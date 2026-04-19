@@ -19,4 +19,17 @@ export default defineConfig({
       },
     },
   },
+  // top-level await vyžaduje esnext target (Spike A nález: Pixi v8 app.init() je async)
+  build: {
+    target: 'esnext',
+  },
+  test: {
+    environment: 'jsdom',
+    globals: false,
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/renderer/**'],
+    },
+  },
 })

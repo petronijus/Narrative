@@ -1,10 +1,14 @@
 /**
  * EditorLayout — 3-pane editor shell.
  *
- * M0: placeholder panes only, no PixiJS yet.
- * M1: Canvas pane will mount PixiJS renderer.
- * M7: Inspector pane will have transform controls.
+ * M0: placeholder panes only, no PixiJS.
+ * M1: Center pane mountuje PixiJS renderer přes <Canvas /> komponentu.
+ * M7: Inspector pane bude mít transform controls.
  */
+
+import { Canvas } from '../renderer/Canvas'
+import { demoSlide } from '../data/demoSlide'
+
 export function EditorLayout() {
   return (
     <div className="flex h-full w-full overflow-hidden bg-gray-950">
@@ -27,9 +31,12 @@ export function EditorLayout() {
             Canvas
           </span>
         </div>
-        <div className="flex flex-1 items-center justify-center bg-gray-950">
-          {/* PixiJS canvas will mount here in M1 */}
-          <p className="select-none text-sm text-gray-700">Canvas renderer — coming in M1</p>
+        {/*
+          position: relative + overflow: hidden = clipping container pro absolutně
+          pozicovaný canvas element. Canvas.tsx používá position: absolute; inset: 0.
+        */}
+        <div className="relative flex-1 overflow-hidden bg-gray-950">
+          <Canvas slideData={demoSlide} />
         </div>
       </main>
 

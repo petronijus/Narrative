@@ -8,10 +8,11 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"No tests yet\" && exit 0",
+    "test": "node ../../node_modules/vitest/vitest.mjs run",
     "preview": "vite preview"
   },
   "dependencies": {
+    "pixi.js": "^8.9.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -20,8 +21,10 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.21",
+    "jsdom": "^26.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
-    "vite": "^6.3.3"
+    "vite": "^6.3.3",
+    "vitest": "^3.1.2"
   }
 }
