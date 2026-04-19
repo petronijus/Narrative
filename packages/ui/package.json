@@ -1,0 +1,25 @@
+{
+  "name": "@narrative/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@narrative/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.20"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  }
+}

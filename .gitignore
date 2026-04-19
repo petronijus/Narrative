@@ -1,13 +1,19 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
 build/
-.DS_Store
+*.tsbuildinfo
+
+# Logs
 *.log
+logs/
 
 # Spikes — throwaway validation projects
 spikes/
 
-# Env
+# Environment secrets
 .env
 .env.local
 .env.*.local
@@ -19,3 +25,14 @@ spikes/
 .vscode/
 .idea/
 *.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pnpm
+.pnpm-store/
+
+# Vite
+apps/web/.vite/

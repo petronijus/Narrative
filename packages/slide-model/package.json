@@ -1,0 +1,19 @@
+{
+  "name": "@narrative/slide-model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@narrative/shared": "workspace:*"
+  }
+}
