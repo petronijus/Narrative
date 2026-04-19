@@ -3,24 +3,36 @@
  *
  * React komponenta — mount/unmount Pixi Application.
  *
- * M2: Objekty čteny z Y.Doc přes useSlideObjects() hook místo slideData prop.
- *     Ellipse a text renderers nejsou implementovány (renderer agent v fázi 2).
- *     Pokud Y.Doc vrátí ellipse/text, SceneGraph je tiše přeskočí s console.warn.
+ * M2 fáze 2a: Přidán OverlayCompositor a overlayRoot div. Compositor je
+ * instanciován po app.init() a uvolněn před app.destroy() při unmount.
+ *
+ * Compositor instance je exponována přes compositorRef prop (nebo React context
+ * pokud editor-ui potřebuje přímý přístup — viz TODO níže).
  *
  * Pixi v8 API:
  * - new Application() + await app.init({ ... })
  * - app.canvas (ne app.view jako v Pixi v7)
  * - app.destroy(true, { children: true, texture: true }) při unmount
+ *
+ * DOM overlay vrstva:
+ * - overlayRoot: <div> uvnitř stejného parent jako canvas, position:absolute;inset:0;pointer-events:none
+ * - OverlayCompositor synchuje DOM elementy s Pixi world coords každý ticker tick
+ * - editor-ui agent (fáze 2b) použije compositor pro text edit overlay a selection outlines
+ *
+ * TODO(M2-2b): Exportovat compositor přes React context aby editor-ui mohl registrovat overlays.
+ *   Alternativně přijmout `onCompositorReady: (c: OverlayCompositor) => void` prop.
  */
 
 import { useEffect, useRef } from 'react'
 import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager } from './ResourceManager'
+import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { useSlideObjects } from '../state/useSlideObjects'
 
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
+  const overlayRootRef = useRef<HTMLDivElement>(null)
 
   const { objects } = useSlideObjects()
 
@@ -32,12 +44,14 @@ export function Canvas() {
     app: Application
     sceneGraph: SceneGraph
     resourceManager: ResourceManager
+    compositor: OverlayCompositor
   } | null>(null)
 
   // Efekt pro mount/unmount Pixi Application
   useEffect(() => {
     const containerEl = containerRef.current
-    if (containerEl === null) return
+    const overlayRootEl = overlayRootRef.current
+    if (containerEl === null || overlayRootEl === null) return
 
     // StrictMode guard: pokud instance již existuje, skip
     if (instanceRef.current !== null) return
@@ -66,11 +80,18 @@ export function Canvas() {
       containerEl.appendChild(app.canvas)
 
       const sceneGraph = new SceneGraph(app)
-      instanceRef.current = { app, sceneGraph, resourceManager }
+
+      // OverlayCompositor: DOM overlay sync nad Pixi canvasem.
+      // overlayRootEl je sousedící <div> s position:absolute;inset:0;pointer-events:none.
+      // Compositor přidá registrované overlay elementy do tohoto divu a synchuje pozice
+      // přes Pixi ticker každý frame (DPR-aware, žádný GC churn).
+      const compositor = new OverlayCompositor(app, overlayRootEl)
+
+      instanceRef.current = { app, sceneGraph, resourceManager, compositor }
 
       // Inicializační render — objects může být stale zde, ale useEffect
       // pro objects changes se postará o aktualizaci
-      console.debug('[Canvas] Pixi initialized, Y.Doc observer active')
+      console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
     }
 
     void initPixi()
@@ -79,10 +100,17 @@ export function Canvas() {
       cancelled = true
 
       if (instanceRef.current !== null) {
-        const { app: liveApp, sceneGraph: liveGraph, resourceManager: liveRM } = instanceRef.current
+        const {
+          app: liveApp,
+          sceneGraph: liveGraph,
+          resourceManager: liveRM,
+          compositor: liveCompositor,
+        } = instanceRef.current
 
         liveGraph.destroy()
         liveRM.destroyAll()
+        // Compositor musí být zničen PŘED app.destroy() — potřebuje ticker pro cleanup
+        liveCompositor.destroy()
         liveApp.destroy(true, { children: true, texture: true })
 
         instanceRef.current = null
@@ -95,9 +123,6 @@ export function Canvas() {
     const instance = instanceRef.current
     if (instance === null) return
 
-    // SceneGraph.render() interně volá getRenderer(type).
-    // Pro ellipse/text: renderer není registrován → getRenderer vrátí undefined → SceneGraph skip.
-    // SceneGraph.ts z M1 musí toto chování podporovat (viz níže).
     instance.sceneGraph.render(objects)
   }, [objects])
 
@@ -121,10 +146,26 @@ export function Canvas() {
   }, [])
 
   return (
-    <div
-      ref={containerRef}
-      style={{ position: 'absolute', inset: 0 }}
-      aria-label="Presentation canvas"
-    />
+    // Wrapper je position:relative aby overlayRoot byl správně umístěn
+    <div style={{ position: 'absolute', inset: 0 }}>
+      {/* Canvas container — Pixi appenduje canvas sem */}
+      <div
+        ref={containerRef}
+        style={{ position: 'absolute', inset: 0 }}
+        aria-label="Presentation canvas"
+      />
+      {/* Overlay root — DOM elementy nad canvasem, synchronizovány OverlayCompositor */}
+      <div
+        ref={overlayRootRef}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          pointerEvents: 'none',
+          // overflow:hidden aby overlay elementy nevyčnívaly mimo canvas area
+          overflow: 'hidden',
+        }}
+        aria-hidden="true"
+      />
+    </div>
   )
 }

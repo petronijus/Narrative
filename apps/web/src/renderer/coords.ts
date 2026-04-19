@@ -14,7 +14,7 @@
  * Toto musí být zachováno ve všech budoucích DOM overlay implementacích (M2+).
  */
 
-import type { Container } from 'pixi.js'
+import type { Application, Container } from 'pixi.js'
 
 /** Fyzické pixely → CSS logical pixely */
 export function worldToScreen(
@@ -25,6 +25,23 @@ export function worldToScreen(
     x: pixiGlobal.x / dpr,
     y: pixiGlobal.y / dpr,
   }
+}
+
+/**
+ * Vrátí aktuální device pixel ratio pro danou Pixi Application.
+ *
+ * DPR handling je POVINNÝ pro HiDPI konzistenci (Spike C nález):
+ * Pixi v8 s resolution=devicePixelRatio+autoDensity škáluje interně celý stage hodnotou DPR.
+ * container.toGlobal() vrací fyzické pixely — CSS translate() pracuje v logical pixelech.
+ * Bez dělení DPR vzniká 2× (nebo DPR×) offset na HiDPI displejích.
+ *
+ * Convenience getter pro editor-ui a OverlayCompositor — čte přes app.renderer.resolution
+ * (pravzor hodnoty při app.init) místo window.devicePixelRatio, která se může lišit
+ * při přesunu okna mezi monitory (window.devicePixelRatio reaguje ihned, app.renderer.resolution
+ * zůstane na init hodnotě — viz OverlayCompositor pro handling změn DPR).
+ */
+export function getCanvasDPR(app: Application): number {
+  return app.renderer.resolution
 }
 
 /**

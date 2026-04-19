@@ -3,13 +3,15 @@
  *
  * Registr object rendererů.
  *
- * M1: Jednoduchý Map<type, renderer> lookup.
- * M2: Přechod na SlideObject z @narrative/shared. Ellipse a text renderers
- *     budou přidány renderer agentem v M2 fázi 2.
- * M2 phase 2+: Plná registerObjectType() API s inspector, schema, hitTest.
+ * M2 fáze 2a: Všechny tři typy registrovány — rectangle, ellipse, text.
+ * Dispatch podle SlideObject.type přes getRenderer(type).
+ *
+ * M2 phase 2+: Plná registerObjectType() API s inspector, schema bude v M3+.
  */
 
 import { rectangleRenderer } from './rectangleRenderer'
+import { ellipseRenderer } from './ellipseRenderer'
+import { textRenderer } from './textRenderer'
 import type { Container } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 
@@ -21,7 +23,11 @@ export interface ObjectRenderer<T extends SlideObject = SlideObject> {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- registr pojme různé generické varianty ObjectRenderer
-const rendererRegistry = new Map<string, ObjectRenderer<any>>([['rectangle', rectangleRenderer]])
+const rendererRegistry = new Map<string, ObjectRenderer<any>>([
+  ['rectangle', rectangleRenderer],
+  ['ellipse', ellipseRenderer],
+  ['text', textRenderer],
+])
 
 /**
  * Vrátí renderer pro daný type string, nebo undefined pokud typ není registrovaný.

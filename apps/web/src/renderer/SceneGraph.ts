@@ -143,6 +143,46 @@ export class SceneGraph {
     }
   }
 
+  /**
+   * Hit test v world-space souřadnicích.
+   * Vrací ID nejhořejšího objektu na daném bodě (z-order: poslední = nahoře), nebo null.
+   *
+   * Implementace: AABB (axis-aligned bounding box) — ignoruje rotaci objektu.
+   * Rotated hit test přidáme v M7 (transform handles).
+   * TODO(M7): Použít rotovaný OBB (oriented bounding box) pro přesný hit test.
+   *
+   * @param worldX - X souřadnice v Pixi world space
+   * @param worldY - Y souřadnice v Pixi world space
+   * @returns ID objektu nebo null pokud není žádný hit
+   */
+  hitTest(worldX: number, worldY: number): string | null {
+    // Iterujeme v reverse insertion order — poslední přidaný je nahoře (highest z-order)
+    const entries = [...this.nodes.entries()]
+
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]
+      if (entry === undefined) continue
+      const [id, node] = entry
+      const { x, y, width, height } = node.data
+
+      // AABB: bounding box vychází z dat objektu (left-top origin)
+      if (worldX >= x && worldX <= x + width && worldY >= y && worldY <= y + height) {
+        return id
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Vrátí SceneNode pro dané ID (pro interní použití a testy).
+   * Neexponuj jako public API — slouží pro test introspekci.
+   * @internal
+   */
+  getNode(id: string): { container: Container; data: SlideObject } | undefined {
+    return this.nodes.get(id)
+  }
+
   /** Počet aktuálně spravovaných objektů (pro debugging a testy). */
   get objectCount(): number {
     return this.nodes.size

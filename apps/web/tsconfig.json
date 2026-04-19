@@ -10,7 +10,8 @@
     "paths": {
       "@narrative/shared": ["../../packages/shared/src/index.ts"],
       "@narrative/slide-model": ["../../packages/slide-model/src/index.ts"]
-    }
+    },
+    "types": ["@testing-library/jest-dom"]
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]

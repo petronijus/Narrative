@@ -10,6 +10,8 @@
 export type {
   BaseSlideObject,
   RectangleObject,
+  EllipseObject,
+  TextObject,
   SlideObject as SlideObjectData,
   SlideObject,
 } from '@narrative/shared'
