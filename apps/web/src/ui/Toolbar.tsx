@@ -8,9 +8,14 @@
  * - R → rectangle
  * - O → ellipse
  * - T → text
+ *
+ * M5: Přidán "Present" button vpravo (▶).
+ * - Klik → naviguje na /deck/:id/present
+ * - Keyboard: Ctrl/Cmd+Enter → present mode
  */
 
 import { useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
 
@@ -44,9 +49,19 @@ function isInputFocused(): boolean {
 
 export function Toolbar() {
   const { activeTool, setActiveTool } = useTool()
+  const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Present mode: Ctrl/Cmd+Enter
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (isInputFocused()) return
+        e.preventDefault()
+        navigate(`/deck/${id ?? ''}/present`)
+        return
+      }
+
       if (isInputFocused()) return
       // Neinterceptovat modifier combos
       if (e.ctrlKey || e.metaKey || e.altKey) return
@@ -60,7 +75,7 @@ export function Toolbar() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [setActiveTool])
+  }, [id, navigate, setActiveTool])
 
   return (
     <div
@@ -68,6 +83,7 @@ export function Toolbar() {
       role="toolbar"
       aria-label="Object tools"
     >
+      {/* Tool buttons */}
       {TOOL_BUTTONS.map(({ tool, label, shortcut, icon }) => {
         const isActive = activeTool === tool
         return (
@@ -93,6 +109,27 @@ export function Toolbar() {
           </button>
         )
       })}
+
+      {/* Spacer */}
+      <div className="flex-1" aria-hidden="true" />
+
+      {/* Present button */}
+      <button
+        type="button"
+        onClick={() => navigate(`/deck/${id ?? ''}/present`)}
+        aria-label="Present (Ctrl+Enter)"
+        title="Present — Ctrl+Enter"
+        className={[
+          'flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+          'bg-green-700 text-white hover:bg-green-600',
+        ].join(' ')}
+      >
+        <span aria-hidden="true" className="text-base leading-none">
+          ▶
+        </span>
+        <span className="hidden sm:inline">Present</span>
+      </button>
     </div>
   )
 }

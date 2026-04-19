@@ -3,27 +3,68 @@
  *
  * - Klik na tlačítko přepíná tool.
  * - Keyboard shortcut (V/R/O/T) přepíná tool.
+ * - M5: Present button naviguje na /deck/:id/present.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, act, fireEvent } from '@testing-library/react'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import type * as ReactRouterDom from 'react-router-dom'
 import { Toolbar } from './Toolbar'
 import { ToolProvider, useTool } from '../state/ToolContext'
 import type { ActiveTool } from '../state/ToolContext'
+
+// ---------------------------------------------------------------------------
+// navigate mock
+// ---------------------------------------------------------------------------
+
+const mockNavigate = vi.fn()
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactRouterDom>()
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function ToolReadout() {
   const { activeTool } = useTool()
   return <div data-testid="active-tool">{activeTool}</div>
 }
 
-function TestApp() {
+/**
+ * Render Toolbar uvnitř MemoryRouter s deck id param.
+ * Route pattern /deck/:id zajistí správné useParams.
+ */
+function TestApp({ deckId = 'test-deck' }: { deckId?: string } = {}) {
   return (
-    <ToolProvider>
-      <Toolbar />
-      <ToolReadout />
-    </ToolProvider>
+    <MemoryRouter initialEntries={[`/deck/${deckId}`]}>
+      <Routes>
+        <Route
+          path="/deck/:id"
+          element={
+            <ToolProvider>
+              <Toolbar />
+              <ToolReadout />
+            </ToolProvider>
+          }
+        />
+      </Routes>
+    </MemoryRouter>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  mockNavigate.mockClear()
+})
 
 describe('Toolbar', () => {
   it('renders all tool buttons', () => {
@@ -32,6 +73,11 @@ describe('Toolbar', () => {
     expect(screen.getByRole('button', { name: /rectangle/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /ellipse/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /text/i })).toBeInTheDocument()
+  })
+
+  it('renders Present button', () => {
+    render(<TestApp />)
+    expect(screen.getByRole('button', { name: /present/i })).toBeInTheDocument()
   })
 
   it('default tool is select', () => {
@@ -108,11 +154,20 @@ describe('Toolbar', () => {
 
   it('keyboard shortcuts are ignored when input is focused', () => {
     render(
-      <ToolProvider>
-        <Toolbar />
-        <ToolReadout />
-        <input data-testid="text-input" />
-      </ToolProvider>,
+      <MemoryRouter initialEntries={['/deck/test']}>
+        <Routes>
+          <Route
+            path="/deck/:id"
+            element={
+              <ToolProvider>
+                <Toolbar />
+                <ToolReadout />
+                <input data-testid="text-input" />
+              </ToolProvider>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
     )
 
     // Focus input
@@ -134,6 +189,22 @@ describe('Toolbar', () => {
       fireEvent.keyDown(window, { key: 'R' })
     })
     expect(screen.getByTestId('active-tool').textContent).toBe('rectangle')
+  })
+
+  it('Present button click navigates to /deck/:id/present', () => {
+    render(<TestApp deckId="my-deck" />)
+    act(() => {
+      screen.getByRole('button', { name: /present/i }).click()
+    })
+    expect(mockNavigate).toHaveBeenCalledWith('/deck/my-deck/present')
+  })
+
+  it('Ctrl+Enter navigates to present mode', () => {
+    render(<TestApp deckId="my-deck" />)
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Enter', ctrlKey: true })
+    })
+    expect(mockNavigate).toHaveBeenCalledWith('/deck/my-deck/present')
   })
 })
 
