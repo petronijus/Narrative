@@ -4,40 +4,41 @@ Handoff document for Claude Code. Read this fully before starting.
 
 ## Project overview
 
-Self-hosted kolaborativní prezentační nástroj s Keynote-level animacemi, těžkou podporou médií a AI-native editací. Stavěno inkrementálně, finální stack od M0.
+Self-hosted collaborative presentation tool with Keynote-level animations, heavy media support, and AI-native editing. Built incrementally, final stack from day one.
 
-**Target users**: týmy do 15 souběžných editorů na deck.
-**Deployment**: self-hosted na Proxmoxu přes Docker Compose.
-**Developer context**: sólo vývojář, learning-as-building, AI-assisted workflow. Víkendová/večerní kadence. Dlouhodobý projekt, ne sprint. Čistý kód před rychlostí; stabilní milníky před širokými featurami.
+**Target users**: teams of up to 15 concurrent editors per deck.
+**Deployment**: self-hosted on Proxmox via Docker Compose.
+**Developer context**: solo developer, learning-as-building, AI-assisted workflow. Weekend/evening cadence. Long-running project, not a sprint. Clean code over speed; stable milestones over broad features.
 
-## Tech stack (final, od M0)
+## Tech stack (final, from M0)
 
 - **Frontend**: React 18 + TypeScript (strict) + Vite + Tailwind CSS
 - **Canvas renderer**: PixiJS v8 (WebGL/WebGPU)
-- **Animation runtime**: **GSAP + GSAP Flip plugin** (free od 2024 po Webflow akvizici, včetně všech plugins). Obalen za vlastní JSON DSL compiler → vyměnitelný.
-- **Animation editor UX inspirace**: Theatre.js Studio jako referenční vzor pro M14 timeline panel (ne runtime dependency).
+- **Animation runtime**: **GSAP + GSAP Flip plugin** (free since 2024 after Webflow acquisition, including all plugins). Wrapped behind a custom JSON DSL compiler → swappable.
+- **Animation editor UX inspiration**: Theatre.js Studio as reference pattern for M14 timeline panel (not a runtime dependency).
 - **Realtime sync**: Yjs + Hocuspocus (WebSocket)
-- **Backend**: Node.js + Fastify, TypeScript. API + Hocuspocus v jedné appce (`apps/server`), rozdělit až když to bude třeba.
-- **Database**: Postgres (metadata + Yjs persistence přes Hocuspocus extension)
+- **Backend**: Node.js + Fastify, TypeScript. API + Hocuspocus in one app (`apps/server`), split only when needed.
+- **Database**: Postgres (metadata + Yjs persistence via Hocuspocus extension)
 - **Object storage**: MinIO (S3-compatible)
-- **Media pipeline**: tus.io uploads, ffmpeg workers přes BullMQ + Redis, imgproxy
-- **Auth**: Authentik (OIDC) — přidáno v M10
-- **AI**: Anthropic API (Claude Sonnet pro generování, tool use pro structured output)
+- **Media pipeline**: tus.io uploads, ffmpeg workers via BullMQ + Redis, imgproxy
+- **Auth**: Authentik (OIDC) — added in M10
+- **AI**: Anthropic API (Claude Sonnet for generation, tool use for structured output)
 - **Reverse proxy**: Caddy (automatic TLS)
-- **Deploy**: Docker Compose na Proxmox LXC/VM, ZFS pro storage
-- **Observability**: Sentry + základní metriky od M6, Prometheus full v M29
+- **Deploy**: Docker Compose on Proxmox LXC/VM, ZFS for storage
+- **Observability**: Sentry + basic metrics from M6, full Prometheus in M29
 
 ## Working principles
 
-1. **Finální stack od M0.** Žádné throwaway technologie. Každý milestone staví na předchozím kódu bez přepisů základů.
-2. **State je single source of truth.** Yjs od M2. PixiJS renderuje diff. Nikdy nemutovat Pixi objekty jako primární stav.
-3. **TypeScript strict mode.** Žádné `any` bez justification komentáře.
-4. **Git commity po logických jednotkách.** Conventional Commits.
-5. **Každý milestone končí s:** funkční demo + testy kritických cest + CHANGELOG záznam + **handoff dokument v `docs/handoff/`**.
-6. **Deploy brzo (M4), ne na konci.** Staging instance od M4 dál.
-7. **ADR v `docs/adr/`** pro netriviální architektonická rozhodnutí.
-8. **Při pochybnostech se zeptat** před přidáním závislosti.
-9. **Handoff after every milestone.** `docs/handoff/MXX-<název>.md` — aby šlo pokračovat na jiném zařízení.
+1. **Final stack from M0.** No throwaway technologies. Each milestone builds on previous code without rewrites of foundations.
+2. **State is single source of truth.** Yjs from M2. PixiJS renders diffs. Never mutate Pixi objects as primary state.
+3. **TypeScript strict mode.** No `any` without justification comment.
+4. **Git commits per logical unit.** Conventional Commits.
+5. **Each milestone ends with:** working demo + tests for critical paths + CHANGELOG entry + **handoff document in `docs/handoff/`**.
+6. **Deploy early (M4), not at the end.** Staging instance from M4 onward.
+7. **ADRs in `docs/adr/`** for non-obvious architectural decisions.
+8. **When in doubt, ask** before adding a dependency.
+9. **Handoff after every milestone.** `docs/handoff/MXX-<name>.md` — to allow continuing on a different device.
+10. **Language.** All project artifacts (code, comments, docs, commits, ADRs, handoffs) in English. Conversation with the developer stays in Czech.
 
 ## Repository structure (target)
 
@@ -45,13 +46,13 @@ Self-hosted kolaborativní prezentační nástroj s Keynote-level animacemi, tě
 /
 ├── apps/
 │   ├── web/              # React frontend
-│   ├── server/           # API + Hocuspocus v jedné appce (rozdělit až bolí)
-│   └── workers/          # ffmpeg, AI workers (přidáno v M12)
+│   ├── server/           # API + Hocuspocus in one app (split when it hurts)
+│   └── workers/          # ffmpeg, AI workers (added in M12)
 ├── packages/
 │   ├── shared/           # Shared types (slide model, object types)
-│   ├── slide-model/      # Object types registry, Yjs bindings
+│   ├── slide-model/      # Object type registry, Yjs bindings
 │   ├── animation/        # JSON DSL + GSAP compiler + timeline runtime
-│   └── ui/               # Reusable UI components
+│   └── ui/               # Reusable UI primitives
 ├── infra/
 │   ├── docker-compose.yml
 │   ├── caddy/
@@ -63,234 +64,266 @@ Self-hosted kolaborativní prezentační nástroj s Keynote-level animacemi, tě
 └── README.md
 ```
 
-pnpm workspaces monorepo od M0. Turborepo volitelně (přidat, až build times bolí).
+pnpm workspaces monorepo from M0. Turborepo optional (add when build times hurt).
 
 ---
 
-## Klíčová architektonická rozhodnutí
+## Key architectural decisions
 
-### Tři pilíře ověřené v prvních ~6 milestonech
+### Three pillars validated in the first ~6 milestones
 
-1. **Scene graph + resource manager** (M1) — lifecycle pro textures, video frames, Lottie rastry, 3D render targets. Jeden centrální manager od začátku.
-2. **Yjs-backed state + object type registry** (M2-M3) — plugin boundary od začátku. `registerObjectType({ type, render, hitTest, defaultProps, inspector, schema })`.
-3. **Animation engine: JSON DSL → GSAP compiler** (M6) — DSL jako jediný model animací od začátku. Žádné preset→DSL migrace později.
+1. **Scene graph + resource manager** (M1) — lifecycle for textures, video frames, Lottie rasters, 3D render targets. One central manager from the start.
+2. **Yjs-backed state + object type registry** (M2–M3) — plugin boundary from the start. `registerObjectType({ type, render, hitTest, defaultProps, inspector, schema })`.
+3. **Animation engine: JSON DSL → GSAP compiler** (M6) — DSL is the only animation model from day one. No preset-then-DSL migration later.
 
 ### Edit mode vs. Present mode
 
-Jeden renderer, dva módy. Present mode má vlastní entry point ale sdílí scene graph + resource manager. Oddělený mode stack (input handling, UI chrome), sdílený render stack. Ověřeno v M5.
+One renderer, two modes. Present mode has its own entry point but shares the scene graph + resource manager. Separate mode stack (input handling, UI chrome), shared render stack. Validated in M5.
 
-### DOM overlay nad Pixi canvasem
+### DOM overlay over Pixi canvas
 
-Vyřešeno jednou v M2 jako "layered compositor" abstrakce. Použije se pro text edit (M2), present mode video (M12), iframe (M24), Lottie (M25). Positioning + event routing jednou odladěn, pak jen použit.
+Solved once in M2 as a "layered compositor" primitive. Used for text edit (M2), present-mode video (M12), iframe (M24), Lottie (M25). Positioning + event routing solved once, then reused.
 
 ### Mixed-target animation pipeline
 
-Animation engine umí cílit na Pixi objekty i DOM overlay objekty ve stejném timeline. First-class concern od M6. Příklady: text letter-by-letter animace v DOMu + shape fadeIn v Pixi ve stejné sekvenci.
+The animation engine can target both Pixi objects and DOM overlay objects in the same timeline. First-class concern from M6. Example: text letter-by-letter animation in the DOM + a shape fadeIn in Pixi in the same sequence.
 
-### Server-side Yjs strategie
+### Server-side Yjs strategy
 
-Pro AI generování slidů (M16): přímá Y.Doc manipulace v Node se broadcasts přes Hocuspocus extension. Rozhodnuto v ADR před M4.
+For AI slide generation (M16): direct Y.Doc manipulation in Node with broadcasts via a Hocuspocus extension. Documented via ADR before M4.
 
 ---
 
-## Fáze −1: Architectural spikes (před M0)
+## Phase −1: Architectural spikes (before M0)
 
-Tři víkendy, throwaway kód, ověření nejrizikovějších neznámých:
+Three weekends, throwaway code, validation of the riskiest unknowns:
 
-**Spike A — GSAP + Pixi performance.** 50 simultánních tweenů na 60 fps? Timeline s 10 sekvenčními animacemi + nested timelines funguje? Flip plugin na 20 objektů při slide transition?
+**Spike A — GSAP + Pixi performance.** Do 50 parallel tweens hold 60 fps? `gsap.timeline()` with 10 sequential animations + nested timelines — does it work cleanly? Flip plugin on 20 objects during slide transition?
 
-**Spike B — Yjs scale.** 15 peerů × 30 Hz awareness + 5 editorů píšících současně. Stíhá scene diff? Jak moc síťového traffiku?
+**Spike B — Yjs scale.** 15 peers × 30 Hz awareness + 5 editors writing concurrently. Does scene diff keep up? How much network traffic?
 
-**Spike C — DOM overlay + Pixi event routing.** Text edit DOM input nad Pixi textem při zoomu/panu. Event routing, focus, keyboard shortcuts. Jak čisté to jde udělat?
+**Spike C — DOM overlay + Pixi event routing.** DOM text input over a Pixi text object during zoom/pan. Event routing, focus, keyboard shortcuts. How clean does it get?
 
-Pokud některý spike selže → měníme stack **teď**, ne v M20.
+If any spike fails → change the stack **now**, not in M20.
 
 ---
 
 ## Milestones
 
-Každý milestone je shippable jednotka. Nezačínat další před committem, testy, CHANGELOG záznamem a **handoff dokumentem**.
+Each milestone is a shippable unit. Do not start the next one until the current one is committed, tested, has a CHANGELOG entry, and **a handoff document**.
 
 ### M0 — Foundation + CI/CD
-Monorepo (pnpm workspaces). `apps/web` s Vite + React + TS strict + Tailwind. Prázdný `apps/server` skeleton. GitHub Actions: build + typecheck + test + lint na každý push. Pre-commit hooks (husky + lint-staged). Local `docker-compose.yml` s Postgres pro dev. README s setup instructions.
 
-**Deliverable**: `pnpm dev` startuje, CI zelená na prázdném repu.
+Monorepo (pnpm workspaces). `apps/web` with Vite + React + TS strict + Tailwind. Empty `apps/server` skeleton. GitHub Actions: build + typecheck + test + lint on every push. Pre-commit hooks (husky + lint-staged). Local `docker-compose.yml` with Postgres for dev. README with setup instructions.
+
+**Deliverable**: `pnpm dev` starts; CI green on an empty repo.
 
 ### M1 — Scene graph + resource manager
-PixiJS v8 v `<Canvas />` React komponentě s proper mount/unmount lifecycle. **Resource manager** jako první-class primitive: centrální správa texture/asset lifecyklů. Jeden hardcoded obdélník renderovaný z JSON definice. 3-pane layout: left sidebar, center canvas, right inspector. ADR-0001 (monorepo), ADR-0002 (renderer architecture).
 
-**Deliverable**: prázdný canvas s jedním obdélníkem z dat.
+PixiJS v8 in a `<Canvas />` React component with proper mount/unmount lifecycle. **Resource manager** as a first-class primitive: central ownership of texture/asset lifecycles. One hardcoded rectangle rendered from a JSON definition. 3-pane layout: left sidebar, center canvas, right inspector. ADR-0001 (monorepo), ADR-0002 (renderer architecture).
 
-### M2 — Yjs od začátku + object type registry + DOM overlay
-Y.Doc v paměti (žádný server). Slide = Y.Map, objects = Y.Array. `registerObjectType` registry s rectangle, ellipse, text typy. Všechny edity přes `doc.transact()`. Y.UndoManager. Toolbar + klik na canvas vytvoří objekt. Pointer events pro drag. **DOM overlay primitive** pro text edit (positioning + focus management). Inspector ukazuje editovatelné properties.
+**Deliverable**: empty canvas with one rectangle from data.
 
-**Deliverable**: jednouživatelský editor shapes + text, CRDT state, undo/redo.
+### M2 — Yjs from the start + object type registry + DOM overlay
+
+Y.Doc in memory (no server yet). Slide = Y.Map, objects = Y.Array. `registerObjectType` registry with rectangle, ellipse, text types. All edits via `doc.transact()`. Y.UndoManager. Toolbar + canvas click creates an object. Pointer events for drag. **DOM overlay primitive** for text edit (positioning + focus management). Inspector shows editable properties.
+
+**Deliverable**: single-user editor for shapes + text, CRDT-backed state, undo/redo.
 
 ### M3 — Renderer reconciler
-Čistý diff engine: Y.Doc state → PixiJS scene (add/update/remove). Žádné přímé mutace Pixi objektů z editing kódu. Observer layer na Y.Doc s batching. ADR-0003 (reconciler pattern).
 
-**Deliverable**: stejný UX jako M2, ale čistá architektura. Připraveno pro multiplayer.
+Clean diff engine: Y.Doc state → PixiJS scene (add/update/remove). No direct mutations of Pixi objects from editing code. Observer layer on Y.Doc with batching. ADR-0003 (reconciler pattern).
 
-### M4 — Hocuspocus sync + Postgres + první deploy
-`apps/server` s Hocuspocus + Fastify API endpointem `/decks`. Hocuspocus persistence extension → Postgres. **První docker-compose setup** a deploy script na staging server (hardcoded user, no auth). Frontend používá `HocuspocusProvider`. **MVP = syncuje mezi taby/zařízeními + je online na doméně.**
+**Deliverable**: same UX as M2, but with clean architecture. Ready for multiplayer.
+
+### M4 — Hocuspocus sync + Postgres + first deploy
+
+`apps/server` with Hocuspocus + Fastify API endpoint `/decks`. Hocuspocus persistence extension → Postgres. **First docker-compose setup** and deploy script to a staging server (hardcoded user, no auth). Frontend uses `HocuspocusProvider`. **MVP = sync between tabs/devices + online on a domain.**
 
 **Deliverable**: **MVP — multi-tab sync, persistence, deployed.**
 
 ### M5 — Present mode MVP
-Fullscreen present mode route. Keyboard nav (Left/Right/Space/Esc). Žádný editor chrome. Žádné animace (zatím). Forces edit/present architectural split early. Presenter view v separátním okně (placeholder).
 
-**Deliverable**: lze prezentovat statické slidy. Split mode stack potvrzen.
+Fullscreen present-mode route. Keyboard nav (Left/Right/Space/Esc). No editor chrome. No animations (yet). Forces edit/present architectural split early. Presenter view in a separate window (placeholder).
+
+**Deliverable**: you can present static slides. Split mode stack confirmed.
 
 ### M6 — Animation engine (GSAP + DSL) + observability baseline
-`packages/animation`: JSON DSL schema + compiler do `gsap.timeline()`. Runtime interpreter. Triggery: `onEnter`, `onClick`, `withPrevious`, `afterPrevious`. Mixed targets (Pixi + DOM overlay). Dva presety jako DSL factories: `fadeIn`, `slideIn`. Test: animace běží v present mode. Sentry + základní metriky (FPS, Yjs update rate). Synthetic load script pro průběžný profiling.
 
-**Deliverable**: animační engine. DSL je jediný model od teď.
+`packages/animation`: JSON DSL schema + compiler to `gsap.timeline()`. Runtime interpreter. Triggers: `onEnter`, `onClick`, `withPrevious`, `afterPrevious`. Mixed targets (Pixi + DOM overlay). Two presets as DSL factories: `fadeIn`, `slideIn`. Test: animations play in present mode. Sentry + basic metrics (FPS, Yjs update rate). Synthetic load script for continuous profiling.
+
+**Deliverable**: animation engine. DSL is the only model from now on.
 
 ### M7 — Transform handles + multi-select + snapping
-Resize handles (8 hran/rohů) s Shift aspect lock. Rotation handle. Multi-select přes drag rectangle + Shift-click. Group transforms. Smart guides (snap na grid, edges, centers jiných objektů, viditelné čáry). Keyboard: Delete, Cmd/Ctrl+D, arrow nudge, undo/redo. **Figma-like object manipulation.**
 
-**Deliverable**: plnohodnotný editor.
+Resize handles (8 corners/edges) with Shift aspect lock. Rotation handle. Multi-select via drag rectangle + Shift-click. Group transforms. Smart guides (snap to grid, edges, centers of other objects, visible lines). Keyboard: Delete, Cmd/Ctrl+D, arrow nudge, undo/redo. **Figma-like object manipulation.**
+
+**Deliverable**: full-featured editor.
 
 ### M8 — Awareness
-Barevné kurzory per user (random barva na join, stabilní per session). Selection highlights v user barvě. Avatar chips v headeru. Cursor throttling 30 Hz. Awareness payload: `{ name, color, selectedObjectIds, cursor: {x, y, slideId} }`.
 
-**Deliverable**: viditelná kolaborativní přítomnost.
+Colored cursors per user (random color on join, stable per session). Selection highlights in user color. Avatar chips in the header. Cursor throttling at 30 Hz. Awareness payload: `{ name, color, selectedObjectIds, cursor: {x, y, slideId} }`.
+
+**Deliverable**: visible collaborative presence.
 
 ### M9 — Multi-slide + transitions
-Deck = Y.Array slide Y.Maps. Sidebar s thumbnails (PixiJS renderToCanvas na 200px). Add/delete/reorder (drag). Active slide = per-client state (nesynchronizuje se). **Slide transitions** (fade, push, cube, none) využívající animation engine z M6. Per-slide nastavení.
 
-**Deliverable**: plné deck editing + přechody.
+Deck = Y.Array of slide Y.Maps. Sidebar with thumbnails (PixiJS renderToCanvas at 200 px). Add/delete/reorder (drag). Active slide = per-client state (not synced). **Slide transitions** (fade, push, cube, none) using the animation engine from M6. Per-slide setting.
+
+**Deliverable**: full deck editing + transitions.
 
 ### M10 — Auth + permissions
-Authentik v docker-compose. OIDC v serveru (JWT validace na WebSocket connect). Per-deck permissions tabulka (owner, editor, viewer). Sharing dialog (invite by email). Public view-only share link s tokenem.
 
-**Deliverable**: multi-user systém s perms.
+Authentik in docker-compose. OIDC in the server (JWT validation on WebSocket connect). Per-deck permissions table (owner, editor, viewer). Sharing dialog (invite by email). Public view-only share link with token.
+
+**Deliverable**: multi-user system with permissions.
 
 ### M11 — Image uploads
-MinIO + tus-node-server v `apps/server`. Drag-and-drop na canvas. Progress UI. Non-blocking editor během uploadu. imgproxy service pro on-the-fly varianty (thumb 400w, display 1600w, original). Image object type používá imgproxy URLs podle kontextu.
 
-**Deliverable**: obrázky na slidech, resumable uploads.
+MinIO + tus-node-server in `apps/server`. Drag-and-drop onto the canvas. Progress UI. Non-blocking editor during upload. imgproxy service for on-the-fly variants (thumb 400w, display 1600w, original). Image object type uses imgproxy URLs by context.
+
+**Deliverable**: images on slides, resumable uploads.
 
 ### M12 — Video support + preloading
-BullMQ + Redis. `apps/workers/video` worker: ffmpeg generuje HLS varianty (360p/720p/1080p) + poster frame + thumbnail. Video object type: poster jako Pixi texture + play icon overlay. V present mode: DOM overlay s hls.js video elementem, pozicovaný nad canvas. **Preloading pipeline**: před startem prezentace scan media URLs → preload přes Image()/manifest fetch → progress bar → IndexedDB cache. Fail gracefully (poster pokud HLS manifest failne).
 
-**Deliverable**: video funguje, prezentace neseká.
+BullMQ + Redis. `apps/workers/video` worker: ffmpeg generates HLS variants (360p/720p/1080p) + poster frame + thumbnail. Video object type: poster as a Pixi texture + play-icon overlay. In present mode: DOM overlay with hls.js video element positioned above the canvas. **Preloading pipeline**: before starting the presentation, scan media URLs → preload via Image()/manifest fetch → progress bar → IndexedDB cache. Fail gracefully (poster if HLS manifest fails).
+
+**Deliverable**: video works, presentations don't stutter.
 
 ### M13 — Magic Move
-**Manual flip pattern** (ne GSAP Flip plugin — ten je DOM-only, ověřeno ve Spike A). Implementace: (1) snapshot transform state Pixi objektů ze slide A, (2) okamžitě aplikovat layout slide B na objekty, (3) GSAP tween proxy z snapshotu zpět na cílové hodnoty. Match objekty po ID napříč slidy, non-matching fade out/in. DSL rozšíření: `magicMove: true` per-transition. GSAP Flip plugin zůstává pro DOM overlay transitions (text, media placeholders nad canvasem) v rámci mixed-target pipeline.
+
+**Manual flip pattern** (not the GSAP Flip plugin — that is DOM-only, verified in Spike A). Implementation: (1) snapshot transform state of Pixi objects from slide A, (2) immediately apply slide B's layout to the objects, (3) GSAP tween a proxy from the snapshot back to the target values. Match objects by ID across slides; non-matching fade out/in. DSL extension: `magicMove: true` per-transition. The GSAP Flip plugin remains for DOM overlay transitions (text, media placeholders above the canvas) as part of the mixed-target pipeline.
 
 **Deliverable**: Keynote Magic Move feature.
 
 ### M14 — Animation timeline UI (inspired by Theatre.js Studio)
-Timeline panel per slide. Drag-to-reorder. Visual delay/duration bars (drag to adjust). Trigger selector. Play button previewuje celou sekvenci slidu. Scrubbing (GSAP timeline seek). **Theatre.js Studio jako referenční design** — studovat UX a transplantovat vhodné patterny.
+
+Timeline panel per slide. Drag-to-reorder. Visual delay/duration bars (drag to adjust). Trigger selector. Play button previews the entire slide sequence. Scrubbing (GSAP timeline seek). **Theatre.js Studio as design reference** — study the UX and transplant suitable patterns.
 
 **Deliverable**: Keynote-like animation panel.
 
-### M15 — Rozšíření presetů + advanced animations
-Dalších 15 presetů jako DSL factories: fadeOut, slideIn×4 směry, scaleIn/Out, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, zoomIn. Text-specific animace využívající DOM overlay: letter-by-letter reveal, typewriter, word-by-word.
+### M15 — Preset expansion + advanced animations
 
-**Deliverable**: bohatá knihovna presetů.
+15 more presets as DSL factories: fadeOut, slideIn×4 directions, scaleIn/Out, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, zoomIn. Text-specific animations using the DOM overlay: letter-by-letter reveal, typewriter, word-by-word.
+
+**Deliverable**: rich preset library.
 
 ### M16 — AI slide generation
-Anthropic SDK v serveru. Structured output přes tool use s JSON schema pro slide model. Server-side Yjs client (přímá Y.Doc manipulace) aplikuje vygenerované slidy. Streaming: slide po slidu, jakmile přijde z modelu. Prompt UI: modal s textareou ("generate 10 slides about X"). `ANTHROPIC_API_KEY` env var.
 
-**Deliverable**: generování slidů z promptu.
+Anthropic SDK in the server. Structured output via tool use with a JSON schema matching the slide model. Server-side Yjs client (direct Y.Doc manipulation) applies the generated slides. Streaming: slide by slide as the model produces them. Prompt UI: modal with a textarea ("generate 10 slides about X"). `ANTHROPIC_API_KEY` env var.
+
+**Deliverable**: slide generation from a prompt.
 
 ### M17 — AI per-slide assistance
-Context menu na objektech/slidech: rewrite, translate, simplify, expand, shorten. LLM dostane aktuální objekt/slide + okolní slidy jako kontext. Diff preview modal před aplikací. Apply = Yjs transaction.
 
-**Deliverable**: AI editační tooly.
+Context menu on objects/slides: rewrite, translate, simplify, expand, shorten. The LLM receives the current object/slide + surrounding slides as context. Diff preview modal before applying. Apply = Yjs transaction.
+
+**Deliverable**: AI editing tools.
 
 ### M18 — AI layout suggestions
-"Fix my slide" tlačítko. LLM dostane objekty + pozice, vrátí nový layout. Constrained na předdefinované layout templates (title+content, two-column, image+caption, quote, section divider) aby se zabránilo chaosu.
+
+"Fix my slide" button. The LLM receives objects + positions, returns a new layout. Constrained to predefined layout templates (title+content, two-column, image+caption, quote, section divider) to avoid chaos.
 
 **Deliverable**: layout AI.
 
 ### M19 — Speaker notes
-Per-slide notes jako Y.Text v slide Y.Map. Notes panel (collapsible) v editoru. Rich text (bold, italic, lists, links) přes Tiptap bound na Y.Text. Presenter view show notes + current + next + timer.
 
-**Deliverable**: notes systém.
+Per-slide notes as Y.Text in the slide Y.Map. Notes panel (collapsible) in the editor. Rich text (bold, italic, lists, links) via Tiptap bound to Y.Text. Presenter view shows notes + current + next + timer.
+
+**Deliverable**: notes system.
 
 ### M20 — Templates + themes
-Theme = `{ colors, fonts, spacing }` na deck levelu. Slide templates předdefinované v kódu (title, content, two-column, image+text, quote, section-divider). Template picker při novém slidu. "Apply theme" přestyluje všechny objekty.
 
-**Deliverable**: design konzistence.
+Theme = `{ colors, fonts, spacing }` at the deck level. Slide templates predefined in code (title, content, two-column, image+text, quote, section-divider). Template picker on new slide. "Apply theme" restyles all objects.
+
+**Deliverable**: design consistency.
 
 ### M21 — Comments + review
-Comments jako Y.Array na decku. Comment: `{ id, author, text, targetSlideId, targetObjectId?, resolved, thread: [...] }`. Pin indicators na canvasu. Comments panel. @mentions s user pickerem. Notifikace (email přes SMTP + in-app).
+
+Comments as a Y.Array on the deck. Comment: `{ id, author, text, targetSlideId, targetObjectId?, resolved, thread: [...] }`. Pin indicators on the canvas. Comments panel. @mentions with a user picker. Notifications (email via SMTP + in-app).
 
 **Deliverable**: review workflow.
 
 ### M22 — Version history
-Snapshot Y.Doc state každých N editů nebo M minut. Manual snapshot button. History view s timeline, diff view (co se změnilo), one-click restore (vytvoří nový snapshot před).
 
-**Deliverable**: git-like historie.
+Snapshot the Y.Doc state every N edits or M minutes. Manual snapshot button. History view with timeline, diff view (what changed), one-click restore (creates a new snapshot first).
+
+**Deliverable**: git-like history.
 
 ### M23 — Custom DSL editor
-Monaco editor v inspectoru (advanced tab) s JSON schema autocomplete pro animation DSL. Validation. Live preview. Power user authoring.
 
-**Deliverable**: advanced animation authoring. (DSL už existuje od M6, tohle je jen UI.)
+Monaco editor in the inspector (advanced tab) with JSON schema autocomplete for the animation DSL. Validation. Live preview. Power-user authoring.
+
+**Deliverable**: advanced animation authoring. (The DSL already exists from M6; this is just UI.)
 
 ### M24 — Web embed (iframe)
-Iframe object type. V editoru: placeholder se screenshotem z backend Playwright služby + URL label. V present mode: live iframe jako DOM overlay (stejný pattern jako video). Sandbox attribute konfigurovatelný per embed.
 
-**Deliverable**: embed webových stránek.
+Iframe object type. In the editor: placeholder with a screenshot from a backend Playwright service + URL label. In present mode: live iframe as a DOM overlay (same pattern as video). Sandbox attribute configurable per embed.
+
+**Deliverable**: embedding web pages.
 
 ### M25 — Lottie
-Lottie object type přes lottie-web renderer do offscreen canvas → PixiJS texture. Upload .json souborů. Volitelný library browser pro built-in set presetů.
 
-**Deliverable**: Lottie animace.
+Lottie object type via the lottie-web renderer into an offscreen canvas → PixiJS texture. Upload .json files. Optional library browser for a built-in preset set.
+
+**Deliverable**: Lottie animations.
 
 ### M26 — Three.js object type
-Three.js scéna jako object type. Offscreen WebGL canvas renderuje Three scénu, kopíruje se jako PixiJS texture každý frame (nebo reduced fps pro perf). Scene config: `{ gltfUrl, camera, lights, autoRotate }`. Jednoduchý scene editor: import .glb, pozicovat kameru. Volitelné: binding animations na slide animation triggery.
 
-**Deliverable**: 3D obsah na slidech.
+Three.js scene as an object type. Offscreen WebGL canvas renders the Three scene, copied as a PixiJS texture every frame (or at reduced fps for perf). Scene config: `{ gltfUrl, camera, lights, autoRotate }`. Simple scene editor: import .glb, position camera. Optional: bind animations to slide-animation triggers.
+
+**Deliverable**: 3D content on slides.
 
 ### M27 — Plugin system (public SDK)
-Object type SDK jako veřejná forma registry, která existuje od M2. `registerObjectType` dokumentace. Plugins v `packages/plugins/*`. Dynamic loading ve frontendu. Built-in plugins pro dogfooding: animated chart (chart lib), code block se syntax highlightingem, static map (OSM static tiles).
+
+Object type SDK as the public form of the registry that has existed since M2. `registerObjectType` documentation. Plugins in `packages/plugins/*`. Dynamic loading in the frontend. Built-in plugins for dogfooding: animated chart (chart lib), code block with syntax highlighting, static map (OSM static tiles).
 
 **Deliverable**: extensible object system + 3 example plugins.
 
-### M28 — Export (zatím nechcete — parked)
-PDF export přes Playwright headless rendering present mode. PNG per slide přes PixiJS `renderToCanvas`. Share link pro view-only (separátní viewer route s tokenem). **PPTX export: parked.** **Video export: parked (explicit rozhodnutí).**
+### M28 — Export (parked for now)
 
-**Deliverable**: základní export pipeline. Přeskakujeme, pokud nepotřeba.
+PDF export via Playwright headless rendering of present mode. PNG per slide via PixiJS `renderToCanvas`. View-only share link (separate viewer route with a token). **PPTX export: parked.** **Video export: parked (explicit decision).**
+
+**Deliverable**: basic export pipeline. Skip unless needed.
 
 ### M29 — Performance + observability + polish
-Profile s 50-slide decky, více video, 15 souběžných editorů (synthetic load script z M6, rozšířený). Optimalizace hot paths: PixiJS scene diffing, Yjs update handling, awareness throttling, GSAP tween count. Prometheus metrics z serveru + workers. Structured logs (pino). Runbook v `docs/ops.md`. Backup scripty (Postgres pg_dump + MinIO mc mirror + ZFS snapshot).
 
-**Deliverable**: production-grade stabilita.
+Profile with 50-slide decks, multiple videos, 15 concurrent editors (synthetic load script from M6, extended). Optimize hot paths: PixiJS scene diffing, Yjs update handling, awareness throttling, GSAP tween count. Prometheus metrics from server + workers. Structured logs (pino). Runbook in `docs/ops.md`. Backup scripts (Postgres pg_dump + MinIO mc mirror + ZFS snapshot).
+
+**Deliverable**: production-grade stability.
 
 ---
 
 ## Definition of done
 
 - **M4** = MVP (sync + deployed)
-- **M6** = animation engine hotový, foundation kompletní
-- **M12** = usable v1 (animace, video, live prezentace)
-- **M15** = rich preset library, produkt vypadá "luxusně"
+- **M6** = animation engine complete, foundation solid
+- **M12** = usable v1 (animations, video, live presentations)
+- **M15** = rich preset library, product feels "luxurious"
 - **M29** = feature-complete
 
-## Jak pracovat s vývojářem
+## How to work with the developer
 
-- Sólo vývojář, learning web dev + AI-assisted.
-- Chce **normal engineering collaboration**, ne tutorial.
-- Architektonické volby vysvětlit krátce když jsou netriviální.
-- Nepřidávat dependencies bez zmínky v commit message s one-line justification.
-- Atomic commity. PR popisky: what/why/how to verify.
-- Když stuck nebo ambiguous requirements → zeptat se.
-- Víkendová/večerní kadence — session může skončit uprostřed milestonu.
-- **Handoff dokument** na konci každého hotového milestonu do `docs/handoff/MXX-<název>.md`. Obsah: status, co bylo uděláno, klíčová rozhodnutí, jak ověřit, další krok, známé TODO, odkazy. Umožňuje pokračovat na jiném zařízení.
-- Vždy nechat repo v kompilovatelném stavu s clear next step.
+- Solo developer, learning web dev + AI-assisted.
+- Wants **normal engineering collaboration**, not a tutorial.
+- Briefly explain architectural choices when non-obvious.
+- Do not add dependencies without mentioning them in the commit message with a one-line justification.
+- Atomic commits. PR descriptions: what/why/how to verify.
+- When stuck or facing ambiguous requirements → ask.
+- Weekend/evening cadence — a session may end mid-milestone.
+- **Handoff document** at the end of each completed milestone into `docs/handoff/MXX-<name>.md`. Contents: status, what was done, key decisions, how to verify, next step, known TODO, links. Enables continuation on another device.
+- Always leave the repo in a compilable state with a clear next step.
+- **Conversation language is Czech, but all code, comments, docs, and commits are English.**
 
 ## First task
 
-**Fáze −1 spike A (GSAP + Pixi performance).** Throwaway projekt mimo monorepo. Ověřit:
-- 50 simultánních GSAP tweenů na Pixi object properties → 60 fps?
-- `gsap.timeline()` s 10 sekvenčními animacemi + nested timelines → funguje clean?
-- Flip plugin na 20 Pixi objektech při slide transition → přijatelná latence?
+**Phase −1 Spike A (GSAP + Pixi performance).** Throwaway project outside the monorepo. Validate:
 
-Pokud spike zelený → pokračovat spike B (Yjs) + spike C (DOM overlay).
-Pokud všechny tři spiky zelené → spustit M0.
+- 50 parallel GSAP tweens on Pixi object properties → 60 fps?
+- `gsap.timeline()` with 10 sequential animations + nested timelines → works cleanly?
+- Flip plugin on 20 Pixi objects during a slide transition → acceptable latency?
 
-**Stop a čekat na potvrzení po spike A.** Handoff doc `docs/handoff/spike-a-gsap-pixi.md` před pokračováním.
+If the spike is green → continue with Spike B (Yjs) + Spike C (DOM overlay).
+If all three spikes are green → start M0.
+
+**Stop and wait for confirmation after Spike A.** Write a handoff doc `docs/handoff/spike-a-gsap-pixi.md` before continuing.
