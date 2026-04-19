@@ -36,7 +36,7 @@ function createContextValue(
   undoManager?: Y.UndoManager,
 ): SlideDocContextValue {
   const um = undoManager ?? slideModel.createUndoManager(mutationCtx)
-  return { mutationCtx, undoManager: um }
+  return { mutationCtx, undoManager: um, wsStatus: 'connected' }
 }
 
 // ---------------------------------------------------------------------------

@@ -12,9 +12,12 @@ import { createContext } from 'react'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type * as Y from 'yjs'
 
+export type WsStatus = 'connecting' | 'connected' | 'disconnected'
+
 export interface SlideDocContextValue {
   mutationCtx: SlideMutationContext
   undoManager: Y.UndoManager
+  wsStatus: WsStatus
 }
 
 export const SlideDocContext = createContext<SlideDocContextValue | null>(null)

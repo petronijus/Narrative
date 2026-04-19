@@ -33,7 +33,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { createUndoManager } from '@narrative/slide-model'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import { SlideDocContext } from './slideDocContext.js'
-import type { SlideDocContextValue } from './slideDocContext.js'
+import type { SlideDocContextValue, WsStatus } from './slideDocContext.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
@@ -43,7 +43,8 @@ interface SlideDocProviderProps {
 }
 
 export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
-  const [value, setValue] = useState<SlideDocContextValue | null>(null)
+  const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
+  const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
 
   // Ref pro StrictMode double-mount guard
   const providerRef = useRef<HocuspocusProvider | null>(null)
@@ -59,16 +60,16 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
       name: deckId,
       document: doc,
       onConnect() {
-        console.log(`[SlideDocProvider] Connected → deck=${deckId}`)
+        setWsStatus('connected')
       },
       onDisconnect() {
-        console.log(`[SlideDocProvider] Disconnected → deck=${deckId}`)
-      },
-      onSynced() {
-        console.log(`[SlideDocProvider] Synced → deck=${deckId}`)
+        setWsStatus('disconnected')
       },
       onStatus({ status }: { status: string }) {
-        console.log(`[SlideDocProvider] Status: ${status}`)
+        // Hocuspocus status values: 'connecting' | 'connected' | 'disconnected'
+        if (status === 'connected' || status === 'connecting' || status === 'disconnected') {
+          setWsStatus(status)
+        }
       },
     })
 
@@ -105,5 +106,6 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
     )
   }
 
-  return <SlideDocContext.Provider value={value}>{children}</SlideDocContext.Provider>
+  const fullValue: SlideDocContextValue = { ...value, wsStatus }
+  return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
 }

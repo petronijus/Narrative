@@ -98,6 +98,7 @@ function createSlideDocValue(): SlideDocContextValue {
   return {
     mutationCtx,
     undoManager: null as unknown as SlideDocContextValue['undoManager'],
+    wsStatus: 'connected',
   }
 }
 

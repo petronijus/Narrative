@@ -18,6 +18,7 @@ import { Inspector } from '../ui/Inspector'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useSlideObjects } from '../state/useSlideObjects'
+import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { createObjectOfType, removeObject, updateObject } from '@narrative/slide-model'
 import type { SlideObjectType } from '@narrative/shared'
@@ -283,8 +284,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
 function DevMetricsOverlay() {
   const { visible, fpsTracker } = useDevMetrics()
+  const { wsStatus } = useSlideDoc()
   if (!visible || fpsTracker === null) return null
-  return <FpsOnlyDashboard fpsTracker={fpsTracker} />
+  return <FpsOnlyDashboard fpsTracker={fpsTracker} wsStatus={wsStatus} />
 }
 
 // ---------------------------------------------------------------------------
