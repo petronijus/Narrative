@@ -3,13 +3,9 @@
  *
  * React komponenta — mount/unmount Pixi Application.
  *
- * Odpovědnosti:
- * - Inicializuje Pixi Application (WebGL/WebGPU renderer).
- * - HiDPI: resolution=devicePixelRatio + autoDensity=true pro správné fyzické pixely.
- * - ResizeObserver: reaguje na změnu velikosti parent kontejneru.
- * - StrictMode safe: React 18 double-mount v dev módu. Ref guard zabraňuje
- *   duplicitní inicializaci — druhý mount detekuje existující instanci a skipne ji.
- * - Všechny slide objekty jdou přes SceneGraph — žádné přímé manipulace s app.stage.
+ * M2: Objekty čteny z Y.Doc přes useSlideObjects() hook místo slideData prop.
+ *     Ellipse a text renderers nejsou implementovány (renderer agent v fázi 2).
+ *     Pokud Y.Doc vrátí ellipse/text, SceneGraph je tiše přeskočí s console.warn.
  *
  * Pixi v8 API:
  * - new Application() + await app.init({ ... })
@@ -21,14 +17,12 @@ import { useEffect, useRef } from 'react'
 import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager } from './ResourceManager'
-import type { SlideObjectData } from './types'
+import { useSlideObjects } from '../state/useSlideObjects'
 
-interface CanvasProps {
-  slideData: SlideObjectData[]
-}
-
-export function Canvas({ slideData }: CanvasProps) {
+export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
+
+  const { objects } = useSlideObjects()
 
   /**
    * Ref guard pro StrictMode double-mount safety.
@@ -50,43 +44,33 @@ export function Canvas({ slideData }: CanvasProps) {
 
     let cancelled = false
     let app: Application | null = null
-    let sceneGraph: SceneGraph | null = null
     const resourceManager = new ResourceManager()
 
     const initPixi = async () => {
       app = new Application()
 
       await app.init({
-        // Pixi v8: canvas element je součástí init options
         resizeTo: containerEl,
-        // HiDPI: fyzické pixely = CSS pixely × DPR, canvas element má CSS velikost
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
-        // Průhledné pozadí — editor background je v CSS
         backgroundAlpha: 0,
-        // WebGPU s fallback na WebGL
         preference: 'webgpu',
         antialias: true,
       })
 
       if (cancelled) {
-        // Cleanup v případě že efekt byl zrušen mezi init a await
         app.destroy(true, { children: true, texture: true })
         return
       }
 
-      // Přidáme canvas element do DOM
-      // Pixi v8 používá app.canvas (HTMLCanvasElement), ne app.view
       containerEl.appendChild(app.canvas)
 
-      // SceneGraph potřebuje Container class — extrahujeme z stage
-      sceneGraph = new SceneGraph(app)
-
-      // Uložíme do ref pro StrictMode guard
+      const sceneGraph = new SceneGraph(app)
       instanceRef.current = { app, sceneGraph, resourceManager }
 
-      // Počáteční render dat
-      sceneGraph.render(slideData)
+      // Inicializační render — objects může být stale zde, ale useEffect
+      // pro objects changes se postará o aktualizaci
+      console.debug('[Canvas] Pixi initialized, Y.Doc observer active')
     }
 
     void initPixi()
@@ -104,15 +88,18 @@ export function Canvas({ slideData }: CanvasProps) {
         instanceRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only run on mount/unmount
-  }, [])
+  }, []) // intentional empty deps: mount-only effect with StrictMode guard
 
-  // Efekt pro reaktivitu na slideData změny
+  // Efekt pro reaktivitu na Y.Doc objects changes
   useEffect(() => {
     const instance = instanceRef.current
     if (instance === null) return
-    instance.sceneGraph.render(slideData)
-  }, [slideData])
+
+    // SceneGraph.render() interně volá getRenderer(type).
+    // Pro ellipse/text: renderer není registrován → getRenderer vrátí undefined → SceneGraph skip.
+    // SceneGraph.ts z M1 musí toto chování podporovat (viz níže).
+    instance.sceneGraph.render(objects)
+  }, [objects])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru
   useEffect(() => {

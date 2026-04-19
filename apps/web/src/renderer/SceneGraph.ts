@@ -3,6 +3,10 @@
  *
  * Vysokoúrovňový scene graph wrapper nad Pixi Container.
  *
+ * M2: Přechod na SlideObject z @narrative/shared (místo lokálního SlideObjectData).
+ *     Ellipse/text typy jsou ignorovány s console.warn — renderer agent implementuje
+ *     příslušné renderers v fázi 2.
+ *
  * Principy:
  * - SceneGraph vlastní root Container a interní mapu node→data.
  * - Žádné přímé mutace Pixi objektů mimo SceneGraph + objectRenderers.
@@ -15,11 +19,11 @@
 import { Container } from 'pixi.js'
 import type { Application } from 'pixi.js'
 import { getRenderer } from './objectRenderers'
-import type { SlideObjectData } from './types'
+import type { SlideObject } from '@narrative/shared'
 
 interface SceneNode {
   container: Container
-  data: SlideObjectData
+  data: SlideObject
 }
 
 export class SceneGraph {
@@ -31,26 +35,25 @@ export class SceneGraph {
 
   constructor(app: Application) {
     this.app = app
-    // Root Container jako separátní vrstva v rámci app.stage.
-    // Container je importován přímo z pixi.js — ne přes app.stage.constructor.
     this.root = new Container()
     this.app.stage.addChild(this.root)
   }
 
   /**
    * Přidá nový objekt do scene graph.
+   * Pokud typ nemá registrovaný renderer, tiše přeskočí s console.warn.
    * Interní — volej přes render() nebo přímo pro testing.
    */
-  addObject(data: SlideObjectData): void {
+  addObject(data: SlideObject): void {
     if (this.nodes.has(data.id)) {
-      // Objekt s tímto ID už existuje — update místo add
       this.updateObject(data.id, data)
       return
     }
 
     const renderer = getRenderer(data.type)
     if (renderer === undefined) {
-      console.warn(`[SceneGraph] Neznámý object type: ${data.type}`)
+      // Ellipse/text nemají renderer v M2 phase 1 — renderer agent implementuje v fázi 2
+      console.warn(`[SceneGraph] No renderer for type: ${data.type}`)
       return
     }
 
@@ -62,16 +65,16 @@ export class SceneGraph {
   /**
    * Aktualizuje existující objekt novými daty.
    */
-  updateObject(id: string, next: SlideObjectData): void {
+  updateObject(id: string, next: SlideObject): void {
     const node = this.nodes.get(id)
     if (node === undefined) {
-      console.warn(`[SceneGraph] updateObject: neznámé ID ${id}`)
+      console.warn(`[SceneGraph] updateObject: unknown ID ${id}`)
       return
     }
 
     const renderer = getRenderer(next.type)
     if (renderer === undefined) {
-      console.warn(`[SceneGraph] Neznámý object type při update: ${next.type}`)
+      console.warn(`[SceneGraph] No renderer for type at update: ${next.type}`)
       return
     }
 
@@ -106,7 +109,7 @@ export class SceneGraph {
    *
    * M3: Toto bude nahrazeno Yjs-driven reconcilerem s batching a O(diff) complexity.
    */
-  render(objects: SlideObjectData[]): void {
+  render(objects: SlideObject[]): void {
     const incomingIds = new Set<string>()
 
     for (const obj of objects) {

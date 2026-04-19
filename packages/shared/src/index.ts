@@ -1,4 +1,13 @@
 // @narrative/shared — shared types across apps and packages
-// Content populated from M2 onwards (Yjs types, slide model types, etc.)
+// Pure TypeScript — no runtime dependencies.
 
-export {}
+export type {
+  BaseSlideObject,
+  RectangleObject,
+  EllipseObject,
+  TextObject,
+  SlideObject,
+  SlideObjectType,
+  SlideObjectPatch,
+  Slide,
+} from './slide.js'

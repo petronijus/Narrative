@@ -1,13 +1,15 @@
 /**
  * data/demoSlide.ts
  *
- * Hardcoded demo slide data pro M1.
- * V M2 bude nahrazeno Yjs Y.Doc state napájejícím SceneGraph přes reconciler.
+ * Demo seed data pro M2. Tato data slouží pouze jako počáteční obsah Y.Doc.
+ * Y.Doc je single source of truth — tato data se na startu seedují jednou.
+ *
+ * V M1 byl tento soubor "the source". Od M2 je jen seed input.
  */
 
-import type { SlideObjectData } from '../renderer/types'
+import type { SlideObject } from '@narrative/shared'
 
-export const demoSlide: SlideObjectData[] = [
+export const demoObjects: SlideObject[] = [
   {
     id: 'rect-1',
     type: 'rectangle',

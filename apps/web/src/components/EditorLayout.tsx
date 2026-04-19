@@ -3,11 +3,12 @@
  *
  * M0: placeholder panes only, no PixiJS.
  * M1: Center pane mountuje PixiJS renderer přes <Canvas /> komponentu.
+ * M2: Canvas čte objekty z Y.Doc přes useSlideObjects hook. SlideDocProvider
+ *     poskytuje Y.Doc kontext celému editoru.
  * M7: Inspector pane bude mít transform controls.
  */
 
 import { Canvas } from '../renderer/Canvas'
-import { demoSlide } from '../data/demoSlide'
 
 export function EditorLayout() {
   return (
@@ -36,7 +37,7 @@ export function EditorLayout() {
           pozicovaný canvas element. Canvas.tsx používá position: absolute; inset: 0.
         */}
         <div className="relative flex-1 overflow-hidden bg-gray-950">
-          <Canvas slideData={demoSlide} />
+          <Canvas />
         </div>
       </main>
 
