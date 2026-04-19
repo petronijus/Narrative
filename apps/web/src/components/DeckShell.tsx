@@ -14,13 +14,33 @@
  *
  * DeckEditor a DeckPresent dědí Y.Doc přes SlideDocContext — žádný reconnect
  * při navigaci mezi těmito dvěma child routes.
+ *
+ * M6: Přidán CanvasInstanceContext.Provider (varianta B — state lifting).
+ * Canvas.tsx volá onReady(instance) po Pixi init → DeckShell uloží do state →
+ * context je dostupný pro PresentLayout + EditorLayout bez přímé závislosti na Canvas.
  */
 
+import { useState, useCallback } from 'react'
 import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
+import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
+
+export interface DeckShellContextValue {
+  /**
+   * Callback pro Canvas.tsx — volá se po Pixi inicializaci.
+   * DeckShell drží instanci ve state a pasuje ji do CanvasInstanceContext.
+   */
+  onCanvasReady: (instance: CanvasInstance) => void
+}
 
 export function DeckShell() {
   const { id } = useParams<{ id: string }>()
+  const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
+
+  const handleCanvasReady = useCallback((instance: CanvasInstance) => {
+    setCanvasInstance(instance)
+  }, [])
 
   if (id === undefined || id === '') {
     return <Navigate to="/" replace />
@@ -29,7 +49,9 @@ export function DeckShell() {
   return (
     <div className="h-screen w-screen overflow-hidden">
       <SlideDocProvider deckId={id}>
-        <Outlet />
+        <CanvasInstanceContext.Provider value={canvasInstance}>
+          <Outlet context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue} />
+        </CanvasInstanceContext.Provider>
       </SlideDocProvider>
     </div>
   )

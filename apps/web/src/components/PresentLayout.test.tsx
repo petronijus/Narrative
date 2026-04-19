@@ -17,8 +17,11 @@ import type * as ReactRouterDom from 'react-router-dom'
 import { PresentLayout } from './PresentLayout'
 import { SlideDocContext } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
+import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext'
 import * as Y from 'yjs'
-import type { MutationContext } from '@narrative/slide-model'
+import type { SlideMutationContext } from '@narrative/slide-model'
+import type { AnimationStep } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -70,6 +73,53 @@ vi.mock('react-router-dom', async (importOriginal) => {
   }
 })
 
+// Animation runtime mock — vi.hoisted() zajistí že proměnné jsou k dispozici před vi.mock() hoistingem
+const {
+  mockPlay,
+  mockDestroy,
+  mockCreateAnimationRuntime,
+  mockCreateClickInputBridge,
+  mockAnimationsData,
+} = vi.hoisted(() => {
+  const mockPlay = vi.fn()
+  const mockDestroy = vi.fn()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockCreateAnimationRuntime = vi.fn((_steps: any, _ctx: any) => ({
+    play: mockPlay,
+    destroy: mockDestroy,
+  }))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mockCreateClickInputBridge = vi.fn((_el: any) => ({ onAdvance: vi.fn() }))
+  const mockAnimationsData: AnimationStep[] = []
+  return {
+    mockPlay,
+    mockDestroy,
+    mockCreateAnimationRuntime,
+    mockCreateClickInputBridge,
+    mockAnimationsData,
+  }
+})
+
+vi.mock('@narrative/animation', () => ({
+  createAnimationRuntime: mockCreateAnimationRuntime,
+  createClickInputBridge: mockCreateClickInputBridge,
+}))
+
+vi.mock('../animation/targetResolver', () => ({
+  createPixiTargetResolver: vi.fn(() => ({ resolve: vi.fn() })),
+}))
+
+vi.mock('../state/useAnimations', () => ({
+  useAnimations: () => ({
+    animations: mockAnimationsData,
+    mutationCtx: {
+      doc: new Y.Doc(),
+      objects: new Y.Doc().getArray('objects'),
+      animations: new Y.Doc().getArray('animations'),
+    },
+  }),
+}))
+
 // requestFullscreen mock
 const mockRequestFullscreen = vi.fn().mockResolvedValue(undefined)
 const mockExitFullscreen = vi.fn().mockResolvedValue(undefined)
@@ -78,10 +128,11 @@ const mockExitFullscreen = vi.fn().mockResolvedValue(undefined)
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): MutationContext {
+function createMutationCtx(): SlideMutationContext {
   const doc = new Y.Doc()
   const objects = doc.getArray<Y.Map<unknown>>('objects')
-  return { doc, objects }
+  const animations = doc.getArray<Y.Map<unknown>>('animations')
+  return { doc, objects, animations }
 }
 
 function createSlideDocValue(): SlideDocContextValue {
@@ -92,20 +143,30 @@ function createSlideDocValue(): SlideDocContextValue {
   }
 }
 
+/** Fiktivní CanvasInstance pro testy runtime integrace. */
+function createMockCanvasInstance(): CanvasInstance {
+  return {
+    sceneGraph: { getNode: vi.fn() } as unknown as CanvasInstance['sceneGraph'],
+    compositor: {} as unknown as CanvasInstance['compositor'],
+  }
+}
+
 /**
  * Render PresentLayout uvnitř MemoryRouter s params.
  * Používáme nested route aby useParams vrátilo { id: 'test-deck' }.
  */
-function renderPresent(deckId = 'test-deck') {
+function renderPresent(deckId = 'test-deck', canvasInstance: CanvasInstance | null = null) {
   const ctxValue = createSlideDocValue()
 
   return render(
     <SlideDocContext.Provider value={ctxValue}>
-      <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
-        <Routes>
-          <Route path="/deck/:id/present" element={<PresentLayout />} />
-        </Routes>
-      </MemoryRouter>
+      <CanvasInstanceContext.Provider value={canvasInstance}>
+        <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
+          <Routes>
+            <Route path="/deck/:id/present" element={<PresentLayout />} />
+          </Routes>
+        </MemoryRouter>
+      </CanvasInstanceContext.Provider>
     </SlideDocContext.Provider>,
   )
 }
@@ -116,6 +177,12 @@ function renderPresent(deckId = 'test-deck') {
 
 beforeEach(() => {
   mockNavigate.mockClear()
+  mockPlay.mockClear()
+  mockDestroy.mockClear()
+  mockCreateAnimationRuntime.mockClear()
+  mockCreateClickInputBridge.mockClear()
+  // Reset animations
+  mockAnimationsData.length = 0
 
   // Fullscreen API není v jsdom — mockujeme
   Object.defineProperty(document, 'fullscreenElement', {
@@ -268,5 +335,70 @@ describe('PresentLayout — scale', () => {
     const container = screen.getByTestId('slide-container')
     const style = container.getAttribute('style') ?? ''
     expect(style).toContain('scale(')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Animation runtime integration tests (M6)
+// ---------------------------------------------------------------------------
+
+describe('PresentLayout — animation runtime', () => {
+  it('nevytváří runtime pokud canvas není ready (null)', () => {
+    mockAnimationsData.push({
+      id: 'a1',
+      objectId: 'obj-1',
+      preset: 'fadeIn',
+      trigger: 'onEnter',
+      duration: 0.6,
+      delay: 0,
+      easing: 'power2.out',
+    })
+
+    renderPresent('test', null)
+    expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
+  })
+
+  it('nevytváří runtime pokud nejsou žádné animace', () => {
+    const instance = createMockCanvasInstance()
+    // mockAnimationsData je prázdné
+    renderPresent('test', instance)
+    expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
+  })
+
+  it('vytvoří runtime a zavolá play() pokud canvas ready + animace existují', () => {
+    mockAnimationsData.push({
+      id: 'a1',
+      objectId: 'obj-1',
+      preset: 'fadeIn',
+      trigger: 'onEnter',
+      duration: 0.6,
+      delay: 0,
+      easing: 'power2.out',
+    })
+
+    const instance = createMockCanvasInstance()
+    renderPresent('test', instance)
+
+    expect(mockCreateAnimationRuntime).toHaveBeenCalledOnce()
+    expect(mockPlay).toHaveBeenCalledOnce()
+  })
+
+  it('destroy() je volán při unmount', () => {
+    mockAnimationsData.push({
+      id: 'a1',
+      objectId: 'obj-1',
+      preset: 'fadeIn',
+      trigger: 'onEnter',
+      duration: 0.6,
+      delay: 0,
+      easing: 'power2.out',
+    })
+
+    const instance = createMockCanvasInstance()
+    const { unmount } = renderPresent('test', instance)
+
+    expect(mockPlay).toHaveBeenCalledOnce()
+    unmount()
+    expect(mockDestroy).toHaveBeenCalledOnce()
   })
 })

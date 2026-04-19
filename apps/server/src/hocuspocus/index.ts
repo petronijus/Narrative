@@ -14,8 +14,10 @@
  */
 
 import { Server } from '@hocuspocus/server'
+import * as Y from 'yjs'
 import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
+import { metrics } from '../metrics/index.js'
 
 export interface HocuspocusServerOptions {
   port: number
@@ -32,12 +34,22 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       // M4: hardcoded user — žádný auth
       // TODO(M10): JWT validation — ověřit Bearer token, nastavit userId z claims
       data.context.userId = 'demo-user'
+      metrics.incConnections()
       console.log(`[hocuspocus] connect → doc=${data.documentName} user=demo-user`)
     },
 
     async onDisconnect(data) {
       const userId = (data.context as { userId?: string }).userId ?? 'unknown'
+      metrics.decConnections()
       console.log(`[hocuspocus] disconnect → doc=${data.documentName} user=${userId}`)
+    },
+
+    async onStoreDocument(data) {
+      // Zaznamenej Yjs update do metrik — onStoreDocument je per-flush, ne per-update
+      // Spike B poznámka: pro per-update counting by bylo nutné subscribovat na doc.on('update')
+      // Pro M6 baseline stačí per-flush tracking (koreluje se zápisy do Postgres)
+      const encoded = Y.encodeStateAsUpdate(data.document)
+      metrics.recordUpdate(encoded.byteLength)
     },
   })
 

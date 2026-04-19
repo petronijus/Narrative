@@ -6,6 +6,9 @@
  * M4: Místo čistě in-memory Y.Doc používá HocuspocusProvider pro realtime sync
  * přes WebSocket. Y.Doc je sdílena s Yjs bindings (mutationCtx).
  *
+ * M6 update: mutationCtx je rozšířen o animations Y.Array (SlideMutationContext).
+ * UndoManager trackuje obě Y.Array (objects + animations).
+ *
  * Lifecycle:
  *   mount   → HocuspocusProvider.connect() (WS handshake, server hydrates Y.Doc)
  *   unmount → HocuspocusProvider.destroy() (cleanup WS + Yjs subscriptions)
@@ -28,7 +31,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { createUndoManager } from '@narrative/slide-model'
-import type { MutationContext } from '@narrative/slide-model'
+import type { SlideMutationContext } from '@narrative/slide-model'
 import { SlideDocContext } from './slideDocContext.js'
 import type { SlideDocContextValue } from './slideDocContext.js'
 
@@ -71,11 +74,15 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
 
     providerRef.current = provider
 
+    // M6: getArray je idempotentní — existující decky bez 'animations' dostanou
+    // prázdný array (backward compat).
     const objects = doc.getArray<Y.Map<unknown>>('objects')
+    const animations = doc.getArray<Y.Map<unknown>>('animations')
 
-    const mutationCtx: MutationContext = {
+    const mutationCtx: SlideMutationContext = {
       doc,
       objects,
+      animations,
     }
 
     const undoManager = createUndoManager(mutationCtx)

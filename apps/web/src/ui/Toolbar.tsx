@@ -113,6 +113,24 @@ export function Toolbar() {
       {/* Spacer */}
       <div className="flex-1" aria-hidden="true" />
 
+      {/* Preview animations button — naviguje do present mode s ?preview=1 */}
+      <button
+        type="button"
+        onClick={() => navigate(`/deck/${id ?? ''}/present?preview=1`)}
+        aria-label="Preview animations"
+        title="Preview animations"
+        className={[
+          'flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+          'text-gray-400 hover:bg-gray-800 hover:text-gray-200',
+        ].join(' ')}
+      >
+        <span aria-hidden="true" className="text-base leading-none">
+          ▷
+        </span>
+        <span className="hidden sm:inline">Preview</span>
+      </button>
+
       {/* Present button */}
       <button
         type="button"

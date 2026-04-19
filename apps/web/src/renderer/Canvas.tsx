@@ -30,8 +30,17 @@ import { ResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
 import type { ObjectChangeSet } from '@narrative/slide-model'
+import type { CanvasInstance } from './CanvasInstanceContext.js'
 
-export function Canvas() {
+export interface CanvasProps {
+  /**
+   * Callback volaný po úspěšném inicializaci Pixi (async).
+   * Při unmount volán s null pro signalizaci cleanup.
+   */
+  onReady?: ((instance: CanvasInstance) => void) | undefined
+}
+
+export function Canvas({ onReady }: CanvasProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
@@ -98,6 +107,9 @@ export function Canvas() {
       }
       pendingChangesRef.current = []
 
+      // Informuj konzumenty (DeckShell → CanvasInstanceContext) o dostupné instanci
+      onReady?.({ sceneGraph, compositor })
+
       console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
     }
 
@@ -123,7 +135,8 @@ export function Canvas() {
         instanceRef.current = null
       }
     }
-  }, []) // intentional empty deps: mount-only effect with StrictMode guard
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentional empty deps: mount-only effect with StrictMode guard; onReady stable via parent useCallback
 
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).

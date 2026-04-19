@@ -3,10 +3,19 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  define: {
+    // Injektuje BUILD_VERSION do bundlu — používá se Sentry release tracking.
+    // V CI nastavit přes env VITE_BUILD_VERSION (např. git sha).
+
+    __BUILD_VERSION__: JSON.stringify(
+      process.env['VITE_BUILD_VERSION'] ?? (mode === 'production' ? 'prod-unknown' : 'dev'),
+    ),
+  },
   plugins: [react()],
   resolve: {
     alias: {
+      '@narrative/animation': path.resolve(__dirname, '../../packages/animation/src/index.ts'),
       '@narrative/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       '@narrative/slide-model': path.resolve(__dirname, '../../packages/slide-model/src/index.ts'),
     },
@@ -34,4 +43,4 @@ export default defineConfig({
       include: ['src/renderer/**'],
     },
   },
-})
+}))

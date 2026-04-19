@@ -21,6 +21,8 @@ import { useSlideObjects } from '../state/useSlideObjects'
 import { useUndoManager } from '../state/useUndoManager'
 import { createObjectOfType, removeObject, updateObject } from '@narrative/slide-model'
 import type { SlideObjectType } from '@narrative/shared'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,7 +80,11 @@ function naiveHitTest(
 // EditorLayout
 // ---------------------------------------------------------------------------
 
-export function EditorLayout() {
+export interface EditorLayoutProps {
+  onCanvasReady?: ((instance: CanvasInstance) => void) | undefined
+}
+
+export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedId, setSelectedId, clearSelection } = useSelection()
   const { activeTool, setActiveTool } = useTool()
   const { objects, mutationCtx } = useSlideObjects()
@@ -248,7 +254,7 @@ export function EditorLayout() {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
         >
-          <Canvas />
+          <Canvas onReady={onCanvasReady} />
 
           {/* Selection outline overlay — naivní DOM implementace */}
           {selectedObj !== undefined && <SelectionOverlay obj={selectedObj} />}
@@ -264,8 +270,21 @@ export function EditorLayout() {
         </div>
         <Inspector />
       </aside>
+
+      {/* DEV-only metrics overlay — Ctrl+Shift+M */}
+      {import.meta.env.DEV && <DevMetricsOverlay />}
     </div>
   )
+}
+
+// ---------------------------------------------------------------------------
+// DevMetricsOverlay — DEV-only wrapper (bezpečné volání hooks — vždy mounted)
+// ---------------------------------------------------------------------------
+
+function DevMetricsOverlay() {
+  const { visible, fpsTracker } = useDevMetrics()
+  if (!visible || fpsTracker === null) return null
+  return <FpsOnlyDashboard fpsTracker={fpsTracker} />
 }
 
 // ---------------------------------------------------------------------------

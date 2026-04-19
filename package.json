@@ -14,7 +14,11 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
-    "prepare": "husky"
+    "prepare": "husky",
+    "load:all": "node tests/load/runAll.mjs",
+    "load:hotedit": "node --loader ts-node/esm tests/load/hotEdit.ts",
+    "load:awareness": "node --loader ts-node/esm tests/load/awarenessFlood.ts",
+    "load:growth": "node --loader ts-node/esm tests/load/docGrowth.ts"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.31.0",

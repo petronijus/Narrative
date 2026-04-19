@@ -14,7 +14,7 @@ import { DeckPresent } from './DeckPresent'
 import { SlideDocContext } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
 import * as Y from 'yjs'
-import type { MutationContext } from '@narrative/slide-model'
+import type { SlideMutationContext } from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -53,6 +53,26 @@ vi.mock('../state/useSlideObjectChanges', () => ({
   useSlideObjectChanges: () => undefined,
 }))
 
+vi.mock('../state/useAnimations', () => ({
+  useAnimations: () => ({
+    animations: [],
+    mutationCtx: {
+      doc: new Y.Doc(),
+      objects: new Y.Doc().getArray('objects'),
+      animations: new Y.Doc().getArray('animations'),
+    },
+  }),
+}))
+
+vi.mock('@narrative/animation', () => ({
+  createAnimationRuntime: vi.fn(() => ({ play: vi.fn(), destroy: vi.fn() })),
+  createClickInputBridge: vi.fn(() => ({ onAdvance: vi.fn() })),
+}))
+
+vi.mock('../animation/targetResolver', () => ({
+  createPixiTargetResolver: vi.fn(() => ({ resolve: vi.fn() })),
+}))
+
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof ReactRouterDom>()
@@ -66,10 +86,11 @@ vi.mock('react-router-dom', async (importOriginal) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): MutationContext {
+function createMutationCtx(): SlideMutationContext {
   const doc = new Y.Doc()
   const objects = doc.getArray<Y.Map<unknown>>('objects')
-  return { doc, objects }
+  const animations = doc.getArray<Y.Map<unknown>>('animations')
+  return { doc, objects, animations }
 }
 
 function createSlideDocValue(): SlideDocContextValue {

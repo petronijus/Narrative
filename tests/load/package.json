@@ -1,0 +1,25 @@
+{
+  "name": "@narrative/load-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Synthetic load harness for Narrative server stress testing.",
+  "scripts": {
+    "hotedit": "node --loader ts-node/esm hotEdit.ts",
+    "awareness": "node --loader ts-node/esm awarenessFlood.ts",
+    "growth": "node --loader ts-node/esm docGrowth.ts",
+    "all": "node runAll.mjs"
+  },
+  "dependencies": {
+    "lib0": "^0.2.110",
+    "ws": "^8.18.1",
+    "y-protocols": "^1.0.6",
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "@types/ws": "^8.5.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,10 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "outDir": "dist",
-    "rootDir": "src"
+    "paths": {
+      "@narrative/shared": ["../shared/src/index.ts"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../shared/src"],
   "exclude": ["node_modules", "dist"]
 }

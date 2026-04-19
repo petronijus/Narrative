@@ -12,3 +12,7 @@ export type {
   Slide,
   ObjectChangeSet,
 } from './slide.js'
+
+export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animation.js'
+
+export { isAnimationPreset, isAnimationTrigger } from './animation.js'

@@ -13,6 +13,12 @@
  * - Keyboard: Escape → editor, Arrow/Space/Page → placeholder (M9 multi-slide).
  * - Fullscreen API: klávesa F nebo F11.
  *
+ * M6: Animation runtime integration.
+ * - onCanvasReady prop → získá SceneGraph pro TargetResolver.
+ * - useAnimations() → snapshot AnimationStep[] z Y.Doc.
+ * - useEffect → createAnimationRuntime, play na mount, destroy na unmount.
+ * - onClick na document.body → runtime.advance() pro onClick triggers.
+ *
  * Accessibility:
  * - role="application" s aria-label pro screen reader context.
  * - Subtle escape hint v rohu (aria-hidden).
@@ -22,6 +28,13 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useAnimations } from '../state/useAnimations.js'
+import { createAnimationRuntime } from '@narrative/animation'
+import { createClickInputBridge } from '@narrative/animation'
+import { createPixiTargetResolver } from '../animation/targetResolver.js'
+import type { AnimationRuntime } from '@narrative/animation'
+import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
 /** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
 function computeScale(viewportW: number, viewportH: number): number {
@@ -29,7 +42,15 @@ function computeScale(viewportW: number, viewportH: number): number {
   return Math.min(viewportW / SLIDE_WIDTH, viewportH / SLIDE_HEIGHT)
 }
 
-export function PresentLayout() {
+export interface PresentLayoutProps {
+  /**
+   * Callback předaný do Canvas.onReady — signalizuje že Pixi je ready.
+   * DeckPresent získá z DeckShell přes useOutletContext a pasuje sem.
+   */
+  onCanvasReady?: ((instance: CanvasInstance) => void) | undefined
+}
+
+export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
 
@@ -37,6 +58,15 @@ export function PresentLayout() {
   const [scale, setScale] = useState<number>(() =>
     computeScale(window.innerWidth, window.innerHeight),
   )
+
+  // Animation runtime ref — imperative, mimo React render cycle
+  const runtimeRef = useRef<AnimationRuntime | null>(null)
+
+  // Canvas instance z DeckShell context (null dokud Pixi neinicializuje)
+  const canvasInstance = useCanvasInstance()
+
+  // Animations snapshot z Y.Doc
+  const { animations } = useAnimations()
 
   // ---------------------------------------------------------------------------
   // Scale-to-fit: ResizeObserver na fullscreen container
@@ -83,6 +113,32 @@ export function PresentLayout() {
   }, [])
 
   // ---------------------------------------------------------------------------
+  // Animation runtime lifecycle
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    // Počkáme dokud Pixi není ready
+    if (canvasInstance === null) return
+    // Pokud nejsou žádné animace, runtime nevytvářej
+    if (animations.length === 0) return
+
+    const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
+    const inputBridge = createClickInputBridge(document.body)
+
+    const runtime = createAnimationRuntime(animations, {
+      targetResolver: resolver,
+      inputBridge,
+    })
+    runtimeRef.current = runtime
+    runtime.play()
+
+    return () => {
+      runtime.destroy()
+      runtimeRef.current = null
+    }
+  }, [canvasInstance, animations])
+
+  // ---------------------------------------------------------------------------
   // Keyboard handling
   // ---------------------------------------------------------------------------
 
@@ -100,6 +156,8 @@ export function PresentLayout() {
         case 'PageUp':
         case 'PageDown':
           e.preventDefault()
+          // Arrow/Space advance není wired do runtime — onClick triggers jdou přes InputBridge
+          // klik na document.body. Keyboard advance přijde v M9.
           console.debug('[present] navigation key pressed — M9 will wire up multi-slide nav')
           break
 
@@ -144,7 +202,7 @@ export function PresentLayout() {
         }}
         data-testid="slide-container"
       >
-        <Canvas />
+        <Canvas onReady={onCanvasReady} />
       </div>
 
       {/* Slide counter (M5: vždy 1/1; M9 napojí real index) */}

@@ -3,14 +3,17 @@
  *
  * React context pro SlideDoc — v separátním souboru kvůli react-refresh.
  * Hooks a Provider importují z tohoto souboru.
+ *
+ * M6 update: mutationCtx je rozšířen na SlideMutationContext (obsahuje
+ * objects i animations). Context consumers mají přístup k oběma mutations API.
  */
 
 import { createContext } from 'react'
-import type { MutationContext } from '@narrative/slide-model'
+import type { SlideMutationContext } from '@narrative/slide-model'
 import type * as Y from 'yjs'
 
 export interface SlideDocContextValue {
-  mutationCtx: MutationContext
+  mutationCtx: SlideMutationContext
   undoManager: Y.UndoManager
 }
 

@@ -17,13 +17,17 @@
 import type { ChangeEvent } from 'react'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
-import { updateObject } from '@narrative/slide-model'
+import { useAnimations } from '../state/useAnimations.js'
+import { updateObject, addAnimation, removeAnimation } from '@narrative/slide-model'
+import type { SlideMutationContext } from '@narrative/slide-model'
 import type {
   SlideObject,
   RectangleObject,
   EllipseObject,
   TextObject,
   SlideObjectPatch,
+  AnimationStep,
+  AnimationTrigger,
 } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -110,6 +114,7 @@ function Section({ title, children }: SectionProps) {
 export function Inspector() {
   const { selectedId } = useSelection()
   const { objects, mutationCtx } = useSlideObjects()
+  const { animations, mutationCtx: animMutationCtx } = useAnimations()
 
   if (selectedId === null) {
     return (
@@ -200,6 +205,14 @@ export function Inspector() {
       {obj.type === 'text' && (
         <TextSection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
       )}
+
+      {/* Animations */}
+      <AnimationsSection
+        objectId={obj.id}
+        animations={animations}
+        mutationCtx={animMutationCtx}
+        totalAnimations={animations.length}
+      />
     </div>
   )
 }
@@ -389,5 +402,156 @@ function TextSection({ obj, patch }: TextSectionProps) {
         </div>
       </Section>
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Animations section
+// ---------------------------------------------------------------------------
+
+interface AnimationsSectionProps {
+  objectId: string
+  animations: AnimationStep[]
+  mutationCtx: SlideMutationContext
+  /** Celkový počet animací na slide — pro výpočet defaultního triggeru nové animace. */
+  totalAnimations: number
+}
+
+/**
+ * Label pro animaci zobrazený v listu.
+ * Příklady: "fadeIn", "slideIn (up)", "slideIn (left)"
+ */
+function animationLabel(step: AnimationStep): string {
+  const dir = step.params?.['direction'] as string | undefined
+  return dir !== undefined ? `${step.preset} (${dir})` : step.preset
+}
+
+/**
+ * Defaultní trigger pro novou animaci:
+ * - První animace na slide → onEnter (spustí se automaticky po zobrazení slide)
+ * - Další → afterPrevious (spustí se po dokončení předchozí)
+ */
+function defaultTrigger(totalAnimations: number): AnimationTrigger {
+  return totalAnimations === 0 ? 'onEnter' : 'afterPrevious'
+}
+
+const ADD_BUTTON_CLASS = [
+  'rounded border border-gray-700 px-2 py-0.5 text-xs text-gray-300',
+  'hover:border-blue-500 hover:text-blue-400 transition-colors',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+].join(' ')
+
+function AnimationsSection({
+  objectId,
+  animations,
+  mutationCtx,
+  totalAnimations,
+}: AnimationsSectionProps) {
+  // Animace patřící tomuto objektu
+  const objectAnimations = animations.filter((a) => a.objectId === objectId)
+
+  function handleAddAnimation(preset: AnimationStep['preset'], params?: Record<string, unknown>) {
+    addAnimation(mutationCtx, {
+      objectId,
+      preset,
+      trigger: defaultTrigger(totalAnimations),
+      duration: 0.6,
+      delay: 0,
+      easing: 'power2.out',
+      ...(params !== undefined ? { params } : {}),
+    })
+  }
+
+  function handleRemove(stepId: string) {
+    removeAnimation(mutationCtx, stepId)
+  }
+
+  return (
+    <Section title="Animations">
+      {/* Add buttons */}
+      <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          className={ADD_BUTTON_CLASS}
+          onClick={() => handleAddAnimation('fadeIn')}
+          aria-label="Add fadeIn animation"
+        >
+          + fadeIn
+        </button>
+        <button
+          type="button"
+          className={ADD_BUTTON_CLASS}
+          onClick={() => handleAddAnimation('slideIn', { direction: 'up' })}
+          aria-label="Add slideIn up animation"
+        >
+          + slideIn up
+        </button>
+        <button
+          type="button"
+          className={ADD_BUTTON_CLASS}
+          onClick={() => handleAddAnimation('slideIn', { direction: 'down' })}
+          aria-label="Add slideIn down animation"
+        >
+          + slideIn down
+        </button>
+        <button
+          type="button"
+          className={ADD_BUTTON_CLASS}
+          onClick={() => handleAddAnimation('slideIn', { direction: 'left' })}
+          aria-label="Add slideIn left animation"
+        >
+          + slideIn left
+        </button>
+        <button
+          type="button"
+          className={ADD_BUTTON_CLASS}
+          onClick={() => handleAddAnimation('slideIn', { direction: 'right' })}
+          aria-label="Add slideIn right animation"
+        >
+          + slideIn right
+        </button>
+      </div>
+
+      {/* Existing animations list */}
+      {objectAnimations.length === 0 ? (
+        <p className="text-[10px] text-gray-600 italic">No animations</p>
+      ) : (
+        <ul className="flex flex-col gap-1" aria-label="Object animations">
+          {objectAnimations.map((step) => (
+            <li
+              key={step.id}
+              className="flex items-center justify-between rounded bg-gray-800 px-2 py-1"
+            >
+              <div className="flex flex-col">
+                <span className="text-xs text-gray-200">{animationLabel(step)}</span>
+                <span className="text-[10px] text-gray-500">{step.trigger}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleRemove(step.id)}
+                aria-label={`Remove ${animationLabel(step)} animation`}
+                className={[
+                  'ml-2 rounded p-0.5 text-gray-600 transition-colors',
+                  'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
+                ].join(' ')}
+              >
+                <svg
+                  aria-hidden="true"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
+                  <path d="M2 2l8 8M10 2l-8 8" />
+                </svg>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
   )
 }

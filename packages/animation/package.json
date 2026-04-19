@@ -11,9 +11,13 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"No tests yet\" && exit 0"
+    "test": "vitest run --root . --config vitest.config.ts"
   },
   "dependencies": {
-    "@narrative/shared": "workspace:*"
+    "@narrative/shared": "workspace:*",
+    "gsap": "^3.12.5"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
   }
 }

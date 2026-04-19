@@ -17,6 +17,7 @@
     "@fastify/cors": "^10.0.2",
     "@hocuspocus/extension-database": "^2.15.0",
     "@hocuspocus/server": "^2.15.0",
+    "@sentry/node": "^8.51.0",
     "drizzle-orm": "^0.43.1",
     "fastify": "^5.3.2",
     "nanoid": "^5.0.9",

@@ -18,11 +18,17 @@ import {
 import { registerObjectType, _clearRegistry } from './registry.js'
 import { createUndoManager } from './undo.js'
 import { yMapToPlainObject } from './bindings.js'
+import type { SlideMutationContext } from './slideMutationContext.js'
 import type { RectangleObject } from '@narrative/shared'
 
 function makeCtx(): MutationContext {
   const { doc, objects } = createSlideDoc()
   return { doc, objects }
+}
+
+function makeFullCtx(): SlideMutationContext {
+  const { doc, objects, animations } = createSlideDoc()
+  return { doc, objects, animations }
 }
 
 function makePlainYMap(obj: Record<string, unknown>): Y.Map<unknown> {
@@ -176,7 +182,7 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
   })
 
   it('undo odstraní přidaný objekt', () => {
-    const ctx = makeCtx()
+    const ctx = makeFullCtx()
     const um = createUndoManager(ctx)
 
     addObject(ctx, sampleRect)
@@ -187,7 +193,7 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
   })
 
   it('redo vrátí objekt po undo', () => {
-    const ctx = makeCtx()
+    const ctx = makeFullCtx()
     const um = createUndoManager(ctx)
 
     addObject(ctx, sampleRect)
@@ -203,7 +209,7 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
   })
 
   it('transakce bez LOCAL_ORIGIN se neundí (simulace remote change)', () => {
-    const ctx = makeCtx()
+    const ctx = makeFullCtx()
     const um = createUndoManager(ctx)
 
     // Remote change — jiný origin (ne LOCAL_ORIGIN)

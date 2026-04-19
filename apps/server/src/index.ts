@@ -21,6 +21,8 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerDeckRoutes } from './routes/decks.js'
+import { registerMetricsEndpoint } from './metrics/index.js'
+import { initSentry } from './observability/sentry.js'
 
 const API_PORT = Number(process.env['API_PORT'] ?? process.env['PORT'] ?? 3001)
 const HOCUSPOCUS_PORT = Number(process.env['HOCUSPOCUS_PORT'] ?? 3002)
@@ -58,10 +60,17 @@ await app.register(cors, {
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
 })
 
+// Sentry — init před routes, dev-gated (tiché bez SENTRY_DSN)
+await initSentry(app)
+
 // Health endpoint
 app.get('/health', async (_request, _reply) => {
   return { status: 'ok' }
 })
+
+// Prometheus metrics endpoint
+// TODO(M29): přidat Bearer token auth nebo IP allowlist
+await registerMetricsEndpoint(app)
 
 // Deck routes
 await registerDeckRoutes(app, db)

@@ -14,7 +14,7 @@ export type { ObjectTypeDef } from './registry.js'
 export { createSlideDoc } from './yDoc.js'
 export type { SlideDocHandles } from './yDoc.js'
 
-// Mutations
+// Mutations — objects
 export {
   LOCAL_ORIGIN,
   addObject,
@@ -24,19 +24,41 @@ export {
 } from './mutations.js'
 export type { MutationContext } from './mutations.js'
 
-// Bindings
+// Mutations — animations (M6)
+export {
+  addAnimation,
+  removeAnimation,
+  updateAnimation,
+  reorderAnimations,
+} from './animationMutations.js'
+export type { AnimationMutationContext } from './animationMutations.js'
+
+// Unified mutation context (M6)
+export type { SlideMutationContext } from './slideMutationContext.js'
+
+// Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
+
+// Bindings — animations (M6)
+export {
+  yMapToAnimationStep,
+  animationStepToYMap,
+  animationStepToYMapInDoc,
+} from './animationBindings.js'
 
 // Undo
 export { createUndoManager } from './undo.js'
 
-// Observer
+// Observer — objects
 export {
   subscribeToObjects,
   subscribeToObjectChanges,
   subscribeToObjectChangesWithFlush,
 } from './observe.js'
 export type { ObjectChangeSet } from './observe.js'
+
+// Observer — animations (M6)
+export { subscribeToAnimations } from './animationObserve.js'
 
 // ---------------------------------------------------------------------------
 // Builtin object type registrations
