@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch --experimental-strip-types src/index.ts",
+    "dev": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
+    "db:migrate": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
