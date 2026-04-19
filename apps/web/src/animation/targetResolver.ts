@@ -27,22 +27,18 @@ export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver
       const node = sceneGraph.getNode(objectId)
       if (node === undefined) return null
 
-      const { container, data } = node
+      const { container } = node
 
-      // Proxy inicializován z Y.Doc snapshot (node.data), ne z container.x/y.
-      // Důvod: pokud se runtime re-creates (user re-enters present, animations array
-      // se změní mid-play), container může být uprostřed předchozí animace — jeho
-      // position je mid-tween value, ne Y.Doc truth. slideIn preset čte proxy.x
-      // jako target end position — pokud by byla mid-tween, animace by skončila
-      // na špatném místě. node.data drží Y.Doc snapshot (sync v applyChanges).
-      //
-      // Scale a rotation nejsou v Y.Doc state model (M7 přidá transform handles),
-      // zatím čteme z containeru — pro default (1, 1, 0) je to shodné.
+      // Proxy inicializován z Pixi containeru (ne z node.data).
+      // Důvod: apply() zapisuje proxy zpět na container, takže proxy.x musí
+      // sémanticky odpovídat container.x. Pro rectangleRenderer je
+      // container.x = data.x + pivot.x (pivot na středu), ne data.x.
+      // Kdybychom použili data.x, apply by posunul container o -pivot.x.
       const proxy = {
-        x: data.x,
-        y: data.y,
-        rotation: data.rotation,
-        alpha: data.opacity,
+        x: container.x,
+        y: container.y,
+        rotation: container.rotation,
+        alpha: container.alpha,
         scaleX: container.scale.x,
         scaleY: container.scale.y,
       }

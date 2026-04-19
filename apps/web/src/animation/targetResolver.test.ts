@@ -78,13 +78,11 @@ describe('createPixiTargetResolver', () => {
     expect(handle?.kind).toBe('pixi')
   })
 
-  it('proxy je inicializován z node.data (Y.Doc truth), scale z containeru', () => {
-    // Container může být uprostřed předchozí animace (mid-tween).
-    // Proxy bere x/y/rotation/opacity z data (Y.Doc stable state), aby animace
-    // vždy končila na správné pozici, nikoliv na mid-tween hodnotě.
-    const container = createMockContainer({ x: 999, y: 999, rotation: 9, alpha: 0.1 })
-    const data = { id: 'obj-1', x: 42, y: 99, rotation: 1.2, opacity: 0.5 }
-    const nodeMap = new Map([['obj-1', { container, data }]])
+  it('proxy je inicializován z Pixi containeru (apply zapisuje zpět na container)', () => {
+    // Proxy.x musí sémanticky odpovídat container.x (apply kopíruje proxy → container).
+    // Pro rectangleRenderer je container.x = data.x + pivot.x, ne data.x.
+    const container = createMockContainer({ x: 42, y: 99, rotation: 1.2, alpha: 0.5 })
+    const nodeMap = new Map([['obj-1', { container, data: {} }]])
     const sceneGraph = createMockSceneGraph(nodeMap)
     const resolver = createPixiTargetResolver(sceneGraph)
 
