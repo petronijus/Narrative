@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Narrative — idempotentní deploy skript
+#
+# Použití:
+#   ./infra/scripts/deploy.sh [staging|prod]
+#
+# Předpoklady (na target serveru):
+#   - Docker + Compose plugin nainstalovaný
+#   - .env.prod soubor v infra/ (viz infra/.env.prod.example)
+#   - DNS záznam pro DOMAIN směřuje na tento server
+#   - ZFS dataset připojený na PG_DATA_PATH (pokud používáte ZFS)
+#
+# Skript NESMÍ být spouštěn přes SSH z CI — user ho spouští ručně na targetu.
+# (M12: harbor push + SSH deploy runner)
+
+set -euo pipefail
+
+ENV="${1:-staging}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INFRA_DIR="${SCRIPT_DIR}/.."
+REPO_DIR="${INFRA_DIR}/.."
+
+cd "${INFRA_DIR}"
+
+# ── Barvy pro výstup ───────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}→${NC} $*"; }
+warn() { echo -e "${YELLOW}!${NC} $*"; }
+err()  { echo -e "${RED}✗${NC} $*" >&2; }
+
+# ── Validace env ───────────────────────────────────────────────────────────────
+if [[ ! -f ".env.prod" ]]; then
+  err "Chybí infra/.env.prod — zkopírujte .env.prod.example a vyplňte hodnoty"
+  exit 1
+fi
+
+# Načteme env vars z .env.prod (bez exportu do shellu — jen pro compose)
+set -a
+# shellcheck disable=SC1091
+source .env.prod
+set +a
+
+if [[ -z "${DOMAIN:-}" ]]; then
+  err "DOMAIN není nastaveno v .env.prod"
+  exit 1
+fi
+
+if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+  err "POSTGRES_PASSWORD není nastaveno v .env.prod"
+  exit 1
+fi
+
+COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
+COMPOSE="docker compose ${COMPOSE_FILES} --env-file .env.prod"
+
+log "Deploy prostředí: ${ENV}"
+log "Doména: ${DOMAIN}"
+
+# ── ZFS snapshot před deployem (prod) ─────────────────────────────────────────
+# Princip: snapshot před každým prod deployem (infra.md #7)
+if [[ "${ENV}" == "prod" ]]; then
+  if command -v zfs &>/dev/null && [[ -n "${ZFS_DATASET:-}" ]]; then
+    SNAP_NAME="${ZFS_DATASET}@deploy-$(date -u +%Y%m%dT%H%M%SZ)"
+    log "ZFS snapshot: ${SNAP_NAME}"
+    zfs snapshot "${SNAP_NAME}" || warn "ZFS snapshot selhal — pokračuji"
+  else
+    warn "ZFS není dostupný nebo ZFS_DATASET není nastaven — přeskakuji snapshot"
+  fi
+fi
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+log "Stavíme Docker images..."
+${COMPOSE} build --pull
+
+# ── Web static build ───────────────────────────────────────────────────────────
+# Web se buildí jako Docker image, ale statické soubory potřebujeme v volume
+# který Caddy mountuje. Extrahujeme je z image.
+log "Extrakce statických souborů web..."
+
+WEB_IMAGE="narrative-web-static"
+docker build \
+  --target runtime \
+  --build-arg VITE_API_URL="https://${DOMAIN}/api" \
+  --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
+  --tag "${WEB_IMAGE}:latest" \
+  --file "${REPO_DIR}/apps/web/Dockerfile" \
+  "${REPO_DIR}"
+
+# Vytvoříme tmp container a zkopírujeme /srv/web do web_static volume
+WEB_CONTAINER=$(docker create "${WEB_IMAGE}:latest")
+# Zajistíme existenci volume
+docker volume create narrative-infra_web_static 2>/dev/null || true
+# Zkopírujeme přes tar pipe
+docker cp "${WEB_CONTAINER}:/srv/web/." - \
+  | docker run --rm -i \
+      -v narrative-infra_web_static:/srv/web \
+      alpine sh -c "cd /srv/web && tar xf -"
+docker rm "${WEB_CONTAINER}"
+
+log "Statické soubory zkopírovány do volume web_static"
+
+# ── DB migrace ─────────────────────────────────────────────────────────────────
+log "Spouštíme DB migrace..."
+${COMPOSE} run --rm \
+  --entrypoint "" \
+  server \
+  node apps/server/dist/db/migrate.js
+
+log "Migrace hotovy"
+
+# ── Start services ─────────────────────────────────────────────────────────────
+log "Startujeme služby..."
+${COMPOSE} up -d --remove-orphans
+
+# ── Healthcheck ────────────────────────────────────────────────────────────────
+log "Čekám na start (15s)..."
+sleep 15
+
+log "Healthcheck API..."
+if curl -fsS --max-time 10 "http://127.0.0.1:${API_PORT:-3001}/health" > /dev/null; then
+  log "API healthcheck OK"
+else
+  err "API neodpovídá na /health"
+  ${COMPOSE} logs --tail=50 server
+  exit 1
+fi
+
+log "Healthcheck Caddy..."
+if curl -fsS --max-time 10 "https://${DOMAIN}/health" > /dev/null 2>&1 \
+  || curl -fksSL --max-time 10 "https://${DOMAIN}/health" > /dev/null 2>&1; then
+  log "Caddy healthcheck OK"
+else
+  warn "Caddy https health check selhal — může být první deploy (Let's Encrypt provisioning)"
+fi
+
+# ── Done ───────────────────────────────────────────────────────────────────────
+echo ""
+echo -e "${GREEN}Deploy dokončen.${NC}"
+echo "  Prostředí:  ${ENV}"
+echo "  Doména:     https://${DOMAIN}"
+echo "  API:        https://${DOMAIN}/api/decks"
+echo "  WebSocket:  wss://${DOMAIN}/ws"
+echo ""
+echo "Logy: docker compose ${COMPOSE_FILES} logs -f"

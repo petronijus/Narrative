@@ -44,3 +44,40 @@ jobs:
 
       - name: Test
         run: pnpm -r test
+
+  docker-build:
+    name: Docker Build Validation
+    runs-on: ubuntu-latest
+    # Spouštíme paralelně s CI — build validace nezávisí na test výsledcích
+    needs: []
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build server image (validation only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          push: false
+          tags: narrative-server:ci
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+
+      - name: Build web image (validation only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          tags: narrative-web:ci
+          # VITE env vars pro build time (dev hodnoty — jen validace že build projde)
+          build-args: |
+            VITE_API_URL=http://localhost:3001
+            VITE_HOCUSPOCUS_URL=ws://localhost:3002
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web

@@ -5,19 +5,30 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch --experimental-strip-types src/index.ts",
-    "build": "tsc --noEmit",
+    "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"No tests yet\" && exit 0",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@hocuspocus/extension-database": "^2.15.0",
+    "@hocuspocus/server": "^2.15.0",
+    "drizzle-orm": "^0.43.1",
     "fastify": "^5.3.2",
-    "pino": "^9.6.0"
+    "nanoid": "^5.0.9",
+    "pg": "^8.14.1",
+    "pino": "^9.6.0",
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
-    "pino-pretty": "^13.0.0"
+    "@types/pg": "^8.11.11",
+    "drizzle-kit": "^0.31.1",
+    "pino-pretty": "^13.0.0",
+    "vitest": "^3.1.2"
   }
 }

@@ -1,0 +1,52 @@
+# Narrative — Caddyfile
+#
+# DOMAIN env var:
+#   - localhost (nebo IP)  → HTTP only, bez TLS
+#   - skutečná doména      → automatické Let's Encrypt TLS
+#
+# Routing:
+#   /api/*  → Fastify HTTP API (port 3001)
+#   /ws     → Hocuspocus WebSocket (port 3002)
+#   /*      → statické soubory SPA (React app) s fallback na index.html
+
+{$DOMAIN:localhost} {
+
+  # ── REST API ────────────────────────────────────────────────────────────────
+  handle_path /api/* {
+    reverse_proxy server:3001 {
+      # Předat original host (pro CORS matching)
+      header_up Host {upstream_hostport}
+    }
+  }
+
+  # ── WebSocket (Hocuspocus) ──────────────────────────────────────────────────
+  # Hocuspocus přijímá WebSocket upgrades na /
+  # Klient se připojuje přes wss://DOMAIN/ws
+  handle /ws* {
+    reverse_proxy server:3002 {
+      # WebSocket upgrade headers
+      header_up Connection {>Connection}
+      header_up Upgrade {>Upgrade}
+    }
+  }
+
+  # ── Health check (Caddy vlastní + proxy na server) ──────────────────────────
+  handle /health {
+    reverse_proxy server:3001
+  }
+
+  # ── Static SPA (React) ──────────────────────────────────────────────────────
+  handle {
+    root * /srv/web
+    # SPA fallback — client-side routes vrací index.html
+    try_files {path} /index.html
+    file_server
+  }
+
+  # ── Logging ─────────────────────────────────────────────────────────────────
+  log {
+    output stdout
+    format json
+    level INFO
+  }
+}

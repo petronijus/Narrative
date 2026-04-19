@@ -1,0 +1,43 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build outputs
+dist
+build
+**/dist
+**/build
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Env files (secrets — nikdy v image)
+.env
+.env.*
+!.env.example
+
+# Dev / editor
+.claude
+.vscode
+.idea
+*.log
+*.tsbuildinfo
+
+# CI
+.github
+
+# Docs + spikes (nejsou potřeba v image)
+docs
+spikes
+*.md
+!apps/server/drizzle
+
+# Test coverage
+coverage
+**/coverage
+
+# OS
+.DS_Store
+Thumbs.db
