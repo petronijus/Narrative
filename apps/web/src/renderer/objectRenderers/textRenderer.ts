@@ -6,6 +6,7 @@
  * Konsistentní signatura s rectangleRenderer a ellipseRenderer:
  * - mount(): vytvoří Container + Pixi Text node s TextStyle.
  * - update(): aktualizuje text/style properties s minimálním rebuild.
+ * - applyPatch(): M3 chirurgický patch — mění jen dotčené fields.
  * - destroy(): uvolní Text node a Container.
  *
  * POZNÁMKA — data.height:
@@ -19,6 +20,11 @@
  * TextRenderer nemanipuluje s DOM.
  *
  * Pivot je na středu objektu (width/2, height/2) — stejný vzor jako ostatní renderers.
+ *
+ * applyPatch granularity:
+ * - Změna x/y/rotation/opacity → POUZE container transform, ŽÁDNÝ TextStyle rebuild.
+ * - Změna text → pouze textNode.text = patch.text, ŽÁDNÝ TextStyle rebuild.
+ * - Změna fontSize/fontWeight/color/align/width → TextStyle rebuild (nevyhnutelné).
  */
 
 import { Container, Text, TextStyle } from 'pixi.js'
@@ -54,6 +60,13 @@ function applyObjectTransform(container: Container, data: TextObject): void {
   container.y = data.y + data.height / 2
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol property na Pixi Container není typovaný
+const asAny = (node: Container): any => node as any
+
+function getTextNode(node: Container): Text | undefined {
+  return asAny(node)[TEXT_TAG] as Text | undefined
+}
+
 export const textRenderer = {
   type: 'text' as const,
 
@@ -68,9 +81,7 @@ export const textRenderer = {
 
     container.addChild(textNode)
 
-    // Ukládáme referenci na Text node pro pozdější update/destroy
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol property na Pixi Container není typovaný
-    ;(container as any)[TEXT_TAG] = textNode
+    asAny(container)[TEXT_TAG] = textNode
 
     applyObjectTransform(container, data)
 
@@ -85,16 +96,13 @@ export const textRenderer = {
   update(node: Container, prev: TextObject, next: TextObject): void {
     applyObjectTransform(node, next)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol property na Pixi Container není typovaný
-    const textNode = (node as any)[TEXT_TAG] as Text | undefined
+    const textNode = getTextNode(node)
     if (textNode === undefined) return
 
-    // Aktualizuj text content pokud se změnil
     if (prev.text !== next.text) {
       textNode.text = next.text
     }
 
-    // Aktualizuj style pokud se změnily vizuální properties
     const styleChanged =
       prev.fontSize !== next.fontSize ||
       prev.fontWeight !== next.fontWeight ||
@@ -108,11 +116,84 @@ export const textRenderer = {
   },
 
   /**
+   * Chirurgický patch update — mění jen dotčené fields.
+   *
+   * Klíčová granularita:
+   * - patch { x } → pouze node.x, BEZ TextStyle rebuild
+   * - patch { text } → pouze textNode.text, BEZ TextStyle rebuild
+   * - patch { fontSize | fontWeight | color | align | width } → TextStyle rebuild
+   *
+   * width v patch ovlivňuje wordWrapWidth (TextStyle) A pivot/pozici containeru.
+   * Oba efekty jsou aplikovány pokud je width v patchi.
+   */
+  applyPatch(node: Container, patch: Partial<TextObject>): void {
+    // Pozice — aktualizuj bez TextStyle rebuild
+    if (patch.x !== undefined) {
+      node.x = patch.x + node.pivot.x
+    }
+    if (patch.y !== undefined) {
+      node.y = patch.y + node.pivot.y
+    }
+
+    if (patch.rotation !== undefined) {
+      node.rotation = patch.rotation
+    }
+
+    if (patch.opacity !== undefined) {
+      node.alpha = patch.opacity
+    }
+
+    // height změna → přepočítej pivot.y a pozici
+    if (patch.height !== undefined) {
+      const currentPivotX = node.pivot.x
+      const _dataX = node.x - currentPivotX
+      const dataY = node.y - node.pivot.y
+      const newPivotY = patch.height / 2
+      node.pivot.set(currentPivotX, newPivotY)
+      node.y = dataY + newPivotY
+    }
+
+    const textNode = getTextNode(node)
+    if (textNode === undefined) return
+
+    // Text content — bez TextStyle rebuild
+    if (patch.text !== undefined) {
+      textNode.text = patch.text
+    }
+
+    // Style-affecting fields — rebuild TextStyle jen pokud se něco změnilo
+    const needsStyleRebuild =
+      patch.fontSize !== undefined ||
+      patch.fontWeight !== undefined ||
+      patch.color !== undefined ||
+      patch.align !== undefined ||
+      patch.width !== undefined
+
+    if (needsStyleRebuild) {
+      // Přečteme aktuální style z Text node a aplikujeme jen změny.
+      // Pixi TextStyle je mutable — updatujeme přímo místo rebuild.
+      const currentStyle = textNode.style as TextStyle
+
+      if (patch.fontSize !== undefined) currentStyle.fontSize = patch.fontSize
+      if (patch.fontWeight !== undefined) currentStyle.fontWeight = patch.fontWeight
+      if (patch.color !== undefined) currentStyle.fill = hexToColorString(patch.color)
+      if (patch.align !== undefined) currentStyle.align = patch.align
+      if (patch.width !== undefined) {
+        currentStyle.wordWrapWidth = patch.width
+        // width mění i pivot.x a pozici containeru
+        const dataX = node.x - node.pivot.x
+        const newPivotX = patch.width / 2
+        node.pivot.set(newPivotX, node.pivot.y)
+        node.x = dataX + newPivotX
+      }
+    }
+  },
+
+  /**
    * Uvolní Text node a Container. Volá se při removeObject.
    */
   destroy(node: Container): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol property na Pixi Container není typovaný
-    const textNode = (node as any)[TEXT_TAG] as Text | undefined
+    const textNode = getTextNode(node)
     textNode?.destroy()
     node.destroy()
   },

@@ -28,13 +28,15 @@ import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
-import { useSlideObjects } from '../state/useSlideObjects'
+import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
+import type { ObjectChangeSet } from '@narrative/slide-model'
 
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
-  const { objects } = useSlideObjects()
+  /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
+  const pendingChangesRef = useRef<ObjectChangeSet[]>([])
 
   /**
    * Ref guard pro StrictMode double-mount safety.
@@ -89,8 +91,13 @@ export function Canvas() {
 
       instanceRef.current = { app, sceneGraph, resourceManager, compositor }
 
-      // Inicializační render — objects může být stale zde, ale useEffect
-      // pro objects changes se postará o aktualizaci
+      // Flush pending changes co přišly před initem (např. initial emission
+      // z useSlideObjectChanges subscribe synchronně po subscribe).
+      for (const pending of pendingChangesRef.current) {
+        sceneGraph.applyChanges(pending)
+      }
+      pendingChangesRef.current = []
+
       console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
     }
 
@@ -118,13 +125,18 @@ export function Canvas() {
     }
   }, []) // intentional empty deps: mount-only effect with StrictMode guard
 
-  // Efekt pro reaktivitu na Y.Doc objects changes
-  useEffect(() => {
+  // Reaktivita na Y.Doc přes incremental changes (M3).
+  // Initial state přichází synchronně jako první emise (added = current).
+  // Batching per rAF v subscribeToObjectChanges — tento callback se volá 1× per tick.
+  useSlideObjectChanges((changes) => {
     const instance = instanceRef.current
-    if (instance === null) return
-
-    instance.sceneGraph.render(objects)
-  }, [objects])
+    if (instance === null) {
+      // Pixi ještě neinicializován — buffer a flush v init
+      pendingChangesRef.current.push(changes)
+      return
+    }
+    instance.sceneGraph.applyChanges(changes)
+  })
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru
   useEffect(() => {

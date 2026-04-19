@@ -4,9 +4,10 @@
  * Registr object rendererů.
  *
  * M2 fáze 2a: Všechny tři typy registrovány — rectangle, ellipse, text.
- * Dispatch podle SlideObject.type přes getRenderer(type).
+ * M3: ObjectRenderer rozšířen o optional applyPatch — chirurgický patch update.
+ *     applyChanges v SceneGraph preferuje applyPatch, fallback na update().
  *
- * M2 phase 2+: Plná registerObjectType() API s inspector, schema bude v M3+.
+ * Dispatch podle SlideObject.type přes getRenderer(type).
  */
 
 import { rectangleRenderer } from './rectangleRenderer'
@@ -18,12 +19,23 @@ import type { SlideObject } from '@narrative/shared'
 export interface ObjectRenderer<T extends SlideObject = SlideObject> {
   type: T['type']
   mount(data: T): Container
+  /**
+   * Full update — zůstává pro zpětnou kompatibilitu.
+   * Dostane předchozí i nový plný objekt.
+   * Pokud renderer implementuje applyPatch, applyChanges ho preferuje.
+   */
   update(node: Container, prev: T, next: T): void
+  /**
+   * Optional: patch-aware update — dostane jen změněné fields.
+   * Výkonnější: nečte neodchozené properties, minimalizuje práci rendererů.
+   * Pokud renderer implementuje, applyChanges ho preferuje před update().
+   */
+  applyPatch?(node: Container, patch: Partial<T>): void
   destroy(node: Container): void
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- registr pojme různé generické varianty ObjectRenderer
-const rendererRegistry = new Map<string, ObjectRenderer<any>>([
+export const rendererRegistry = new Map<string, ObjectRenderer<any>>([
   ['rectangle', rectangleRenderer],
   ['ellipse', ellipseRenderer],
   ['text', textRenderer],

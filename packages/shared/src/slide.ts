@@ -56,3 +56,21 @@ export interface Slide {
   id: string
   objects: SlideObject[]
 }
+
+/**
+ * ObjectChangeSet — inkrementální diff dodaný state-sync agentem.
+ *
+ * Kontrakt: state-sync → renderer (applyChanges).
+ * Nesmí se měnit bez schválení tech-leada (koordinace agentů).
+ *
+ * - added: nové objekty k přidání do scene graph
+ * - removed: ID objektů k odstranění
+ * - updated: patch-based updaty (jen změněné fields)
+ * - snapshot: plná kolekce po aplikaci diff (pro bootstrap a debug)
+ */
+export interface ObjectChangeSet {
+  added: SlideObject[]
+  removed: string[]
+  updated: Array<{ id: string; patch: Partial<SlideObject> }>
+  snapshot: SlideObject[]
+}

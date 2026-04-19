@@ -10,4 +10,5 @@ export type {
   SlideObjectType,
   SlideObjectPatch,
   Slide,
+  ObjectChangeSet,
 } from './slide.js'

@@ -7,19 +7,22 @@
  *     Ellipse/text typy jsou ignorovány s console.warn — renderer agent implementuje
  *     příslušné renderers v fázi 2.
  *
+ * M3: SceneGraph.applyChanges(ObjectChangeSet) — chirurgický incremental diff.
+ *     - Přidán nodeTypes Map<id, SlideObjectType> pro O(1) renderer lookup bez scan.
+ *     - applyChanges preferuje renderer.applyPatch() pokud existuje, jinak fallback update().
+ *     - render() zachováno pro backward compat (Canvas.tsx boot, M4 state-sync přechod).
+ *
  * Principy:
  * - SceneGraph vlastní root Container a interní mapu node→data.
  * - Žádné přímé mutace Pixi objektů mimo SceneGraph + objectRenderers.
  * - render(array) provádí naivní ID-based diff: add/update/remove.
- *   Plný reconciler (driven Yjs observations s batching) přijde v M3.
- *
- * M3: SceneGraph.render() bude volán z reconciler diff engine, ne z React useEffect.
+ * - applyChanges(ObjectChangeSet) — incremental diff s patch-based updates.
  */
 
 import { Container } from 'pixi.js'
 import type { Application } from 'pixi.js'
 import { getRenderer } from './objectRenderers'
-import type { SlideObject } from '@narrative/shared'
+import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 
 interface SceneNode {
   container: Container
@@ -32,6 +35,12 @@ export class SceneGraph {
   private readonly root: Container
   /** Mapa objectId → SceneNode (Container + poslední data snapshot). */
   private readonly nodes = new Map<string, SceneNode>()
+  /**
+   * Mapa objectId → SlideObjectType.
+   * Umožňuje O(1) renderer lookup v applyChanges bez potřeby full node scan.
+   * Plněna při addObject/applyChanges.added, mazána při removeObject/applyChanges.removed.
+   */
+  private readonly nodeTypes = new Map<string, SlideObjectType>()
 
   constructor(app: Application) {
     this.app = app
@@ -42,7 +51,7 @@ export class SceneGraph {
   /**
    * Přidá nový objekt do scene graph.
    * Pokud typ nemá registrovaný renderer, tiše přeskočí s console.warn.
-   * Interní — volej přes render() nebo přímo pro testing.
+   * Interní — volej přes render() nebo applyChanges() nebo přímo pro testing.
    */
   addObject(data: SlideObject): void {
     if (this.nodes.has(data.id)) {
@@ -52,7 +61,6 @@ export class SceneGraph {
 
     const renderer = getRenderer(data.type)
     if (renderer === undefined) {
-      // Ellipse/text nemají renderer v M2 phase 1 — renderer agent implementuje v fázi 2
       console.warn(`[SceneGraph] No renderer for type: ${data.type}`)
       return
     }
@@ -60,6 +68,7 @@ export class SceneGraph {
     const container = renderer.mount(data)
     this.root.addChild(container)
     this.nodes.set(data.id, { container, data })
+    this.nodeTypes.set(data.id, data.type)
   }
 
   /**
@@ -97,6 +106,7 @@ export class SceneGraph {
     }
 
     this.nodes.delete(id)
+    this.nodeTypes.delete(id)
   }
 
   /**
@@ -107,7 +117,8 @@ export class SceneGraph {
    * 1. Projdi nová data → add nebo update.
    * 2. Projdi existující node IDs → odstraň ty, co nejsou v nových datech.
    *
-   * M3: Toto bude nahrazeno Yjs-driven reconcilerem s batching a O(diff) complexity.
+   * Zachováno pro backward compat — Canvas.tsx ho používá při bootu a jako fallback
+   * dokud state-sync agent nedodá useSlideObjectChanges hook (M3 fáze 1).
    */
   render(objects: SlideObject[]): void {
     const incomingIds = new Set<string>()
@@ -126,6 +137,62 @@ export class SceneGraph {
       if (!incomingIds.has(id)) {
         this.removeObject(id)
       }
+    }
+  }
+
+  /**
+   * M3: Aplikuje incremental ObjectChangeSet chirurgicky na scene graph.
+   *
+   * Pořadí operací je záměrné:
+   * 1. remove — nejdříve, stabilnější pro ID collision edge cases (remove+add stejného ID)
+   * 2. add — přidá nové objekty
+   * 3. update — aplikuje patch na existující objekty
+   *
+   * Pro update preferuje renderer.applyPatch(patch) pokud renderer ho implementuje.
+   * Fallback na renderer.update(prev, next) — v tom případě potřebuje plný next objekt
+   * z nodes Map (data snapshot). Caller nemusí poskytnout full object v updated[].patch.
+   *
+   * @param changes - incremental diff od state-sync agenta
+   */
+  applyChanges(changes: ObjectChangeSet): void {
+    // 1. Remove first
+    for (const id of changes.removed) {
+      this.removeObject(id)
+    }
+
+    // 2. Add
+    for (const obj of changes.added) {
+      this.addObject(obj)
+    }
+
+    // 3. Update (patch-based)
+    for (const { id, patch } of changes.updated) {
+      const node = this.nodes.get(id)
+      const type = this.nodeTypes.get(id)
+
+      if (node === undefined || type === undefined) {
+        console.warn(`[SceneGraph] applyChanges: update for unknown ID ${id}`)
+        continue
+      }
+
+      const renderer = getRenderer(type)
+      if (renderer === undefined) {
+        console.warn(`[SceneGraph] applyChanges: no renderer for type ${type}`)
+        continue
+      }
+
+      if (renderer.applyPatch !== undefined) {
+        // Chirurgický patch — renderer ví co se přesně změnilo
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- patch je Partial<SlideObject>, renderer akceptuje Partial<T extends SlideObject>
+        renderer.applyPatch(node.container, patch as any)
+      } else {
+        // Fallback: plný update s aktuálním snapotem + patch merge
+        const merged = { ...node.data, ...patch } as SlideObject
+        renderer.update(node.container, node.data, merged)
+      }
+
+      // Aktualizuj data snapshot v node (merge patch do existujícího stavu)
+      node.data = { ...node.data, ...patch } as SlideObject
     }
   }
 

@@ -31,7 +31,12 @@ export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 export { createUndoManager } from './undo.js'
 
 // Observer
-export { subscribeToObjects } from './observe.js'
+export {
+  subscribeToObjects,
+  subscribeToObjectChanges,
+  subscribeToObjectChangesWithFlush,
+} from './observe.js'
+export type { ObjectChangeSet } from './observe.js'
 
 // ---------------------------------------------------------------------------
 // Builtin object type registrations
