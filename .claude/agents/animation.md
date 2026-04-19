@@ -28,6 +28,37 @@ Jsi vlastník **animačního enginu** projektu Narrative.
 4. **Mixed targets first-class.** DSL `target` field řeší Pixi vs. DOM overlay. Engine dispatchne.
 5. **Žádný animace-specific state v Y.Doc mimo to, co `state-sync` už schválil.**
 
+## Engine design constraints (ze Spike A — 2026-04-19)
+
+### Proxy pattern pro Pixi targets — POVINNÝ DEFAULT
+Compiler NESMÍ generovat `gsap.to(pixiObject, { ... })`. Místo toho:
+```
+const proxy = { x: obj.x, y: obj.y, scaleX: obj.scale.x, scaleY: obj.scale.y, ... }
+gsap.to(proxy, {
+  x: targetX, y: targetY, scaleX: targetSX, scaleY: targetSY,
+  onUpdate: () => {
+    obj.position.set(proxy.x, proxy.y)
+    obj.scale.set(proxy.scaleX, proxy.scaleY)
+    // ...
+  }
+})
+```
+**Důvod**: Pixi v8 má `scale`, `pivot`, `skew`, `position` jako `ObservablePoint` (ne flat number). GSAP neanimuje ObservablePoint spolehlivě. Proxy pattern má zároveň **nižší frame variance** než direct (ověřeno: min FPS 59.7 proxy vs. 48.9 direct na 50 paralelních tweenech).
+
+### DSL scale syntax
+V DSL `{ scaleX, scaleY }` jako explicitní fields, ne shorthand `{ scale }`. Důvod: single-field `scale` svádí k `pixiObject.scale = number` přístupu, který obchází proxy pattern.
+
+### Flip plugin NENÍ pro Pixi targets
+GSAP Flip plugin je DOM-only (ověřeno). Pro Pixi slide transitions (Magic Move M13) implementovat **manual flip pattern**:
+1. `engine.flipSnap(objectIds)` → uloží current transform state
+2. `renderer.applyLayout(slideB)` → okamžitě aplikuje cílové pozice
+3. `engine.flipFrom(snapshot, { duration, ease })` → GSAP tween proxy ze snapshotu
+Flip plugin zůstává hodnotný pro DOM overlay transitions (text boxes, UI overlays, iframe/video placeholders) v rámci mixed-target dispatch.
+
+### Engine dispatcher podle target prefixu
+- `"pixi:<objectId>"` → proxy + onUpdate → renderer setter
+- `"dom:<overlayId>"` → GSAP animuje DOM element přímo (Flip kompatibilní)
+
 ## Workflow
 - Nový preset → napsat jako DSL factory, unit test na vygenerovaný DSL, integration test v present mode.
 - DSL schema change → bump schema version, migration, ADR.

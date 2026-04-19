@@ -177,7 +177,7 @@ BullMQ + Redis. `apps/workers/video` worker: ffmpeg generuje HLS varianty (360p/
 **Deliverable**: video funguje, prezentace neseká.
 
 ### M13 — Magic Move
-GSAP Flip plugin integrace. Při přechodu mezi slide A a B: match objekty po ID, tween transform properties (x, y, w, h, rotation, opacity, scale). Non-matching fade out/in. DSL rozšíření: `magicMove: true` per-transition.
+**Manual flip pattern** (ne GSAP Flip plugin — ten je DOM-only, ověřeno ve Spike A). Implementace: (1) snapshot transform state Pixi objektů ze slide A, (2) okamžitě aplikovat layout slide B na objekty, (3) GSAP tween proxy z snapshotu zpět na cílové hodnoty. Match objekty po ID napříč slidy, non-matching fade out/in. DSL rozšíření: `magicMove: true` per-transition. GSAP Flip plugin zůstává pro DOM overlay transitions (text, media placeholders nad canvasem) v rámci mixed-target pipeline.
 
 **Deliverable**: Keynote Magic Move feature.
 

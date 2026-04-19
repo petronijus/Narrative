@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+
+# Spikes — throwaway validation projects
+spikes/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Claude local settings
+.claude/settings.local.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
