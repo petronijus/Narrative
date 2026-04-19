@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Inspector } from './Inspector'
 import { SelectionProvider } from '../state/SelectionContext'
-import { SlideDocContext } from '../state/slideDocContext'
+import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
 import * as slideModel from '@narrative/slide-model'
 import type { AnimationStep } from '@narrative/shared'
@@ -36,7 +36,7 @@ function createContextValue(
   undoManager?: Y.UndoManager,
 ): SlideDocContextValue {
   const um = undoManager ?? slideModel.createUndoManager(mutationCtx)
-  return { mutationCtx, undoManager: um, wsStatus: 'connected' }
+  return createMockSlideDocValue({ mutationCtx, undoManager: um })
 }
 
 // ---------------------------------------------------------------------------

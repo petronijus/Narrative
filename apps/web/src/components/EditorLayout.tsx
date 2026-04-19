@@ -18,12 +18,15 @@ import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
 import { TransformHandles } from '../ui/TransformHandles'
 import { SnapGuides } from '../ui/SnapGuides'
+import { PeerCursors } from '../ui/PeerCursors'
+import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
+import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
 import {
   createObjectOfType,
   removeObject,
@@ -109,6 +112,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
 
+  // M8: Awareness updater — broadcast cursor + selection
+  const { setCursor, setSelection } = useAwarenessUpdater()
+
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
@@ -134,6 +140,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   /** Canvas size pro SnapGuides vizualizaci */
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
+
+  // ---------------------------------------------------------------------------
+  // M8: Selection broadcast → awareness
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    setSelection([...selectedIds])
+  }, [selectedIds, setSelection])
 
   // Canvas size observer
   useEffect(() => {
@@ -251,14 +265,27 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // M8: Broadcast cursor position (throttled 30Hz na state-sync straně)
+      // Získáme canvas-relative coords jednou a reuse pro marquee i cursor broadcast.
+      const containerEl = canvasContainerRef.current
+      const canvasCoords =
+        containerEl !== null
+          ? clientToCanvasCoords(e.clientX, e.clientY, containerEl.getBoundingClientRect())
+          : null
+
+      if (canvasCoords !== null) {
+        setCursor({ x: canvasCoords.x, y: canvasCoords.y })
+      }
+
       // Marquee update
       const mq = marqueeRef.current
       if (mq !== null) {
-        const containerEl = canvasContainerRef.current
-        if (containerEl !== null) {
-          const rect = containerEl.getBoundingClientRect()
-          const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect)
-          const updated: MarqueeState = { ...mq, currentX: x, currentY: y }
+        if (canvasCoords !== null) {
+          const updated: MarqueeState = {
+            ...mq,
+            currentX: canvasCoords.x,
+            currentY: canvasCoords.y,
+          }
           marqueeRef.current = updated
           setMarquee({ ...updated })
         }
@@ -314,7 +341,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         proposed.map((p) => ({ id: p.id, patch: { x: p.x, y: p.y } })),
       )
     },
-    [mutationCtx, objects],
+    [mutationCtx, objects, setCursor],
   )
 
   const handlePointerUp = useCallback(
@@ -373,6 +400,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     },
     [objects, canvasInstance, selectedIds, selectMany],
   )
+
+  // M8: Cursor leave — broadcast null (peer offline z canvasu)
+  const handlePointerLeave = useCallback(() => {
+    setCursor(null)
+  }, [setCursor])
 
   // ---------------------------------------------------------------------------
   // Keyboard shortcuts
@@ -506,6 +538,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerLeave}
         >
           <Canvas onReady={onCanvasReady} />
 
@@ -519,6 +552,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           {/* Marquee selection overlay */}
           {marquee !== null && <MarqueeOverlay marquee={marquee} />}
 
+          {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
+          <PeerSelectionOverlays />
+
           {/* Transform handles + outline — pokud je selection a canvas ready */}
           {selectedIds.size > 0 && canvasInstance !== null && (
             <TransformHandles
@@ -529,6 +565,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               otherBounds={otherBounds}
             />
           )}
+
+          {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
+          <PeerCursors />
         </div>
       </main>
 

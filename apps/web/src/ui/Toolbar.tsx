@@ -18,6 +18,7 @@ import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
+import { AvatarChips } from './AvatarChips.js'
 
 interface ToolButton {
   tool: ActiveTool
@@ -112,6 +113,9 @@ export function Toolbar() {
 
       {/* Spacer */}
       <div className="flex-1" aria-hidden="true" />
+
+      {/* M8: Connected collaborators avatar chips */}
+      <AvatarChips />
 
       {/* Preview animations button — naviguje do present mode s ?preview=1 */}
       <button

@@ -15,7 +15,7 @@ import { fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import type * as ReactRouterDom from 'react-router-dom'
 import { PresentLayout } from './PresentLayout'
-import { SlideDocContext } from '../state/slideDocContext'
+import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext'
@@ -137,11 +137,7 @@ function createMutationCtx(): SlideMutationContext {
 
 function createSlideDocValue(): SlideDocContextValue {
   const mutationCtx = createMutationCtx()
-  return {
-    mutationCtx,
-    undoManager: null as unknown as SlideDocContextValue['undoManager'],
-    wsStatus: 'connected',
-  }
+  return createMockSlideDocValue({ mutationCtx })
 }
 
 /** Fiktivní CanvasInstance pro testy runtime integrace. */

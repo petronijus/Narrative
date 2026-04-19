@@ -51,6 +51,9 @@ export {
 // Undo
 export { createUndoManager } from './undo.js'
 
+// Awareness helpers (M8)
+export { generatePeerId, toPeerInfo, peerColorFromId } from './awareness.js'
+
 // Observer — objects
 export {
   subscribeToObjects,

@@ -15,6 +15,15 @@ import { ToolProvider, useTool } from '../state/ToolContext'
 import type { ActiveTool } from '../state/ToolContext'
 
 // ---------------------------------------------------------------------------
+// Mock useAwareness — Toolbar renderuje AvatarChips, který potřebuje awareness.
+// Toolbar.test testuje tool switching, ne awareness — mockneme celý hook.
+// ---------------------------------------------------------------------------
+
+vi.mock('../state/useAwareness.js', () => ({
+  useAwareness: () => ({ peers: [], remotePeers: [], localClientId: 1 }),
+}))
+
+// ---------------------------------------------------------------------------
 // navigate mock
 // ---------------------------------------------------------------------------
 

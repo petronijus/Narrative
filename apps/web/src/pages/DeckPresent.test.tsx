@@ -11,7 +11,7 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import type * as ReactRouterDom from 'react-router-dom'
 import { DeckPresent } from './DeckPresent'
-import { SlideDocContext } from '../state/slideDocContext'
+import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
 import * as Y from 'yjs'
 import type { SlideMutationContext } from '@narrative/slide-model'
@@ -95,11 +95,7 @@ function createMutationCtx(): SlideMutationContext {
 
 function createSlideDocValue(): SlideDocContextValue {
   const mutationCtx = createMutationCtx()
-  return {
-    mutationCtx,
-    undoManager: null as unknown as SlideDocContextValue['undoManager'],
-    wsStatus: 'connected',
-  }
+  return createMockSlideDocValue({ mutationCtx })
 }
 
 function renderDeckPresent(deckId = 'deck-123') {
