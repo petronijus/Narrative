@@ -8,22 +8,33 @@
  *     Pointer events pro drag + vytváření objektů.
  *     Undo/redo keyboard shortcuts.
  *     Delete key pro removal.
- * M7: Inspector pane bude mít transform controls.
+ * M7: Multi-select (shift-click, marquee), transform handles, snapping,
+ *     SceneGraph.hitTest (rotation-aware), keyboard duplicate + nudge.
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
+import { TransformHandles } from '../ui/TransformHandles'
+import { SnapGuides } from '../ui/SnapGuides'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
-import { createObjectOfType, removeObject, updateObject } from '@narrative/slide-model'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
+import {
+  createObjectOfType,
+  removeObject,
+  duplicateObject,
+  bulkUpdateObjects,
+} from '@narrative/slide-model'
 import type { SlideObjectType } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
+import type { SnapGuide } from '../editor/snap.js'
+import { computeSnap } from '../editor/snap.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,10 +50,9 @@ function isInputFocused(): boolean {
 
 /**
  * Převede CSS client souřadnice (z PointerEvent) na souřadnice relativní
- * k canvas containeru (= "world" souřadnice pro M2, bez zoom/pan).
+ * k canvas containeru (= "world" souřadnice pro M7, bez zoom/pan).
  *
- * TODO (po merge s renderer agentem): Pokud renderer exponuje SceneGraph
- * s hitTest + worldTransform, nahradit naivní výpočet přes SceneGraph.hitTest.
+ * M8+: při zoom/pan zde přidat viewport transform.
  */
 function clientToCanvasCoords(
   clientX: number,
@@ -55,26 +65,33 @@ function clientToCanvasCoords(
   }
 }
 
-/**
- * Naivní hit test pro M2 — zkontroluje, zda bod leží v bounding boxu objektu.
- * Ignoruje rotation pro jednoduchost (přesný hit test přijde v M7).
- *
- * TODO (po merge s renderer agentem): nahradit voláním SceneGraph.hitTest().
- */
-function naiveHitTest(
-  x: number,
-  y: number,
-  objects: Array<{ id: string; x: number; y: number; width: number; height: number }>,
-): string | null {
-  // Iterujeme pozpátku → objekty "nahoře" (vyšší index) mají prioritu
-  for (let i = objects.length - 1; i >= 0; i--) {
-    const obj = objects[i]
-    if (obj === undefined) continue
-    if (x >= obj.x && x <= obj.x + obj.width && y >= obj.y && y <= obj.y + obj.height) {
-      return obj.id
-    }
-  }
-  return null
+// ---------------------------------------------------------------------------
+// Marquee rect
+// ---------------------------------------------------------------------------
+
+interface MarqueeState {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  additive: boolean // shift was held → add to existing selection
+}
+
+function MarqueeOverlay({ marquee }: { marquee: MarqueeState }) {
+  const x = Math.min(marquee.startX, marquee.currentX)
+  const y = Math.min(marquee.startY, marquee.currentY)
+  const w = Math.abs(marquee.currentX - marquee.startX)
+  const h = Math.abs(marquee.currentY - marquee.startY)
+
+  if (w < 2 && h < 2) return null
+
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute border border-blue-400 bg-blue-400/10"
+      style={{ left: x, top: y, width: w, height: h }}
+    />
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -86,23 +103,53 @@ export interface EditorLayoutProps {
 }
 
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
-  const { selectedId, setSelectedId, clearSelection } = useSelection()
+  const { selectedIds, selectedId, selectOne, selectMany, toggle, clear } = useSelection()
   const { activeTool, setActiveTool } = useTool()
   const { objects, mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
+  const canvasInstance = useCanvasInstance()
 
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
-  /** Drag state — ephemeral, neukládá se do Y.Doc */
+  // ---------------------------------------------------------------------------
+  // Drag state — ephemeral, neukládá se do Y.Doc
+  // ---------------------------------------------------------------------------
+
   const dragRef = useRef<{
     active: boolean
-    objectId: string
+    objectIds: string[]
     startX: number
     startY: number
-    objStartX: number
-    objStartY: number
+    /** Počáteční pozice objektů v dragu */
+    initialPositions: Array<{ id: string; x: number; y: number }>
   } | null>(null)
+
+  /** Marquee drag state */
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null)
+  const marqueeRef = useRef<MarqueeState | null>(null)
+
+  /** Snap guides — aktivní během dragu/resize */
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
+
+  /** Canvas size pro SnapGuides vizualizaci */
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
+
+  // Canvas size observer
+  useEffect(() => {
+    const el = canvasContainerRef.current
+    if (el === null) return
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry === undefined) return
+      setCanvasSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Pointer event handlers
@@ -110,7 +157,6 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      // Jen levé tlačítko
       if (e.button !== 0) return
 
       const containerEl = canvasContainerRef.current
@@ -119,61 +165,217 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       const rect = containerEl.getBoundingClientRect()
       const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect)
 
-      if (activeTool === 'select') {
-        // Hit test → select nebo deselect
-        const hitId = naiveHitTest(x, y, objects)
-        if (hitId === null) {
-          clearSelection()
-          return
-        }
-
-        setSelectedId(hitId)
-
-        // Začni drag
-        const obj = objects.find((o) => o.id === hitId)
-        if (obj !== undefined) {
-          ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
-          dragRef.current = {
-            active: true,
-            objectId: hitId,
-            startX: e.clientX,
-            startY: e.clientY,
-            objStartX: obj.x,
-            objStartY: obj.y,
-          }
-        }
-      } else {
+      if (activeTool !== 'select') {
         // Create tool — vytvoř objekt na pozici kliku
         createObjectOfType(mutationCtx, activeTool as SlideObjectType, { x, y })
-        // Vrať se na select po vytvoření
         setActiveTool('select')
+        return
+      }
+
+      // Hit test — preferuj SceneGraph.hitTest pokud dostupný
+      let hitId: string | null = null
+      if (canvasInstance !== null) {
+        hitId = canvasInstance.sceneGraph.hitTest(x, y)
+      } else {
+        // Fallback naivní AABB (Canvas ještě není ready)
+        for (let i = objects.length - 1; i >= 0; i--) {
+          const obj = objects[i]
+          if (obj === undefined) continue
+          if (x >= obj.x && x <= obj.x + obj.width && y >= obj.y && y <= obj.y + obj.height) {
+            hitId = obj.id
+            break
+          }
+        }
+      }
+
+      if (hitId === null) {
+        // Klik na prázdnou plochu
+        if (!e.shiftKey) {
+          clear()
+        }
+        // Start marquee drag
+        const ms: MarqueeState = {
+          startX: x,
+          startY: y,
+          currentX: x,
+          currentY: y,
+          additive: e.shiftKey,
+        }
+        marqueeRef.current = ms
+        setMarquee(ms)
+        ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+        return
+      }
+
+      if (e.shiftKey) {
+        // Shift-click: toggle selection, nestart drag
+        toggle(hitId)
+        return
+      }
+
+      // Normální klik na objekt: nahraď selection + start drag
+      if (!selectedIds.has(hitId)) {
+        selectOne(hitId)
+      }
+
+      // Sberi selected IDs (pokud kliknutý objekt byl už selected, drag pohne celý group)
+      const dragIds = selectedIds.has(hitId) ? [...selectedIds] : [hitId]
+
+      const initialPositions = dragIds.flatMap((id) => {
+        const obj = objects.find((o) => o.id === id)
+        if (obj === undefined) return []
+        return [{ id, x: obj.x, y: obj.y }]
+      })
+
+      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      dragRef.current = {
+        active: true,
+        objectIds: dragIds,
+        startX: e.clientX,
+        startY: e.clientY,
+        initialPositions,
       }
     },
-    [activeTool, objects, mutationCtx, setActiveTool, setSelectedId, clearSelection],
+    [
+      activeTool,
+      objects,
+      mutationCtx,
+      setActiveTool,
+      selectedIds,
+      selectOne,
+      toggle,
+      clear,
+      canvasInstance,
+    ],
   )
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Marquee update
+      const mq = marqueeRef.current
+      if (mq !== null) {
+        const containerEl = canvasContainerRef.current
+        if (containerEl !== null) {
+          const rect = containerEl.getBoundingClientRect()
+          const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect)
+          const updated: MarqueeState = { ...mq, currentX: x, currentY: y }
+          marqueeRef.current = updated
+          setMarquee({ ...updated })
+        }
+        return
+      }
+
+      // Object drag
       const drag = dragRef.current
       if (drag === null || !drag.active) return
 
       const dx = e.clientX - drag.startX
       const dy = e.clientY - drag.startY
 
-      updateObject(mutationCtx, drag.objectId, {
-        x: drag.objStartX + dx,
-        y: drag.objStartY + dy,
-      })
+      // Propose new positions
+      const proposed = drag.initialPositions.map((init) => ({
+        id: init.id,
+        x: init.x + dx,
+        y: init.y + dy,
+      }))
+
+      // Snap (použijeme bounds prvního objektu pro jednoduchost u group)
+      const firstProposed = proposed[0]
+      if (firstProposed !== undefined) {
+        const firstObj = objects.find((o) => o.id === firstProposed.id)
+        if (firstObj !== undefined) {
+          const otherBounds = objects
+            .filter((o) => !drag.objectIds.includes(o.id))
+            .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
+
+          const snapResult = computeSnap(
+            {
+              x: firstProposed.x,
+              y: firstProposed.y,
+              width: firstObj.width,
+              height: firstObj.height,
+            },
+            otherBounds,
+          )
+
+          setSnapGuides(snapResult.guides)
+
+          const updates = proposed.map((p) => ({
+            id: p.id,
+            patch: { x: p.x + snapResult.dx, y: p.y + snapResult.dy },
+          }))
+          bulkUpdateObjects(mutationCtx, updates)
+          return
+        }
+      }
+
+      bulkUpdateObjects(
+        mutationCtx,
+        proposed.map((p) => ({ id: p.id, patch: { x: p.x, y: p.y } })),
+      )
     },
-    [mutationCtx],
+    [mutationCtx, objects],
   )
 
-  const handlePointerUp = useCallback((_e: React.PointerEvent<HTMLDivElement>) => {
-    dragRef.current = null
-  }, [])
+  const handlePointerUp = useCallback(
+    (_e: React.PointerEvent<HTMLDivElement>) => {
+      // Finalize marquee
+      const mq = marqueeRef.current
+      if (mq !== null) {
+        marqueeRef.current = null
+        setMarquee(null)
+
+        const rectX = Math.min(mq.startX, mq.currentX)
+        const rectY = Math.min(mq.startY, mq.currentY)
+        const rectW = Math.abs(mq.currentX - mq.startX)
+        const rectH = Math.abs(mq.currentY - mq.startY)
+
+        if (rectW > 2 || rectH > 2) {
+          // Najdi objekty jejichž AABB world bounds se překrývají s marquee rect
+          const hitIds: string[] = []
+
+          if (canvasInstance !== null) {
+            for (const obj of objects) {
+              const bounds = canvasInstance.sceneGraph.getBounds(obj.id)
+              if (bounds === null) continue
+              const { x: bx, y: by, width: bw, height: bh } = bounds.world
+              // Overlap test
+              if (bx < rectX + rectW && bx + bw > rectX && by < rectY + rectH && by + bh > rectY) {
+                hitIds.push(obj.id)
+              }
+            }
+          } else {
+            // Fallback naivní AABB
+            for (const obj of objects) {
+              if (
+                obj.x < rectX + rectW &&
+                obj.x + obj.width > rectX &&
+                obj.y < rectY + rectH &&
+                obj.y + obj.height > rectY
+              ) {
+                hitIds.push(obj.id)
+              }
+            }
+          }
+
+          if (hitIds.length > 0) {
+            if (mq.additive) {
+              selectMany([...selectedIds, ...hitIds])
+            } else {
+              selectMany(hitIds)
+            }
+          }
+        }
+      }
+
+      dragRef.current = null
+      setSnapGuides([])
+    },
+    [objects, canvasInstance, selectedIds, selectMany],
+  )
 
   // ---------------------------------------------------------------------------
-  // Keyboard shortcuts — delete + undo/redo
+  // Keyboard shortcuts
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
@@ -197,35 +399,91 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         return
       }
 
-      // Delete/Backspace → remove selected object
+      // Delete/Backspace → odstraň vybrané objekty
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isInputFocused()) return
-        if (selectedId !== null) {
-          removeObject(mutationCtx, selectedId)
-          clearSelection()
+        if (selectedIds.size > 0) {
+          for (const id of selectedIds) {
+            removeObject(mutationCtx, id)
+          }
+          clear()
         }
+        return
+      }
+
+      // Ctrl/Cmd+D — duplicate selected
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        if (isInputFocused()) return
+        e.preventDefault()
+        if (selectedIds.size > 0) {
+          const newIds: string[] = []
+          for (const id of selectedIds) {
+            const dup = duplicateObject(mutationCtx, id, { x: 20, y: 20 })
+            if (dup !== null) {
+              newIds.push(dup.id)
+            }
+          }
+          if (newIds.length > 0) {
+            selectMany(newIds)
+          }
+        }
+        return
+      }
+
+      // Arrow keys — nudge selected
+      if (
+        selectedIds.size > 0 &&
+        (e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown')
+      ) {
+        if (isInputFocused()) return
+        e.preventDefault()
+        const step = e.shiftKey ? 10 : 1
+        let dx = 0
+        let dy = 0
+        if (e.key === 'ArrowLeft') dx = -step
+        if (e.key === 'ArrowRight') dx = step
+        if (e.key === 'ArrowUp') dy = -step
+        if (e.key === 'ArrowDown') dy = step
+
+        const updates = [...selectedIds].flatMap((id) => {
+          const obj = objects.find((o) => o.id === id)
+          if (obj === undefined) return []
+          return [{ id, patch: { x: obj.x + dx, y: obj.y + dy } }]
+        })
+        bulkUpdateObjects(mutationCtx, updates)
+        return
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedId, mutationCtx, undo, redo, clearSelection])
+  }, [selectedIds, selectedId, mutationCtx, undo, redo, clear, selectMany, objects])
 
   // ---------------------------------------------------------------------------
-  // Selection outline overlay (naivní fallback — DOM div nad canvasem)
-  //
-  // TODO (po merge s renderer agentem): Pokud renderer exponuje OverlayCompositor,
-  // nahradit registrací přes compositor.register(id, element).
+  // Snap guide callback z TransformHandles
   // ---------------------------------------------------------------------------
 
-  const selectedObj = selectedId !== null ? objects.find((o) => o.id === selectedId) : undefined
+  const handleSnapGuides = useCallback((guides: SnapGuide[]) => {
+    setSnapGuides(guides)
+  }, [])
 
-  // Cursor style podle aktivního toolu
+  // ---------------------------------------------------------------------------
+  // Other bounds pro snap
+  // ---------------------------------------------------------------------------
+
+  const otherBounds = objects
+    .filter((o) => !selectedIds.has(o.id))
+    .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
+
+  // Cursor style
   const canvasCursor = activeTool === 'select' ? 'default' : 'crosshair'
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-gray-950">
-      {/* Left sidebar: slide panel */}
+      {/* Left sidebar */}
       <aside className="flex w-48 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900">
         <div className="border-b border-gray-800 px-3 py-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -239,14 +497,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
       {/* Center: canvas area */}
       <main className="flex flex-1 flex-col overflow-hidden">
-        {/* Toolbar */}
         <Toolbar />
 
-        {/*
-          Canvas container: position: relative + overflow: hidden = clipping container
-          pro absolutně pozicovaný canvas element. Canvas.tsx používá position: absolute; inset: 0.
-          Pointer events jsou zachyceny zde (parent div), ne uvnitř Canvas.tsx.
-        */}
         <div
           ref={canvasContainerRef}
           className="relative flex-1 overflow-hidden bg-gray-950"
@@ -257,12 +509,30 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         >
           <Canvas onReady={onCanvasReady} />
 
-          {/* Selection outline overlay — naivní DOM implementace */}
-          {selectedObj !== undefined && <SelectionOverlay obj={selectedObj} />}
+          {/* Snap guide lines — viditelné jen během dragu */}
+          <SnapGuides
+            guides={snapGuides}
+            canvasWidth={canvasSize.width}
+            canvasHeight={canvasSize.height}
+          />
+
+          {/* Marquee selection overlay */}
+          {marquee !== null && <MarqueeOverlay marquee={marquee} />}
+
+          {/* Transform handles + outline — pokud je selection a canvas ready */}
+          {selectedIds.size > 0 && canvasInstance !== null && (
+            <TransformHandles
+              objectIds={[...selectedIds]}
+              sceneGraph={canvasInstance.sceneGraph}
+              mutationCtx={mutationCtx}
+              onSnapGuides={handleSnapGuides}
+              otherBounds={otherBounds}
+            />
+          )}
         </div>
       </main>
 
-      {/* Right sidebar: inspector panel */}
+      {/* Right sidebar: inspector */}
       <aside className="flex w-64 flex-shrink-0 flex-col border-l border-gray-800 bg-gray-900">
         <div className="border-b border-gray-800 px-3 py-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -272,14 +542,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         <Inspector />
       </aside>
 
-      {/* DEV-only metrics overlay — Ctrl+Shift+M */}
       {import.meta.env.DEV && <DevMetricsOverlay />}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// DevMetricsOverlay — DEV-only wrapper (bezpečné volání hooks — vždy mounted)
+// DevMetricsOverlay — DEV-only
 // ---------------------------------------------------------------------------
 
 function DevMetricsOverlay() {
@@ -287,40 +556,4 @@ function DevMetricsOverlay() {
   const { wsStatus } = useSlideDoc()
   if (!visible || fpsTracker === null) return null
   return <FpsOnlyDashboard fpsTracker={fpsTracker} wsStatus={wsStatus} />
-}
-
-// ---------------------------------------------------------------------------
-// SelectionOverlay
-// ---------------------------------------------------------------------------
-
-interface SelectionOverlayProps {
-  obj: { x: number; y: number; width: number; height: number; rotation: number }
-}
-
-/**
- * Naivní selection outline jako absolutně pozicovaný div.
- *
- * TODO (po merge s renderer agentem): Pokud renderer exponuje OverlayCompositor,
- * tuto komponentu nahradit registrací overlay elementu přes compositor API.
- * OverlayCompositor zajistí správné DPR-aware positioning i při zoom/pan.
- *
- * Pro M2 (žádný zoom/pan): x/y odpovídají CSS logical pixelům přímo.
- */
-function SelectionOverlay({ obj }: SelectionOverlayProps) {
-  const rotationStyle = obj.rotation !== 0 ? `rotate(${obj.rotation}rad)` : undefined
-
-  return (
-    <div
-      className="pointer-events-none absolute border-2 border-blue-400"
-      style={{
-        left: obj.x,
-        top: obj.y,
-        width: obj.width,
-        height: obj.height,
-        transform: rotationStyle,
-        transformOrigin: 'center center',
-      }}
-      aria-hidden="true"
-    />
-  )
 }

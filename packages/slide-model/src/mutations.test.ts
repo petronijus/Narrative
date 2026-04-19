@@ -4,7 +4,7 @@
  * Testy pro mutation API — addObject, removeObject, updateObject, undo/redo.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
 import {
@@ -12,8 +12,11 @@ import {
   removeObject,
   updateObject,
   createObjectOfType,
+  duplicateObject,
+  bulkUpdateObjects,
   LOCAL_ORIGIN,
   type MutationContext,
+  type BulkUpdate,
 } from './mutations.js'
 import { registerObjectType, _clearRegistry } from './registry.js'
 import { createUndoManager } from './undo.js'
@@ -221,5 +224,258 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
     expect(ctx.objects.length).toBe(1)
     um.undo() // nemělo by nic udělat — remote change není trackovaný
     expect(ctx.objects.length).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// duplicateObject
+// ---------------------------------------------------------------------------
+
+describe('duplicateObject', () => {
+  beforeEach(() => {
+    registerObjectType<RectangleObject>({
+      type: 'rectangle',
+      defaultProps: () => ({
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        fill: 0,
+        rotation: 0,
+        opacity: 1,
+      }),
+    })
+  })
+
+  it('vrátí kopii s novým id a defaultním posunem 20/20', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+
+    const dup = duplicateObject(ctx, 'r1')
+
+    expect(dup).not.toBeNull()
+    expect(dup!.id).not.toBe('r1')
+    expect(dup!.x).toBe(sampleRect.x + 20)
+    expect(dup!.y).toBe(sampleRect.y + 20)
+  })
+
+  it('source neexistuje → vrátí null a vypíše warn', () => {
+    const ctx = makeCtx()
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = duplicateObject(ctx, 'neexistuje')
+    warnSpy.mockRestore()
+
+    expect(result).toBeNull()
+    expect(ctx.objects.length).toBe(0)
+  })
+
+  it('respektuje custom offset', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+
+    const dup = duplicateObject(ctx, 'r1', { x: 5, y: 10 })
+
+    expect(dup!.x).toBe(sampleRect.x + 5)
+    expect(dup!.y).toBe(sampleRect.y + 10)
+  })
+
+  it('zachová type + type-specific fields (fill pro rectangle)', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+
+    const dup = duplicateObject(ctx, 'r1') as RectangleObject
+
+    expect(dup.type).toBe('rectangle')
+    expect(dup.fill).toBe(sampleRect.fill)
+    expect(dup.width).toBe(sampleRect.width)
+    expect(dup.height).toBe(sampleRect.height)
+    expect(dup.rotation).toBe(sampleRect.rotation)
+    expect(dup.opacity).toBe(sampleRect.opacity)
+  })
+
+  it('zachová type + type-specific fields pro TextObject', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registerObjectType<any>({
+      type: 'text',
+      defaultProps: () => ({
+        x: 0,
+        y: 0,
+        width: 240,
+        height: 40,
+        text: 'Hello',
+        fontSize: 24,
+        fontWeight: 'normal',
+        color: 0x000000,
+        align: 'left',
+        rotation: 0,
+        opacity: 1,
+      }),
+    })
+
+    const ctx = makeCtx()
+    const textObj = {
+      id: 't1',
+      type: 'text' as const,
+      x: 50,
+      y: 50,
+      width: 240,
+      height: 40,
+      text: 'Hello',
+      fontSize: 24,
+      fontWeight: 'normal' as const,
+      color: 0x000000,
+      align: 'left' as const,
+      rotation: 0,
+      opacity: 1,
+    }
+    addObject(ctx, textObj)
+
+    const dup = duplicateObject(ctx, 't1') as typeof textObj
+
+    expect(dup.type).toBe('text')
+    expect(dup.text).toBe('Hello')
+    expect(dup.fontSize).toBe(24)
+    expect(dup.color).toBe(0x000000)
+    expect(dup.id).not.toBe('t1')
+  })
+
+  it('duplikát je na konci Y.Array (nejvyšší z-order)', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+    addObject(ctx, { ...sampleRect, id: 'r2' })
+
+    const dup = duplicateObject(ctx, 'r1')!
+
+    expect(ctx.objects.length).toBe(3)
+    const last = ctx.objects.get(ctx.objects.length - 1)
+    expect(last.get('id')).toBe(dup.id)
+  })
+
+  it('single transaction — observer fires 1× pro add', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+
+    let fireCount = 0
+    ctx.objects.observe(() => {
+      fireCount++
+    })
+
+    duplicateObject(ctx, 'r1')
+
+    expect(fireCount).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// bulkUpdateObjects
+// ---------------------------------------------------------------------------
+
+describe('bulkUpdateObjects', () => {
+  const r1: RectangleObject = { ...sampleRect, id: 'r1' }
+  const r2: RectangleObject = { ...sampleRect, id: 'r2', x: 200, y: 200 }
+  const r3: RectangleObject = { ...sampleRect, id: 'r3', x: 300, y: 300 }
+
+  it('3 updates — všechny aplikovány, observer fires 1×', () => {
+    const ctx = makeCtx()
+    addObject(ctx, r1)
+    addObject(ctx, r2)
+    addObject(ctx, r3)
+
+    // observeDeep zachytí i nested Y.Map property changes (na rozdíl od observe)
+    let fireCount = 0
+    ctx.objects.observeDeep(() => {
+      fireCount++
+    })
+
+    const updates: BulkUpdate[] = [
+      { id: 'r1', patch: { x: 11 } },
+      { id: 'r2', patch: { x: 22 } },
+      { id: 'r3', patch: { x: 33 } },
+    ]
+    bulkUpdateObjects(ctx, updates)
+
+    expect(fireCount).toBe(1)
+
+    const plain1 = yMapToPlainObject<RectangleObject>(ctx.objects.get(0))
+    const plain2 = yMapToPlainObject<RectangleObject>(ctx.objects.get(1))
+    const plain3 = yMapToPlainObject<RectangleObject>(ctx.objects.get(2))
+    expect(plain1.x).toBe(11)
+    expect(plain2.x).toBe(22)
+    expect(plain3.x).toBe(33)
+  })
+
+  it('1 neexistující id + 2 validní → 2 aplikovány, 1 warn, observer fires 1×', () => {
+    const ctx = makeCtx()
+    addObject(ctx, r1)
+    addObject(ctx, r2)
+
+    let fireCount = 0
+    ctx.objects.observeDeep(() => {
+      fireCount++
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const updates: BulkUpdate[] = [
+      { id: 'neexistuje', patch: { x: 999 } },
+      { id: 'r1', patch: { x: 111 } },
+      { id: 'r2', patch: { x: 222 } },
+    ]
+    bulkUpdateObjects(ctx, updates)
+    const warnCalls = warnSpy.mock.calls.length
+    warnSpy.mockRestore()
+
+    expect(warnCalls).toBe(1)
+    expect(fireCount).toBe(1)
+
+    const plain1 = yMapToPlainObject<RectangleObject>(ctx.objects.get(0))
+    const plain2 = yMapToPlainObject<RectangleObject>(ctx.objects.get(1))
+    expect(plain1.x).toBe(111)
+    expect(plain2.x).toBe(222)
+  })
+
+  it('prázdné updates → no-op, žádný observer fire', () => {
+    const ctx = makeCtx()
+    addObject(ctx, r1)
+
+    let fireCount = 0
+    ctx.objects.observe(() => {
+      fireCount++
+    })
+
+    bulkUpdateObjects(ctx, [])
+
+    expect(fireCount).toBe(0)
+  })
+
+  it('undo vrátí celou batch v jednom kroku', () => {
+    const ctx = makeFullCtx()
+
+    // Přidáme objekty bez UndoManageru — tyto operace nebudou v undo stacku
+    addObject(ctx, r1)
+    addObject(ctx, r2)
+
+    // Zapamatujeme si původní hodnoty
+    const origX1 = yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x
+    const origX2 = yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x
+
+    // UndoManager vytvoříme až po addObject — bude trackovat jen bulkUpdate
+    const um = createUndoManager(ctx)
+
+    const updates: BulkUpdate[] = [
+      { id: 'r1', patch: { x: 500 } },
+      { id: 'r2', patch: { x: 600 } },
+    ]
+    bulkUpdateObjects(ctx, updates)
+
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x).toBe(500)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x).toBe(600)
+
+    um.undo()
+
+    // Objekty stále existují (addObject nebylo undo-ováno), jen x se vrátil
+    expect(ctx.objects.length).toBe(2)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x).toBe(origX1)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x).toBe(origX2)
   })
 })

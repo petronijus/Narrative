@@ -355,3 +355,38 @@ describe('Inspector — Animations section', () => {
     expect(mockRemoveAnimation).toHaveBeenCalledWith(expect.anything(), 'anim-delete-me')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Multi-select placeholder (M7)
+// ---------------------------------------------------------------------------
+
+describe('Inspector — multi-select placeholder', () => {
+  it('zobrazí multi-select placeholder pro >1 selected', () => {
+    mockObjects.length = 0
+    mockObjects.push(RECT_OBJ, ELLIPSE_OBJ)
+
+    const mutationCtx = createMutationCtx()
+    const ctxValue = createContextValue(mutationCtx)
+
+    function MultiSelectInner() {
+      const { selectMany } = useSelection()
+      useEffect(() => {
+        selectMany([RECT_OBJ.id, ELLIPSE_OBJ.id])
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return <Inspector />
+    }
+
+    render(
+      <SlideDocContext.Provider value={ctxValue}>
+        <SelectionProvider>
+          <MultiSelectInner />
+        </SelectionProvider>
+      </SlideDocContext.Provider>,
+    )
+
+    expect(screen.getByText(/Multi-select/)).toBeInTheDocument()
+    expect(screen.getByText(/2 objects selected/)).toBeInTheDocument()
+    expect(screen.queryByText('Position')).not.toBeInTheDocument()
+  })
+})

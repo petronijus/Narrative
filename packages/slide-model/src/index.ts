@@ -21,8 +21,10 @@ export {
   removeObject,
   updateObject,
   createObjectOfType,
+  duplicateObject,
+  bulkUpdateObjects,
 } from './mutations.js'
-export type { MutationContext } from './mutations.js'
+export type { MutationContext, BulkUpdate } from './mutations.js'
 
 // Mutations — animations (M6)
 export {

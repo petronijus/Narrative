@@ -112,9 +112,22 @@ function Section({ title, children }: SectionProps) {
 // ---------------------------------------------------------------------------
 
 export function Inspector() {
-  const { selectedId } = useSelection()
+  const { selectedIds, selectedId } = useSelection()
   const { objects, mutationCtx } = useSlideObjects()
   const { animations, mutationCtx: animMutationCtx } = useAnimations()
+
+  // Multi-select placeholder
+  if (selectedIds.size > 1) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-3 text-center">
+        <p className="text-xs text-gray-500">
+          Multi-select — {selectedIds.size} objects selected.
+          <br />
+          Inspector not supported yet.
+        </p>
+      </div>
+    )
+  }
 
   if (selectedId === null) {
     return (

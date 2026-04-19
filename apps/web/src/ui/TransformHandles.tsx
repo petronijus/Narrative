@@ -1,0 +1,472 @@
+/**
+ * ui/TransformHandles.tsx
+ *
+ * Transform handles pro single/multi-select objekty v editoru (M7).
+ *
+ * Renderuje:
+ * - 1 selection outline (obdélník / rotovaný polygon)
+ * - 8 resize handles (TL, TC, TR, ML, MR, BL, BC, BR)
+ * - 1 rotation handle (nad TC, 24px offset)
+ *
+ * Implementace jako DOM overlay (absolutně pozicované divy nad canvas containerem).
+ * Nepoužívá OverlayCompositor.registerOverlay pro handles — ty jsou DOM-only
+ * (nepotřebují Pixi Container tracking, souřadnice čteme přímo z SceneGraph.getBounds).
+ *
+ * Single-select: rotation-aware outline + handles v rotated coordinate system.
+ * Multi-select: AABB outline (rotation=0) + handles, bez rotation handle.
+ *
+ * Resize matematika:
+ * - Corner handles: free resize (Shift = aspect lock). Opposite corner zůstane fixní.
+ * - Edge handles: resize jen v jedné ose.
+ * - Rotation: atan2 od středu objektu.
+ *
+ * M14: Multi-select group resize + keyboard focus ring pro handles.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { SceneGraph } from '../renderer/SceneGraph.js'
+import type { ObjectBounds } from '../renderer/types.js'
+import type { MutationContext, BulkUpdate } from '@narrative/slide-model'
+import { bulkUpdateObjects } from '@narrative/slide-model'
+import { computeSnap } from '../editor/snap.js'
+import type { SnapGuide } from '../editor/snap.js'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type HandleKind = 'TL' | 'TC' | 'TR' | 'ML' | 'MR' | 'BL' | 'BC' | 'BR' | 'rotate'
+
+interface HandlePoint {
+  kind: HandleKind
+  x: number
+  y: number
+  cursor: string
+  ariaLabel: string
+}
+
+interface DragState {
+  kind: HandleKind
+  startMouseX: number
+  startMouseY: number
+  bounds: ObjectBounds
+  objectIds: string[]
+  /** Počáteční bounds všech vybraných objektů (pro group drag) */
+  allInitialBounds: Array<{ id: string; x: number; y: number; w: number; h: number }>
+}
+
+export interface TransformHandlesProps {
+  objectIds: string[]
+  sceneGraph: SceneGraph
+  mutationCtx: MutationContext
+  /** Callback pro předání aktivních snap guides do EditorLayout (vizualizace). */
+  onSnapGuides?: (guides: SnapGuide[]) => void
+  /** Bounds ostatních objektů pro snapping (all objects minus selected). */
+  otherBounds: Array<{ id: string; x: number; y: number; width: number; height: number }>
+}
+
+// ---------------------------------------------------------------------------
+// Handle geometry helpers
+// ---------------------------------------------------------------------------
+
+const HANDLE_SIZE = 8
+const ROTATION_OFFSET = 24
+
+/**
+ * Interpoluje bod mezi dvěma body (pro edge midpoints).
+ */
+function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
+/**
+ * Vypočítá pozice 8 resize handles + 1 rotation handle z ObjectBounds.
+ * Pro single-select s rotací: handles jsou v rotated space (z corners).
+ * Pro multi-select (rotation=0): handles jsou na AABB.
+ */
+function computeHandlePoints(bounds: ObjectBounds): HandlePoint[] {
+  const [tl, tr, br, bl] = bounds.corners
+
+  if (tl === undefined || tr === undefined || br === undefined || bl === undefined) {
+    return []
+  }
+
+  const tc = midpoint(tl, tr)
+  const bc = midpoint(bl, br)
+  const ml = midpoint(tl, bl)
+  const mr = midpoint(tr, br)
+
+  // Rotation handle: 24px v směru "nahoru" z TC (v local space = -Y direction)
+  // Vypočítáme normal z TR-TL (horní hrana)
+  const edgeDx = tr.x - tl.x
+  const edgeDy = tr.y - tl.y
+  const edgeLen = Math.sqrt(edgeDx * edgeDx + edgeDy * edgeDy) || 1
+  // Normál kolmý na horní hranu, směřující "ven" (nahoru v local space)
+  const normalX = -edgeDy / edgeLen
+  const normalY = edgeDx / edgeLen
+
+  const rotHandle: HandlePoint = {
+    kind: 'rotate',
+    x: tc.x + normalX * ROTATION_OFFSET,
+    y: tc.y + normalY * ROTATION_OFFSET,
+    cursor: 'grab',
+    ariaLabel: 'Rotate handle',
+  }
+
+  return [
+    { kind: 'TL', x: tl.x, y: tl.y, cursor: 'nwse-resize', ariaLabel: 'Resize top-left handle' },
+    { kind: 'TC', x: tc.x, y: tc.y, cursor: 'ns-resize', ariaLabel: 'Resize top-center handle' },
+    { kind: 'TR', x: tr.x, y: tr.y, cursor: 'nesw-resize', ariaLabel: 'Resize top-right handle' },
+    { kind: 'ML', x: ml.x, y: ml.y, cursor: 'ew-resize', ariaLabel: 'Resize middle-left handle' },
+    { kind: 'MR', x: mr.x, y: mr.y, cursor: 'ew-resize', ariaLabel: 'Resize middle-right handle' },
+    { kind: 'BL', x: bl.x, y: bl.y, cursor: 'nesw-resize', ariaLabel: 'Resize bottom-left handle' },
+    { kind: 'BC', x: bc.x, y: bc.y, cursor: 'ns-resize', ariaLabel: 'Resize bottom-center handle' },
+    {
+      kind: 'BR',
+      x: br.x,
+      y: br.y,
+      cursor: 'nwse-resize',
+      ariaLabel: 'Resize bottom-right handle',
+    },
+    rotHandle,
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Resize math
+// ---------------------------------------------------------------------------
+
+interface ResizeResult {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * Vypočítá nové bounds po resize handleu.
+ * Opposite corner/edge zůstane fixní.
+ * shiftAspect = true → aspect lock (pouze pro corner handles).
+ */
+function computeResize(
+  handle: HandleKind,
+  initial: { x: number; y: number; w: number; h: number },
+  dx: number,
+  dy: number,
+  shiftAspect: boolean,
+): ResizeResult {
+  let { x, y, w: width, h: height } = initial
+
+  switch (handle) {
+    case 'TL': {
+      width = Math.max(1, initial.w - dx)
+      height = Math.max(1, initial.h - dy)
+      if (shiftAspect) {
+        const ratio = initial.w / initial.h
+        if (Math.abs(dx) > Math.abs(dy)) {
+          height = width / ratio
+        } else {
+          width = height * ratio
+        }
+      }
+      x = initial.x + initial.w - width
+      y = initial.y + initial.h - height
+      break
+    }
+    case 'TR': {
+      width = Math.max(1, initial.w + dx)
+      height = Math.max(1, initial.h - dy)
+      if (shiftAspect) {
+        const ratio = initial.w / initial.h
+        if (Math.abs(dx) > Math.abs(dy)) {
+          height = width / ratio
+        } else {
+          width = height * ratio
+        }
+      }
+      x = initial.x
+      y = initial.y + initial.h - height
+      break
+    }
+    case 'BR': {
+      width = Math.max(1, initial.w + dx)
+      height = Math.max(1, initial.h + dy)
+      if (shiftAspect) {
+        const ratio = initial.w / initial.h
+        if (Math.abs(dx) > Math.abs(dy)) {
+          height = width / ratio
+        } else {
+          width = height * ratio
+        }
+      }
+      x = initial.x
+      y = initial.y
+      break
+    }
+    case 'BL': {
+      width = Math.max(1, initial.w - dx)
+      height = Math.max(1, initial.h + dy)
+      if (shiftAspect) {
+        const ratio = initial.w / initial.h
+        if (Math.abs(dx) > Math.abs(dy)) {
+          height = width / ratio
+        } else {
+          width = height * ratio
+        }
+      }
+      x = initial.x + initial.w - width
+      y = initial.y
+      break
+    }
+    case 'TC': {
+      height = Math.max(1, initial.h - dy)
+      x = initial.x
+      y = initial.y + initial.h - height
+      width = initial.w
+      break
+    }
+    case 'BC': {
+      height = Math.max(1, initial.h + dy)
+      x = initial.x
+      y = initial.y
+      width = initial.w
+      break
+    }
+    case 'ML': {
+      width = Math.max(1, initial.w - dx)
+      x = initial.x + initial.w - width
+      y = initial.y
+      height = initial.h
+      break
+    }
+    case 'MR': {
+      width = Math.max(1, initial.w + dx)
+      x = initial.x
+      y = initial.y
+      height = initial.h
+      break
+    }
+    default:
+      break
+  }
+
+  return { x, y, width, height }
+}
+
+// ---------------------------------------------------------------------------
+// Outline polygon helper
+// ---------------------------------------------------------------------------
+
+/** Vrátí SVG polygon points string ze 4 corners. */
+function cornersToSvgPoints(corners: Array<{ x: number; y: number }>): string {
+  return corners.map((c) => `${c.x},${c.y}`).join(' ')
+}
+
+// ---------------------------------------------------------------------------
+// TransformHandles component
+// ---------------------------------------------------------------------------
+
+export function TransformHandles({
+  objectIds,
+  sceneGraph,
+  mutationCtx,
+  onSnapGuides,
+  otherBounds,
+}: TransformHandlesProps) {
+  const dragRef = useRef<DragState | null>(null)
+  const [, forceUpdate] = useState(0)
+
+  // Bounds pro render (re-fetch každý render z SceneGraph)
+  const bounds: ObjectBounds | null =
+    objectIds.length === 1
+      ? sceneGraph.getBounds(objectIds[0] ?? '')
+      : objectIds.length > 1
+        ? sceneGraph.getMultiBounds(objectIds)
+        : null
+
+  const isMulti = objectIds.length > 1
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, kind: HandleKind) => {
+      e.stopPropagation()
+      e.preventDefault()
+
+      const currentBounds =
+        objectIds.length === 1
+          ? sceneGraph.getBounds(objectIds[0] ?? '')
+          : sceneGraph.getMultiBounds(objectIds)
+
+      if (currentBounds === null) return
+
+      // Sberi initial bounds všech vybraných objektů
+      const allInitialBounds = objectIds.flatMap((id) => {
+        const b = sceneGraph.getBounds(id)
+        if (b === null) return []
+        return [{ id, x: b.world.x, y: b.world.y, w: b.world.width, h: b.world.height }]
+      })
+
+      dragRef.current = {
+        kind,
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        bounds: currentBounds,
+        objectIds: [...objectIds],
+        allInitialBounds,
+      }
+      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+    },
+    [objectIds, sceneGraph],
+  )
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      const drag = dragRef.current
+      if (drag === null) return
+
+      const dx = e.clientX - drag.startMouseX
+      const dy = e.clientY - drag.startMouseY
+
+      const shiftHeld = e.shiftKey
+
+      if (drag.kind === 'rotate') {
+        // Rotation handle — pouze single-select
+        const center = drag.bounds.center
+        const startAngle = Math.atan2(drag.startMouseY - center.y, drag.startMouseX - center.x)
+        const currentAngle = Math.atan2(e.clientY - center.y, e.clientX - center.x)
+        const deltaAngle = currentAngle - startAngle
+        const initialRotation = drag.bounds.rotation
+        const newRotation = initialRotation + deltaAngle
+
+        if (drag.objectIds.length === 1) {
+          const id = drag.objectIds[0]
+          if (id !== undefined) {
+            bulkUpdateObjects(mutationCtx, [{ id, patch: { rotation: newRotation } }])
+          }
+        }
+        return
+      }
+
+      if (drag.objectIds.length === 1) {
+        // Single-select resize
+        const initial = drag.allInitialBounds[0]
+        if (initial === undefined) return
+
+        const newRect = computeResize(drag.kind, initial, dx, dy, shiftHeld)
+
+        // Snap
+        const snapResult = computeSnap(
+          { x: newRect.x, y: newRect.y, width: newRect.width, height: newRect.height },
+          otherBounds,
+        )
+
+        const snappedX = newRect.x + snapResult.dx
+        const snappedY = newRect.y + snapResult.dy
+
+        onSnapGuides?.(snapResult.guides)
+
+        const id = drag.objectIds[0]
+        if (id !== undefined) {
+          bulkUpdateObjects(mutationCtx, [
+            {
+              id,
+              patch: {
+                x: snappedX,
+                y: snappedY,
+                width: newRect.width,
+                height: newRect.height,
+              },
+            },
+          ])
+        }
+      } else {
+        // Multi-select: pouze translation (M14: group resize)
+        const updates: BulkUpdate[] = drag.allInitialBounds.map((init) => ({
+          id: init.id,
+          patch: {
+            x: init.x + dx,
+            y: init.y + dy,
+          },
+        }))
+        bulkUpdateObjects(mutationCtx, updates)
+        onSnapGuides?.([])
+      }
+
+      // Force re-render aby handles sledovaly novou pozici
+      forceUpdate((n) => n + 1)
+    },
+    [mutationCtx, otherBounds, onSnapGuides],
+  )
+
+  const handlePointerUp = useCallback(() => {
+    dragRef.current = null
+    onSnapGuides?.([])
+  }, [onSnapGuides])
+
+  // Global pointermove/pointerup pro drag (capture na handle elementu)
+  useEffect(() => {
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [handlePointerMove, handlePointerUp])
+
+  if (bounds === null || objectIds.length === 0) return null
+
+  const handlePoints = computeHandlePoints(bounds)
+  // Multi-select: skip rotation handle
+  const visibleHandles = isMulti ? handlePoints.filter((h) => h.kind !== 'rotate') : handlePoints
+
+  // Outline: SVG polygon přes 4 corners
+  const [tl, tr, br, bl] = bounds.corners
+  if (tl === undefined || tr === undefined || br === undefined || bl === undefined) return null
+
+  const svgMinX = Math.min(tl.x, tr.x, br.x, bl.x) - 2
+  const svgMinY = Math.min(tl.y, tr.y, br.y, bl.y) - 2
+  const svgMaxX = Math.max(tl.x, tr.x, br.x, bl.x) + 2
+  const svgMaxY = Math.max(tl.y, tr.y, br.y, bl.y) + 2
+  const svgW = svgMaxX - svgMinX
+  const svgH = svgMaxY - svgMinY
+
+  return (
+    <>
+      {/* Selection outline jako SVG polygon — rotation-aware */}
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 top-0 overflow-visible"
+        style={{ width: svgW, height: svgH, transform: `translate(${svgMinX}px, ${svgMinY}px)` }}
+      >
+        <polygon
+          points={cornersToSvgPoints(
+            bounds.corners.map((c) => ({ x: c.x - svgMinX, y: c.y - svgMinY })),
+          )}
+          fill="none"
+          stroke="#60a5fa"
+          strokeWidth="1.5"
+          strokeDasharray={isMulti ? '4 3' : undefined}
+        />
+      </svg>
+
+      {/* Transform handles */}
+      {visibleHandles.map((h) => (
+        <div
+          key={h.kind}
+          role="button"
+          aria-label={h.ariaLabel}
+          tabIndex={-1}
+          className="absolute box-border border-2 border-blue-400 bg-white"
+          style={{
+            left: h.x - HANDLE_SIZE / 2,
+            top: h.y - HANDLE_SIZE / 2,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+            cursor: h.cursor,
+            borderRadius: h.kind === 'rotate' ? '50%' : 0,
+          }}
+          onPointerDown={(e) => handlePointerDown(e, h.kind)}
+        />
+      ))}
+    </>
+  )
+}

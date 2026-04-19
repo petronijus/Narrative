@@ -19,10 +19,11 @@
  * - applyChanges(ObjectChangeSet) — incremental diff s patch-based updates.
  */
 
-import { Container } from 'pixi.js'
+import { Container, Point } from 'pixi.js'
 import type { Application } from 'pixi.js'
 import { getRenderer } from './objectRenderers'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
+import type { ObjectBounds } from './types'
 
 interface SceneNode {
   container: Container
@@ -41,6 +42,12 @@ export class SceneGraph {
    * Plněna při addObject/applyChanges.added, mazána při removeObject/applyChanges.removed.
    */
   private readonly nodeTypes = new Map<string, SlideObjectType>()
+  /**
+   * Scratch Point pro hitTest — reuse per-frame, žádný GC churn.
+   * Inicializován lazily při prvním hitTest volání.
+   */
+  private _hitTestWorldPoint: Point | null = null
+  private _hitTestLocalPoint: Point | null = null
 
   constructor(app: Application) {
     this.app = app
@@ -214,15 +221,33 @@ export class SceneGraph {
    * Hit test v world-space souřadnicích.
    * Vrací ID nejhořejšího objektu na daném bodě (z-order: poslední = nahoře), nebo null.
    *
-   * Implementace: AABB (axis-aligned bounding box) — ignoruje rotaci objektu.
-   * Rotated hit test přidáme v M7 (transform handles).
-   * TODO(M7): Použít rotovaný OBB (oriented bounding box) pro přesný hit test.
+   * M7: Respektuje rotaci objektu pomocí Pixi container.toLocal() — transformuje
+   * world point do object-local space (zohledňuje pivot + rotaci) a testuje vůči
+   * local AABB (0,0) → (width, height).
+   *
+   * Pro rotation=0 je výsledek identický s původním AABB chováním (backward compat).
+   *
+   * TODO(M29 / ellipse polish): Striktní elliptic hit test v ellipse rovnici
+   * (x/a)²+(y/b)²≤1 místo AABB. Pro M7 editor UX je AABB dostatečně user-friendly.
+   *
+   * Performance: scratch Point objekty jsou reused mezi voláními — žádný GC churn
+   * na per-frame hot path.
    *
    * @param worldX - X souřadnice v Pixi world space
    * @param worldY - Y souřadnice v Pixi world space
    * @returns ID objektu nebo null pokud není žádný hit
    */
   hitTest(worldX: number, worldY: number): string | null {
+    // Lazy init scratch points — Point konstruktor vyžaduje Pixi runtime
+    if (this._hitTestWorldPoint === null) {
+      this._hitTestWorldPoint = new Point()
+      this._hitTestLocalPoint = new Point()
+    }
+    const worldPoint = this._hitTestWorldPoint
+    const localPoint = this._hitTestLocalPoint!
+
+    worldPoint.set(worldX, worldY)
+
     // Iterujeme v reverse insertion order — poslední přidaný je nahoře (highest z-order)
     const entries = [...this.nodes.entries()]
 
@@ -230,15 +255,138 @@ export class SceneGraph {
       const entry = entries[i]
       if (entry === undefined) continue
       const [id, node] = entry
-      const { x, y, width, height } = node.data
+      const { width, height } = node.data
 
-      // AABB: bounding box vychází z dat objektu (left-top origin)
-      if (worldX >= x && worldX <= x + width && worldY >= y && worldY <= y + height) {
+      // Transformace world → object local space (respektuje pivot + rotaci)
+      // container.toLocal() je Pixi v8 public API, zohledňuje celou transform chain
+      node.container.toLocal(worldPoint, undefined, localPoint)
+
+      // Test vůči local AABB: objekt je renderován od (0,0) do (width, height)
+      if (
+        localPoint.x >= 0 &&
+        localPoint.x <= width &&
+        localPoint.y >= 0 &&
+        localPoint.y <= height
+      ) {
         return id
       }
     }
 
     return null
+  }
+
+  /**
+   * Vrátí bounds objektu v různých formách pro editor-ui.
+   *
+   * world: AABB v world coords (axis-aligned bounding box rotovaného obdélníku).
+   * corners: 4 rohy v world coords po aplikaci rotace (TL, TR, BR, BL clockwise).
+   * center: střed objektu = container.x/y (pivot point po offsetu).
+   * rotation: container.rotation v radiánech.
+   *
+   * Výpočet corners: z definice objektu (data.width × height) s pivot na středu,
+   * container.x/y je středový bod. Aplikujeme rotaci ručně z local corners → world.
+   *
+   * @param id - ID objektu
+   * @returns ObjectBounds nebo null pokud objekt neexistuje
+   */
+  getBounds(id: string): ObjectBounds | null {
+    const node = this.nodes.get(id)
+    if (node === undefined) return null
+
+    const { container, data } = node
+    const w = data.width
+    const h = data.height
+    // container.x/y je střed objektu (pivot = w/2, h/2 nastavuje renderer)
+    const cx = container.x
+    const cy = container.y
+    const θ = container.rotation
+
+    const cosθ = Math.cos(θ)
+    const sinθ = Math.sin(θ)
+
+    const halfW = w / 2
+    const halfH = h / 2
+
+    // Local corners relativně ke středu (před rotací)
+    const localCorners = [
+      { x: -halfW, y: -halfH }, // TL
+      { x: halfW, y: -halfH }, // TR
+      { x: halfW, y: halfH }, // BR
+      { x: -halfW, y: halfH }, // BL
+    ]
+
+    // Transformace do world space: rotace kolem středu + posun na cx/cy
+    const corners = localCorners.map((p) => ({
+      x: cx + p.x * cosθ - p.y * sinθ,
+      y: cy + p.x * sinθ + p.y * cosθ,
+    }))
+
+    // AABB z world corners
+    const xs = corners.map((c) => c.x)
+    const ys = corners.map((c) => c.y)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+
+    return {
+      world: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+      corners,
+      center: { x: cx, y: cy },
+      rotation: θ,
+    }
+  }
+
+  /**
+   * Vrátí union bounds pro skupinu objektů (multi-select).
+   *
+   * Výsledný AABB je sjednocením world AABB všech zadaných objektů.
+   * rotation je vždy 0 — multi-select group nemá vlastní rotaci
+   * (transform handles pro group rotation jsou editor-ui concern).
+   * corners odpovídají rohům merged AABB (axis-aligned).
+   * center je střed merged AABB.
+   *
+   * Objekty, které neexistují v scene graph, jsou tiše ignorovány.
+   * Vrátí null pokud žádný ze zadaných ids neexistuje.
+   *
+   * @param ids - pole ID objektů
+   * @returns union ObjectBounds nebo null
+   */
+  getMultiBounds(ids: string[]): ObjectBounds | null {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    let found = false
+
+    for (const id of ids) {
+      const b = this.getBounds(id)
+      if (b === null) continue
+      found = true
+      if (b.world.x < minX) minX = b.world.x
+      if (b.world.y < minY) minY = b.world.y
+      if (b.world.x + b.world.width > maxX) maxX = b.world.x + b.world.width
+      if (b.world.y + b.world.height > maxY) maxY = b.world.y + b.world.height
+    }
+
+    if (!found) return null
+
+    const w = maxX - minX
+    const h = maxY - minY
+    const cx = minX + w / 2
+    const cy = minY + h / 2
+
+    return {
+      world: { x: minX, y: minY, width: w, height: h },
+      corners: [
+        { x: minX, y: minY }, // TL
+        { x: maxX, y: minY }, // TR
+        { x: maxX, y: maxY }, // BR
+        { x: minX, y: maxY }, // BL
+      ],
+      center: { x: cx, y: cy },
+      rotation: 0,
+    }
   }
 
   /**

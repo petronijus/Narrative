@@ -1,0 +1,209 @@
+/**
+ * editor/snap.ts
+ *
+ * Snapping engine pro editor-ui (M7).
+ *
+ * Logika:
+ * - Pro každý z 6 "strings" proposedBounds (left, centerX, right, top, centerY, bottom):
+ *   najdi nejbližší match v otherObjects do threshold px.
+ * - Grid fallback: pokud žádný object snap, zaokrouhli na gridSize násobky.
+ * - Vrátí korekci (dx, dy) a SnapGuide[] pro vizualizaci.
+ *
+ * Bez externích závislostí, čistá matematika — snadno testovatelné.
+ */
+
+export interface SnapGuide {
+  kind: 'vertical' | 'horizontal'
+  /** Světová souřadnice — x pro vertical, y pro horizontal */
+  position: number
+  /** Segment pro vizualizaci */
+  range: { start: number; end: number }
+}
+
+export interface SnapResult {
+  dx: number
+  dy: number
+  guides: SnapGuide[]
+}
+
+export interface BoundsRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface OtherObjectBounds extends BoundsRect {
+  id: string
+}
+
+/**
+ * Vypočítá snap korekci a guideline pro drag/resize operace.
+ *
+ * @param proposedBounds - Navrhované bounds po aktuálním dragu (před snap korekcí)
+ * @param otherObjectBounds - Bounds ostatních objektů na slidu
+ * @param gridSize - Velikost mřížky pro grid snap (default 10px)
+ * @param threshold - Tolerance v px pro object snap (default 6px)
+ */
+export function computeSnap(
+  proposedBounds: BoundsRect,
+  otherObjectBounds: OtherObjectBounds[],
+  gridSize: number = 10,
+  threshold: number = 6,
+): SnapResult {
+  const { x, y, width, height } = proposedBounds
+
+  // 6 "edge strings" navrhovaných bounds
+  const proposedLeft = x
+  const proposedCenterX = x + width / 2
+  const proposedRight = x + width
+  const proposedTop = y
+  const proposedCenterY = y + height / 2
+  const proposedBottom = y + height
+
+  let bestDx: number | null = null
+  let bestDy: number | null = null
+  let bestDxDist = threshold + 1
+  let bestDyDist = threshold + 1
+
+  const guides: SnapGuide[] = []
+
+  // Kandidáti pro snap guides — hromadíme a vybereme nejbližší
+  const verticalCandidates: Array<{
+    dx: number
+    dist: number
+    position: number
+    rangeStart: number
+    rangeEnd: number
+  }> = []
+  const horizontalCandidates: Array<{
+    dy: number
+    dist: number
+    position: number
+    rangeStart: number
+    rangeEnd: number
+  }> = []
+
+  for (const other of otherObjectBounds) {
+    const otherLeft = other.x
+    const otherCenterX = other.x + other.width / 2
+    const otherRight = other.x + other.width
+    const otherTop = other.y
+    const otherCenterY = other.y + other.height / 2
+    const otherBottom = other.y + other.height
+
+    // Vertical snap candidates (X axis alignment)
+    const xPairs: Array<[number, number]> = [
+      [proposedLeft, otherLeft],
+      [proposedLeft, otherCenterX],
+      [proposedLeft, otherRight],
+      [proposedCenterX, otherLeft],
+      [proposedCenterX, otherCenterX],
+      [proposedCenterX, otherRight],
+      [proposedRight, otherLeft],
+      [proposedRight, otherCenterX],
+      [proposedRight, otherRight],
+    ]
+
+    for (const [proposedEdge, otherEdge] of xPairs) {
+      const dist = Math.abs(proposedEdge - otherEdge)
+      if (dist <= threshold) {
+        const delta = otherEdge - proposedEdge
+        // Range: min/max Y pro vizualizaci guide line
+        const rangeStart = Math.min(y, other.y)
+        const rangeEnd = Math.max(y + height, other.y + other.height)
+        verticalCandidates.push({
+          dx: delta,
+          dist,
+          position: otherEdge,
+          rangeStart,
+          rangeEnd,
+        })
+      }
+    }
+
+    // Horizontal snap candidates (Y axis alignment)
+    const yPairs: Array<[number, number]> = [
+      [proposedTop, otherTop],
+      [proposedTop, otherCenterY],
+      [proposedTop, otherBottom],
+      [proposedCenterY, otherTop],
+      [proposedCenterY, otherCenterY],
+      [proposedCenterY, otherBottom],
+      [proposedBottom, otherTop],
+      [proposedBottom, otherCenterY],
+      [proposedBottom, otherBottom],
+    ]
+
+    for (const [proposedEdge, otherEdge] of yPairs) {
+      const dist = Math.abs(proposedEdge - otherEdge)
+      if (dist <= threshold) {
+        const delta = otherEdge - proposedEdge
+        const rangeStart = Math.min(x, other.x)
+        const rangeEnd = Math.max(x + width, other.x + other.width)
+        horizontalCandidates.push({
+          dy: delta,
+          dist,
+          position: otherEdge,
+          rangeStart,
+          rangeEnd,
+        })
+      }
+    }
+  }
+
+  // Vyber nejbližší vertical candidate
+  for (const c of verticalCandidates) {
+    if (c.dist < bestDxDist) {
+      bestDxDist = c.dist
+      bestDx = c.dx
+    }
+  }
+
+  // Vyber nejbližší horizontal candidate
+  for (const c of horizontalCandidates) {
+    if (c.dist < bestDyDist) {
+      bestDyDist = c.dist
+      bestDy = c.dy
+    }
+  }
+
+  // Emit guides jen pro nejbližší dx/dy
+  if (bestDx !== null) {
+    // Najdi všechny candidates se stejným dx (může být víc snap lines se stejnou korekcí)
+    for (const c of verticalCandidates) {
+      if (c.dx === bestDx) {
+        guides.push({
+          kind: 'vertical',
+          position: c.position,
+          range: { start: c.rangeStart, end: c.rangeEnd },
+        })
+      }
+    }
+  }
+
+  if (bestDy !== null) {
+    for (const c of horizontalCandidates) {
+      if (c.dy === bestDy) {
+        guides.push({
+          kind: 'horizontal',
+          position: c.position,
+          range: { start: c.rangeStart, end: c.rangeEnd },
+        })
+      }
+    }
+  }
+
+  // Grid fallback: pokud žádný object snap, zaokrouhli na gridSize násobky
+  const finalDx =
+    bestDx !== null ? bestDx : Math.round(proposedLeft / gridSize) * gridSize - proposedLeft
+
+  const finalDy =
+    bestDy !== null ? bestDy : Math.round(proposedTop / gridSize) * gridSize - proposedTop
+
+  return {
+    dx: finalDx,
+    dy: finalDy,
+    guides,
+  }
+}

@@ -8,7 +8,7 @@
  * všechny mutace jdou přes toto API.
  */
 
-import type * as Y from 'yjs'
+import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/shared'
 import { plainObjectToYMap } from './bindings.js'
@@ -101,6 +101,87 @@ export function createObjectOfType(
   addObject(ctx, obj)
 
   return obj
+}
+
+/**
+ * Duplikuje existující objekt — vytvoří kopii s novým id a volitelným posunem.
+ *
+ * - Offset default: { x: 20, y: 20 } aby byl duplikát viditelně posunutý.
+ * - Duplikát je přidán na konec Y.Array (nejvyšší z-order).
+ * - Celá operace v jedné transakci → jeden undo krok.
+ *
+ * @returns Plain object nově přidaného duplikátu, nebo null pokud source neexistuje.
+ */
+export function duplicateObject(
+  ctx: MutationContext,
+  id: string,
+  offset: { x: number; y: number } = { x: 20, y: 20 },
+): SlideObject | null {
+  const sourceIdx = findIndexById(ctx.objects, id)
+  if (sourceIdx === -1) {
+    console.warn(`duplicateObject: object '${id}' not found`)
+    return null
+  }
+
+  const sourceMap = ctx.objects.get(sourceIdx)
+  const sourcePlain = Object.fromEntries(sourceMap.entries()) as Record<string, unknown>
+
+  const newId = nanoid()
+  const clonedPlain: Record<string, unknown> = {
+    ...sourcePlain,
+    id: newId,
+    x: (sourcePlain['x'] as number) + offset.x,
+    y: (sourcePlain['y'] as number) + offset.y,
+  }
+
+  // Sestavíme Y.Map pro nový objekt
+  const newYMap = new Y.Map<unknown>()
+  for (const [key, value] of Object.entries(clonedPlain)) {
+    newYMap.set(key, value)
+  }
+
+  ctx.doc.transact(() => {
+    ctx.objects.push([newYMap])
+  }, LOCAL_ORIGIN)
+
+  // Vrátíme plain kopii — přečteme ze Y.Array (YMap je teď v doc kontextu)
+  const insertedMap = ctx.objects.get(ctx.objects.length - 1)
+  return Object.fromEntries(insertedMap.entries()) as unknown as SlideObject
+}
+
+/**
+ * Popis jedné položky v batch update.
+ */
+export interface BulkUpdate {
+  id: string
+  patch: SlideObjectPatch<SlideObject>
+}
+
+/**
+ * Aplikuje více patch operací v jedné Yjs transakci.
+ *
+ * Výhoda: N updatů = 1 Yjs update (1 WS message místo N).
+ * Při 60Hz group drag (20 objektů) → 60× méně network trafficu.
+ *
+ * - Pro neexistující id: warn + skip, ostatní pokračují.
+ * - Empty updates: no-op, žádná transakce se neotvírá.
+ */
+export function bulkUpdateObjects(ctx: MutationContext, updates: BulkUpdate[]): void {
+  if (updates.length === 0) return
+
+  ctx.doc.transact(() => {
+    for (const { id, patch } of updates) {
+      const idx = findIndexById(ctx.objects, id)
+      if (idx === -1) {
+        console.warn(`bulkUpdateObjects: object '${id}' not found, skipping`)
+        continue
+      }
+      const yMap = ctx.objects.get(idx)
+      for (const [key, value] of Object.entries(patch)) {
+        yMap.set(key, value)
+      }
+    }
+  }, LOCAL_ORIGIN)
 }
 
 // ---------------------------------------------------------------------------
