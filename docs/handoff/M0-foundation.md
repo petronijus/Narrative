@@ -110,7 +110,7 @@ Dispatch: `renderer` agent
 
 ## Odkazy
 
-- **Commit**: TBD po `feat(m0)` commitu
+- **Commit**: `aa20372` — feat(m0): foundation — monorepo, web shell, server skeleton, CI/CD
 - **ADR-0001**: `docs/adr/0001-monorepo-layout.md`
 - **CI config**: `.github/workflows/ci.yml`
 - **Env schema**: `.env.example`
