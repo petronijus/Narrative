@@ -23,6 +23,7 @@
 import { useState, useCallback } from 'react'
 import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
+import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
@@ -49,9 +50,13 @@ export function DeckShell() {
   return (
     <div className="h-screen w-screen overflow-hidden">
       <SlideDocProvider deckId={id}>
-        <CanvasInstanceContext.Provider value={canvasInstance}>
-          <Outlet context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue} />
-        </CanvasInstanceContext.Provider>
+        <ActiveSlideProvider>
+          <CanvasInstanceContext.Provider value={canvasInstance}>
+            <Outlet
+              context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
+            />
+          </CanvasInstanceContext.Provider>
+        </ActiveSlideProvider>
       </SlideDocProvider>
     </div>
   )

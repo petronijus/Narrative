@@ -1,38 +1,52 @@
 /**
  * state/useAnimations.ts
  *
- * Hook pro subscribe na animations z Y.Doc.
- * Re-renderuje komponentu když se změní jakýkoliv AnimationStep.
+ * Hook for subscribing to animations from the active slide in Y.Doc.
+ * Full snapshot pattern — returns complete AnimationStep[] on every change.
+ * Play order corresponds to Y.Array order.
  *
- * Full snapshot pattern — vrací celý seznam AnimationStep po každé změně.
- * Pořadí odpovídá Y.Array pořadí = play order animací na slide.
+ * M9 update: scoped to active slide via ActiveSlideContext.
  *
- * Vrací:
- * - animations: AnimationStep[] — aktuální snapshot (v play order)
- * - mutationCtx: SlideMutationContext — pro volání animation mutations
+ * Returns:
+ * - animations: AnimationStep[] — current snapshot (in play order)
+ * - animationsCtx: AnimationsMutationContext | null — for calling animation mutations
  */
 
 import { useState, useEffect } from 'react'
-import { subscribeToAnimations } from '@narrative/slide-model'
-import type { SlideMutationContext } from '@narrative/slide-model'
+import { subscribeToSlideAnimations, getSlideAnimationsCtx } from '@narrative/slide-model'
+import type { AnimationsMutationContext } from '@narrative/slide-model'
 import type { AnimationStep } from '@narrative/shared'
 import { useSlideDoc } from './useSlideDoc.js'
+import { useActiveSlide } from './ActiveSlideContext.js'
 
 export interface UseAnimationsResult {
   animations: AnimationStep[]
-  mutationCtx: SlideMutationContext
+  /** AnimationsMutationContext scoped to the active slide. Null if no active slide. */
+  animationsCtx: AnimationsMutationContext | null
+  /**
+   * @deprecated Use animationsCtx. Kept for backward compat with consumers expecting mutationCtx.
+   * Removed in M10.
+   */
+  mutationCtx: AnimationsMutationContext | null
 }
 
 export function useAnimations(): UseAnimationsResult {
-  const { mutationCtx } = useSlideDoc()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
   const [animations, setAnimations] = useState<AnimationStep[]>([])
 
   useEffect(() => {
-    // subscribeToAnimations inicializačně zavolá setAnimations se současným snapshotem,
-    // pak na každou Y.Doc změnu
-    const unsubscribe = subscribeToAnimations(mutationCtx, setAnimations)
-    return unsubscribe
-  }, [mutationCtx])
+    if (activeSlideId === null) {
+      setAnimations([])
+      return
+    }
 
-  return { animations, mutationCtx }
+    const unsubscribe = subscribeToSlideAnimations(deckCtx, activeSlideId, setAnimations)
+    return unsubscribe
+  }, [deckCtx, activeSlideId])
+
+  const animationsCtx =
+    activeSlideId !== null ? getSlideAnimationsCtx(deckCtx, activeSlideId) : null
+
+  return { animations, animationsCtx, mutationCtx: animationsCtx }
 }

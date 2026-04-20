@@ -1,13 +1,16 @@
 /**
  * state/slideDocContext.ts
  *
- * React context pro SlideDoc — v separátním souboru kvůli react-refresh.
- * Hooks a Provider importují z tohoto souboru.
+ * React context for SlideDoc — in a separate file for react-refresh compliance.
  *
- * M6 update: mutationCtx je rozšířen na SlideMutationContext (obsahuje
- * objects i animations). Context consumers mají přístup k oběma mutations API.
+ * M9 update: context now exposes deckCtx (SlideMutationContext = { doc, slides })
+ * instead of the old mutationCtx ({ doc, objects, animations }).
  *
- * M8 update: přidány awareness + localUser (per-session peer identity).
+ * Consumers must obtain per-slide scoped contexts via:
+ *   getSlideObjectsCtx(deckCtx, activeSlideId)
+ *   getSlideAnimationsCtx(deckCtx, activeSlideId)
+ *
+ * UndoManager tracks the top-level slides Y.Array (and all nested content).
  */
 
 import { createContext } from 'react'
@@ -19,12 +22,13 @@ import type * as Y from 'yjs'
 export type WsStatus = 'connecting' | 'connected' | 'disconnected'
 
 export interface SlideDocContextValue {
-  mutationCtx: SlideMutationContext
+  /** Deck-level mutation context — holds doc + slides Y.Array. */
+  deckCtx: SlideMutationContext
   undoManager: Y.UndoManager
   wsStatus: WsStatus
-  /** Y.Awareness instance z HocuspocusProvider. Přímý přístup pouze pro hooks v apps/web/state. */
+  /** Y.Awareness instance from HocuspocusProvider. Direct access for state hooks only. */
   awareness: Awareness
-  /** Lokální user identity — deterministická z session ID. */
+  /** Local user identity — deterministic from session ID. */
   localUser: PeerUser
 }
 
@@ -35,13 +39,17 @@ export const SlideDocContext = createContext<SlideDocContextValue | null>(null)
 // ---------------------------------------------------------------------------
 
 /**
- * createMockSlideDocValue — factory pro testovací mock SlideDocContextValue.
+ * createMockSlideDocValue — factory for test mock SlideDocContextValue.
  *
- * Sdílí se mezi všemi testy které mockují SlideDocContext, aby bylo jasné
- * jaké fields existují a aby přidání nového field v M8+ nerozlámalo testy.
+ * Shared across tests that mock SlideDocContext.
+ * Adding new fields to SlideDocContextValue only requires updating this factory.
+ *
+ * @param overrides Partial overrides for specific fields.
+ * @param slideCount Number of mock slides to pre-seed (default 1).
  */
 export function createMockSlideDocValue(
   overrides?: Partial<SlideDocContextValue>,
+  slideCount = 1,
 ): SlideDocContextValue {
   const mockAwareness = {
     on: () => {},
@@ -53,18 +61,55 @@ export function createMockSlideDocValue(
   } as unknown as Awareness
 
   const mockDoc = {} as unknown as Y.Doc
-  const mockObjects = {
-    toArray: () => [],
+
+  // Build mock slides Y.Array with slideCount entries
+  const mockSlideIds: string[] = Array.from(
+    { length: Math.max(1, slideCount) },
+    (_, i) => `mock-slide-${i}`,
+  )
+  const mockSlides = {
+    length: mockSlideIds.length,
+    get: (i: number) => {
+      const id = mockSlideIds[i] ?? `mock-slide-${i}`
+      return {
+        get: (key: string) => {
+          if (key === 'id') return id
+          if (key === 'objects')
+            return {
+              length: 0,
+              get: () => undefined,
+              observeDeep: () => {},
+              unobserveDeep: () => {},
+            }
+          if (key === 'animations')
+            return {
+              length: 0,
+              get: () => undefined,
+              observeDeep: () => {},
+              unobserveDeep: () => {},
+            }
+          if (key === 'transition')
+            return {
+              get: (k: string) => (k === 'kind' ? 'none' : k === 'durationMs' ? 0 : undefined),
+            }
+          return undefined
+        },
+      }
+    },
     observe: () => {},
     unobserve: () => {},
+    observeDeep: () => {},
+    unobserveDeep: () => {},
+    toArray: () => [],
+    push: () => {},
+    insert: () => {},
+    delete: () => {},
   } as unknown as Y.Array<Y.Map<unknown>>
-  const mockAnimations = mockObjects
 
   const defaults: SlideDocContextValue = {
-    mutationCtx: {
+    deckCtx: {
       doc: mockDoc,
-      objects: mockObjects,
-      animations: mockAnimations,
+      slides: mockSlides,
     },
     undoManager: {
       undo: () => {},

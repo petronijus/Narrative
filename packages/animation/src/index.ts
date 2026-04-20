@@ -34,3 +34,11 @@ export { createClickInputBridge, createManualInputBridge } from './inputBridge.j
 // Preset factories (pro DSL generátory, AI agent v M16, extension v M15)
 export { fadeIn, slideIn, getPresetFactory } from './presets/index.js'
 export type { PresetFactory } from './presets/index.js'
+
+// Slide transitions — global slide-level animations (M9)
+export { runSlideTransition, compileSlideTransition } from './transitions/index.js'
+export type {
+  SlideTransitionTargets,
+  CompiledTransition,
+  TransitionFactory,
+} from './transitions/index.js'

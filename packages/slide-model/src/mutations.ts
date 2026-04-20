@@ -21,16 +21,26 @@ import { getObjectTypeDef } from './registry.js'
  */
 export const LOCAL_ORIGIN = Symbol('local-user')
 
-export interface MutationContext {
+/**
+ * ObjectsMutationContext — context scoped to one slide's objects Y.Array.
+ * Renamed from MutationContext in M9 for clarity.
+ * Use getSlideObjectsCtx() from slides.ts to obtain from a deck context.
+ */
+export interface ObjectsMutationContext {
   doc: Y.Doc
   objects: Y.Array<Y.Map<unknown>>
 }
 
 /**
+ * @deprecated Use ObjectsMutationContext. Alias kept for backward compat — removed in M10.
+ */
+export type MutationContext = ObjectsMutationContext
+
+/**
  * Přidá SlideObject do Y.Array.
  * Objekt musí mít platné id a type.
  */
-export function addObject(ctx: MutationContext, obj: SlideObject): void {
+export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
   const yMap = plainObjectToYMap(obj)
   ctx.doc.transact(() => {
     ctx.objects.push([yMap])
@@ -41,7 +51,7 @@ export function addObject(ctx: MutationContext, obj: SlideObject): void {
  * Odstraní objekt podle id z Y.Array.
  * Pokud id neexistuje, operace je no-op.
  */
-export function removeObject(ctx: MutationContext, id: string): void {
+export function removeObject(ctx: ObjectsMutationContext, id: string): void {
   ctx.doc.transact(() => {
     const idx = findIndexById(ctx.objects, id)
     if (idx !== -1) {
@@ -57,7 +67,7 @@ export function removeObject(ctx: MutationContext, id: string): void {
  * Pokud objekt s daným id neexistuje, operace je no-op.
  */
 export function updateObject<T extends SlideObject>(
-  ctx: MutationContext,
+  ctx: ObjectsMutationContext,
   id: string,
   patch: SlideObjectPatch<T>,
 ): void {
@@ -79,7 +89,7 @@ export function updateObject<T extends SlideObject>(
  * @throws Pokud typ není registrován v registry.
  */
 export function createObjectOfType(
-  ctx: MutationContext,
+  ctx: ObjectsMutationContext,
   type: SlideObjectType,
   overrides?: Partial<Omit<SlideObject, 'type'>>,
 ): SlideObject {
@@ -113,7 +123,7 @@ export function createObjectOfType(
  * @returns Plain object nově přidaného duplikátu, nebo null pokud source neexistuje.
  */
 export function duplicateObject(
-  ctx: MutationContext,
+  ctx: ObjectsMutationContext,
   id: string,
   offset: { x: number; y: number } = { x: 20, y: 20 },
 ): SlideObject | null {
@@ -166,7 +176,7 @@ export interface BulkUpdate {
  * - Pro neexistující id: warn + skip, ostatní pokračují.
  * - Empty updates: no-op, žádná transakce se neotvírá.
  */
-export function bulkUpdateObjects(ctx: MutationContext, updates: BulkUpdate[]): void {
+export function bulkUpdateObjects(ctx: ObjectsMutationContext, updates: BulkUpdate[]): void {
   if (updates.length === 0) return
 
   ctx.doc.transact(() => {

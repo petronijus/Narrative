@@ -13,6 +13,7 @@ import type * as ReactRouterDom from 'react-router-dom'
 import { DeckPresent } from './DeckPresent'
 import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
 import type { SlideDocContextValue } from '../state/slideDocContext'
+import { ActiveSlideContext } from '../state/ActiveSlideContext'
 import * as Y from 'yjs'
 import type { SlideMutationContext } from '@narrative/slide-model'
 
@@ -56,12 +57,20 @@ vi.mock('../state/useSlideObjectChanges', () => ({
 vi.mock('../state/useAnimations', () => ({
   useAnimations: () => ({
     animations: [],
+    animationsCtx: {
+      doc: new Y.Doc(),
+      animations: new Y.Doc().getArray('animations'),
+    },
     mutationCtx: {
       doc: new Y.Doc(),
-      objects: new Y.Doc().getArray('objects'),
       animations: new Y.Doc().getArray('animations'),
     },
   }),
+}))
+
+// M9: useSlides mock — PresentLayout now reads slides for counter + navigation
+vi.mock('../state/useSlides', () => ({
+  useSlides: () => [],
 }))
 
 vi.mock('@narrative/animation', () => ({
@@ -86,28 +95,30 @@ vi.mock('react-router-dom', async (importOriginal) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): SlideMutationContext {
+function createDeckCtx(): SlideMutationContext {
   const doc = new Y.Doc()
-  const objects = doc.getArray<Y.Map<unknown>>('objects')
-  const animations = doc.getArray<Y.Map<unknown>>('animations')
-  return { doc, objects, animations }
+  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  return { doc, slides }
 }
 
 function createSlideDocValue(): SlideDocContextValue {
-  const mutationCtx = createMutationCtx()
-  return createMockSlideDocValue({ mutationCtx })
+  const deckCtx = createDeckCtx()
+  return createMockSlideDocValue({ deckCtx })
 }
 
 function renderDeckPresent(deckId = 'deck-123') {
   const ctxValue = createSlideDocValue()
+  const mockActiveSlide = { activeSlideId: null, setActiveSlideId: vi.fn() }
 
   return render(
     <SlideDocContext.Provider value={ctxValue}>
-      <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
-        <Routes>
-          <Route path="/deck/:id/present" element={<DeckPresent />} />
-        </Routes>
-      </MemoryRouter>
+      <ActiveSlideContext.Provider value={mockActiveSlide}>
+        <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
+          <Routes>
+            <Route path="/deck/:id/present" element={<DeckPresent />} />
+          </Routes>
+        </MemoryRouter>
+      </ActiveSlideContext.Provider>
     </SlideDocContext.Provider>,
   )
 }

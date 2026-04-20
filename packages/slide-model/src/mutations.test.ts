@@ -15,23 +15,32 @@ import {
   duplicateObject,
   bulkUpdateObjects,
   LOCAL_ORIGIN,
-  type MutationContext,
+  type ObjectsMutationContext,
   type BulkUpdate,
 } from './mutations.js'
 import { registerObjectType, _clearRegistry } from './registry.js'
 import { createUndoManager } from './undo.js'
 import { yMapToPlainObject } from './bindings.js'
+import { getSlideObjectsCtx } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
 import type { RectangleObject } from '@narrative/shared'
 
-function makeCtx(): MutationContext {
-  const { doc, objects } = createSlideDoc()
-  return { doc, objects }
+/**
+ * Creates an ObjectsMutationContext scoped to slide-0 in a fresh doc.
+ * M9: objects live inside slides, not at root level.
+ */
+function makeCtx(): ObjectsMutationContext {
+  const { doc, slides } = createSlideDoc()
+  const deckCtx: SlideMutationContext = { doc, slides }
+  const firstSlideId = slides.get(0).get('id') as string
+  const ctx = getSlideObjectsCtx(deckCtx, firstSlideId)
+  if (ctx === null) throw new Error('makeCtx: no slide-0 objects ctx')
+  return ctx
 }
 
 function makeFullCtx(): SlideMutationContext {
-  const { doc, objects, animations } = createSlideDoc()
-  return { doc, objects, animations }
+  const { doc, slides } = createSlideDoc()
+  return { doc, slides }
 }
 
 function makePlainYMap(obj: Record<string, unknown>): Y.Map<unknown> {
@@ -185,26 +194,45 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
   })
 
   it('undo odstraní přidaný objekt', () => {
-    const ctx = makeFullCtx()
-    const um = createUndoManager(ctx)
+    const deckCtx = makeFullCtx()
+    const um = createUndoManager(deckCtx)
+    const ctx = makeCtx() // separate slide-scoped ctx sharing same doc would need different setup
+    // Use a fresh ctx scoped to slide-0 for object operations
+    const objectsCtx = (() => {
+      const { doc, slides } = createSlideDoc()
+      const dk: SlideMutationContext = { doc, slides }
+      const firstSlideId = slides.get(0).get('id') as string
+      const c = getSlideObjectsCtx(dk, firstSlideId)
+      if (c === null) throw new Error('no objects ctx')
+      // Create undo manager on the same deck
+      const undoMgr = createUndoManager(dk)
+      return { c, undoMgr }
+    })()
 
-    addObject(ctx, sampleRect)
-    expect(ctx.objects.length).toBe(1)
+    addObject(objectsCtx.c, sampleRect)
+    expect(objectsCtx.c.objects.length).toBe(1)
 
-    um.undo()
-    expect(ctx.objects.length).toBe(0)
+    objectsCtx.undoMgr.undo()
+    expect(objectsCtx.c.objects.length).toBe(0)
+
+    void ctx // suppress unused
+    void um // suppress unused
   })
 
   it('redo vrátí objekt po undo', () => {
-    const ctx = makeFullCtx()
-    const um = createUndoManager(ctx)
+    const { doc, slides } = createSlideDoc()
+    const dk: SlideMutationContext = { doc, slides }
+    const firstSlideId = slides.get(0).get('id') as string
+    const objectsCtx = getSlideObjectsCtx(dk, firstSlideId)
+    if (objectsCtx === null) throw new Error('no objects ctx')
+    const um = createUndoManager(dk)
 
-    addObject(ctx, sampleRect)
+    addObject(objectsCtx, sampleRect)
     um.undo()
-    expect(ctx.objects.length).toBe(0)
+    expect(objectsCtx.objects.length).toBe(0)
 
     um.redo()
-    expect(ctx.objects.length).toBe(1)
+    expect(objectsCtx.objects.length).toBe(1)
   })
 
   it('LOCAL_ORIGIN je Symbol', () => {
@@ -212,18 +240,22 @@ describe('LOCAL_ORIGIN a UndoManager', () => {
   })
 
   it('transakce bez LOCAL_ORIGIN se neundí (simulace remote change)', () => {
-    const ctx = makeFullCtx()
-    const um = createUndoManager(ctx)
+    const { doc, slides } = createSlideDoc()
+    const dk: SlideMutationContext = { doc, slides }
+    const firstSlideId = slides.get(0).get('id') as string
+    const objectsCtx = getSlideObjectsCtx(dk, firstSlideId)
+    if (objectsCtx === null) throw new Error('no objects ctx')
+    const um = createUndoManager(dk)
 
     // Remote change — jiný origin (ne LOCAL_ORIGIN)
     const remoteOrigin = Symbol('remote')
-    ctx.doc.transact(() => {
-      ctx.objects.push([makePlainYMap({ ...sampleRect, id: 'remote-1' })])
+    objectsCtx.doc.transact(() => {
+      objectsCtx.objects.push([makePlainYMap({ ...sampleRect, id: 'remote-1' })])
     }, remoteOrigin)
 
-    expect(ctx.objects.length).toBe(1)
+    expect(objectsCtx.objects.length).toBe(1)
     um.undo() // nemělo by nic udělat — remote change není trackovaný
-    expect(ctx.objects.length).toBe(1)
+    expect(objectsCtx.objects.length).toBe(1)
   })
 })
 
@@ -449,7 +481,12 @@ describe('bulkUpdateObjects', () => {
   })
 
   it('undo vrátí celou batch v jednom kroku', () => {
-    const ctx = makeFullCtx()
+    // Setup: deck ctx + scoped objects ctx
+    const { doc, slides } = createSlideDoc()
+    const deckCtx: SlideMutationContext = { doc, slides }
+    const firstSlideId = slides.get(0).get('id') as string
+    const ctx = getSlideObjectsCtx(deckCtx, firstSlideId)
+    if (ctx === null) throw new Error('no objects ctx')
 
     // Přidáme objekty bez UndoManageru — tyto operace nebudou v undo stacku
     addObject(ctx, r1)
@@ -460,7 +497,7 @@ describe('bulkUpdateObjects', () => {
     const origX2 = yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x
 
     // UndoManager vytvoříme až po addObject — bude trackovat jen bulkUpdate
-    const um = createUndoManager(ctx)
+    const um = createUndoManager(deckCtx)
 
     const updates: BulkUpdate[] = [
       { id: 'r1', patch: { x: 500 } },

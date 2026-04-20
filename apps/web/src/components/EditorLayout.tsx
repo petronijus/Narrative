@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
+import { SlidesPanel } from '../ui/SlidesPanel'
 import { TransformHandles } from '../ui/TransformHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
@@ -108,7 +109,7 @@ export interface EditorLayoutProps {
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedIds, selectedId, selectOne, selectMany, toggle, clear } = useSelection()
   const { activeTool, setActiveTool } = useTool()
-  const { objects, mutationCtx } = useSlideObjects()
+  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
 
@@ -181,6 +182,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
       if (activeTool !== 'select') {
         // Create tool — vytvoř objekt na pozici kliku
+        if (mutationCtx === null) return
         createObjectOfType(mutationCtx, activeTool as SlideObjectType, { x, y })
         setActiveTool('select')
         return
@@ -295,6 +297,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       // Object drag
       const drag = dragRef.current
       if (drag === null || !drag.active) return
+      if (mutationCtx === null) return
 
       const dx = e.clientX - drag.startX
       const dy = e.clientY - drag.startY
@@ -434,7 +437,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       // Delete/Backspace → odstraň vybrané objekty
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isInputFocused()) return
-        if (selectedIds.size > 0) {
+        if (selectedIds.size > 0 && mutationCtx !== null) {
           for (const id of selectedIds) {
             removeObject(mutationCtx, id)
           }
@@ -447,7 +450,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
         if (isInputFocused()) return
         e.preventDefault()
-        if (selectedIds.size > 0) {
+        if (selectedIds.size > 0 && mutationCtx !== null) {
           const newIds: string[] = []
           for (const id of selectedIds) {
             const dup = duplicateObject(mutationCtx, id, { x: 20, y: 20 })
@@ -480,12 +483,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         if (e.key === 'ArrowUp') dy = -step
         if (e.key === 'ArrowDown') dy = step
 
-        const updates = [...selectedIds].flatMap((id) => {
-          const obj = objects.find((o) => o.id === id)
-          if (obj === undefined) return []
-          return [{ id, patch: { x: obj.x + dx, y: obj.y + dy } }]
-        })
-        bulkUpdateObjects(mutationCtx, updates)
+        if (mutationCtx !== null) {
+          const updates = [...selectedIds].flatMap((id) => {
+            const obj = objects.find((o) => o.id === id)
+            if (obj === undefined) return []
+            return [{ id, patch: { x: obj.x + dx, y: obj.y + dy } }]
+          })
+          bulkUpdateObjects(mutationCtx, updates)
+        }
         return
       }
     }
@@ -515,16 +520,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-gray-950">
-      {/* Left sidebar */}
-      <aside className="flex w-48 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900">
-        <div className="border-b border-gray-800 px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Slides
-          </span>
-        </div>
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-xs text-gray-600">No slides yet</p>
-        </div>
+      {/* Left sidebar — slides panel */}
+      <aside className="flex w-60 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-hidden">
+        <SlidesPanel />
       </aside>
 
       {/* Center: canvas area */}
@@ -556,7 +554,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           <PeerSelectionOverlays />
 
           {/* Transform handles + outline — pokud je selection a canvas ready */}
-          {selectedIds.size > 0 && canvasInstance !== null && (
+          {selectedIds.size > 0 && canvasInstance !== null && mutationCtx !== null && (
             <TransformHandles
               objectIds={[...selectedIds]}
               sceneGraph={canvasInstance.sceneGraph}

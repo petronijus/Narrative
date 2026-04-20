@@ -9,9 +9,12 @@ export type {
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,
-  Slide,
   ObjectChangeSet,
 } from './slide.js'
+
+export type { SlideTransitionKind, SlidePushDirection, SlideTransition, Slide } from './deck.js'
+
+export { DEFAULT_TRANSITION } from './deck.js'
 
 export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animation.js'
 

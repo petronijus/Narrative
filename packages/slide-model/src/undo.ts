@@ -1,12 +1,16 @@
 /**
  * slide-model/src/undo.ts
  *
- * Y.UndoManager factory s filtrováním na LOCAL_ORIGIN.
- * Remote changes (budoucí M4 Hocuspocus sync) mají jiný origin a nebudou
- * zahrnuty do undo stacku klienta.
+ * Y.UndoManager factory with LOCAL_ORIGIN filtering.
+ * Remote changes (Hocuspocus sync) have a different origin → excluded from undo stack.
  *
- * M6 update: UndoManager trackuje obě Y.Array — objects i animations —
- * takže undo/redo funguje i pro animační změny.
+ * M9 update: UndoManager now tracks the top-level 'slides' Y.Array.
+ * Y.UndoManager tracks nested Y.Maps and Y.Arrays recursively when given
+ * a top-level Y.Array, so undo/redo works for:
+ *   - slide add/remove/reorder
+ *   - object mutations inside any slide
+ *   - animation mutations inside any slide
+ *   - transition updates
  */
 
 import * as Y from 'yjs'
@@ -14,11 +18,11 @@ import { LOCAL_ORIGIN } from './mutations.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
 
 /**
- * Vytvoří Y.UndoManager pro objects i animations array.
- * Trackuje pouze operace s LOCAL_ORIGIN — lokální user edity.
+ * Creates Y.UndoManager tracking the slides Y.Array (and all nested content).
+ * Tracks only operations with LOCAL_ORIGIN — local user edits only.
  */
 export function createUndoManager(ctx: SlideMutationContext): Y.UndoManager {
-  return new Y.UndoManager([ctx.objects, ctx.animations], {
+  return new Y.UndoManager([ctx.slides], {
     trackedOrigins: new Set([LOCAL_ORIGIN]),
   })
 }

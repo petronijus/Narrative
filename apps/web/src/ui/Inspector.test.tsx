@@ -19,24 +19,34 @@ import type { SlideObject } from '@narrative/shared'
 import * as Y from 'yjs'
 import { useEffect } from 'react'
 import { useSelection } from '../state/SelectionContext'
+import { ActiveSlideContext } from '../state/ActiveSlideContext'
+import type { ActiveSlideContextValue } from '../state/ActiveSlideContext'
+import type * as UseSlidesModule from '../state/useSlides'
+import type { Slide } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): SlideMutationContext {
+function createDeckCtx(): SlideMutationContext {
   const doc = new Y.Doc()
-  const objects = doc.getArray<Y.Map<unknown>>('objects')
-  const animations = doc.getArray<Y.Map<unknown>>('animations')
-  return { doc, objects, animations }
+  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  return { doc, slides }
+}
+
+function createMockActiveSlide(): ActiveSlideContextValue {
+  return {
+    activeSlideId: 'mock-slide-0',
+    setActiveSlideId: () => {},
+  }
 }
 
 function createContextValue(
-  mutationCtx: SlideMutationContext,
+  deckCtx: SlideMutationContext,
   undoManager?: Y.UndoManager,
 ): SlideDocContextValue {
-  const um = undoManager ?? slideModel.createUndoManager(mutationCtx)
-  return createMockSlideDocValue({ mutationCtx, undoManager: um })
+  const um = undoManager ?? slideModel.createUndoManager(deckCtx)
+  return createMockSlideDocValue({ deckCtx, undoManager: um })
 }
 
 // ---------------------------------------------------------------------------
@@ -46,20 +56,139 @@ function createContextValue(
 // Vitest module mock musí být statický — proto použijeme přímý approach:
 // místo mockování hooku předáme objekty přes context a testujeme přímo komponentu
 
-describe('Inspector', () => {
-  it('renders No selection placeholder when nothing is selected', () => {
-    const mutationCtx = createMutationCtx()
-    const ctxValue = createContextValue(mutationCtx)
+// ---------------------------------------------------------------------------
+// Mock useSlides for SlideInspector tests
+// ---------------------------------------------------------------------------
+
+vi.mock('../state/useSlides', async (importOriginal) => {
+  const actual = await importOriginal<typeof UseSlidesModule>()
+  return {
+    ...actual,
+    useSlides: () => mockSlides,
+  }
+})
+
+const mockSlides: Slide[] = []
+
+describe('Inspector — no selection shows SlideInspector', () => {
+  beforeEach(() => {
+    mockSlides.length = 0
+  })
+
+  it('shows slide transition section when no object is selected and active slide exists', () => {
+    mockSlides.push({
+      id: 'mock-slide-0',
+      objects: [],
+      animations: [],
+      transition: { kind: 'none', durationMs: 0 },
+    })
+
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
 
     render(
       <SlideDocContext.Provider value={ctxValue}>
-        <SelectionProvider>
-          <Inspector />
-        </SelectionProvider>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inspector />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
+      </SlideDocContext.Provider>,
+    )
+
+    expect(screen.getByText('Transition')).toBeInTheDocument()
+    expect(screen.getByLabelText('Kind')).toBeInTheDocument()
+  })
+
+  it('shows "No selection" fallback when slide list is empty', () => {
+    // mockSlides is empty — active slide not found
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
+
+    render(
+      <SlideDocContext.Provider value={ctxValue}>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inspector />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
       </SlideDocContext.Provider>,
     )
 
     expect(screen.getByText('No selection')).toBeInTheDocument()
+  })
+
+  it('transition kind dropdown shows current value', () => {
+    mockSlides.push({
+      id: 'mock-slide-0',
+      objects: [],
+      animations: [],
+      transition: { kind: 'fade', durationMs: 400 },
+    })
+
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
+
+    render(
+      <SlideDocContext.Provider value={ctxValue}>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inspector />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
+      </SlideDocContext.Provider>,
+    )
+
+    const kindSelect = screen.getByLabelText('Kind') as HTMLSelectElement
+    expect(kindSelect.value).toBe('fade')
+  })
+
+  it('direction dropdown shown only when kind is push', () => {
+    mockSlides.push({
+      id: 'mock-slide-0',
+      objects: [],
+      animations: [],
+      transition: { kind: 'push', durationMs: 300, direction: 'left' },
+    })
+
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
+
+    render(
+      <SlideDocContext.Provider value={ctxValue}>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inspector />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
+      </SlideDocContext.Provider>,
+    )
+
+    expect(screen.getByLabelText('Direction')).toBeInTheDocument()
+  })
+
+  it('direction dropdown not shown for kind=fade', () => {
+    mockSlides.push({
+      id: 'mock-slide-0',
+      objects: [],
+      animations: [],
+      transition: { kind: 'fade', durationMs: 300 },
+    })
+
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
+
+    render(
+      <SlideDocContext.Provider value={ctxValue}>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inspector />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
+      </SlideDocContext.Provider>,
+    )
+
+    expect(screen.queryByLabelText('Direction')).not.toBeInTheDocument()
   })
 })
 
@@ -78,6 +207,7 @@ const mockAnimations: AnimationStep[] = []
 vi.mock('../state/useSlideObjects', () => ({
   useSlideObjects: () => ({
     objects: mockObjects,
+    objectsCtx: { doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') },
     mutationCtx: { doc: new Y.Doc(), objects: new Y.Doc().getArray('objects') },
   }),
 }))
@@ -85,9 +215,12 @@ vi.mock('../state/useSlideObjects', () => ({
 vi.mock('../state/useAnimations', () => ({
   useAnimations: () => ({
     animations: mockAnimations,
+    animationsCtx: {
+      doc: new Y.Doc(),
+      animations: new Y.Doc().getArray('animations'),
+    },
     mutationCtx: {
       doc: new Y.Doc(),
-      objects: new Y.Doc().getArray('objects'),
       animations: new Y.Doc().getArray('animations'),
     },
   }),
@@ -154,8 +287,8 @@ function renderWithSelection(obj: SlideObject) {
   mockObjects.push(obj)
   mockUpdateObject = vi.fn()
 
-  const mutationCtx = createMutationCtx()
-  const ctxValue = createContextValue(mutationCtx)
+  const deckCtx = createDeckCtx()
+  const ctxValue = createContextValue(deckCtx)
 
   function Inner() {
     const { setSelectedId } = useSelection()
@@ -168,9 +301,11 @@ function renderWithSelection(obj: SlideObject) {
 
   return render(
     <SlideDocContext.Provider value={ctxValue}>
-      <SelectionProvider>
-        <Inner />
-      </SelectionProvider>
+      <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+        <SelectionProvider>
+          <Inner />
+        </SelectionProvider>
+      </ActiveSlideContext.Provider>
     </SlideDocContext.Provider>,
   )
 }
@@ -365,8 +500,8 @@ describe('Inspector — multi-select placeholder', () => {
     mockObjects.length = 0
     mockObjects.push(RECT_OBJ, ELLIPSE_OBJ)
 
-    const mutationCtx = createMutationCtx()
-    const ctxValue = createContextValue(mutationCtx)
+    const deckCtx = createDeckCtx()
+    const ctxValue = createContextValue(deckCtx)
 
     function MultiSelectInner() {
       const { selectMany } = useSelection()
@@ -379,9 +514,11 @@ describe('Inspector — multi-select placeholder', () => {
 
     render(
       <SlideDocContext.Provider value={ctxValue}>
-        <SelectionProvider>
-          <MultiSelectInner />
-        </SelectionProvider>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <MultiSelectInner />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
       </SlideDocContext.Provider>,
     )
 

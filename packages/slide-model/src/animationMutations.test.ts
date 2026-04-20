@@ -13,17 +13,23 @@ import {
   removeAnimation,
   updateAnimation,
   reorderAnimations,
-  type AnimationMutationContext,
+  type AnimationsMutationContext,
 } from './animationMutations.js'
+import { getSlideAnimationsCtx } from './slides.js'
+import type { SlideMutationContext } from './slideMutationContext.js'
 import { yMapToAnimationStep } from './animationBindings.js'
 import type { AnimationStep } from '@narrative/shared'
 
-function makeCtx(): AnimationMutationContext {
-  const { doc, animations } = createSlideDoc()
-  return { doc, animations }
+function makeCtx(): AnimationsMutationContext {
+  const { doc, slides } = createSlideDoc()
+  const dk: SlideMutationContext = { doc, slides }
+  const firstSlideId = slides.get(0).get('id') as string
+  const ctx = getSlideAnimationsCtx(dk, firstSlideId)
+  if (ctx === null) throw new Error('makeCtx: no slide-0 animations ctx')
+  return ctx
 }
 
-function getSnapshots(ctx: AnimationMutationContext): AnimationStep[] {
+function getSnapshots(ctx: AnimationsMutationContext): AnimationStep[] {
   const result: AnimationStep[] = []
   for (let i = 0; i < ctx.animations.length; i++) {
     result.push(yMapToAnimationStep(ctx.animations.get(i)))

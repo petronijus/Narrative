@@ -11,9 +11,16 @@
 
 import type { AnimationStep } from '@narrative/shared'
 import { yMapToAnimationStep } from './animationBindings.js'
-import type { AnimationMutationContext } from './animationMutations.js'
+import type { AnimationsMutationContext } from './animationMutations.js'
+
+// Backward-compat alias
+type AnimationMutationContext = AnimationsMutationContext
 
 /**
+ * @deprecated Use subscribeToSlideAnimations() from slideObserve.ts (M9).
+ * This subscribes to a root-level animations array — only valid for legacy single-slide docs.
+ * Kept for backward compat — removed in M10.
+ *
  * Subscribeuje na změny animations array.
  * Callback je zavolán synchronně po subscribe se současným snapshotem,
  * pak na každou změnu (add/update/remove/reorder).

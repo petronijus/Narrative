@@ -1,19 +1,33 @@
 /**
  * slide-model/src/slideMutationContext.ts
  *
- * SlideMutationContext — unified kontext spojující MutationContext (objects)
- * a AnimationMutationContext (animations).
+ * Deck-level mutation context (M9 multi-slide schema).
  *
- * Konzumenti, kteří potřebují obě mutations API dohromady, používají
- * SlideMutationContext. createSlideDoc() vrací SlideDocHandles které tvar
- * SlideMutationContext splňují (doc + objects + animations jsou přítomné).
+ * DeckMutationContext — primary context exported as SlideMutationContext for
+ * consumer compatibility. Holds doc + slides Y.Array.
+ *
+ * Per-slide scoped contexts (ObjectsMutationContext, AnimationsMutationContext)
+ * are obtained via getSlideObjectsCtx() / getSlideAnimationsCtx() in slides.ts.
  */
 
-import type { MutationContext } from './mutations.js'
-import type { AnimationMutationContext } from './animationMutations.js'
+import type * as Y from 'yjs'
 
 /**
- * Unified mutation context — kombinuje objects i animations.
- * SlideDocHandles tvar splňuje tento interface.
+ * Deck-level mutation context — wraps doc + top-level slides Y.Array.
+ * Pass to slide CRUD functions in slides.ts.
  */
-export interface SlideMutationContext extends MutationContext, AnimationMutationContext {}
+export interface DeckMutationContext {
+  doc: Y.Doc
+  slides: Y.Array<Y.Map<unknown>>
+}
+
+/**
+ * SlideMutationContext — exported alias for DeckMutationContext.
+ * Named SlideMutationContext for continuity with M6/M8 consumers.
+ * Internally this is now the DECK context (holds slides, not objects/animations directly).
+ *
+ * Consumers using the old shape { doc, objects, animations } must migrate to:
+ *   const objectsCtx = getSlideObjectsCtx(deckCtx, activeSlideId)
+ *   const animationsCtx = getSlideAnimationsCtx(deckCtx, activeSlideId)
+ */
+export type SlideMutationContext = DeckMutationContext

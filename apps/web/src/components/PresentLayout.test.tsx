@@ -1,12 +1,16 @@
 /**
  * PresentLayout.test.tsx
  *
- * M5 testy pro present mode layout:
- * - Fullscreen layout nerenderuje toolbar/inspector/sidebar
- * - Escape key → navigate voláno s /deck/:id
- * - Arrow keys + Space → console.debug placeholder
- * - Slide container existuje v DOM
- * - F key → toggleFullscreen (requestFullscreen mock)
+ * M5: present mode layout tests.
+ * M9: slide navigation (ArrowRight/Left/Space/PageUp/PageDown), slide counter.
+ *
+ * Tests:
+ * - Layout: fullscreen layout renders correctly (no toolbar/inspector/sidebar)
+ * - Keyboard: Escape → navigate, navigation keys advance/retreat active slide
+ * - Arrow Left at first slide is no-op
+ * - Counter shows correct "X / N"
+ * - Fullscreen API integration
+ * - Animation runtime lifecycle
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -19,15 +23,17 @@ import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocConte
 import type { SlideDocContextValue } from '../state/slideDocContext'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext'
+import { ActiveSlideContext } from '../state/ActiveSlideContext'
+import type { ActiveSlideContextValue } from '../state/ActiveSlideContext'
 import * as Y from 'yjs'
 import type { SlideMutationContext } from '@narrative/slide-model'
-import type { AnimationStep } from '@narrative/shared'
+import type { AnimationStep, Slide } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
-// ResizeObserver není v jsdom — polyfill pro testy
+// ResizeObserver — polyfill for jsdom
 class ResizeObserverMock {
   private callback: ResizeObserverCallback
 
@@ -36,7 +42,6 @@ class ResizeObserverMock {
   }
 
   observe(target: Element) {
-    // Zavolej callback synchronně s fiktivní entry (simuluje initial measurement)
     const entry = {
       contentRect: { width: 1280, height: 720 } as DOMRectReadOnly,
       target,
@@ -53,12 +58,11 @@ class ResizeObserverMock {
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
-// Canvas je heavy Pixi závislost — mockujeme ji
+// Canvas is a heavy Pixi dependency — mock it
 vi.mock('../renderer/Canvas', () => ({
   Canvas: () => <div data-testid="canvas-mock" />,
 }))
 
-// useSlideObjectChanges je voláno z Canvas — mock pokud Canvas není mockovaný hlouběji
 vi.mock('../state/useSlideObjectChanges', () => ({
   useSlideObjectChanges: () => undefined,
 }))
@@ -73,7 +77,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
   }
 })
 
-// Animation runtime mock — vi.hoisted() zajistí že proměnné jsou k dispozici před vi.mock() hoistingem
+// Animation runtime mock
 const {
   mockPlay,
   mockDestroy,
@@ -112,12 +116,21 @@ vi.mock('../animation/targetResolver', () => ({
 vi.mock('../state/useAnimations', () => ({
   useAnimations: () => ({
     animations: mockAnimationsData,
+    animationsCtx: {
+      doc: new Y.Doc(),
+      animations: new Y.Doc().getArray('animations'),
+    },
     mutationCtx: {
       doc: new Y.Doc(),
-      objects: new Y.Doc().getArray('objects'),
       animations: new Y.Doc().getArray('animations'),
     },
   }),
+}))
+
+// useSlides mock — controlled per test
+const mockSlidesData: Slide[] = []
+vi.mock('../state/useSlides', () => ({
+  useSlides: () => mockSlidesData,
 }))
 
 // requestFullscreen mock
@@ -128,19 +141,17 @@ const mockExitFullscreen = vi.fn().mockResolvedValue(undefined)
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): SlideMutationContext {
+function createDeckCtx(): SlideMutationContext {
   const doc = new Y.Doc()
-  const objects = doc.getArray<Y.Map<unknown>>('objects')
-  const animations = doc.getArray<Y.Map<unknown>>('animations')
-  return { doc, objects, animations }
+  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  return { doc, slides }
 }
 
 function createSlideDocValue(): SlideDocContextValue {
-  const mutationCtx = createMutationCtx()
-  return createMockSlideDocValue({ mutationCtx })
+  const deckCtx = createDeckCtx()
+  return createMockSlideDocValue({ deckCtx })
 }
 
-/** Fiktivní CanvasInstance pro testy runtime integrace. */
 function createMockCanvasInstance(): CanvasInstance {
   return {
     sceneGraph: { getNode: vi.fn() } as unknown as CanvasInstance['sceneGraph'],
@@ -148,28 +159,50 @@ function createMockCanvasInstance(): CanvasInstance {
   }
 }
 
+function makeSlide(id: string): Slide {
+  return {
+    id,
+    objects: [],
+    animations: [],
+    transition: { kind: 'none', durationMs: 0 },
+  }
+}
+
 /**
- * Render PresentLayout uvnitř MemoryRouter s params.
- * Používáme nested route aby useParams vrátilo { id: 'test-deck' }.
+ * Renders PresentLayout within MemoryRouter with params and ActiveSlideContext.
  */
-function renderPresent(deckId = 'test-deck', canvasInstance: CanvasInstance | null = null) {
+function renderPresent(
+  options: {
+    deckId?: string
+    canvasInstance?: CanvasInstance | null
+    activeSlide?: ActiveSlideContextValue
+  } = {},
+) {
+  const {
+    deckId = 'test-deck',
+    canvasInstance = null,
+    activeSlide = { activeSlideId: null, setActiveSlideId: vi.fn() },
+  } = options
+
   const ctxValue = createSlideDocValue()
 
   return render(
     <SlideDocContext.Provider value={ctxValue}>
-      <CanvasInstanceContext.Provider value={canvasInstance}>
-        <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
-          <Routes>
-            <Route path="/deck/:id/present" element={<PresentLayout />} />
-          </Routes>
-        </MemoryRouter>
-      </CanvasInstanceContext.Provider>
+      <ActiveSlideContext.Provider value={activeSlide}>
+        <CanvasInstanceContext.Provider value={canvasInstance}>
+          <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
+            <Routes>
+              <Route path="/deck/:id/present" element={<PresentLayout />} />
+            </Routes>
+          </MemoryRouter>
+        </CanvasInstanceContext.Provider>
+      </ActiveSlideContext.Provider>
     </SlideDocContext.Provider>,
   )
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Setup
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
@@ -178,10 +211,9 @@ beforeEach(() => {
   mockDestroy.mockClear()
   mockCreateAnimationRuntime.mockClear()
   mockCreateClickInputBridge.mockClear()
-  // Reset animations
   mockAnimationsData.length = 0
+  mockSlidesData.length = 0
 
-  // Fullscreen API není v jsdom — mockujeme
   Object.defineProperty(document, 'fullscreenElement', {
     value: null,
     writable: true,
@@ -199,49 +231,55 @@ beforeEach(() => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Layout tests
+// ---------------------------------------------------------------------------
+
 describe('PresentLayout — layout', () => {
-  it('renderuje slide container', () => {
+  it('renders slide container', () => {
     renderPresent()
     expect(screen.getByTestId('slide-container')).toBeInTheDocument()
   })
 
-  it('renderuje canvas', () => {
+  it('renders canvas', () => {
     renderPresent()
     expect(screen.getByTestId('canvas-mock')).toBeInTheDocument()
   })
 
-  it('nerenderuje toolbar', () => {
+  it('does not render toolbar', () => {
     renderPresent()
     expect(screen.queryByRole('toolbar')).toBeNull()
   })
 
-  it('nerenderuje inspector', () => {
+  it('does not render inspector', () => {
     renderPresent()
-    // Inspector má heading "Inspector"
     expect(screen.queryByText(/inspector/i)).toBeNull()
   })
 
-  it('nerenderuje sidebar "Slides"', () => {
+  it('does not render sidebar "Slides"', () => {
     renderPresent()
     expect(screen.queryByText(/^slides$/i)).toBeNull()
   })
 
-  it('slide container má pointer-events:none', () => {
+  it('slide container has pointer-events:none', () => {
     renderPresent()
     const container = screen.getByTestId('slide-container')
-    // Tailwind class pointer-events-none aplikuje inline style nebo class
     expect(container.className).toContain('pointer-events-none')
   })
 
-  it('role="application" s aria-label', () => {
+  it('role="application" with aria-label', () => {
     renderPresent()
     expect(screen.getByRole('application')).toBeInTheDocument()
   })
 })
 
-describe('PresentLayout — keyboard', () => {
-  it('Escape naviguje zpět do editoru', () => {
-    renderPresent('abc')
+// ---------------------------------------------------------------------------
+// Keyboard navigation tests
+// ---------------------------------------------------------------------------
+
+describe('PresentLayout — keyboard navigation', () => {
+  it('Escape navigates back to editor', () => {
+    renderPresent({ deckId: 'abc' })
     act(() => {
       fireEvent.keyDown(window, { key: 'Escape' })
     })
@@ -249,67 +287,147 @@ describe('PresentLayout — keyboard', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/deck/abc')
   })
 
-  it('ArrowLeft loguje placeholder', () => {
-    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    renderPresent()
-    act(() => {
-      fireEvent.keyDown(window, { key: 'ArrowLeft' })
-    })
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[present] navigation key pressed'),
-    )
-    consoleSpy.mockRestore()
-  })
+  it('ArrowRight advances to next slide', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
 
-  it('ArrowRight loguje placeholder', () => {
-    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    renderPresent()
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's1',
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
     act(() => {
       fireEvent.keyDown(window, { key: 'ArrowRight' })
     })
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[present] navigation key pressed'),
-    )
-    consoleSpy.mockRestore()
+
+    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
   })
 
-  it('Space loguje placeholder', () => {
-    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    renderPresent()
+  it('Space advances to next slide', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
+
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's1',
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
     act(() => {
       fireEvent.keyDown(window, { key: ' ' })
     })
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[present] navigation key pressed'),
-    )
-    consoleSpy.mockRestore()
+
+    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
   })
 
-  it('PageUp loguje placeholder', () => {
-    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    renderPresent()
-    act(() => {
-      fireEvent.keyDown(window, { key: 'PageUp' })
-    })
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[present] navigation key pressed'),
-    )
-    consoleSpy.mockRestore()
-  })
+  it('PageDown advances to next slide', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
 
-  it('PageDown loguje placeholder', () => {
-    const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined)
-    renderPresent()
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's1',
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
     act(() => {
       fireEvent.keyDown(window, { key: 'PageDown' })
     })
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[present] navigation key pressed'),
-    )
-    consoleSpy.mockRestore()
+
+    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
   })
 
-  it('F key volá requestFullscreen', async () => {
+  it('ArrowLeft retreats to previous slide', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
+
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's2',
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    })
+
+    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s1')
+  })
+
+  it('PageUp retreats to previous slide', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
+
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's2',
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'PageUp' })
+    })
+
+    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s1')
+  })
+
+  it('ArrowLeft at first slide is no-op', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
+
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's1', // already at first
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'ArrowLeft' })
+    })
+
+    expect(mockSetActiveSlideId).not.toHaveBeenCalled()
+  })
+
+  it('ArrowRight at last slide is no-op', () => {
+    const slide1 = makeSlide('s1')
+    const slide2 = makeSlide('s2')
+    mockSlidesData.push(slide1, slide2)
+
+    const mockSetActiveSlideId = vi.fn()
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's2', // already at last
+      setActiveSlideId: mockSetActiveSlideId,
+    }
+
+    renderPresent({ activeSlide })
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'ArrowRight' })
+    })
+
+    expect(mockSetActiveSlideId).not.toHaveBeenCalled()
+  })
+
+  it('F key calls requestFullscreen', async () => {
     renderPresent()
     await act(async () => {
       fireEvent.keyDown(window, { key: 'f' })
@@ -317,7 +435,7 @@ describe('PresentLayout — keyboard', () => {
     expect(mockRequestFullscreen).toHaveBeenCalled()
   })
 
-  it('nenaviguje na jiných klávesách', () => {
+  it('does not navigate on other keys', () => {
     renderPresent()
     act(() => {
       fireEvent.keyDown(window, { key: 'a' })
@@ -326,8 +444,49 @@ describe('PresentLayout — keyboard', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Slide counter tests
+// ---------------------------------------------------------------------------
+
+describe('PresentLayout — slide counter', () => {
+  it('shows correct counter when on first of two slides', () => {
+    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
+
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's1',
+      setActiveSlideId: vi.fn(),
+    }
+
+    renderPresent({ activeSlide })
+    // aria-hidden counter
+    expect(screen.getByText('1 / 2')).toBeInTheDocument()
+  })
+
+  it('shows correct counter when on second of two slides', () => {
+    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
+
+    const activeSlide: ActiveSlideContextValue = {
+      activeSlideId: 's2',
+      setActiveSlideId: vi.fn(),
+    }
+
+    renderPresent({ activeSlide })
+    expect(screen.getByText('2 / 2')).toBeInTheDocument()
+  })
+
+  it('shows 1/1 fallback when slides list is empty', () => {
+    // mockSlidesData is empty
+    renderPresent()
+    expect(screen.getByText('1 / 1')).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Scale test
+// ---------------------------------------------------------------------------
+
 describe('PresentLayout — scale', () => {
-  it('slide container má CSS transform scale', () => {
+  it('slide container has CSS transform scale', () => {
     renderPresent()
     const container = screen.getByTestId('slide-container')
     const style = container.getAttribute('style') ?? ''
@@ -340,7 +499,7 @@ describe('PresentLayout — scale', () => {
 // ---------------------------------------------------------------------------
 
 describe('PresentLayout — animation runtime', () => {
-  it('nevytváří runtime pokud canvas není ready (null)', () => {
+  it('does not create runtime if canvas not ready', () => {
     mockAnimationsData.push({
       id: 'a1',
       objectId: 'obj-1',
@@ -351,18 +510,17 @@ describe('PresentLayout — animation runtime', () => {
       easing: 'power2.out',
     })
 
-    renderPresent('test', null)
+    renderPresent({ canvasInstance: null })
     expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
   })
 
-  it('nevytváří runtime pokud nejsou žádné animace', () => {
+  it('does not create runtime if no animations exist', () => {
     const instance = createMockCanvasInstance()
-    // mockAnimationsData je prázdné
-    renderPresent('test', instance)
+    renderPresent({ canvasInstance: instance })
     expect(mockCreateAnimationRuntime).not.toHaveBeenCalled()
   })
 
-  it('vytvoří runtime a zavolá play() pokud canvas ready + animace existují', () => {
+  it('creates runtime and calls play() when canvas is ready and animations exist', () => {
     mockAnimationsData.push({
       id: 'a1',
       objectId: 'obj-1',
@@ -374,13 +532,13 @@ describe('PresentLayout — animation runtime', () => {
     })
 
     const instance = createMockCanvasInstance()
-    renderPresent('test', instance)
+    renderPresent({ canvasInstance: instance })
 
     expect(mockCreateAnimationRuntime).toHaveBeenCalledOnce()
     expect(mockPlay).toHaveBeenCalledOnce()
   })
 
-  it('destroy() je volán při unmount', () => {
+  it('calls destroy() on unmount', () => {
     mockAnimationsData.push({
       id: 'a1',
       objectId: 'obj-1',
@@ -392,7 +550,7 @@ describe('PresentLayout — animation runtime', () => {
     })
 
     const instance = createMockCanvasInstance()
-    const { unmount } = renderPresent('test', instance)
+    const { unmount } = renderPresent({ canvasInstance: instance })
 
     expect(mockPlay).toHaveBeenCalledOnce()
     unmount()

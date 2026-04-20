@@ -1,35 +1,54 @@
 /**
  * state/useSlideObjects.ts
  *
- * Hook pro subscribe na slide objects z Y.Doc.
- * Re-renderuje komponentu když se změní jakýkoliv objekt.
+ * Hook for subscribing to the active slide's objects from Y.Doc.
+ * Re-renders when any object on the active slide changes.
  *
- * Vrací:
- * - objects: SlideObject[] — aktuální snapshot
- * - mutationCtx: MutationContext — pro volání mutations
+ * M9 update: scoped to active slide via ActiveSlideContext.
+ * If no active slide, returns empty array and null objectsCtx.
+ *
+ * Returns:
+ * - objects: SlideObject[] — current snapshot
+ * - objectsCtx: ObjectsMutationContext | null — for calling object mutations
  */
 
 import { useState, useEffect } from 'react'
-import { subscribeToObjects } from '@narrative/slide-model'
-import type { MutationContext } from '@narrative/slide-model'
+import { subscribeToSlideObjects, getSlideObjectsCtx } from '@narrative/slide-model'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
 import type { SlideObject } from '@narrative/shared'
 import { useSlideDoc } from './useSlideDoc.js'
+import { useActiveSlide } from './ActiveSlideContext.js'
 
 export interface UseSlideObjectsResult {
   objects: SlideObject[]
-  mutationCtx: MutationContext
+  /** ObjectsMutationContext scoped to the active slide. Null if no active slide. */
+  objectsCtx: ObjectsMutationContext | null
+  /**
+   * @deprecated Use objectsCtx. Kept for backward compat with consumers expecting mutationCtx.
+   * Removed in M10.
+   */
+  mutationCtx: ObjectsMutationContext | null
 }
 
 export function useSlideObjects(): UseSlideObjectsResult {
-  const { mutationCtx } = useSlideDoc()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
   const [objects, setObjects] = useState<SlideObject[]>([])
 
   useEffect(() => {
-    // subscribeToObjects inicializačně zavolá setObjects se současným snapshotem,
-    // pak na každou Y.Doc změnu
-    const unsubscribe = subscribeToObjects(mutationCtx, setObjects)
-    return unsubscribe
-  }, [mutationCtx])
+    if (activeSlideId === null) {
+      setObjects([])
+      return
+    }
 
-  return { objects, mutationCtx }
+    // subscribeToSlideObjects emits initial state synchronously, then on every change
+    const unsubscribe = subscribeToSlideObjects(deckCtx, activeSlideId, (changes) => {
+      setObjects(changes.snapshot)
+    })
+    return unsubscribe
+  }, [deckCtx, activeSlideId])
+
+  const objectsCtx = activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null
+
+  return { objects, objectsCtx, mutationCtx: objectsCtx }
 }

@@ -52,7 +52,11 @@ export type SlideObjectType = SlideObject['type']
  */
 export type SlideObjectPatch<T extends SlideObject> = Partial<Omit<T, 'id' | 'type'>>
 
-export interface Slide {
+/**
+ * @deprecated Use Slide from deck.ts (M9 multi-slide schema).
+ * Kept for reference only — removed from exports in M9.
+ */
+export interface LegacySingleSlide {
   id: string
   objects: SlideObject[]
 }

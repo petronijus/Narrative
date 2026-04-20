@@ -1,17 +1,17 @@
 /**
  * @narrative/slide-model — public API
  *
- * Single import point pro všechny state/Yjs operace.
- * Renderer a editor-ui nesmí importovat Y.Doc přímo —
- * všechno přes toto API (viz ADR-0003).
+ * Single import point for all state/Yjs operations.
+ * Renderer and editor-ui must not import Y.Doc directly —
+ * everything goes through this API (see ADR-0003).
  */
 
 // Registry
 export { registerObjectType, getObjectTypeDef, listRegisteredTypes } from './registry.js'
 export type { ObjectTypeDef } from './registry.js'
 
-// Y.Doc factory
-export { createSlideDoc } from './yDoc.js'
+// Y.Doc factory (M9: multi-slide schema)
+export { createSlideDoc, hydrateSlideDoc } from './yDoc.js'
 export type { SlideDocHandles } from './yDoc.js'
 
 // Mutations — objects
@@ -24,7 +24,12 @@ export {
   duplicateObject,
   bulkUpdateObjects,
 } from './mutations.js'
-export type { MutationContext, BulkUpdate } from './mutations.js'
+export type {
+  ObjectsMutationContext,
+  /** @deprecated Use ObjectsMutationContext */
+  MutationContext,
+  BulkUpdate,
+} from './mutations.js'
 
 // Mutations — animations (M6)
 export {
@@ -33,10 +38,25 @@ export {
   updateAnimation,
   reorderAnimations,
 } from './animationMutations.js'
-export type { AnimationMutationContext } from './animationMutations.js'
+export type {
+  AnimationsMutationContext,
+  /** @deprecated Use AnimationsMutationContext */
+  AnimationMutationContext,
+} from './animationMutations.js'
 
-// Unified mutation context (M6)
-export type { SlideMutationContext } from './slideMutationContext.js'
+// Deck-level mutation context (M9)
+export type { SlideMutationContext, DeckMutationContext } from './slideMutationContext.js'
+
+// Slide CRUD + scoped context accessors (M9)
+export {
+  addSlide,
+  removeSlide,
+  moveSlide,
+  updateSlideTransition,
+  listSlides,
+  getSlideObjectsCtx,
+  getSlideAnimationsCtx,
+} from './slides.js'
 
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
@@ -54,21 +74,29 @@ export { createUndoManager } from './undo.js'
 // Awareness helpers (M8)
 export { generatePeerId, toPeerInfo, peerColorFromId } from './awareness.js'
 
-// Observer — objects
+// Observer — slides (M9)
+export {
+  subscribeToSlides,
+  subscribeToSlideObjects,
+  subscribeToSlideObjectsWithFlush,
+  subscribeToSlideAnimations,
+} from './slideObserve.js'
+export type { SlideSummary, ObjectChangeSet } from './slideObserve.js'
+
+// Observer — objects (deprecated, backward compat — remove in M10)
 export {
   subscribeToObjects,
   subscribeToObjectChanges,
   subscribeToObjectChangesWithFlush,
 } from './observe.js'
-export type { ObjectChangeSet } from './observe.js'
 
-// Observer — animations (M6)
+// Observer — animations (deprecated, backward compat — remove in M10)
 export { subscribeToAnimations } from './animationObserve.js'
 
 // ---------------------------------------------------------------------------
 // Builtin object type registrations
 // ---------------------------------------------------------------------------
-// Importovat tento modul (index) garantuje že builtin typy jsou zaregistrovány.
+// Importing this module (index) guarantees builtin types are registered.
 
 import { registerObjectType } from './registry.js'
 import type { RectangleObject, EllipseObject, TextObject } from '@narrative/shared'

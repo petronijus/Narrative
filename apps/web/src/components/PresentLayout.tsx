@@ -30,6 +30,8 @@ import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useAnimations } from '../state/useAnimations.js'
+import { useSlides } from '../state/useSlides.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { createAnimationRuntime } from '@narrative/animation'
 import { createClickInputBridge } from '@narrative/animation'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
@@ -67,6 +69,10 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
 
   // Animations snapshot z Y.Doc
   const { animations } = useAnimations()
+
+  // M9: slide list + active slide for navigation
+  const slides = useSlides()
+  const { activeSlideId, setActiveSlideId } = useActiveSlide()
 
   // ---------------------------------------------------------------------------
   // Scale-to-fit: ResizeObserver na fullscreen container
@@ -139,6 +145,36 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   }, [canvasInstance, animations])
 
   // ---------------------------------------------------------------------------
+  // M9: Slide navigation helpers
+  // ---------------------------------------------------------------------------
+
+  const navigateToSlide = useCallback(
+    (direction: 'next' | 'prev') => {
+      if (slides.length === 0) return
+      const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
+      if (currentIdx === -1) return
+
+      let targetIdx: number
+      if (direction === 'next') {
+        if (currentIdx >= slides.length - 1) return // boundary — no wrap
+        targetIdx = currentIdx + 1
+      } else {
+        if (currentIdx <= 0) return // boundary — no wrap
+        targetIdx = currentIdx - 1
+      }
+
+      const targetSlide = slides[targetIdx]
+      if (targetSlide === undefined) return
+
+      // TODO(M9-transitions): run runSlideTransition() from @narrative/animation
+      // when that API is available and the slide's transition.kind !== 'none'.
+      // For now: instant swap.
+      setActiveSlideId(targetSlide.id)
+    },
+    [slides, activeSlideId, setActiveSlideId],
+  )
+
+  // ---------------------------------------------------------------------------
   // Keyboard handling
   // ---------------------------------------------------------------------------
 
@@ -150,15 +186,17 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
           navigate(`/deck/${id ?? ''}`)
           break
 
-        case 'ArrowLeft':
         case 'ArrowRight':
         case ' ':
-        case 'PageUp':
         case 'PageDown':
           e.preventDefault()
-          // Arrow/Space advance není wired do runtime — onClick triggers jdou přes InputBridge
-          // klik na document.body. Keyboard advance přijde v M9.
-          console.debug('[present] navigation key pressed — M9 will wire up multi-slide nav')
+          navigateToSlide('next')
+          break
+
+        case 'ArrowLeft':
+        case 'PageUp':
+          e.preventDefault()
+          navigateToSlide('prev')
           break
 
         case 'f':
@@ -174,7 +212,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [id, navigate, toggleFullscreen])
+  }, [id, navigate, toggleFullscreen, navigateToSlide])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -205,12 +243,14 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         <Canvas onReady={onCanvasReady} />
       </div>
 
-      {/* Slide counter (M5: vždy 1/1; M9 napojí real index) */}
+      {/* Slide counter — real index/count (M9) */}
       <div
         className="absolute bottom-4 right-4 select-none text-xs text-white/40"
         aria-hidden="true"
       >
-        1 / 1
+        {slides.length > 0
+          ? `${Math.max(1, slides.findIndex((s) => s.id === activeSlideId) + 1)} / ${slides.length}`
+          : '1 / 1'}
       </div>
 
       {/* Escape hint */}

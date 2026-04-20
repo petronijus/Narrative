@@ -26,7 +26,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
-import type { MutationContext, BulkUpdate } from '@narrative/slide-model'
+import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
 import { bulkUpdateObjects } from '@narrative/slide-model'
 import { computeSnap } from '../editor/snap.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -58,7 +58,7 @@ interface DragState {
 export interface TransformHandlesProps {
   objectIds: string[]
   sceneGraph: SceneGraph
-  mutationCtx: MutationContext
+  mutationCtx: ObjectsMutationContext
   /** Callback pro předání aktivních snap guides do EditorLayout (vizualizace). */
   onSnapGuides?: (guides: SnapGuide[]) => void
   /** Bounds ostatních objektů pro snapping (all objects minus selected). */

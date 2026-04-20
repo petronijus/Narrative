@@ -1,40 +1,49 @@
 /**
  * state/useSlideObjectChanges.ts
  *
- * Hook pro konzumaci incremental changes z Y.Doc.
- * Určen pro renderer (surgical updates) — ne pro UI komponenty.
+ * Hook for consuming incremental object changes from Y.Doc.
+ * Intended for the renderer (surgical updates) — not for UI components.
  *
- * Pro UI komponenty co chtějí plain objects snapshot, použij useSlideObjects().
- * Pro renderer (surgical apply), použij tento hook s ObjectChangeSet callbackem.
+ * For UI components wanting a plain objects snapshot, use useSlideObjects().
+ * For the renderer (surgical apply), use this hook with ObjectChangeSet callback.
+ *
+ * M9 update: scoped to active slide via ActiveSlideContext.
+ * Re-subscribes when activeSlideId changes.
  */
 
 import { useEffect, useRef } from 'react'
-import { subscribeToObjectChanges } from '@narrative/slide-model'
+import { subscribeToSlideObjects } from '@narrative/slide-model'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
+import { useActiveSlide } from './ActiveSlideContext.js'
 
 /**
- * Subscribe na incremental changes s per-frame batching.
+ * Subscribe to incremental changes with per-frame batching.
  *
- * Callback je uložen v ref — nezpůsobuje re-subscribe při každém re-renderu.
- * Re-subscribes pouze když se změní mutationCtx (nový Y.Doc).
+ * Callback is stored in a ref — does not cause re-subscribe on every re-render.
+ * Re-subscribes only when deckCtx or activeSlideId changes.
  *
- * Initial call: callback je zavolán synchronně v rámci useEffect setup
- * s initial state { added: <všechny existující>, removed: [], updated: [], snapshot: [...] }.
+ * Initial call: callback is called synchronously in useEffect setup
+ * with initial state { added: <all existing>, removed: [], updated: [], snapshot: [...] }.
  *
- * @param callback Funkce volaná při každém batched change setu
+ * If there is no active slide, callback is never called.
+ *
+ * @param callback Function called on each batched change set
  */
 export function useSlideObjectChanges(callback: (changes: ObjectChangeSet) => void): void {
-  const { mutationCtx } = useSlideDoc()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
 
-  // Callback v ref — aby se neměnil subscribe při každém re-renderu
+  // Callback in ref — avoid re-subscribe on every re-render
   const callbackRef = useRef(callback)
   callbackRef.current = callback
 
   useEffect(() => {
-    const unsubscribe = subscribeToObjectChanges(mutationCtx, (changes) =>
+    if (activeSlideId === null) return
+
+    const unsubscribe = subscribeToSlideObjects(deckCtx, activeSlideId, (changes) =>
       callbackRef.current(changes),
     )
     return unsubscribe
-  }, [mutationCtx])
+  }, [deckCtx, activeSlideId])
 }

@@ -1,42 +1,34 @@
 /**
  * state/SlideDocProvider.tsx
  *
- * React context provider pro SlideDoc.
+ * React context provider for SlideDoc.
  *
- * M4: Místo čistě in-memory Y.Doc používá HocuspocusProvider pro realtime sync
- * přes WebSocket. Y.Doc je sdílena s Yjs bindings (mutationCtx).
- *
- * M6 update: mutationCtx je rozšířen o animations Y.Array (SlideMutationContext).
- * UndoManager trackuje obě Y.Array (objects + animations).
- *
- * M8 update: Awareness integrace.
- *   - Lokální peer ID se generuje nebo načítá ze sessionStorage (klíč: narrative:peerId).
- *   - Initial awareness state (user, selectedObjectIds, cursor) se nastavuje po connect.
- *   - On unmount: awareness state se vyčistí (broadcast disappear ostatním peerům).
- *   - SlideDocContextValue je rozšířen o awareness + localUser.
+ * M4: Uses HocuspocusProvider for realtime sync over WebSocket.
+ * M6: mutationCtx extended with animations Y.Array (SlideMutationContext).
+ * M8: Awareness integration — peer cursors, selections, avatar chips.
+ * M9: Multi-slide schema restructure.
+ *   - hydrateSlideDoc() runs backward-compat migration on load.
+ *   - Context now exposes deckCtx ({ doc, slides }) instead of mutationCtx.
+ *   - UndoManager tracks the top-level slides Y.Array (deep tracking).
+ *   - Per-slide scoped contexts obtained via getSlideObjectsCtx / getSlideAnimationsCtx.
  *
  * Lifecycle:
  *   mount   → HocuspocusProvider.connect() (WS handshake, server hydrates Y.Doc)
  *   unmount → HocuspocusProvider.destroy() (cleanup WS + Yjs subscriptions)
  *
- * Connection URL z env: VITE_HOCUSPOCUS_URL (default ws://localhost:3002)
- * Document name = deckId z props (předávané z URL param /deck/:id)
- *
- * Initial state:
- *   Server-side: onLoadDocument aplikuje existující updates z DB → Y.Doc je hydrated
- *   Client-side: po sync provider emituje 'synced' event → Y.Doc je ready
- *   Idempotentní seed: pokud deck nemá žádné objekty, Landing page seeduje prázdný deck
- *   bez dat — první otevření bude prázdné plátno (bez demo objects)
- *
- * Security (M4):
- *   Žádný auth — žádný token v URL nebo header. Všichni klienti mají write access.
- *   TODO(M10): přidat token do HocuspocusProvider options po implementaci JWT auth
+ * Connection URL from env: VITE_HOCUSPOCUS_URL (default ws://localhost:3002)
+ * Document name = deckId from props (passed from URL param /deck/:id)
  */
 
 import { useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { createUndoManager, generatePeerId, peerColorFromId } from '@narrative/slide-model'
+import {
+  createUndoManager,
+  generatePeerId,
+  peerColorFromId,
+  hydrateSlideDoc,
+} from '@narrative/slide-model'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type { PeerUser } from '@narrative/shared'
 import { SlideDocContext } from './slideDocContext.js'
@@ -46,7 +38,7 @@ const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
 
 // ---------------------------------------------------------------------------
-// Session peer ID — persist přes refresh, nový per tab
+// Session peer ID — persist across refresh, new per tab
 // ---------------------------------------------------------------------------
 
 function getOrCreatePeerId(): string {
@@ -57,7 +49,7 @@ function getOrCreatePeerId(): string {
     sessionStorage.setItem(PEER_ID_STORAGE_KEY, fresh)
     return fresh
   } catch {
-    // sessionStorage nedostupný (private mode bez storage, SSR guard)
+    // sessionStorage unavailable (private mode, SSR guard)
     return generatePeerId()
   }
 }
@@ -71,16 +63,16 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
   const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
 
-  // Ref pro StrictMode double-mount guard
+  // Ref for StrictMode double-mount guard
   const providerRef = useRef<HocuspocusProvider | null>(null)
 
   useEffect(() => {
-    // StrictMode guard — neopakuj mount pokud provider existuje pro stejný deckId
+    // StrictMode guard — don't remount if provider already exists for this deckId
     if (providerRef.current !== null) return
 
     const doc = new Y.Doc()
 
-    // M8: Lokální peer identity — stabilní pro celý session tab
+    // M8: Local peer identity — stable for the entire session tab
     const peerId = getOrCreatePeerId()
     const localUser: PeerUser = {
       id: peerId,
@@ -94,8 +86,7 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
       document: doc,
       onConnect() {
         setWsStatus('connected')
-        // M8: Nastavit initial awareness state při každém (re)connect.
-        // Hocuspocus po reconnect vyčistí awareness — musíme obnovit.
+        // M8: Restore awareness state on (re)connect — Hocuspocus clears it after reconnect.
         provider.awareness?.setLocalState({
           user: localUser,
           selectedObjectIds: [],
@@ -106,17 +97,27 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
         setWsStatus('disconnected')
       },
       onStatus({ status }: { status: string }) {
-        // Hocuspocus status values: 'connecting' | 'connected' | 'disconnected'
         if (status === 'connected' || status === 'connecting' || status === 'disconnected') {
           setWsStatus(status as WsStatus)
         }
+      },
+      onSynced() {
+        // M9: After Hocuspocus syncs the Y.Doc, run backward-compat migration.
+        // hydrateSlideDoc is idempotent — safe to call multiple times.
+        const handles = hydrateSlideDoc(doc)
+        const deckCtx: SlideMutationContext = {
+          doc: handles.doc,
+          slides: handles.slides,
+        }
+        const undoManager = createUndoManager(deckCtx)
+        setValue({ deckCtx, undoManager, awareness: provider.awareness!, localUser })
       },
     })
 
     providerRef.current = provider
 
-    // M8: Set initial awareness state okamžitě (i před WS connect —
-    // awareness.setLocalState funguje lokálně, broadcast proběhne po connect).
+    // M8: Set initial awareness state immediately (even before WS connect —
+    // awareness.setLocalState works locally, broadcast happens after connect).
     const awareness = provider.awareness
     if (awareness === null) {
       throw new Error('HocuspocusProvider.awareness is null — provider not initialized')
@@ -127,23 +128,18 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
       cursor: null,
     })
 
-    // M6: getArray je idempotentní — existující decky bez 'animations' dostanou
-    // prázdný array (backward compat).
-    const objects = doc.getArray<Y.Map<unknown>>('objects')
-    const animations = doc.getArray<Y.Map<unknown>>('animations')
-
-    const mutationCtx: SlideMutationContext = {
-      doc,
-      objects,
-      animations,
+    // M9: Also hydrate immediately for offline/test scenarios where onSynced may not fire.
+    // This ensures deckCtx is available even without a WS connection.
+    const handles = hydrateSlideDoc(doc)
+    const deckCtx: SlideMutationContext = {
+      doc: handles.doc,
+      slides: handles.slides,
     }
-
-    const undoManager = createUndoManager(mutationCtx)
-
-    setValue({ mutationCtx, undoManager, awareness, localUser })
+    const undoManager = createUndoManager(deckCtx)
+    setValue({ deckCtx, undoManager, awareness, localUser })
 
     return () => {
-      // M8: Cleanup — broadcast disappear ostatním peerům
+      // M8: Cleanup — broadcast disappear to other peers
       awareness.setLocalState(null)
       provider.destroy()
       doc.destroy()

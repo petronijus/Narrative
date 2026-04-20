@@ -13,10 +13,20 @@ import type { AnimationStep } from '@narrative/shared'
 import { LOCAL_ORIGIN } from './mutations.js'
 import { animationStepToYMap, yMapToAnimationStep } from './animationBindings.js'
 
-export interface AnimationMutationContext {
+/**
+ * AnimationsMutationContext — context scoped to one slide's animations Y.Array.
+ * Renamed from AnimationMutationContext in M9 for clarity.
+ * Use getSlideAnimationsCtx() from slides.ts to obtain from a deck context.
+ */
+export interface AnimationsMutationContext {
   doc: Y.Doc
   animations: Y.Array<Y.Map<unknown>>
 }
+
+/**
+ * @deprecated Use AnimationsMutationContext. Alias kept for backward compat — removed in M10.
+ */
+export type AnimationMutationContext = AnimationsMutationContext
 
 /**
  * Přidá AnimationStep do Y.Array animations.
@@ -25,7 +35,7 @@ export interface AnimationMutationContext {
  * @returns Přidaný AnimationStep s vygenerovaným id.
  */
 export function addAnimation(
-  ctx: AnimationMutationContext,
+  ctx: AnimationsMutationContext,
   step: Omit<AnimationStep, 'id'>,
 ): AnimationStep {
   const id = nanoid()
@@ -43,7 +53,7 @@ export function addAnimation(
  * Odstraní AnimationStep podle id z Y.Array.
  * Pokud id neexistuje: no-op + warn (idempotent).
  */
-export function removeAnimation(ctx: AnimationMutationContext, id: string): void {
+export function removeAnimation(ctx: AnimationsMutationContext, id: string): void {
   ctx.doc.transact(() => {
     const idx = findAnimationIndexById(ctx.animations, id)
     if (idx === -1) {
@@ -61,7 +71,7 @@ export function removeAnimation(ctx: AnimationMutationContext, id: string): void
  * Pokud id neexistuje: no-op + warn (idempotent).
  */
 export function updateAnimation(
-  ctx: AnimationMutationContext,
+  ctx: AnimationsMutationContext,
   id: string,
   patch: Partial<Omit<AnimationStep, 'id' | 'objectId'>>,
 ): void {
@@ -85,7 +95,7 @@ export function updateAnimation(
  *
  * @throws Pokud newOrder neobsahuje stejné IDs jako existující animations.
  */
-export function reorderAnimations(ctx: AnimationMutationContext, newOrder: string[]): void {
+export function reorderAnimations(ctx: AnimationsMutationContext, newOrder: string[]): void {
   // Načteme existující steps jako plain objects (před transact, pro validaci)
   const existingSteps: AnimationStep[] = []
   for (let i = 0; i < ctx.animations.length; i++) {

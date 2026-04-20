@@ -12,14 +12,25 @@
  * - Transform: Rotation (degrees), Opacity
  * - Appearance: Fill (rect/ellipse)
  * - Text: Text, Font size, Font weight, Color, Align
+ *
+ * No-selection state (M9):
+ * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
 import type { ChangeEvent } from 'react'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
-import { updateObject, addAnimation, removeAnimation } from '@narrative/slide-model'
-import type { SlideMutationContext } from '@narrative/slide-model'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useSlides } from '../state/useSlides.js'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import {
+  updateObject,
+  addAnimation,
+  removeAnimation,
+  updateSlideTransition,
+} from '@narrative/slide-model'
+import type { AnimationsMutationContext } from '@narrative/slide-model'
 import type {
   SlideObject,
   RectangleObject,
@@ -28,6 +39,9 @@ import type {
   SlideObjectPatch,
   AnimationStep,
   AnimationTrigger,
+  SlideTransition,
+  SlideTransitionKind,
+  SlidePushDirection,
 } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -113,8 +127,8 @@ function Section({ title, children }: SectionProps) {
 
 export function Inspector() {
   const { selectedIds, selectedId } = useSelection()
-  const { objects, mutationCtx } = useSlideObjects()
-  const { animations, mutationCtx: animMutationCtx } = useAnimations()
+  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  const { animations, animationsCtx: animMutationCtx } = useAnimations()
 
   // Multi-select placeholder
   if (selectedIds.size > 1) {
@@ -130,11 +144,7 @@ export function Inspector() {
   }
 
   if (selectedId === null) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-xs text-gray-600">No selection</p>
-      </div>
-    )
+    return <SlideInspector />
   }
 
   const obj = objects.find((o) => o.id === selectedId)
@@ -148,7 +158,7 @@ export function Inspector() {
   }
 
   function patch<T extends SlideObject>(p: SlideObjectPatch<T>) {
-    if (obj === undefined) return
+    if (obj === undefined || mutationCtx === null) return
     updateObject(mutationCtx, obj.id, p)
   }
 
@@ -220,12 +230,158 @@ export function Inspector() {
       )}
 
       {/* Animations */}
-      <AnimationsSection
-        objectId={obj.id}
-        animations={animations}
-        mutationCtx={animMutationCtx}
-        totalAnimations={animations.length}
-      />
+      {animMutationCtx !== null && (
+        <AnimationsSection
+          objectId={obj.id}
+          animations={animations}
+          mutationCtx={animMutationCtx}
+          totalAnimations={animations.length}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SlideInspector — shown when no object is selected (M9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Slide-level inspector: shows transition settings for the active slide.
+ * Replaces the "No selection" placeholder when selection is empty.
+ */
+function SlideInspector() {
+  const { activeSlideId } = useActiveSlide()
+  const { deckCtx } = useSlideDoc()
+  const slides = useSlides()
+
+  const slide = slides.find((s) => s.id === activeSlideId)
+
+  if (slide === undefined) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-xs text-gray-600">No selection</p>
+      </div>
+    )
+  }
+
+  const { transition } = slide
+
+  function patchTransition(p: Partial<SlideTransition>) {
+    if (activeSlideId === null) return
+    updateSlideTransition(deckCtx, activeSlideId, p)
+  }
+
+  const kindOptions: { value: SlideTransitionKind; label: string }[] = [
+    { value: 'none', label: 'None' },
+    { value: 'fade', label: 'Fade' },
+    { value: 'push', label: 'Push' },
+    { value: 'cube', label: 'Cube' },
+  ]
+
+  const directionOptions: { value: SlidePushDirection; label: string }[] = [
+    { value: 'left', label: 'Left' },
+    { value: 'right', label: 'Right' },
+    { value: 'up', label: 'Up' },
+    { value: 'down', label: 'Down' },
+  ]
+
+  const SELECT_CLASS = [
+    'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
+    'text-xs text-gray-200',
+    'focus:border-blue-500 focus:outline-none',
+    'disabled:opacity-40 disabled:cursor-not-allowed',
+  ].join(' ')
+
+  return (
+    <div className="flex flex-col overflow-y-auto">
+      {/* Slide ID reference */}
+      <div className="border-b border-gray-800 px-3 py-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Slide</p>
+        <p className="mt-1 truncate font-mono text-[10px] text-gray-600" title={slide.id}>
+          {slide.id}
+        </p>
+      </div>
+
+      {/* Transition settings */}
+      <Section title="Transition">
+        {/* Kind */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`transition-kind-${slide.id}`}
+            className="w-16 flex-shrink-0 text-xs text-gray-400"
+          >
+            Kind
+          </label>
+          <select
+            id={`transition-kind-${slide.id}`}
+            value={transition.kind}
+            onChange={(e) => patchTransition({ kind: e.target.value as SlideTransitionKind })}
+            className={SELECT_CLASS}
+          >
+            {kindOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Duration */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`transition-duration-${slide.id}`}
+            className="w-16 flex-shrink-0 text-xs text-gray-400"
+          >
+            Duration
+          </label>
+          <input
+            id={`transition-duration-${slide.id}`}
+            type="number"
+            min={0}
+            step={50}
+            value={transition.durationMs}
+            disabled={transition.kind === 'none'}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => {
+              const parsed = parseInt(e.target.value, 10)
+              if (Number.isFinite(parsed) && parsed >= 0) {
+                patchTransition({ durationMs: parsed })
+              }
+            }}
+            className={[
+              'w-full rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
+              'text-right text-xs text-gray-200',
+              'focus:border-blue-500 focus:outline-none',
+              'disabled:opacity-40 disabled:cursor-not-allowed',
+            ].join(' ')}
+          />
+          <span className="flex-shrink-0 text-[10px] text-gray-600">ms</span>
+        </div>
+
+        {/* Direction — only for push */}
+        {transition.kind === 'push' && (
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor={`transition-dir-${slide.id}`}
+              className="w-16 flex-shrink-0 text-xs text-gray-400"
+            >
+              Direction
+            </label>
+            <select
+              id={`transition-dir-${slide.id}`}
+              value={transition.direction ?? 'left'}
+              onChange={(e) => patchTransition({ direction: e.target.value as SlidePushDirection })}
+              className={SELECT_CLASS}
+            >
+              {directionOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </Section>
     </div>
   )
 }
@@ -425,8 +581,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
 interface AnimationsSectionProps {
   objectId: string
   animations: AnimationStep[]
-  mutationCtx: SlideMutationContext
-  /** Celkový počet animací na slide — pro výpočet defaultního triggeru nové animace. */
+  mutationCtx: AnimationsMutationContext
+  /** Total animation count on slide — for computing default trigger for new animation. */
   totalAnimations: number
 }
 

@@ -402,4 +402,17 @@ export class SceneGraph {
   get objectCount(): number {
     return this.nodes.size
   }
+
+  /**
+   * Public accessor for the root Container.
+   *
+   * Exposed so that consumers like PeerCursors and the thumbnail renderer can
+   * reference the root without an unsafe cast. The root is the direct child of
+   * app.stage that holds all slide objects.
+   *
+   * Read-only intent — callers must not mutate or destroy this container.
+   */
+  get rootContainer(): Container {
+    return this.root
+  }
 }

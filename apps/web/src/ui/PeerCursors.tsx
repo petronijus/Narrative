@@ -25,7 +25,6 @@ import { useAwareness } from '../state/useAwareness.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { OverlayHandle } from '../renderer/overlay/types.js'
 import type { PeerInfo } from '@narrative/shared'
-import type { Container as PixiContainer } from 'pixi.js'
 
 // ---------------------------------------------------------------------------
 // SVG cursor markup
@@ -123,7 +122,7 @@ export function PeerCursors(): null {
 
     // SceneGraph root container je na world (0,0). Worldoffset = cursor world coords.
     // Tím obcházíme nutnost per-cursor Pixi Container.
-    const rootContainer = (sceneGraph as unknown as { root: PixiContainer }).root
+    const rootContainer = sceneGraph.rootContainer
 
     const currentOverlays = overlaysRef.current
 

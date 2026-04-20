@@ -14,7 +14,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { TransformHandles } from './TransformHandles'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
-import type { MutationContext } from '@narrative/slide-model'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
 import * as Y from 'yjs'
 import type * as SlideModel from '@narrative/slide-model'
 
@@ -36,7 +36,7 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMutationCtx(): MutationContext {
+function createMutationCtx(): ObjectsMutationContext {
   const doc = new Y.Doc()
   return { doc, objects: doc.getArray('objects') }
 }

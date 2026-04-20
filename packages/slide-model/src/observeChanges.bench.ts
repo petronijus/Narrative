@@ -17,14 +17,20 @@
 
 import { describe, bench, beforeEach } from 'vitest'
 import { createSlideDoc } from './yDoc.js'
-import { addObject, updateObject, type MutationContext } from './mutations.js'
+import { addObject, updateObject, type ObjectsMutationContext } from './mutations.js'
+import { getSlideObjectsCtx } from './slides.js'
+import type { SlideMutationContext } from './slideMutationContext.js'
 import { subscribeToObjectChangesWithFlush } from './observe.js'
 import { registerObjectType, _clearRegistry } from './registry.js'
 import type { RectangleObject, SlideObject } from '@narrative/shared'
 
-function makeCtx(): MutationContext {
-  const { doc, objects } = createSlideDoc()
-  return { doc, objects }
+function makeCtx(): ObjectsMutationContext {
+  const { doc, slides } = createSlideDoc()
+  const dk: SlideMutationContext = { doc, slides }
+  const firstSlideId = slides.get(0).get('id') as string
+  const ctx = getSlideObjectsCtx(dk, firstSlideId)
+  if (ctx === null) throw new Error('makeCtx: no slide-0 objects ctx')
+  return ctx
 }
 
 const makeRect = (id: string): RectangleObject => ({

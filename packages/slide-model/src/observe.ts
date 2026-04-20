@@ -11,13 +11,20 @@
 import * as Y from 'yjs'
 import type { SlideObject } from '@narrative/shared'
 import { yMapToPlainObject } from './bindings.js'
-import type { MutationContext } from './mutations.js'
+import type { ObjectsMutationContext } from './mutations.js'
+
+// Backward-compat alias — functions below still accept the old MutationContext shape
+type MutationContext = ObjectsMutationContext
 
 // ---------------------------------------------------------------------------
 // Full snapshot API (M2, zachováno pro backward compat)
 // ---------------------------------------------------------------------------
 
 /**
+ * @deprecated Use subscribeToSlideObjects() from slideObserve.ts (M9).
+ * This subscribes to a root-level objects array — only valid for legacy single-slide docs.
+ * Kept for backward compat — removed in M10.
+ *
  * Subscribeuje na změny objects array.
  * Callback je zavolán okamžitě se současným snapshotem,
  * pak na každou změnu (add/update/remove).
@@ -111,6 +118,10 @@ function isBatchEmpty(batch: PendingBatch): boolean {
 }
 
 /**
+ * @deprecated Use subscribeToSlideObjects() from slideObserve.ts (M9).
+ * This subscribes to a root-level objects array — only valid for legacy single-slide docs.
+ * Kept for backward compat — removed in M10.
+ *
  * Subscribe na incremental changes s per-frame batching (requestAnimationFrame).
  *
  * - Více mutací ve stejném rAF ticku se agregují do jednoho ObjectChangeSet.
@@ -128,6 +139,9 @@ export function subscribeToObjectChanges(
 }
 
 /**
+ * @deprecated Use subscribeToSlideObjects() from slideObserve.ts (M9).
+ * Kept for backward compat — removed in M10.
+ *
  * Varianta s explicit flush (pro testing a SSR).
  * V testech můžeš spustit pending changes synchronně přes flush().
  */
