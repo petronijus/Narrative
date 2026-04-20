@@ -40,10 +40,18 @@ COPY packages/shared/package.json     packages/shared/package.json
 # Production deps only
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
-# Compiled output from builder
+# Compiled output from builder. The TS compile emits:
+#   dist/apps/video-worker/src/*.js
+#   dist/packages/shared/src/*.js
+# baseUrl spans the repo root so @narrative/shared can resolve.
 COPY --from=builder /app/apps/video-worker/dist   apps/video-worker/dist/
 
-# Shared packages (source used directly via workspace symlinks)
-COPY --from=builder /app/packages   packages/
+# Compiled shared JS replaces the TS source for runtime resolution.
+# The symlink created by pnpm install points packages/shared → here.
+COPY --from=builder /app/packages/shared/package.json   packages/shared/package.json
+COPY --from=builder /app/apps/video-worker/dist/packages/shared/src   packages/shared/src/
 
-CMD ["node", "apps/video-worker/dist/index.js"]
+# Retarget shared's main/exports to the compiled .js entry.
+RUN sed -i 's|./src/index.ts|./src/index.js|g' packages/shared/package.json
+
+CMD ["node", "apps/video-worker/dist/apps/video-worker/src/index.js"]
