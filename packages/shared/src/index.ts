@@ -7,6 +7,7 @@ export type {
   EllipseObject,
   TextObject,
   ImageObject,
+  VideoObject,
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,

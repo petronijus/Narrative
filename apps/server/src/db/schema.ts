@@ -54,6 +54,24 @@ const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
  */
 export const deckRoleEnum = pgEnum('deck_role', ['owner', 'editor', 'viewer'])
 
+/**
+ * media_asset_kind — discriminator between image and video assets.
+ * Defaults to 'image' for backward compatibility with M11 rows.
+ */
+export const mediaAssetKindEnum = pgEnum('media_asset_kind', ['image', 'video'])
+
+/**
+ * media_transcode_status — lifecycle of ffmpeg transcode jobs (video only).
+ * NULL for image assets.
+ * Transitions: pending → processing → done | failed
+ */
+export const transcodeStatusEnum = pgEnum('media_transcode_status', [
+  'pending',
+  'processing',
+  'done',
+  'failed',
+])
+
 // ---------------------------------------------------------------------------
 // decks — metadata table
 // ---------------------------------------------------------------------------
@@ -171,6 +189,25 @@ export const mediaAssets = pgTable(
     /** Image height in px — populated when mime is image/* and probe succeeds */
     height: integer('height'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+
+    // M12 additions — video support
+    /** Discriminator: 'image' (default, backfilled) or 'video'. */
+    kind: mediaAssetKindEnum('kind').notNull().default('image'),
+    /** Video duration in seconds — populated by ffmpeg probe after transcode. */
+    durationSec: integer('duration_sec'),
+    /** S3/MinIO key for the HLS master playlist: decks/<deckId>/videos/<id>/master.m3u8 */
+    hlsManifestKey: text('hls_manifest_key'),
+    /** S3/MinIO key for the poster frame: decks/<deckId>/videos/<id>/poster.jpg */
+    posterKey: text('poster_key'),
+    /** S3/MinIO key for the sidebar thumbnail: decks/<deckId>/videos/<id>/thumb.jpg */
+    thumbnailKey: text('thumbnail_key'),
+    /**
+     * Transcode job status — NULL for image assets.
+     * Lifecycle: pending → processing → done | failed (set by BullMQ worker, phase 2).
+     */
+    transcodeStatus: transcodeStatusEnum('transcode_status'),
+    /** Error message from ffmpeg when transcodeStatus = 'failed'. */
+    transcodeError: text('transcode_error'),
   },
   (t) => [index('media_assets_deck_idx').on(t.deckId)],
 )

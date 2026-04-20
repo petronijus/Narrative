@@ -147,6 +147,102 @@ Both `narrative.example.com` and `auth.narrative.example.com` must resolve to th
 
 Caddy handles TLS automatically for both via Let's Encrypt.
 
+## Video pipeline (M12)
+
+### Architecture
+
+```
+User uploads video via tus.io (existing upload endpoint)
+  → server receives upload-complete event
+  → server enqueues BullMQ job on media-redis (video-transcode queue)
+  → video-worker picks up job
+  → ffmpeg transcodes: 360p / 720p / 1080p HLS segments + poster + thumbnail
+  → outputs uploaded to MinIO under decks/<deckId>/videos/<assetId>/
+  → media_assets row updated with HLS manifest key, duration, dimensions, status=ready
+  → client polls GET /api/media/:id or receives Yjs state update
+```
+
+### Services
+
+- `media-redis` — dedicated Redis instance for the BullMQ queue (port 6380 by default, separate from Authentik's Redis on its internal Docker network).
+- `video-worker` — Node.js + ffmpeg container, runs `@narrative/video-worker` package.
+
+### MinIO bucket layout extension
+
+```
+narrative-media/
+  decks/<deckId>/
+    videos/<assetId>/
+      master.m3u8         # HLS master playlist (all variants)
+      360p/
+        playlist.m3u8
+        seg000.ts
+        seg001.ts
+        ...
+      720p/
+        playlist.m3u8
+        ...
+      1080p/
+        playlist.m3u8
+        ...
+      poster.jpg          # first I-frame, full resolution
+      thumb.jpg           # poster scaled to 320 px wide
+```
+
+### Running locally
+
+Start both services alongside the existing stack:
+
+```bash
+# Start media-redis + video-worker (requires MinIO to be up)
+cd infra
+docker compose --env-file ../.env up -d media-redis video-worker
+
+# Check worker logs
+docker compose --env-file ../.env logs -f video-worker
+
+# Health probe for media-redis
+MEDIA_REDIS_URL=redis://127.0.0.1:6380 ./scripts/verify-redis.sh
+```
+
+For rapid iteration on worker code without rebuilding the image:
+
+```bash
+# Worker connects to MEDIA_REDIS_URL from .env (127.0.0.1:6380)
+# Make sure media-redis container is up first.
+pnpm --filter @narrative/video-worker dev
+```
+
+### Environment variables
+
+| Variable                | Default                  | Where                                     |
+| ----------------------- | ------------------------ | ----------------------------------------- |
+| `MEDIA_REDIS_PORT`      | `6380`                   | Host port for media-redis                 |
+| `MEDIA_REDIS_URL`       | `redis://127.0.0.1:6380` | Server uses this to enqueue jobs          |
+| `WORKER_CONCURRENCY`    | `2`                      | Parallel ffmpeg jobs per worker container |
+| `MEDIA_REDIS_DATA_PATH` | _(named volume)_         | Prod: ZFS path for queue persistence      |
+
+Worker-internal env (set by compose, not needed in `.env`):
+
+| Variable         | Value in compose           |
+| ---------------- | -------------------------- |
+| `REDIS_URL`      | `redis://media-redis:6379` |
+| `MINIO_ENDPOINT` | `http://minio:9000`        |
+
+### Phase 1a status
+
+The `transcodeProcessor` in `apps/video-worker/src/processors/transcode.ts` is a **stub** — it throws immediately. The worker boots and connects to Redis, queues are registered, but jobs will fail until the media agent implements the real ffmpeg pipeline in phase 2.
+
+### Known TODOs (phase 2+)
+
+- Media agent implements real ffmpeg transcoding in `transcodeProcessor`
+- Server endpoint to enqueue jobs after tus upload completes
+- `GET /api/media/:id/video-info` returning HLS manifest URL for client playback
+- Audio-only fallback track (M14+)
+- HLS variant selection UI in the player
+- DRM / signed HLS URLs (M29+)
+- Resource limits on video-worker (M29 — profile first)
+
 ### Authentik version
 
 Pinned to `ghcr.io/goauthentik/server:2024.8.3`. To upgrade: update the image tag in `infra/docker-compose.yml` (both `authentik-server` and `authentik-worker`) and review the Authentik changelog for breaking changes.

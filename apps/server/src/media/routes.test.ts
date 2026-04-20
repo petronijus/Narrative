@@ -56,6 +56,14 @@ const FIXTURE_ASSET: MediaAsset = {
   width: 1920,
   height: 1080,
   createdAt: new Date('2026-04-20T10:00:00Z'),
+  // M12 additions — image defaults
+  kind: 'image',
+  durationSec: null,
+  hlsManifestKey: null,
+  posterKey: null,
+  thumbnailKey: null,
+  transcodeStatus: null,
+  transcodeError: null,
 }
 
 // ---------------------------------------------------------------------------

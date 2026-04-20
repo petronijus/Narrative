@@ -10,7 +10,13 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
 import { plainObjectToYMap, yMapToPlainObject, plainObjectToYMapInDoc } from './bindings.js'
-import type { RectangleObject, EllipseObject, TextObject, ImageObject } from '@narrative/shared'
+import type {
+  RectangleObject,
+  EllipseObject,
+  TextObject,
+  ImageObject,
+  VideoObject,
+} from '@narrative/shared'
 
 describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
   it('rectangle round-trip (v Y.Doc)', () => {
@@ -168,6 +174,88 @@ describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
 
     expect(result.assetId).toBe('')
     expect(result.type).toBe('image')
+  })
+
+  it('video round-trip (v Y.Doc) — all fields including optional', () => {
+    const video: VideoObject = {
+      id: 'vid-1',
+      type: 'video',
+      x: 100,
+      y: 100,
+      width: 640,
+      height: 360,
+      rotation: 0,
+      opacity: 1,
+      assetId: 'asset-vid-abc',
+      fit: 'contain',
+      autoplay: true,
+      loop: true,
+      muted: false,
+      alt: 'Conference keynote recording',
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, video)
+    const result = yMapToPlainObject<VideoObject>(yMap)
+
+    expect(result).toEqual(video)
+    expect(result.assetId).toBe('asset-vid-abc')
+    expect(result.fit).toBe('contain')
+    expect(result.autoplay).toBe(true)
+    expect(result.loop).toBe(true)
+    expect(result.muted).toBe(false)
+    expect(result.alt).toBe('Conference keynote recording')
+  })
+
+  it('video round-trip — minimal required fields (no optional)', () => {
+    const video: VideoObject = {
+      id: 'vid-2',
+      type: 'video',
+      x: 0,
+      y: 0,
+      width: 640,
+      height: 360,
+      rotation: 0,
+      opacity: 1,
+      assetId: 'asset-vid-xyz',
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, video)
+    const result = yMapToPlainObject<VideoObject>(yMap)
+
+    expect(result).toEqual(video)
+    expect(result.autoplay).toBeUndefined()
+    expect(result.loop).toBeUndefined()
+    expect(result.muted).toBeUndefined()
+    expect(result.alt).toBeUndefined()
+    expect(result.fit).toBeUndefined()
+  })
+
+  it('video round-trip — empty assetId (broken placeholder)', () => {
+    const video: VideoObject = {
+      id: 'vid-3',
+      type: 'video',
+      x: 0,
+      y: 0,
+      width: 640,
+      height: 360,
+      rotation: 0,
+      opacity: 1,
+      assetId: '',
+      fit: 'contain',
+      autoplay: false,
+      loop: false,
+      muted: true,
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, video)
+    const result = yMapToPlainObject<VideoObject>(yMap)
+
+    expect(result.assetId).toBe('')
+    expect(result.type).toBe('video')
+    expect(result.muted).toBe(true)
   })
 
   it('yMapToPlainObject vyhodí na chybějícím type field', () => {

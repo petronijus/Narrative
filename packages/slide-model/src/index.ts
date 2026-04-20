@@ -99,7 +99,13 @@ export { subscribeToAnimations } from './animationObserve.js'
 // Importing this module (index) guarantees builtin types are registered.
 
 import { registerObjectType } from './registry.js'
-import type { RectangleObject, EllipseObject, TextObject, ImageObject } from '@narrative/shared'
+import type {
+  RectangleObject,
+  EllipseObject,
+  TextObject,
+  ImageObject,
+  VideoObject,
+} from '@narrative/shared'
 
 registerObjectType<RectangleObject>({
   type: 'rectangle',
@@ -162,5 +168,30 @@ registerObjectType<ImageObject>({
     assetId: '',
     variant: 'display',
     fit: 'cover',
+  }),
+})
+
+/**
+ * Video object type.
+ * NOTE: callers MUST provide assetId via createObjectOfType overrides after upload.
+ * Creating a video object without assetId yields a broken placeholder — upload and transcode pending.
+ * Media agent phase 2 sets kind='video', transcode_status='pending' on finalize.
+ * Editor-ui calls createObjectOfType('video', { assetId }) once the upload completes.
+ * The renderer must check transcodeStatus via /api/media/:id/video-info before playback.
+ */
+registerObjectType<VideoObject>({
+  type: 'video',
+  defaultProps: () => ({
+    x: 100,
+    y: 100,
+    width: 640,
+    height: 360,
+    rotation: 0,
+    opacity: 1,
+    assetId: '',
+    fit: 'contain',
+    autoplay: false,
+    loop: false,
+    muted: true,
   }),
 })

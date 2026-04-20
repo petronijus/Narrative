@@ -15,6 +15,20 @@
       "when": 1745136000000,
       "tag": "0001_m10_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1745222400000,
+      "tag": "0002_m11_media_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1745308800000,
+      "tag": "0003_m12_video_columns",
+      "breakpoints": true
     }
   ]
 }

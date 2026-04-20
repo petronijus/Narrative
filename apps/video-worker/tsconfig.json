@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "moduleResolution": "bundler",
+    "baseUrl": "../..",
+    "paths": {
+      "bullmq": ["node_modules/bullmq/dist/esm/index.d.ts"],
+      "ioredis": ["node_modules/ioredis/built/index.d.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

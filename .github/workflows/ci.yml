@@ -82,6 +82,16 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
+      - name: Build video-worker image (validation only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/video-worker/Dockerfile
+          push: false
+          tags: narrative-video-worker:ci
+          cache-from: type=gha,scope=video-worker
+          cache-to: type=gha,mode=max,scope=video-worker
+
       # MinIO and imgproxy use upstream pre-built images (no project Dockerfile).
       # Validate compose config parses correctly with required env vars stubbed out.
       - name: Validate docker-compose config (base + prod overlay)

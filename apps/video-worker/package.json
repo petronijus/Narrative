@@ -1,0 +1,28 @@
+{
+  "name": "@narrative/video-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
+    "build": "tsc --project tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --passWithNoTests",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.776.0",
+    "bullmq": "^5.52.0",
+    "drizzle-orm": "^0.43.1",
+    "ioredis": "^5.6.1",
+    "pg": "^8.14.1",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.1",
+    "@types/pg": "^8.11.11",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  }
+}

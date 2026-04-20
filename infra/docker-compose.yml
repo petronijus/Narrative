@@ -164,6 +164,53 @@ services:
       "
     restart: 'no'
 
+  # ─── Media queue Redis (M12) — separate from Authentik's Redis ──────────────
+  # Operational isolation rationale: auth Redis needs strict availability (sessions,
+  # cache); media-redis can be wiped without user-visible impact and has a more
+  # relaxed SLA. Keeping them separate also prevents queue traffic from affecting
+  # auth latency. See ADR in docs/adr/.
+  media-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - media_redis_data:/data
+    # Append-only log + RDB snapshot every 60 s if >= 1000 writes.
+    # In prod the snapshot file lands on a ZFS dataset; acceptable durability
+    # for a job queue (worst case: re-enqueue in-flight jobs on crash).
+    command: ['redis-server', '--save', '60', '1000', '--appendonly', 'yes']
+    ports:
+      - '${MEDIA_REDIS_PORT:-6380}:6379' # 6380 avoids colliding with a generic Redis on 6379
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─── Video transcode worker (M12) ────────────────────────────────────────────
+  # Picks BullMQ jobs off media-redis, runs ffmpeg, uploads HLS variants + poster
+  # + thumbnail to MinIO, updates media_assets via Postgres.
+  # Phase 1a: container wired up, transcodeProcessor is a placeholder stub.
+  # Phase 2 (media agent): replaces stub with real ffmpeg pipeline.
+  video-worker:
+    build:
+      context: ../
+      dockerfile: apps/video-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      media-redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://media-redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-narrative-media}
+      POSTGRES_URL: postgres://${POSTGRES_USER:-narrative}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-narrative}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+
   # ─── imgproxy (M11) ──────────────────────────────────────────────────────────
   imgproxy:
     image: darthsim/imgproxy:v3.27
@@ -193,4 +240,6 @@ volumes:
   authentik_certs:
     driver: local
   minio_data:
+    driver: local
+  media_redis_data:
     driver: local

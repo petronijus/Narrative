@@ -11,7 +11,7 @@ import {
   listRegisteredTypes,
   _clearRegistry,
 } from './registry.js'
-import type { RectangleObject, EllipseObject, ImageObject } from '@narrative/shared'
+import type { RectangleObject, EllipseObject, ImageObject, VideoObject } from '@narrative/shared'
 
 beforeEach(() => {
   _clearRegistry()
@@ -138,6 +138,61 @@ describe('image object type', () => {
     })
 
     expect(listRegisteredTypes()).toContain('image')
+  })
+})
+
+describe('video object type', () => {
+  it('can be registered with expected defaults', () => {
+    registerObjectType<VideoObject>({
+      type: 'video',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 640,
+        height: 360,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        fit: 'contain',
+        autoplay: false,
+        loop: false,
+        muted: true,
+      }),
+    })
+
+    const def = getObjectTypeDef('video')
+    expect(def).toBeDefined()
+    expect(def?.type).toBe('video')
+
+    const defaults = def?.defaultProps() as Omit<VideoObject, 'id' | 'type'>
+    expect(defaults.assetId).toBe('')
+    expect(defaults.fit).toBe('contain')
+    expect(defaults.autoplay).toBe(false)
+    expect(defaults.loop).toBe(false)
+    expect(defaults.muted).toBe(true)
+    expect(defaults.width).toBe(640)
+    expect(defaults.height).toBe(360)
+  })
+
+  it('video type appears in listRegisteredTypes after registration', () => {
+    registerObjectType<VideoObject>({
+      type: 'video',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 640,
+        height: 360,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        fit: 'contain',
+        autoplay: false,
+        loop: false,
+        muted: true,
+      }),
+    })
+
+    expect(listRegisteredTypes()).toContain('video')
   })
 })
 

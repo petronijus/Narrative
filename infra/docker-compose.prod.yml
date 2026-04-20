@@ -10,6 +10,8 @@
 #   - Authentik volumes on ZFS dataset (AUTHENTIK_DATA_PATH env var)
 #   - MinIO ports bound to 127.0.0.1, data on ZFS (MINIO_DATA_PATH env var) [M11]
 #   - imgproxy port bound to 127.0.0.1, IMGPROXY_REPORT_DOWNLOADING_ERRORS=false [M11]
+#   - media-redis port bound to 127.0.0.1, data on ZFS (MEDIA_REDIS_DATA_PATH env var) [M12]
+#   - video-worker restart=always; resource limits deferred to M29 [M12]
 #   - Restart policy `always`
 #   - env_file: .env.prod (gitignored)
 
@@ -81,6 +83,31 @@ services:
     ports:
       # Bind to localhost — Caddy proxies /imgproxy/* to this port
       - '127.0.0.1:${IMGPROXY_PORT:-8080}:8080'
+
+  # ─── Media queue Redis prod overrides (M12) ──────────────────────────────────
+  media-redis:
+    restart: always
+    volumes:
+      # ZFS dataset mount — set MEDIA_REDIS_DATA_PATH in .env.prod
+      # Example: MEDIA_REDIS_DATA_PATH=/mnt/tank/narrative/media-redis
+      - ${MEDIA_REDIS_DATA_PATH:-media_redis_data}:/data
+    ports:
+      # Admin access via SSH tunnel only; worker talks via Docker internal network.
+      - '127.0.0.1:${MEDIA_REDIS_PORT:-6380}:6379'
+
+  # ─── Video worker prod overrides (M12) ───────────────────────────────────────
+  video-worker:
+    restart: always
+    # TODO M29: add resource limits once load profile is known.
+    # Example when ready:
+    #   deploy:
+    #     resources:
+    #       limits:
+    #         cpus: '2'
+    #         memory: 4G
+    #       reservations:
+    #         cpus: '0.5'
+    #         memory: 512M
 
   caddy:
     image: caddy:2-alpine

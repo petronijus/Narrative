@@ -23,7 +23,7 @@ import { createUndoManager } from './undo.js'
 import { yMapToPlainObject } from './bindings.js'
 import { getSlideObjectsCtx } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
-import type { RectangleObject, ImageObject } from '@narrative/shared'
+import type { RectangleObject, ImageObject, VideoObject } from '@narrative/shared'
 
 /**
  * Creates an ObjectsMutationContext scoped to slide-0 in a fresh doc.
@@ -245,6 +245,83 @@ describe('createObjectOfType — image', () => {
     expect(result.assetId).toBe('asset-abc')
     expect(result.variant).toBe('thumb')
     expect(result.fit).toBe('contain')
+  })
+})
+
+describe('createObjectOfType — video', () => {
+  beforeEach(() => {
+    registerObjectType<VideoObject>({
+      type: 'video',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 640,
+        height: 360,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        fit: 'contain',
+        autoplay: false,
+        loop: false,
+        muted: true,
+      }),
+    })
+  })
+
+  it('creates video object with default props', () => {
+    const ctx = makeCtx()
+    const obj = createObjectOfType(ctx, 'video')
+
+    expect(obj.type).toBe('video')
+    expect(typeof obj.id).toBe('string')
+    expect(obj.id.length).toBeGreaterThan(0)
+    expect(ctx.objects.length).toBe(1)
+
+    const vid = obj as VideoObject
+    expect(vid.assetId).toBe('')
+    expect(vid.fit).toBe('contain')
+    expect(vid.autoplay).toBe(false)
+    expect(vid.loop).toBe(false)
+    expect(vid.muted).toBe(true)
+    expect(vid.width).toBe(640)
+    expect(vid.height).toBe(360)
+  })
+
+  it('applies assetId override — typical post-upload call', () => {
+    const ctx = makeCtx()
+    const obj = createObjectOfType(ctx, 'video', {
+      assetId: 'v1',
+      width: 1920,
+      height: 1080,
+    }) as VideoObject
+
+    expect(obj.assetId).toBe('v1')
+    expect(obj.width).toBe(1920)
+    expect(obj.height).toBe(1080)
+    // defaults still applied
+    expect(obj.fit).toBe('contain')
+    expect(obj.muted).toBe(true)
+  })
+
+  it('video fields survive Y.Doc round-trip', () => {
+    const ctx = makeCtx()
+    createObjectOfType(ctx, 'video', {
+      assetId: 'v2',
+      autoplay: true,
+      loop: true,
+      muted: false,
+      alt: 'Product demo',
+    })
+
+    const yMap = ctx.objects.get(0)
+    const result = yMapToPlainObject<VideoObject>(yMap)
+
+    expect(result.assetId).toBe('v2')
+    expect(result.autoplay).toBe(true)
+    expect(result.loop).toBe(true)
+    expect(result.muted).toBe(false)
+    expect(result.alt).toBe('Product demo')
+    expect(result.type).toBe('video')
   })
 })
 

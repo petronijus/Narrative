@@ -64,10 +64,42 @@ export interface ImageObject extends BaseSlideObject {
   alt?: string
 }
 
+export interface VideoObject extends BaseSlideObject {
+  type: 'video'
+  /**
+   * Asset ID from media_assets table. The asset's transcode_status determines
+   * whether the video is playable — renderer must check before attempting HLS playback.
+   * An empty string means the object is a broken placeholder (upload/transcode pending).
+   */
+  assetId: string
+  /**
+   * Fit mode within the object bounding box — same semantics as ImageObject.
+   * Default: 'contain'.
+   */
+  fit?: 'cover' | 'contain'
+  /**
+   * Autoplay in present mode. Default: false.
+   * Most browsers block autoplay with audio — pair with muted: true.
+   */
+  autoplay?: boolean
+  /**
+   * Loop playback in present mode. Default: false.
+   */
+  loop?: boolean
+  /**
+   * Mute audio. Default: true (browsers block autoplay with sound).
+   */
+  muted?: boolean
+  /**
+   * Accessibility alt text / video description.
+   */
+  alt?: string
+}
+
 /**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
-export type SlideObject = RectangleObject | EllipseObject | TextObject | ImageObject
+export type SlideObject = RectangleObject | EllipseObject | TextObject | ImageObject | VideoObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']
