@@ -2,10 +2,12 @@
  * ui/UploadProgressCard.tsx
  *
  * M11: Per-upload progress card shown in the bottom-right of the editor.
+ * M12: Extended for video transcode "Processing…" state.
  *
  * Shows:
  *   - Filename (truncated)
  *   - Progress bar + percentage (while uploading)
+ *   - "Processing… (transcoding video)" with indeterminate spinner (status='finalizing' for video)
  *   - Cancel button (while uploading)
  *   - Error state: message + retry + dismiss buttons
  *   - Done state: auto-dismiss after 2 s (manual dismiss also available)
@@ -36,6 +38,9 @@ export function UploadProgressCard({ entry }: UploadProgressCardProps) {
     entry.status === 'uploading' || entry.status === 'queued' || entry.status === 'finalizing'
   const percent = Math.round(entry.progress * 100)
 
+  // Determine if this is a video transcode wait
+  const isVideoTranscoding = entry.status === 'finalizing' && entry.mimeType?.startsWith('video/')
+
   // Status label
   let statusLabel: string
   switch (entry.status) {
@@ -46,7 +51,7 @@ export function UploadProgressCard({ entry }: UploadProgressCardProps) {
       statusLabel = `${percent}%`
       break
     case 'finalizing':
-      statusLabel = 'Finalizing…'
+      statusLabel = isVideoTranscoding ? 'Processing…' : 'Finalizing…'
       break
     case 'done':
       statusLabel = 'Done'
@@ -90,8 +95,8 @@ export function UploadProgressCard({ entry }: UploadProgressCardProps) {
         </span>
       </div>
 
-      {/* Progress bar — only while active */}
-      {isActive && (
+      {/* Progress bar or transcoding spinner — only while active */}
+      {isActive && !isVideoTranscoding && (
         <div
           className="h-1.5 w-full rounded-full bg-gray-700 overflow-hidden"
           role="progressbar"
@@ -103,6 +108,15 @@ export function UploadProgressCard({ entry }: UploadProgressCardProps) {
             className="h-full rounded-full bg-blue-500 transition-all duration-200"
             style={{ width: `${entry.status === 'finalizing' ? 100 : percent}%` }}
           />
+        </div>
+      )}
+
+      {/* Indeterminate spinner for video transcoding */}
+      {isVideoTranscoding && (
+        <div className="flex items-center gap-2" role="status" aria-label="Transcoding video">
+          {/* Spinning circle */}
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400 shrink-0" />
+          <span className="text-xs text-gray-400">Transcoding video…</span>
         </div>
       )}
 

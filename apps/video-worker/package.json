@@ -8,10 +8,11 @@
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "node ../../node_modules/vitest/vitest.mjs run --passWithNoTests",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@narrative/shared": "workspace:*",
     "@aws-sdk/client-s3": "^3.776.0",
     "bullmq": "^5.52.0",
     "drizzle-orm": "^0.43.1",

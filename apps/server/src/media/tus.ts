@@ -24,10 +24,11 @@
  *   - Share token (viewer) path does NOT grant upload rights — only JWT users with editor/owner role may upload.
  *   - MIME checked via Upload-Metadata content-type; probe-image-size confirms on finalize.
  *
- * Known limitations (M11):
+ * Known limitations / TODOs:
  *   - Orphaned MinIO objects on termination/error are not cleaned up (documented M29 GC).
  *   - No per-user rate limiting (M29).
- *   - Video uploads not supported (M12 BullMQ workers).
+ *   - HLS presigned URLs for private buckets (M29).
+ *   - Video width/height not available at upload time — filled by worker after ffprobe.
  */
 
 import { createRequire } from 'node:module'
@@ -42,6 +43,7 @@ import type { S3ClientConfig } from '@aws-sdk/client-s3'
 import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
 import { createMediaAsset } from './assets.js'
+import { enqueueVideoTranscode } from './enqueue.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import type { createJwtVerifier } from '../auth/jwt.js'
 
@@ -61,7 +63,12 @@ interface ProbeResult {
 // Config constants
 // ---------------------------------------------------------------------------
 
-const MAX_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_000)
+/** Max size for image uploads. */
+const MAX_IMAGE_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_000)
+/** Max size for video uploads. */
+const MAX_VIDEO_UPLOAD_SIZE = Number(process.env['MAX_VIDEO_UPLOAD_SIZE'] ?? 500_000_000)
+/** tus server-level maxSize — set to the larger of the two; per-MIME enforcement is in onUploadCreate. */
+const MAX_UPLOAD_SIZE = Math.max(MAX_IMAGE_UPLOAD_SIZE, MAX_VIDEO_UPLOAD_SIZE)
 const BUCKET = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
 
 // ---------------------------------------------------------------------------
@@ -133,6 +140,14 @@ function extensionFromMimeOrFilename(mime: string, filename?: string): string {
     'image/bmp': 'bmp',
     'image/heic': 'heic',
     'image/heif': 'heif',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/webm': 'webm',
+    'video/x-msvideo': 'avi',
+    'video/x-matroska': 'mkv',
+    'video/mpeg': 'mpg',
+    'video/3gpp': '3gp',
+    'video/ogg': 'ogv',
   }
 
   const fromMime = mimeMap[mime.toLowerCase()]
@@ -293,14 +308,34 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         throw { status_code: 400, body: 'Missing deckId in Upload-Metadata' }
       }
 
-      // 3. MIME validation — image/* only in M11
+      // 3. MIME validation — accept image/* and video/*; reject everything else
       const mime =
         meta['content-type'] ?? meta['mimeType'] ?? upload.metadata?.['content-type'] ?? ''
 
-      if (!mime.startsWith('image/')) {
+      const isImage = mime.startsWith('image/')
+      const isVideo = mime.startsWith('video/')
+
+      if (!isImage && !isVideo) {
         throw {
           status_code: 415,
-          body: `Unsupported media type: ${mime}. Only image/* is accepted.`,
+          body: `Unsupported media type: ${mime}. Only image/* and video/* are accepted.`,
+        }
+      }
+
+      // Per-MIME upload size enforcement.
+      // The tus maxSize is set to the larger of the two limits; we enforce the
+      // tighter limit here so an image upload cannot claim video allowance.
+      const uploadSize = upload.size ?? 0
+      if (isImage && uploadSize > MAX_IMAGE_UPLOAD_SIZE) {
+        throw {
+          status_code: 413,
+          body: `Image upload exceeds maximum size of ${MAX_IMAGE_UPLOAD_SIZE} bytes.`,
+        }
+      }
+      if (isVideo && uploadSize > MAX_VIDEO_UPLOAD_SIZE) {
+        throw {
+          status_code: 413,
+          body: `Video upload exceeds maximum size of ${MAX_VIDEO_UPLOAD_SIZE} bytes.`,
         }
       }
 
@@ -377,14 +412,68 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         console.warn('[tus] HeadObject failed, using tus-reported size:', err)
       }
 
+      const isVideo = mimeRaw.startsWith('video/')
+
+      if (isVideo) {
+        // -----------------------------------------------------------------------
+        // Video branch: create asset row with pending transcode status, enqueue job
+        // -----------------------------------------------------------------------
+        try {
+          await createMediaAsset(db, {
+            id: assetId,
+            deckId,
+            uploaderUserId: userId,
+            mimeType: mimeRaw,
+            sizeBytes,
+            storageKey,
+            ...(filename !== undefined ? { originalFilename: filename } : {}),
+            // width/height left null — worker fills them after ffprobe
+            kind: 'video',
+            transcodeStatus: 'pending',
+          })
+        } catch (err) {
+          console.error('[tus] createMediaAsset (video) failed:', err)
+          throw { status_code: 500, body: 'Failed to persist video asset metadata' }
+        }
+
+        try {
+          await enqueueVideoTranscode({
+            assetId,
+            deckId,
+            storageKey,
+            uploaderUserId: userId,
+            mimeType: mimeRaw,
+          })
+        } catch (err) {
+          console.error('[tus] enqueueVideoTranscode failed:', err)
+          // Asset row already exists — log the failure but don't rollback.
+          // Operator can re-enqueue manually. Do not fail the upload response.
+        }
+
+        return {
+          res,
+          status_code: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assetId,
+            storageKey,
+            mimeType: mimeRaw,
+            sizeBytes,
+            transcodeStatus: 'pending',
+          }),
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // Image branch: probe dimensions, insert row with kind='image'
+      // -----------------------------------------------------------------------
+
       // Probe image dimensions (non-fatal if probe fails)
       let dims: { width: number; height: number } | undefined
-      if (mimeRaw.startsWith('image/')) {
-        dims = await probeImageDimensions(s3, storageKey)
-        if (!dims) {
-          console.warn('[tus] probe-image-size returned no result for', storageKey)
-          // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
-        }
+      dims = await probeImageDimensions(s3, storageKey)
+      if (!dims) {
+        console.warn('[tus] probe-image-size returned no result for', storageKey)
+        // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
       }
 
       // Insert media_assets row
@@ -398,6 +487,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           storageKey,
           ...(filename !== undefined ? { originalFilename: filename } : {}),
           ...(dims !== undefined ? { width: dims.width, height: dims.height } : {}),
+          kind: 'image',
         })
       } catch (err) {
         console.error('[tus] createMediaAsset failed:', err)

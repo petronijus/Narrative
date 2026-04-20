@@ -16,6 +16,7 @@ import { rectangleRenderer } from './rectangleRenderer'
 import { ellipseRenderer } from './ellipseRenderer'
 import { textRenderer } from './textRenderer'
 import { imageRenderer } from './imageRenderer'
+import { videoRenderer } from './videoRenderer'
 import type { Container } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 
@@ -53,6 +54,7 @@ export const rendererRegistry = new Map<string, ObjectRenderer<any>>([
   ['ellipse', ellipseRenderer],
   ['text', textRenderer],
   ['image', imageRenderer],
+  ['video', videoRenderer as ObjectRenderer<SlideObject>],
 ])
 
 /**

@@ -30,6 +30,7 @@ import { Container, Graphics, Sprite, type Texture } from 'pixi.js'
 import type { ImageObject } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
+import { applyFit, applyCoverMask } from '../mediaFit.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state stored on Container instances
@@ -146,57 +147,6 @@ function drawErrorIndicator(g: Graphics, width: number, height: number): void {
   const dotR = Math.max(2, width * 0.04)
   g.circle(cx, cy + barH / 2 + dotR, dotR)
   g.fill({ color: 0xcc0000, alpha: 1 })
-}
-
-// ---------------------------------------------------------------------------
-// Fit math
-// ---------------------------------------------------------------------------
-
-/**
- * Applies cover or contain fit to a Sprite within a bounding box.
- * The sprite's position is relative to the box origin (0,0).
- */
-function applyFit(
-  sprite: Sprite,
-  texture: Texture,
-  box: { w: number; h: number },
-  fit: 'cover' | 'contain',
-): void {
-  const tw = texture.width
-  const th = texture.height
-
-  // Guard against zero-size textures.
-  if (tw === 0 || th === 0) return
-
-  const scale =
-    fit === 'cover' ? Math.max(box.w / tw, box.h / th) : Math.min(box.w / tw, box.h / th)
-
-  sprite.width = tw * scale
-  sprite.height = th * scale
-  sprite.x = (box.w - sprite.width) / 2
-  sprite.y = (box.h - sprite.height) / 2
-}
-
-/**
- * Updates or creates the cover mask Graphics on the sprite wrap container.
- * The mask is a simple rectangle sized to the bounding box.
- */
-function applyCoverMask(
-  spriteWrap: Container,
-  existingMask: Graphics | undefined,
-  box: { w: number; h: number },
-): Graphics {
-  const mask = existingMask ?? new Graphics()
-  mask.clear()
-  mask.rect(0, 0, box.w, box.h)
-  mask.fill({ color: 0xffffff, alpha: 1 })
-
-  if (existingMask === undefined) {
-    spriteWrap.addChild(mask)
-    spriteWrap.mask = mask
-  }
-
-  return mask
 }
 
 // ---------------------------------------------------------------------------

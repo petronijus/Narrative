@@ -2,9 +2,12 @@ import { Worker } from 'bullmq'
 import IORedis from 'ioredis'
 import { VIDEO_TRANSCODE_QUEUE } from './queue.js'
 import { transcodeProcessor } from './processors/transcode.js'
+import { createDb } from './db.js'
+import { updateTranscodeStatus } from './assets.js'
 
-const redisUrl = process.env['REDIS_URL']
-if (!redisUrl) throw new Error('REDIS_URL is required')
+// MEDIA_REDIS_URL is the dedicated Redis for the media pipeline (separate from Hocuspocus Redis).
+const redisUrl = process.env['MEDIA_REDIS_URL'] ?? process.env['REDIS_URL']
+if (!redisUrl) throw new Error('MEDIA_REDIS_URL (or REDIS_URL) is required')
 
 // maxRetriesPerRequest: null is required by BullMQ — it manages retries itself.
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null })
@@ -34,6 +37,17 @@ worker.on('completed', (job, result) => {
 
 worker.on('failed', (job, err) => {
   console.error(`[video-worker] job=${job?.id} failed:`, err)
+  if (job?.data.assetId) {
+    // Update DB so the UI can display the error state.
+    // createDb() may fail if POSTGRES_URL is not set — log and swallow.
+    try {
+      const db = createDb()
+      const message = err instanceof Error ? err.message : String(err)
+      void updateTranscodeStatus(db, job.data.assetId, 'failed', message.slice(0, 1000))
+    } catch (dbErr) {
+      console.error('[video-worker] Failed to update transcode status in DB:', dbErr)
+    }
+  }
 })
 
 worker.on('error', (err) => {

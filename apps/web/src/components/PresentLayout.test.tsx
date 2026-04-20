@@ -67,6 +67,21 @@ vi.mock('../state/useSlideObjectChanges', () => ({
   useSlideObjectChanges: () => undefined,
 }))
 
+// M12: PresentLayout now uses useMediaPreload which calls useAuth + useApi.
+// Mock the preload hook to bypass those dependencies in layout tests.
+vi.mock('../state/useMediaPreload', () => ({
+  useMediaPreload: () => ({
+    start: vi.fn().mockResolvedValue(undefined),
+    progress: { total: 0, completed: 0, errored: 0, isDone: true },
+    isPreloading: false,
+  }),
+}))
+
+// VideoOverlay also depends on api client; mock out to avoid AuthContext touch.
+vi.mock('../ui/VideoOverlay', () => ({
+  VideoOverlay: () => null,
+}))
+
 // navigate mock
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -261,10 +276,14 @@ describe('PresentLayout — layout', () => {
     expect(screen.queryByText(/^slides$/i)).toBeNull()
   })
 
-  it('slide container has pointer-events:none', () => {
+  it('slide container is position:relative for overlay compositor anchoring', () => {
+    // M12: VideoOverlay sits over the Pixi canvas and needs pointer-events for play.
+    // The slide wrapper was pointer-events-none in M5; relaxed in M12 so DOM overlays
+    // can be interactive. The wrapper is still position:relative so OverlayCompositor
+    // can anchor absolutely-positioned DOM children.
     renderPresent()
     const container = screen.getByTestId('slide-container')
-    expect(container.className).toContain('pointer-events-none')
+    expect(container.className).toContain('relative')
   })
 
   it('role="application" with aria-label', () => {

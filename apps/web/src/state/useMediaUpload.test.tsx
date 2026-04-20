@@ -286,7 +286,7 @@ describe('useMediaUpload', () => {
     expect(tusInstances[0]!.abortMock).toHaveBeenCalledWith(true)
   })
 
-  it('non-image MIME is rejected client-side with error status — no tus call', async () => {
+  it('non-image/non-video MIME is rejected client-side with error status — no tus call', async () => {
     let capturedCtx: MediaUploadContextValue | null = null
 
     render(
@@ -436,5 +436,157 @@ describe('useMediaUpload', () => {
     await waitFor(() => expect(tusInstances.length).toBe(2))
 
     await waitFor(() => expect(capturedCtx!.uploads[0]!.status).toBe('uploading'))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// M12: Video upload tests
+// ---------------------------------------------------------------------------
+
+describe('useMediaUpload — video uploads (M12)', () => {
+  function makeVideoFile(name = 'clip.mp4', type = 'video/mp4', size = 1024 * 1024): File {
+    return new File(['x'.repeat(Math.min(size, 100))], name, { type })
+  }
+
+  it('video file starts upload (no dimension probe)', async () => {
+    let capturedCtx: MediaUploadContextValue | null = null
+
+    render(
+      <TestWrapper
+        onContext={(ctx) => {
+          capturedCtx = ctx
+        }}
+      />,
+    )
+
+    act(() => {
+      capturedCtx!.startUpload(makeVideoFile())
+    })
+
+    await waitFor(() => expect(capturedCtx!.uploads).toHaveLength(1))
+    // tus instance created immediately (no createImageBitmap probe for video)
+    await waitFor(() => expect(tusInstances.length).toBeGreaterThan(0))
+
+    const entry = capturedCtx!.uploads[0]!
+    expect(entry.mimeType).toBe('video/mp4')
+    expect(entry.status).toBe('uploading')
+  })
+
+  it('video with transcodeStatus pending starts poll and stays finalizing', async () => {
+    let capturedCtx: MediaUploadContextValue | null = null
+    const onDone = vi.fn()
+
+    render(
+      <TestWrapper
+        onContext={(ctx) => {
+          capturedCtx = ctx
+        }}
+      />,
+    )
+
+    act(() => {
+      capturedCtx!.startUpload(makeVideoFile(), { onDone })
+    })
+
+    await waitFor(() => expect(tusInstances.length).toBeGreaterThan(0))
+
+    const instance = tusInstances[0]!
+
+    // Simulate tus PATCH final response — server sets assetId + transcode status pending
+    act(() => {
+      instance.callbacks.onAfterResponse?.(
+        {},
+        {
+          getHeader: (h: string) => {
+            if (h === 'X-Narrative-Asset-Id') return 'vid-asset-123'
+            return undefined
+          },
+        },
+      )
+    })
+
+    act(() => {
+      instance.callbacks.onSuccess?.()
+    })
+
+    // Should be in 'finalizing' — waiting for transcode
+    await waitFor(() => {
+      const entry = capturedCtx!.uploads[0]!
+      expect(entry.status).toBe('finalizing')
+      expect(entry.assetId).toBe('vid-asset-123')
+    })
+
+    // onDone should NOT have been called yet (transcode still pending)
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it('video upload rejects oversized file (>500MB) client-side', async () => {
+    let capturedCtx: MediaUploadContextValue | null = null
+
+    render(
+      <TestWrapper
+        onContext={(ctx) => {
+          capturedCtx = ctx
+        }}
+      />,
+    )
+
+    // Create a file with size > 500MB (fake — just set size in File metadata)
+    const bigFile = new File(['x'], 'huge.mp4', { type: 'video/mp4' })
+    Object.defineProperty(bigFile, 'size', { value: 501 * 1024 * 1024 })
+
+    act(() => {
+      capturedCtx!.startUpload(bigFile)
+    })
+
+    await waitFor(() => expect(capturedCtx!.uploads).toHaveLength(1))
+
+    const entry = capturedCtx!.uploads[0]!
+    expect(entry.status).toBe('error')
+    expect(entry.error).toMatch(/too large/i)
+    // No tus instance created
+    expect(tusInstances).toHaveLength(0)
+  })
+
+  it('cancelUpload during finalizing clears transcode poll timer', async () => {
+    let capturedCtx: MediaUploadContextValue | null = null
+
+    render(
+      <TestWrapper
+        onContext={(ctx) => {
+          capturedCtx = ctx
+        }}
+      />,
+    )
+
+    act(() => {
+      capturedCtx!.startUpload(makeVideoFile())
+    })
+
+    await waitFor(() => expect(tusInstances.length).toBeGreaterThan(0))
+
+    const instance = tusInstances[0]!
+    act(() => {
+      instance.callbacks.onAfterResponse?.(
+        {},
+        { getHeader: (h: string) => (h === 'X-Narrative-Asset-Id' ? 'vid-abc' : undefined) },
+      )
+    })
+    act(() => {
+      instance.callbacks.onSuccess?.()
+    })
+
+    await waitFor(() => {
+      expect(capturedCtx!.uploads[0]!.status).toBe('finalizing')
+    })
+
+    const id = capturedCtx!.uploads[0]!.id
+    act(() => {
+      capturedCtx!.cancelUpload(id)
+    })
+
+    await waitFor(() => {
+      expect(capturedCtx!.uploads[0]!.status).toBe('cancelled')
+    })
   })
 })

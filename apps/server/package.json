@@ -15,7 +15,10 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@narrative/shared": "workspace:*",
     "@aws-sdk/client-s3": "^3.776.0",
+    "bullmq": "^5.52.0",
+    "ioredis": "^5.6.1",
     "@fastify/cors": "^10.0.2",
     "@hocuspocus/extension-database": "^2.15.0",
     "@hocuspocus/server": "^2.15.0",

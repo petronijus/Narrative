@@ -1,19 +1,15 @@
-export const VIDEO_TRANSCODE_QUEUE = 'video-transcode'
+/**
+ * queue.ts
+ *
+ * Re-exports from @narrative/shared so existing imports within the video-worker
+ * package continue to resolve without changes.
+ *
+ * Source of truth has moved to packages/shared/src/video-queue.ts so that
+ * apps/server can also import these types without a cross-app dependency.
+ */
 
-export interface VideoTranscodeJobData {
-  assetId: string // media_assets row id
-  deckId: string
-  storageKey: string // original upload key in MinIO (e.g. uploads/<assetId>)
-  uploaderUserId: string
-  mimeType: string
-}
-
-export interface VideoTranscodeResult {
-  assetId: string
-  posterKey: string // decks/<deckId>/videos/<assetId>/poster.jpg
-  thumbnailKey: string // decks/<deckId>/videos/<assetId>/thumb.jpg
-  hlsManifestKey: string // decks/<deckId>/videos/<assetId>/master.m3u8
-  durationSec: number
-  width: number
-  height: number
-}
+export {
+  VIDEO_TRANSCODE_QUEUE,
+  type VideoTranscodeJobData,
+  type VideoTranscodeResult,
+} from '@narrative/shared'

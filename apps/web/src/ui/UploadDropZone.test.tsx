@@ -216,6 +216,7 @@ describe('UploadDropZone', () => {
         id: 'x',
         filename: 'photo.jpg',
         sizeBytes: 100,
+        mimeType: 'image/jpeg',
         status: 'done',
         progress: 1,
         assetId: 'asset-1',

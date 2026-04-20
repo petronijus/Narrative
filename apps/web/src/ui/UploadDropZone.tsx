@@ -2,21 +2,20 @@
  * ui/UploadDropZone.tsx
  *
  * M11: Transparent absolute-positioned drop zone overlay inside the canvas container.
+ * M12: Extended to accept video/* MIME types (up to 500 MB).
  *
  * Behaviour:
- *   - dragenter/dragover with image files → show "Drop image here" border highlight
+ *   - dragenter/dragover with image or video files → show "Drop here" border highlight
  *   - dragleave / dragend → hide highlight
- *   - drop → for each image file call startUpload(file, { onDone: addImageObject })
- *   - non-image files silently filtered (MIME check client-side; server enforces 415)
+ *   - drop → for each accepted file call startUpload(file, { onDone })
+ *     - image files → onDone creates ImageObject
+ *     - video files → onDone creates VideoObject (once transcode is done)
+ *   - non-image/non-video files silently filtered (MIME check client-side; server enforces 415)
  *   - viewer role: rendered inert (pointer-events-none, no event handlers)
  *
- * addImageObject(entry, dropX, dropY):
- *   Creates an ImageObject via createObjectOfType on the active slide at the drop
- *   position in world/canvas coords (same coordinate space as other objects).
+ * addMediaObject(entry, dropX, dropY):
+ *   Creates an ImageObject or VideoObject via createObjectOfType on the active slide.
  *   Falls back to slide centre (960, 540 for 1920×1080) if drop position is unknown.
- *
- * Note: clientToCanvasCoords mirrors the helper in EditorLayout.tsx. When zoom/pan
- * lands in a future milestone, both places need updating to apply the viewport transform.
  */
 
 import { useCallback, useRef, useState } from 'react'
@@ -60,7 +59,8 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const { objectsCtx } = useSlideObjects()
 
   const [isDragOver, setIsDragOver] = useState(false)
-  /** Track drop X/Y in world coords so onDone callback can place the image. */
+  const [dragFileType, setDragFileType] = useState<'image' | 'video' | 'mixed' | null>(null)
+  /** Track drop X/Y in world coords so onDone callback can place the object. */
   const pendingDropCoordsRef = useRef<{ x: number; y: number }>({
     x: DEFAULT_DROP_X,
     y: DEFAULT_DROP_Y,
@@ -72,35 +72,65 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const isViewer = role === 'viewer'
 
   // ---------------------------------------------------------------------------
-  // Check if dragged items contain image files
+  // Check if dragged items contain image or video files
   // ---------------------------------------------------------------------------
 
-  function hasImageFiles(dataTransfer: DataTransfer): boolean {
+  function hasAcceptedFiles(dataTransfer: DataTransfer): boolean {
     for (const item of Array.from(dataTransfer.items)) {
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
+      if (
+        item.kind === 'file' &&
+        (item.type.startsWith('image/') || item.type.startsWith('video/'))
+      ) {
         return true
       }
     }
     return false
   }
 
+  function detectDragFileType(dataTransfer: DataTransfer): 'image' | 'video' | 'mixed' | null {
+    let hasImage = false
+    let hasVideo = false
+    for (const item of Array.from(dataTransfer.items)) {
+      if (item.kind !== 'file') continue
+      if (item.type.startsWith('image/')) hasImage = true
+      if (item.type.startsWith('video/')) hasVideo = true
+    }
+    if (hasImage && hasVideo) return 'mixed'
+    if (hasImage) return 'image'
+    if (hasVideo) return 'video'
+    return null
+  }
+
   // ---------------------------------------------------------------------------
-  // Create ImageObject on upload completion
+  // Create ImageObject or VideoObject on upload completion
   // ---------------------------------------------------------------------------
 
-  const addImageObject = useCallback(
+  const addMediaObject = useCallback(
     (entry: UploadEntry, x: number, y: number) => {
       if (entry.status !== 'done') return
       if (objectsCtx === null) return
       if (entry.assetId === undefined || entry.assetId === '') return
 
-      createObjectOfType(objectsCtx, 'image', {
-        assetId: entry.assetId,
-        width: entry.width ?? 400,
-        height: entry.height ?? 300,
-        x,
-        y,
-      })
+      if (entry.mimeType.startsWith('video/')) {
+        createObjectOfType(objectsCtx, 'video', {
+          assetId: entry.assetId,
+          width: entry.width ?? 640,
+          height: entry.height ?? 360,
+          x,
+          y,
+          autoplay: false,
+          loop: false,
+          muted: true,
+        })
+      } else {
+        createObjectOfType(objectsCtx, 'image', {
+          assetId: entry.assetId,
+          width: entry.width ?? 400,
+          height: entry.height ?? 300,
+          x,
+          y,
+        })
+      }
     },
     [objectsCtx],
   )
@@ -113,8 +143,9 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
     e.preventDefault()
     e.stopPropagation()
     dragDepthRef.current += 1
-    if (hasImageFiles(e.dataTransfer)) {
+    if (hasAcceptedFiles(e.dataTransfer)) {
       setIsDragOver(true)
+      setDragFileType(detectDragFileType(e.dataTransfer))
     }
   }, [])
 
@@ -131,6 +162,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
     if (dragDepthRef.current <= 0) {
       dragDepthRef.current = 0
       setIsDragOver(false)
+      setDragFileType(null)
     }
   }, [])
 
@@ -140,6 +172,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       e.stopPropagation()
       dragDepthRef.current = 0
       setIsDragOver(false)
+      setDragFileType(null)
 
       const containerEl = canvasContainerRef.current
       const rect = containerEl?.getBoundingClientRect()
@@ -151,23 +184,33 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       pendingDropCoordsRef.current = dropCoords
 
       const files = Array.from(e.dataTransfer.files)
-      const imageFiles = files.filter((f) => f.type.startsWith('image/'))
+      const accepted = files.filter(
+        (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
+      )
 
-      for (const file of imageFiles) {
+      for (const file of accepted) {
         // Capture drop coords for this upload's onDone closure
         const { x, y } = dropCoords
         startUpload(file, {
-          onDone: (entry) => addImageObject(entry, x, y),
+          onDone: (entry) => addMediaObject(entry, x, y),
         })
       }
     },
-    [canvasContainerRef, startUpload, addImageObject],
+    [canvasContainerRef, startUpload, addMediaObject],
   )
 
   // Viewer: render inert transparent overlay (no pointer events, no handlers)
   if (isViewer) {
     return <div className="pointer-events-none absolute inset-0" aria-hidden="true" />
   }
+
+  // Choose label text based on what's being dragged
+  const dropLabel =
+    dragFileType === 'video'
+      ? 'Drop video here'
+      : dragFileType === 'mixed'
+        ? 'Drop files here'
+        : 'Drop image here'
 
   return (
     <div
@@ -186,7 +229,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       {isDragOver && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="rounded-xl bg-gray-900/90 px-6 py-4 shadow-xl">
-            <p className="text-sm font-semibold text-blue-300">Drop image here</p>
+            <p className="text-sm font-semibold text-blue-300">{dropLabel}</p>
           </div>
         </div>
       )}

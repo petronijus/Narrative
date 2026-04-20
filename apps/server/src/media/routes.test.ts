@@ -25,6 +25,7 @@ import { registerMediaRoutes } from './routes.js'
 
 vi.mock('./assets.js', () => ({
   getMediaAsset: vi.fn(),
+  getVideoAsset: vi.fn(),
   deleteMediaAsset: vi.fn(),
 }))
 
@@ -37,13 +38,49 @@ vi.mock('../auth/permissions.js', () => ({
   roleAtLeast: vi.fn(),
 }))
 
-import { getMediaAsset, deleteMediaAsset } from './assets.js'
+import { getMediaAsset, getVideoAsset, deleteMediaAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
+
+import type { VideoAssetRow } from './assets.js'
+
+const FIXTURE_VIDEO_PENDING: VideoAssetRow = {
+  id: 'video-pending-01',
+  deckId: 'deck-alpha',
+  mimeType: 'video/mp4',
+  sizeBytes: 50_000_000,
+  storageKey: 'decks/deck-alpha/uploads/video-pending-01/original.mp4',
+  width: null,
+  height: null,
+  durationSec: null,
+  hlsManifestKey: null,
+  posterKey: null,
+  thumbnailKey: null,
+  transcodeStatus: 'pending',
+  transcodeError: null,
+  createdAt: new Date('2026-04-20T10:00:00Z'),
+}
+
+const FIXTURE_VIDEO_DONE: VideoAssetRow = {
+  id: 'video-done-01',
+  deckId: 'deck-alpha',
+  mimeType: 'video/mp4',
+  sizeBytes: 50_000_000,
+  storageKey: 'decks/deck-alpha/uploads/video-done-01/original.mp4',
+  width: 1920,
+  height: 1080,
+  durationSec: 120,
+  hlsManifestKey: 'decks/deck-alpha/videos/video-done-01/master.m3u8',
+  posterKey: 'decks/deck-alpha/videos/video-done-01/poster.jpg',
+  thumbnailKey: 'decks/deck-alpha/videos/video-done-01/thumb.jpg',
+  transcodeStatus: 'done',
+  transcodeError: null,
+  createdAt: new Date('2026-04-20T10:00:00Z'),
+}
 
 const FIXTURE_ASSET: MediaAsset = {
   id: 'asset-test-01',
@@ -252,5 +289,108 @@ describe('DELETE /api/media/:assetId', () => {
     })
 
     expect(res.statusCode).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: GET /api/media/:assetId/video-info
+// ---------------------------------------------------------------------------
+
+describe('GET /api/media/:assetId/video-info', () => {
+  let app: FastifyInstance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    app = await buildApp()
+  })
+
+  it('returns 404 when asset does not exist or is not a video', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValue(null)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/nonexistent/video-info',
+    })
+
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('returns 403 when user has no deck access', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValue(FIXTURE_VIDEO_PENDING)
+    vi.mocked(resolveDeckAccess).mockResolvedValue(null)
+    vi.mocked(roleAtLeast).mockReturnValue(false)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/video-pending-01/video-info',
+    })
+
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('returns pending status with null URLs when video is still transcoding', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValue(FIXTURE_VIDEO_PENDING)
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/video-pending-01/video-info',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<Record<string, unknown>>()
+    expect(body['transcodeStatus']).toBe('pending')
+    expect(body['posterUrl']).toBeNull()
+    expect(body['thumbnailUrl']).toBeNull()
+    expect(body['hlsManifestUrl']).toBeNull()
+    expect(body['assetId']).toBe('video-pending-01')
+  })
+
+  it('returns done status with signed URLs and hlsManifestUrl when transcode is complete', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValue(FIXTURE_VIDEO_DONE)
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/video-done-01/video-info',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<Record<string, unknown>>()
+    expect(body['transcodeStatus']).toBe('done')
+    expect(body['durationSec']).toBe(120)
+    expect(body['width']).toBe(1920)
+    expect(body['height']).toBe(1080)
+
+    // signImgproxyUrl is mocked to return the test URL
+    expect(body['posterUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
+    expect(body['thumbnailUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
+
+    // HLS URL contains the manifest key
+    expect(typeof body['hlsManifestUrl']).toBe('string')
+    expect(body['hlsManifestUrl'] as string).toContain('master.m3u8')
+  })
+
+  it('includes transcodeError field in response', async () => {
+    const failedAsset: VideoAssetRow = {
+      ...FIXTURE_VIDEO_PENDING,
+      transcodeStatus: 'failed',
+      transcodeError: 'ffmpeg exited with code 1',
+    }
+    vi.mocked(getVideoAsset).mockResolvedValue(failedAsset)
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/media/video-pending-01/video-info',
+    })
+
+    expect(res.statusCode).toBe(200)
+    const body = res.json<Record<string, unknown>>()
+    expect(body['transcodeStatus']).toBe('failed')
+    expect(body['transcodeError']).toBe('ffmpeg exited with code 1')
   })
 })

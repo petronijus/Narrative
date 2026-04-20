@@ -8,6 +8,11 @@
  *     Auth: JWT required (authPreHandler). Deck access: viewer or above.
  *     Cache-Control: max-age=600 (10 min). Signed URLs are stable so caching is safe.
  *
+ *   GET  /api/media/:assetId/video-info
+ *     Returns transcode status + signed poster/thumbnail URLs + HLS manifest URL.
+ *     Auth: JWT required. Deck access: viewer or above.
+ *     Poll this endpoint at 2 s intervals until transcodeStatus === 'done'.
+ *
  *   DELETE /api/media/:assetId
  *     Removes the media_assets row (owner only).
  *     The MinIO object is NOT deleted — documented M29 GC TODO.
@@ -15,18 +20,37 @@
  * Consumer expectations for phase 3 (editor-ui + renderer):
  *   - Editor-ui fetches GET /api/media/:assetId/url?variant=display for <img src>.
  *   - Renderer calls same endpoint, caches result in ResourceManager.
+ *   - For video: renderer reads GET /api/media/:assetId/video-info; uses posterUrl
+ *     until transcodeStatus === 'done', then attaches hls.js to hlsManifestUrl.
  *
  * Security notes:
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
  *   - Deck ownership verified via getMediaAsset → deckId → resolveDeckAccess chain.
+ *   - hlsManifestUrl uses direct MinIO URL (public bucket policy for dev).
+ *     TODO(M29): switch to MinIO presigned URLs when bucket becomes private.
  */
 
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
-import { getMediaAsset, deleteMediaAsset } from './assets.js'
+import { getMediaAsset, getVideoAsset, deleteMediaAsset } from './assets.js'
 import { signImgproxyUrl, type ImgproxyVariant } from './imgproxyUrl.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the public MinIO base URL for direct object access.
+ * Used for HLS manifest URLs (M12 dev: public bucket policy).
+ * TODO(M29): replace with presigned URL generation for private buckets.
+ */
+function publicMinioBaseUrl(): string {
+  const endpoint = process.env['MINIO_ENDPOINT'] ?? 'http://localhost:9000'
+  const bucket = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
+  return `${endpoint}/${bucket}`
+}
 
 export interface MediaRoutesOpts {
   db: Database
@@ -86,6 +110,58 @@ export async function registerMediaRoutes(
     })
 
     return reply.header('Cache-Control', 'public, max-age=600').send({ url })
+  })
+
+  // -------------------------------------------------------------------------
+  // GET /api/media/:assetId/video-info
+  //
+  // Returns transcode state + signed image URLs + HLS manifest URL for a video.
+  // Poll at 2 s intervals until transcodeStatus === 'done'.
+  // -------------------------------------------------------------------------
+  app.get<{
+    Params: { assetId: string }
+    Querystring: { share_token?: string }
+  }>('/api/media/:assetId/video-info', { preHandler: authPreHandler }, async (request, reply) => {
+    const { assetId } = request.params
+
+    const asset = await getVideoAsset(db, assetId)
+    if (!asset) {
+      return reply.status(404).send({ error: 'Video asset not found' })
+    }
+
+    const userId = request.user?.sub ?? null
+    const shareToken = request.query.share_token ?? null
+    const access = await resolveDeckAccess(db, { deckId: asset.deckId, userId, shareToken })
+
+    if (!access || !roleAtLeast(access.role, 'viewer')) {
+      return reply.status(403).send({ error: 'Forbidden' })
+    }
+
+    const posterUrl = asset.posterKey
+      ? signImgproxyUrl({ storageKey: asset.posterKey, variant: 'display', extension: 'jpg' })
+      : null
+
+    const thumbnailUrl = asset.thumbnailKey
+      ? signImgproxyUrl({ storageKey: asset.thumbnailKey, variant: 'thumb', extension: 'jpg' })
+      : null
+
+    // HLS manifest: direct MinIO URL (public bucket for M12 dev).
+    // TODO(M29): generate presigned URL for private bucket policy.
+    const hlsManifestUrl = asset.hlsManifestKey
+      ? `${publicMinioBaseUrl()}/${asset.hlsManifestKey}`
+      : null
+
+    return reply.send({
+      assetId: asset.id,
+      transcodeStatus: asset.transcodeStatus,
+      durationSec: asset.durationSec,
+      width: asset.width,
+      height: asset.height,
+      posterUrl,
+      thumbnailUrl,
+      hlsManifestUrl,
+      transcodeError: asset.transcodeError ?? null,
+    })
   })
 
   // -------------------------------------------------------------------------

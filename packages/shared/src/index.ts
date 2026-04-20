@@ -24,3 +24,9 @@ export { isAnimationPreset, isAnimationTrigger } from './animation.js'
 
 export type { PeerUser, PeerCursor, PeerAwarenessState, PeerInfo } from './awareness.js'
 export { peerColorFromId } from './awareness.js'
+
+export {
+  VIDEO_TRANSCODE_QUEUE,
+  type VideoTranscodeJobData,
+  type VideoTranscodeResult,
+} from './video-queue.js'

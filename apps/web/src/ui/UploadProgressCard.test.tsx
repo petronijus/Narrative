@@ -38,6 +38,7 @@ function makeEntry(overrides: Partial<UploadEntry> = {}): UploadEntry {
     id: 'test-id',
     filename: 'photo.jpg',
     sizeBytes: 1024,
+    mimeType: 'image/jpeg',
     status: 'uploading',
     progress: 0.45,
     ...overrides,

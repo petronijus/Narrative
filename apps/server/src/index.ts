@@ -29,6 +29,7 @@ import { registerDeckRoutes } from './routes/decks.js'
 import { registerSharingRoutes } from './routes/sharing.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
+import { closeQueueConnection } from './media/enqueue.js'
 import { registerMetricsEndpoint } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
@@ -157,6 +158,13 @@ const shutdown = async (signal: string) => {
     console.log('[server] Postgres pool closed')
   } catch (err) {
     console.error('[server] Error closing pg pool:', err)
+  }
+
+  try {
+    await closeQueueConnection()
+    console.log('[server] BullMQ queue connection closed')
+  } catch (err) {
+    console.error('[server] Error closing BullMQ queue connection:', err)
   }
 
   process.exit(0)

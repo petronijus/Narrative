@@ -29,6 +29,7 @@ import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { createImageUrlResolver, setDefaultImageUrlResolver } from './imageUrl.js'
+import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
 import { useAuth } from '../state/AuthContext.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
@@ -80,6 +81,7 @@ export function Canvas({ onReady }: CanvasProps = {}) {
     // so it always returns the latest token even after re-auth.
     const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
     setDefaultImageUrlResolver(createImageUrlResolver(apiBase, () => tokenRef.current))
+    setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase, () => tokenRef.current))
 
     let cancelled = false
     let app: Application | null = null

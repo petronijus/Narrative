@@ -59,6 +59,10 @@ vi.mock('./assets.js', () => ({
   createMediaAsset: vi.fn().mockResolvedValue(undefined),
 }))
 
+vi.mock('./enqueue.js', () => ({
+  enqueueVideoTranscode: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Mock probe-image-size (createRequire path)
 vi.mock('node:module', () => ({
   createRequire: vi.fn(
@@ -74,6 +78,7 @@ vi.mock('../auth/permissions.js', () => ({
 
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { createMediaAsset } from './assets.js'
+import { enqueueVideoTranscode } from './enqueue.js'
 import { registerTusPlugin } from './tus.js'
 
 // ---------------------------------------------------------------------------
@@ -218,7 +223,23 @@ describe('onUploadCreate hook', () => {
     await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 400 })
   })
 
-  it('throws 415 when MIME type is not image/*', async () => {
+  it('throws 415 when MIME type is neither image/* nor video/*', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'application/pdf' }),
+    })
+    const res = buildResponse()
+    const upload = { metadata: { deckId: 'deck-1' }, size: 1000 }
+
+    await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 415 })
+  })
+
+  it('accepts video/mp4 MIME type for editor role', async () => {
     await buildApp(true)
     const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
 
@@ -229,9 +250,43 @@ describe('onUploadCreate hook', () => {
       uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'video/mp4' }),
     })
     const res = buildResponse()
-    const upload = { metadata: { deckId: 'deck-1' } }
+    const upload = { metadata: { deckId: 'deck-1' }, size: 1000 }
 
-    await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 415 })
+    await expect(hook(req, res, upload)).resolves.toBeDefined()
+  })
+
+  it('throws 413 when video size exceeds MAX_VIDEO_UPLOAD_SIZE', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'video/mp4' }),
+    })
+    const res = buildResponse()
+    // 501 MB — above the default 500 MB video limit
+    const upload = { metadata: { deckId: 'deck-1' }, size: 501_000_000 }
+
+    await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 413 })
+  })
+
+  it('throws 413 when image size exceeds MAX_IMAGE_UPLOAD_SIZE', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/jpeg' }),
+    })
+    const res = buildResponse()
+    // 26 MB — above the default 25 MB image limit
+    const upload = { metadata: { deckId: 'deck-1' }, size: 26_000_000 }
+
+    await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 413 })
   })
 
   it('throws 403 when user has viewer role (not editor or owner)', async () => {
@@ -398,5 +453,83 @@ describe('onUploadFinish hook', () => {
     const upload = { id: 'bad-id-no-colon', size: 100, offset: 100, metadata: {} }
 
     await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 500 })
+  })
+
+  it('video upload: creates asset with kind=video and transcodeStatus=pending', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+
+    const assetId = 'asset-video01'
+    const deckId = 'deck-video'
+    const storageKey = `decks/${deckId}/uploads/${assetId}/original.mp4`
+    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({
+        deckId,
+        'content-type': 'video/mp4',
+        filename: 'clip.mp4',
+      }),
+    })
+
+    const upload = {
+      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      size: 10_000_000,
+      offset: 10_000_000,
+      metadata: { deckId, 'content-type': 'video/mp4' },
+    }
+
+    const res = buildResponse()
+    const result = (await hook(req, res, upload)) as { status_code: number; body: string }
+
+    expect(createMediaAsset).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        id: assetId,
+        deckId,
+        storageKey,
+        mimeType: 'video/mp4',
+        kind: 'video',
+        transcodeStatus: 'pending',
+      }),
+    )
+
+    expect(result.status_code).toBe(200)
+    const body = JSON.parse(result.body) as Record<string, unknown>
+    expect(body['transcodeStatus']).toBe('pending')
+    expect(body['assetId']).toBe(assetId)
+  })
+
+  it('video upload: enqueues a transcode job with correct args', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+
+    const assetId = 'asset-video02'
+    const deckId = 'deck-video2'
+    const storageKey = `decks/${deckId}/uploads/${assetId}/original.mp4`
+    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId, 'content-type': 'video/mp4' }),
+    })
+
+    const upload = {
+      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      size: 5_000_000,
+      offset: 5_000_000,
+      metadata: { deckId },
+    }
+
+    const res = buildResponse()
+    await hook(req, res, upload)
+
+    expect(enqueueVideoTranscode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetId,
+        deckId,
+        storageKey,
+        mimeType: 'video/mp4',
+      }),
+    )
   })
 })

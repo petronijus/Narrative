@@ -54,6 +54,19 @@ vi.mock('../state/useSlideObjectChanges', () => ({
   useSlideObjectChanges: () => undefined,
 }))
 
+// M12: PresentLayout depends on useMediaPreload + VideoOverlay; mock to bypass
+// the AuthContext + API client requirements in these page-level tests.
+vi.mock('../state/useMediaPreload', () => ({
+  useMediaPreload: () => ({
+    start: vi.fn().mockResolvedValue(undefined),
+    progress: { total: 0, completed: 0, errored: 0, isDone: true },
+    isPreloading: false,
+  }),
+}))
+vi.mock('../ui/VideoOverlay', () => ({
+  VideoOverlay: () => null,
+}))
+
 vi.mock('../state/useAnimations', () => ({
   useAnimations: () => ({
     animations: [],

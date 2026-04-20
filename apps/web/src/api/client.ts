@@ -33,6 +33,10 @@ export interface ApiClient {
   listShareLinks(deckId: string): Promise<ShareLink[]>
   createShareLink(deckId: string, body: CreateShareLinkBody): Promise<ShareLinkCreated>
   revokeShareLink(deckId: string, linkId: string): Promise<void>
+  /** M12: Fetch video transcode status + URLs for a given asset. */
+  getVideoInfo(assetId: string): Promise<VideoInfoResponse>
+  /** M12: Get a display-variant URL for an image asset. */
+  getMediaUrl(assetId: string, variant?: 'thumb' | 'display' | 'original'): Promise<string>
 }
 
 export interface DeckSummary {
@@ -72,6 +76,22 @@ export interface ShareLinkCreated {
 export interface CreateShareLinkBody {
   role: 'owner' | 'editor' | 'viewer'
   expiresAt?: string
+}
+
+// ---------------------------------------------------------------------------
+// Video info types (M12)
+// ---------------------------------------------------------------------------
+
+export interface VideoInfoResponse {
+  assetId: string
+  transcodeStatus: 'pending' | 'processing' | 'done' | 'failed'
+  durationSec: number | null
+  width: number | null
+  height: number | null
+  posterUrl: string | null
+  thumbnailUrl: string | null
+  hlsManifestUrl: string | null
+  transcodeError: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +162,15 @@ export function createApiClient(getToken: () => string | null): ApiClient {
     revokeShareLink: async (deckId, linkId) => {
       const res = await request(`/decks/${deckId}/share-links/${linkId}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    getVideoInfo: (assetId) => requestJson<VideoInfoResponse>(`/api/media/${assetId}/video-info`),
+
+    getMediaUrl: async (assetId, variant = 'display') => {
+      const data = await requestJson<{ url: string }>(
+        `/api/media/${assetId}/url?variant=${variant}`,
+      )
+      return data.url
     },
   }
 }
