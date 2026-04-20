@@ -47,6 +47,29 @@ vi.mock('./ShareDialog.js', () => ({
 }))
 
 // ---------------------------------------------------------------------------
+// M11: Mock useMediaUpload + useSlideObjects + slide-model (Toolbar now imports these)
+// ---------------------------------------------------------------------------
+
+vi.mock('../state/useMediaUpload.js', () => ({
+  useMediaUpload: () => ({
+    startUpload: vi.fn(),
+    uploads: [],
+    cancelUpload: vi.fn(),
+    retryUpload: vi.fn(),
+    dismissUpload: vi.fn(),
+  }),
+}))
+
+vi.mock('../state/useSlideObjects.js', () => ({
+  useSlideObjects: () => ({ objectsCtx: null, objects: [] }),
+}))
+
+vi.mock('@narrative/slide-model', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@narrative/slide-model')>()
+  return { ...actual, createObjectOfType: vi.fn() }
+})
+
+// ---------------------------------------------------------------------------
 // navigate mock
 // ---------------------------------------------------------------------------
 

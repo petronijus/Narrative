@@ -26,9 +26,11 @@
 import { useEffect, useRef } from 'react'
 import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
-import { ResourceManager } from './ResourceManager'
+import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
+import { createImageUrlResolver, setDefaultImageUrlResolver } from './imageUrl.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
+import { useAuth } from '../state/AuthContext.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
 
@@ -43,6 +45,12 @@ export interface CanvasProps {
 export function Canvas({ onReady }: CanvasProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
+  const { token } = useAuth()
+
+  // Stable ref so the image URL resolver always reads the current token
+  // even if the user re-authenticates mid-session.
+  const tokenRef = useRef<string | null>(token)
+  tokenRef.current = token
 
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
   const pendingChangesRef = useRef<ObjectChangeSet[]>([])
@@ -67,9 +75,18 @@ export function Canvas({ onReady }: CanvasProps = {}) {
     // StrictMode guard: pokud instance již existuje, skip
     if (instanceRef.current !== null) return
 
+    // Install default image URL resolver bound to this Canvas's token ref.
+    // Done once at mount time. The token getter is a stable closure over tokenRef
+    // so it always returns the latest token even after re-auth.
+    const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
+    setDefaultImageUrlResolver(createImageUrlResolver(apiBase, () => tokenRef.current))
+
     let cancelled = false
     let app: Application | null = null
     const resourceManager = new ResourceManager()
+
+    // Install default ResourceManager so imageRenderer can acquire/release textures.
+    setDefaultResourceManager(resourceManager)
 
     const initPixi = async () => {
       app = new Application()

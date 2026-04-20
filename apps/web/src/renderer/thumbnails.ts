@@ -121,13 +121,17 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     slideContainer.scale.set(scale)
 
     // Mount each object through the registry (same path as the main SceneGraph).
+    // Prefer thumbnailMount() when available — it avoids expensive async operations
+    // (e.g. texture loads) in the offscreen render path. Full raster image thumbnails
+    // are deferred to M29.
     for (const obj of objects) {
       const renderer = getRenderer(obj.type)
       if (renderer === undefined) {
         // Unknown type — silently skip (same policy as SceneGraph.addObject).
         continue
       }
-      const node = renderer.mount(obj)
+      const mountFn = renderer.thumbnailMount ?? renderer.mount
+      const node = mountFn.call(renderer, obj)
       slideContainer.addChild(node)
     }
 

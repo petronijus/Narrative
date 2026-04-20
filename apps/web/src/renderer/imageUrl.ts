@@ -1,0 +1,146 @@
+/**
+ * renderer/imageUrl.ts
+ *
+ * Signed imgproxy URL resolver for ImageObject rendering.
+ *
+ * Design:
+ * - Framework-agnostic (no React, no Vite env reads). Pure TS.
+ * - In-memory cache keyed by `${assetId}:${variant}`. Entries are Promises
+ *   so concurrent callers for the same key share one in-flight fetch.
+ * - On fetch error the cache entry is removed so the next call retries.
+ * - A module-level default resolver is installed at app bootstrap time via
+ *   setDefaultImageUrlResolver(). Renderer code calls getDefaultImageUrlResolver().
+ *
+ * Bootstrap (Canvas.tsx / App.tsx):
+ *   setDefaultImageUrlResolver(createImageUrlResolver(import.meta.env.VITE_API_URL, () => token))
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ResolveImageUrlOpts {
+  assetId: string
+  /** Defaults to 'display'. */
+  variant?: 'thumb' | 'display' | 'original'
+  /**
+   * Optional auth token getter. If provided and returns a non-empty string,
+   * the value is sent as `Authorization: Bearer <token>`.
+   */
+  getAuthToken?: () => string | null
+}
+
+/**
+ * Returns a signed imgproxy URL for the given assetId + variant.
+ * Cached per (assetId, variant) key for the lifetime of the resolver instance.
+ */
+export type ImageUrlResolver = (opts: ResolveImageUrlOpts) => Promise<string>
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds an ImageUrlResolver bound to a given API base URL.
+ *
+ * @param apiBaseUrl  Base URL without trailing slash, e.g. 'https://api.example.com'.
+ *                    Pass '' to use relative paths (same-origin).
+ * @param getAuthToken  Optional getter for the current JWT access token.
+ *                      Called on every fetch — captures token changes across re-auths.
+ */
+export function createImageUrlResolver(
+  apiBaseUrl: string,
+  getAuthToken?: () => string | null,
+): ImageUrlResolver {
+  // Cache: key → Promise<url>
+  // Promise caching means concurrent callers for same key share one in-flight fetch.
+  const cache = new Map<string, Promise<string>>()
+
+  return function resolveImageUrl(opts: ResolveImageUrlOpts): Promise<string> {
+    const variant = opts.variant ?? 'display'
+    const cacheKey = `${opts.assetId}:${variant}`
+
+    const cached = cache.get(cacheKey)
+    if (cached !== undefined) {
+      return cached
+    }
+
+    // Prefer per-call getAuthToken, fall back to factory-level getter.
+    const tokenGetter = opts.getAuthToken ?? getAuthToken
+
+    const fetchPromise: Promise<string> = (async () => {
+      const url = `${apiBaseUrl}/api/media/${opts.assetId}/url?variant=${variant}`
+
+      const headers: Record<string, string> = {}
+      const token = tokenGetter?.()
+      if (token != null && token !== '') {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
+      const res = await fetch(url, { headers })
+
+      if (!res.ok) {
+        // Remove from cache to allow retry.
+        cache.delete(cacheKey)
+        throw new Error(
+          `[imageUrl] Failed to fetch signed URL for ${opts.assetId}/${variant}: HTTP ${res.status}`,
+        )
+      }
+
+      const json = (await res.json()) as { url?: string }
+
+      if (typeof json.url !== 'string') {
+        cache.delete(cacheKey)
+        throw new Error(
+          `[imageUrl] Invalid response for ${opts.assetId}/${variant}: missing 'url' field`,
+        )
+      }
+
+      return json.url
+    })()
+
+    // On rejection remove cache entry so caller can retry.
+    fetchPromise.catch(() => {
+      cache.delete(cacheKey)
+    })
+
+    cache.set(cacheKey, fetchPromise)
+    return fetchPromise
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level default resolver (installed at app bootstrap)
+// ---------------------------------------------------------------------------
+
+let defaultResolver: ImageUrlResolver | null = null
+
+/**
+ * Install the default ImageUrlResolver.
+ * Must be called before any imageRenderer is mounted.
+ * Typically called in Canvas.tsx / App.tsx useEffect on mount.
+ */
+export function setDefaultImageUrlResolver(resolver: ImageUrlResolver): void {
+  defaultResolver = resolver
+}
+
+/**
+ * Returns the installed default resolver.
+ * Throws if setDefaultImageUrlResolver() was not called yet.
+ */
+export function getDefaultImageUrlResolver(): ImageUrlResolver {
+  if (defaultResolver === null) {
+    throw new Error(
+      '[imageUrl] No default resolver installed — call setDefaultImageUrlResolver() first',
+    )
+  }
+  return defaultResolver
+}
+
+/**
+ * Reset the default resolver (for testing).
+ * @internal
+ */
+export function _resetDefaultImageUrlResolver(): void {
+  defaultResolver = null
+}

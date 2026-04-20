@@ -27,6 +27,8 @@ import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerDeckRoutes } from './routes/decks.js'
 import { registerSharingRoutes } from './routes/sharing.js'
+import { registerTusPlugin } from './media/tus.js'
+import { registerMediaRoutes } from './media/routes.js'
 import { registerMetricsEndpoint } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
@@ -85,7 +87,9 @@ const app = Fastify({
 
 await app.register(cors, {
   origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  // PATCH is required by the tus protocol for upload resumption.
+  // HEAD is required by tus for upload status checks.
+  methods: ['GET', 'POST', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'],
 })
 
 // Sentry — init before routes, dev-gated (silent without SENTRY_DSN)
@@ -111,6 +115,10 @@ await registerDeckRoutes(app, db)
 
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)
+
+// Media routes: tus upload + signed URL + delete
+registerTusPlugin(app, { db })
+await registerMediaRoutes(app, { db })
 
 // ---------------------------------------------------------------------------
 // Hocuspocus WebSocket server

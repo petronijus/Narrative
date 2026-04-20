@@ -40,6 +40,8 @@ import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { computeSnap } from '../editor/snap.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { UploadDropZone } from '../ui/UploadDropZone.js'
+import { UploadProgressStack } from '../ui/UploadProgressCard.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -570,6 +572,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
           {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
           <PeerCursors />
+
+          {/* M11: Drop zone for image uploads — inert for viewer role */}
+          <UploadDropZone canvasContainerRef={canvasContainerRef} />
         </div>
       </main>
 
@@ -584,6 +589,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       </aside>
 
       {import.meta.env.DEV && <DevMetricsOverlay />}
+
+      {/* M11: Upload progress stack — fixed bottom-right, visible across the editor */}
+      <UploadProgressStack />
     </div>
   )
 }

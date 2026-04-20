@@ -20,6 +20,11 @@
  * context je dostupný pro PresentLayout + EditorLayout bez přímé závislosti na Canvas.
  *
  * M10: DeckRoleProvider added to expose per-deck role to all child components.
+ *
+ * M11: MediaUploadProvider added for tus resumable uploads.
+ *      Scoped to editor routes only (DeckShell excludes PresentLayout from uploads
+ *      via role gating + component-level guards, but the provider is present in both
+ *      child routes for simplicity — upload state is simply unused in present mode).
  */
 
 import { useState, useCallback } from 'react'
@@ -29,6 +34,7 @@ import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider } from '../state/DeckRoleContext.js'
+import { MediaUploadProvider } from '../state/useMediaUpload.js'
 
 export interface DeckShellContextValue {
   /**
@@ -55,11 +61,13 @@ export function DeckShell() {
       <DeckRoleProvider deckId={id}>
         <SlideDocProvider deckId={id}>
           <ActiveSlideProvider>
-            <CanvasInstanceContext.Provider value={canvasInstance}>
-              <Outlet
-                context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
-              />
-            </CanvasInstanceContext.Provider>
+            <MediaUploadProvider deckId={id}>
+              <CanvasInstanceContext.Provider value={canvasInstance}>
+                <Outlet
+                  context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
+                />
+              </CanvasInstanceContext.Provider>
+            </MediaUploadProvider>
           </ActiveSlideProvider>
         </SlideDocProvider>
       </DeckRoleProvider>

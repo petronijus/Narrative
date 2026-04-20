@@ -15,6 +15,7 @@ export type {
   RectangleObject,
   EllipseObject,
   TextObject,
+  ImageObject,
   SlideObject as SlideObjectData,
   SlideObject,
 } from '@narrative/shared'

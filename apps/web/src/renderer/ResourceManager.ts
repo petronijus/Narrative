@@ -75,3 +75,39 @@ export class ResourceManager {
     return this.textures.get(url)?.refCount ?? 0
   }
 }
+
+// ---------------------------------------------------------------------------
+// Module-level default ResourceManager (installed at app bootstrap)
+// ---------------------------------------------------------------------------
+
+let defaultResourceManager: ResourceManager | null = null
+
+/**
+ * Install the default ResourceManager instance.
+ * Must be called in Canvas.tsx after the ResourceManager is created,
+ * before any imageRenderer is mounted.
+ */
+export function setDefaultResourceManager(rm: ResourceManager): void {
+  defaultResourceManager = rm
+}
+
+/**
+ * Returns the installed default ResourceManager.
+ * Throws if setDefaultResourceManager() was not called yet.
+ */
+export function getDefaultResourceManager(): ResourceManager {
+  if (defaultResourceManager === null) {
+    throw new Error(
+      '[ResourceManager] No default instance installed — call setDefaultResourceManager() first',
+    )
+  }
+  return defaultResourceManager
+}
+
+/**
+ * Reset the default ResourceManager (for testing).
+ * @internal
+ */
+export function _resetDefaultResourceManager(): void {
+  defaultResourceManager = null
+}

@@ -17,9 +17,13 @@
  * - Tool creation buttons hidden for viewer role.
  * - Share button (owner-only) opens ShareDialog.
  * - Signed-in user display + sign-out in top-right.
+ *
+ * M11: "Insert image" button — opens file picker, uploads via tus, creates ImageObject.
+ * - Hidden for viewer role (same gate as shape tools).
+ * - Default drop position: centre of slide (960, 540 for 1920×1080 world coords).
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
@@ -27,6 +31,10 @@ import { AvatarChips } from './AvatarChips.js'
 import { useAuth } from '../state/AuthContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { ShareDialog } from './ShareDialog.js'
+import { useMediaUpload } from '../state/useMediaUpload.js'
+import { useSlideObjects } from '../state/useSlideObjects.js'
+import { createObjectOfType } from '@narrative/slide-model'
+import type { UploadEntry } from '../state/useMediaUpload.js'
 
 interface ToolButton {
   tool: ActiveTool
@@ -56,6 +64,10 @@ function isInputFocused(): boolean {
   return tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable
 }
 
+// Default image drop position — slide centre in 1920×1080 world coords
+const DEFAULT_IMAGE_X = 960
+const DEFAULT_IMAGE_Y = 540
+
 export function Toolbar() {
   const { activeTool, setActiveTool } = useTool()
   const navigate = useNavigate()
@@ -65,6 +77,33 @@ export function Toolbar() {
   const [shareOpen, setShareOpen] = useState(false)
   const isViewer = role === 'viewer'
   const isOwner = role === 'owner'
+
+  // M11: Upload hook + hidden file input ref
+  const { startUpload } = useMediaUpload()
+  const { objectsCtx } = useSlideObjects()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleImageUploadDone(entry: UploadEntry) {
+    if (entry.status !== 'done') return
+    if (objectsCtx === null) return
+    if (entry.assetId === undefined || entry.assetId === '') return
+    createObjectOfType(objectsCtx, 'image', {
+      assetId: entry.assetId,
+      width: entry.width ?? 400,
+      height: entry.height ?? 300,
+      x: DEFAULT_IMAGE_X - (entry.width ?? 400) / 2,
+      y: DEFAULT_IMAGE_Y - (entry.height ?? 300) / 2,
+    })
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    for (const file of files) {
+      startUpload(file, { onDone: handleImageUploadDone })
+    }
+    // Reset so re-selecting the same file fires onChange again
+    e.target.value = ''
+  }
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -84,12 +123,19 @@ export function Toolbar() {
       if (tool !== undefined) {
         e.preventDefault()
         setActiveTool(tool)
+        return
+      }
+
+      // I → Insert image (open file picker, non-viewer only)
+      if (e.key.toLowerCase() === 'i' && !isViewer) {
+        e.preventDefault()
+        fileInputRef.current?.click()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [id, navigate, setActiveTool])
+  }, [id, navigate, setActiveTool, isViewer])
 
   return (
     <div
@@ -124,6 +170,51 @@ export function Toolbar() {
             </button>
           )
         })}
+
+      {/* M11: Insert Image button — hidden for viewer role */}
+      {!isViewer && (
+        <>
+          {/* Hidden file input — triggered by the button below */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={handleFileInputChange}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Insert image (I)"
+            title="Insert image — I"
+            className={[
+              'flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+              'text-gray-400 hover:bg-gray-800 hover:text-gray-200',
+            ].join(' ')}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+            <span className="hidden sm:inline">Image</span>
+          </button>
+        </>
+      )}
 
       {/* Spacer */}
       <div className="flex-1" aria-hidden="true" />
