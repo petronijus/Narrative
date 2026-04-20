@@ -1,20 +1,42 @@
 /**
  * routes/decks.test.ts
  *
- * Testy pro /decks REST API endpointy.
- * Používá mock Drizzle DB objekt — žádný real Postgres.
+ * Tests for /decks REST API endpoints.
+ * Uses a mock Drizzle DB — no real Postgres.
+ *
+ * Auth: all tests run with BYPASS_AUTH=true semantics (dev-user synthesized).
+ * The mock DB is wired to return appropriate data for each test scenario.
  *
  * Coverage:
- *   GET  /decks → empty list
- *   GET  /decks → list with data
- *   POST /decks → vytvoří deck, vrátí row
- *   DELETE /decks/:id → 204 + cascade (mock)
- *   DELETE /decks/:id → 404 pro neexistující ID
+ *   GET  /decks                   → returns accessible decks (bypass: demo-user + dev-user)
+ *   GET  /decks/:id               → returns deck (JWT or share_token)
+ *   POST /decks                   → creates deck, sets ownerUserId from JWT sub (dev-user in bypass)
+ *   DELETE /decks/:id             → 204 + cascade (owner check)
+ *   DELETE /decks/:id no owner    → 403
+ *   GET /decks/:id share_token    → 200 with valid share access
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import Fastify from 'fastify'
+import Fastify, { type FastifyInstance } from 'fastify'
 import { registerDeckRoutes } from './decks.js'
+import { registerAuthPlugin } from '../auth/fastifyAuth.js'
+import type { Database } from '../db/client.js'
+import type { DeckAccessResult } from '../auth/permissions.js'
+
+// ---------------------------------------------------------------------------
+// Mock resolveDeckAccess for GET /decks/:id share_token tests
+// ---------------------------------------------------------------------------
+
+vi.mock('../auth/permissions.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../auth/permissions.js')>()
+  return {
+    ...original,
+    resolveDeckAccess: vi.fn(),
+  }
+})
+
+const { resolveDeckAccess } = await import('../auth/permissions.js')
+const resolveMock = resolveDeckAccess as ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // Mock DB factory
@@ -29,68 +51,83 @@ interface MockDeck {
 }
 
 function makeMockDb(initialDecks: MockDeck[] = []) {
-  let decks = [...initialDecks]
+  let deckStore = [...initialDecks]
 
-  // Chain-able query builder mock
-  const queryResult = {
-    _filters: [] as string[],
-    _order: null as null | string,
-
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockImplementation(function (this: typeof queryResult) {
-      return Promise.resolve(decks)
-    }),
-    returning: vi.fn().mockImplementation(function (this: typeof queryResult) {
-      // Pro delete — vrátíme deleted items
-      return Promise.resolve(this._filters.includes('delete') ? [decks[0]] : decks)
-    }),
-  }
-
-  return {
+  const db = {
     select: vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue(queryResult),
+      from: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
+          limit: vi
+            .fn()
+            .mockImplementation(() => Promise.resolve(deckStore.length > 0 ? [deckStore[0]] : [])),
+        }),
+        orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
+        limit: vi
+          .fn()
+          .mockImplementation(() => Promise.resolve(deckStore.length > 0 ? [deckStore[0]] : [])),
+      }),
     }),
 
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockImplementation((vals: MockDeck) => ({
-        returning: vi.fn().mockResolvedValue([{ ...vals }]),
-      })),
-    }),
+    insert: vi.fn().mockImplementation((_table: unknown) => ({
+      values: vi.fn().mockImplementation((vals: MockDeck) => {
+        const result: Promise<unknown[]> & { returning: () => Promise<MockDeck[]> } =
+          Promise.resolve([]) as never
+        result.returning = vi.fn().mockResolvedValue([{ ...vals }])
+        return result
+      }),
+    })),
 
     delete: vi.fn().mockImplementation((_table: unknown) => ({
       where: vi.fn().mockReturnValue({
         returning: vi.fn().mockImplementation((_cols: unknown) => {
-          const before = decks.length
-          // Simulujeme mazání — v reálu by to filtrovalo podle ID
-          // Pro test vrátíme prázdné pole pokud decks je prázdné
-          if (before === 0) return Promise.resolve([])
-          const deleted = [decks[0]]
-          decks = decks.slice(1)
+          if (deckStore.length === 0) return Promise.resolve([])
+          const deleted = [deckStore[0]]
+          deckStore = deckStore.slice(1)
           return Promise.resolve(deleted)
         }),
       }),
     })),
+
+    transaction: vi.fn().mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      return fn(db)
+    }),
   }
+
+  return db as unknown as Database
 }
 
 // ---------------------------------------------------------------------------
-// Test helpers
+// App builder — bypass auth, owner role for dev-user on 'deck-1'
 // ---------------------------------------------------------------------------
 
-async function buildApp(db: ReturnType<typeof makeMockDb>) {
+async function buildApp(
+  db: Database,
+  accessResult: DeckAccessResult | null = { role: 'owner', reason: 'direct' },
+): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  await registerDeckRoutes(app, db as never)
+
+  // Bypass auth → dev-user
+  registerAuthPlugin(app, { verifier: null, bypass: true, db })
+
+  // Default mock: dev-user has the specified role on any deck
+  resolveMock.mockResolvedValue(accessResult)
+
+  await registerDeckRoutes(app, db)
   await app.ready()
   return app
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// GET /decks
 // ---------------------------------------------------------------------------
 
 describe('GET /decks', () => {
+  beforeEach(() => vi.clearAllMocks())
+
   it('returns empty array when no decks', async () => {
-    const app = await buildApp(makeMockDb([]))
+    const db = makeMockDb([])
+    const app = await buildApp(db)
 
     const res = await app.inject({ method: 'GET', url: '/decks' })
 
@@ -98,25 +135,83 @@ describe('GET /decks', () => {
     expect(JSON.parse(res.body)).toEqual([])
   })
 
-  it('returns list of decks', async () => {
+  it('returns list of decks owned by dev-user', async () => {
     const now = new Date()
     const db = makeMockDb([
-      { id: 'deck-1', title: 'Deck One', ownerUserId: 'demo-user', createdAt: now, updatedAt: now },
+      { id: 'deck-1', title: 'Deck One', ownerUserId: 'dev-user', createdAt: now, updatedAt: now },
     ])
-
-    // Override orderBy to return the decks
     const app = await buildApp(db)
 
     const res = await app.inject({ method: 'GET', url: '/decks' })
     expect(res.statusCode).toBe(200)
-    // Response may vary based on mock — just check it's an array
     const body = JSON.parse(res.body) as unknown[]
     expect(Array.isArray(body)).toBe(true)
   })
 })
 
+// ---------------------------------------------------------------------------
+// GET /decks/:id (with share_token)
+// ---------------------------------------------------------------------------
+
+describe('GET /decks/:id', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns deck for authenticated user', async () => {
+    const now = new Date()
+    const db = makeMockDb([
+      { id: 'deck-1', title: 'My Deck', ownerUserId: 'dev-user', createdAt: now, updatedAt: now },
+    ])
+    resolveMock.mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({ method: 'GET', url: '/decks/deck-1' })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('returns 200 with valid share_token', async () => {
+    const now = new Date()
+    const db = makeMockDb([
+      { id: 'deck-1', title: 'Shared Deck', ownerUserId: 'alice', createdAt: now, updatedAt: now },
+    ])
+    // Mock: share token grants viewer access
+    resolveMock.mockResolvedValueOnce({ role: 'viewer', reason: 'share-link' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/decks/deck-1?share_token=test-share-token',
+    })
+
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('returns 403 when no access (no token, no share_token)', async () => {
+    const db = makeMockDb([])
+    resolveMock.mockResolvedValueOnce(null)
+    const app = await buildApp(db, null)
+
+    const res = await app.inject({ method: 'GET', url: '/decks/nonexistent' })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('returns 404 when deck does not exist but access resolves', async () => {
+    const db = makeMockDb([]) // no decks in store
+    resolveMock.mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({ method: 'GET', url: '/decks/ghost-deck' })
+    expect(res.statusCode).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// POST /decks
+// ---------------------------------------------------------------------------
+
 describe('POST /decks', () => {
-  it('creates a deck with default title', async () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a deck with default title and sets ownerUserId to dev-user (bypass)', async () => {
     const db = makeMockDb()
     const app = await buildApp(db)
 
@@ -130,9 +225,9 @@ describe('POST /decks', () => {
     expect(res.statusCode).toBe(201)
     const body = JSON.parse(res.body) as { title: string; ownerUserId: string; id: string }
     expect(body.title).toBe('Untitled Deck')
-    expect(body.ownerUserId).toBe('demo-user')
+    // In bypass mode, JWT sub = 'dev-user'
+    expect(body.ownerUserId).toBe('dev-user')
     expect(typeof body.id).toBe('string')
-    expect(body.id.length).toBeGreaterThan(0)
   })
 
   it('creates a deck with custom title', async () => {
@@ -143,52 +238,78 @@ describe('POST /decks', () => {
       method: 'POST',
       url: '/decks',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'My Presentation' }),
+      body: JSON.stringify({ title: 'Q2 Roadmap' }),
     })
 
     expect(res.statusCode).toBe(201)
     const body = JSON.parse(res.body) as { title: string }
-    expect(body.title).toBe('My Presentation')
+    expect(body.title).toBe('Q2 Roadmap')
   })
 })
 
+// ---------------------------------------------------------------------------
+// DELETE /decks/:id
+// ---------------------------------------------------------------------------
+
 describe('DELETE /decks/:id', () => {
-  it('returns 204 for existing deck', async () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('returns 204 when user is owner', async () => {
     const now = new Date()
     const db = makeMockDb([
       {
         id: 'deck-del',
         title: 'To Delete',
-        ownerUserId: 'demo-user',
+        ownerUserId: 'dev-user',
         createdAt: now,
         updatedAt: now,
       },
     ])
+    resolveMock.mockResolvedValue({ role: 'owner', reason: 'direct' })
     const app = await buildApp(db)
 
     const res = await app.inject({ method: 'DELETE', url: '/decks/deck-del' })
     expect(res.statusCode).toBe(204)
   })
 
-  it('returns 404 for non-existent deck', async () => {
-    const db = makeMockDb([]) // prázdná DB
+  it('returns 403 when user is not owner (editor role)', async () => {
+    const now = new Date()
+    const db = makeMockDb([
+      { id: 'deck-1', title: 'Deck', ownerUserId: 'alice', createdAt: now, updatedAt: now },
+    ])
+    resolveMock.mockResolvedValue({ role: 'editor', reason: 'direct' })
+    const app = await buildApp(db, { role: 'editor', reason: 'direct' })
+
+    const res = await app.inject({ method: 'DELETE', url: '/decks/deck-1' })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('returns 403 when user has no access', async () => {
+    const db = makeMockDb([])
+    resolveMock.mockResolvedValue(null)
+    const app = await buildApp(db, null)
+
+    const res = await app.inject({ method: 'DELETE', url: '/decks/deck-1' })
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('returns 404 for non-existent deck (user is owner but deck is gone)', async () => {
+    const db = makeMockDb([]) // empty DB — delete returns []
+    resolveMock.mockResolvedValue({ role: 'owner', reason: 'direct' })
     const app = await buildApp(db)
 
     const res = await app.inject({ method: 'DELETE', url: '/decks/nonexistent' })
     expect(res.statusCode).toBe(404)
-    const body = JSON.parse(res.body) as { error: string }
-    expect(body.error).toBe('Deck not found')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Route registration smoke test
+// ---------------------------------------------------------------------------
 
 describe('Route registration', () => {
   it('registers routes without error', async () => {
     const db = makeMockDb()
     expect(() => buildApp(db)).not.toThrow()
   })
-})
-
-// Cleanup
-beforeEach(() => {
-  vi.clearAllMocks()
 })

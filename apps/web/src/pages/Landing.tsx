@@ -1,43 +1,31 @@
 /**
  * pages/Landing.tsx
  *
- * Minimalistická landing page — list decků, create + navigate.
+ * Minimalist landing page — list decks, create + navigate.
  *
- * UI je záměrně prostý — design polish přijde v M20 (templates + themes).
- * Hlavní je funkční flow:
- *   1. Fetch GET /decks → zobrazí seznam
- *   2. "New deck" → POST /decks → navigate na /deck/:id
- *   3. Klik na deck → navigate na /deck/:id
- *   4. Trash icon → DELETE /decks/:id → refetch
- *
- * API base URL z env: VITE_API_URL (default http://localhost:3001)
+ * M10: Refactored to use centralized API client (useApi hook) which
+ * automatically attaches Bearer token to all requests. Sign-out button
+ * added to header using useAuth().
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
-
-interface Deck {
-  id: string
-  title: string
-  ownerUserId: string
-  createdAt: string
-  updatedAt: string
-}
+import { useApi } from '../api/client.js'
+import { useAuth } from '../state/AuthContext.js'
+import type { DeckSummary } from '../api/client.js'
 
 export function Landing() {
   const navigate = useNavigate()
-  const [decks, setDecks] = useState<Deck[]>([])
+  const api = useApi()
+  const { user, logout } = useAuth()
+  const [decks, setDecks] = useState<DeckSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
   const fetchDecks = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/decks`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = (await res.json()) as Deck[]
+      const data = await api.listDecks()
       setDecks(data)
       setError(null)
     } catch (err) {
@@ -45,7 +33,7 @@ export function Landing() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void fetchDecks()
@@ -54,30 +42,26 @@ export function Landing() {
   const handleCreateDeck = useCallback(async () => {
     setCreating(true)
     try {
-      const res = await fetch(`${API_URL}/decks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Untitled Deck' }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const deck = (await res.json()) as Deck
+      const deck = await api.createDeck('Untitled Deck')
       void navigate(`/deck/${deck.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create deck')
       setCreating(false)
     }
-  }, [navigate])
+  }, [api, navigate])
 
-  const handleDeleteDeck = useCallback(async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      const res = await fetch(`${API_URL}/decks/${id}`, { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
-      setDecks((prev) => prev.filter((d) => d.id !== id))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete deck')
-    }
-  }, [])
+  const handleDeleteDeck = useCallback(
+    async (id: string, e: React.MouseEvent) => {
+      e.stopPropagation()
+      try {
+        await api.deleteDeck(id)
+        setDecks((prev) => prev.filter((d) => d.id !== id))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to delete deck')
+      }
+    },
+    [api],
+  )
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-950 text-gray-100">
@@ -85,13 +69,28 @@ export function Landing() {
       <header className="border-b border-gray-800 px-8 py-4">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
-          <button
-            onClick={() => void handleCreateDeck()}
-            disabled={creating}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-          >
-            {creating ? 'Creating…' : '+ New Deck'}
-          </button>
+          <div className="flex items-center gap-3">
+            {user !== null && (
+              <div className="flex items-center gap-2">
+                <span className="hidden sm:block text-sm text-gray-400">
+                  {user.name ?? user.email ?? user.sub.slice(0, 8)}
+                </span>
+                <button
+                  onClick={() => void logout()}
+                  className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => void handleCreateDeck()}
+              disabled={creating}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {creating ? 'Creating…' : '+ New Deck'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -132,7 +131,7 @@ export function Landing() {
 // ---------------------------------------------------------------------------
 
 interface DeckCardProps {
-  deck: Deck
+  deck: DeckSummary
   onOpen: () => void
   onDelete: (e: React.MouseEvent) => void
 }

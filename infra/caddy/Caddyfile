@@ -1,27 +1,31 @@
 # Narrative — Caddyfile
 #
 # DOMAIN env var:
-#   - localhost (nebo IP)  → HTTP only, bez TLS
-#   - skutečná doména      → automatické Let's Encrypt TLS
+#   - localhost (or IP)  → HTTP only, no TLS
+#   - real domain        → automatic Let's Encrypt TLS
 #
 # Routing:
-#   /api/*  → Fastify HTTP API (port 3001)
-#   /ws     → Hocuspocus WebSocket (port 3002)
-#   /*      → statické soubory SPA (React app) s fallback na index.html
+#   {$DOMAIN}            → React SPA (static files)
+#   {$DOMAIN}/api/*      → Fastify HTTP API (port 3001)
+#   {$DOMAIN}/ws*        → Hocuspocus WebSocket (port 3002)
+#   auth.{$DOMAIN}       → Authentik OIDC server (port 9000) [M10]
+#
+# DNS requirement: both {$DOMAIN} and auth.{$DOMAIN} must resolve to this server.
+# Use a wildcard A record (*.example.com → server IP) or explicit auth.example.com A record.
 
 {$DOMAIN:localhost} {
 
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
     reverse_proxy server:3001 {
-      # Předat original host (pro CORS matching)
+      # Forward original host (for CORS matching)
       header_up Host {upstream_hostport}
     }
   }
 
   # ── WebSocket (Hocuspocus) ──────────────────────────────────────────────────
-  # Hocuspocus přijímá WebSocket upgrades na /
-  # Klient se připojuje přes wss://DOMAIN/ws
+  # Hocuspocus accepts WebSocket upgrades on /
+  # Client connects via wss://DOMAIN/ws
   handle /ws* {
     reverse_proxy server:3002 {
       # WebSocket upgrade headers
@@ -30,7 +34,7 @@
     }
   }
 
-  # ── Health check (Caddy vlastní + proxy na server) ──────────────────────────
+  # ── Health check ────────────────────────────────────────────────────────────
   handle /health {
     reverse_proxy server:3001
   }
@@ -38,12 +42,31 @@
   # ── Static SPA (React) ──────────────────────────────────────────────────────
   handle {
     root * /srv/web
-    # SPA fallback — client-side routes vrací index.html
+    # SPA fallback — client-side routes return index.html
     try_files {path} /index.html
     file_server
   }
 
   # ── Logging ─────────────────────────────────────────────────────────────────
+  log {
+    output stdout
+    format json
+    level INFO
+  }
+}
+
+# ── Authentik OIDC (M10) ───────────────────────────────────────────────────────
+# Subdomain: auth.{$DOMAIN} → Authentik server container on port 9000.
+# In dev (DOMAIN=localhost) this block is unreachable — use localhost:9000 directly.
+# In prod Caddy handles TLS automatically for auth.{$DOMAIN}.
+auth.{$DOMAIN:localhost} {
+  reverse_proxy authentik-server:9000 {
+    # Pass real IP — Authentik uses it for rate limiting and audit logs
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+
   log {
     output stdout
     format json

@@ -24,6 +24,29 @@ vi.mock('../state/useAwareness.js', () => ({
 }))
 
 // ---------------------------------------------------------------------------
+// M10: Mock AuthContext and DeckRoleContext (Toolbar now uses both)
+// ---------------------------------------------------------------------------
+
+vi.mock('../state/AuthContext.js', () => ({
+  useAuth: () => ({
+    user: { sub: 'test-user', name: 'Test User' },
+    token: 'test-token',
+    isLoading: false,
+    login: vi.fn(),
+    logout: vi.fn(),
+    refreshToken: vi.fn(),
+  }),
+}))
+
+vi.mock('../state/DeckRoleContext.js', () => ({
+  useDeckRole: () => ({ role: 'owner', isLoading: false }),
+}))
+
+vi.mock('./ShareDialog.js', () => ({
+  ShareDialog: () => <div data-testid="share-dialog">Share Dialog</div>,
+}))
+
+// ---------------------------------------------------------------------------
 // navigate mock
 // ---------------------------------------------------------------------------
 

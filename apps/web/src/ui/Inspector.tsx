@@ -24,6 +24,7 @@ import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
+import { useDeckRole } from '../state/DeckRoleContext.js'
 import {
   updateObject,
   addAnimation,
@@ -77,10 +78,11 @@ interface NumberFieldProps {
   label: string
   value: number
   step?: number
+  disabled?: boolean
   onChange: (value: number) => void
 }
 
-function NumberField({ id, label, value, step = 1, onChange }: NumberFieldProps) {
+function NumberField({ id, label, value, step = 1, disabled = false, onChange }: NumberFieldProps) {
   return (
     <div className="flex items-center gap-2">
       <label htmlFor={id} className="w-16 flex-shrink-0 text-xs text-gray-400">
@@ -90,6 +92,7 @@ function NumberField({ id, label, value, step = 1, onChange }: NumberFieldProps)
         id={id}
         type="number"
         step={step}
+        disabled={disabled}
         value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const parsed = parseFloat(e.target.value)
@@ -129,6 +132,8 @@ export function Inspector() {
   const { selectedIds, selectedId } = useSelection()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { animations, animationsCtx: animMutationCtx } = useAnimations()
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
 
   // Multi-select placeholder
   if (selectedIds.size > 1) {
@@ -158,6 +163,8 @@ export function Inspector() {
   }
 
   function patch<T extends SlideObject>(p: SlideObjectPatch<T>) {
+    // M10: viewer role — no mutations
+    if (isViewer) return
     if (obj === undefined || mutationCtx === null) return
     updateObject(mutationCtx, obj.id, p)
   }
@@ -166,6 +173,12 @@ export function Inspector() {
 
   return (
     <div className="flex flex-col overflow-y-auto">
+      {/* M10: viewer mode notice */}
+      {isViewer && (
+        <div className="border-b border-gray-800 bg-gray-900/50 px-3 py-1.5">
+          <p className="text-[10px] text-gray-500">View only</p>
+        </div>
+      )}
       {/* Position */}
       <Section title="Position">
         <NumberField

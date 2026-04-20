@@ -12,6 +12,11 @@
  *   - UndoManager tracks the top-level slides Y.Array (deep tracking).
  *   - Per-slide scoped contexts obtained via getSlideObjectsCtx / getSlideAnimationsCtx.
  *
+ * M10: Auth integration.
+ *   - JWT access token passed as `token` to HocuspocusProvider (server validates).
+ *   - share_token from URL query params passed as WS URL parameter for anonymous viewer path.
+ *   - When BYPASS_AUTH=true on server (dev), missing token is fine.
+ *
  * Lifecycle:
  *   mount   → HocuspocusProvider.connect() (WS handshake, server hydrates Y.Doc)
  *   unmount → HocuspocusProvider.destroy() (cleanup WS + Yjs subscriptions)
@@ -21,6 +26,8 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import { useAuth } from './AuthContext.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import {
@@ -62,6 +69,8 @@ interface SlideDocProviderProps {
 export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
   const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
+  const location = useLocation()
+  const { token, user } = useAuth()
 
   // Ref for StrictMode double-mount guard
   const providerRef = useRef<HocuspocusProvider | null>(null)
@@ -73,17 +82,29 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
     const doc = new Y.Doc()
 
     // M8: Local peer identity — stable for the entire session tab
+    // M10: Prefer authenticated user name/id when available
     const peerId = getOrCreatePeerId()
     const localUser: PeerUser = {
-      id: peerId,
-      name: `User ${peerId.slice(0, 4)}`,
+      id: user?.sub ?? peerId,
+      name: user?.name ?? user?.email ?? `User ${peerId.slice(0, 4)}`,
       color: peerColorFromId(peerId),
+    }
+
+    // M10: share_token from URL query params — passed as WS parameter for anonymous viewer path
+    const searchParams = new URLSearchParams(location.search)
+    const shareToken = searchParams.get('share_token')
+
+    // M10: Build auth options separately to avoid exactOptionalPropertyTypes conflicts
+    const authOptions = {
+      ...(token !== null ? { token } : { token: null }),
+      ...(shareToken !== null ? { parameters: { share_token: shareToken } } : {}),
     }
 
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,
       name: deckId,
       document: doc,
+      ...authOptions,
       onConnect() {
         setWsStatus('connected')
         // M8: Restore awareness state on (re)connect — Hocuspocus clears it after reconnect.

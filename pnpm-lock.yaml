@@ -61,6 +61,9 @@ importers:
       fastify:
         specifier: ^5.3.2
         version: 5.8.5
+      jose:
+        specifier: ^6.2.2
+        version: 6.2.2
       nanoid:
         specifier: ^5.0.9
         version: 5.1.9
@@ -95,6 +98,9 @@ importers:
       '@hocuspocus/provider':
         specifier: ^2.15.0
         version: 2.15.3(y-protocols@1.0.7(yjs@13.6.30))(yjs@13.6.30)
+      '@narrative/animation':
+        specifier: workspace:*
+        version: link:../../packages/animation
       '@narrative/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -3824,6 +3830,12 @@ packages:
         integrity: sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==,
       }
     hasBin: true
+
+  jose@6.2.2:
+    resolution:
+      {
+        integrity: sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ==,
+      }
 
   joycon@3.1.1:
     resolution:
@@ -7664,6 +7676,8 @@ snapshots:
   isomorphic.js@0.2.5: {}
 
   jiti@1.21.7: {}
+
+  jose@6.2.2: {}
 
   joycon@3.1.1: {}
 

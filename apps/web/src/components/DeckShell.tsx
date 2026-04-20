@@ -18,6 +18,8 @@
  * M6: Přidán CanvasInstanceContext.Provider (varianta B — state lifting).
  * Canvas.tsx volá onReady(instance) po Pixi init → DeckShell uloží do state →
  * context je dostupný pro PresentLayout + EditorLayout bez přímé závislosti na Canvas.
+ *
+ * M10: DeckRoleProvider added to expose per-deck role to all child components.
  */
 
 import { useState, useCallback } from 'react'
@@ -26,6 +28,7 @@ import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { DeckRoleProvider } from '../state/DeckRoleContext.js'
 
 export interface DeckShellContextValue {
   /**
@@ -49,15 +52,17 @@ export function DeckShell() {
 
   return (
     <div className="h-screen w-screen overflow-hidden">
-      <SlideDocProvider deckId={id}>
-        <ActiveSlideProvider>
-          <CanvasInstanceContext.Provider value={canvasInstance}>
-            <Outlet
-              context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
-            />
-          </CanvasInstanceContext.Provider>
-        </ActiveSlideProvider>
-      </SlideDocProvider>
+      <DeckRoleProvider deckId={id}>
+        <SlideDocProvider deckId={id}>
+          <ActiveSlideProvider>
+            <CanvasInstanceContext.Provider value={canvasInstance}>
+              <Outlet
+                context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
+              />
+            </CanvasInstanceContext.Provider>
+          </ActiveSlideProvider>
+        </SlideDocProvider>
+      </DeckRoleProvider>
     </div>
   )
 }

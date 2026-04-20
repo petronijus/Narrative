@@ -72,9 +72,101 @@ lint → typecheck → build → test + Docker build validation.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
+## Authentication (M10)
+
+### Architecture
+
+Authentik is the self-hosted OIDC identity provider. Both the Narrative web app and server validate JWTs issued by Authentik.
+
+```
+User → Narrative web (http://localhost:5173)
+      → redirects to Authentik authorize endpoint (auth.DOMAIN or localhost:9000)
+      → user logs in at Authentik
+      → Authentik redirects back with authorization code
+      → web exchanges code for JWT access token (PKCE flow — no client secret)
+      → web stores token, sends as Bearer on every API/WS request
+      → server validates JWT signature via Authentik JWKS endpoint
+      → server checks issuer claim matches AUTHENTIK_ISSUER
+```
+
+Access control: users must be members of the `narrative-users` group in Authentik. The blueprint creates this group automatically; you add users to it manually via the Authentik admin UI.
+
+### First-run setup
+
+```bash
+# 1. Generate secrets
+openssl rand -hex 32    # → AUTHENTIK_SECRET_KEY in .env
+openssl rand -hex 16    # → AUTHENTIK_POSTGRES_PASSWORD in .env
+
+# 2. Set env vars in .env (dev) or infra/.env.prod (prod)
+#    Required: AUTHENTIK_SECRET_KEY, AUTHENTIK_POSTGRES_PASSWORD,
+#              AUTHENTIK_BOOTSTRAP_PASSWORD, AUTHENTIK_BOOTSTRAP_EMAIL
+
+# 3. Start services
+cd infra
+docker compose --env-file ../.env -f docker-compose.yml up -d
+
+# 4. Wait for blueprint to apply (30–60 s on first run)
+docker compose -f docker-compose.yml logs -f authentik-server | grep -i blueprint
+
+# 5. Open Authentik admin
+#    → http://localhost:9000
+#    → Username: akadmin
+#    → Password: value of AUTHENTIK_BOOTSTRAP_PASSWORD
+#    → If AUTHENTIK_BOOTSTRAP_PASSWORD was empty: visit http://localhost:9000/if/flow/initial-setup/
+
+# 6. Update the redirect URI for your production domain
+#    Admin UI → Providers → Narrative OIDC Provider → Edit
+#    Add: https://narrative.example.com/auth/callback
+
+# 7. Create the first Narrative user
+#    Admin UI → Directory → Users → Create
+#    Then: Directory → Groups → narrative-users → Add member
+
+# 8. Verify OIDC endpoints are reachable
+./scripts/verify-authentik.sh
+```
+
+### Blueprint
+
+`infra/authentik/blueprints/custom/narrative-oidc.yaml` is applied automatically on each Authentik server start. It creates (idempotently):
+
+- OIDC provider `Narrative OIDC Provider` — public client, PKCE, client ID `narrative-web`
+- Application `Narrative` linked to the provider
+- Group `narrative-users`
+- Expression policy restricting app access to group members
+
+The blueprint pre-registers `http://localhost:5173/auth/callback` as a redirect URI. Add your production URI via admin UI or edit the blueprint before first run.
+
+### DNS (production)
+
+Both `narrative.example.com` and `auth.narrative.example.com` must resolve to the server IP. Use either:
+
+- A wildcard DNS record: `*.narrative.example.com → server IP`
+- Two explicit A records: `narrative.example.com` + `auth.narrative.example.com`
+
+Caddy handles TLS automatically for both via Let's Encrypt.
+
+### Authentik version
+
+Pinned to `ghcr.io/goauthentik/server:2024.8.3`. To upgrade: update the image tag in `infra/docker-compose.yml` (both `authentik-server` and `authentik-worker`) and review the Authentik changelog for breaking changes.
+
+### Consumer expectations for phase 2 (server JWT middleware)
+
+The server implementation in M10 phase 2 should:
+
+- Fetch JWKS from `AUTHENTIK_JWKS_URL` (internal Docker network, no TLS needed)
+- Validate JWT signature using keys from JWKS
+- Verify `iss` claim matches `AUTHENTIK_ISSUER`
+- Verify `aud` claim includes `AUTHENTIK_CLIENT_ID` (`narrative-web`)
+- Reject tokens with `exp` in the past
+- Extract `sub` (user ID) and `email` claims for request context
+
+---
+
 ## Deployment
 
-> **Security note:** Auth (OIDC via Authentik) is added in M10. Until then the API is open — deploy only on private networks or behind a firewall. Do not expose to the public internet before M10.
+> **Security note (M10):** Authentik is now deployed. The system can be exposed to the public internet after M10 phase 2 (server JWT validation) is complete. Phase 1a (this milestone) deploys Authentik but the API is still open until the server middleware is wired in phase 2. During phase 1a, keep the server ports on 127.0.0.1 (prod compose does this) and use a firewall to block direct access.
 
 ### Architecture
 

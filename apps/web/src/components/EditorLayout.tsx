@@ -39,6 +39,7 @@ import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { computeSnap } from '../editor/snap.js'
+import { useDeckRole } from '../state/DeckRoleContext.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,6 +113,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
 
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection } = useAwarenessUpdater()
@@ -181,7 +184,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect)
 
       if (activeTool !== 'select') {
-        // Create tool — vytvoř objekt na pozici kliku
+        // Create tool — viewer cannot create objects
+        if (isViewer) return
         if (mutationCtx === null) return
         createObjectOfType(mutationCtx, activeTool as SlideObjectType, { x, y })
         setActiveTool('select')
@@ -553,8 +557,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
           <PeerSelectionOverlays />
 
-          {/* Transform handles + outline — pokud je selection a canvas ready */}
-          {selectedIds.size > 0 && canvasInstance !== null && mutationCtx !== null && (
+          {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
+          {!isViewer && selectedIds.size > 0 && canvasInstance !== null && mutationCtx !== null && (
             <TransformHandles
               objectIds={[...selectedIds]}
               sceneGraph={canvasInstance.sceneGraph}

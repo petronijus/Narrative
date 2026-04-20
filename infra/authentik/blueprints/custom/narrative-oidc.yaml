@@ -1,0 +1,86 @@
+# Narrative OIDC Blueprint
+#
+# Authentik declarative configuration — applied idempotently on every server start.
+# Creates the OIDC provider, application, and user group for Narrative.
+#
+# Docs: https://docs.goauthentik.io/docs/customize/blueprints/
+# Version pinned to Authentik 2024.8.x schema.
+
+version: 1
+metadata:
+  labels:
+    blueprints.goauthentik.io/instantiate: 'true'
+  name: Narrative OIDC Setup
+
+entries:
+  # ── Group: narrative-users ────────────────────────────────────────────────────
+  # Users must be members of this group to access Narrative.
+  - model: authentik_core.group
+    identifiers:
+      name: narrative-users
+    attrs:
+      name: narrative-users
+      is_superuser: false
+
+  # ── OIDC Provider ─────────────────────────────────────────────────────────────
+  # Public client (SPA) — PKCE required, no client secret stored in browser.
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
+      name: Narrative OIDC Provider
+    attrs:
+      name: Narrative OIDC Provider
+      authorization_flow:
+        !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      client_type: public
+      client_id: narrative-web
+      # Redirect URIs: one per line — both dev (localhost:5173) and prod.
+      # In prod the DOMAIN-based URI is pre-registered; the server validates the
+      # redirect_uri at runtime against this list.
+      redirect_uris: "http://localhost:5173/auth/callback\nhttps://narrative.example.com/auth/callback"
+      signing_key:
+        !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # Token lifetimes (ISO 8601 duration strings)
+      access_code_validity: minutes=1
+      access_token_validity: minutes=30
+      refresh_token_validity: days=30
+      # Scopes exposed to Narrative (server validates openid claim, uses email as identity)
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+
+  # ── Application ───────────────────────────────────────────────────────────────
+  - model: authentik_core.application
+    identifiers:
+      slug: narrative
+    attrs:
+      name: Narrative
+      slug: narrative
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, Narrative OIDC Provider]]
+      meta_launch_url: http://localhost:5173
+      policy_engine_mode: any
+
+  # ── Policy: restrict access to narrative-users group ─────────────────────────
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: narrative-group-membership
+    attrs:
+      name: narrative-group-membership
+      expression: |
+        return ak_is_group_member(request.user, name="narrative-users")
+
+  # ── Policy Binding: attach group policy to the application ───────────────────
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_core.application, [slug, narrative]]
+      policy:
+        !Find [authentik_policies_expression.expressionpolicy, [name, narrative-group-membership]]
+      order: 0
+    attrs:
+      target: !Find [authentik_core.application, [slug, narrative]]
+      policy:
+        !Find [authentik_policies_expression.expressionpolicy, [name, narrative-group-membership]]
+      enabled: true
+      order: 0
+      negate: false
+      timeout: 30

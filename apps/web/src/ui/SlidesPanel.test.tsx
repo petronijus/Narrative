@@ -40,6 +40,11 @@ vi.mock('../state/useSlideThumbnails', () => ({
   useSlideThumbnails: () => new Map<string, string>(),
 }))
 
+// M10: Mock useDeckRole — default to owner so edit controls are shown
+vi.mock('../state/DeckRoleContext', () => ({
+  useDeckRole: () => ({ role: 'owner', isLoading: false }),
+}))
+
 // Mock slide mutations
 const mockAddSlide = vi.fn()
 const mockRemoveSlide = vi.fn()

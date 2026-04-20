@@ -1,16 +1,21 @@
 /**
  * apps/server/src/index.ts
  *
- * Entry point — startuje Fastify HTTP API + Hocuspocus WebSocket server paralelně.
+ * Entry point — starts Fastify HTTP API + Hocuspocus WebSocket server in parallel.
  *
  * Ports:
  *   API_PORT        (default 3001) — Fastify HTTP
  *   HOCUSPOCUS_PORT (default 3002) — Hocuspocus WebSocket
  *
- * V dev: automaticky spouští Drizzle migrace při startu (pokud NODE_ENV !== 'production').
- * V prod: migrace jsou manuální krok před deployem (infra agent fáze 2).
+ * Auth (M10 phase 2):
+ *   AUTHENTIK_ISSUER, AUTHENTIK_JWKS_URL, AUTHENTIK_CLIENT_ID must be set in production.
+ *   BYPASS_AUTH=true skips OIDC validation and synthesizes 'dev-user' for all requests.
+ *   A loud warning is logged when bypass is active. NEVER use in production.
  *
- * Graceful shutdown: SIGTERM/SIGINT → close oba servery + pg pool.
+ * In dev: Drizzle migrations are applied automatically on start (NODE_ENV !== 'production').
+ * In prod: migrations are a manual step before deploy.
+ *
+ * Graceful shutdown: SIGTERM/SIGINT → close both servers + pg pool.
  */
 
 import Fastify from 'fastify'
@@ -21,15 +26,35 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerDeckRoutes } from './routes/decks.js'
+import { registerSharingRoutes } from './routes/sharing.js'
 import { registerMetricsEndpoint } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
+import { createJwtVerifier } from './auth/jwt.js'
+import { registerAuthPlugin } from './auth/fastifyAuth.js'
 
 const API_PORT = Number(process.env['API_PORT'] ?? process.env['PORT'] ?? 3001)
 const HOCUSPOCUS_PORT = Number(process.env['HOCUSPOCUS_PORT'] ?? 3002)
 const HOST = process.env['HOST'] ?? '0.0.0.0'
 const isDev = process.env['NODE_ENV'] !== 'production'
 
-// Migrace v dev modu
+// ---------------------------------------------------------------------------
+// Auth config
+// ---------------------------------------------------------------------------
+
+const bypassAuth = process.env['BYPASS_AUTH'] === 'true'
+
+const verifier = bypassAuth
+  ? null
+  : createJwtVerifier({
+      issuer: process.env['AUTHENTIK_ISSUER']!,
+      jwksUrl: process.env['AUTHENTIK_JWKS_URL']!,
+      audience: process.env['AUTHENTIK_CLIENT_ID']!,
+    })
+
+// ---------------------------------------------------------------------------
+// Dev migrations
+// ---------------------------------------------------------------------------
+
 if (isDev) {
   const __filename = fileURLToPath(import.meta.url)
   const __dirname = path.dirname(__filename)
@@ -43,7 +68,10 @@ if (isDev) {
   }
 }
 
+// ---------------------------------------------------------------------------
 // Fastify HTTP API
+// ---------------------------------------------------------------------------
+
 const app = Fastify({
   logger: isDev
     ? {
@@ -60,8 +88,14 @@ await app.register(cors, {
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
 })
 
-// Sentry — init před routes, dev-gated (tiché bez SENTRY_DSN)
+// Sentry — init before routes, dev-gated (silent without SENTRY_DSN)
 await initSentry(app)
+
+// Auth plugin — must be registered before routes that use authPreHandler
+if (bypassAuth) {
+  app.log.warn('BYPASS_AUTH=true — all requests run as dev-user. DO NOT USE IN PRODUCTION.')
+}
+registerAuthPlugin(app, { verifier, bypass: bypassAuth, db })
 
 // Health endpoint
 app.get('/health', async (_request, _reply) => {
@@ -69,16 +103,30 @@ app.get('/health', async (_request, _reply) => {
 })
 
 // Prometheus metrics endpoint
-// TODO(M29): přidat Bearer token auth nebo IP allowlist
+// TODO(M29): add Bearer token auth or IP allowlist
 await registerMetricsEndpoint(app)
 
 // Deck routes
 await registerDeckRoutes(app, db)
 
-// Hocuspocus WebSocket server
-const hocuspocus = createHocuspocusServer({ port: HOCUSPOCUS_PORT, db })
+// Sharing routes (permissions + share links)
+await registerSharingRoutes(app, db)
 
+// ---------------------------------------------------------------------------
+// Hocuspocus WebSocket server
+// ---------------------------------------------------------------------------
+
+const hocuspocus = createHocuspocusServer({
+  port: HOCUSPOCUS_PORT,
+  db,
+  verifier,
+  bypass: bypassAuth,
+})
+
+// ---------------------------------------------------------------------------
 // Graceful shutdown
+// ---------------------------------------------------------------------------
+
 const shutdown = async (signal: string) => {
   console.log(`[server] Received ${signal}, shutting down...`)
 
@@ -109,7 +157,10 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
 
-// Start oba servery paralelně
+// ---------------------------------------------------------------------------
+// Start both servers in parallel
+// ---------------------------------------------------------------------------
+
 await Promise.all([
   app.listen({ port: API_PORT, host: HOST }).then(() => {
     console.log(`[server] Fastify API running on http://${HOST}:${API_PORT}`)

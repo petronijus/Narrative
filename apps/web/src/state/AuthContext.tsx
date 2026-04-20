@@ -1,0 +1,212 @@
+/**
+ * state/AuthContext.tsx
+ *
+ * M10: OIDC PKCE authentication context via oidc-client-ts.
+ *
+ * Provides:
+ *   - useAuth() hook: { user, token, isLoading, login, logout, refreshToken }
+ *   - AuthProvider: wraps app, restores session on mount, configures silent renewal
+ *
+ * UserManager config reads from Vite env:
+ *   VITE_AUTHENTIK_ISSUER
+ *   VITE_AUTHENTIK_CLIENT_ID
+ *   VITE_AUTHENTIK_REDIRECT_URI
+ *
+ * Token storage: oidc-client-ts default (sessionStorage) — do not roll your own.
+ * NEVER log tokens to console or error tracking.
+ */
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { UserManager, type User } from 'oidc-client-ts'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface AuthUser {
+  sub: string
+  email?: string
+  name?: string
+  groups?: string[]
+}
+
+export interface AuthContextValue {
+  user: AuthUser | null
+  token: string | null
+  isLoading: boolean
+  login(): Promise<void>
+  logout(): Promise<void>
+  refreshToken(): Promise<void>
+}
+
+// ---------------------------------------------------------------------------
+// UserManager factory — exported so AuthCallback can reuse the same config
+// ---------------------------------------------------------------------------
+
+export function createUserManager(): UserManager {
+  return new UserManager({
+    authority: import.meta.env['VITE_AUTHENTIK_ISSUER'] ?? '',
+    client_id: import.meta.env['VITE_AUTHENTIK_CLIENT_ID'] ?? '',
+    redirect_uri:
+      import.meta.env['VITE_AUTHENTIK_REDIRECT_URI'] ?? `${window.location.origin}/auth/callback`,
+    response_type: 'code',
+    scope: 'openid profile email',
+    post_logout_redirect_uri: window.location.origin,
+    loadUserInfo: true,
+    automaticSilentRenew: true,
+  })
+}
+
+function oidcUserToAuthUser(u: User): AuthUser {
+  const profile = u.profile
+  const result: AuthUser = { sub: profile.sub }
+  if (typeof profile['email'] === 'string') result.email = profile['email']
+  if (typeof profile['name'] === 'string') result.name = profile['name']
+  if (Array.isArray(profile['groups'])) result.groups = profile['groups'] as string[]
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
+
+export const AuthContext = createContext<AuthContextValue | null>(null)
+
+// ---------------------------------------------------------------------------
+// AuthProvider
+// ---------------------------------------------------------------------------
+
+export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Stable UserManager instance for the lifetime of the app
+  const userManager = useMemo(() => createUserManager(), [])
+
+  // Timeout ref — handle network failures during session restore
+  const loadingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ---------------------------------------------------------------------------
+  // Helpers — apply/clear resolved user
+  // ---------------------------------------------------------------------------
+
+  const applyUser = useCallback((oidcUser: User | null) => {
+    if (oidcUser === null || oidcUser.expired) {
+      setUser(null)
+      setToken(null)
+    } else {
+      setUser(oidcUserToAuthUser(oidcUser))
+      // access_token intentionally stored in state; never logged
+      setToken(oidcUser.access_token)
+    }
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // On mount: restore existing session
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    let cancelled = false
+
+    // Safety timeout — if OIDC discovery or storage read hangs, unblock UI
+    loadingTimeoutRef.current = setTimeout(() => {
+      if (!cancelled) {
+        setIsLoading(false)
+      }
+    }, 5000)
+
+    userManager
+      .getUser()
+      .then((oidcUser) => {
+        if (cancelled) return
+        applyUser(oidcUser)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setUser(null)
+        setToken(null)
+      })
+      .finally(() => {
+        if (cancelled) return
+        clearTimeout(loadingTimeoutRef.current ?? undefined)
+        setIsLoading(false)
+      })
+
+    // Subscribe to token renewal events
+    const handleUserLoaded = (oidcUser: User) => {
+      applyUser(oidcUser)
+    }
+    const handleUserUnloaded = () => {
+      setUser(null)
+      setToken(null)
+    }
+    const handleSilentRenewError = () => {
+      // Silent renew failed — user stays logged in with current token until expiry.
+      // On next 401 the app will trigger login().
+    }
+
+    userManager.events.addUserLoaded(handleUserLoaded)
+    userManager.events.addUserUnloaded(handleUserUnloaded)
+    userManager.events.addSilentRenewError(handleSilentRenewError)
+
+    return () => {
+      cancelled = true
+      clearTimeout(loadingTimeoutRef.current ?? undefined)
+      userManager.events.removeUserLoaded(handleUserLoaded)
+      userManager.events.removeUserUnloaded(handleUserUnloaded)
+      userManager.events.removeSilentRenewError(handleSilentRenewError)
+    }
+  }, [userManager, applyUser])
+
+  // ---------------------------------------------------------------------------
+  // Auth actions
+  // ---------------------------------------------------------------------------
+
+  const login = useCallback(async () => {
+    // Store current path so callback can redirect back
+    const returnTo = window.location.pathname + window.location.search
+    await userManager.signinRedirect({ state: { returnTo } })
+  }, [userManager])
+
+  const logout = useCallback(async () => {
+    await userManager.signoutRedirect()
+  }, [userManager])
+
+  const refreshToken = useCallback(async () => {
+    const refreshed = await userManager.signinSilent()
+    applyUser(refreshed)
+  }, [userManager, applyUser])
+
+  // ---------------------------------------------------------------------------
+  // Context value
+  // ---------------------------------------------------------------------------
+
+  const value: AuthContextValue = useMemo(
+    () => ({ user, token, isLoading, login, logout, refreshToken }),
+    [user, token, isLoading, login, logout, refreshToken],
+  )
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+// ---------------------------------------------------------------------------
+// useAuth hook
+// ---------------------------------------------------------------------------
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext)
+  if (ctx === null) {
+    throw new Error('useAuth must be used inside <AuthProvider>')
+  }
+  return ctx
+}

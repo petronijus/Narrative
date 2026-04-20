@@ -1,83 +1,194 @@
 /**
  * routes/decks.ts
  *
- * REST API pro správu prezentací (decks).
+ * REST API for presentation (deck) management.
  *
- * Endpointy:
- *   GET    /decks      → list všech decků (hardcoded owner='demo-user')
- *   POST   /decks      → create nový deck, vrátí metadata
- *   DELETE /decks/:id  → smaž deck a jeho Yjs updates (cascade)
+ * Endpoints:
+ *   GET    /decks      → list all decks accessible to the authenticated user
+ *   POST   /decks      → create a new deck; ownerUserId = JWT sub claim
+ *   DELETE /decks/:id  → delete deck (owner only)
+ *   GET    /decks/:id  → get single deck (supports ?share_token=... for unauthenticated access)
  *
- * Security (M4):
- *   Žádný auth — hardcoded ownerUserId='demo-user' pro všechny operace.
- *   TODO(M10): číst userId z JWT Bearer tokenu
+ * Auth:
+ *   All endpoints require authPreHandler (JWT Bearer or BYPASS_AUTH=true dev mode).
+ *   DELETE /decks/:id additionally requires requireDeckRole('owner').
+ *   GET /decks/:id is the ONLY endpoint that accepts an unauthenticated share token.
+ *     This is intentional: share links are read-only viewer access for specific decks.
  *
- * Seed slide:
- *   POST /decks vytvoří záznam v DB a zároveň seeduje Y.Doc přes Hocuspocus
- *   server-side klientem (jednoduché prázdné pole slides). Deck začíná s
- *   prázdným Y.Doc — client-side initializeDefaultSlide přidá první slide
- *   pokud ještě žádný neexistuje (idempotentní check).
+ * BYPASS_AUTH compatibility (dev mode):
+ *   When BYPASS_AUTH=true, the synthesized user is 'dev-user'.
+ *   Decks owned by legacy 'demo-user' (M4-era) would be invisible because they have
+ *   no deck_permissions row for 'dev-user'.
+ *   Workaround (Option A): GET /decks queries by BOTH ownerUserId IN ('demo-user', 'dev-user')
+ *   when in bypass mode. Remove this when M10 ships to production and demo-user is migrated.
+ *   TODO(post-M10): remove demo-user fallback once infra migration script runs in production.
  */
 
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
-import { eq } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { decks } from '../db/schema.js'
-
-const DEMO_USER_ID = 'demo-user'
+import { decks, deckPermissions } from '../db/schema.js'
+import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
+import { resolveDeckAccess } from '../auth/permissions.js'
 
 interface CreateDeckBody {
   title?: string
 }
 
 export async function registerDeckRoutes(app: FastifyInstance, db: Database): Promise<void> {
-  // GET /decks — list all decks for demo-user
-  app.get('/decks', async (_request, reply) => {
+  // ---------------------------------------------------------------------------
+  // GET /decks — list decks accessible to the authenticated user
+  // ---------------------------------------------------------------------------
+  app.get('/decks', { preHandler: authPreHandler }, async (request, reply) => {
+    const userId = request.user!.sub
+
+    // Determine if running in bypass/dev mode by checking bypass flag on plugin opts.
+    const isBypass =
+      (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts?.bypass === true
+
+    if (isBypass) {
+      // BYPASS_AUTH=true dev fallback: query both 'dev-user' and legacy 'demo-user' owned decks.
+      // TODO(post-M10): remove when production migration script has run.
+      const rows = await db
+        .select()
+        .from(decks)
+        .where(inArray(decks.ownerUserId, ['dev-user', 'demo-user']))
+        .orderBy(decks.createdAt)
+
+      return reply.send(rows)
+    }
+
+    // Production: return decks where user has any explicit permission row.
+    // Uses a subquery to avoid N+1 (deck.ownerUserId is already denormalized for fast lookup,
+    // but deck_permissions is the authoritative access list post-M10).
+    const accessibleDeckIds = db
+      .select({ deckId: deckPermissions.deckId })
+      .from(deckPermissions)
+      .where(eq(deckPermissions.userId, userId))
+
     const rows = await db
       .select()
       .from(decks)
-      .where(eq(decks.ownerUserId, DEMO_USER_ID))
+      .where(sql`${decks.id} IN (${accessibleDeckIds})`)
       .orderBy(decks.createdAt)
 
     return reply.send(rows)
   })
 
-  // POST /decks — create new deck
-  app.post<{ Body: CreateDeckBody }>('/decks', async (request, reply) => {
-    const { title = 'Untitled Deck' } = request.body ?? {}
+  // ---------------------------------------------------------------------------
+  // GET /decks/:id — get single deck (supports share_token)
+  //
+  // This is the ONE endpoint that supports unauthenticated access via share token.
+  // authPreHandler is NOT listed here; we handle auth manually to allow share links.
+  // ---------------------------------------------------------------------------
+  app.get<{ Params: { id: string } }>('/decks/:id', async (request, reply) => {
+    const { id } = request.params
+    const query = request.query as Record<string, string>
+    const shareToken = query['share_token'] ?? null
 
-    const id = nanoid(12)
-    const now = new Date()
-
-    const [deck] = await db
-      .insert(decks)
-      .values({
-        id,
-        title,
-        ownerUserId: DEMO_USER_ID,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-
-    if (!deck) {
-      return reply.status(500).send({ error: 'Failed to create deck' })
+    // Try JWT auth first (optional on this route).
+    let userId: string | null = null
+    const authHeader = request.headers['authorization']
+    if (authHeader?.startsWith('Bearer ')) {
+      const opts = (
+        app as FastifyInstance & {
+          _authOpts?: {
+            verifier?: { verify: (t: string) => Promise<{ sub: string }> } | null
+            bypass?: boolean
+          }
+        }
+      )._authOpts
+      if (opts?.bypass) {
+        userId = 'dev-user'
+      } else if (opts?.verifier) {
+        try {
+          const payload = await opts.verifier.verify(authHeader.slice(7))
+          userId = payload.sub
+        } catch {
+          // Invalid token — fall through to share_token check
+        }
+      }
     }
 
-    return reply.status(201).send(deck)
-  })
+    const access = await resolveDeckAccess(db, { deckId: id, userId, shareToken })
+    if (!access) {
+      return reply.status(403).send({ error: 'Forbidden' })
+    }
 
-  // DELETE /decks/:id — delete deck + cascade deck_updates
-  app.delete<{ Params: { id: string } }>('/decks/:id', async (request, reply) => {
-    const { id } = request.params
+    const [deck] = await db.select().from(decks).where(eq(decks.id, id)).limit(1)
 
-    const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
-
-    if (deleted.length === 0) {
+    if (!deck) {
       return reply.status(404).send({ error: 'Deck not found' })
     }
 
-    return reply.status(204).send()
+    return reply.send(deck)
   })
+
+  // ---------------------------------------------------------------------------
+  // POST /decks — create new deck
+  // ---------------------------------------------------------------------------
+  app.post<{ Body: CreateDeckBody }>(
+    '/decks',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      const { title = 'Untitled Deck' } = request.body ?? {}
+      const ownerUserId = request.user!.sub
+
+      const id = nanoid(12)
+      const now = new Date()
+
+      // Transactional: insert deck + owner permission row together.
+      // This keeps decks.owner_user_id and deck_permissions in sync from the start.
+      const deck = await db.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(decks)
+          .values({
+            id,
+            title,
+            ownerUserId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning()
+
+        if (!inserted) return null
+
+        await tx.insert(deckPermissions).values({
+          deckId: id,
+          userId: ownerUserId,
+          role: 'owner',
+          grantedAt: now,
+          grantedBy: ownerUserId,
+        })
+
+        return inserted
+      })
+
+      if (!deck) {
+        return reply.status(500).send({ error: 'Failed to create deck' })
+      }
+
+      return reply.status(201).send(deck)
+    },
+  )
+
+  // ---------------------------------------------------------------------------
+  // DELETE /decks/:id — delete deck (owner only)
+  // ---------------------------------------------------------------------------
+  app.delete<{ Params: { id: string } }>(
+    '/decks/:id',
+    { preHandler: [authPreHandler, requireDeckRole('owner')] },
+    async (request, reply) => {
+      const { id } = request.params
+
+      const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
+
+      if (deleted.length === 0) {
+        return reply.status(404).send({ error: 'Deck not found' })
+      }
+
+      return reply.status(204).send()
+    },
+  )
 }

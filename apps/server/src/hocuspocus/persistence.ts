@@ -53,6 +53,20 @@ export class PostgresPersistence implements Extension {
 
   async onStoreDocument(data: onStoreDocumentPayload): Promise<void> {
     const deckId = data.documentName
+    const ctx = data.context as { role?: string; userId?: string } | undefined
+
+    // Defense-in-depth: skip persistence for viewer connections.
+    // Primary enforcement is `readOnly: true` returned from onAuthenticate,
+    // which prevents Hocuspocus from accepting update messages at protocol level.
+    // This guard handles any edge-cases (e.g. server-side writes accidentally routed
+    // through a viewer-context document).
+    if (ctx?.role === 'viewer') {
+      console.warn(
+        `[persistence] Blocked write from viewer userId=${ctx.userId ?? 'unknown'} deck=${deckId}`,
+      )
+      return
+    }
+
     const update = Y.encodeStateAsUpdate(data.document)
 
     await this.db.insert(deckUpdates).values({

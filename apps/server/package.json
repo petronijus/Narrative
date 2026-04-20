@@ -11,10 +11,12 @@
     "test": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
+    "db:migrate-demo": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/migrateDemoUserDecks.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "jose": "^6.2.2",
     "@hocuspocus/extension-database": "^2.15.0",
     "@hocuspocus/server": "^2.15.0",
     "@sentry/node": "^8.51.0",

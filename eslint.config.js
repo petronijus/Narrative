@@ -60,4 +60,16 @@ export default [
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  // Relax rules for test files — inline `import()` type annotations and scratch
+  // unused helpers are fine in tests (vi.hoisted mocks use this pattern).
+  {
+    files: ['**/*.{test,spec}.{ts,tsx}', '**/__tests__/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/consistent-type-imports': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
 ]

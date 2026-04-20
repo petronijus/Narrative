@@ -1,11 +1,13 @@
 # Narrative — Docker Compose production override
 #
-# Použití: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# Změny oproti base compose:
-#   - Server ports binding na 127.0.0.1 (Caddy je před nimi)
-#   - Caddy service s auto-TLS
-#   - Postgres volume na ZFS dataset (PG_DATA_PATH env var)
+# Changes vs base compose:
+#   - Server ports bound to 127.0.0.1 (Caddy sits in front)
+#   - Caddy service with auto-TLS
+#   - Postgres volume on ZFS dataset (PG_DATA_PATH env var)
+#   - Authentik HTTP port bound to 127.0.0.1 (proxied via auth.DOMAIN subdomain)
+#   - Authentik volumes on ZFS dataset (AUTHENTIK_DATA_PATH env var)
 #   - Restart policy `always`
 #   - env_file: .env.prod (gitignored)
 
@@ -13,10 +15,10 @@ services:
   postgres:
     restart: always
     volumes:
-      # ZFS dataset mount — user nastaví PG_DATA_PATH v .env.prod
-      # Příklad: PG_DATA_PATH=/mnt/tank/narrative/postgres
+      # ZFS dataset mount — set PG_DATA_PATH in .env.prod
+      # Example: PG_DATA_PATH=/mnt/tank/narrative/postgres
       - ${PG_DATA_PATH:-postgres_data}:/var/lib/postgresql/data
-    # Expose pouze na localhost — Caddy / server přistupují přes internal network
+    # Expose only on localhost — Caddy / server access via internal network
     ports:
       - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
 
@@ -24,12 +26,38 @@ services:
     restart: always
     environment:
       NODE_ENV: production
-      # V prod Caddy posílá Origin jako DOMAIN
+      # In prod Caddy sends Origin as DOMAIN
       CORS_ORIGIN: https://${DOMAIN}
     ports:
-      # Binding jen na 127.0.0.1 — Caddy reverse-proxuje
+      # Bind to 127.0.0.1 only — Caddy reverse-proxies
       - '127.0.0.1:${API_PORT:-3001}:3001'
       - '127.0.0.1:${HOCUSPOCUS_PORT:-3002}:3002'
+
+  # ─── Authentik prod overrides ─────────────────────────────────────────────────
+  authentik-postgres:
+    restart: always
+    volumes:
+      # ZFS dataset mount — set AUTHENTIK_DATA_PATH in .env.prod
+      # Example: AUTHENTIK_DATA_PATH=/mnt/tank/narrative/authentik
+      - ${AUTHENTIK_DATA_PATH:-authentik_pg_data}/postgres:/var/lib/postgresql/data
+    ports: [] # no external port in prod — internal network only
+
+  authentik-server:
+    restart: always
+    ports:
+      # Bind to localhost — proxied by Caddy as auth.DOMAIN
+      - '127.0.0.1:${AUTHENTIK_HTTP_PORT:-9000}:9000'
+    volumes:
+      - ${AUTHENTIK_DATA_PATH:-authentik_media}/media:/media
+      - ${AUTHENTIK_DATA_PATH:-authentik_certs}/certs:/certs
+      - ./authentik/blueprints/custom:/blueprints/custom:ro
+
+  authentik-worker:
+    restart: always
+    volumes:
+      - ${AUTHENTIK_DATA_PATH:-authentik_media}/media:/media
+      - ${AUTHENTIK_DATA_PATH:-authentik_certs}/certs:/certs
+      - ./authentik/blueprints/custom:/blueprints/custom:ro
 
   caddy:
     image: caddy:2-alpine
@@ -42,13 +70,15 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-      # Static web soubory — build pipeline je zkopíruje sem (viz deploy.sh)
+      # Static web files — build pipeline copies them here (see deploy.sh)
       - web_static:/srv/web:ro
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN env var is required}
     depends_on:
       server:
         condition: service_healthy
+      authentik-server:
+        condition: service_started
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:80/health || exit 1']
       interval: 30s
