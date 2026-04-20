@@ -11,7 +11,7 @@ import {
   listRegisteredTypes,
   _clearRegistry,
 } from './registry.js'
-import type { RectangleObject, EllipseObject } from '@narrative/shared'
+import type { RectangleObject, EllipseObject, ImageObject } from '@narrative/shared'
 
 beforeEach(() => {
   _clearRegistry()
@@ -89,6 +89,55 @@ describe('getObjectTypeDef', () => {
     expect(def).toBeDefined()
     expect(def?.type).toBe('ellipse')
     expect(def?.defaultProps().width).toBe(50)
+  })
+})
+
+describe('image object type', () => {
+  it('can be registered with expected defaults', () => {
+    registerObjectType<ImageObject>({
+      type: 'image',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 400,
+        height: 300,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        variant: 'display',
+        fit: 'cover',
+      }),
+    })
+
+    const def = getObjectTypeDef('image')
+    expect(def).toBeDefined()
+    expect(def?.type).toBe('image')
+
+    const defaults = def?.defaultProps() as Omit<ImageObject, 'id' | 'type'>
+    expect(defaults.assetId).toBe('')
+    expect(defaults.variant).toBe('display')
+    expect(defaults.fit).toBe('cover')
+    expect(defaults.width).toBe(400)
+    expect(defaults.height).toBe(300)
+  })
+
+  it('image type appears in listRegisteredTypes after registration', () => {
+    registerObjectType<ImageObject>({
+      type: 'image',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 400,
+        height: 300,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        variant: 'display',
+        fit: 'cover',
+      }),
+    })
+
+    expect(listRegisteredTypes()).toContain('image')
   })
 })
 

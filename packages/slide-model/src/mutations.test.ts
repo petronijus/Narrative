@@ -23,7 +23,7 @@ import { createUndoManager } from './undo.js'
 import { yMapToPlainObject } from './bindings.js'
 import { getSlideObjectsCtx } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
-import type { RectangleObject } from '@narrative/shared'
+import type { RectangleObject, ImageObject } from '@narrative/shared'
 
 /**
  * Creates an ObjectsMutationContext scoped to slide-0 in a fresh doc.
@@ -174,6 +174,77 @@ describe('createObjectOfType', () => {
     const ctx = makeCtx()
 
     expect(() => createObjectOfType(ctx, 'ellipse')).toThrow("type 'ellipse' is not registered")
+  })
+})
+
+describe('createObjectOfType — image', () => {
+  beforeEach(() => {
+    registerObjectType<ImageObject>({
+      type: 'image',
+      defaultProps: () => ({
+        x: 100,
+        y: 100,
+        width: 400,
+        height: 300,
+        rotation: 0,
+        opacity: 1,
+        assetId: '',
+        variant: 'display',
+        fit: 'cover',
+      }),
+    })
+  })
+
+  it('creates image object with default props', () => {
+    const ctx = makeCtx()
+    const obj = createObjectOfType(ctx, 'image')
+
+    expect(obj.type).toBe('image')
+    expect(typeof obj.id).toBe('string')
+    expect(obj.id.length).toBeGreaterThan(0)
+    expect(ctx.objects.length).toBe(1)
+
+    const img = obj as ImageObject
+    expect(img.assetId).toBe('')
+    expect(img.variant).toBe('display')
+    expect(img.fit).toBe('cover')
+    expect(img.width).toBe(400)
+    expect(img.height).toBe(300)
+  })
+
+  it('applies assetId override — typical post-upload call', () => {
+    const ctx = makeCtx()
+    const obj = createObjectOfType(ctx, 'image', {
+      assetId: 'asset-real-id',
+      width: 1920,
+      height: 1080,
+      x: 50,
+      y: 50,
+    }) as ImageObject
+
+    expect(obj.assetId).toBe('asset-real-id')
+    expect(obj.width).toBe(1920)
+    expect(obj.height).toBe(1080)
+    expect(obj.x).toBe(50)
+    // defaults still applied where not overridden
+    expect(obj.variant).toBe('display')
+    expect(obj.fit).toBe('cover')
+  })
+
+  it('optional fields (variant, fit, alt) survive round-trip via Y.Doc', () => {
+    const ctx = makeCtx()
+    createObjectOfType(ctx, 'image', {
+      assetId: 'asset-abc',
+      variant: 'thumb',
+      fit: 'contain',
+    })
+
+    const yMap = ctx.objects.get(0)
+    const result = yMapToPlainObject<ImageObject>(yMap)
+
+    expect(result.assetId).toBe('asset-abc')
+    expect(result.variant).toBe('thumb')
+    expect(result.fit).toBe('contain')
   })
 })
 

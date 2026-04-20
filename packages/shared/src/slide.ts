@@ -39,10 +39,35 @@ export interface TextObject extends BaseSlideObject {
   align: 'left' | 'center' | 'right'
 }
 
+export interface ImageObject extends BaseSlideObject {
+  type: 'image'
+  /**
+   * Asset ID from media_assets table — stable reference to the uploaded original.
+   * Callers MUST provide a valid assetId via createObjectOfType overrides after upload.
+   * An empty string here means the object is a broken placeholder (upload pending).
+   */
+  assetId: string
+  /**
+   * Rendering variant the editor requests from imgproxy.
+   * Renderer picks based on context; stored here so a slide can force-pin a variant.
+   * Default: 'display' (1600w).
+   */
+  variant?: 'thumb' | 'display' | 'original'
+  /**
+   * Fit mode when the image's native aspect differs from the object's bounding box.
+   * 'cover' = crop to fill (default), 'contain' = letterbox.
+   */
+  fit?: 'cover' | 'contain'
+  /**
+   * Optional alt text for accessibility / PDF export.
+   */
+  alt?: string
+}
+
 /**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
-export type SlideObject = RectangleObject | EllipseObject | TextObject
+export type SlideObject = RectangleObject | EllipseObject | TextObject | ImageObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']

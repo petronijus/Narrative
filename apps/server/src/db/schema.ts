@@ -28,6 +28,7 @@ import {
   pgEnum,
   primaryKey,
   boolean,
+  integer,
 } from 'drizzle-orm/pg-core'
 
 // Custom type for bytea (Yjs updates are Uint8Array)
@@ -134,6 +135,47 @@ export const shareLinks = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// media_assets — uploaded media originals (M11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tracks every uploaded original file associated with a deck.
+ *
+ * Lifecycle:
+ *   - Row is inserted by the media agent on tus upload finalize (phase 2).
+ *   - ON DELETE CASCADE from decks ensures rows are removed when a deck is deleted.
+ *
+ * KNOWN ISSUE (M11): When a deck is deleted, the cascade removes media_assets rows
+ * but leaves the original files orphaned in MinIO. This is intentional for M11.
+ * TODO(M29 or media phase 2): add a post-delete hook or periodic GC job to enqueue
+ * bucket cleanup for all storageKey values belonging to the deleted deck.
+ *
+ * imgproxy variants (thumb, display, original) are generated on demand from the
+ * original stored at storageKey — no variant rows needed here.
+ */
+export const mediaAssets = pgTable(
+  'media_assets',
+  {
+    id: text('id').primaryKey(), // nanoid produced by media agent on upload start
+    deckId: text('deck_id')
+      .notNull()
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    uploaderUserId: text('uploader_user_id').notNull(),
+    mimeType: text('mime_type').notNull(), // e.g. image/png, image/jpeg
+    sizeBytes: integer('size_bytes').notNull(),
+    /** Bucket key: decks/<deckId>/uploads/<id>/original.<ext> */
+    storageKey: text('storage_key').notNull(),
+    originalFilename: text('original_filename'),
+    /** Image width in px — populated when mime is image/* and probe succeeds */
+    width: integer('width'),
+    /** Image height in px — populated when mime is image/* and probe succeeds */
+    height: integer('height'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('media_assets_deck_idx').on(t.deckId)],
+)
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -145,3 +187,5 @@ export type DeckPermission = typeof deckPermissions.$inferSelect
 export type NewDeckPermission = typeof deckPermissions.$inferInsert
 export type ShareLink = typeof shareLinks.$inferSelect
 export type NewShareLink = typeof shareLinks.$inferInsert
+export type MediaAsset = typeof mediaAssets.$inferSelect
+export type NewMediaAsset = typeof mediaAssets.$inferInsert

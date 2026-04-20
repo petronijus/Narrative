@@ -48,7 +48,7 @@ jobs:
   docker-build:
     name: Docker Build Validation
     runs-on: ubuntu-latest
-    # Spouštíme paralelně s CI — build validace nezávisí na test výsledcích
+    # Runs in parallel with CI — build validation does not depend on test results
     needs: []
 
     steps:
@@ -75,9 +75,27 @@ jobs:
           file: apps/web/Dockerfile
           push: false
           tags: narrative-web:ci
-          # VITE env vars pro build time (dev hodnoty — jen validace že build projde)
+          # VITE env vars for build time (dev values — validates the build passes)
           build-args: |
             VITE_API_URL=http://localhost:3001
             VITE_HOCUSPOCUS_URL=ws://localhost:3002
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+      # MinIO and imgproxy use upstream pre-built images (no project Dockerfile).
+      # Validate compose config parses correctly with required env vars stubbed out.
+      - name: Validate docker-compose config (base + prod overlay)
+        working-directory: infra
+        env:
+          # Stub required env vars — values are irrelevant for config validation
+          POSTGRES_PASSWORD: ci-stub
+          AUTHENTIK_POSTGRES_PASSWORD: ci-stub
+          AUTHENTIK_SECRET_KEY: ci-stub
+          MINIO_ROOT_USER: ci-stub
+          MINIO_ROOT_PASSWORD: ci-stub
+          IMGPROXY_KEY: ci-stub
+          IMGPROXY_SALT: ci-stub
+          DOMAIN: ci.example.com
+        run: |
+          docker compose -f docker-compose.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet

@@ -88,10 +88,17 @@ export function updateObject<T extends SlideObject>(
  *
  * @throws Pokud typ není registrován v registry.
  */
+/**
+ * Distributive Partial for a union — applies Partial<Omit<_, 'type'>> to each
+ * union member. Without the distribution TypeScript would intersect the
+ * variants and lose type-specific fields (e.g. ImageObject.assetId).
+ */
+type PerMemberPartial<T> = T extends unknown ? Partial<Omit<T, 'type'>> : never
+
 export function createObjectOfType(
   ctx: ObjectsMutationContext,
   type: SlideObjectType,
-  overrides?: Partial<Omit<SlideObject, 'type'>>,
+  overrides?: PerMemberPartial<SlideObject>,
 ): SlideObject {
   const def = getObjectTypeDef(type)
   if (def === undefined) {

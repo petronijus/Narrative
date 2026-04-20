@@ -5,13 +5,16 @@
 #   - real domain        → automatic Let's Encrypt TLS
 #
 # Routing:
-#   {$DOMAIN}            → React SPA (static files)
-#   {$DOMAIN}/api/*      → Fastify HTTP API (port 3001)
-#   {$DOMAIN}/ws*        → Hocuspocus WebSocket (port 3002)
-#   auth.{$DOMAIN}       → Authentik OIDC server (port 9000) [M10]
+#   {$DOMAIN}              → React SPA (static files)
+#   {$DOMAIN}/api/*        → Fastify HTTP API (port 3001)
+#   {$DOMAIN}/ws*          → Hocuspocus WebSocket (port 3002)
+#   {$DOMAIN}/storage/*    → MinIO S3 API (port 9000) for presigned URL fetches [M11]
+#   {$DOMAIN}/imgproxy/*   → imgproxy image transforms (port 8080) [M11]
+#   auth.{$DOMAIN}         → Authentik OIDC server (port 9000) [M10]
+#   minio.{$DOMAIN}        → MinIO web console (port 9001) [M11]
 #
-# DNS requirement: both {$DOMAIN} and auth.{$DOMAIN} must resolve to this server.
-# Use a wildcard A record (*.example.com → server IP) or explicit auth.example.com A record.
+# DNS requirement: {$DOMAIN}, auth.{$DOMAIN}, and minio.{$DOMAIN} must resolve to this server.
+# Use a wildcard A record (*.example.com → server IP) or explicit A records per subdomain.
 
 {$DOMAIN:localhost} {
 
@@ -32,6 +35,22 @@
       header_up Connection {>Connection}
       header_up Upgrade {>Upgrade}
     }
+  }
+
+  # ── MinIO S3 API passthrough (M11) ─────────────────────────────────────────
+  # Used for presigned URL fetches and any direct S3 operations from clients.
+  # tus-node-server in apps/server talks to MinIO directly on the internal
+  # Docker network (minio:9000) — this route is for external presigned URL access.
+  handle_path /storage/* {
+    reverse_proxy minio:9000
+  }
+
+  # ── imgproxy image transforms (M11) ────────────────────────────────────────
+  # Browser requests signed imgproxy URLs via this route.
+  # URL signing is implemented in apps/server (media agent, phase 2).
+  # Example: /imgproxy/sig/rs:fit:400:0/plain/s3://narrative-media/decks/x/uploads/y/original.jpg
+  handle_path /imgproxy/* {
+    reverse_proxy imgproxy:8080
   }
 
   # ── Health check ────────────────────────────────────────────────────────────
@@ -66,6 +85,21 @@ auth.{$DOMAIN:localhost} {
     header_up X-Forwarded-For {remote_host}
     header_up X-Forwarded-Proto {scheme}
   }
+
+  log {
+    output stdout
+    format json
+    level INFO
+  }
+}
+
+# ── MinIO web console (M11) ────────────────────────────────────────────────────
+# Subdomain: minio.{$DOMAIN} → MinIO console on port 9001.
+# Admin access only — protect with firewall or Authentik forward auth in M29.
+# In dev (DOMAIN=localhost) this block is unreachable — use localhost:9101 directly.
+# DNS: requires minio.{$DOMAIN} A record or wildcard *.{$DOMAIN}.
+minio.{$DOMAIN:localhost} {
+  reverse_proxy minio:9001
 
   log {
     output stdout

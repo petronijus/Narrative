@@ -124,6 +124,65 @@ services:
       - authentik_certs:/certs
       - ./authentik/blueprints/custom:/blueprints/custom:ro
 
+  # ─── MinIO object storage (M11) ──────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
+    volumes:
+      - minio_data:/data
+    ports:
+      - '${MINIO_API_PORT:-9100}:9000' # S3 API (avoids collision with Authentik on 9000)
+      - '${MINIO_CONSOLE_PORT:-9101}:9001' # Web console
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot bucket bootstrap — creates the narrative-media bucket if absent.
+  # Uses mc (MinIO client) baked into the minio/mc image. Runs once on compose up,
+  # then exits. A non-zero exit fails the stack — intentional, makes config drift loud.
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      BUCKET_NAME: ${MEDIA_BUCKET:-narrative-media}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+        (mc ls local/$$BUCKET_NAME || mc mb local/$$BUCKET_NAME) &&
+        mc anonymous set download local/$$BUCKET_NAME &&
+        echo 'Bucket ready: '$$BUCKET_NAME
+      "
+    restart: 'no'
+
+  # ─── imgproxy (M11) ──────────────────────────────────────────────────────────
+  imgproxy:
+    image: darthsim/imgproxy:v3.27
+    restart: unless-stopped
+    environment:
+      IMGPROXY_KEY: ${IMGPROXY_KEY:?required}
+      IMGPROXY_SALT: ${IMGPROXY_SALT:?required}
+      IMGPROXY_ALLOWED_SOURCES: 'local://,http://minio:9000/,s3://'
+      IMGPROXY_USE_S3: 'true'
+      IMGPROXY_S3_ENDPOINT: 'http://minio:9000'
+      IMGPROXY_S3_REGION: 'us-east-1' # MinIO default; must match mc alias config
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - '${IMGPROXY_PORT:-8080}:8080'
+
 volumes:
   postgres_data:
     driver: local
@@ -132,4 +191,6 @@ volumes:
   authentik_media:
     driver: local
   authentik_certs:
+    driver: local
+  minio_data:
     driver: local

@@ -99,7 +99,7 @@ export { subscribeToAnimations } from './animationObserve.js'
 // Importing this module (index) guarantees builtin types are registered.
 
 import { registerObjectType } from './registry.js'
-import type { RectangleObject, EllipseObject, TextObject } from '@narrative/shared'
+import type { RectangleObject, EllipseObject, TextObject, ImageObject } from '@narrative/shared'
 
 registerObjectType<RectangleObject>({
   type: 'rectangle',
@@ -141,5 +141,26 @@ registerObjectType<TextObject>({
     align: 'left',
     rotation: 0,
     opacity: 1,
+  }),
+})
+
+/**
+ * Image object type.
+ * NOTE: callers MUST provide assetId via createObjectOfType overrides after a successful upload.
+ * Creating an image object without assetId yields a broken placeholder — intentional for M11.
+ * Editor-ui calls createObjectOfType('image', { assetId, width, height }) on upload completion.
+ */
+registerObjectType<ImageObject>({
+  type: 'image',
+  defaultProps: () => ({
+    x: 100,
+    y: 100,
+    width: 400,
+    height: 300,
+    rotation: 0,
+    opacity: 1,
+    assetId: '',
+    variant: 'display',
+    fit: 'cover',
   }),
 })

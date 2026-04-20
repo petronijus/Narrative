@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
 import { plainObjectToYMap, yMapToPlainObject, plainObjectToYMapInDoc } from './bindings.js'
-import type { RectangleObject, EllipseObject, TextObject } from '@narrative/shared'
+import type { RectangleObject, EllipseObject, TextObject, ImageObject } from '@narrative/shared'
 
 describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
   it('rectangle round-trip (v Y.Doc)', () => {
@@ -95,6 +95,79 @@ describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
     expect(yMap.get('id')).toBe('test-id')
     expect(yMap.get('type')).toBe('rectangle')
     expect(yMap.get('fill')).toBe(0)
+  })
+
+  it('image round-trip (v Y.Doc) — all fields including optional', () => {
+    const image: ImageObject = {
+      id: 'img-1',
+      type: 'image',
+      x: 50,
+      y: 80,
+      width: 400,
+      height: 300,
+      rotation: 0,
+      opacity: 0.95,
+      assetId: 'asset-abc123',
+      variant: 'display',
+      fit: 'cover',
+      alt: 'A scenic mountain landscape',
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, image)
+    const result = yMapToPlainObject<ImageObject>(yMap)
+
+    expect(result).toEqual(image)
+    expect(result.assetId).toBe('asset-abc123')
+    expect(result.variant).toBe('display')
+    expect(result.fit).toBe('cover')
+    expect(result.alt).toBe('A scenic mountain landscape')
+  })
+
+  it('image round-trip — partial optional fields (no alt, contain fit)', () => {
+    const image: ImageObject = {
+      id: 'img-2',
+      type: 'image',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 150,
+      rotation: 0,
+      opacity: 1,
+      assetId: 'asset-xyz',
+      variant: 'thumb',
+      fit: 'contain',
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, image)
+    const result = yMapToPlainObject<ImageObject>(yMap)
+
+    expect(result).toEqual(image)
+    expect(result.alt).toBeUndefined()
+  })
+
+  it('image round-trip — empty assetId (broken placeholder)', () => {
+    const image: ImageObject = {
+      id: 'img-3',
+      type: 'image',
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+      rotation: 0,
+      opacity: 1,
+      assetId: '',
+      variant: 'display',
+      fit: 'cover',
+    }
+
+    const doc = new Y.Doc()
+    const yMap = plainObjectToYMapInDoc(doc, image)
+    const result = yMapToPlainObject<ImageObject>(yMap)
+
+    expect(result.assetId).toBe('')
+    expect(result.type).toBe('image')
   })
 
   it('yMapToPlainObject vyhodí na chybějícím type field', () => {

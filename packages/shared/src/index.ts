@@ -6,6 +6,7 @@ export type {
   RectangleObject,
   EllipseObject,
   TextObject,
+  ImageObject,
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,

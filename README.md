@@ -164,6 +164,69 @@ The server implementation in M10 phase 2 should:
 
 ---
 
+## Media pipeline (M11)
+
+### Architecture
+
+MinIO stores original uploaded files; imgproxy serves resized variants on demand.
+
+```
+Browser upload  → apps/server /api/uploads/* (tus, resumable) → MinIO S3 (internal)
+Browser display → Caddy /imgproxy/* → imgproxy → MinIO S3 (internal)
+```
+
+See [docs/storage.md](./docs/storage.md) for the full bucket layout, URL structure, and ops notes.
+
+### First-run setup (dev)
+
+```bash
+# 1. Generate imgproxy signing secrets (run twice — one for KEY, one for SALT)
+xxd -g 2 -l 32 -p /dev/random | tr -d '\n'
+
+# 2. Set env vars in .env
+#    Required: MINIO_ROOT_USER, MINIO_ROOT_PASSWORD, IMGPROXY_KEY, IMGPROXY_SALT
+
+# 3. Start MinIO + imgproxy
+cd infra
+docker compose --env-file ../.env up -d minio minio-init imgproxy
+
+# minio-init exits automatically after creating the bucket (check with:)
+docker compose --env-file ../.env logs minio-init
+# Expected: "Bucket ready: narrative-media"
+
+# 4. Verify
+MINIO_ROOT_USER=... MINIO_ROOT_PASSWORD=... ./scripts/verify-minio.sh
+```
+
+Service endpoints in dev:
+
+- MinIO S3 API: `http://localhost:9100`
+- MinIO console: `http://localhost:9101`
+- imgproxy: `http://localhost:8080`
+
+### First-run setup (prod)
+
+```bash
+# On the server — before first deploy:
+zfs create tank/narrative/minio
+
+# In infra/.env.prod, set:
+#   MINIO_DATA_PATH=/mnt/tank/narrative/minio
+#   MINIO_ROOT_USER, MINIO_ROOT_PASSWORD (strong values)
+#   IMGPROXY_KEY, IMGPROXY_SALT (64 hex chars each — see above)
+#   VITE_IMGPROXY_URL=https://narrative.example.com/imgproxy
+```
+
+DNS: `minio.${DOMAIN}` must resolve to the server (wildcard `*.${DOMAIN}` covers this). Caddy handles TLS automatically.
+
+### Security notes
+
+- `IMGPROXY_KEY` and `IMGPROXY_SALT` must NOT be committed. They protect signed URLs from manipulation.
+- MinIO console (`minio.${DOMAIN}`) is admin-only. Consider restricting with firewall rules or forward auth (planned M29).
+- imgproxy only serves objects from MinIO — `IMGPROXY_ALLOWED_SOURCES` is restricted to `minio:9000`.
+
+---
+
 ## Deployment
 
 > **Security note (M10):** Authentik is now deployed. The system can be exposed to the public internet after M10 phase 2 (server JWT validation) is complete. Phase 1a (this milestone) deploys Authentik but the API is still open until the server middleware is wired in phase 2. During phase 1a, keep the server ports on 127.0.0.1 (prod compose does this) and use a firewall to block direct access.
