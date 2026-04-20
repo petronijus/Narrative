@@ -474,12 +474,11 @@ function TextSection({ obj, patch }: TextSectionProps) {
           </label>
           <textarea
             id={`inspector-text-${obj.id}`}
-            defaultValue={obj.text}
-            key={obj.id}
+            value={obj.text}
             rows={3}
-            onBlur={(e) => patch({ text: e.target.value })}
+            onChange={(e) => patch({ text: e.target.value })}
             onKeyDown={(e) => {
-              // Ctrl+Enter nebo Escape → blur (commit)
+              // Escape blurs (drops focus). Ctrl+Enter same — ergonomic.
               if ((e.ctrlKey && e.key === 'Enter') || e.key === 'Escape') {
                 e.currentTarget.blur()
               }

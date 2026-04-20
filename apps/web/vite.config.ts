@@ -4,6 +4,10 @@ import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // Load .env from the monorepo root so one .env feeds both apps/server
+  // (via Node --env-file) and apps/web (via Vite). Keeps the dev experience
+  // to a single file.
+  envDir: path.resolve(__dirname, '../..'),
   define: {
     // Injektuje BUILD_VERSION do bundlu — používá se Sentry release tracking.
     // V CI nastavit přes env VITE_BUILD_VERSION (např. git sha).

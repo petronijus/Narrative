@@ -196,31 +196,51 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
   // ---------------------------------------------------------------------------
   // Lifecycle — subscribe/unsubscribe when slideIds list changes
+  //
+  // moveSlide() in slide-model deletes+recreates the slide's Y.Map (Yjs has no
+  // in-place reorder for Y.Array<Y.Map>), which orphans any observer attached
+  // to the old objects Y.Array. We MUST re-subscribe whenever slide order or
+  // membership changes — otherwise thumbnails of reordered slides stop updating.
+  //
+  // We detect reorder/membership changes by comparing the ordered slideIds
+  // array against the previous value. Unchanged order → skip (no-op).
   // ---------------------------------------------------------------------------
 
+  const lastSlideIdsRef = useRef<string[]>([])
+
   useEffect(() => {
+    const prev = lastSlideIdsRef.current
+    const sameOrder = prev.length === slideIds.length && prev.every((id, i) => id === slideIds[i])
+
+    if (sameOrder) return
+
+    // Tear down ALL existing subscriptions — cheap relative to GPU render, and
+    // correct regardless of whether Y.Map identity changed underneath.
+    for (const slideId of [...unsubscribesRef.current.keys()]) {
+      unsubscribeSlide(slideId)
+    }
+
+    // Subscribe fresh for current slide IDs.
+    for (const slideId of slideIds) {
+      subscribeSlide(slideId, deckCtx)
+    }
+
+    // Prune thumbnails of slides that no longer exist.
     const incoming = new Set(slideIds)
-    const current = new Set(unsubscribesRef.current.keys())
-
-    // Subscribe to new slides.
-    for (const slideId of incoming) {
-      if (!current.has(slideId)) {
-        subscribeSlide(slideId, deckCtx)
+    setThumbnails((prev) => {
+      let changed = false
+      const next = new Map<string, string>()
+      for (const [id, url] of prev) {
+        if (incoming.has(id)) {
+          next.set(id, url)
+        } else {
+          changed = true
+        }
       }
-    }
+      return changed ? next : prev
+    })
 
-    // Unsubscribe from removed slides and remove their thumbnails.
-    for (const slideId of current) {
-      if (!incoming.has(slideId)) {
-        unsubscribeSlide(slideId)
-        setThumbnails((prev) => {
-          if (!prev.has(slideId)) return prev
-          const next = new Map(prev)
-          next.delete(slideId)
-          return next
-        })
-      }
-    }
+    lastSlideIdsRef.current = slideIds.slice()
   }, [slideIds, deckCtx, subscribeSlide, unsubscribeSlide])
 
   // ---------------------------------------------------------------------------
@@ -232,6 +252,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       for (const slideId of [...unsubscribesRef.current.keys()]) {
         unsubscribeSlide(slideId)
       }
+      // React 18 StrictMode persists refs across the mount→unmount→remount cycle.
+      // If we don't reset lastSlideIdsRef here, the remount's slideIds effect
+      // sees sameOrder=true and skips resubscribing — leaving latestObjectsRef
+      // empty forever. Clear it so remount sees a fresh baseline.
+      lastSlideIdsRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only on unmount
   }, [])

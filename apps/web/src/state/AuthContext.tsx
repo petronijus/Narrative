@@ -85,10 +85,26 @@ export const AuthContext = createContext<AuthContextValue | null>(null)
 // AuthProvider
 // ---------------------------------------------------------------------------
 
+// Dev bypass — synthesizes a fake user without real OIDC. NEVER use in prod.
+// Enabled via VITE_BYPASS_AUTH=true in .env for local dev against a server
+// also running with BYPASS_AUTH=true.
+// Evaluated at hook invocation (not module load) so tests can control the
+// flag by stubbing import.meta.env before rendering.
+function isBypassEnabled(): boolean {
+  return import.meta.env['VITE_BYPASS_AUTH'] === 'true'
+}
+
+const BYPASS_USER: AuthUser = {
+  sub: 'dev-user',
+  name: 'Dev User',
+  email: 'dev@local',
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
-  const [user, setUser] = useState<AuthUser | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const bypass = isBypassEnabled()
+  const [user, setUser] = useState<AuthUser | null>(bypass ? BYPASS_USER : null)
+  const [token, setToken] = useState<string | null>(bypass ? 'dev-bypass-token' : null)
+  const [isLoading, setIsLoading] = useState(!bypass)
 
   // Stable UserManager instance for the lifetime of the app
   const userManager = useMemo(() => createUserManager(), [])
@@ -116,6 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    if (bypass) {
+      console.warn('[auth] VITE_BYPASS_AUTH=true — using synthesized dev-user. DO NOT DEPLOY.')
+      return
+    }
+
     let cancelled = false
 
     // Safety timeout — if OIDC discovery or storage read hangs, unblock UI

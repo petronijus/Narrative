@@ -149,15 +149,12 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
       cursor: null,
     })
 
-    // M9: Also hydrate immediately for offline/test scenarios where onSynced may not fire.
-    // This ensures deckCtx is available even without a WS connection.
-    const handles = hydrateSlideDoc(doc)
-    const deckCtx: SlideMutationContext = {
-      doc: handles.doc,
-      slides: handles.slides,
-    }
-    const undoManager = createUndoManager(deckCtx)
-    setValue({ deckCtx, undoManager, awareness, localUser })
+    // M9: Do NOT hydrate before onSynced fires. hydrateSlideDoc() seeds a
+    // default empty slide when the doc has no slides — but if WS sync is still
+    // pending, the doc is empty locally even though the server has data. A
+    // pre-sync hydrate would add an empty slide that then merges with the
+    // server's real slides (Yjs CRDT merge), leaving an extra empty slide on
+    // every reload. Wait for onSynced so we know Y.Doc state matches server.
 
     return () => {
       // M8: Cleanup — broadcast disappear to other peers

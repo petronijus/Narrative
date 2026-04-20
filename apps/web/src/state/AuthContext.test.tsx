@@ -43,6 +43,12 @@ vi.mock('oidc-client-ts', () => ({
   UserManager: vi.fn(() => mockUserManager),
 }))
 
+// Disable dev bypass for these tests — they exercise the real OIDC code path.
+// The .env may have VITE_BYPASS_AUTH=true for local dev; vi.stubEnv overrides it.
+beforeEach(() => {
+  vi.stubEnv('VITE_BYPASS_AUTH', 'false')
+})
+
 // ---------------------------------------------------------------------------
 // Test component
 // ---------------------------------------------------------------------------
