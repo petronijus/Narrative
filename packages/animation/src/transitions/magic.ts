@@ -195,7 +195,17 @@ export function magicTransition(
     // Hide the outgoing copy of the matched object so we don't see two
     // instances during the morph. We fade rather than snap to avoid a pop
     // at t=0 in case the tween's onUpdate is a frame late.
+    //
+    // Seed the proxy with the outgoing's CURRENT transform. makeContainerProxy
+    // otherwise defaults x/y/scaleX/scaleY to 0/0/1/1, and applyProxy writes
+    // ALL proxy fields on every onUpdate — which would snap the outgoing
+    // container to (0,0) on the first animation frame. We only want alpha
+    // to change; position/scale must stay put.
     const { proxy: outCopyProxy, applyProxy: applyOutCopy } = makeContainerProxy(pair.outgoing, {
+      x: from.x,
+      y: from.y,
+      scaleX: from.scaleX,
+      scaleY: from.scaleY,
       alpha: from.alpha,
     })
     tl.to(

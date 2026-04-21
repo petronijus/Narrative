@@ -225,6 +225,42 @@ describe('magicTransition — durationMs > 0', () => {
   })
 })
 
+describe('magicTransition — outgoing copy fades in place (not at 0,0)', () => {
+  const transition: SlideTransition = { kind: 'magic', durationMs: 600 }
+
+  it('seeking to mid-tween keeps pair.outgoing at its original position', () => {
+    // Regression: an earlier version of magic.ts created the outgoing-copy
+    // proxy with the default { x: 0, y: 0, scaleX: 1, scaleY: 1, alpha: initial },
+    // then its onUpdate applyProxy() stomped position/scale back to (0,0)/
+    // (1,1) on the first frame — the user saw the outgoing object flash to
+    // the top-left corner before fading out.
+    const outObj = makeContainer({
+      x: 320,
+      y: 240,
+      scaleX: 1.25,
+      scaleY: 1.25,
+      alpha: 1,
+    })
+    const inObj = makeContainer({ x: 600, y: 400, scaleX: 1, scaleY: 1, alpha: 1 })
+    const targets = makeTargets([{ id: 'obj-1', outgoing: outObj, incoming: inObj }])
+    const { timeline, dispose } = magicTransition(targets, transition)
+
+    // Seek to ~halfway through the short outgoing-fade tween.
+    timeline.seek(0.08, false)
+
+    // Outgoing's position should still be its original (320, 240), not (0, 0).
+    expect(outObj._state.x).toBe(320)
+    expect(outObj._state.y).toBe(240)
+    expect(outObj._state.scaleX).toBeCloseTo(1.25, 2)
+    expect(outObj._state.scaleY).toBeCloseTo(1.25, 2)
+    // Alpha should be partway between 1 and 0.
+    expect(outObj._state.alpha).toBeLessThan(1)
+    expect(outObj._state.alpha).toBeGreaterThan(0)
+
+    dispose()
+  })
+})
+
 describe('magicTransition — durationMs === 0', () => {
   const transition: SlideTransition = { kind: 'magic', durationMs: 0 }
 
