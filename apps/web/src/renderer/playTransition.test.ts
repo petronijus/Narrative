@@ -1,0 +1,277 @@
+/**
+ * renderer/playTransition.test.ts
+ *
+ * Unit tests for the present-mode transition orchestrator. Covers the
+ * wiring layer, not the GSAP tweening itself (that's in
+ * packages/animation/src/transitions/*.test.ts).
+ *
+ * Pixi is mocked structurally — these tests care about who calls what,
+ * not about WebGL. The key invariants:
+ *
+ *   1. incoming Container is built by mounting each incoming slide object
+ *      through the registered renderer.
+ *   2. incoming is parented on sceneGraph.getApp().stage.
+ *   3. Magic Move pairs = id-matched (outgoing-side from sceneGraph.getContainer,
+ *      incoming-side from the fresh mounts); non-matched incoming objects
+ *      produce no pair.
+ *   4. After runSlideTransition resolves, sceneGraph.adoptSlideRoot is
+ *      called with the incoming root + the per-object node list.
+ *   5. abort() before settlement destroys the incoming root and skips
+ *      adoption.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { SlideObject, SlideTransition } from '@narrative/shared'
+
+// ---------------------------------------------------------------------------
+// Pixi + animation pkg mocks — set up BEFORE playTransition is imported.
+// `vi.mock` factories are hoisted, so any variables they reference must be
+// created inside `vi.hoisted()` to avoid TDZ errors.
+// ---------------------------------------------------------------------------
+
+const hoisted = vi.hoisted(() => {
+  class MockContainer {
+    children: MockContainer[] = []
+    destroyed = false
+    parent: MockContainer | null = null
+    addChild(c: MockContainer): MockContainer {
+      this.children.push(c)
+      c.parent = this
+      return c
+    }
+    removeChild(c: MockContainer): MockContainer {
+      this.children = this.children.filter((x) => x !== c)
+      c.parent = null
+      return c
+    }
+    destroy(_opts?: unknown): void {
+      this.destroyed = true
+    }
+  }
+  const mockRenderer = {
+    type: 'rectangle' as const,
+    mount: vi.fn((data: { id: string }) => {
+      const c = new MockContainer()
+      ;(c as unknown as Record<string, unknown>).__mockFor = data.id
+      return c
+    }),
+    update: vi.fn(),
+    destroy: vi.fn(),
+  }
+  const mockRunSlideTransition = vi.fn<(...args: unknown[]) => Promise<void>>()
+  return { MockContainer, mockRenderer, mockRunSlideTransition }
+})
+
+vi.mock('pixi.js', () => ({
+  Container: hoisted.MockContainer,
+  Application: vi.fn(),
+  Graphics: class extends hoisted.MockContainer {
+    clear() {
+      return this
+    }
+    rect() {
+      return this
+    }
+    fill() {
+      return this
+    }
+    stroke() {
+      return this
+    }
+  },
+  Sprite: class extends hoisted.MockContainer {},
+  Texture: { from: vi.fn() },
+  Point: class {},
+}))
+
+vi.mock('@narrative/animation', () => ({
+  runSlideTransition: (...args: unknown[]) => hoisted.mockRunSlideTransition(...args),
+}))
+
+vi.mock('./objectRenderers/index.js', () => ({
+  getRenderer: () => hoisted.mockRenderer,
+}))
+
+type MockContainer = InstanceType<typeof hoisted.MockContainer>
+const { mockRenderer, mockRunSlideTransition } = hoisted
+
+// Now import the subject (dynamic import inside beforeEach to ensure mocks
+// are installed). Actually top-level import is fine — vi.mock calls above
+// are hoisted by Vitest.
+import { playTransition } from './playTransition.js'
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+interface FakeSceneGraph {
+  _root: MockContainer
+  _app: { stage: MockContainer }
+  _outgoingByObjectId: Map<string, MockContainer>
+  getRoot(): MockContainer
+  getApp(): { stage: MockContainer }
+  getContainer(id: string): MockContainer | undefined
+  adoptSlideRoot: ReturnType<typeof vi.fn>
+}
+
+function makeSceneGraph(outgoingIds: string[] = []): FakeSceneGraph {
+  const outgoingByObjectId = new Map<string, MockContainer>()
+  const root = new hoisted.MockContainer()
+  for (const id of outgoingIds) {
+    const c = new hoisted.MockContainer()
+    ;(c as unknown as Record<string, unknown>).__outgoingFor = id
+    root.addChild(c)
+    outgoingByObjectId.set(id, c)
+  }
+  const stage = new hoisted.MockContainer()
+  stage.addChild(root)
+  return {
+    _root: root,
+    _app: { stage },
+    _outgoingByObjectId: outgoingByObjectId,
+    getRoot: () => root,
+    getApp: () => ({ stage }),
+    getContainer: (id: string) => outgoingByObjectId.get(id),
+    adoptSlideRoot: vi.fn(),
+  }
+}
+
+function rect(id: string, x = 0, y = 0): SlideObject {
+  return {
+    id,
+    type: 'rectangle',
+    x,
+    y,
+    width: 100,
+    height: 100,
+    rotation: 0,
+    opacity: 1,
+    fill: '#ff0000',
+  }
+}
+
+const FADE: SlideTransition = { kind: 'fade', durationMs: 300 }
+const MAGIC: SlideTransition = { kind: 'magic', durationMs: 500 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockRunSlideTransition.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('playTransition — wiring', () => {
+  it('mounts each incoming slide object via the registered renderer', () => {
+    const sg = makeSceneGraph(['a'])
+    const incoming = [rect('b')]
+    playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incoming,
+      transition: FADE,
+    })
+    expect(mockRenderer.mount).toHaveBeenCalledTimes(1)
+    expect(mockRenderer.mount).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }))
+  })
+
+  it('parents the incoming root on sceneGraph.getApp().stage', () => {
+    const sg = makeSceneGraph()
+    const incomingObjs = [rect('x')]
+    playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incomingObjs,
+      transition: FADE,
+    })
+    // stage has the original root + the new incoming root → 2 children.
+    expect(sg._app.stage.children.length).toBe(2)
+  })
+
+  it('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
+    const sg = makeSceneGraph(['shared-1', 'only-in-outgoing'])
+    const incoming = [rect('shared-1'), rect('only-in-incoming')]
+
+    const handle = playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incoming,
+      transition: MAGIC,
+    })
+    await handle.done
+
+    expect(mockRunSlideTransition).toHaveBeenCalledTimes(1)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vi.fn mock.calls
+    const [targets, transition] = mockRunSlideTransition.mock.calls[0]! as any[]
+    expect(transition.kind).toBe('magic')
+    expect(targets.magicPairs).toHaveLength(1)
+    expect(targets.magicPairs[0].id).toBe('shared-1')
+    // The outgoing Container in the pair is the one the SceneGraph had for that id.
+    expect(targets.magicPairs[0].outgoing).toBe(sg._outgoingByObjectId.get('shared-1'))
+  })
+
+  it('for kind=fade, does NOT compute magicPairs', async () => {
+    const sg = makeSceneGraph(['a'])
+    const incoming = [rect('a')]
+    const handle = playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incoming,
+      transition: FADE,
+    })
+    await handle.done
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vi.fn mock.calls
+    const [targets] = mockRunSlideTransition.mock.calls[0]! as any[]
+    expect(targets.magicPairs).toBeUndefined()
+  })
+
+  it('after done, calls sceneGraph.adoptSlideRoot with incoming root + node list', async () => {
+    const sg = makeSceneGraph()
+    const incoming = [rect('n1'), rect('n2')]
+    const handle = playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incoming,
+      transition: FADE,
+    })
+    await handle.done
+
+    expect(sg.adoptSlideRoot).toHaveBeenCalledTimes(1)
+
+    const [root, nodes] = sg.adoptSlideRoot.mock.calls[0]! as [MockContainer, unknown[]]
+    // The incoming root we parented on stage is the one adopted.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural check
+    const stageChildren = sg._app.stage.children as any[]
+    expect(root).toBe(stageChildren[1])
+    expect(nodes).toHaveLength(2)
+    expect((nodes[0] as { id: string }).id).toBe('n1')
+    expect((nodes[1] as { id: string }).id).toBe('n2')
+  })
+})
+
+describe('playTransition — abort', () => {
+  it('abort() before settlement destroys the incoming root and skips adoption', async () => {
+    // Never-resolving transition so we can abort before it finishes.
+    let resolveTx!: () => void
+    const pending = new Promise<void>((r) => {
+      resolveTx = r
+    })
+    mockRunSlideTransition.mockReturnValueOnce(pending)
+
+    const sg = makeSceneGraph()
+    const incoming = [rect('a')]
+    const handle = playTransition({
+      sceneGraph: sg as unknown as Parameters<typeof playTransition>[0]['sceneGraph'],
+      incomingObjects: incoming,
+      transition: FADE,
+    })
+
+    handle.abort()
+
+    // Free the dangling promise so the async IIFE can settle in tests.
+    resolveTx()
+    await handle.done
+
+    expect(sg.adoptSlideRoot).not.toHaveBeenCalled()
+  })
+})

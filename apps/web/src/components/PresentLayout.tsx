@@ -36,6 +36,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
+import { playTransition } from '../renderer/playTransition.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useAnimations } from '../state/useAnimations.js'
 import { useSlides } from '../state/useSlides.js'
@@ -202,6 +203,11 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M9: Slide navigation helpers
   // ---------------------------------------------------------------------------
 
+  // M13: Transition-aware navigation. If the target slide defines a
+  // non-trivial transition, mount it via playTransition() before swapping
+  // activeSlideId so React state matches the already-painted new scene.
+  const transitionInFlightRef = useRef<{ abort(): void } | null>(null)
+
   const navigateToSlide = useCallback(
     (direction: 'next' | 'prev') => {
       if (slides.length === 0) return
@@ -220,12 +226,33 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       const targetSlide = slides[targetIdx]
       if (targetSlide === undefined) return
 
-      // TODO(M9-transitions): run runSlideTransition() from @narrative/animation
-      // when that API is available and the slide's transition.kind !== 'none'.
-      // For now: instant swap.
-      setActiveSlideId(targetSlide.id)
+      const incomingTransition = targetSlide.transition
+      const useTransition =
+        canvasInstance !== null &&
+        incomingTransition.kind !== 'none' &&
+        incomingTransition.durationMs > 0
+
+      // Don't fire overlapping transitions.
+      if (transitionInFlightRef.current !== null) return
+
+      if (!useTransition) {
+        setActiveSlideId(targetSlide.id)
+        return
+      }
+
+      const handle = playTransition({
+        sceneGraph: canvasInstance!.sceneGraph,
+        incomingObjects: targetSlide.objects,
+        transition: incomingTransition,
+      })
+      transitionInFlightRef.current = handle
+
+      handle.done.finally(() => {
+        transitionInFlightRef.current = null
+        setActiveSlideId(targetSlide.id)
+      })
     },
-    [slides, activeSlideId, setActiveSlideId],
+    [slides, activeSlideId, setActiveSlideId, canvasInstance],
   )
 
   // ---------------------------------------------------------------------------

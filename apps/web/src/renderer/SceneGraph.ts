@@ -32,8 +32,15 @@ interface SceneNode {
 
 export class SceneGraph {
   private readonly app: Application
-  /** Root container přidaný na app.stage. Všechny slide objekty jsou jeho children. */
-  private readonly root: Container
+  /**
+   * Root container přidaný na app.stage. Všechny slide objekty jsou jeho children.
+   *
+   * Mutable (not `readonly`) because M13 Magic Move / slide transitions build
+   * an "incoming" Container off-stage and then hand it over to SceneGraph via
+   * `adoptSlideRoot()` — at that point the SceneGraph's root reference is
+   * replaced wholesale rather than mutated in place.
+   */
+  private root: Container
   /** Mapa objectId → SceneNode (Container + poslední data snapshot). */
   private readonly nodes = new Map<string, SceneNode>()
   /**
@@ -200,6 +207,84 @@ export class SceneGraph {
 
       // Aktualizuj data snapshot v node (merge patch do existujícího stavu)
       node.data = { ...node.data, ...patch } as SlideObject
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // M13 — Slide transition support
+  // -------------------------------------------------------------------------
+
+  /**
+   * Returns the Pixi Application that owns the stage — lets present-mode
+   * transitions parent a temporary "incoming" container as a sibling of
+   * `this.root` during the cross-slide animation.
+   */
+  getApp(): Application {
+    return this.app
+  }
+
+  /**
+   * Returns the active root Container. Present-mode transitions treat this
+   * as the "outgoing" container when wiring runSlideTransition().
+   */
+  getRoot(): Container {
+    return this.root
+  }
+
+  /**
+   * Looks up the Container for a given object id. Present-mode transitions
+   * use this to build the Magic Move pair list (outgoing Container per id
+   * paired with the freshly-mounted incoming Container).
+   */
+  getContainer(id: string): Container | undefined {
+    return this.nodes.get(id)?.container
+  }
+
+  /**
+   * Adopts a pre-built "incoming" slide root as the new active root. Called
+   * by the present-mode transition runner AFTER `runSlideTransition()`
+   * resolves — swaps the SceneGraph's bookkeeping to match what's now on
+   * stage without re-mounting everything from scratch (which would cause a
+   * visible flash between the transition end and the Y.Doc observer diff).
+   *
+   * Contract:
+   *   - `nextRoot` is already on stage. This call removes the old root,
+   *     clears all per-object state (nodes + nodeTypes), and installs the
+   *     new root + its per-object entries. Old containers are destroyed.
+   *   - `nextNodes` must list every direct slide-object child of nextRoot
+   *     keyed by id. SceneGraph trusts this mapping verbatim and does not
+   *     re-scan.
+   */
+  adoptSlideRoot(nextRoot: Container, nextNodes: Array<SceneNode & { id: string }>): void {
+    // Destroy the previous root and all its children (the outgoing slide's
+    // nodes) in one pass. This also runs each renderer's destroy() path via
+    // Container.destroy({ children: true }), because renderers only hang
+    // extra state as Symbol-tagged metadata rather than via a destroy hook —
+    // texture release is the exception, handled through ResourceManager.
+    if (this.root !== nextRoot && !this.root.destroyed) {
+      if (this.root.parent !== null) {
+        this.root.parent.removeChild(this.root)
+      }
+      // Explicitly walk the old nodes via their registered renderers so that
+      // ResourceManager textures + renderer-side bookkeeping get cleaned up,
+      // not just the Pixi Container tree.
+      for (const id of [...this.nodes.keys()]) {
+        this.removeObject(id)
+      }
+      this.root.destroy({ children: false })
+    } else {
+      // Same-instance no-op guard.
+      this.nodes.clear()
+      this.nodeTypes.clear()
+    }
+
+    this.root = nextRoot
+    if (nextRoot.parent === null) {
+      this.app.stage.addChild(nextRoot)
+    }
+    for (const entry of nextNodes) {
+      this.nodes.set(entry.id, { container: entry.container, data: entry.data })
+      this.nodeTypes.set(entry.id, entry.data.type)
     }
   }
 
