@@ -24,10 +24,31 @@ export interface PixiContainer {
   position: { set(x: number, y: number): void }
   scale: { set(x: number, y: number): void }
   alpha: number
+  /**
+   * Rotation is only read/written by Magic Move for per-object tweens. The
+   * root-slide containers don't rotate so it's optional here for backward
+   * compatibility with tests using plain object mocks.
+   */
+  rotation?: number
 }
 
 /**
- * The two slide root containers involved in a slide transition.
+ * A pairing of matched-by-id per-object containers between the outgoing and
+ * incoming slide. Populated only by the present-mode runtime when the active
+ * transition kind is 'magic'; other transition factories ignore it.
+ */
+export interface MagicMoveObjectPair {
+  /** Object ID shared by outgoing + incoming. */
+  id: string
+  /** The outgoing-slide Container for this object (what's currently on screen). */
+  outgoing: PixiContainer
+  /** The incoming-slide Container for this object (target layout). */
+  incoming: PixiContainer
+}
+
+/**
+ * The two slide root containers involved in a slide transition, plus optional
+ * per-object pairing for Magic Move.
  */
 export interface SlideTransitionTargets {
   /** The Pixi container holding the outgoing slide's objects. */
@@ -36,6 +57,12 @@ export interface SlideTransitionTargets {
   incoming: PixiContainer
   /** Stage dimensions in world coordinates (SLIDE_WIDTH × SLIDE_HEIGHT). */
   slideSize: { width: number; height: number }
+  /**
+   * Objects present in BOTH outgoing and incoming (matched by id).
+   * Only populated when the active transition kind is 'magic'; empty/undefined
+   * otherwise. Unmatched objects are handled via the root-container fade path.
+   */
+  magicPairs?: MagicMoveObjectPair[]
 }
 
 /**

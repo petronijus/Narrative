@@ -13,9 +13,15 @@ import { noneTransition } from './none.js'
 import { fadeTransition } from './fade.js'
 import { pushTransition } from './push.js'
 import { cubeTransition } from './cube.js'
+import { magicTransition } from './magic.js'
 
 // Re-export types for public API surface.
-export type { SlideTransitionTargets, CompiledTransition, TransitionFactory } from './types.js'
+export type {
+  SlideTransitionTargets,
+  CompiledTransition,
+  TransitionFactory,
+  MagicMoveObjectPair,
+} from './types.js'
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -26,6 +32,7 @@ const REGISTRY: Record<SlideTransitionKind, TransitionFactory> = {
   fade: fadeTransition,
   push: pushTransition,
   cube: cubeTransition,
+  magic: magicTransition,
 }
 
 // ---------------------------------------------------------------------------

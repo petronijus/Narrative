@@ -10,7 +10,7 @@
 import type { SlideObject } from './slide.js'
 import type { AnimationStep } from './animation.js'
 
-export type SlideTransitionKind = 'none' | 'fade' | 'push' | 'cube'
+export type SlideTransitionKind = 'none' | 'fade' | 'push' | 'cube' | 'magic'
 export type SlidePushDirection = 'left' | 'right' | 'up' | 'down'
 
 export interface SlideTransition {
