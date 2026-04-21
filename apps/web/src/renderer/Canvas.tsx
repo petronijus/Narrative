@@ -38,9 +38,11 @@ import type { CanvasInstance } from './CanvasInstanceContext.js'
 export interface CanvasProps {
   /**
    * Callback volaný po úspěšném inicializaci Pixi (async).
-   * Při unmount volán s null pro signalizaci cleanup.
+   * Při unmount volán s null pro signalizaci cleanup — consumers (DeckShell)
+   * musí vynulovat svůj canvasInstance state, aby stálé konzumery (VideoOverlay)
+   * neměly referenci na zničený SceneGraph/Compositor.
    */
-  onReady?: ((instance: CanvasInstance) => void) | undefined
+  onReady?: ((instance: CanvasInstance | null) => void) | undefined
 }
 
 export function Canvas({ onReady }: CanvasProps = {}) {
@@ -144,6 +146,11 @@ export function Canvas({ onReady }: CanvasProps = {}) {
           resourceManager: liveRM,
           compositor: liveCompositor,
         } = instanceRef.current
+
+        // Notify parent first so downstream consumers drop stale references
+        // (e.g. VideoOverlay holds sceneGraph/compositor and would leak DOM
+        // elements against a torn-down Pixi app otherwise).
+        onReady?.(null)
 
         liveGraph.destroy()
         liveRM.destroyAll()

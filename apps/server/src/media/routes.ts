@@ -44,10 +44,21 @@ import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 /**
  * Returns the public MinIO base URL for direct object access.
  * Used for HLS manifest URLs (M12 dev: public bucket policy).
+ *
+ * MINIO_PUBLIC_URL can be:
+ *   - absolute (`http://localhost:9100`) — for Vite-independent clients
+ *   - path-only  (`/storage`)            — same-origin via Vite proxy (dev)
+ *
+ * Default is `/storage` so the browser fetches the manifest same-origin
+ * through Vite's dev proxy (configured in apps/web/vite.config.ts). The
+ * manifest's relative variant playlist and segment paths then resolve
+ * against `/storage/...` and also go through the proxy, which keeps
+ * hls.js happy without MinIO CORS.
+ *
  * TODO(M29): replace with presigned URL generation for private buckets.
  */
 function publicMinioBaseUrl(): string {
-  const endpoint = process.env['MINIO_ENDPOINT'] ?? 'http://localhost:9000'
+  const endpoint = process.env['MINIO_PUBLIC_URL'] ?? '/storage'
   const bucket = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
   return `${endpoint}/${bucket}`
 }

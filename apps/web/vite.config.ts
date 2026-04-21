@@ -36,6 +36,14 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/imgproxy/, ''),
       },
+      // MinIO direct access for HLS manifests + segments. Same-origin via Vite
+      // avoids CORS headaches and keeps hls.js happy with the server-returned
+      // manifest URL (variant playlists and segments resolve relative to it).
+      '/storage': {
+        target: `http://localhost:${process.env['MINIO_API_PORT'] ?? '9100'}`,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/storage/, ''),
+      },
     },
   },
   // top-level await vyžaduje esnext target (Spike A nález: Pixi v8 app.init() je async)

@@ -38,17 +38,18 @@ import { MediaUploadProvider } from '../state/useMediaUpload.js'
 
 export interface DeckShellContextValue {
   /**
-   * Callback pro Canvas.tsx — volá se po Pixi inicializaci.
-   * DeckShell drží instanci ve state a pasuje ji do CanvasInstanceContext.
+   * Callback pro Canvas.tsx — volá se po Pixi inicializaci a při unmount (null).
+   * Null cleanup signal je důležitý pro edit ↔ present navigaci: bez něj by
+   * canvasInstance state držel referenci na zničený SceneGraph během remount okna.
    */
-  onCanvasReady: (instance: CanvasInstance) => void
+  onCanvasReady: (instance: CanvasInstance | null) => void
 }
 
 export function DeckShell() {
   const { id } = useParams<{ id: string }>()
   const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
 
-  const handleCanvasReady = useCallback((instance: CanvasInstance) => {
+  const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)
   }, [])
 
