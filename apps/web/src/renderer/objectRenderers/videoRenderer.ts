@@ -12,7 +12,8 @@
  * - applyPatch(): Handles x/y/rotation/opacity/width/height/assetId/fit patches.
  *   assetId change triggers a full re-resolve.
  * - destroy(): Releases acquired poster texture, clears polling timer, sets aborted flag.
- * - thumbnailMount(): Gray placeholder only — no async loading.
+ * - thumbnailMount(): Async loads thumbnailUrl (400×225 jpg from ffmpeg pipeline)
+ *   so sidebar shows the actual first-frame preview.
  *
  * Polling:
  * - If transcode status is pending/processing on mount, a 5s interval re-checks until
@@ -28,11 +29,12 @@
  * - All async continuations check this flag before doing work.
  */
 
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import { getDefaultVideoInfoResolver } from '../videoInfo.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
+import { setThumbnailReady } from '../thumbnailReady.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state on Container instances
@@ -717,6 +719,7 @@ export const videoRenderer = {
     const placeholder = new Graphics()
     drawLoadingPlaceholder(placeholder, data.width, data.height)
     container.addChild(placeholder)
+    setPlaceholder(container, placeholder)
 
     container.rotation = data.rotation
     container.alpha = data.opacity
@@ -724,6 +727,67 @@ export const videoRenderer = {
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
 
+    // Async: fetch video info and draw the 400w thumbnail. Uses thumbnailUrl
+    // in preference to posterUrl (much smaller raster → cheaper to keep many
+    // thumbnails alive in the sidebar).
+    const { assetId } = data
+    const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+    const box = { w: data.width, h: data.height }
+
+    if (assetId === '') return container
+
+    // Same reasoning as imageRenderer.thumbnailMount: do NOT go through the
+    // main ResourceManager — its textures are bound to the main Canvas's
+    // WebGL context. Load a fresh per-thumbnail Texture from an HTMLImageElement.
+    // Exposes a ready-promise so the offscreen thumbnail renderer can await
+    // the decode before taking its snapshot frame.
+    const ready = (async () => {
+      let infoUrl: string
+      try {
+        const resolver = getDefaultVideoInfoResolver()
+        const info = await resolver({ assetId })
+        if (isAborted(container)) return
+        if (info.transcodeStatus !== 'done') return
+        const url = info.thumbnailUrl ?? info.posterUrl
+        if (url === null) return
+        infoUrl = url
+      } catch {
+        return
+      }
+
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = infoUrl
+      try {
+        await img.decode()
+      } catch {
+        return
+      }
+      if (isAborted(container)) return
+
+      const texture = Texture.from(img)
+
+      const spriteWrap = new Container()
+      const sprite = new Sprite(texture)
+      applyFit(sprite, texture, box, fit)
+      spriteWrap.addChild(sprite)
+
+      if (fit === 'cover') {
+        const mask = applyCoverMask(spriteWrap, undefined, box)
+        setMask(container, mask)
+      }
+
+      container.addChild(spriteWrap)
+      setSpriteWrap(container, spriteWrap)
+      setSprite(container, sprite)
+
+      const ph = getPlaceholder(container)
+      if (ph !== undefined && !ph.destroyed) {
+        ph.visible = false
+      }
+    })()
+
+    setThumbnailReady(container, ready)
     return container
   },
 }

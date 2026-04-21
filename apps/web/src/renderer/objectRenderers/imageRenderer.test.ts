@@ -92,11 +92,17 @@ vi.mock('pixi.js', () => {
     }
   }
 
+  const MockTexture = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock source
+    from: vi.fn((src: any) => ({ width: 400, height: 225, source: src, destroyed: false })),
+  }
+
   return {
     Container: MockContainer,
     Graphics: MockGraphics,
     Sprite: MockSprite,
     Application: vi.fn(),
+    Texture: MockTexture,
   }
 })
 
@@ -349,17 +355,29 @@ describe('imageRenderer', () => {
     }
   })
 
-  it('thumbnailMount: returns Container with placeholder, no async load', async () => {
+  it('thumbnailMount: loads the `thumb` imgproxy variant async (bypasses shared RM)', async () => {
+    // jsdom's HTMLImageElement lacks .decode — patch it for the duration of
+    // the test so the thumbnail flow resolves without a network fetch.
+    const proto = HTMLImageElement.prototype as unknown as { decode?: () => Promise<void> }
+    const decodeFn = vi.fn().mockResolvedValue(undefined)
+    proto.decode = decodeFn
+
     const ir = await getRenderer()
     const node = ir.thumbnailMount!(baseImage)
 
-    // Must have at least one child (the placeholder).
     expect(node.children.length).toBeGreaterThanOrEqual(1)
 
-    // Resolver must NOT have been called.
     await new Promise((r) => setTimeout(r, 10))
-    expect(resolver).not.toHaveBeenCalled()
+    expect(resolver).toHaveBeenCalledWith(
+      expect.objectContaining({ assetId: baseImage.assetId, variant: 'thumb' }),
+    )
+    // Thumbnails MUST NOT go through the main ResourceManager — its textures
+    // are bound to the main Canvas WebGL context and can't cross into the
+    // separate offscreen thumbnail Pixi app.
     expect(rm.acquireTexture).not.toHaveBeenCalled()
+    expect(decodeFn).toHaveBeenCalled()
+
+    delete proto.decode
   })
 
   it('empty assetId stays in placeholder state (broken object)', async () => {

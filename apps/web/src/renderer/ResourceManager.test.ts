@@ -13,15 +13,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('pixi.js', () => {
   const makeTexture = () => ({
     destroy: vi.fn(),
-    // Minimální vlastnosti pro Texture type kompatibilitu
     label: '',
-    source: null,
+    // Non-null source so acquireTexture does not fall through to the
+    // HTMLImageElement.decode() fallback (jsdom has no .decode).
+    source: { _mock: true },
   })
 
   return {
     Assets: {
       load: vi.fn().mockImplementation(async (_url: string) => makeTexture()),
+      unload: vi.fn().mockResolvedValue(undefined),
     },
+    Texture: { from: vi.fn(() => makeTexture()) },
   }
 })
 

@@ -104,12 +104,18 @@ vi.mock('pixi.js', () => {
     }
   }
 
+  const MockTexture = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mock source
+    from: vi.fn((src: any) => ({ width: 400, height: 225, source: src, destroyed: false })),
+  }
+
   return {
     Container: MockContainer,
     Graphics: MockGraphics,
     Sprite: MockSprite,
     Text: MockText,
     Application: vi.fn(),
+    Texture: MockTexture,
   }
 })
 
@@ -441,7 +447,11 @@ describe('videoRenderer', () => {
     vr.destroy(node)
   })
 
-  it('thumbnailMount: returns Container with placeholder, no async load', async () => {
+  it('thumbnailMount: fetches video info and loads thumbnailUrl (400×225) bypassing RM', async () => {
+    const proto = HTMLImageElement.prototype as unknown as { decode?: () => Promise<void> }
+    const decodeFn = vi.fn().mockResolvedValue(undefined)
+    proto.decode = decodeFn
+
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
@@ -451,7 +461,11 @@ describe('videoRenderer', () => {
     expect(node.children.length).toBeGreaterThanOrEqual(1)
 
     await new Promise((r) => setTimeout(r, 10))
-    expect(resolver).not.toHaveBeenCalled()
+    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ assetId: baseVideo.assetId }))
+    // Thumbnails must not go through the shared Canvas ResourceManager.
     expect(rm.acquireTexture).not.toHaveBeenCalled()
+    expect(decodeFn).toHaveBeenCalled()
+
+    delete proto.decode
   })
 })

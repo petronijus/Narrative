@@ -28,6 +28,7 @@
 import { Application, Container } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
+import { getThumbnailReady } from './thumbnailReady.js'
 import type { SlideObject } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -114,16 +115,19 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // Internal render implementation
   // ---------------------------------------------------------------------------
 
-  function renderSlideInternal(objects: SlideObject[]): Promise<string> {
+  async function renderSlideInternal(objects: SlideObject[]): Promise<string> {
     // Build a temp container that holds the full slide content scaled to thumbnail size.
     const slideContainer = new Container()
     // Scale the entire slide down to thumbnail dimensions.
     slideContainer.scale.set(scale)
 
     // Mount each object through the registry (same path as the main SceneGraph).
-    // Prefer thumbnailMount() when available — it avoids expensive async operations
-    // (e.g. texture loads) in the offscreen render path. Full raster image thumbnails
-    // are deferred to M29.
+    // Prefer thumbnailMount() when available. thumbnailMount MAY attach a
+    // ready-promise (via setThumbnailReady) — for async content like image
+    // rasters or video posters, we must wait for those to resolve before
+    // taking the one-shot render frame, otherwise the PNG captures only the
+    // grey placeholder.
+    const readyPromises: Promise<void>[] = []
     for (const obj of objects) {
       const renderer = getRenderer(obj.type)
       if (renderer === undefined) {
@@ -133,6 +137,15 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       const mountFn = renderer.thumbnailMount ?? renderer.mount
       const node = mountFn.call(renderer, obj)
       slideContainer.addChild(node)
+      const ready = getThumbnailReady(node)
+      if (ready !== undefined) readyPromises.push(ready)
+    }
+
+    // Await all async mounts (image decode, video-info fetch). Each ready-
+    // promise is already wrapped in its own try/catch inside thumbnailMount,
+    // so a single failed asset does not reject the whole render.
+    if (readyPromises.length > 0) {
+      await Promise.allSettled(readyPromises)
     }
 
     app.stage.addChild(slideContainer)
@@ -160,7 +173,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       slideContainer.destroy()
     }
 
-    return Promise.resolve(dataUrl)
+    return dataUrl
   }
 
   // ---------------------------------------------------------------------------
