@@ -349,17 +349,20 @@ describe('imageRenderer', () => {
     }
   })
 
-  it('thumbnailMount: returns Container with placeholder, no async load', async () => {
+  it('thumbnailMount: loads the `thumb` imgproxy variant async', async () => {
     const ir = await getRenderer()
     const node = ir.thumbnailMount!(baseImage)
 
-    // Must have at least one child (the placeholder).
+    // Must have at least one child (the placeholder) immediately.
     expect(node.children.length).toBeGreaterThanOrEqual(1)
 
-    // Resolver must NOT have been called.
+    // Resolver is invoked with the small `thumb` variant regardless of any
+    // per-object variant pin — keeps the offscreen thumbnail app cheap.
     await new Promise((r) => setTimeout(r, 10))
-    expect(resolver).not.toHaveBeenCalled()
-    expect(rm.acquireTexture).not.toHaveBeenCalled()
+    expect(resolver).toHaveBeenCalledWith(
+      expect.objectContaining({ assetId: baseImage.assetId, variant: 'thumb' }),
+    )
+    expect(rm.acquireTexture).toHaveBeenCalled()
   })
 
   it('empty assetId stays in placeholder state (broken object)', async () => {

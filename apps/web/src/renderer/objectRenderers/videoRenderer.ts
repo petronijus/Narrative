@@ -12,7 +12,8 @@
  * - applyPatch(): Handles x/y/rotation/opacity/width/height/assetId/fit patches.
  *   assetId change triggers a full re-resolve.
  * - destroy(): Releases acquired poster texture, clears polling timer, sets aborted flag.
- * - thumbnailMount(): Gray placeholder only — no async loading.
+ * - thumbnailMount(): Async loads thumbnailUrl (400×225 jpg from ffmpeg pipeline)
+ *   so sidebar shows the actual first-frame preview.
  *
  * Polling:
  * - If transcode status is pending/processing on mount, a 5s interval re-checks until
@@ -717,12 +718,36 @@ export const videoRenderer = {
     const placeholder = new Graphics()
     drawLoadingPlaceholder(placeholder, data.width, data.height)
     container.addChild(placeholder)
+    setPlaceholder(container, placeholder)
 
     container.rotation = data.rotation
     container.alpha = data.opacity
     container.pivot.set(data.width / 2, data.height / 2)
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
+
+    // Async: fetch video info and draw the 400w thumbnail. Uses thumbnailUrl
+    // in preference to posterUrl (much smaller raster → cheaper to keep many
+    // thumbnails alive in the sidebar).
+    const { assetId } = data
+    const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+    const box = { w: data.width, h: data.height }
+
+    if (assetId === '') return container
+
+    void (async () => {
+      try {
+        const resolver = getDefaultVideoInfoResolver()
+        const info = await resolver({ assetId })
+        if (isAborted(container)) return
+        if (info.transcodeStatus !== 'done') return
+        const url = info.thumbnailUrl ?? info.posterUrl
+        if (url === null) return
+        await loadPosterTexture(container, url, box, fit)
+      } catch {
+        // Network error — placeholder stays.
+      }
+    })()
 
     return container
   },

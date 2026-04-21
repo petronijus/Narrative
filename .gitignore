@@ -47,3 +47,8 @@ Thumbs.db
 
 # Vite
 apps/web/.vite/
+
+# Playwright E2E artifacts (never commit)
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/.playwright/
