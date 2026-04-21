@@ -74,46 +74,63 @@ async function dropImage(page: Page, pngBase64: string): Promise<void> {
 
 If `dispatchEvent` doesn't fire handlers (happens with some React overlays), fall back to `page.evaluate` that queries `document.elementFromPoint` and calls `el.dispatchEvent(new DragEvent(...))` directly.
 
-## Visual assert on Pixi canvas
+## Visual assert — default: full-page screenshot + coloured-pixel count
 
-Can't query DOM for "is there an image". Sample pixels:
+For 95 % of "did the thing render" checks, **take one full-page screenshot
+before the action and another after**, then count saturated pixels in both
+PNGs. The delta tells you whether real content painted anywhere in the
+editor — main canvas, sidebar thumbnail, inspector preview, all at once.
+No need to probe individual Pixi contexts or DOM subtrees.
 
 ```ts
-async function countColouredPixels(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
-    if (!canvas) return 0
-    const tmp = document.createElement('canvas')
-    tmp.width = canvas.width
-    tmp.height = canvas.height
-    const ctx = tmp.getContext('2d')!
-    ctx.drawImage(canvas, 0, 0)
-    let img: ImageData
-    try {
-      img = ctx.getImageData(0, 0, tmp.width, tmp.height)
-    } catch {
-      return -1
-    } // tainted
-    let count = 0
-    const d = img.data
-    for (let i = 0; i < d.length; i += 4) {
-      const r = d[i]!,
-        g = d[i + 1]!,
-        b = d[i + 2]!,
-        a = d[i + 3]!
-      if (a < 200) continue
-      const max = Math.max(r, g, b),
-        min = Math.min(r, g, b)
-      if (max - min > 30 && max > 20 && min < 235) count++
-    }
-    return count
-  })
+import { PNG } from 'pngjs'
+
+function countColouredPixelsInPng(buf: Buffer): number {
+  const png = PNG.sync.read(buf)
+  const d = png.data
+  let count = 0
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i]!,
+      g = d[i + 1]!,
+      b = d[i + 2]!,
+      a = d[i + 3]!
+    if (a < 200) continue
+    const max = Math.max(r, g, b),
+      min = Math.min(r, g, b)
+    if (max - min > 30 && max > 20 && min < 235) count++
+  }
+  return count
 }
+
+// In a test:
+const before = await page.screenshot({ fullPage: true })
+const baseline = countColouredPixelsInPng(before)
+await dropImage(page, BLUE_PNG_BASE64)
+let after = baseline
+const deadline = Date.now() + 15_000
+while (Date.now() < deadline) {
+  await page.waitForTimeout(500)
+  after = countColouredPixelsInPng(await page.screenshot({ fullPage: true }))
+  if (after > baseline + 500) break
+}
+expect(after).toBeGreaterThan(baseline + 500)
 ```
 
-Baseline empty slide → drop image → wait ~4s → count again. `after > baseline + 500` is a reliable threshold for "image actually painted, not grey placeholder".
+This is the default. Don't reach for `getImageData` on a specific canvas
+unless you genuinely need per-element attribution. Pixi v8 defaults to
+`preserveDrawingBuffer: false`, so `drawImage(canvas)` on the test side
+captures an empty WebGL backing store — `page.screenshot` uses the
+browser's screenshotter which bypasses that limitation.
 
-**Pixi caveat**: if `-1` comes back, the canvas is tainted. Pixi v8 defaults to `preserveDrawingBuffer: false`; screenshot via `page.screenshot({ clip: canvasBoundingBox })` instead and do image diff via `@playwright/test` toHaveScreenshot.
+`pngjs` + `@types/pngjs` are already installed in `apps/web` devDeps for
+decoding screenshot buffers in Node.
+
+### When per-element sampling IS worth it
+
+Only when "did ANY pixel paint" isn't enough and you need to localise
+the failure — e.g. "the sidebar thumbnail specifically renders vs. the
+main canvas". Then use `locator.screenshot()` + the same pixel count
+helper. Still probably overkill for most tasks.
 
 ## Capture console + page errors
 
