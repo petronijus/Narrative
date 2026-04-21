@@ -31,7 +31,6 @@ import type { VideoObject } from '@narrative/shared'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { OverlayCompositor } from '../renderer/overlay/OverlayCompositor.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
-import { openMediaCache } from '../state/mediaCache.js'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -83,21 +82,12 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
 
     // Attach HLS or fallback to native (Safari)
     async function attachHls() {
-      let manifestSrc = hlsUrl
-
-      // Try to serve from IndexedDB cache (reduces first-manifest-fetch latency)
-      try {
-        const cache = await openMediaCache()
-        const cached = await cache.get(hlsUrl)
-        if (cached !== null && typeof cached.content === 'string') {
-          const blob = new Blob([cached.content], { type: 'application/vnd.apple.mpegurl' })
-          const objUrl = URL.createObjectURL(blob)
-          objectUrlRef.current = objUrl
-          manifestSrc = objUrl
-        }
-      } catch {
-        // Cache unavailable — use original URL
-      }
+      // Always use the original URL. An earlier optimisation served a cached
+      // manifest via a blob: URL, but HLS master manifests reference variant
+      // playlists by relative path (e.g. "720p/playlist.m3u8"); hls.js resolves
+      // those against the blob: base and 404s. Until the cache layer rewrites
+      // relative URLs (or preloads variants too), skip the blob path.
+      const manifestSrc = hlsUrl
 
       if (Hls.isSupported()) {
         const hls = new Hls()

@@ -91,6 +91,21 @@ await app.register(cors, {
   // PATCH is required by the tus protocol for upload resumption.
   // HEAD is required by tus for upload status checks.
   methods: ['GET', 'POST', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'],
+  // Browser silently strips non-safelisted response headers from cross-origin
+  // reads unless they are listed here. tus and our upload finalize flow need them.
+  exposedHeaders: [
+    'Location',
+    'Upload-Offset',
+    'Upload-Length',
+    'Upload-Metadata',
+    'Tus-Version',
+    'Tus-Resumable',
+    'Tus-Max-Size',
+    'Tus-Extension',
+    'X-Narrative-Asset-Id',
+    'X-Narrative-Width',
+    'X-Narrative-Height',
+  ],
 })
 
 // Sentry — init before routes, dev-gated (silent without SENTRY_DSN)

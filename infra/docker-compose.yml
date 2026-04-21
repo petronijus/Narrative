@@ -224,6 +224,7 @@ services:
       IMGPROXY_S3_REGION: 'us-east-1' # MinIO default; must match mc alias config
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      IMGPROXY_CORS_ALLOW_ORIGIN: '*'
     depends_on:
       minio:
         condition: service_healthy

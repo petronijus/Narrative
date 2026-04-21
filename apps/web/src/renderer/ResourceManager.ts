@@ -13,7 +13,7 @@
  * M11 (image uploads): ResourceManager bude zásadní — rozhraní musí být stabilní.
  */
 
-import { Assets, type Texture } from 'pixi.js'
+import { Assets, Texture, type TextureSourceOptions } from 'pixi.js'
 
 interface TextureEntry {
   texture: Texture
@@ -34,7 +34,25 @@ export class ResourceManager {
       return existing.texture
     }
 
-    const texture = await Assets.load<Texture>(url)
+    let texture: Texture | null = null
+    try {
+      texture = await Assets.load<Texture>(url)
+    } catch {
+      texture = null
+    }
+
+    // Fallback for URLs with no/unrecognised extension (e.g. imgproxy paths
+    // ending in "@webp") where Assets can't pick a loader → returns null/errors.
+    // Texture.from bypasses extension detection by loading the URL into an
+    // HTMLImageElement directly.
+    if (!texture || !(texture as { source?: unknown }).source) {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = url
+      await img.decode()
+      texture = Texture.from(img as unknown as TextureSourceOptions)
+    }
+
     this.textures.set(url, { texture, refCount: 1 })
     return texture
   }

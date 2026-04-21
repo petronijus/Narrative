@@ -31,6 +31,11 @@ export default defineConfig(({ mode }) => ({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      '/imgproxy': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/imgproxy/, ''),
+      },
     },
   },
   // top-level await vyžaduje esnext target (Spike A nález: Pixi v8 app.init() je async)

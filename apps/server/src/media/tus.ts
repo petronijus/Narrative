@@ -34,7 +34,7 @@
 import { createRequire } from 'node:module'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Readable } from 'node:stream'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { nanoid } from 'nanoid'
 import { Server as TusServer } from '@tus/server'
 import type { Upload } from '@tus/server'
@@ -310,7 +310,25 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
 
       // 3. MIME validation — accept image/* and video/*; reject everything else
       const mime =
-        meta['content-type'] ?? meta['mimeType'] ?? upload.metadata?.['content-type'] ?? ''
+        meta['content-type'] ??
+        meta['mimeType'] ??
+        meta['mimetype'] ??
+        meta['filetype'] ??
+        meta['type'] ??
+        upload.metadata?.['content-type'] ??
+        upload.metadata?.['mimeType'] ??
+        upload.metadata?.['mimetype'] ??
+        upload.metadata?.['filetype'] ??
+        upload.metadata?.['type'] ??
+        ''
+
+      if (!mime) {
+        console.warn(
+          '[tus] onUploadCreate: no MIME in metadata; headers=%o upload.metadata=%o',
+          meta,
+          upload.metadata,
+        )
+      }
 
       const isImage = mime.startsWith('image/')
       const isVideo = mime.startsWith('video/')
@@ -379,17 +397,19 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       headers?: Record<string, string | number>
       body?: string
     }> => {
-      // Decode assetId + deckId + storageKey from the compound id
+      // Decode assetId + deckId from the compound id.
+      // The actual S3 object key is `upload.id` itself — @tus/s3-store writes the
+      // object at that key. We keep the compound encoding so we can recover
+      // assetId/deckId without a DB lookup, but storageKey must match what S3 has.
       const parts = upload.id.split(':')
       const assetId = parts[0]
       const deckId = parts[1]
-      const storageKeyB64 = parts[2]
 
-      if (!assetId || !deckId || !storageKeyB64) {
+      if (!assetId || !deckId) {
         console.error('[tus] onUploadFinish: malformed upload id', upload.id)
         throw { status_code: 500, body: 'Internal error: upload id malformed' }
       }
-      const storageKey = Buffer.from(storageKeyB64, 'base64url').toString('utf8')
+      const storageKey = upload.id
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
       const userId = (await resolveUserIdFromReq(req, appWithAuth)) ?? 'unknown'
@@ -453,7 +473,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         return {
           res,
           status_code: 200,
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Narrative-Asset-Id': assetId,
+          },
           body: JSON.stringify({
             assetId,
             storageKey,
@@ -504,10 +527,17 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         height: dims?.height ?? null,
       })
 
+      const imageHeaders: Record<string, string | number> = {
+        'Content-Type': 'application/json',
+        'X-Narrative-Asset-Id': assetId,
+      }
+      if (dims?.width !== undefined) imageHeaders['X-Narrative-Width'] = dims.width
+      if (dims?.height !== undefined) imageHeaders['X-Narrative-Height'] = dims.height
+
       return {
         res,
         status_code: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: imageHeaders,
         body: responseBody,
       }
     },
@@ -521,11 +551,43 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   // Auth is enforced inside onUploadCreate / onIncomingRequest hooks above.
   // -------------------------------------------------------------------------
 
+  // tus uses `application/offset+octet-stream` on PATCH and no body on POST/HEAD;
+  // Fastify's default ContentTypeParser rejects both with 415 before our handler
+  // runs. Register a passthrough parser for these tus-specific types so the raw
+  // request reaches tusServer.handle().
+  const passthroughParser = (
+    _req: unknown,
+    payload: NodeJS.ReadableStream,
+    done: (err: Error | null, body?: unknown) => void,
+  ) => {
+    // Do not consume the stream — tus reads from req.raw directly.
+    done(null, payload)
+  }
+  app.addContentTypeParser('application/offset+octet-stream', passthroughParser)
+  app.addContentTypeParser('application/x-www-form-urlencoded', passthroughParser)
+
+  const corsOrigin = process.env['CORS_ORIGIN'] ?? 'http://localhost:5173'
+  const exposeHeaders =
+    'Location, Upload-Offset, Upload-Length, Upload-Metadata, Tus-Version, Tus-Resumable, Tus-Max-Size, Tus-Extension, X-Narrative-Asset-Id, X-Narrative-Width, X-Narrative-Height'
+
+  const applyCorsHeaders = (req: FastifyRequest, reply: FastifyReply) => {
+    const origin = req.headers.origin
+    if (origin !== undefined) {
+      reply.raw.setHeader('Access-Control-Allow-Origin', origin)
+      reply.raw.setHeader('Vary', 'Origin')
+    } else {
+      reply.raw.setHeader('Access-Control-Allow-Origin', corsOrigin)
+    }
+    reply.raw.setHeader('Access-Control-Expose-Headers', exposeHeaders)
+  }
+
   app.all('/api/uploads', async (req, reply) => {
+    applyCorsHeaders(req, reply)
     await tusServer.handle(req.raw, reply.raw)
   })
 
   app.all('/api/uploads/*', async (req, reply) => {
+    applyCorsHeaders(req, reply)
     await tusServer.handle(req.raw, reply.raw)
   })
 

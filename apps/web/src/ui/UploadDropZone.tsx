@@ -18,7 +18,7 @@
  *   Falls back to slide centre (960, 540 for 1920×1080) if drop position is unknown.
  */
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createObjectOfType } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
@@ -139,65 +139,77 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   // Drag event handlers
   // ---------------------------------------------------------------------------
 
-  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragDepthRef.current += 1
-    if (hasAcceptedFiles(e.dataTransfer)) {
-      setIsDragOver(true)
-      setDragFileType(detectDragFileType(e.dataTransfer))
+  // Attach native drag listeners to the canvas container so events fire even
+  // when this overlay is pointer-events-none (its default idle state so clicks
+  // on canvas objects pass through).
+  useEffect(() => {
+    if (isViewer) return
+    const el = canvasContainerRef.current
+    if (!el) return
+
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!e.dataTransfer) return
+      dragDepthRef.current += 1
+      if (hasAcceptedFiles(e.dataTransfer)) {
+        setIsDragOver(true)
+        setDragFileType(detectDragFileType(e.dataTransfer))
+      }
     }
-  }, [])
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    e.dataTransfer.dropEffect = 'copy'
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragDepthRef.current -= 1
-    if (dragDepthRef.current <= 0) {
-      dragDepthRef.current = 0
-      setIsDragOver(false)
-      setDragFileType(null)
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
     }
-  }, [])
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      dragDepthRef.current -= 1
+      if (dragDepthRef.current <= 0) {
+        dragDepthRef.current = 0
+        setIsDragOver(false)
+        setDragFileType(null)
+      }
+    }
+
+    const onDrop = (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
       dragDepthRef.current = 0
       setIsDragOver(false)
       setDragFileType(null)
 
-      const containerEl = canvasContainerRef.current
-      const rect = containerEl?.getBoundingClientRect()
-      const dropCoords =
-        rect !== undefined
-          ? clientToCanvasCoords(e.clientX, e.clientY, rect)
-          : { x: DEFAULT_DROP_X, y: DEFAULT_DROP_Y }
-
+      const rect = el.getBoundingClientRect()
+      const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect)
       pendingDropCoordsRef.current = dropCoords
 
-      const files = Array.from(e.dataTransfer.files)
+      const files = Array.from(e.dataTransfer?.files ?? [])
       const accepted = files.filter(
         (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
       )
 
       for (const file of accepted) {
-        // Capture drop coords for this upload's onDone closure
         const { x, y } = dropCoords
         startUpload(file, {
           onDone: (entry) => addMediaObject(entry, x, y),
         })
       }
-    },
-    [canvasContainerRef, startUpload, addMediaObject],
-  )
+    }
+
+    el.addEventListener('dragenter', onDragEnter)
+    el.addEventListener('dragover', onDragOver)
+    el.addEventListener('dragleave', onDragLeave)
+    el.addEventListener('drop', onDrop)
+    return () => {
+      el.removeEventListener('dragenter', onDragEnter)
+      el.removeEventListener('dragover', onDragOver)
+      el.removeEventListener('dragleave', onDragLeave)
+      el.removeEventListener('drop', onDrop)
+    }
+  }, [isViewer, canvasContainerRef, startUpload, addMediaObject])
 
   // Viewer: render inert transparent overlay (no pointer events, no handlers)
   if (isViewer) {
@@ -216,15 +228,11 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
     <div
       aria-hidden="true"
       className={[
-        'absolute inset-0 transition-all duration-150',
+        'pointer-events-none absolute inset-0 transition-all duration-150',
         isDragOver
           ? 'border-4 border-blue-400 border-dashed bg-blue-400/10 z-20'
-          : 'pointer-events-none border-transparent',
+          : 'border-transparent',
       ].join(' ')}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       {isDragOver && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

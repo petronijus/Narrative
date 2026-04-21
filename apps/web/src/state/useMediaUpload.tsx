@@ -39,6 +39,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -104,6 +105,10 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
   const { token } = useAuth()
 
   const [uploads, setUploads] = useState<UploadEntry[]>([])
+  // Synchronous mirror of `uploads` — needed because setUploads runs its updater
+  // asynchronously (and twice in Strict Mode). Consumers that need a definitive
+  // snapshot (e.g. dispatching onDone after a status transition) read from here.
+  const uploadsMapRef = useRef<Map<string, UploadEntry>>(new Map())
   // tus.Upload instances keyed by local upload id (for abort/retry)
   const tusUploadsRef = useRef<Map<string, tus.Upload>>(new Map())
   // Original File references keyed by local upload id (for retry after cancel)
@@ -112,6 +117,14 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
   const onDoneCallbacksRef = useRef<Map<string, (entry: UploadEntry) => void>>(new Map())
   // Transcode poll interval IDs keyed by local upload id
   const transPollTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  // Keep the synchronous mirror in sync with committed state (runs once per
+  // commit, not per Strict Mode double-invocation of the updater).
+  useEffect(() => {
+    const m = new Map<string, UploadEntry>()
+    for (const e of uploads) m.set(e.id, e)
+    uploadsMapRef.current = m
+  }, [uploads])
 
   // ---------------------------------------------------------------------------
   // Internal helpers
@@ -163,23 +176,26 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
 
         if (status === 'done') {
           transPollTimersRef.current.delete(id)
-          setUploads((prev) => {
-            const entry = prev.find((e) => e.id === id)
-            if (entry === undefined) return prev
+          // Consume the onDone callback before the state update so React's
+          // Strict Mode double-invoked updater can't schedule cb() twice.
+          const cb = onDoneCallbacksRef.current.get(id)
+          onDoneCallbacksRef.current.delete(id)
 
-            const patch: Partial<UploadEntry> = { status: 'done', progress: 1 }
-            if (typeof data.width === 'number') patch.width = data.width
-            if (typeof data.height === 'number') patch.height = data.height
+          const patch: Partial<UploadEntry> = { status: 'done', progress: 1 }
+          if (typeof data.width === 'number') patch.width = data.width
+          if (typeof data.height === 'number') patch.height = data.height
 
-            const done: UploadEntry = { ...entry, ...patch }
-            const cb = onDoneCallbacksRef.current.get(id)
-            if (cb !== undefined) {
+          setUploads((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)))
+
+          if (cb !== undefined) {
+            const prev = uploadsMapRef.current.get(id)
+            if (prev !== undefined) {
+              const finalEntry: UploadEntry = { ...prev, ...patch }
               Promise.resolve()
-                .then(() => cb(done))
+                .then(() => cb(finalEntry))
                 .catch(() => undefined)
             }
-            return prev.map((e) => (e.id === id ? done : e))
-          })
+          }
         } else if (status === 'failed') {
           transPollTimersRef.current.delete(id)
           const errorMsg: string =
@@ -217,7 +233,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     const metadata: Record<string, string> = {
       deckId,
       filename: file.name,
-      mimetype: file.type,
+      'content-type': file.type,
     }
     if (dims.width !== undefined) metadata['width'] = String(dims.width)
     if (dims.height !== undefined) metadata['height'] = String(dims.height)
@@ -229,8 +245,11 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
 
     const isVideo = file.type.startsWith('video/')
 
-    // Capture assetId from the response header (set by server on the final PATCH).
+    // Capture values from the final PATCH response body — needed to build the
+    // onDone entry synchronously without reading state (which may be stale/batched).
     let capturedAssetId: string | undefined
+    let capturedWidth: number | undefined
+    let capturedHeight: number | undefined
 
     const upload = new tus.Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
@@ -243,21 +262,33 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
         upsertEntry(id, { status: 'uploading', progress })
       },
       onAfterResponse(_req: tus.HttpRequest, res: tus.HttpResponse) {
-        // Server sets X-Narrative-Asset-Id on the final PATCH response.
-        const assetId = res.getHeader('X-Narrative-Asset-Id')
-        if (assetId === undefined || assetId === '') return
+        // The final PATCH response body is a JSON payload from onUploadFinish
+        // ({ assetId, storageKey, mimeType, sizeBytes, width?, height?, transcodeStatus? }).
+        // We read from the body instead of response headers because @tus/server
+        // hardcodes Access-Control-Expose-Headers, so custom X-Narrative-* headers
+        // are stripped by the browser in CORS mode.
+        const bodyText = (res as unknown as { getBody?: () => string }).getBody?.()
+        if (!bodyText) return
+        let parsed: {
+          assetId?: string
+          width?: number
+          height?: number
+        } | null = null
+        try {
+          parsed = JSON.parse(bodyText)
+        } catch {
+          return
+        }
+        const assetId = parsed?.assetId
+        if (typeof assetId !== 'string' || assetId === '') return
 
         capturedAssetId = assetId
+        if (typeof parsed?.width === 'number') capturedWidth = parsed.width
+        if (typeof parsed?.height === 'number') capturedHeight = parsed.height
 
-        const rawWidth = res.getHeader('X-Narrative-Width')
-        const rawHeight = res.getHeader('X-Narrative-Height')
-        const parsedWidth = rawWidth !== undefined ? parseInt(rawWidth, 10) : NaN
-        const parsedHeight = rawHeight !== undefined ? parseInt(rawHeight, 10) : NaN
-
-        // For video: go to 'finalizing' (transcode pending), skip immediate 'done'.
         const patch: Partial<UploadEntry> = { status: 'finalizing', assetId }
-        if (!isNaN(parsedWidth)) patch.width = parsedWidth
-        if (!isNaN(parsedHeight)) patch.height = parsedHeight
+        if (capturedWidth !== undefined) patch.width = capturedWidth
+        if (capturedHeight !== undefined) patch.height = capturedHeight
         upsertEntry(id, patch)
       },
       onSuccess() {
@@ -272,18 +303,43 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
         }
 
         // Image (or video without assetId — shouldn't happen but handle gracefully).
-        setUploads((prev) => {
-          const entry = prev.find((e) => e.id === id)
-          if (entry === undefined) return prev
-          const done: UploadEntry = { ...entry, status: 'done', progress: 1 }
-          const cb = onDoneCallbacksRef.current.get(id)
-          if (cb !== undefined) {
-            Promise.resolve()
-              .then(() => cb(done))
-              .catch(() => undefined)
+        // Consume the callback before the state update. React Strict Mode
+        // double-invokes the setUploads updater in dev; deleting from the ref
+        // map up front guarantees at-most-once onDone dispatch.
+        const cb = onDoneCallbacksRef.current.get(id)
+        onDoneCallbacksRef.current.delete(id)
+
+        setUploads((prev) =>
+          prev.map((e) =>
+            e.id === id
+              ? {
+                  ...e,
+                  status: 'done' as const,
+                  progress: 1,
+                  ...(capturedAssetId !== undefined ? { assetId: capturedAssetId } : {}),
+                  ...(capturedWidth !== undefined ? { width: capturedWidth } : {}),
+                  ...(capturedHeight !== undefined ? { height: capturedHeight } : {}),
+                }
+              : e,
+          ),
+        )
+
+        if (cb !== undefined) {
+          const finalEntry: UploadEntry = {
+            id,
+            filename: file.name,
+            sizeBytes: file.size,
+            mimeType: file.type,
+            status: 'done',
+            progress: 1,
+            ...(capturedAssetId !== undefined ? { assetId: capturedAssetId } : {}),
+            ...(capturedWidth !== undefined ? { width: capturedWidth } : {}),
+            ...(capturedHeight !== undefined ? { height: capturedHeight } : {}),
           }
-          return prev.map((e) => (e.id === id ? done : e))
-        })
+          Promise.resolve()
+            .then(() => cb(finalEntry))
+            .catch(() => undefined)
+        }
         tusUploadsRef.current.delete(id)
       },
       onError(error: Error) {
