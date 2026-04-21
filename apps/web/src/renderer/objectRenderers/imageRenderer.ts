@@ -26,11 +26,12 @@
  *   to keep the offscreen thumbnail Pixi app cheap.
  */
 
-import { Container, Graphics, Sprite, type Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Texture } from 'pixi.js'
 import type { ImageObject } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
+import { setThumbnailReady } from '../thumbnailReady.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state stored on Container instances
@@ -492,9 +493,14 @@ export const imageRenderer = {
   },
 
   /**
-   * Thumbnail variant of mount — loads via imgproxy `thumb` variant (400w JPEG).
-   * Small raster so the offscreen thumbnail Pixi app stays cheap; real image
-   * content is visible in the sidebar instead of a gray placeholder.
+   * Thumbnail variant of mount — loads the imgproxy `thumb` variant (400w JPEG)
+   * so the sidebar shows real image content.
+   *
+   * Does NOT go through the main Canvas's ResourceManager. That RM's textures
+   * are bound to the main Pixi Application's WebGL context; the sidebar
+   * thumbnails run in a separate offscreen Pixi Application with its own
+   * context and cannot reuse them. Each thumbnail creates its own lightweight
+   * TextureSource from a fresh HTMLImageElement decoded per-call.
    */
   thumbnailMount(data: ImageObject): Container {
     const container = new Container()
@@ -510,10 +516,58 @@ export const imageRenderer = {
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
 
-    // Force the small imgproxy variant regardless of the pinned per-object variant.
-    // Reuses the same async load + abort flag flow as mount().
-    startLoad(container, { ...data, variant: 'thumb' })
+    const { assetId } = data
+    if (assetId === '') return container
 
+    const fit = data.fit ?? 'cover'
+    const box = { w: data.width, h: data.height }
+    const resolver = getDefaultImageUrlResolver()
+
+    // Expose a ready-promise so the offscreen thumbnail renderer can await
+    // the async decode before capturing its one-shot frame.
+    const ready = (async () => {
+      let url: string
+      try {
+        url = await resolver({ assetId, variant: 'thumb' })
+      } catch {
+        return
+      }
+      if (isAborted(container)) return
+
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = url
+      try {
+        await img.decode()
+      } catch {
+        return
+      }
+      if (isAborted(container)) return
+
+      // Per-thumbnail Texture — not cached, not shared across Pixi apps.
+      const texture = Texture.from(img)
+
+      const spriteWrap = new Container()
+      const sprite = new Sprite(texture)
+      applyFit(sprite, texture, box, fit)
+      spriteWrap.addChild(sprite)
+
+      if (fit === 'cover') {
+        const mask = applyCoverMask(spriteWrap, undefined, box)
+        setMask(container, mask)
+      }
+
+      container.addChild(spriteWrap)
+      setSpriteWrap(container, spriteWrap)
+      setSprite(container, sprite)
+
+      const ph = getPlaceholder(container)
+      if (ph !== undefined && !ph.destroyed) {
+        ph.visible = false
+      }
+    })()
+
+    setThumbnailReady(container, ready)
     return container
   },
 }
