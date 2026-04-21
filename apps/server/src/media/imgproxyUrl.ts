@@ -73,15 +73,11 @@ function processingForVariant(variant: ImgproxyVariant): string {
 /**
  * Returns a signed imgproxy URL for the given storageKey + variant.
  *
- * URL structure (imgproxy docs, base64 source URL form):
- *   {baseUrl}/{signature}/{processing}/{base64(sourceUrl)}.{extension}
+ * URL structure (imgproxy docs):
+ *   {baseUrl}/{signature}/{processing}/plain/{sourceUrl}@{extension}
  *
- * We use the base64 form (not the `plain/` form) because same-origin URLs
- * served through the Vite dev proxy get path-normalised in the browser,
- * collapsing the `s3://bucket/key` double-slash into `s3:/bucket/key` and
- * breaking the signature. Base64 sidesteps slash collapse entirely.
- *
- * The `processing` segment is omitted for the 'original' variant.
+ * The `processing` segment is omitted entirely for the 'original' variant
+ * to avoid an empty path component.
  */
 export function signImgproxyUrl(args: SignImgproxyUrlArgs): string {
   const { storageKey, variant = 'display', extension = 'webp' } = args
@@ -97,15 +93,14 @@ export function signImgproxyUrl(args: SignImgproxyUrlArgs): string {
   const bucket = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
   const sourceUrl = `s3://${bucket}/${storageKey}`
 
-  // imgproxy expects URL-safe base64 without padding for the source URL segment.
-  const encodedSourceUrl = Buffer.from(sourceUrl, 'utf8').toString('base64url')
-
   const processing = processingForVariant(variant)
 
+  // Path that gets signed — imgproxy requires this exact format.
+  // For 'original' there is no processing directive; path is /plain/...
   const path =
     processing.length > 0
-      ? `/${processing}/${encodedSourceUrl}.${extension}`
-      : `/${encodedSourceUrl}.${extension}`
+      ? `/${processing}/plain/${sourceUrl}@${extension}`
+      : `/plain/${sourceUrl}@${extension}`
 
   // Signature: HMAC-SHA256(salt || path, key), URL-safe base64 without padding
   const saltBuffer = Buffer.from(salt)

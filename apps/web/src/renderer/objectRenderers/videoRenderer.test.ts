@@ -441,19 +441,17 @@ describe('videoRenderer', () => {
     vr.destroy(node)
   })
 
-  it('thumbnailMount: fetches video info and loads thumbnailUrl (400×225)', async () => {
+  it('thumbnailMount: returns Container with placeholder, no async load', async () => {
     const resolver = makeResolver(makeDoneResult())
     setDefaultVideoInfoResolver(resolver)
 
     const vr = await getRenderer()
     const node = vr.thumbnailMount!(baseVideo)
 
-    // Placeholder is rendered immediately.
     expect(node.children.length).toBeGreaterThanOrEqual(1)
 
-    // Async resolve + texture acquire for the thumbnail URL (not the poster).
     await new Promise((r) => setTimeout(r, 10))
-    expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ assetId: baseVideo.assetId }))
-    expect(rm.acquireTexture).toHaveBeenCalledWith('https://imgproxy.example.com/thumb.jpg')
+    expect(resolver).not.toHaveBeenCalled()
+    expect(rm.acquireTexture).not.toHaveBeenCalled()
   })
 })

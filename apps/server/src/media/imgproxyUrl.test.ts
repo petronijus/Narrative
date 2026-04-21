@@ -78,9 +78,7 @@ describe('signImgproxyUrl', () => {
   it('has no resize processing segment for original variant', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY, variant: 'original' })
     expect(url).not.toContain('rs:')
-    // Original variant URL is /{signature}/{base64_source}.{ext} — no processing.
-    // Make sure no leftover /rs: or /g: style processing directive sneaks in.
-    expect(url).not.toMatch(/\/(rs|g):/)
+    expect(url).toContain('/plain/')
   })
 
   it('produces a different URL for different variants', () => {
@@ -100,12 +98,12 @@ describe('signImgproxyUrl', () => {
 
   it('defaults to webp extension when extension is omitted', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY })
-    expect(url).toMatch(/\.webp$/)
+    expect(url).toMatch(/@webp$/)
   })
 
   it('respects a custom extension', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY, extension: 'jpg' })
-    expect(url).toMatch(/\.jpg$/)
+    expect(url).toMatch(/@jpg$/)
   })
 
   it('uses a custom baseUrl when provided', () => {
@@ -116,14 +114,9 @@ describe('signImgproxyUrl', () => {
     expect(url).toMatch(/^https:\/\/custom\.imgproxy\.example\.com\//)
   })
 
-  it('encodes the S3 source URL as URL-safe base64 in the path', () => {
+  it('includes the S3 source URL with bucket name in the path', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY })
-    const expectedSource = `s3://${BUCKET}/${STORAGE_KEY}`
-    const encoded = Buffer.from(expectedSource, 'utf8').toString('base64url')
-    expect(url).toContain(encoded)
-    // The literal `s3://` form must not appear — browsers / proxies collapse
-    // the double-slash and break the signature when it does.
-    expect(url).not.toContain(`s3://${BUCKET}`)
+    expect(url).toContain(`s3://${BUCKET}/${STORAGE_KEY}`)
   })
 
   it('signature segment is URL-safe base64 (no + / = characters)', () => {

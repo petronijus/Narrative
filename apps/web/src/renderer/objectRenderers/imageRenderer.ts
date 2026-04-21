@@ -21,9 +21,9 @@
  * - Any in-flight URL resolve or texture acquire checks this flag and becomes a no-op.
  *
  * Thumbnail context:
- * - thumbnailMount loads the small `thumb` imgproxy variant (400w JPEG) so
- *   sidebar thumbnails show actual image content. The raster is small enough
- *   to keep the offscreen thumbnail Pixi app cheap.
+ * - thumbnailMount renders a static gray placeholder — never loads textures.
+ *   This avoids expensive raster loading in the offscreen thumbnail Pixi app.
+ *   Full image thumbnails are deferred to M29.
  */
 
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js'
@@ -492,16 +492,15 @@ export const imageRenderer = {
   },
 
   /**
-   * Thumbnail variant of mount — loads via imgproxy `thumb` variant (400w JPEG).
-   * Small raster so the offscreen thumbnail Pixi app stays cheap; real image
-   * content is visible in the sidebar instead of a gray placeholder.
+   * Thumbnail variant of mount — renders a static gray placeholder.
+   * Does NOT load the texture (expensive raster load in offscreen app avoided).
+   * Full image thumbnails deferred to M29.
    */
   thumbnailMount(data: ImageObject): Container {
     const container = new Container()
     const placeholder = new Graphics()
     drawPlaceholder(placeholder, data.width, data.height)
     container.addChild(placeholder)
-    setPlaceholder(container, placeholder)
 
     // Apply transform (same as mount).
     container.rotation = data.rotation
@@ -509,10 +508,6 @@ export const imageRenderer = {
     container.pivot.set(data.width / 2, data.height / 2)
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
-
-    // Force the small imgproxy variant regardless of the pinned per-object variant.
-    // Reuses the same async load + abort flag flow as mount().
-    startLoad(container, { ...data, variant: 'thumb' })
 
     return container
   },

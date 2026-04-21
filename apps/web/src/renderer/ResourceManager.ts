@@ -67,12 +67,6 @@ export class ResourceManager {
 
     entry.refCount -= 1
     if (entry.refCount <= 0) {
-      // Pixi's Assets singleton lives outside of our Pixi app lifecycle.
-      // If we .destroy() without Assets.unload(), the Assets cache keeps
-      // the URL key pointing at a now-destroyed TextureSource — the next
-      // acquireTexture() for the same URL will return the stale zombie
-      // texture and render as a grey rectangle. Always unload first.
-      void Assets.unload(url).catch(() => undefined)
       entry.texture.destroy(true)
       this.textures.delete(url)
     }
@@ -83,8 +77,7 @@ export class ResourceManager {
    * Po volání destroyAll() není instance použitelná.
    */
   destroyAll(): void {
-    for (const [url, entry] of this.textures) {
-      void Assets.unload(url).catch(() => undefined)
+    for (const [, entry] of this.textures) {
       entry.texture.destroy(true)
     }
     this.textures.clear()
