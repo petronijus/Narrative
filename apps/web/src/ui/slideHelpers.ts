@@ -13,14 +13,15 @@
  * Implementation notes:
  * - Reads source slide via listSlides() snapshot.
  * - Creates the new slide via addSlide() (correct transaction).
- * - Bulk-copies objects via addObject() with fresh nanoid IDs.
- * - Animations are copied without objectId linkage — IDs differ post-copy.
- *   Full ID remapping is deferred to M22.
- * - All mutations run in individual doc.transact calls (addSlide, addObject, addAnimation).
- *   A single compound transaction would be cleaner — deferred to M22.
+ * - Copies objects preserving their source IDs — object IDs are slide-local,
+ *   and preserving them makes the duplicated slide a natural fixture for
+ *   Magic Move transitions (M13) and keeps animation `objectId` references
+ *   valid.
+ * - All mutations run in individual doc.transact calls (addSlide, addObject,
+ *   addAnimation). A single compound transaction would be cleaner — deferred
+ *   to M22.
  */
 
-import { nanoid } from 'nanoid'
 import {
   addSlide,
   listSlides,
@@ -56,22 +57,27 @@ export function duplicateSlide(
   // Create a new empty slide at the desired position
   const newSlide = addSlide(deckCtx, insertAtIndex)
 
-  // Copy objects into the new slide with freshly generated IDs
+  // Copy objects into the new slide, PRESERVING the source object IDs. Two
+  // reasons:
+  //   1. Magic Move (M13) transitions morph objects by id-match across slides.
+  //      If duplicate minted new ids, "duplicate slide + tweak" — the most
+  //      natural Magic Move authoring flow — would silently fall through to
+  //      a cross-fade.
+  //   2. Animation steps reference objectId; fresh-id duplicates used to
+  //      orphan them. Keeping ids means the copied slide's animations still
+  //      target the right objects.
+  //
+  // Id uniqueness is per-slide (each slide's objects live in their own
+  // Y.Array), so same id across two slides is safe.
   const objectsCtx = getSlideObjectsCtx(deckCtx, newSlide.id)
   if (objectsCtx !== null) {
     for (const obj of source.objects) {
-      const copy: SlideObject = {
-        ...(obj as SlideObject),
-        id: nanoid(),
-      }
-      addObject(objectsCtx, copy)
+      addObject(objectsCtx, obj as SlideObject)
     }
   }
 
-  // Copy animations into the new slide.
-  // NOTE: objectId references from the source are intentionally kept as-is here —
-  // the copied objects have new IDs so animation-to-object linkage will be broken.
-  // A full deep-copy with ID remapping is deferred to M22.
+  // Copy animations into the new slide. objectId references carry over
+  // verbatim and now resolve correctly against the duplicated objects.
   const animationsCtx = getSlideAnimationsCtx(deckCtx, newSlide.id)
   if (animationsCtx !== null) {
     for (const anim of source.animations) {

@@ -290,6 +290,7 @@ function SlideInspector() {
     { value: 'fade', label: 'Fade' },
     { value: 'push', label: 'Push' },
     { value: 'cube', label: 'Cube' },
+    { value: 'magic', label: 'Magic Move' },
   ]
 
   const directionOptions: { value: SlidePushDirection; label: string }[] = [
