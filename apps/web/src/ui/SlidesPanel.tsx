@@ -216,19 +216,25 @@ function SlideItem({
         }}
         className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
       >
-        {/* Thumbnail card */}
+        {/* Thumbnail card. Skipped slides collapse to a thin bar
+            (Keynote-style) via a maxHeight transition; the aspectRatio
+            hint still governs the "unskipped" size, max-height drives
+            the animation. */}
         <div
           className={[
             'relative mx-2 cursor-pointer overflow-hidden rounded',
-            'transition-shadow duration-100',
+            'transition-[max-height,opacity] duration-200 ease',
             isActive
               ? 'ring-2 ring-blue-500'
               : ringClass !== ''
                 ? ringClass
                 : 'ring-1 ring-gray-700 hover:ring-gray-500',
-            slide.skipped === true ? 'opacity-50' : '',
+            slide.skipped === true ? 'opacity-60' : '',
           ].join(' ')}
-          style={{ aspectRatio: '16/9' }}
+          style={{
+            aspectRatio: '16/9',
+            maxHeight: slide.skipped === true ? 10 : 1000,
+          }}
           onPointerDown={(e) => onPointerDown(e, slide.id, index)}
           onClick={(e) => onActivate(slide.id, e.shiftKey)}
           aria-hidden="true"
