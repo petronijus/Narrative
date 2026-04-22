@@ -791,7 +791,7 @@ export function AnimationTimeline() {
   )
 
   return (
-    <div className="panel flex flex-shrink-0 flex-col border-t border-border">
+    <div className="flex flex-shrink-0 flex-col border-t border-border bg-surface-1">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <div className="flex items-center gap-2">
@@ -844,303 +844,309 @@ export function AnimationTimeline() {
       </div>
 
       <div className="collapsible" data-collapsed={collapsed ? 'true' : 'false'}>
-        <div
-          className="collapsible-body overflow-auto scrollbar-narrative"
-          style={{
-            height: collapsed
-              ? undefined
-              : Math.min(260, RULER_HEIGHT + Math.max(rowsTotalHeight, ROW_HEIGHT) + 8),
-          }}
-        >
-          {laidOut.length === 0 ? (
-            <div className="flex items-center justify-center py-6">
-              <p className="text-[11px] text-muted-foreground italic">
-                No animations on this slide. Add one from the Inspector.
-              </p>
-            </div>
-          ) : (
-            <div style={{ width: trackWidthPx, position: 'relative' }}>
-              {/* Ruler — click/drag to scrub */}
-              <div
-                className="sticky top-0 z-10 cursor-col-resize border-b border-border bg-surface-1/90 backdrop-blur-glass"
-                style={{ height: RULER_HEIGHT, width: trackWidthPx }}
-                onPointerDown={(e) => {
-                  if (isViewer || canvasInstance === null || animations.length === 0) return
-                  e.currentTarget.setPointerCapture(e.pointerId)
-                  const bounds = e.currentTarget.getBoundingClientRect()
-                  handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
-                }}
-                onPointerMove={(e) => {
-                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-                  const bounds = e.currentTarget.getBoundingClientRect()
-                  handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
-                }}
-                onPointerUp={(e) => {
-                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                    e.currentTarget.releasePointerCapture(e.pointerId)
-                  }
-                }}
-                role="slider"
-                aria-label="Scrub animations timeline"
-                aria-valuemin={0}
-                aria-valuemax={totalSec}
-                aria-valuenow={playheadSec}
-              >
-                {Array.from({ length: tickCount }, (_, i) => (
-                  <div
-                    key={i}
-                    className="absolute flex h-full items-center text-[9px] text-gray-500"
-                    style={{ left: GRIP_WIDTH + i * PX_PER_SEC, transform: 'translateX(-50%)' }}
-                  >
-                    {i}s
-                  </div>
-                ))}
+        <div className="collapsible-body">
+          {/* Scroll viewport separated from the collapsible-body so
+              `overflow: hidden` (needed for the grid-rows animation)
+              doesn't fight with `overflow: auto` on the same node. */}
+          <div
+            className="overflow-auto scrollbar-narrative"
+            style={{
+              height: Math.min(260, RULER_HEIGHT + Math.max(rowsTotalHeight, ROW_HEIGHT) + 8),
+            }}
+          >
+            {laidOut.length === 0 ? (
+              <div className="flex items-center justify-center py-6">
+                <p className="text-[11px] text-muted-foreground italic">
+                  No animations on this slide. Add one from the Inspector.
+                </p>
               </div>
-
-              {/* Playhead — vertical line spanning all rows + a small chevron at the top */}
-              <div
-                className="pointer-events-none absolute top-0 z-20"
-                style={{
-                  left: GRIP_WIDTH + Math.round(playheadSec * PX_PER_SEC),
-                  height: RULER_HEIGHT + rowsTotalHeight,
-                  width: 1,
-                  backgroundColor: 'rgb(239 68 68)', // red-500
-                }}
-              >
+            ) : (
+              <div style={{ width: trackWidthPx, position: 'relative' }}>
+                {/* Ruler — click/drag to scrub */}
                 <div
-                  className="absolute"
-                  style={{
-                    top: 2,
-                    left: -4,
-                    width: 0,
-                    height: 0,
-                    borderLeft: '4px solid transparent',
-                    borderRight: '4px solid transparent',
-                    borderTop: '6px solid rgb(239 68 68)',
+                  className="sticky top-0 z-10 cursor-col-resize border-b border-border bg-surface-1/90 backdrop-blur-glass"
+                  style={{ height: RULER_HEIGHT, width: trackWidthPx }}
+                  onPointerDown={(e) => {
+                    if (isViewer || canvasInstance === null || animations.length === 0) return
+                    e.currentTarget.setPointerCapture(e.pointerId)
+                    const bounds = e.currentTarget.getBoundingClientRect()
+                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
                   }}
-                />
-              </div>
+                  onPointerMove={(e) => {
+                    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+                    const bounds = e.currentTarget.getBoundingClientRect()
+                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
+                  }}
+                  onPointerUp={(e) => {
+                    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                      e.currentTarget.releasePointerCapture(e.pointerId)
+                    }
+                  }}
+                  role="slider"
+                  aria-label="Scrub animations timeline"
+                  aria-valuemin={0}
+                  aria-valuemax={totalSec}
+                  aria-valuenow={playheadSec}
+                >
+                  {Array.from({ length: tickCount }, (_, i) => (
+                    <div
+                      key={i}
+                      className="absolute flex h-full items-center text-[9px] text-gray-500"
+                      style={{ left: GRIP_WIDTH + i * PX_PER_SEC, transform: 'translateX(-50%)' }}
+                    >
+                      {i}s
+                    </div>
+                  ))}
+                </div>
 
-              {/* Rows — one per unique objectId (first-seen order + user
+                {/* Playhead — vertical line spanning all rows + a small chevron at the top */}
+                <div
+                  className="pointer-events-none absolute top-0 z-20"
+                  style={{
+                    left: GRIP_WIDTH + Math.round(playheadSec * PX_PER_SEC),
+                    height: RULER_HEIGHT + rowsTotalHeight,
+                    width: 1,
+                    backgroundColor: 'rgb(239 68 68)', // red-500
+                  }}
+                >
+                  <div
+                    className="absolute"
+                    style={{
+                      top: 2,
+                      left: -4,
+                      width: 0,
+                      height: 0,
+                      borderLeft: '4px solid transparent',
+                      borderRight: '4px solid transparent',
+                      borderTop: '6px solid rgb(239 68 68)',
+                    }}
+                  />
+                </div>
+
+                {/* Rows — one per unique objectId (first-seen order + user
                   preference). All animations on an object share the row;
                   overlapping ones stack on separate lanes so nothing gets
                   hidden. */}
-              <div className="relative" data-rows-container>
-                {/* Drop-indicator — horizontal guide at the prospective
+                <div className="relative" data-rows-container>
+                  {/* Drop-indicator — horizontal guide at the prospective
                     insertion boundary during a row-grip drag. */}
-                {reorderingObjectId !== null && dropRowIndex !== null && (
-                  <div
-                    className="pointer-events-none absolute left-0 z-30 bg-blue-400"
-                    style={{
-                      top: (rowBoundaries[dropRowIndex] ?? 0) - 1,
-                      height: 2,
-                      width: trackWidthPx,
-                    }}
-                  />
-                )}
-
-                {rows.map(({ objectId, items, height }, rowIdx) => {
-                  const isRowDragged = reorderingObjectId === objectId
-                  return (
+                  {reorderingObjectId !== null && dropRowIndex !== null && (
                     <div
-                      key={objectId}
-                      className={[
-                        'relative border-b divider-soft',
-                        rowIdx % 2 === 0 ? 'bg-surface-1' : 'bg-surface-2/50',
-                        isRowDragged ? 'opacity-40' : '',
-                      ].join(' ')}
-                      style={{ height, width: trackWidthPx }}
-                    >
-                      {/* Sticky-left label column + reorder grip. Stays
+                      className="pointer-events-none absolute left-0 z-30 bg-blue-400"
+                      style={{
+                        top: (rowBoundaries[dropRowIndex] ?? 0) - 1,
+                        height: 2,
+                        width: trackWidthPx,
+                      }}
+                    />
+                  )}
+
+                  {rows.map(({ objectId, items, height }, rowIdx) => {
+                    const isRowDragged = reorderingObjectId === objectId
+                    return (
+                      <div
+                        key={objectId}
+                        className={[
+                          'relative border-b divider-soft',
+                          rowIdx % 2 === 0 ? 'bg-surface-1' : 'bg-surface-2/50',
+                          isRowDragged ? 'opacity-40' : '',
+                        ].join(' ')}
+                        style={{ height, width: trackWidthPx }}
+                      >
+                        {/* Sticky-left label column + reorder grip. Stays
                           pinned during horizontal scroll so the row-to-object
                           mapping is always visible. */}
-                      <div
-                        className="sticky left-0 z-10 flex h-full items-center border-r border-border bg-surface-1/90"
-                        style={{ width: TRACK_LABEL_WIDTH }}
-                        title={objectId}
-                      >
-                        {!isViewer && (
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Reorder row ${objectId}`}
-                            onPointerDown={(e) => beginRowReorder(e, objectId, rowIdx)}
-                            onPointerMove={handleRowReorderMove}
-                            onPointerUp={endRowReorder}
-                            onPointerCancel={endRowReorder}
-                            className="flex h-full w-5 flex-shrink-0 cursor-grab items-center justify-center text-gray-500 hover:text-gray-200 active:cursor-grabbing"
-                            style={{ touchAction: 'none' }}
-                            title="Drag to reorder row"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              width="8"
-                              height="14"
-                              viewBox="0 0 8 14"
-                              fill="currentColor"
-                            >
-                              <circle cx="1.5" cy="2" r="1" />
-                              <circle cx="6.5" cy="2" r="1" />
-                              <circle cx="1.5" cy="7" r="1" />
-                              <circle cx="6.5" cy="7" r="1" />
-                              <circle cx="1.5" cy="12" r="1" />
-                              <circle cx="6.5" cy="12" r="1" />
-                            </svg>
-                          </div>
-                        )}
-                        <span
-                          className="truncate px-1 font-mono text-[10px] text-gray-400"
-                          style={{ maxWidth: TRACK_LABEL_WIDTH - 24 }}
+                        <div
+                          className="sticky left-0 z-10 flex h-full items-center border-r border-border bg-surface-1/90"
+                          style={{ width: TRACK_LABEL_WIDTH }}
+                          title={objectId}
                         >
-                          {objectId}
-                        </span>
-                      </div>
-
-                      {/* Bars — one per animation on this object. */}
-                      {items.map(({ step, startSec, lane }) => {
-                        const isSelected = selectedId === step.id
-                        const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
-                        const widthPx = Math.max(Math.round((step.duration ?? 0) * PX_PER_SEC), 24)
-                        const dir =
-                          (step.params as { direction?: string } | undefined)?.direction ??
-                          undefined
-                        const label = dir !== undefined ? `${step.preset} (${dir})` : step.preset
-                        const barTop = BAR_TOP + lane * LANE_STRIDE
-
-                        return (
-                          <div
-                            key={step.id}
-                            role="button"
-                            tabIndex={0}
-                            onPointerDown={(e) => beginDrag(e, step, startSec, 'body')}
-                            onPointerMove={handleDragMove}
-                            onPointerUp={endDrag}
-                            onPointerCancel={endDrag}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.stopPropagation()
-                                setSelectedId(step.id)
-                              }
-                            }}
-                            className={barBaseClass(isSelected, isViewer)}
-                            style={{
-                              left: leftPx,
-                              width: widthPx,
-                              top: barTop,
-                              height: BAR_HEIGHT,
-                              touchAction: 'none',
-                            }}
-                            title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
-                            aria-label={`Animation ${label}, trigger ${step.trigger}`}
+                          {!isViewer && (
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Reorder row ${objectId}`}
+                              onPointerDown={(e) => beginRowReorder(e, objectId, rowIdx)}
+                              onPointerMove={handleRowReorderMove}
+                              onPointerUp={endRowReorder}
+                              onPointerCancel={endRowReorder}
+                              className="flex h-full w-5 flex-shrink-0 cursor-grab items-center justify-center text-gray-500 hover:text-gray-200 active:cursor-grabbing"
+                              style={{ touchAction: 'none' }}
+                              title="Drag to reorder row"
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="8"
+                                height="14"
+                                viewBox="0 0 8 14"
+                                fill="currentColor"
+                              >
+                                <circle cx="1.5" cy="2" r="1" />
+                                <circle cx="6.5" cy="2" r="1" />
+                                <circle cx="1.5" cy="7" r="1" />
+                                <circle cx="6.5" cy="7" r="1" />
+                                <circle cx="1.5" cy="12" r="1" />
+                                <circle cx="6.5" cy="12" r="1" />
+                              </svg>
+                            </div>
+                          )}
+                          <span
+                            className="truncate px-1 font-mono text-[10px] text-gray-400"
+                            style={{ maxWidth: TRACK_LABEL_WIDTH - 24 }}
                           >
-                            {/* Trigger chip — colour-coded by trigger; click
+                            {objectId}
+                          </span>
+                        </div>
+
+                        {/* Bars — one per animation on this object. */}
+                        {items.map(({ step, startSec, lane }) => {
+                          const isSelected = selectedId === step.id
+                          const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
+                          const widthPx = Math.max(
+                            Math.round((step.duration ?? 0) * PX_PER_SEC),
+                            24,
+                          )
+                          const dir =
+                            (step.params as { direction?: string } | undefined)?.direction ??
+                            undefined
+                          const label = dir !== undefined ? `${step.preset} (${dir})` : step.preset
+                          const barTop = BAR_TOP + lane * LANE_STRIDE
+
+                          return (
+                            <div
+                              key={step.id}
+                              role="button"
+                              tabIndex={0}
+                              onPointerDown={(e) => beginDrag(e, step, startSec, 'body')}
+                              onPointerMove={handleDragMove}
+                              onPointerUp={endDrag}
+                              onPointerCancel={endDrag}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.stopPropagation()
+                                  setSelectedId(step.id)
+                                }
+                              }}
+                              className={barBaseClass(isSelected, isViewer)}
+                              style={{
+                                left: leftPx,
+                                width: widthPx,
+                                top: barTop,
+                                height: BAR_HEIGHT,
+                                touchAction: 'none',
+                              }}
+                              title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
+                              aria-label={`Animation ${label}, trigger ${step.trigger}`}
+                            >
+                              {/* Trigger chip — colour-coded by trigger; click
                                 opens a native dropdown to switch onEnter /
                                 withPrevious / afterPrevious / onClick. The
                                 native <select> is used so we get accessible
                                 keyboard + platform-appropriate popup without
                                 building our own menu + outside-click logic. */}
-                            <select
-                              className={`flex-shrink-0 appearance-none cursor-pointer ${triggerColor(step.trigger)}`}
-                              style={{
-                                width: 6,
-                                height: BAR_HEIGHT,
-                                border: 0,
-                                outline: 'none',
-                                fontSize: 0,
-                                color: 'transparent',
-                              }}
-                              value={step.trigger}
-                              disabled={isViewer}
-                              aria-label={`Trigger for ${label}`}
-                              title={`Trigger: ${step.trigger}`}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => {
-                                if (animationsCtx === null) return
-                                updateAnimation(animationsCtx, step.id, {
-                                  trigger: e.target.value as AnimationTrigger,
-                                })
-                              }}
-                            >
-                              <option value="onEnter">onEnter</option>
-                              <option value="withPrevious">withPrevious</option>
-                              <option value="afterPrevious">afterPrevious</option>
-                              <option value="onClick">onClick</option>
-                            </select>
-                            <span className="truncate px-1">{label}</span>
-                            {!isViewer && isSelected && (
                               <select
-                                className="flex-shrink-0 cursor-pointer rounded border border-transparent bg-black/30 px-1 text-[10px] text-gray-200 hover:border-gray-500"
-                                style={{ height: BAR_HEIGHT - 4 }}
-                                value={step.easing ?? 'power2.out'}
-                                aria-label={`Easing for ${label}`}
-                                title={`Easing: ${step.easing ?? 'power2.out'}`}
+                                className={`flex-shrink-0 appearance-none cursor-pointer ${triggerColor(step.trigger)}`}
+                                style={{
+                                  width: 6,
+                                  height: BAR_HEIGHT,
+                                  border: 0,
+                                  outline: 'none',
+                                  fontSize: 0,
+                                  color: 'transparent',
+                                }}
+                                value={step.trigger}
+                                disabled={isViewer}
+                                aria-label={`Trigger for ${label}`}
+                                title={`Trigger: ${step.trigger}`}
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                                 onChange={(e) => {
                                   if (animationsCtx === null) return
                                   updateAnimation(animationsCtx, step.id, {
-                                    easing: e.target.value,
+                                    trigger: e.target.value as AnimationTrigger,
                                   })
                                 }}
                               >
-                                <option value="none">linear</option>
-                                <option value="power1.out">power1 out</option>
-                                <option value="power2.out">power2 out</option>
-                                <option value="power2.inOut">power2 in/out</option>
-                                <option value="power3.inOut">power3 in/out</option>
-                                <option value="sine.inOut">sine in/out</option>
-                                <option value="back.out">back out</option>
-                                <option value="bounce.out">bounce out</option>
-                                <option value="elastic.out">elastic out</option>
+                                <option value="onEnter">onEnter</option>
+                                <option value="withPrevious">withPrevious</option>
+                                <option value="afterPrevious">afterPrevious</option>
+                                <option value="onClick">onClick</option>
                               </select>
-                            )}
-                            {!isViewer && isSelected && (
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                aria-label={`Remove animation ${label}`}
-                                className="ml-auto flex h-full w-5 flex-shrink-0 items-center justify-center text-gray-300 hover:bg-red-600/40 hover:text-white"
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleRemove(step.id)
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
+                              <span className="truncate px-1">{label}</span>
+                              {!isViewer && isSelected && (
+                                <select
+                                  className="flex-shrink-0 cursor-pointer rounded border border-transparent bg-black/30 px-1 text-[10px] text-gray-200 hover:border-gray-500"
+                                  style={{ height: BAR_HEIGHT - 4 }}
+                                  value={step.easing ?? 'power2.out'}
+                                  aria-label={`Easing for ${label}`}
+                                  title={`Easing: ${step.easing ?? 'power2.out'}`}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    if (animationsCtx === null) return
+                                    updateAnimation(animationsCtx, step.id, {
+                                      easing: e.target.value,
+                                    })
+                                  }}
+                                >
+                                  <option value="none">linear</option>
+                                  <option value="power1.out">power1 out</option>
+                                  <option value="power2.out">power2 out</option>
+                                  <option value="power2.inOut">power2 in/out</option>
+                                  <option value="power3.inOut">power3 in/out</option>
+                                  <option value="sine.inOut">sine in/out</option>
+                                  <option value="back.out">back out</option>
+                                  <option value="bounce.out">bounce out</option>
+                                  <option value="elastic.out">elastic out</option>
+                                </select>
+                              )}
+                              {!isViewer && isSelected && (
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-label={`Remove animation ${label}`}
+                                  className="ml-auto flex h-full w-5 flex-shrink-0 items-center justify-center text-gray-300 hover:bg-red-600/40 hover:text-white"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
                                     e.stopPropagation()
                                     handleRemove(step.id)
-                                  }
-                                }}
-                              >
-                                ×
-                              </span>
-                            )}
-                            {!isViewer && (
-                              <span
-                                aria-label={`Resize ${label}`}
-                                onPointerDown={(e) => {
-                                  e.stopPropagation()
-                                  beginDrag(e, step, startSec, 'resize')
-                                }}
-                                onPointerMove={handleDragMove}
-                                onPointerUp={endDrag}
-                                onPointerCancel={endDrag}
-                                className="absolute right-0 top-0 h-full w-2 cursor-ew-resize hover:bg-white/20"
-                                style={{ touchAction: 'none' }}
-                              />
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.stopPropagation()
+                                      handleRemove(step.id)
+                                    }
+                                  }}
+                                >
+                                  ×
+                                </span>
+                              )}
+                              {!isViewer && (
+                                <span
+                                  aria-label={`Resize ${label}`}
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation()
+                                    beginDrag(e, step, startSec, 'resize')
+                                  }}
+                                  onPointerMove={handleDragMove}
+                                  onPointerUp={endDrag}
+                                  onPointerCancel={endDrag}
+                                  className="absolute right-0 top-0 h-full w-2 cursor-ew-resize hover:bg-white/20"
+                                  style={{ touchAction: 'none' }}
+                                />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

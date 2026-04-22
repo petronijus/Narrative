@@ -21,13 +21,14 @@
 
        Reference: https://vercel.com/geist/colors. Borders at 0.06-0.08
        alpha, not 0.15+.  */
-    /* Cool-neutral navy — user asked for the slight blue tint back. Keep
-       saturation low so it doesn't read as "cartoon blue". */
-    --surface-0: 230 18% 5%; /* Editor page / canvas backdrop */
-    --surface-1: 230 14% 8%; /* Toolbar + sidebar rails */
-    --surface-2: 228 12% 10%; /* Panel body backgrounds */
-    --surface-3: 228 10% 12%; /* Controls / inputs */
-    --surface-elevated: 228 12% 14%; /* Popovers / dialogs */
+    /* Cool-neutral navy — enough saturation that inputs / panels read
+       as "dark blue-gray" and visibly belong to the same family, not
+       some as "gray on navy". */
+    --surface-0: 228 24% 6%; /* Editor page / canvas backdrop */
+    --surface-1: 228 22% 9%; /* Toolbar + sidebar rails */
+    --surface-2: 228 20% 12%; /* Panel body backgrounds */
+    --surface-3: 228 18% 15%; /* Controls / inputs */
+    --surface-elevated: 228 20% 16%; /* Popovers / dialogs */
 
     /* Borders — low-alpha white so they only just separate surfaces.
        Vercel uses 0.06-0.08; we stay at 0.07 for panel separators. */

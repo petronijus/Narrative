@@ -100,7 +100,7 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
           if (Number.isFinite(parsed)) onChange(parsed)
         }}
         className={[
-          'w-full rounded-md border border-input bg-background px-2 py-0.5',
+          'w-full rounded-md border border-input bg-surface-2 px-2 py-0.5',
           'text-right text-xs text-foreground',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           'disabled:cursor-not-allowed disabled:opacity-50',
