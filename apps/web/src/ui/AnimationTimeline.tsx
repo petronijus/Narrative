@@ -92,8 +92,14 @@ const ROW_HEIGHT = 28
 const RULER_HEIGHT = 18
 const BAR_TOP = 4
 const BAR_HEIGHT = ROW_HEIGHT - 2 * BAR_TOP
-/** Fixed-width gutter at the left of every row holding the reorder grip. */
-const GRIP_WIDTH = 20
+/**
+ * Left-edge padding before the timeline content starts. Kept at 0 now that
+ * reorder happens via horizontal bar drag (Premiere-style) rather than a
+ * left-gutter grip; the constant is still referenced in px→time math for
+ * the ruler, bar positioning, and scrub so it's easy to reinstate a gutter
+ * later without touching those call sites.
+ */
+const GRIP_WIDTH = 0
 
 const COLLAPSE_STORAGE_KEY = 'narrative:animTimeline:collapsed'
 
@@ -159,27 +165,20 @@ export function AnimationTimeline() {
   // local-first so React picks up the new snapshot immediately and the bar
   // follows the cursor in sync. The drag threshold (3 px) distinguishes
   // a click (→ select) from a drag.
+  // Body drag uses the "Premiere mental model": absolute time on the
+  // timeline is the source of truth. On first movement the step's trigger
+  // is converted to 'onEnter' so delay equals the absolute start time —
+  // dragging anywhere on the timeline then just writes delay = newAbsStart.
+  // Array order is kept in sync with absolute-time order after every move,
+  // so dragging a bar past a neighbour reorders them automatically.
   const dragStateRef = useRef<{
     stepId: string
     mode: 'body' | 'resize'
     startPointerX: number
-    anchorSec: number
-    originalDelay: number
+    originalAbsStart: number
     originalDuration: number
     hasMoved: boolean
-  } | null>(null)
-
-  // Reorder state — vertical drag of a row grip reorders the Y.Array.
-  // `draggingStepId` is the step currently being grabbed; `dropIndex` is the
-  // insertion target (0..animations.length). Live preview is just the bar's
-  // opacity drop and a horizontal guide line at the prospective slot.
-  const [draggingStepId, setDraggingStepId] = useState<string | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
-  const reorderStateRef = useRef<{
-    stepId: string
-    startPointerY: number
-    startIdx: number
-    rowsElement: HTMLDivElement | null
+    converted: boolean
   } | null>(null)
 
   const toggleCollapsed = useCallback(() => {
@@ -229,19 +228,6 @@ export function AnimationTimeline() {
     return Math.round(valueSec / snap) * snap
   }
 
-  /** Anchor time for step at index idx (the "0 delay" baseline on the timeline). */
-  function anchorSecForIndex(idx: number): number {
-    if (idx === 0) return 0
-    const step = laidOut[idx]?.step
-    if (step === undefined) return 0
-    if (step.trigger === 'onEnter') return 0
-    const prev = laidOut[idx - 1]
-    if (prev === undefined) return 0
-    if (step.trigger === 'withPrevious') return prev.startSec
-    // afterPrevious | onClick → prev.endSec
-    return prev.startSec + (prev.step.duration ?? 0)
-  }
-
   const beginDrag = useCallback(
     (
       e: React.PointerEvent<HTMLElement>,
@@ -256,15 +242,14 @@ export function AnimationTimeline() {
         stepId: step.id,
         mode,
         startPointerX: e.clientX,
-        anchorSec: anchorSecForIndex(rowIdx),
-        originalDelay: step.delay ?? 0,
+        originalAbsStart: laidOut[rowIdx]?.startSec ?? step.delay ?? 0,
         originalDuration: step.duration ?? 0,
         hasMoved: false,
+        converted: false,
       }
     },
-    // laidOut closes over the latest snapshot; inline usage of anchorSecForIndex
-    // therefore stays current. eslint-disable because that closure is intentional.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // laidOut closes over the latest snapshot so rowIdx → startSec is current.
+
     [isViewer, animationsCtx, laidOut],
   )
 
@@ -279,20 +264,51 @@ export function AnimationTimeline() {
       drag.hasMoved = true
 
       const snap = e.shiftKey ? 0 : SNAP_SEC
-      const deltaSec = dx / PX_PER_SEC
 
-      if (drag.mode === 'body') {
-        const newDelay = Math.max(0, quantize(drag.originalDelay + deltaSec, snap))
-        updateAnimation(animationsCtx, drag.stepId, { delay: newDelay })
-      } else {
+      if (drag.mode === 'resize') {
         const newDuration = Math.max(
           MIN_DURATION_SEC,
-          quantize(drag.originalDuration + deltaSec, snap),
+          quantize(drag.originalDuration + dx / PX_PER_SEC, snap),
         )
         updateAnimation(animationsCtx, drag.stepId, { duration: newDuration })
+        return
+      }
+
+      // 'body' mode — Premiere-like absolute-time positioning.
+      const newAbsStart = Math.max(0, quantize(drag.originalAbsStart + dx / PX_PER_SEC, snap))
+
+      // First movement converts to onEnter so delay == absolute time. This
+      // detaches the bar from any afterPrevious / withPrevious chain anchor
+      // — subsequent drags are pure absolute writes. Chain-triggered
+      // successors downstream may shift visually since their predecessor
+      // changed; that's the accepted trade-off for the Premiere model.
+      const draggedStep = animations.find((a) => a.id === drag.stepId)
+      const patch: Partial<AnimationStep> = { delay: newAbsStart }
+      if (!drag.converted && draggedStep !== undefined && draggedStep.trigger !== 'onEnter') {
+        ;(patch as { trigger?: AnimationTrigger }).trigger = 'onEnter'
+        drag.converted = true
+      }
+      updateAnimation(animationsCtx, drag.stepId, patch)
+
+      // Sort Y.Array by effective absolute start to keep array order in
+      // sync with visual order. Use current laidOut but replace the dragged
+      // step's startSec with its new position.
+      const currentIdx = animations.findIndex((a) => a.id === drag.stepId)
+      if (currentIdx === -1) return
+      const effective = laidOut.map((l, i) => ({
+        id: l.step.id,
+        start: i === currentIdx ? newAbsStart : l.startSec,
+      }))
+      // Stable sort by start time, preserving current array order for ties.
+      const decorated = effective.map((e, i) => ({ ...e, i }))
+      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
+      const newOrder = decorated.map((e) => e.id)
+      const currentOrder = animations.map((a) => a.id)
+      if (!newOrder.every((id, i) => id === currentOrder[i])) {
+        reorderAnimations(animationsCtx, newOrder)
       }
     },
-    [animationsCtx],
+    [animationsCtx, animations, laidOut],
   )
 
   const endDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
@@ -308,76 +324,6 @@ export function AnimationTimeline() {
       setSelectedId(drag.stepId)
     }
   }, [])
-
-  // ---------------------------------------------------------------------------
-  // Reorder (grip drag → reorderAnimations)
-  // ---------------------------------------------------------------------------
-
-  const beginReorder = useCallback(
-    (e: React.PointerEvent<HTMLElement>, stepId: string, startIdx: number) => {
-      if (isViewer || animationsCtx === null) return
-      e.currentTarget.setPointerCapture(e.pointerId)
-      e.stopPropagation()
-      // Walk up to the rows container so we can translate pointer Y into
-      // a row index during the move handler.
-      const rows = (e.currentTarget as HTMLElement).closest('[data-rows-container]')
-      reorderStateRef.current = {
-        stepId,
-        startPointerY: e.clientY,
-        startIdx,
-        rowsElement: rows instanceof HTMLDivElement ? rows : null,
-      }
-      setDraggingStepId(stepId)
-      setDropIndex(startIdx)
-    },
-    [isViewer, animationsCtx],
-  )
-
-  const handleReorderMove = useCallback(
-    (e: React.PointerEvent<HTMLElement>) => {
-      const state = reorderStateRef.current
-      if (state === null) return
-      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
-      const rows = state.rowsElement
-      if (rows === null) return
-      const bounds = rows.getBoundingClientRect()
-      const relY = e.clientY - bounds.top
-      // Each row occupies ROW_HEIGHT. The drop slot is the nearest integer
-      // edge — so a y within the top half lands at slot `i`, bottom half at
-      // slot `i + 1`. That matches the typical "between rows" feel.
-      const slot = Math.max(0, Math.min(Math.round(relY / ROW_HEIGHT), animations.length))
-      setDropIndex(slot)
-    },
-    [animations.length],
-  )
-
-  const endReorder = useCallback(
-    (e: React.PointerEvent<HTMLElement>) => {
-      const state = reorderStateRef.current
-      if (state === null) return
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId)
-      }
-      const { stepId, startIdx } = state
-      const target = dropIndex
-      reorderStateRef.current = null
-      setDraggingStepId(null)
-      setDropIndex(null)
-
-      if (target === null || animationsCtx === null) return
-      // Splicing: remove from startIdx, then insert at target. If target
-      // is past the removal point, subtract 1 to account for the hole.
-      const order = animations.map((a) => a.id)
-      const removed = order.splice(startIdx, 1)
-      if (removed.length === 0) return
-      const adjusted = target > startIdx ? target - 1 : target
-      order.splice(adjusted, 0, stepId)
-      // No-op if nothing moved.
-      if (order.every((id, i) => id === animations[i]?.id)) return
-      reorderAnimations(animationsCtx, order)
-    },
-    [animations, animationsCtx, dropIndex],
-  )
 
   // ---------------------------------------------------------------------------
   // Playback
@@ -622,23 +568,9 @@ export function AnimationTimeline() {
               </div>
 
               {/* Rows */}
-              <div data-rows-container className="relative">
-                {/* Drop-indicator — horizontal line at the prospective insertion
-                    slot during a row-reorder drag. */}
-                {draggingStepId !== null && dropIndex !== null && (
-                  <div
-                    className="pointer-events-none absolute left-0 z-30 bg-blue-400"
-                    style={{
-                      top: dropIndex * ROW_HEIGHT - 1,
-                      height: 2,
-                      width: trackWidthPx,
-                    }}
-                  />
-                )}
-
+              <div className="relative">
                 {laidOut.map(({ step, startSec }, rowIdx) => {
                   const isSelected = selectedId === step.id
-                  const isDragging = draggingStepId === step.id
                   const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
                   const widthPx = Math.max(Math.round((step.duration ?? 0) * PX_PER_SEC), 24)
                   const dir =
@@ -651,49 +583,9 @@ export function AnimationTimeline() {
                       className={[
                         'relative',
                         rowIdx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/60',
-                        isDragging ? 'opacity-40' : '',
                       ].join(' ')}
                       style={{ height: ROW_HEIGHT, width: trackWidthPx }}
                     >
-                      {/* Reorder grip — vertical drag moves this row in the
-                          Y.Array. Hidden for viewer role. */}
-                      {!isViewer && (
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          aria-label={`Reorder ${label}`}
-                          onPointerDown={(e) => beginReorder(e, step.id, rowIdx)}
-                          onPointerMove={handleReorderMove}
-                          onPointerUp={endReorder}
-                          onPointerCancel={endReorder}
-                          className="absolute top-0 z-10 flex cursor-grab items-center justify-center border-r border-gray-800 bg-gray-900/80 text-gray-500 hover:bg-gray-800 hover:text-gray-200 active:cursor-grabbing"
-                          style={{
-                            left: 0,
-                            width: GRIP_WIDTH,
-                            height: ROW_HEIGHT,
-                            touchAction: 'none',
-                          }}
-                          title="Drag to reorder"
-                        >
-                          {/* Inline SVG — six dots in two columns, always
-                              renders regardless of OS font fallback. */}
-                          <svg
-                            aria-hidden="true"
-                            width="8"
-                            height="14"
-                            viewBox="0 0 8 14"
-                            fill="currentColor"
-                          >
-                            <circle cx="1.5" cy="2" r="1" />
-                            <circle cx="6.5" cy="2" r="1" />
-                            <circle cx="1.5" cy="7" r="1" />
-                            <circle cx="6.5" cy="7" r="1" />
-                            <circle cx="1.5" cy="12" r="1" />
-                            <circle cx="6.5" cy="12" r="1" />
-                          </svg>
-                        </div>
-                      )}
-
                       {/* Row baseline — helps the eye align bars to the ruler. */}
                       <div
                         className="absolute right-0 border-t border-gray-800/50"
