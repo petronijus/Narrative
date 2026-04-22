@@ -1,19 +1,16 @@
 /**
  * ui/SlidesPanel.tsx
  *
- * Left sidebar slide panel (M9).
+ * Left sidebar slide panel.
  *
- * Features:
- * - Ordered list of slide thumbnails (200×113 / 16:9)
- * - Active-slide highlight (2px blue ring)
- * - Numbering (1-based), add / duplicate / delete / transition
- * - Drag-to-reorder via pointer events (no library)
- * - Keyboard: Up/Down navigate, Enter activates
- * - Thumbnails: consumes useSlideThumbnails() when available; falls back to
- *   index-keyed placeholder colour block.
- *   TODO: wire real thumbnails once renderer agent ships useSlideThumbnails.
- *
- * Mutations: addSlide, removeSlide, moveSlide, duplicateSlide (client-side helper).
+ * P3 outline behaviour (Keynote-style):
+ * - Each slide carries an `indent` level (0 = top). Parent = nearest
+ *   previous slide with smaller indent.
+ * - Parents can `collapsed` — their descendants disappear from the panel
+ *   (and only the panel; present-mode ignores collapse).
+ * - Drag reorders (vertical) AND re-indents (horizontal delta). The
+ *   resulting indent is clamped: a slide can be at most `previous.indent + 1`
+ *   after the move, so you can't jump levels.
  */
 
 import { useRef, useState, useCallback, useEffect, useId } from 'react'
@@ -28,23 +25,18 @@ import {
   moveSlide,
   setSlideName,
   setSlideSkipped,
-  assignSlideToSection,
-  createSection,
-  removeSection,
-  renameSection,
-  setSectionCollapsed,
+  setSlideIndent,
+  setSlideCollapsed,
 } from '@narrative/slide-model'
 import { duplicateSlide } from './slideHelpers.js'
-import type { Slide, DeckSection } from '@narrative/shared'
+import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
-import { SectionHeader } from './SectionHeader.js'
-import { useSections } from '../state/useSections.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { Plus, EyeOff, FolderPlus } from 'lucide-react'
+import { Plus, EyeOff, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
-// Fallback palette for thumbnail placeholder colours
+// Constants
 // ---------------------------------------------------------------------------
 
 const PLACEHOLDER_COLOURS = ['#1e293b', '#1c2b3a', '#1e1e2e', '#1a1a2e', '#16213e', '#0f3460']
@@ -53,17 +45,29 @@ function placeholderColour(index: number): string {
   return PLACEHOLDER_COLOURS[index % PLACEHOLDER_COLOURS.length] ?? '#1e293b'
 }
 
+/** Pixels of horizontal drag that equal one indent step. */
+const INDENT_STEP_PX = 24
+/** Visual inset per indent level (in px). */
+const INDENT_VISUAL_PX = 16
+/** Max indent level. Keynote caps around 5; 6 is plenty. */
+const MAX_INDENT = 6
+
 // ---------------------------------------------------------------------------
-// Drag-to-reorder state
+// Drag state
 // ---------------------------------------------------------------------------
 
 interface DragState {
   slideId: string
   fromIndex: number
-  /** Current drop-target index (insertion point) */
-  insertAt: number
+  fromIndent: number
+  startX: number
   startY: number
+  currentX: number
   currentY: number
+  /** Final drop index in the global slides array. */
+  insertAt: number
+  /** Final indent after clamp. */
+  indent: number
 }
 
 // ---------------------------------------------------------------------------
@@ -73,43 +77,45 @@ interface DragState {
 interface SlideItemProps {
   slide: Slide
   index: number
+  indent: number
+  hasChildren: boolean
+  collapsed: boolean
   isActive: boolean
   isDragging: boolean
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
   thumbnailUrl: string | undefined
-  /** P3: sections available for the "Move to section" submenu. */
-  sections: DeckSection[]
-  /** M10: hide mutation controls for viewers */
   readOnly?: boolean
   onActivate: (id: string) => void
+  onToggleCollapsed: (id: string) => void
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>, id: string, index: number) => void
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onTransition: (id: string) => void
   onRename: (id: string, name: string) => void
   onToggleSkip: (id: string) => void
-  onMoveToSection: (slideId: string, sectionId: string | null) => void
 }
 
 function SlideItem({
   slide,
   index,
+  indent,
+  hasChildren,
+  collapsed,
   isActive,
   isDragging,
   dropIndicatorAbove,
   dropIndicatorBelow,
   thumbnailUrl,
-  sections,
   readOnly = false,
   onActivate,
+  onToggleCollapsed,
   onPointerDown,
   onDuplicate,
   onDelete,
   onTransition,
   onRename,
   onToggleSkip,
-  onMoveToSection,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
   const [editing, setEditing] = useState(false)
@@ -143,6 +149,7 @@ function SlideItem({
       aria-labelledby={labelId}
       data-slide-id={slide.id}
       data-slide-index={index}
+      style={{ paddingLeft: indent * INDENT_VISUAL_PX }}
       className={['group relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
     >
       {/* Drop indicator — above */}
@@ -151,6 +158,26 @@ function SlideItem({
           aria-hidden="true"
           className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
         />
+      )}
+
+      {/* Collapse chevron — only rendered for parents */}
+      {hasChildren && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleCollapsed(slide.id)
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label={collapsed ? 'Expand children' : 'Collapse children'}
+          className="absolute left-0 top-2 z-10 flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+          style={{ left: Math.max(0, indent * INDENT_VISUAL_PX - 16) }}
+        >
+          <ChevronRight
+            className={'h-3 w-3 transition-transform ' + (collapsed ? '' : 'rotate-90')}
+            aria-hidden="true"
+          />
+        </button>
       )}
 
       {/* Thumbnail card */}
@@ -251,14 +278,11 @@ function SlideItem({
           <SlideItemMenu
             slideId={slide.id}
             skipped={slide.skipped === true}
-            currentSectionId={slide.sectionId}
-            sections={sections}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             onTransition={onTransition}
             onRename={() => setEditing(true)}
             onToggleSkip={onToggleSkip}
-            onMoveToSection={onMoveToSection}
           />
         </div>
       )}
@@ -272,7 +296,6 @@ function SlideItem({
 
 export function SlidesPanel(): JSX.Element {
   const slides = useSlides()
-  const sections = useSections()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { deckCtx } = useSlideDoc()
   const { clear: clearSelection } = useSelection()
@@ -281,19 +304,12 @@ export function SlidesPanel(): JSX.Element {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
-  // ---------------------------------------------------------------------------
-  // Thumbnail URLs from renderer agent's useSlideThumbnails hook
-  // ---------------------------------------------------------------------------
   const allSlideIds = slides.map((s) => s.id)
   const thumbnailMap = useSlideThumbnails(allSlideIds)
 
-  // ---------------------------------------------------------------------------
-  // Drag-to-reorder state
-  // ---------------------------------------------------------------------------
-
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)
-  const itemHeightRef = useRef<number>(90) // estimated, updated on first drag
+  const itemHeightRef = useRef<number>(90)
 
   const handleActivate = useCallback(
     (id: string) => {
@@ -303,19 +319,11 @@ export function SlidesPanel(): JSX.Element {
     [setActiveSlideId, clearSelection],
   )
 
-  // ---------------------------------------------------------------------------
-  // Add slide
-  // ---------------------------------------------------------------------------
-
   const handleAdd = useCallback(() => {
     const newSlide = addSlide(deckCtx)
     setActiveSlideId(newSlide.id)
     clearSelection()
   }, [deckCtx, setActiveSlideId, clearSelection])
-
-  // ---------------------------------------------------------------------------
-  // Duplicate
-  // ---------------------------------------------------------------------------
 
   const handleDuplicate = useCallback(
     (slideId: string) => {
@@ -330,13 +338,8 @@ export function SlidesPanel(): JSX.Element {
     [deckCtx, slides, setActiveSlideId, clearSelection],
   )
 
-  // ---------------------------------------------------------------------------
-  // Delete
-  // ---------------------------------------------------------------------------
-
   const handleDelete = useCallback(
     (slideId: string) => {
-      // Determine next active slide before deletion
       const idx = slides.findIndex((s) => s.id === slideId)
       if (idx !== -1 && slides.length > 1) {
         const nextIdx = idx > 0 ? idx - 1 : 1
@@ -351,21 +354,12 @@ export function SlidesPanel(): JSX.Element {
     [deckCtx, slides, activeSlideId, setActiveSlideId, clearSelection],
   )
 
-  // ---------------------------------------------------------------------------
-  // Transition (deferred — opens Inspector slide section)
-  // ---------------------------------------------------------------------------
-
   const handleTransition = useCallback(
     (slideId: string) => {
-      // Activate the slide so Inspector shows its transition settings
       handleActivate(slideId)
     },
     [handleActivate],
   )
-
-  // ---------------------------------------------------------------------------
-  // Rename + Skip
-  // ---------------------------------------------------------------------------
 
   const handleRename = useCallback(
     (slideId: string, name: string) => {
@@ -383,46 +377,17 @@ export function SlidesPanel(): JSX.Element {
     [deckCtx, slides],
   )
 
-  // ---------------------------------------------------------------------------
-  // Sections (P3)
-  // ---------------------------------------------------------------------------
-
-  const handleAddSection = useCallback(() => {
-    createSection(deckCtx)
-  }, [deckCtx])
-
-  const handleRenameSection = useCallback(
-    (sectionId: string, title: string) => {
-      renameSection(deckCtx, sectionId, title)
-    },
-    [deckCtx],
-  )
-
-  const handleToggleSectionCollapsed = useCallback(
-    (sectionId: string) => {
-      const s = sections.find((x) => x.id === sectionId)
+  const handleToggleCollapsed = useCallback(
+    (slideId: string) => {
+      const s = slides.find((x) => x.id === slideId)
       if (s === undefined) return
-      setSectionCollapsed(deckCtx, sectionId, !s.collapsed)
+      setSlideCollapsed(deckCtx, slideId, s.collapsed !== true)
     },
-    [deckCtx, sections],
-  )
-
-  const handleDeleteSection = useCallback(
-    (sectionId: string) => {
-      removeSection(deckCtx, sectionId)
-    },
-    [deckCtx],
-  )
-
-  const handleMoveToSection = useCallback(
-    (slideId: string, sectionId: string | null) => {
-      assignSlideToSection(deckCtx, slideId, sectionId)
-    },
-    [deckCtx],
+    [deckCtx, slides],
   )
 
   // ---------------------------------------------------------------------------
-  // Drag-to-reorder — pointer events
+  // Drag math helpers
   // ---------------------------------------------------------------------------
 
   const getItemHeight = useCallback((): number => {
@@ -435,36 +400,65 @@ export function SlidesPanel(): JSX.Element {
     return itemHeightRef.current
   }, [])
 
-  const getInsertAt = useCallback(
-    (startIndex: number, deltaY: number): number => {
-      const h = getItemHeight()
-      const rawOffset = Math.round(deltaY / h)
-      return Math.max(0, Math.min(slides.length - 1, startIndex + rawOffset))
+  /**
+   * Clamps a proposed indent given the previous slide in the post-move
+   * slide list. A slide can be at most one level deeper than the slide
+   * preceding its drop position. With no preceding slide (= top of
+   * list), the only legal indent is 0.
+   */
+  const clampIndent = useCallback(
+    (proposed: number, insertAt: number, movingSlideId: string): number => {
+      // Rebuild the list as it would look after the move: drop the
+      // moving slide from its current position, then consult the slide
+      // just before insertAt.
+      const filtered = slides.filter((s) => s.id !== movingSlideId)
+      const clampedInsertAt = Math.max(0, Math.min(insertAt, filtered.length))
+      const prev = clampedInsertAt > 0 ? filtered[clampedInsertAt - 1] : undefined
+      const maxAllowed = prev === undefined ? 0 : (prev.indent ?? 0) + 1
+      return Math.max(0, Math.min(MAX_INDENT, Math.min(proposed, maxAllowed)))
     },
-    [slides.length, getItemHeight],
+    [slides],
+  )
+
+  const computeDragOutcome = useCallback(
+    (ds: DragState): { insertAt: number; indent: number } => {
+      const h = getItemHeight()
+      const deltaY = ds.currentY - ds.startY
+      const deltaX = ds.currentX - ds.startX
+      const rawRowOffset = Math.round(deltaY / h)
+      const insertAt = Math.max(0, Math.min(slides.length - 1, ds.fromIndex + rawRowOffset))
+      const rawIndent = ds.fromIndent + Math.round(deltaX / INDENT_STEP_PX)
+      const indent = clampIndent(rawIndent, insertAt, ds.slideId)
+      return { insertAt, indent }
+    },
+    [slides.length, getItemHeight, clampIndent],
   )
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>, slideId: string, index: number) => {
-      // Only start drag on primary button, non-menu targets
       if (e.button !== 0) return
-      // Don't start drag if clicking the menu button or its children
       const target = e.target as HTMLElement
       if (target.closest('[data-slide-menu]') !== null) return
+      const slide = slides.find((s) => s.id === slideId)
+      if (slide === undefined) return
 
       e.currentTarget.setPointerCapture(e.pointerId)
 
       const state: DragState = {
         slideId,
         fromIndex: index,
-        insertAt: index,
+        fromIndent: slide.indent ?? 0,
+        startX: e.clientX,
         startY: e.clientY,
+        currentX: e.clientX,
         currentY: e.clientY,
+        insertAt: index,
+        indent: slide.indent ?? 0,
       }
       dragStateRef.current = state
       setDragState({ ...state })
     },
-    [],
+    [slides],
   )
 
   const handlePointerMove = useCallback(
@@ -472,15 +466,18 @@ export function SlidesPanel(): JSX.Element {
       const ds = dragStateRef.current
       if (ds === null) return
 
-      const updated: DragState = {
+      const next: DragState = {
         ...ds,
+        currentX: e.clientX,
         currentY: e.clientY,
-        insertAt: getInsertAt(ds.fromIndex, e.clientY - ds.startY),
       }
-      dragStateRef.current = updated
-      setDragState({ ...updated })
+      const outcome = computeDragOutcome(next)
+      next.insertAt = outcome.insertAt
+      next.indent = outcome.indent
+      dragStateRef.current = next
+      setDragState({ ...next })
     },
-    [getInsertAt],
+    [computeDragOutcome],
   )
 
   const handlePointerUp = useCallback(
@@ -491,15 +488,20 @@ export function SlidesPanel(): JSX.Element {
       dragStateRef.current = null
       setDragState(null)
 
+      // Apply position change first (if any), then indent. Both mutations
+      // sit inside LOCAL_ORIGIN transacts — paired within the same frame.
       if (ds.insertAt !== ds.fromIndex) {
         moveSlide(deckCtx, ds.slideId, ds.insertAt)
+      }
+      if (ds.indent !== ds.fromIndent) {
+        setSlideIndent(deckCtx, ds.slideId, ds.indent)
       }
     },
     [deckCtx],
   )
 
   // ---------------------------------------------------------------------------
-  // Keyboard navigation in panel
+  // Keyboard navigation
   // ---------------------------------------------------------------------------
 
   const handleKeyDown = useCallback(
@@ -524,10 +526,6 @@ export function SlidesPanel(): JSX.Element {
     [slides, activeSlideId, handleActivate],
   )
 
-  // ---------------------------------------------------------------------------
-  // Scroll active slide into view
-  // ---------------------------------------------------------------------------
-
   useEffect(() => {
     if (activeSlideId === null) return
     const list = listRef.current
@@ -537,6 +535,44 @@ export function SlidesPanel(): JSX.Element {
       el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [activeSlideId])
+
+  // ---------------------------------------------------------------------------
+  // Derived outline state — which slides have children + which are hidden
+  // ---------------------------------------------------------------------------
+
+  const outline = (() => {
+    const hasChildrenMap = new Map<string, boolean>()
+    const hiddenIds = new Set<string>()
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i]
+      if (slide === undefined) continue
+      const indent = slide.indent ?? 0
+
+      // Has children if the next slide is at a deeper indent.
+      const next = slides[i + 1]
+      const hasChildren = next !== undefined && (next.indent ?? 0) > indent
+      hasChildrenMap.set(slide.id, hasChildren)
+    }
+
+    // A slide is hidden if ANY ancestor (earlier slide with smaller
+    // indent) is collapsed. Walk left-to-right, track the deepest
+    // collapsed-ancestor indent we're still "under".
+    let suppressingIndent: number | null = null
+    for (const slide of slides) {
+      const indent = slide.indent ?? 0
+      if (suppressingIndent !== null && indent > suppressingIndent) {
+        hiddenIds.add(slide.id)
+      } else {
+        suppressingIndent = null
+      }
+      if (slide.collapsed === true && suppressingIndent === null) {
+        suppressingIndent = indent
+      }
+    }
+
+    return { hasChildrenMap, hiddenIds }
+  })()
 
   // ---------------------------------------------------------------------------
   // Render
@@ -557,30 +593,17 @@ export function SlidesPanel(): JSX.Element {
           Slides
           <span className="ml-1.5 font-normal opacity-60">({slides.length})</span>
         </h2>
-        {/* Add slide + Add section buttons — hidden for viewer role */}
         {!isViewer && (
-          <div className="flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleAddSection}
-              aria-label="Add section"
-              className="h-6 w-6"
-              title="Add section"
-            >
-              <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleAdd}
-              aria-label="Add slide"
-              className="h-6 w-6"
-              title="Add slide"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleAdd}
+            aria-label="Add slide"
+            className="h-6 w-6"
+            title="Add slide"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
         )}
       </div>
 
@@ -599,89 +622,51 @@ export function SlidesPanel(): JSX.Element {
           onKeyDown={handleKeyDown}
           className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
-          {(() => {
-            // P3: group slides by section. Unsectioned slides render
-            // first (above the first section header), then each section
-            // with its member slides. Global drag index is preserved so
-            // existing moveSlide math keeps working.
-            const knownSectionIds = new Set(sections.map((s) => s.id))
-            const unsectioned: Array<{ slide: Slide; index: number }> = []
-            const bySection = new Map<string, Array<{ slide: Slide; index: number }>>()
-            slides.forEach((slide, index) => {
-              const sid = slide.sectionId
-              if (sid !== undefined && knownSectionIds.has(sid)) {
-                const bucket = bySection.get(sid) ?? []
-                bucket.push({ slide, index })
-                bySection.set(sid, bucket)
-              } else {
-                unsectioned.push({ slide, index })
-              }
-            })
+          {slides.map((slide, idx) => {
+            if (outline.hiddenIds.has(slide.id)) return null
+            const isDragging = dragState?.slideId === slide.id
+            const dropIndicatorAbove =
+              dragState !== null &&
+              dragState.slideId !== slide.id &&
+              dragState.insertAt === idx &&
+              dragState.insertAt < dragState.fromIndex
+            const dropIndicatorBelow =
+              dragState !== null &&
+              dragState.slideId !== slide.id &&
+              dragState.insertAt === idx &&
+              dragState.insertAt > dragState.fromIndex
 
-            const renderSlideEntry = ({ slide, index }: { slide: Slide; index: number }) => {
-              const isDragging = dragState?.slideId === slide.id
-              const dropIndicatorAbove =
-                dragState !== null &&
-                dragState.slideId !== slide.id &&
-                dragState.insertAt === index &&
-                dragState.insertAt < dragState.fromIndex
-              const dropIndicatorBelow =
-                dragState !== null &&
-                dragState.slideId !== slide.id &&
-                dragState.insertAt === index &&
-                dragState.insertAt > dragState.fromIndex
-
-              return (
-                <li key={slide.id} className="flex-shrink-0">
-                  <SlideItem
-                    slide={slide}
-                    index={index}
-                    isActive={slide.id === activeSlideId}
-                    isDragging={isDragging}
-                    dropIndicatorAbove={dropIndicatorAbove}
-                    dropIndicatorBelow={dropIndicatorBelow}
-                    thumbnailUrl={thumbnailMap.get(slide.id)}
-                    sections={sections}
-                    readOnly={isViewer}
-                    onActivate={handleActivate}
-                    onPointerDown={isViewer ? () => {} : handlePointerDown}
-                    onDuplicate={handleDuplicate}
-                    onDelete={handleDelete}
-                    onTransition={handleTransition}
-                    onRename={handleRename}
-                    onToggleSkip={handleToggleSkip}
-                    onMoveToSection={handleMoveToSection}
-                  />
-                </li>
-              )
-            }
+            // During a drag, preview the moving slide's indent live — every
+            // other slide uses its committed indent.
+            const indent = isDragging && dragState !== null ? dragState.indent : (slide.indent ?? 0)
+            const hasChildren = outline.hasChildrenMap.get(slide.id) ?? false
 
             return (
-              <>
-                {unsectioned.map(renderSlideEntry)}
-                {sections.map((section) => {
-                  const members = bySection.get(section.id) ?? []
-                  return (
-                    <li key={`section-${section.id}`} className="flex-shrink-0 list-none">
-                      <SectionHeader
-                        section={section}
-                        slideCount={members.length}
-                        readOnly={isViewer}
-                        onToggleCollapsed={handleToggleSectionCollapsed}
-                        onRename={handleRenameSection}
-                        onDelete={handleDeleteSection}
-                      />
-                      {!section.collapsed && (
-                        <ul className="mt-1 flex flex-col gap-2">
-                          {members.map(renderSlideEntry)}
-                        </ul>
-                      )}
-                    </li>
-                  )
-                })}
-              </>
+              <li key={slide.id} className="flex-shrink-0">
+                <SlideItem
+                  slide={slide}
+                  index={idx}
+                  indent={indent}
+                  hasChildren={hasChildren}
+                  collapsed={slide.collapsed === true}
+                  isActive={slide.id === activeSlideId}
+                  isDragging={isDragging}
+                  dropIndicatorAbove={dropIndicatorAbove}
+                  dropIndicatorBelow={dropIndicatorBelow}
+                  thumbnailUrl={thumbnailMap.get(slide.id)}
+                  readOnly={isViewer}
+                  onActivate={handleActivate}
+                  onToggleCollapsed={handleToggleCollapsed}
+                  onPointerDown={isViewer ? () => {} : handlePointerDown}
+                  onDuplicate={handleDuplicate}
+                  onDelete={handleDelete}
+                  onTransition={handleTransition}
+                  onRename={handleRename}
+                  onToggleSkip={handleToggleSkip}
+                />
+              </li>
             )
-          })()}
+          })}
         </ul>
       )}
     </div>

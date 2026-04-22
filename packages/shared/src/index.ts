@@ -25,7 +25,6 @@ export type {
   RadialGradientBackground,
   ImageBackground,
   SlideBackground,
-  DeckSection,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND } from './deck.js'

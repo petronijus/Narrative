@@ -20,24 +20,14 @@ import { useRef, useState, useEffect, useCallback, useId } from 'react'
 // Types
 // ---------------------------------------------------------------------------
 
-interface SectionOption {
-  id: string
-  title: string
-}
-
 interface SlideItemMenuProps {
   slideId: string
   skipped?: boolean
-  /** P3: currently assigned section id (or undefined for unsectioned). */
-  currentSectionId?: string | undefined
-  /** P3: available sections to move the slide into. */
-  sections?: SectionOption[]
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onTransition: (id: string) => void
   onRename?: (id: string) => void
   onToggleSkip?: (id: string) => void
-  onMoveToSection?: (slideId: string, sectionId: string | null) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -47,14 +37,11 @@ interface SlideItemMenuProps {
 export function SlideItemMenu({
   slideId,
   skipped = false,
-  currentSectionId,
-  sections = [],
   onDuplicate,
   onDelete,
   onTransition,
   onRename,
   onToggleSkip,
-  onMoveToSection,
 }: SlideItemMenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const menuId = useId()
@@ -230,46 +217,6 @@ export function SlideItemMenu({
           <button type="button" role="menuitem" onClick={handleTransition} className={ITEM_CLASS}>
             Transition settings
           </button>
-          {onMoveToSection !== undefined && sections.length > 0 && (
-            <>
-              <div className="my-1 border-t border-gray-700" role="separator" />
-              <div className="px-3 py-0.5 text-[10px] uppercase tracking-wider text-gray-500">
-                Move to section
-              </div>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  close()
-                  onMoveToSection(slideId, null)
-                }}
-                disabled={currentSectionId === undefined}
-                className={ITEM_CLASS + ' disabled:opacity-40 disabled:hover:bg-transparent'}
-              >
-                — None —
-              </button>
-              {sections.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    close()
-                    onMoveToSection(slideId, s.id)
-                  }}
-                  disabled={currentSectionId === s.id}
-                  className={
-                    ITEM_CLASS + ' disabled:opacity-40 disabled:hover:bg-transparent truncate'
-                  }
-                  title={s.title}
-                >
-                  {s.title}
-                </button>
-              ))}
-            </>
-          )}
           <div className="my-1 border-t border-gray-700" role="separator" />
           <button
             type="button"

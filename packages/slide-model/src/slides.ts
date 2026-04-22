@@ -93,10 +93,11 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const backgroundMap = yMap.get('background') as Y.Map<unknown> | undefined
   const background = backgroundMap === undefined ? undefined : yMapToBackground(backgroundMap)
 
-  // P3: name + skipped + sectionId. All optional.
+  // P3: name + skipped + indent + collapsed. All optional.
   const name = yMap.get('name') as string | undefined
   const skipped = yMap.get('skipped') as boolean | undefined
-  const sectionId = yMap.get('sectionId') as string | undefined
+  const indent = yMap.get('indent') as number | undefined
+  const collapsed = yMap.get('collapsed') as boolean | undefined
 
   return {
     id,
@@ -106,7 +107,8 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     ...(background !== undefined ? { background } : {}),
     ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
     ...(skipped === true ? { skipped: true } : {}),
-    ...(typeof sectionId === 'string' && sectionId.length > 0 ? { sectionId } : {}),
+    ...(typeof indent === 'number' && indent > 0 ? { indent } : {}),
+    ...(collapsed === true ? { collapsed: true } : {}),
   }
 }
 
@@ -353,22 +355,42 @@ export function setSlideSkipped(
 }
 
 /**
- * Assigns a slide to a section (or clears its section when `sectionId`
- * is null / empty).
+ * Sets the slide's outline indent level. Values ≤ 0 clear the field
+ * (= default level 0). Values are stored verbatim — the caller is
+ * responsible for enforcing "can only indent one level deeper than the
+ * previous slide", since that check needs the slide-list context.
  */
-export function assignSlideToSection(
+export function setSlideIndent(ctx: SlideMutationContext, slideId: string, indent: number): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (indent <= 0) {
+      slideMap.delete('indent')
+    } else {
+      slideMap.set('indent', Math.floor(indent))
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Toggles (or explicitly sets) the slide's outline collapsed flag —
+ * when true, the slides panel hides the slide's indented children.
+ * Presenter-mode ignores the flag.
+ */
+export function setSlideCollapsed(
   ctx: SlideMutationContext,
   slideId: string,
-  sectionId: string | null,
+  collapsed: boolean,
 ): void {
   const idx = findSlideIndex(ctx.slides, slideId)
   if (idx === -1) return
   ctx.doc.transact(() => {
     const slideMap = ctx.slides.get(idx)
-    if (sectionId === null || sectionId === '') {
-      slideMap.delete('sectionId')
+    if (collapsed) {
+      slideMap.set('collapsed', true)
     } else {
-      slideMap.set('sectionId', sectionId)
+      slideMap.delete('collapsed')
     }
   }, LOCAL_ORIGIN)
 }

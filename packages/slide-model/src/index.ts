@@ -56,23 +56,13 @@ export {
   updateSlideBackground,
   setSlideName,
   setSlideSkipped,
-  assignSlideToSection,
+  setSlideIndent,
+  setSlideCollapsed,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
   getSlideNotes,
 } from './slides.js'
-
-// Deck sections (P3)
-export {
-  listSections,
-  subscribeToSections,
-  createSection,
-  removeSection,
-  renameSection,
-  setSectionCollapsed,
-  moveSection,
-} from './sections.js'
 
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
