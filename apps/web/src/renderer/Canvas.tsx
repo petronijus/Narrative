@@ -78,6 +78,15 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
   const pendingChangesRef = useRef<ObjectChangeSet[]>([])
 
   /**
+   * Always points at the latest artboardSize so the async Pixi init can
+   * push bounds to SceneGraph the moment it becomes available — the
+   * `artboardSize`-driven useEffect below can't do that alone because
+   * instanceRef is null on first render.
+   */
+  const artboardSizeRef = useRef(artboardSize)
+  artboardSizeRef.current = artboardSize
+
+  /**
    * Ref guard pro StrictMode double-mount safety.
    * Drží reference na živé instance napříč efektem.
    */
@@ -133,6 +142,14 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       const sceneGraph = new SceneGraph(app)
       if (bleedPx !== 0) {
         sceneGraph.setSlideOrigin(bleedPx, bleedPx)
+      }
+      const initialArtboard = artboardSizeRef.current
+      if (
+        initialArtboard !== undefined &&
+        initialArtboard.width > 0 &&
+        initialArtboard.height > 0
+      ) {
+        sceneGraph.setSlideBounds(initialArtboard.width, initialArtboard.height)
       }
 
       // OverlayCompositor: DOM overlay sync nad Pixi canvasem.

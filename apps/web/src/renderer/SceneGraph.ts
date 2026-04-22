@@ -114,13 +114,20 @@ export class SceneGraph {
   private applyOutsideFade(node: SceneNode): void {
     const w = this.slideBoundsW
     const h = this.slideBoundsH
+    // Respect the object's authored opacity — outside-fade multiplies
+    // on top of it so tuning opacity in the Inspector still does what
+    // it says. Objects without an opacity field default to 1.
+    const baseAlpha =
+      typeof (node.data as { opacity?: number }).opacity === 'number'
+        ? (node.data as { opacity: number }).opacity
+        : 1
     if (w === 0 || h === 0) {
-      node.container.alpha = 1
+      node.container.alpha = baseAlpha
       return
     }
     const { x, y, width, height } = node.data
     const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
-    node.container.alpha = outside ? 0.4 : 1
+    node.container.alpha = outside ? baseAlpha * 0.35 : baseAlpha
   }
 
   /**

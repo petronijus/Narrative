@@ -5,13 +5,18 @@
  * around the artboard). Persisted to localStorage — NOT synced via Y.Doc,
  * because it's a per-viewer display choice, not deck content.
  *
- * The default value `null` means "use the themed default" (`.canvas-backdrop`
- * CSS rule). Any string is treated as a CSS colour and applied inline.
+ * State is shared across all consumers via a tiny pub-sub so that e.g.
+ * the picker and the EditorLayout backdrop both react to the same
+ * current value without a React Context wrapper. `null` means "use the
+ * themed default" (`.canvas-backdrop` CSS rule).
  */
 
 import { useCallback, useEffect, useState } from 'react'
 
 const STORAGE_KEY = 'narrative:stage-bg-color'
+
+type Listener = (next: string | null) => void
+const listeners = new Set<Listener>()
 
 function readStored(): string | null {
   if (typeof window === 'undefined') return null
@@ -23,6 +28,18 @@ function readStored(): string | null {
   }
 }
 
+function writeStored(next: string | null): void {
+  try {
+    if (next === null) {
+      window.localStorage.removeItem(STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(STORAGE_KEY, next)
+    }
+  } catch {
+    // Storage disabled — in-memory state still holds.
+  }
+}
+
 export function useStageBgColor(): {
   color: string | null
   setColor: (next: string | null) => void
@@ -30,26 +47,25 @@ export function useStageBgColor(): {
   const [color, setColorState] = useState<string | null>(() => readStored())
 
   useEffect(() => {
-    // Cross-tab sync — refresh if user changes on another tab
+    const listener: Listener = (next) => setColorState(next)
+    listeners.add(listener)
+
     function onStorage(e: StorageEvent) {
       if (e.key !== STORAGE_KEY) return
-      setColorState(e.newValue === null || e.newValue === '' ? null : e.newValue)
+      const next = e.newValue === null || e.newValue === '' ? null : e.newValue
+      setColorState(next)
     }
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+
+    return () => {
+      listeners.delete(listener)
+      window.removeEventListener('storage', onStorage)
+    }
   }, [])
 
   const setColor = useCallback((next: string | null) => {
-    setColorState(next)
-    try {
-      if (next === null) {
-        window.localStorage.removeItem(STORAGE_KEY)
-      } else {
-        window.localStorage.setItem(STORAGE_KEY, next)
-      }
-    } catch {
-      // Storage disabled — in-memory state still holds.
-    }
+    writeStored(next)
+    for (const listener of listeners) listener(next)
   }, [])
 
   return { color, setColor }
