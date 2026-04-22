@@ -47,6 +47,7 @@ import { createAnimationRuntime } from '@narrative/animation'
 import { createClickInputBridge } from '@narrative/animation'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
 import { VideoOverlay } from '../ui/VideoOverlay.js'
+import { PresenterOverlay } from '../ui/PresenterOverlay.js'
 import type { AnimationRuntime } from '@narrative/animation'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { VideoObject } from '@narrative/shared'
@@ -99,13 +100,22 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   const preloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const showPreloadOverlay = isPreloading && !preloadDismissed
 
+  // M19 phase 3: presenter overlay — toggled by 'N' key. When visible, the
+  // canvas shrinks (via flex-1 min-h-0 on the wrapper) and the overlay takes
+  // the bottom strip with notes / next-slide thumbnail / elapsed timer.
+  const [presenterVisible, setPresenterVisible] = useState(false)
+
   // ---------------------------------------------------------------------------
   // Scale-to-fit: ResizeObserver na fullscreen container
   // ---------------------------------------------------------------------------
 
+  // Slide area element — observed for scale. Different from containerRef
+  // once the presenter overlay is shown (slide area shrinks to leave room).
+  const slideAreaRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
-    const containerEl = containerRef.current
-    if (containerEl === null) return
+    const el = slideAreaRef.current
+    if (el === null) return
 
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -114,10 +124,10 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       setScale(computeScale(width, height))
     })
 
-    observer.observe(containerEl)
+    observer.observe(el)
 
     // Počáteční výpočet (pro případ, že ResizeObserver nepošle entry synchronně)
-    const { width, height } = containerEl.getBoundingClientRect()
+    const { width, height } = el.getBoundingClientRect()
     setScale(computeScale(width, height))
 
     return () => observer.disconnect()
@@ -316,6 +326,12 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
           void toggleFullscreen()
           break
 
+        case 'n':
+        case 'N':
+          e.preventDefault()
+          setPresenterVisible((v) => !v)
+          break
+
         default:
           break
       }
@@ -332,116 +348,122 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 flex items-center justify-center bg-black"
+      className="fixed inset-0 flex flex-col bg-black"
       role="application"
-      aria-label="Presentation — press Escape to return to editor"
+      aria-label="Presentation — press Escape to return to editor, N to toggle presenter view"
     >
       {/*
+        Slide area: flex-1 so it yields space to the presenter overlay below.
         Slide wrapper: pevný CSS size 1920×1080, škálován CSS transformací.
         transform-origin: center center (default) → správné centrování.
         pointer-events: none → žádná interakce na canvas.
         Video overlays have pointer-events: auto (set by OverlayCompositor per element).
       */}
-      <div
-        className={[
-          'relative',
-          showPreloadOverlay ? 'opacity-40' : '',
-          'transition-opacity duration-300',
-        ].join(' ')}
-        style={{
-          width: SLIDE_WIDTH,
-          height: SLIDE_HEIGHT,
-          transform: `scale(${scale})`,
-          transformOrigin: 'center center',
-        }}
-        data-testid="slide-container"
-      >
-        {/* Canvas itself is pointer-events:none */}
-        <div className="pointer-events-none absolute inset-0">
-          <Canvas onReady={onCanvasReady} />
-        </div>
-
-        {/* Video DOM overlays — one per VideoObject on active slide */}
-        {canvasInstance !== null &&
-          videoObjects.map((vidObj) => (
-            <VideoOverlay
-              key={vidObj.id}
-              videoObject={vidObj}
-              sceneGraph={canvasInstance.sceneGraph}
-              compositor={canvasInstance.compositor}
-            />
-          ))}
-      </div>
-
-      {/* M12: Preload overlay */}
-      {showPreloadOverlay && (
+      <div ref={slideAreaRef} className="relative flex min-h-0 flex-1 items-center justify-center">
         <div
-          role="status"
-          aria-label="Preparing presentation"
-          className="absolute inset-0 flex flex-col items-center justify-center z-50 pointer-events-none"
+          className={[
+            'relative',
+            showPreloadOverlay ? 'opacity-40' : '',
+            'transition-opacity duration-300',
+          ].join(' ')}
+          style={{
+            width: SLIDE_WIDTH,
+            height: SLIDE_HEIGHT,
+            transform: `scale(${scale})`,
+            transformOrigin: 'center center',
+          }}
+          data-testid="slide-container"
         >
-          <div className="rounded-2xl bg-gray-900/95 shadow-2xl px-8 py-6 flex flex-col gap-4 w-80 pointer-events-auto">
-            <p className="text-sm font-semibold text-gray-100 text-center">
-              Preparing presentation…
-            </p>
-
-            {/* Progress bar */}
-            <div className="flex flex-col gap-1.5">
-              <div
-                className="h-2 w-full rounded-full bg-gray-700 overflow-hidden"
-                role="progressbar"
-                aria-valuenow={preloadProgress.total > 0 ? preloadProgress.completed : 0}
-                aria-valuemin={0}
-                aria-valuemax={preloadProgress.total}
-              >
-                <div
-                  className="h-full rounded-full bg-blue-500 transition-all duration-300"
-                  style={{
-                    width:
-                      preloadProgress.total > 0
-                        ? `${Math.round((preloadProgress.completed / preloadProgress.total) * 100)}%`
-                        : '0%',
-                  }}
-                />
-              </div>
-              <p className="text-xs text-gray-400 text-center tabular-nums">
-                {preloadProgress.total > 0
-                  ? `${preloadProgress.completed} / ${preloadProgress.total} media items`
-                  : 'Scanning media…'}
-                {preloadProgress.errored > 0 && (
-                  <span className="text-yellow-500 ml-1">({preloadProgress.errored} failed)</span>
-                )}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-              onClick={() => setPreloadDismissed(true)}
-            >
-              Skip and present now
-            </button>
+          {/* Canvas itself is pointer-events:none */}
+          <div className="pointer-events-none absolute inset-0">
+            <Canvas onReady={onCanvasReady} />
           </div>
+
+          {/* Video DOM overlays — one per VideoObject on active slide */}
+          {canvasInstance !== null &&
+            videoObjects.map((vidObj) => (
+              <VideoOverlay
+                key={vidObj.id}
+                videoObject={vidObj}
+                sceneGraph={canvasInstance.sceneGraph}
+                compositor={canvasInstance.compositor}
+              />
+            ))}
         </div>
-      )}
 
-      {/* Slide counter — real index/count (M9) */}
-      <div
-        className="absolute bottom-4 right-4 select-none text-xs text-white/40"
-        aria-hidden="true"
-      >
-        {slides.length > 0
-          ? `${Math.max(1, slides.findIndex((s) => s.id === activeSlideId) + 1)} / ${slides.length}`
-          : '1 / 1'}
+        {/* M12: Preload overlay */}
+        {showPreloadOverlay && (
+          <div
+            role="status"
+            aria-label="Preparing presentation"
+            className="absolute inset-0 flex flex-col items-center justify-center z-50 pointer-events-none"
+          >
+            <div className="rounded-2xl bg-gray-900/95 shadow-2xl px-8 py-6 flex flex-col gap-4 w-80 pointer-events-auto">
+              <p className="text-sm font-semibold text-gray-100 text-center">
+                Preparing presentation…
+              </p>
+
+              {/* Progress bar */}
+              <div className="flex flex-col gap-1.5">
+                <div
+                  className="h-2 w-full rounded-full bg-gray-700 overflow-hidden"
+                  role="progressbar"
+                  aria-valuenow={preloadProgress.total > 0 ? preloadProgress.completed : 0}
+                  aria-valuemin={0}
+                  aria-valuemax={preloadProgress.total}
+                >
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                    style={{
+                      width:
+                        preloadProgress.total > 0
+                          ? `${Math.round((preloadProgress.completed / preloadProgress.total) * 100)}%`
+                          : '0%',
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 text-center tabular-nums">
+                  {preloadProgress.total > 0
+                    ? `${preloadProgress.completed} / ${preloadProgress.total} media items`
+                    : 'Scanning media…'}
+                  {preloadProgress.errored > 0 && (
+                    <span className="text-yellow-500 ml-1">({preloadProgress.errored} failed)</span>
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                onClick={() => setPreloadDismissed(true)}
+              >
+                Skip and present now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Slide counter — real index/count (M9) */}
+        <div
+          className="absolute bottom-4 right-4 select-none text-xs text-white/40"
+          aria-hidden="true"
+        >
+          {slides.length > 0
+            ? `${Math.max(1, slides.findIndex((s) => s.id === activeSlideId) + 1)} / ${slides.length}`
+            : '1 / 1'}
+        </div>
+
+        {/* Escape / presenter hint */}
+        <div
+          className="absolute bottom-4 left-4 select-none text-xs text-white/30"
+          aria-hidden="true"
+        >
+          Esc — back to editor · N — presenter view
+        </div>
       </div>
 
-      {/* Escape hint */}
-      <div
-        className="absolute bottom-4 left-4 select-none text-xs text-white/30"
-        aria-hidden="true"
-      >
-        Esc — back to editor
-      </div>
+      {/* M19 phase 3: presenter overlay — toggled by 'N' */}
+      <PresenterOverlay activeSlideId={activeSlideId} visible={presenterVisible} />
     </div>
   )
 }
