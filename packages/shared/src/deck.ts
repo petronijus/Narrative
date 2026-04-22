@@ -106,4 +106,14 @@ export interface Slide {
   transition: SlideTransition
   /** P2: optional per-slide background fill. Undefined ⇒ DEFAULT_BACKGROUND. */
   background?: SlideBackground
+  /**
+   * P3: optional slide name shown in the slides panel. Also feeds the
+   * overview + speaker notes. Undefined falls back to "Slide {index+1}".
+   */
+  name?: string
+  /**
+   * P3: when true, the slide is hidden from present mode (next/prev skip
+   * over it). Still visible + editable in the editor.
+   */
+  skipped?: boolean
 }

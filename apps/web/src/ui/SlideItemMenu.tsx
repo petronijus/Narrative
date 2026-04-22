@@ -22,9 +22,12 @@ import { useRef, useState, useEffect, useCallback, useId } from 'react'
 
 interface SlideItemMenuProps {
   slideId: string
+  skipped?: boolean
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onTransition: (id: string) => void
+  onRename?: (id: string) => void
+  onToggleSkip?: (id: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -33,9 +36,12 @@ interface SlideItemMenuProps {
 
 export function SlideItemMenu({
   slideId,
+  skipped = false,
   onDuplicate,
   onDelete,
   onTransition,
+  onRename,
+  onToggleSkip,
 }: SlideItemMenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const menuId = useId()
@@ -112,6 +118,24 @@ export function SlideItemMenu({
     [slideId, onTransition, close],
   )
 
+  const handleRename = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      close()
+      onRename?.(slideId)
+    },
+    [slideId, onRename, close],
+  )
+
+  const handleToggleSkip = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      close()
+      onToggleSkip?.(slideId)
+    },
+    [slideId, onToggleSkip, close],
+  )
+
   // Keyboard navigation inside menu
   function handleMenuKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'))
@@ -177,9 +201,19 @@ export function SlideItemMenu({
             'bg-gray-800 py-1 shadow-lg',
           ].join(' ')}
         >
+          {onRename !== undefined && (
+            <button type="button" role="menuitem" onClick={handleRename} className={ITEM_CLASS}>
+              Rename
+            </button>
+          )}
           <button type="button" role="menuitem" onClick={handleDuplicate} className={ITEM_CLASS}>
             Duplicate
           </button>
+          {onToggleSkip !== undefined && (
+            <button type="button" role="menuitem" onClick={handleToggleSkip} className={ITEM_CLASS}>
+              {skipped ? 'Unskip in present' : 'Skip in present'}
+            </button>
+          )}
           <button type="button" role="menuitem" onClick={handleTransition} className={ITEM_CLASS}>
             Transition settings
           </button>

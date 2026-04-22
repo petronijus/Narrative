@@ -22,12 +22,18 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
-import { addSlide, removeSlide, moveSlide } from '@narrative/slide-model'
+import {
+  addSlide,
+  removeSlide,
+  moveSlide,
+  setSlideName,
+  setSlideSkipped,
+} from '@narrative/slide-model'
 import { duplicateSlide } from './slideHelpers.js'
 import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { Plus } from 'lucide-react'
+import { Plus, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
@@ -72,6 +78,8 @@ interface SlideItemProps {
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onTransition: (id: string) => void
+  onRename: (id: string, name: string) => void
+  onToggleSkip: (id: string) => void
 }
 
 function SlideItem({
@@ -88,8 +96,33 @@ function SlideItem({
   onDuplicate,
   onDelete,
   onTransition,
+  onRename,
+  onToggleSkip,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
+  const [editing, setEditing] = useState(false)
+  const [draftName, setDraftName] = useState(slide.name ?? '')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editing) return
+    setDraftName(slide.name ?? '')
+  }, [slide.name, editing])
+
+  useEffect(() => {
+    if (!editing) return
+    const el = inputRef.current
+    if (el === null) return
+    el.focus()
+    el.select()
+  }, [editing])
+
+  const commit = useCallback(() => {
+    onRename(slide.id, draftName)
+    setEditing(false)
+  }, [draftName, slide.id, onRename])
+
+  const displayName = slide.name ?? `Slide ${index + 1}`
 
   return (
     <div
@@ -114,6 +147,7 @@ function SlideItem({
           'relative mx-2 cursor-pointer overflow-hidden rounded',
           'transition-shadow duration-100',
           isActive ? 'ring-2 ring-blue-500' : 'ring-1 ring-gray-700 hover:ring-gray-500',
+          slide.skipped === true ? 'opacity-50' : '',
         ].join(' ')}
         style={{ aspectRatio: '16/9' }}
         onClick={() => onActivate(slide.id)}
@@ -133,6 +167,62 @@ function SlideItem({
         >
           {index + 1}
         </span>
+
+        {/* Skipped badge — corner eye-off icon */}
+        {slide.skipped === true && (
+          <span
+            aria-label="Skipped in present mode"
+            className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+          >
+            <EyeOff className="h-3 w-3" aria-hidden="true" />
+          </span>
+        )}
+      </div>
+
+      {/* Slide name — double-click / F2 to edit */}
+      <div className="mx-2 mt-1 text-[11px] text-muted-foreground">
+        {editing ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commit()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                setDraftName(slide.name ?? '')
+                setEditing(false)
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            placeholder={`Slide ${index + 1}`}
+            className="w-full rounded border border-border bg-surface-1 px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-border-strong"
+          />
+        ) : (
+          <button
+            type="button"
+            onDoubleClick={() => {
+              if (readOnly) return
+              setEditing(true)
+            }}
+            onKeyDown={(e) => {
+              if (!readOnly && e.key === 'F2') {
+                e.preventDefault()
+                setEditing(true)
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-2/60"
+            title={displayName}
+          >
+            {displayName}
+          </button>
+        )}
       </div>
 
       {/* Drop indicator — below */}
@@ -148,9 +238,12 @@ function SlideItem({
         <div className="absolute right-3 top-1">
           <SlideItemMenu
             slideId={slide.id}
+            skipped={slide.skipped === true}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             onTransition={onTransition}
+            onRename={() => setEditing(true)}
+            onToggleSkip={onToggleSkip}
           />
         </div>
       )}
@@ -252,6 +345,26 @@ export function SlidesPanel(): JSX.Element {
       handleActivate(slideId)
     },
     [handleActivate],
+  )
+
+  // ---------------------------------------------------------------------------
+  // Rename + Skip
+  // ---------------------------------------------------------------------------
+
+  const handleRename = useCallback(
+    (slideId: string, name: string) => {
+      setSlideName(deckCtx, slideId, name)
+    },
+    [deckCtx],
+  )
+
+  const handleToggleSkip = useCallback(
+    (slideId: string) => {
+      const s = slides.find((x) => x.id === slideId)
+      if (s === undefined) return
+      setSlideSkipped(deckCtx, slideId, s.skipped !== true)
+    },
+    [deckCtx, slides],
   )
 
   // ---------------------------------------------------------------------------
@@ -448,6 +561,8 @@ export function SlidesPanel(): JSX.Element {
                   onDuplicate={handleDuplicate}
                   onDelete={handleDelete}
                   onTransition={handleTransition}
+                  onRename={handleRename}
+                  onToggleSkip={handleToggleSkip}
                 />
               </li>
             )
