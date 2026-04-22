@@ -116,4 +116,18 @@ export interface Slide {
    * over it). Still visible + editable in the editor.
    */
   skipped?: boolean
+  /**
+   * P3: Keynote-style outline indent level. `0` (default) = top level.
+   * Higher values = child of the nearest previous slide at a lower
+   * indent. Child slides are hidden when any ancestor's `collapsed`
+   * flag is true in the sidebar; present-mode ignores both fields
+   * (collapse is purely a sidebar UX choice).
+   */
+  indent?: number
+  /**
+   * P3: when true, this slide's outline children are hidden in the
+   * slides panel. Only meaningful on slides that have at least one
+   * subsequent slide at a higher indent level.
+   */
+  collapsed?: boolean
 }

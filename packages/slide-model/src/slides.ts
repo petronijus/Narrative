@@ -93,10 +93,11 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const backgroundMap = yMap.get('background') as Y.Map<unknown> | undefined
   const background = backgroundMap === undefined ? undefined : yMapToBackground(backgroundMap)
 
-  // P3: name + skipped. Both optional — name shows in the slides panel,
-  // skipped hides the slide from present-mode navigation.
+  // P3: name + skipped + indent + collapsed. All optional.
   const name = yMap.get('name') as string | undefined
   const skipped = yMap.get('skipped') as boolean | undefined
+  const indent = yMap.get('indent') as number | undefined
+  const collapsed = yMap.get('collapsed') as boolean | undefined
 
   return {
     id,
@@ -106,6 +107,8 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     ...(background !== undefined ? { background } : {}),
     ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
     ...(skipped === true ? { skipped: true } : {}),
+    ...(typeof indent === 'number' && indent > 0 ? { indent } : {}),
+    ...(collapsed === true ? { collapsed: true } : {}),
   }
 }
 
@@ -257,52 +260,14 @@ export function moveSlide(ctx: SlideMutationContext, slideId: string, toIndex: n
   if (fromIdx === clampedTo) return // Already in position
 
   ctx.doc.transact(() => {
-    // Snapshot the slide data BEFORE deletion.
-    // Y.Array items cannot be moved — must delete and re-insert a fresh Y.Map.
-    // We reconstruct the slide Y.Map from the current state of the original.
+    // Y.Array items cannot be moved in place — we delete and re-insert a
+    // detached clone at the target index. Y.Map.clone() deep-clones every
+    // field (including nested Y.Array / Y.XmlFragment / Y.Map), which is
+    // what we need so new schema fields (P2 background, P3 name + skipped,
+    // M19 notes XmlFragment) survive the reorder automatically.
     const originalMap = ctx.slides.get(fromIdx)
-    const id = originalMap.get('id') as string
-    const origObjects = originalMap.get('objects') as Y.Array<Y.Map<unknown>>
-    const origAnimations = originalMap.get('animations') as Y.Array<Y.Map<unknown>>
-    const origTransition = originalMap.get('transition') as Y.Map<unknown>
+    const newSlideMap = originalMap.clone()
 
-    // Build new slide Y.Map
-    const newSlideMap = new Y.Map<unknown>()
-    const newObjects = new Y.Array<Y.Map<unknown>>()
-    const newAnimations = new Y.Array<Y.Map<unknown>>()
-    const newTransition = new Y.Map<unknown>()
-
-    // Clone transition
-    origTransition.forEach((value, key) => {
-      newTransition.set(key, value)
-    })
-
-    // Clone objects
-    const objCopies: Y.Map<unknown>[] = []
-    for (let i = 0; i < origObjects.length; i++) {
-      const src = origObjects.get(i)
-      const copy = new Y.Map<unknown>()
-      src.forEach((value, key) => copy.set(key, value))
-      objCopies.push(copy)
-    }
-    if (objCopies.length > 0) newObjects.push(objCopies)
-
-    // Clone animations
-    const animCopies: Y.Map<unknown>[] = []
-    for (let i = 0; i < origAnimations.length; i++) {
-      const src = origAnimations.get(i)
-      const copy = new Y.Map<unknown>()
-      src.forEach((value, key) => copy.set(key, value))
-      animCopies.push(copy)
-    }
-    if (animCopies.length > 0) newAnimations.push(animCopies)
-
-    newSlideMap.set('id', id)
-    newSlideMap.set('objects', newObjects)
-    newSlideMap.set('animations', newAnimations)
-    newSlideMap.set('transition', newTransition)
-
-    // Delete original and insert clone at target position.
     // insertAt = clampedTo for backward moves (elements after insertAt shift right by 1 after insert).
     // insertAt = clampedTo for forward moves too (after delete fromIdx, elements shift left;
     // but clampedTo already accounts for the final desired position in the original array,
@@ -310,6 +275,57 @@ export function moveSlide(ctx: SlideMutationContext, slideId: string, toIndex: n
     // correct final order regardless of direction).
     ctx.slides.delete(fromIdx, 1)
     ctx.slides.insert(clampedTo, [newSlideMap])
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * P3: moves a set of slides — in the order they currently appear in
+ * the array — to a new position, as a single Yjs transaction. Used by
+ * the slides panel for subtree drag (drag a parent → drag its outline
+ * children too) and for multi-select drag.
+ *
+ * `toIndex` is interpreted relative to the array BEFORE the move.
+ * After the move the moved slides occupy `[adjustedTarget,
+ * adjustedTarget + N)` where adjustedTarget compensates for any
+ * deletions that happened before the target position.
+ */
+export function moveSlidesBlock(
+  ctx: SlideMutationContext,
+  slideIds: string[],
+  toIndex: number,
+): void {
+  if (slideIds.length === 0) return
+
+  ctx.doc.transact(() => {
+    // Collect original indices + clones in the order the caller passed
+    // them. Callers typically pass ids in array order so the clones are
+    // inserted in the same relative order at the target.
+    const originals: Array<{ idx: number; clone: Y.Map<unknown> }> = []
+    for (const id of slideIds) {
+      const idx = findSlideIndex(ctx.slides, id)
+      if (idx === -1) continue
+      originals.push({ idx, clone: ctx.slides.get(idx).clone() })
+    }
+    if (originals.length === 0) return
+
+    // Delete from highest to lowest so earlier deletes don't shift the
+    // later ones' indices.
+    const descendingIdx = [...originals].sort((a, b) => b.idx - a.idx)
+    for (const { idx } of descendingIdx) {
+      ctx.slides.delete(idx, 1)
+    }
+
+    // The caller asked for `toIndex` in the PRE-move array. After
+    // deletions, everything at or after the earliest-deleted index
+    // shifts left by the count of deletions that happened before
+    // `toIndex`. Compute the adjusted target.
+    const removedBeforeTarget = originals.filter((o) => o.idx < toIndex).length
+    const adjusted = Math.max(0, Math.min(ctx.slides.length, toIndex - removedBeforeTarget))
+
+    ctx.slides.insert(
+      adjusted,
+      originals.map((o) => o.clone),
+    )
   }, LOCAL_ORIGIN)
 }
 
@@ -385,6 +401,47 @@ export function setSlideSkipped(
       slideMap.set('skipped', true)
     } else {
       slideMap.delete('skipped')
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Sets the slide's outline indent level. Values ≤ 0 clear the field
+ * (= default level 0). Values are stored verbatim — the caller is
+ * responsible for enforcing "can only indent one level deeper than the
+ * previous slide", since that check needs the slide-list context.
+ */
+export function setSlideIndent(ctx: SlideMutationContext, slideId: string, indent: number): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (indent <= 0) {
+      slideMap.delete('indent')
+    } else {
+      slideMap.set('indent', Math.floor(indent))
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Toggles (or explicitly sets) the slide's outline collapsed flag —
+ * when true, the slides panel hides the slide's indented children.
+ * Presenter-mode ignores the flag.
+ */
+export function setSlideCollapsed(
+  ctx: SlideMutationContext,
+  slideId: string,
+  collapsed: boolean,
+): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (collapsed) {
+      slideMap.set('collapsed', true)
+    } else {
+      slideMap.delete('collapsed')
     }
   }, LOCAL_ORIGIN)
 }

@@ -47,6 +47,7 @@ import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
 import { StageBgPicker } from '../ui/StageBgPicker.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
+import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -130,6 +131,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
+  /** Ref on the scroll container so we can centre the artboard on mount. */
+  const stageScrollRef = useRef<HTMLDivElement>(null)
+
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
   // ---------------------------------------------------------------------------
@@ -160,6 +164,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   useEffect(() => {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
+
+  // On first mount, scroll the stage so the artboard sits in the
+  // horizontal and vertical centre (reveals equal margin on each side
+  // when the window is smaller than the artboard + full margin).
+  useEffect(() => {
+    const el = stageScrollRef.current
+    if (el === null) return
+    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
+    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
+  }, [])
 
   // Canvas size observer
   useEffect(() => {
@@ -549,7 +563,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         <Toolbar />
 
         <div
-          className="canvas-backdrop relative flex flex-1 items-center justify-center overflow-hidden p-6"
+          className="canvas-backdrop relative flex flex-1 overflow-hidden"
           style={{
             cursor: canvasCursor,
             ...(stageBgColor !== null ? { background: stageBgColor } : {}),
@@ -559,70 +573,96 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
         >
-          {/* Stage color picker — local view setting, not synced */}
-          <div className="pointer-events-none absolute right-3 top-3 z-10">
-            <StageBgPicker />
-          </div>
-          {/* Artboard: fixed 16:9, scaled to fit the stage, thin rim
-              border. canvasContainerRef is on THIS inner div so Pixi,
-              SnapGuides, MarqueeOverlay, TransformHandles and the
-              UploadDropZone all work in artboard-local coords. */}
-          <div
-            ref={canvasContainerRef}
-            className="artboard relative rounded-md"
-            style={{
-              aspectRatio: '16 / 9',
-              width: 'min(100%, calc(100vh * 16 / 9))',
-              maxHeight: '100%',
-              background: 'hsl(var(--surface-elevated))',
-              // overflow:visible intentional — objects dragged outside the
-              // artboard remain visible (faded) on the stage backdrop.
-              overflow: 'visible',
-            }}
-          >
-            <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
+          {/* Scrollable stage: artboard has a fixed size, so the
+              backdrop provides scrollbars when the window is smaller. */}
+          <div ref={stageScrollRef} className="flex flex-1 overflow-auto">
+            {/* Stage padding wrapper — 400 px of space around the
+                artboard on every side. width:fit-content makes it hug
+                the artboard + padding so scrollbars reveal the full
+                margin, min-width/min-height:100% stretch the wrapper
+                to at least the viewport when it's larger. Grid
+                place-items keeps the artboard centered in both
+                scenarios without the "stuck to the start" quirk that
+                flex centering has when the content overflows. */}
+            <div
+              style={{
+                width: 'fit-content',
+                minWidth: '100%',
+                minHeight: '100%',
+                padding: 200,
+                boxSizing: 'border-box',
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              {/* Artboard: fixed 1920×1080 logical/CSS size. Slide object
+              coordinates map 1:1 to these pixels, so resizing the
+              window no longer moves objects relative to the slide —
+              the backdrop simply scrolls when the artboard overflows.
+              Zoom-to-fit is a future feature and will adjust a single
+              scale factor on the Pixi stage instead. */}
+              <div
+                ref={canvasContainerRef}
+                className="artboard relative flex-shrink-0 rounded-md"
+                style={{
+                  width: SLIDE_WIDTH,
+                  height: SLIDE_HEIGHT,
+                  background: 'hsl(var(--surface-elevated))',
+                  overflow: 'visible',
+                }}
+              >
+                <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
 
-            {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
+                {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
                 beyond the artboard rect and would otherwise occlude a border
                 on the artboard div. Pointer-events:none to pass clicks
                 through to overlays. */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
-            />
-
-            {/* Snap guide lines — viditelné jen během dragu */}
-            <SnapGuides
-              guides={snapGuides}
-              canvasWidth={canvasSize.width}
-              canvasHeight={canvasSize.height}
-            />
-
-            {/* Marquee selection overlay */}
-            {marquee !== null && <MarqueeOverlay marquee={marquee} />}
-
-            {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
-            <PeerSelectionOverlays />
-
-            {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
-            {!isViewer &&
-              selectedIds.size > 0 &&
-              canvasInstance !== null &&
-              mutationCtx !== null && (
-                <TransformHandles
-                  objectIds={[...selectedIds]}
-                  sceneGraph={canvasInstance.sceneGraph}
-                  mutationCtx={mutationCtx}
-                  onSnapGuides={handleSnapGuides}
-                  otherBounds={otherBounds}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
                 />
-              )}
 
-            {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
-            <PeerCursors />
+                {/* Snap guide lines — viditelné jen během dragu */}
+                <SnapGuides
+                  guides={snapGuides}
+                  canvasWidth={canvasSize.width}
+                  canvasHeight={canvasSize.height}
+                />
 
-            {/* M11: Drop zone for image uploads — inert for viewer role */}
-            <UploadDropZone canvasContainerRef={canvasContainerRef} />
+                {/* Marquee selection overlay */}
+                {marquee !== null && <MarqueeOverlay marquee={marquee} />}
+
+                {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
+                <PeerSelectionOverlays />
+
+                {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
+                {!isViewer &&
+                  selectedIds.size > 0 &&
+                  canvasInstance !== null &&
+                  mutationCtx !== null && (
+                    <TransformHandles
+                      objectIds={[...selectedIds]}
+                      sceneGraph={canvasInstance.sceneGraph}
+                      mutationCtx={mutationCtx}
+                      onSnapGuides={handleSnapGuides}
+                      otherBounds={otherBounds}
+                    />
+                  )}
+
+                {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
+                <PeerCursors />
+
+                {/* M11: Drop zone for image uploads — inert for viewer role */}
+                <UploadDropZone canvasContainerRef={canvasContainerRef} />
+              </div>
+            </div>
+          </div>
+
+          {/* Stage color picker — absolute to the non-scrolling backdrop
+              so it stays pinned to the editor corner while the user
+              scrolls the stage. */}
+          <div className="pointer-events-none absolute right-3 top-3 z-10">
+            <StageBgPicker />
           </div>
         </div>
 

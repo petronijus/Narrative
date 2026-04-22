@@ -28,6 +28,12 @@ interface SlideItemMenuProps {
   onTransition: (id: string) => void
   onRename?: (id: string) => void
   onToggleSkip?: (id: string) => void
+  /**
+   * P3: notifies the parent row when the popover opens / closes so the
+   * row can lift its stacking order while the menu is showing —
+   * otherwise the following slide paints on top of the dropdown.
+   */
+  onOpenChange?: (open: boolean) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -42,8 +48,12 @@ export function SlideItemMenu({
   onTransition,
   onRename,
   onToggleSkip,
+  onOpenChange,
 }: SlideItemMenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
   const menuId = useId()
   const buttonRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
