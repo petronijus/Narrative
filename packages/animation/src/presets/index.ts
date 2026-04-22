@@ -20,7 +20,18 @@ import type { AnimationPreset } from '../types.js'
 type GsapTimeline = ReturnType<typeof gsap.timeline>
 
 import { fadeIn } from './fadeIn.js'
+import { fadeOut } from './fadeOut.js'
 import { slideIn } from './slideIn.js'
+import { slideOut } from './slideOut.js'
+import { scaleIn } from './scaleIn.js'
+import { scaleOut } from './scaleOut.js'
+import { zoomIn } from './zoomIn.js'
+import { rotateIn } from './rotateIn.js'
+import { bounceIn } from './bounceIn.js'
+import { flipIn } from './flipIn.js'
+import { popIn } from './popIn.js'
+import { dissolveIn } from './dissolveIn.js'
+import { wipeIn } from './wipeIn.js'
 
 export type PresetFactory = (
   step: AnimationStep,
@@ -31,7 +42,18 @@ export type PresetFactory = (
 
 const PRESET_REGISTRY = new Map<AnimationPreset, PresetFactory>([
   ['fadeIn', fadeIn],
+  ['fadeOut', fadeOut],
   ['slideIn', slideIn],
+  ['slideOut', slideOut],
+  ['scaleIn', scaleIn],
+  ['scaleOut', scaleOut],
+  ['zoomIn', zoomIn],
+  ['rotateIn', rotateIn],
+  ['bounceIn', bounceIn],
+  ['flipIn', flipIn],
+  ['popIn', popIn],
+  ['dissolveIn', dissolveIn],
+  ['wipeIn', wipeIn],
 ])
 
 /**
@@ -41,4 +63,18 @@ export function getPresetFactory(preset: AnimationPreset): PresetFactory | null 
   return PRESET_REGISTRY.get(preset) ?? null
 }
 
-export { fadeIn, slideIn }
+export {
+  fadeIn,
+  fadeOut,
+  slideIn,
+  slideOut,
+  scaleIn,
+  scaleOut,
+  zoomIn,
+  rotateIn,
+  bounceIn,
+  flipIn,
+  popIn,
+  dissolveIn,
+  wipeIn,
+}

@@ -688,8 +688,11 @@ function AnimationsSection({
 
   return (
     <Section title="Animations">
-      {/* Add buttons */}
-      <div className="flex flex-wrap gap-1">
+      {/* Add dropdown — quick fadeIn button + full preset menu.
+          Presets with direction variants (slideIn / slideOut) encode the
+          direction in the value after a colon; onChange parses and forwards
+          as params. */}
+      <div className="flex items-center gap-1">
         <button
           type="button"
           className={ADD_BUTTON_CLASS}
@@ -698,38 +701,50 @@ function AnimationsSection({
         >
           + fadeIn
         </button>
-        <button
-          type="button"
-          className={ADD_BUTTON_CLASS}
-          onClick={() => handleAddAnimation('slideIn', { direction: 'up' })}
-          aria-label="Add slideIn up animation"
+        <select
+          value=""
+          aria-label="Add animation preset"
+          className="flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+          onChange={(e) => {
+            const val = e.target.value
+            if (val === '') return
+            const [preset, direction] = val.split(':') as [
+              AnimationStep['preset'],
+              string | undefined,
+            ]
+            if (direction !== undefined) {
+              handleAddAnimation(preset, { direction })
+            } else {
+              handleAddAnimation(preset)
+            }
+            // Reset so the same preset can be chosen again.
+            e.target.value = ''
+          }}
         >
-          + slideIn up
-        </button>
-        <button
-          type="button"
-          className={ADD_BUTTON_CLASS}
-          onClick={() => handleAddAnimation('slideIn', { direction: 'down' })}
-          aria-label="Add slideIn down animation"
-        >
-          + slideIn down
-        </button>
-        <button
-          type="button"
-          className={ADD_BUTTON_CLASS}
-          onClick={() => handleAddAnimation('slideIn', { direction: 'left' })}
-          aria-label="Add slideIn left animation"
-        >
-          + slideIn left
-        </button>
-        <button
-          type="button"
-          className={ADD_BUTTON_CLASS}
-          onClick={() => handleAddAnimation('slideIn', { direction: 'right' })}
-          aria-label="Add slideIn right animation"
-        >
-          + slideIn right
-        </button>
+          <option value="">+ More presets…</option>
+          <optgroup label="Enter">
+            <option value="dissolveIn">dissolveIn</option>
+            <option value="scaleIn">scaleIn</option>
+            <option value="zoomIn">zoomIn</option>
+            <option value="rotateIn">rotateIn</option>
+            <option value="bounceIn">bounceIn</option>
+            <option value="flipIn">flipIn</option>
+            <option value="popIn">popIn</option>
+            <option value="wipeIn">wipeIn</option>
+            <option value="slideIn:up">slideIn up</option>
+            <option value="slideIn:down">slideIn down</option>
+            <option value="slideIn:left">slideIn left</option>
+            <option value="slideIn:right">slideIn right</option>
+          </optgroup>
+          <optgroup label="Exit">
+            <option value="fadeOut">fadeOut</option>
+            <option value="scaleOut">scaleOut</option>
+            <option value="slideOut:up">slideOut up</option>
+            <option value="slideOut:down">slideOut down</option>
+            <option value="slideOut:left">slideOut left</option>
+            <option value="slideOut:right">slideOut right</option>
+          </optgroup>
+        </select>
       </div>
 
       {/* Existing animations list */}

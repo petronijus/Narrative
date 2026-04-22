@@ -8,10 +8,26 @@
  */
 
 /**
- * Dostupné animation presety v M6.
- * Rozšíří se v M15 o dalších ~15 presetů.
+ * Dostupné animation presety.
+ * M15 rozšířilo sadu o 10 nových factories (fadeOut, slideOut, scaleIn/Out,
+ * zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn). Text
+ * presety (typewriter, letter-by-letter, word-by-word) vyžadují DOM text
+ * overlay — přijdou v další fázi.
  */
-export type AnimationPreset = 'fadeIn' | 'slideIn'
+export type AnimationPreset =
+  | 'fadeIn'
+  | 'fadeOut'
+  | 'slideIn'
+  | 'slideOut'
+  | 'scaleIn'
+  | 'scaleOut'
+  | 'zoomIn'
+  | 'rotateIn'
+  | 'bounceIn'
+  | 'flipIn'
+  | 'popIn'
+  | 'dissolveIn'
+  | 'wipeIn'
 
 /**
  * Trigger semantics:
@@ -58,8 +74,24 @@ export interface AnimationStep {
 // Type guards
 // ---------------------------------------------------------------------------
 
+const ANIMATION_PRESETS: ReadonlySet<string> = new Set<string>([
+  'fadeIn',
+  'fadeOut',
+  'slideIn',
+  'slideOut',
+  'scaleIn',
+  'scaleOut',
+  'zoomIn',
+  'rotateIn',
+  'bounceIn',
+  'flipIn',
+  'popIn',
+  'dissolveIn',
+  'wipeIn',
+])
+
 export function isAnimationPreset(s: string): s is AnimationPreset {
-  return s === 'fadeIn' || s === 'slideIn'
+  return ANIMATION_PRESETS.has(s)
 }
 
 export function isAnimationTrigger(s: string): s is AnimationTrigger {
