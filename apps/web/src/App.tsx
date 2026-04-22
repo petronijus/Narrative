@@ -10,7 +10,7 @@
  *   - share_token query param bypasses auth (anonymous viewer path).
  */
 
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { AuthProvider } from './state/AuthContext.js'
 import { ThemeProvider } from './state/ThemeContext.js'
 import { Landing } from './pages/Landing.js'
@@ -45,13 +45,22 @@ export function App() {
             </Route>
           </Routes>
           {/* Global bottom-left chrome: auto-bumping build version + a
-              tri-state theme toggle (system / light / dark). */}
-          <div className="pointer-events-auto fixed bottom-2 left-2 z-50 flex items-center gap-1">
-            <VersionChip />
-            <ThemeToggle />
-          </div>
+              tri-state theme toggle (system / light / dark). Hidden on
+              present route — the presenter view must stay clean. */}
+          <GlobalChrome />
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
+  )
+}
+
+function GlobalChrome() {
+  const location = useLocation()
+  if (location.pathname.endsWith('/present')) return null
+  return (
+    <div className="pointer-events-auto fixed bottom-2 left-2 z-50 flex items-center gap-1">
+      <VersionChip />
+      <ThemeToggle />
+    </div>
   )
 }

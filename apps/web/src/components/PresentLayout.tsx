@@ -549,14 +549,18 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
           </div>
         )}
 
-        {/* Slide counter — real index/count (M9) */}
+        {/* Slide counter — skipped slides are excluded from both the
+            running index and the total (P3). */}
         <div
           className="absolute bottom-4 right-4 select-none text-xs text-white/40"
           aria-hidden="true"
         >
-          {slides.length > 0
-            ? `${Math.max(1, slides.findIndex((s) => s.id === activeSlideId) + 1)} / ${slides.length}`
-            : '1 / 1'}
+          {(() => {
+            const presentable = slides.filter((s) => s.skipped !== true)
+            if (presentable.length === 0) return '1 / 1'
+            const activeIdx = presentable.findIndex((s) => s.id === activeSlideId)
+            return `${Math.max(1, activeIdx + 1)} / ${presentable.length}`
+          })()}
         </div>
 
         {/* Escape / presenter hint + pop-out */}

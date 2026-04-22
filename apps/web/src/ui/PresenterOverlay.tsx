@@ -85,9 +85,13 @@ export function PresenterOverlay({
     [notesFragment],
   )
 
-  const activeIdx = slides.findIndex((s) => s.id === activeSlideId)
+  // P3: present-mode navigation (and the counter) ignores skipped slides.
+  const presentable = slides.filter((s) => s.skipped !== true)
+  const activeIdx = presentable.findIndex((s) => s.id === activeSlideId)
   const nextSlide =
-    activeIdx >= 0 && activeIdx < slides.length - 1 ? (slides[activeIdx + 1] ?? null) : null
+    activeIdx >= 0 && activeIdx < presentable.length - 1
+      ? (presentable[activeIdx + 1] ?? null)
+      : null
 
   // Only thumbnail the next slide (and the current one so the renderer keeps
   // it warm). Limiting the set keeps the background renderer's work bounded.
@@ -137,7 +141,7 @@ export function PresenterOverlay({
             Notes
           </span>
           <span className="font-mono text-[10px] tabular-nums text-gray-500">
-            Slide {activeIdx + 1} / {slides.length}
+            Slide {activeIdx + 1} / {presentable.length}
           </span>
         </div>
         {notesFragment === null || notesText.length === 0 ? (
