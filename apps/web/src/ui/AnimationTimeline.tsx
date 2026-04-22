@@ -31,7 +31,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
-import { removeAnimation } from '@narrative/slide-model'
+import { removeAnimation, updateAnimation } from '@narrative/slide-model'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
 import { useAnimations } from '../state/useAnimations.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
@@ -108,10 +108,11 @@ function triggerColor(trigger: AnimationTrigger): string {
   }
 }
 
-function barBaseClass(selected: boolean): string {
+function barBaseClass(selected: boolean, isViewer: boolean): string {
   return [
     'absolute flex items-center gap-1 rounded text-[11px] text-white shadow-sm',
-    'cursor-pointer select-none overflow-hidden',
+    isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+    'select-none overflow-hidden',
     'bg-gray-700 hover:bg-gray-600 transition-colors',
     selected ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-gray-900' : '',
   ].join(' ')
@@ -145,6 +146,27 @@ export function AnimationTimeline() {
   const [playheadSec, setPlayheadSec] = useState<number>(0)
   const [isPlaying, setIsPlaying] = useState<boolean>(false)
 
+  // Drag-to-edit state. Two modes:
+  //   'body'   → horizontal drag of the bar body adjusts step.delay so the
+  //              bar relocates along the timeline relative to its trigger
+  //              anchor (0 for onEnter, prev.startSec for withPrevious,
+  //              prev.endSec for afterPrevious / onClick). Successors that
+  //              chain off this step's end will cascade.
+  //   'resize' → horizontal drag of the right-edge grip adjusts step.duration.
+  // Writes flow through updateAnimation on each pointermove — Y.Doc is
+  // local-first so React picks up the new snapshot immediately and the bar
+  // follows the cursor in sync. The drag threshold (3 px) distinguishes
+  // a click (→ select) from a drag.
+  const dragStateRef = useRef<{
+    stepId: string
+    mode: 'body' | 'resize'
+    startPointerX: number
+    anchorSec: number
+    originalDelay: number
+    originalDuration: number
+    hasMoved: boolean
+  } | null>(null)
+
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev
@@ -177,6 +199,100 @@ export function AnimationTimeline() {
     },
     [animationsCtx],
   )
+
+  // ---------------------------------------------------------------------------
+  // Drag to edit (body → delay, right-edge grip → duration)
+  // ---------------------------------------------------------------------------
+
+  const MIN_DURATION_SEC = 0.1
+  const DRAG_THRESHOLD_PX = 3
+  const SNAP_SEC = 0.05
+
+  /** Round to the nearest multiple of `step`, suppressed by holding Shift. */
+  function quantize(valueSec: number, snap: number): number {
+    if (snap <= 0) return valueSec
+    return Math.round(valueSec / snap) * snap
+  }
+
+  /** Anchor time for step at index idx (the "0 delay" baseline on the timeline). */
+  function anchorSecForIndex(idx: number): number {
+    if (idx === 0) return 0
+    const step = laidOut[idx]?.step
+    if (step === undefined) return 0
+    if (step.trigger === 'onEnter') return 0
+    const prev = laidOut[idx - 1]
+    if (prev === undefined) return 0
+    if (step.trigger === 'withPrevious') return prev.startSec
+    // afterPrevious | onClick → prev.endSec
+    return prev.startSec + (prev.step.duration ?? 0)
+  }
+
+  const beginDrag = useCallback(
+    (
+      e: React.PointerEvent<HTMLElement>,
+      step: AnimationStep,
+      rowIdx: number,
+      mode: 'body' | 'resize',
+    ) => {
+      if (isViewer || animationsCtx === null) return
+      e.currentTarget.setPointerCapture(e.pointerId)
+      e.stopPropagation()
+      dragStateRef.current = {
+        stepId: step.id,
+        mode,
+        startPointerX: e.clientX,
+        anchorSec: anchorSecForIndex(rowIdx),
+        originalDelay: step.delay ?? 0,
+        originalDuration: step.duration ?? 0,
+        hasMoved: false,
+      }
+    },
+    // laidOut closes over the latest snapshot; inline usage of anchorSecForIndex
+    // therefore stays current. eslint-disable because that closure is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isViewer, animationsCtx, laidOut],
+  )
+
+  const handleDragMove = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const drag = dragStateRef.current
+      if (drag === null || animationsCtx === null) return
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+
+      const dx = e.clientX - drag.startPointerX
+      if (!drag.hasMoved && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+      drag.hasMoved = true
+
+      const snap = e.shiftKey ? 0 : SNAP_SEC
+      const deltaSec = dx / PX_PER_SEC
+
+      if (drag.mode === 'body') {
+        const newDelay = Math.max(0, quantize(drag.originalDelay + deltaSec, snap))
+        updateAnimation(animationsCtx, drag.stepId, { delay: newDelay })
+      } else {
+        const newDuration = Math.max(
+          MIN_DURATION_SEC,
+          quantize(drag.originalDuration + deltaSec, snap),
+        )
+        updateAnimation(animationsCtx, drag.stepId, { duration: newDuration })
+      }
+    },
+    [animationsCtx],
+  )
+
+  const endDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = dragStateRef.current
+    if (drag === null) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    const wasDrag = drag.hasMoved
+    dragStateRef.current = null
+    // If the pointer never moved past the threshold, treat as click → select.
+    if (!wasDrag) {
+      setSelectedId(drag.stepId)
+    }
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Playback
@@ -444,17 +560,28 @@ export function AnimationTimeline() {
                       style={{ top: ROW_HEIGHT / 2 }}
                     />
 
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(step.id)}
-                      className={barBaseClass(isSelected)}
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onPointerDown={(e) => beginDrag(e, step, rowIdx, 'body')}
+                      onPointerMove={handleDragMove}
+                      onPointerUp={endDrag}
+                      onPointerCancel={endDrag}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation()
+                          setSelectedId(step.id)
+                        }
+                      }}
+                      className={barBaseClass(isSelected, isViewer)}
                       style={{
                         left: leftPx,
                         width: widthPx,
                         top: BAR_TOP,
                         height: BAR_HEIGHT,
+                        touchAction: 'none',
                       }}
-                      title={`${label} • trigger: ${step.trigger} • ${step.duration ?? 0}s • delay ${step.delay ?? 0}s`}
+                      title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
                       aria-label={`Animation ${label}, trigger ${step.trigger}`}
                     >
                       <span
@@ -468,6 +595,7 @@ export function AnimationTimeline() {
                           tabIndex={0}
                           aria-label={`Remove animation ${label}`}
                           className="ml-auto flex h-full w-5 flex-shrink-0 items-center justify-center text-gray-300 hover:bg-red-600/40 hover:text-white"
+                          onPointerDown={(e) => e.stopPropagation()}
                           onClick={(e) => {
                             e.stopPropagation()
                             handleRemove(step.id)
@@ -482,7 +610,24 @@ export function AnimationTimeline() {
                           ×
                         </span>
                       )}
-                    </button>
+                      {/* Right-edge resize grip — drag to adjust step.duration.
+                          Only shown for editors. Stops propagation so it
+                          doesn't also trigger the body-drag. */}
+                      {!isViewer && (
+                        <span
+                          aria-label={`Resize ${label}`}
+                          onPointerDown={(e) => {
+                            e.stopPropagation()
+                            beginDrag(e, step, rowIdx, 'resize')
+                          }}
+                          onPointerMove={handleDragMove}
+                          onPointerUp={endDrag}
+                          onPointerCancel={endDrag}
+                          className="absolute right-0 top-0 h-full w-2 cursor-ew-resize hover:bg-white/20"
+                          style={{ touchAction: 'none' }}
+                        />
+                      )}
+                    </div>
                   </div>
                 )
               })}
