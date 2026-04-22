@@ -338,23 +338,25 @@ function SlideItem({
             </button>
           )}
         </div>
-
-        {/* Three-dot menu button — hidden for viewer role */}
-        {!readOnly && (
-          <div className="absolute right-3 top-1">
-            <SlideItemMenu
-              slideId={slide.id}
-              skipped={slide.skipped === true}
-              onDuplicate={onDuplicate}
-              onDelete={onDelete}
-              onTransition={onTransition}
-              onRename={() => setEditing(true)}
-              onToggleSkip={onToggleSkip}
-              onOpenChange={setMenuOpen}
-            />
-          </div>
-        )}
       </div>
+
+      {/* Three-dot menu — placed OUTSIDE the inner overflow:hidden
+          wrapper so its dropdown isn't clipped by the collapse-animation
+          container. Sits absolute against the outer row instead. */}
+      {!readOnly && (
+        <div className="absolute right-3 top-1">
+          <SlideItemMenu
+            slideId={slide.id}
+            skipped={slide.skipped === true}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete}
+            onTransition={onTransition}
+            onRename={() => setEditing(true)}
+            onToggleSkip={onToggleSkip}
+            onOpenChange={setMenuOpen}
+          />
+        </div>
+      )}
     </div>
   )
 }
