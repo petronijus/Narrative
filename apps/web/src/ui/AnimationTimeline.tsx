@@ -93,13 +93,15 @@ const RULER_HEIGHT = 18
 const BAR_TOP = 4
 const BAR_HEIGHT = ROW_HEIGHT - 2 * BAR_TOP
 /**
- * Left-edge padding before the timeline content starts. Kept at 0 now that
- * reorder happens via horizontal bar drag (Premiere-style) rather than a
- * left-gutter grip; the constant is still referenced in px→time math for
- * the ruler, bar positioning, and scrub so it's easy to reinstate a gutter
- * later without touching those call sites.
+ * Sticky left gutter on every row showing the object id (or truncated name).
+ * Each row in the timeline corresponds to one SlideObject; its animations
+ * all live on the same row, positioned by absolute start time. The label
+ * column stays pinned as the track scrolls horizontally so you always know
+ * which object's animations you're looking at.
  */
-const GRIP_WIDTH = 0
+const TRACK_LABEL_WIDTH = 96
+/** Legacy alias — the ruler / bar / scrub math refers to it. */
+const GRIP_WIDTH = TRACK_LABEL_WIDTH
 
 const COLLAPSE_STORAGE_KEY = 'narrative:animTimeline:collapsed'
 
@@ -194,6 +196,27 @@ export function AnimationTimeline() {
   }, [])
 
   const laidOut = useMemo(() => layoutSteps(animations), [animations])
+
+  // Group laidOut steps by objectId. Each unique objectId gets its own row;
+  // insertion order is "first-seen in the current Y.Array" so row positions
+  // remain stable as the user drags bars around in time. The time ordering
+  // lives purely in bar positions, not in row ordering.
+  const rows = useMemo(() => {
+    const buckets = new Map<string, LaidOutStep[]>()
+    const order: string[] = []
+    for (const l of laidOut) {
+      const oid = l.step.objectId
+      const existing = buckets.get(oid)
+      if (existing === undefined) {
+        buckets.set(oid, [l])
+        order.push(oid)
+      } else {
+        existing.push(l)
+      }
+    }
+    return order.map((oid) => ({ objectId: oid, items: buckets.get(oid) ?? [] }))
+  }, [laidOut])
+
   const totalSec = useMemo(() => {
     // Minimum 3 s so the ruler always has something useful.
     return laidOut.reduce(
@@ -232,7 +255,7 @@ export function AnimationTimeline() {
     (
       e: React.PointerEvent<HTMLElement>,
       step: AnimationStep,
-      rowIdx: number,
+      absStart: number,
       mode: 'body' | 'resize',
     ) => {
       if (isViewer || animationsCtx === null) return
@@ -242,15 +265,13 @@ export function AnimationTimeline() {
         stepId: step.id,
         mode,
         startPointerX: e.clientX,
-        originalAbsStart: laidOut[rowIdx]?.startSec ?? step.delay ?? 0,
+        originalAbsStart: absStart,
         originalDuration: step.duration ?? 0,
         hasMoved: false,
         converted: false,
       }
     },
-    // laidOut closes over the latest snapshot so rowIdx → startSec is current.
-
-    [isViewer, animationsCtx, laidOut],
+    [isViewer, animationsCtx],
   )
 
   const handleDragMove = useCallback(
@@ -495,7 +516,7 @@ export function AnimationTimeline() {
         <div
           className="overflow-auto"
           style={{
-            height: Math.min(220, RULER_HEIGHT + Math.max(laidOut.length, 1) * ROW_HEIGHT + 8),
+            height: Math.min(220, RULER_HEIGHT + Math.max(rows.length, 1) * ROW_HEIGHT + 8),
           }}
         >
           {laidOut.length === 0 ? (
@@ -548,7 +569,7 @@ export function AnimationTimeline() {
                 className="pointer-events-none absolute top-0 z-20"
                 style={{
                   left: GRIP_WIDTH + Math.round(playheadSec * PX_PER_SEC),
-                  height: RULER_HEIGHT + laidOut.length * ROW_HEIGHT,
+                  height: RULER_HEIGHT + rows.length * ROW_HEIGHT,
                   width: 1,
                   backgroundColor: 'rgb(239 68 68)', // red-500
                 }}
@@ -567,102 +588,118 @@ export function AnimationTimeline() {
                 />
               </div>
 
-              {/* Rows */}
+              {/* Rows — one per unique objectId (first-seen order). All
+                  animations on a given object live on the same row,
+                  positioned by their absolute start time. */}
               <div className="relative">
-                {laidOut.map(({ step, startSec }, rowIdx) => {
-                  const isSelected = selectedId === step.id
-                  const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
-                  const widthPx = Math.max(Math.round((step.duration ?? 0) * PX_PER_SEC), 24)
-                  const dir =
-                    (step.params as { direction?: string } | undefined)?.direction ?? undefined
-                  const label = dir !== undefined ? `${step.preset} (${dir})` : step.preset
-
-                  return (
+                {rows.map(({ objectId, items }, rowIdx) => (
+                  <div
+                    key={objectId}
+                    className={[
+                      'relative',
+                      rowIdx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/60',
+                    ].join(' ')}
+                    style={{ height: ROW_HEIGHT, width: trackWidthPx }}
+                  >
+                    {/* Row baseline — helps the eye align bars to the ruler. */}
                     <div
-                      key={step.id}
-                      className={[
-                        'relative',
-                        rowIdx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/60',
-                      ].join(' ')}
-                      style={{ height: ROW_HEIGHT, width: trackWidthPx }}
-                    >
-                      {/* Row baseline — helps the eye align bars to the ruler. */}
-                      <div
-                        className="absolute right-0 border-t border-gray-800/50"
-                        style={{ left: GRIP_WIDTH, top: ROW_HEIGHT / 2 }}
-                      />
+                      className="absolute right-0 border-t border-gray-800/50"
+                      style={{ left: GRIP_WIDTH, top: ROW_HEIGHT / 2 }}
+                    />
 
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        onPointerDown={(e) => beginDrag(e, step, rowIdx, 'body')}
-                        onPointerMove={handleDragMove}
-                        onPointerUp={endDrag}
-                        onPointerCancel={endDrag}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.stopPropagation()
-                            setSelectedId(step.id)
-                          }
-                        }}
-                        className={barBaseClass(isSelected, isViewer)}
-                        style={{
-                          left: leftPx,
-                          width: widthPx,
-                          top: BAR_TOP,
-                          height: BAR_HEIGHT,
-                          touchAction: 'none',
-                        }}
-                        title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
-                        aria-label={`Animation ${label}, trigger ${step.trigger}`}
-                      >
-                        <span
-                          className={`flex-shrink-0 ${triggerColor(step.trigger)}`}
-                          style={{ width: 4, height: BAR_HEIGHT }}
-                        />
-                        <span className="truncate px-1">{label}</span>
-                        {!isViewer && isSelected && (
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Remove animation ${label}`}
-                            className="ml-auto flex h-full w-5 flex-shrink-0 items-center justify-center text-gray-300 hover:bg-red-600/40 hover:text-white"
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => {
+                    {/* Sticky-left label column showing the object id. Stays
+                        pinned while the user scrolls the track horizontally
+                        so the row-to-object mapping is always visible. */}
+                    <div
+                      className="sticky left-0 z-10 flex h-full items-center border-r border-gray-800 bg-gray-900/90 px-2"
+                      style={{ width: TRACK_LABEL_WIDTH }}
+                      title={objectId}
+                    >
+                      <span className="truncate font-mono text-[10px] text-gray-400">
+                        {objectId}
+                      </span>
+                    </div>
+
+                    {/* Bars — one per animation on this object. */}
+                    {items.map(({ step, startSec }) => {
+                      const isSelected = selectedId === step.id
+                      const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
+                      const widthPx = Math.max(Math.round((step.duration ?? 0) * PX_PER_SEC), 24)
+                      const dir =
+                        (step.params as { direction?: string } | undefined)?.direction ?? undefined
+                      const label = dir !== undefined ? `${step.preset} (${dir})` : step.preset
+
+                      return (
+                        <div
+                          key={step.id}
+                          role="button"
+                          tabIndex={0}
+                          onPointerDown={(e) => beginDrag(e, step, startSec, 'body')}
+                          onPointerMove={handleDragMove}
+                          onPointerUp={endDrag}
+                          onPointerCancel={endDrag}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
                               e.stopPropagation()
-                              handleRemove(step.id)
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
+                              setSelectedId(step.id)
+                            }
+                          }}
+                          className={barBaseClass(isSelected, isViewer)}
+                          style={{
+                            left: leftPx,
+                            width: widthPx,
+                            top: BAR_TOP,
+                            height: BAR_HEIGHT,
+                            touchAction: 'none',
+                          }}
+                          title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
+                          aria-label={`Animation ${label}, trigger ${step.trigger}`}
+                        >
+                          <span
+                            className={`flex-shrink-0 ${triggerColor(step.trigger)}`}
+                            style={{ width: 4, height: BAR_HEIGHT }}
+                          />
+                          <span className="truncate px-1">{label}</span>
+                          {!isViewer && isSelected && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label={`Remove animation ${label}`}
+                              className="ml-auto flex h-full w-5 flex-shrink-0 items-center justify-center text-gray-300 hover:bg-red-600/40 hover:text-white"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
                                 e.stopPropagation()
                                 handleRemove(step.id)
-                              }
-                            }}
-                          >
-                            ×
-                          </span>
-                        )}
-                        {/* Right-edge resize grip — drag to adjust step.duration.
-                          Only shown for editors. Stops propagation so it
-                          doesn't also trigger the body-drag. */}
-                        {!isViewer && (
-                          <span
-                            aria-label={`Resize ${label}`}
-                            onPointerDown={(e) => {
-                              e.stopPropagation()
-                              beginDrag(e, step, rowIdx, 'resize')
-                            }}
-                            onPointerMove={handleDragMove}
-                            onPointerUp={endDrag}
-                            onPointerCancel={endDrag}
-                            className="absolute right-0 top-0 h-full w-2 cursor-ew-resize hover:bg-white/20"
-                            style={{ touchAction: 'none' }}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.stopPropagation()
+                                  handleRemove(step.id)
+                                }
+                              }}
+                            >
+                              ×
+                            </span>
+                          )}
+                          {!isViewer && (
+                            <span
+                              aria-label={`Resize ${label}`}
+                              onPointerDown={(e) => {
+                                e.stopPropagation()
+                                beginDrag(e, step, startSec, 'resize')
+                              }}
+                              onPointerMove={handleDragMove}
+                              onPointerUp={endDrag}
+                              onPointerCancel={endDrag}
+                              className="absolute right-0 top-0 h-full w-2 cursor-ew-resize hover:bg-white/20"
+                              style={{ touchAction: 'none' }}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ))}
               </div>
             </div>
           )}
