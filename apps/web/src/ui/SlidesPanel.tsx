@@ -706,6 +706,13 @@ export function SlidesPanel(): JSX.Element {
   return (
     <div
       className="flex h-full flex-col select-none"
+      onMouseDown={(e) => {
+        // Shift-click extends the browser's text selection by default,
+        // which otherwise highlights the entire sidebar when users try
+        // to extend their multi-select. Cancelling the default aborts
+        // the text-range extension without blocking the click itself.
+        if (e.shiftKey) e.preventDefault()
+      }}
       onPointerMove={handlePointerMove as unknown as React.PointerEventHandler<HTMLDivElement>}
       onPointerUp={handlePointerUp as unknown as React.PointerEventHandler<HTMLDivElement>}
     >
@@ -749,16 +756,18 @@ export function SlidesPanel(): JSX.Element {
         >
           {slides.map((slide, idx) => {
             const isDragging = draggingSet !== null && draggingSet.has(slide.id)
-            const dropIndicatorAbove =
+            // Drop indicator fires on the slide that will be pushed by
+            // the insertion. moveSlidesBlock re-inserts at `insertAt`
+            // in the PRE-move array, so the block lands immediately
+            // before the slide currently at `insertAt` (or after the
+            // last slide when insertAt >= slides.length).
+            const showIndicator =
               dragState !== null &&
               !draggingSet!.has(slide.id) &&
-              dragState.insertAt === idx &&
-              dragState.insertAt < dragState.fromIndex
+              dragState.insertAt !== dragState.fromIndex
+            const dropIndicatorAbove = showIndicator && dragState!.insertAt === idx
             const dropIndicatorBelow =
-              dragState !== null &&
-              !draggingSet!.has(slide.id) &&
-              dragState.insertAt === idx &&
-              dragState.insertAt > dragState.fromIndex
+              showIndicator && dragState!.insertAt >= slides.length && idx === slides.length - 1
 
             // Live-preview indent only for the dragged *root* slide.
             const isDragRoot = dragState !== null && dragState.slideIds[0] === slide.id
