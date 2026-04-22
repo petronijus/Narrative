@@ -199,6 +199,17 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         // elements against a torn-down Pixi app otherwise).
         onReady?.(null)
 
+        // Stop the Pixi ticker FIRST so a rAF callback that's already
+        // been scheduled for the next frame can't fire against our
+        // about-to-be-destroyed scene graph. Fixes the "Cannot read
+        // properties of null (reading 'clear')" crash users hit when
+        // bouncing quickly between the editor and present mode.
+        try {
+          liveApp.ticker.stop()
+        } catch {
+          // App was already destroyed by a concurrent cleanup — safe to ignore.
+        }
+
         liveGraph.destroy()
         liveRM.destroyAll()
         // Compositor musí být zničen PŘED app.destroy() — potřebuje ticker pro cleanup

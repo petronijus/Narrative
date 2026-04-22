@@ -189,6 +189,14 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       await Promise.allSettled(readyPromises)
     }
 
+    // The app may have been destroyed during the await above (e.g. the
+    // user navigated to present mode while thumbnails were still being
+    // rendered). Abort instead of touching a torn-down renderer.
+    if (destroyed || app.renderer === null) {
+      slideContainer.destroy({ children: true })
+      throw new Error('[ThumbnailRenderer] renderer has been destroyed')
+    }
+
     app.stage.addChild(slideContainer)
 
     // Render one frame synchronously — the offscreen app is not running a ticker.
