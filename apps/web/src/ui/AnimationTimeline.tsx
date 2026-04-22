@@ -29,11 +29,15 @@
  *   `layoutSteps` below. totalDurationSec drives the viewport width.
  */
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation } from '@narrative/slide-model'
+import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
 import { useAnimations } from '../state/useAnimations.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useSlideObjects } from '../state/useSlideObjects.js'
+import { createPixiTargetResolver } from '../animation/targetResolver.js'
 
 // ---------------------------------------------------------------------------
 // Layout math
@@ -120,6 +124,8 @@ function barBaseClass(selected: boolean): string {
 export function AnimationTimeline() {
   const { animations, animationsCtx } = useAnimations()
   const { role } = useDeckRole()
+  const canvasInstance = useCanvasInstance()
+  const { objects: slideObjects } = useSlideObjects()
   const isViewer = role === 'viewer'
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -130,6 +136,14 @@ export function AnimationTimeline() {
     }
   })
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  // Preview playback state. The runtime is created on demand from the current
+  // animations snapshot and lives only for the preview session — destroyed on
+  // stop/unmount/animations change/canvas swap.
+  const runtimeRef = useRef<AnimationRuntime | null>(null)
+  const rafIdRef = useRef<number | null>(null)
+  const [playheadSec, setPlayheadSec] = useState<number>(0)
+  const [isPlaying, setIsPlaying] = useState<boolean>(false)
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
@@ -164,6 +178,123 @@ export function AnimationTimeline() {
     [animationsCtx],
   )
 
+  // ---------------------------------------------------------------------------
+  // Playback
+  // ---------------------------------------------------------------------------
+
+  const resetCanvasFromData = useCallback(() => {
+    // Animations mutate Pixi container transforms directly; after preview we
+    // want the editor canvas to reflect the committed Y.Doc state again.
+    // SceneGraph.render does a full diff — for objects that still exist it
+    // calls renderer.update(container, prev, next) which re-applies the
+    // canonical transform props. That clears GSAP's lingering mutations.
+    canvasInstance?.sceneGraph.render(slideObjects)
+  }, [canvasInstance, slideObjects])
+
+  const stopPlayheadLoop = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current)
+      rafIdRef.current = null
+    }
+  }, [])
+
+  const startPlayheadLoop = useCallback(() => {
+    stopPlayheadLoop()
+    const tick = () => {
+      const rt = runtimeRef.current
+      if (rt === null) return
+      setPlayheadSec(rt.time())
+      if (rt.isPlaying()) {
+        rafIdRef.current = requestAnimationFrame(tick)
+      } else {
+        // Natural end or external pause — stop looping but keep playhead where it is.
+        rafIdRef.current = null
+        setIsPlaying(false)
+      }
+    }
+    rafIdRef.current = requestAnimationFrame(tick)
+  }, [stopPlayheadLoop])
+
+  const teardownRuntime = useCallback(() => {
+    stopPlayheadLoop()
+    const rt = runtimeRef.current
+    if (rt !== null) {
+      rt.destroy()
+      runtimeRef.current = null
+    }
+  }, [stopPlayheadLoop])
+
+  // Any time the animations or canvas changes, the current runtime is stale —
+  // tear it down so the next Play recompiles against fresh containers.
+  useEffect(() => {
+    teardownRuntime()
+    setIsPlaying(false)
+    setPlayheadSec(0)
+    // Intentionally NOT calling resetCanvasFromData here: we only want to
+    // reset when the USER stops. An animation add/remove shouldn't visually
+    // snap the scene if the user didn't ask for it.
+  }, [animations, canvasInstance, teardownRuntime])
+
+  useEffect(() => {
+    return () => {
+      teardownRuntime()
+    }
+  }, [teardownRuntime])
+
+  const ensureRuntime = useCallback((): AnimationRuntime | null => {
+    if (runtimeRef.current !== null) return runtimeRef.current
+    if (canvasInstance === null) return null
+    if (animations.length === 0) return null
+    const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
+    // No inputBridge — the preview treats onClick like afterPrevious by
+    // auto-advancing. That's simpler than wiring a "click the canvas to
+    // advance" hint; authors can still test onClick by using Present mode.
+    const runtime = createAnimationRuntime(animations, { targetResolver: resolver })
+    runtimeRef.current = runtime
+    return runtime
+  }, [animations, canvasInstance])
+
+  const handlePlayPause = useCallback(() => {
+    const rt = ensureRuntime()
+    if (rt === null) return
+    if (rt.isPlaying()) {
+      rt.pause()
+      stopPlayheadLoop()
+      setIsPlaying(false)
+      return
+    }
+    // If playhead is at end, rewind before playing.
+    if (rt.time() >= rt.duration() - 0.001) {
+      rt.seek(0)
+    }
+    rt.play()
+    setIsPlaying(true)
+    startPlayheadLoop()
+  }, [ensureRuntime, startPlayheadLoop, stopPlayheadLoop])
+
+  const handleStop = useCallback(() => {
+    teardownRuntime()
+    setIsPlaying(false)
+    setPlayheadSec(0)
+    resetCanvasFromData()
+  }, [teardownRuntime, resetCanvasFromData])
+
+  const handleScrub = useCallback(
+    (timeSec: number) => {
+      const rt = ensureRuntime()
+      if (rt === null) return
+      const clamped = Math.max(0, Math.min(timeSec, rt.duration()))
+      if (rt.isPlaying()) {
+        rt.pause()
+        stopPlayheadLoop()
+        setIsPlaying(false)
+      }
+      rt.seek(clamped)
+      setPlayheadSec(clamped)
+    },
+    [ensureRuntime, stopPlayheadLoop],
+  )
+
   return (
     <div className="flex flex-shrink-0 flex-col border-t border-gray-800 bg-gray-900">
       {/* Header */}
@@ -174,14 +305,43 @@ export function AnimationTimeline() {
           </span>
           <span className="text-[10px] text-gray-600">{animations.length} step(s)</span>
         </div>
-        <button
-          type="button"
-          onClick={toggleCollapsed}
-          className="rounded px-2 py-0.5 text-[10px] text-gray-400 hover:bg-gray-800 hover:text-gray-200"
-          aria-label={collapsed ? 'Expand animations timeline' : 'Collapse animations timeline'}
-        >
-          {collapsed ? '▲ expand' : '▼ collapse'}
-        </button>
+        <div className="flex items-center gap-1">
+          {!collapsed && !isViewer && (
+            <>
+              <button
+                type="button"
+                onClick={handlePlayPause}
+                disabled={animations.length === 0 || canvasInstance === null}
+                className="rounded px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-blue-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+                aria-label={isPlaying ? 'Pause animations preview' : 'Play animations preview'}
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? '⏸' : '▶'}
+              </button>
+              <button
+                type="button"
+                onClick={handleStop}
+                disabled={runtimeRef.current === null && playheadSec === 0}
+                className="rounded px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-blue-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+                aria-label="Stop preview and reset canvas"
+                title="Stop and reset canvas"
+              >
+                ■
+              </button>
+              <span className="ml-1 font-mono text-[10px] tabular-nums text-gray-500">
+                {playheadSec.toFixed(2)}s
+              </span>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            className="rounded px-2 py-0.5 text-[10px] text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            aria-label={collapsed ? 'Expand animations timeline' : 'Collapse animations timeline'}
+          >
+            {collapsed ? '▲ expand' : '▼ collapse'}
+          </button>
+        </div>
       </div>
 
       {!collapsed && (
@@ -199,10 +359,31 @@ export function AnimationTimeline() {
             </div>
           ) : (
             <div style={{ width: trackWidthPx, position: 'relative' }}>
-              {/* Ruler */}
+              {/* Ruler — click/drag to scrub */}
               <div
-                className="sticky top-0 z-10 border-b border-gray-800 bg-gray-900/95 backdrop-blur"
+                className="sticky top-0 z-10 cursor-col-resize border-b border-gray-800 bg-gray-900/95 backdrop-blur"
                 style={{ height: RULER_HEIGHT, width: trackWidthPx }}
+                onPointerDown={(e) => {
+                  if (isViewer || canvasInstance === null || animations.length === 0) return
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  const bounds = e.currentTarget.getBoundingClientRect()
+                  handleScrub((e.clientX - bounds.left) / PX_PER_SEC)
+                }}
+                onPointerMove={(e) => {
+                  if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+                  const bounds = e.currentTarget.getBoundingClientRect()
+                  handleScrub((e.clientX - bounds.left) / PX_PER_SEC)
+                }}
+                onPointerUp={(e) => {
+                  if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                    e.currentTarget.releasePointerCapture(e.pointerId)
+                  }
+                }}
+                role="slider"
+                aria-label="Scrub animations timeline"
+                aria-valuemin={0}
+                aria-valuemax={totalSec}
+                aria-valuenow={playheadSec}
               >
                 {Array.from({ length: tickCount }, (_, i) => (
                   <div
@@ -213,6 +394,30 @@ export function AnimationTimeline() {
                     {i}s
                   </div>
                 ))}
+              </div>
+
+              {/* Playhead — vertical line spanning all rows + a small chevron at the top */}
+              <div
+                className="pointer-events-none absolute top-0 z-20"
+                style={{
+                  left: Math.round(playheadSec * PX_PER_SEC),
+                  height: RULER_HEIGHT + laidOut.length * ROW_HEIGHT,
+                  width: 1,
+                  backgroundColor: 'rgb(239 68 68)', // red-500
+                }}
+              >
+                <div
+                  className="absolute"
+                  style={{
+                    top: 2,
+                    left: -4,
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '6px solid rgb(239 68 68)',
+                  }}
+                />
               </div>
 
               {/* Rows */}

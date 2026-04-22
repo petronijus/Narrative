@@ -37,6 +37,20 @@ export interface AnimationRuntime {
    */
   advance(): void
   /**
+   * Aktuální playhead position v sekundách. M14 timeline UI čte přes rAF
+   * smyčku pro vykreslení visual playhead. Nezmění state — pure getter.
+   */
+  time(): number
+  /**
+   * Celková délka zkompilovaného timeline v sekundách (bez onClick pauz
+   * za poslední animací). M14: viewport scaling.
+   */
+  duration(): number
+  /**
+   * Vrací true, pokud timeline aktuálně hraje. M14: Play/Pause toggle state.
+   */
+  isPlaying(): boolean
+  /**
    * Kompletní cleanup — kill timeline, odebrat listenery.
    * Volat při unmount slide nebo opuštění present modu.
    */
@@ -80,6 +94,18 @@ export function createAnimationRuntime(
       if (tl.paused()) {
         tl.play()
       }
+    },
+
+    time(): number {
+      return tl.time()
+    },
+
+    duration(): number {
+      return tl.duration()
+    },
+
+    isPlaying(): boolean {
+      return tl.isActive() && !tl.paused()
     },
 
     destroy(): void {
