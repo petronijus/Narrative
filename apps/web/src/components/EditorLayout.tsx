@@ -83,6 +83,38 @@ function clientToCanvasCoords(
   }
 }
 
+/**
+ * Applies the Shift-key aspect-ratio constraint to a draft drag
+ * outcome. Shapes (rectangle / ellipse / triangle / polygon) snap to
+ * a square around the start point. Lines / arrows snap to the
+ * nearest 45° increment.
+ */
+function constrainDraft(
+  tool: SlideObjectType,
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+): { currentX: number; currentY: number } {
+  const dx = currentX - startX
+  const dy = currentY - startY
+  if (tool === 'line' || tool === 'arrow') {
+    const angle = Math.atan2(dy, dx)
+    const snap = Math.PI / 4
+    const snapped = Math.round(angle / snap) * snap
+    const length = Math.hypot(dx, dy)
+    return {
+      currentX: startX + Math.cos(snapped) * length,
+      currentY: startY + Math.sin(snapped) * length,
+    }
+  }
+  const size = Math.max(Math.abs(dx), Math.abs(dy))
+  return {
+    currentX: startX + Math.sign(dx || 1) * size,
+    currentY: startY + Math.sign(dy || 1) * size,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Marquee rect
 // ---------------------------------------------------------------------------
@@ -107,6 +139,95 @@ function MarqueeOverlay({ marquee }: { marquee: MarqueeState }) {
     <div
       aria-hidden="true"
       className="pointer-events-none absolute border border-blue-400 bg-blue-400/10"
+      style={{ left: x, top: y, width: w, height: h }}
+    />
+  )
+}
+
+function DraftOverlay({
+  draft,
+}: {
+  draft: {
+    tool: SlideObjectType
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+  }
+}) {
+  const x = Math.min(draft.startX, draft.currentX)
+  const y = Math.min(draft.startY, draft.currentY)
+  const w = Math.abs(draft.currentX - draft.startX)
+  const h = Math.abs(draft.currentY - draft.startY)
+  if (w < 1 && h < 1) return null
+
+  // Line + arrow: thin coloured segment from start to current.
+  if (draft.tool === 'line' || draft.tool === 'arrow') {
+    const length = Math.hypot(draft.currentX - draft.startX, draft.currentY - draft.startY)
+    const angle = Math.atan2(draft.currentY - draft.startY, draft.currentX - draft.startX)
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute"
+        style={{
+          left: draft.startX,
+          top: draft.startY,
+          width: length,
+          height: 2,
+          background: 'rgb(96 165 250 / 0.85)',
+          transform: `rotate(${angle}rad)`,
+          transformOrigin: '0 50%',
+        }}
+      />
+    )
+  }
+
+  // Ellipse → rounded rect of the same bbox.
+  if (draft.tool === 'ellipse') {
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
+        style={{ left: x, top: y, width: w, height: h, borderRadius: '50%' }}
+      />
+    )
+  }
+
+  // Triangle / polygon → inline SVG so the preview matches the shape
+  // we'll draw on commit, not a misleading rectangle.
+  if (draft.tool === 'triangle' || draft.tool === 'polygon') {
+    const sides = draft.tool === 'triangle' ? 3 : 5
+    const points: string[] = []
+    for (let i = 0; i < sides; i++) {
+      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / sides
+      const px = 0.5 + 0.5 * Math.cos(angle)
+      const py = 0.5 + 0.5 * Math.sin(angle)
+      points.push(`${px},${py}`)
+    }
+    return (
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute"
+        style={{ left: x, top: y, width: w, height: h, overflow: 'visible' }}
+        viewBox="0 0 1 1"
+        preserveAspectRatio="none"
+      >
+        <polygon
+          points={points.join(' ')}
+          fill="rgb(96 165 250 / 0.15)"
+          stroke="rgb(96 165 250)"
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    )
+  }
+
+  // Rectangle + everything else: outlined AABB.
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
       style={{ left: x, top: y, width: w, height: h }}
     />
   )
@@ -170,6 +291,17 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   /** Marquee drag state */
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const marqueeRef = useRef<MarqueeState | null>(null)
+
+  /** Drag-to-draw state for shape / line creation tools. */
+  interface DraftState {
+    tool: SlideObjectType
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+  }
+  const [draft, setDraft] = useState<DraftState | null>(null)
+  const draftRef = useRef<DraftState | null>(null)
 
   /** Snap guides — aktivní během dragu/resize */
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
@@ -249,8 +381,23 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Create tool — viewer cannot create objects
         if (isViewer) return
         if (mutationCtx === null) return
-        createObjectOfType(mutationCtx, activeTool as SlideObjectType, { x, y })
-        setActiveTool('select')
+        // Text + image stay click-to-create; every other creation tool
+        // uses drag-to-draw so the user can size the new object in one
+        // gesture (Keynote / Figma / Sketch convention).
+        if (activeTool === 'text') {
+          createObjectOfType(mutationCtx, 'text', { x, y })
+          setActiveTool('select')
+          return
+        }
+        draftRef.current = {
+          tool: activeTool,
+          startX: x,
+          startY: y,
+          currentX: x,
+          currentY: y,
+        }
+        setDraft({ ...draftRef.current })
+        ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
         return
       }
 
@@ -361,6 +508,24 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         setCursor({ x: canvasCoords.x, y: canvasCoords.y })
       }
 
+      // Draft (drag-to-draw) update
+      const dr = draftRef.current
+      if (dr !== null) {
+        if (canvasCoords !== null) {
+          const { currentX, currentY } = e.shiftKey
+            ? constrainDraft(dr.tool, dr.startX, dr.startY, canvasCoords.x, canvasCoords.y)
+            : { currentX: canvasCoords.x, currentY: canvasCoords.y }
+          const updated: DraftState = {
+            ...dr,
+            currentX,
+            currentY,
+          }
+          draftRef.current = updated
+          setDraft({ ...updated })
+        }
+        return
+      }
+
       // Marquee update
       const mq = marqueeRef.current
       if (mq !== null) {
@@ -430,11 +595,48 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   )
 
   const handlePointerUp = useCallback(
-    (_e: React.PointerEvent<HTMLDivElement>) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
       if (panRef.current !== null) {
         panRef.current = null
         return
       }
+
+      // Finalize draft drag-to-draw → create object sized by the rect.
+      const dr = draftRef.current
+      if (dr !== null) {
+        draftRef.current = null
+        setDraft(null)
+        if (mutationCtx !== null) {
+          // Re-apply shift constraint at commit time — handles the
+          // case where shift was pressed after the last pointermove.
+          const { currentX: cx, currentY: cy } = e.shiftKey
+            ? constrainDraft(dr.tool, dr.startX, dr.startY, dr.currentX, dr.currentY)
+            : { currentX: dr.currentX, currentY: dr.currentY }
+          const x = Math.min(dr.startX, cx)
+          const y = Math.min(dr.startY, cy)
+          const w = Math.abs(cx - dr.startX)
+          const h = Math.abs(cy - dr.startY)
+          // Tiny-drag fallback — treat as click-to-create with default size.
+          const minSize = 6
+          if (w < minSize && h < minSize) {
+            createObjectOfType(mutationCtx, dr.tool, { x: dr.startX, y: dr.startY })
+          } else if (dr.tool === 'line' || dr.tool === 'arrow') {
+            createObjectOfType(mutationCtx, dr.tool, {
+              x,
+              y,
+              width: w,
+              height: h,
+              p1: { x: dr.startX - x, y: dr.startY - y },
+              p2: { x: cx - x, y: cy - y },
+            })
+          } else {
+            createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
+          }
+        }
+        setActiveTool('select')
+        return
+      }
+
       // Finalize marquee
       const mq = marqueeRef.current
       if (mq !== null) {
@@ -707,6 +909,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
                   {/* Marquee selection overlay */}
                   {marquee !== null && <MarqueeOverlay marquee={marquee} />}
+                  {draft !== null && <DraftOverlay draft={draft} />}
 
                   {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
                   <PeerSelectionOverlays />

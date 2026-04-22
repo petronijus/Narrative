@@ -109,6 +109,10 @@ import { registerObjectType } from './registry.js'
 import type {
   RectangleObject,
   EllipseObject,
+  TriangleObject,
+  PolygonObject,
+  LineObject,
+  ArrowObject,
   TextObject,
   ImageObject,
   VideoObject,
@@ -137,6 +141,69 @@ registerObjectType<EllipseObject>({
     fill: 0xe06040,
     rotation: 0,
     opacity: 1,
+  }),
+})
+
+registerObjectType<TriangleObject>({
+  type: 'triangle',
+  defaultProps: () => ({
+    x: 100,
+    y: 100,
+    width: 180,
+    height: 160,
+    fill: 0x40b060,
+    rotation: 0,
+    opacity: 1,
+  }),
+})
+
+registerObjectType<PolygonObject>({
+  type: 'polygon',
+  defaultProps: () => ({
+    x: 100,
+    y: 100,
+    width: 180,
+    height: 180,
+    fill: 0xe0a040,
+    rotation: 0,
+    opacity: 1,
+    sides: 5,
+  }),
+})
+
+registerObjectType<LineObject>({
+  type: 'line',
+  defaultProps: () => ({
+    x: 100,
+    y: 200,
+    width: 200,
+    height: 0,
+    rotation: 0,
+    opacity: 1,
+    stroke: 0xffffff,
+    strokeWidth: 3,
+    p1: { x: 0, y: 0 },
+    p2: { x: 200, y: 0 },
+    startCap: 'none',
+    endCap: 'none',
+  }),
+})
+
+registerObjectType<ArrowObject>({
+  type: 'arrow',
+  defaultProps: () => ({
+    x: 100,
+    y: 200,
+    width: 200,
+    height: 0,
+    rotation: 0,
+    opacity: 1,
+    stroke: 0xffffff,
+    strokeWidth: 3,
+    p1: { x: 0, y: 0 },
+    p2: { x: 200, y: 0 },
+    startCap: 'none',
+    endCap: 'arrow',
   }),
 })
 
