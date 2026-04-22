@@ -50,6 +50,10 @@ interface TransformSnapshot {
   scaleY: number
   alpha: number
   rotation: number
+  /** Apparent width (= geometry × scale). Used by Magic Move to morph objects
+   *  whose renderers change size via geometry rather than container.scale. */
+  width: number
+  height: number
 }
 
 function snapshotTransform(c: PixiContainer): TransformSnapshot {
@@ -65,6 +69,8 @@ function snapshotTransform(c: PixiContainer): TransformSnapshot {
     scaleY: Number(anyC.scale?.y ?? 1),
     alpha: Number(anyC.alpha ?? 1),
     rotation: Number(anyC.rotation ?? 0),
+    width: Number(anyC.width ?? 0),
+    height: Number(anyC.height ?? 0),
   }
 }
 
@@ -100,31 +106,60 @@ export function magicTransition(
     return { timeline: tl, dispose: () => tl.kill() }
   }
 
-  // ---- Un-matched objects: root-container crossfade ----
+  // ---- Un-matched objects: per-child fade ----
   //
-  // For objects not in a magic pair the outgoing root fades out and the
-  // incoming root fades in. Matched objects have their incoming container
-  // alpha overridden inline below, so this crossfade only affects unmatched
-  // children (they inherit their parent root's alpha).
+  // An earlier implementation crossfaded the ROOT containers (outgoing 1→0,
+  // incoming 0→1) so unmatched children would inherit the fade. That was a
+  // bug for Magic Move: a child's rendered alpha is root.alpha × child.alpha,
+  // so matched-pair children — whose own alpha tween targets a constant
+  // ~1 — would still visually fade in/out along with the root. Result:
+  // objects faded away AND THEN morphed, instead of morphing directly.
+  //
+  // Fix: keep both roots at alpha 1 throughout. Fade individual *unmatched*
+  // children directly. Matched children are driven solely by the per-pair
+  // morph tween below.
+  outgoing.alpha = 1
+  incoming.alpha = 1
 
-  const { proxy: outRootProxy, applyProxy: applyOutRoot } = makeContainerProxy(outgoing, {
-    alpha: 1,
-  })
-  const { proxy: inRootProxy, applyProxy: applyInRoot } = makeContainerProxy(incoming, {
-    alpha: 0,
-  })
-  incoming.alpha = 0
+  const pairedOutgoing = new Set<PixiContainer>(pairs.map((p) => p.outgoing))
+  const pairedIncoming = new Set<PixiContainer>(pairs.map((p) => p.incoming))
 
-  tl.to(
-    outRootProxy,
-    { alpha: 0, duration: durationSec, ease: 'power2.inOut', onUpdate: applyOutRoot },
-    0,
-  )
-  tl.to(
-    inRootProxy,
-    { alpha: 1, duration: durationSec, ease: 'power2.inOut', onUpdate: applyInRoot },
-    0,
-  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural Pixi children access
+  const outChildren: PixiContainer[] = ((outgoing as any).children ?? []) as PixiContainer[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural Pixi children access
+  const inChildren: PixiContainer[] = ((incoming as any).children ?? []) as PixiContainer[]
+
+  for (const child of outChildren) {
+    if (pairedOutgoing.has(child)) continue
+    const snap = snapshotTransform(child)
+    const { proxy, applyProxy } = makeContainerProxy(child, {
+      x: snap.x,
+      y: snap.y,
+      scaleX: snap.scaleX,
+      scaleY: snap.scaleY,
+      alpha: snap.alpha,
+    })
+    tl.to(proxy, { alpha: 0, duration: durationSec, ease: 'power2.inOut', onUpdate: applyProxy }, 0)
+  }
+
+  for (const child of inChildren) {
+    if (pairedIncoming.has(child)) continue
+    const snap = snapshotTransform(child)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- seeding alpha for the tween
+    ;(child as any).alpha = 0
+    const { proxy, applyProxy } = makeContainerProxy(child, {
+      x: snap.x,
+      y: snap.y,
+      scaleX: snap.scaleX,
+      scaleY: snap.scaleY,
+      alpha: 0,
+    })
+    tl.to(
+      proxy,
+      { alpha: snap.alpha, duration: durationSec, ease: 'power2.inOut', onUpdate: applyProxy },
+      0,
+    )
+  }
 
   // ---- Matched pairs: per-object morph ----
   //
@@ -141,10 +176,23 @@ export function magicTransition(
     const from = snapshotTransform(pair.outgoing)
     const to = snapshotTransform(pair.incoming)
 
+    // In Narrative, object renderers change size by redrawing geometry (e.g.
+    // Graphics.rect(0, 0, width, height)) rather than by setting
+    // container.scale. So both from.scaleX and to.scaleX are typically 1 —
+    // there's nothing to tween. To morph size anyway we derive an effective
+    // scale factor from the apparent container width/height:
+    //   at t=0 incoming is drawn at its own geometry size (to.width); we
+    //   want it to *look* like the outgoing's apparent size (from.width),
+    //   so seed incoming.scale = from.width / to.width and tween back to 1.
+    const fromSx = to.width > 0 ? from.width / to.width : from.scaleX
+    const fromSy = to.height > 0 ? from.height / to.height : from.scaleY
+    const toSx = to.scaleX
+    const toSy = to.scaleY
+
     // Seed the incoming container at the outgoing state so the tween starts
     // exactly where the outgoing object was drawn last frame.
     pair.incoming.position.set(from.x, from.y)
-    pair.incoming.scale.set(from.scaleX, from.scaleY)
+    pair.incoming.scale.set(fromSx, fromSy)
     pair.incoming.alpha = from.alpha
     if (pair.incoming.rotation !== undefined) pair.incoming.rotation = from.rotation
 
@@ -163,8 +211,8 @@ export function magicTransition(
     const { proxy, applyProxy } = makeContainerProxy(pair.incoming, {
       x: from.x,
       y: from.y,
-      scaleX: from.scaleX,
-      scaleY: from.scaleY,
+      scaleX: fromSx,
+      scaleY: fromSy,
       alpha: from.alpha,
     })
 
@@ -174,8 +222,8 @@ export function magicTransition(
       {
         x: to.x,
         y: to.y,
-        scaleX: to.scaleX,
-        scaleY: to.scaleY,
+        scaleX: toSx,
+        scaleY: toSy,
         alpha: to.alpha,
         duration: durationSec,
         ease: 'power2.inOut',
@@ -192,32 +240,15 @@ export function magicTransition(
       0,
     )
 
-    // Hide the outgoing copy of the matched object so we don't see two
-    // instances during the morph. We fade rather than snap to avoid a pop
-    // at t=0 in case the tween's onUpdate is a frame late.
-    //
-    // Seed the proxy with the outgoing's CURRENT transform. makeContainerProxy
-    // otherwise defaults x/y/scaleX/scaleY to 0/0/1/1, and applyProxy writes
-    // ALL proxy fields on every onUpdate — which would snap the outgoing
-    // container to (0,0) on the first animation frame. We only want alpha
-    // to change; position/scale must stay put.
-    const { proxy: outCopyProxy, applyProxy: applyOutCopy } = makeContainerProxy(pair.outgoing, {
-      x: from.x,
-      y: from.y,
-      scaleX: from.scaleX,
-      scaleY: from.scaleY,
-      alpha: from.alpha,
-    })
-    tl.to(
-      outCopyProxy,
-      {
-        alpha: 0,
-        duration: Math.min(durationSec, 0.15),
-        ease: 'power1.out',
-        onUpdate: applyOutCopy,
-      },
-      0,
-    )
+    // Hide the outgoing copy of the matched object immediately (not over
+    // 150ms) so the incoming's seeded transform is the only thing rendered
+    // at t=0. Previously we fade-out-ed the outgoing over 150ms, but the
+    // incoming is already seeded at from.alpha at t=0 — which means both
+    // copies were visible, and "over" compositing summed them to a higher
+    // apparent alpha than the user's source (e.g. two 0.5 alphas composite
+    // to 0.75). That was a visible blink-up-then-dip pattern for any
+    // object with source alpha < 1.
+    pair.outgoing.alpha = 0
   }
 
   // Snap final state on complete — insurance against floating-point residue

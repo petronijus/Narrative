@@ -108,13 +108,16 @@ function makeTargets(pairs: MagicMoveObjectPair[] = []): SlideTransitionTargets 
 describe('magicTransition — durationMs > 0', () => {
   const transition: SlideTransition = { kind: 'magic', durationMs: 600 }
 
-  it('creates root-level crossfade tweens when there are no pairs', () => {
+  it('creates no tweens when there are no pairs and no unmatched children', () => {
+    // Magic Move no longer crossfades the root containers — it keeps them at
+    // alpha 1 and fades individual unmatched children. With zero pairs and
+    // zero children the timeline is legitimately empty; runSlideTransition
+    // still fires onComplete on the next microtask.
     const targets = makeTargets([])
     const { timeline, dispose } = magicTransition(targets, transition)
 
     const children = timeline.getChildren(false)
-    // 2 root tweens (outgoing fade out + incoming fade in), no pair tweens
-    expect(children).toHaveLength(2)
+    expect(children).toHaveLength(0)
 
     dispose()
   })
@@ -184,7 +187,7 @@ describe('magicTransition — durationMs > 0', () => {
     dispose()
   })
 
-  it('creates 2 root tweens + 2 per-pair tweens (morph + outgoing fade) per matched object', () => {
+  it('creates 1 per-pair morph tween per matched object', () => {
     const pair: MagicMoveObjectPair = {
       id: 'obj-1',
       outgoing: makeContainer(),
@@ -194,8 +197,10 @@ describe('magicTransition — durationMs > 0', () => {
     const { timeline, dispose } = magicTransition(targets, transition)
 
     const children = timeline.getChildren(false)
-    // 2 root + 2 per-pair = 4
-    expect(children).toHaveLength(4)
+    // Single morph tween on the incoming container. Outgoing copy is hidden
+    // by a synchronous alpha=0 snap (no tween) so it doesn't double-render
+    // with the seeded incoming at t=0.
+    expect(children).toHaveLength(1)
 
     dispose()
   })
@@ -225,15 +230,17 @@ describe('magicTransition — durationMs > 0', () => {
   })
 })
 
-describe('magicTransition — outgoing copy fades in place (not at 0,0)', () => {
+describe('magicTransition — outgoing copy is snapped hidden at t=0', () => {
   const transition: SlideTransition = { kind: 'magic', durationMs: 600 }
 
-  it('seeking to mid-tween keeps pair.outgoing at its original position', () => {
-    // Regression: an earlier version of magic.ts created the outgoing-copy
-    // proxy with the default { x: 0, y: 0, scaleX: 1, scaleY: 1, alpha: initial },
-    // then its onUpdate applyProxy() stomped position/scale back to (0,0)/
-    // (1,1) on the first frame — the user saw the outgoing object flash to
-    // the top-left corner before fading out.
+  it('snaps pair.outgoing.alpha to 0 without touching its position/scale', () => {
+    // Two-copy double-render regression: previously the outgoing copy was
+    // tweened 1→0 over 150ms while the incoming was seeded at from.alpha
+    // at the same position. Two copies compositing with "over" alpha
+    // produced a visible blink-up at t=0 for source alphas < 1 (e.g.
+    // two 0.5 alphas compose to 0.75). Fix: snap outgoing alpha to 0
+    // synchronously; leave position/scale untouched so the incoming's
+    // seed is the only visible copy from frame 1.
     const outObj = makeContainer({
       x: 320,
       y: 240,
@@ -245,17 +252,14 @@ describe('magicTransition — outgoing copy fades in place (not at 0,0)', () => 
     const targets = makeTargets([{ id: 'obj-1', outgoing: outObj, incoming: inObj }])
     const { timeline, dispose } = magicTransition(targets, transition)
 
-    // Seek to ~halfway through the short outgoing-fade tween.
-    timeline.seek(0.08, false)
-
-    // Outgoing's position should still be its original (320, 240), not (0, 0).
+    // Outgoing position/scale must be unchanged — magic.ts must never stomp
+    // them to default proxy values.
     expect(outObj._state.x).toBe(320)
     expect(outObj._state.y).toBe(240)
     expect(outObj._state.scaleX).toBeCloseTo(1.25, 2)
     expect(outObj._state.scaleY).toBeCloseTo(1.25, 2)
-    // Alpha should be partway between 1 and 0.
-    expect(outObj._state.alpha).toBeLessThan(1)
-    expect(outObj._state.alpha).toBeGreaterThan(0)
+    // Alpha was snapped to 0 by the factory itself (no tween).
+    expect(outObj._state.alpha).toBe(0)
 
     dispose()
   })
