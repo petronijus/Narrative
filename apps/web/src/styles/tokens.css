@@ -1,70 +1,97 @@
 /**
  * styles/tokens.css
  *
- * Design tokens for Narrative — CSS custom properties consumed by both
- * shadcn/ui component primitives (`hsl(var(--background))` style) and our
- * own Tailwind utilities (via `theme.extend.colors` in tailwind.config.js).
+ * Design tokens for Narrative.
  *
- * Dark-first: Narrative is a Keynote-like editor, the light palette is a
- * thin layer on top added later. For P1 we ship dark only.
+ * Dark-first palette tuned to a warmer, slightly bluish Keynote-like look
+ * rather than neutral gray on pure black. Layered surfaces give panels
+ * visible depth without borders doing all the work.
+ *
+ * Values are HSL triplets so shadcn components can wrap them in `hsl()`
+ * and so per-theme overrides (M20 themes) can swap just the H/S axes.
  */
 
 @layer base {
   :root {
-    /* ───────── shadcn surfaces (HSL triplets, no hsl()) ───────── */
-    /* Re-used by shadcn components via `hsl(var(--background))`. */
-    --background: 230 23% 9%;
-    --foreground: 220 14% 90%;
-    --card: 230 23% 11%;
-    --card-foreground: 220 14% 90%;
-    --popover: 230 25% 8%;
-    --popover-foreground: 220 14% 95%;
-    --primary: 217 91% 60%;
+    /* ───────── Narrative dark palette — warm-neutral navy ───────── */
+    /* Base hue: 230 (cool navy). Saturation gets mellower as surfaces
+       get brighter so the eye reads depth without the panels turning
+       cartoon-blue. */
+    --surface-0: 230 25% 6%; /* Editor page / canvas backdrop */
+    --surface-1: 230 19% 14%; /* Toolbar + sidebar rails */
+    --surface-2: 232 16% 17%; /* Panels nested inside a sidebar */
+    --surface-3: 232 14% 22%; /* Controls / inputs */
+    --surface-elevated: 234 18% 19%; /* Popovers / dialogs */
+
+    --border-subtle: 230 15% 20%;
+    --border-strong: 230 15% 32%;
+
+    --fg-high: 220 20% 96%; /* Primary text */
+    --fg-mid: 220 12% 72%; /* Secondary text, inactive labels */
+    --fg-low: 220 8% 48%; /* Hints, counts, separators */
+
+    /* Accent — slightly indigo blue, distinguishes UI from neutral dark. */
+    --accent-400: 221 96% 72%;
+    --accent-500: 221 90% 64%;
+    --accent-600: 221 82% 55%;
+
+    /* Warm highlight for the Present button + state chips. */
+    --brand-500: 256 80% 65%;
+
+    /* ───────── shadcn semantic layer (HSL triplets, no hsl()) ───────── */
+    /* Mapped to Narrative's scale so shadcn primitives blend in. */
+    --background: var(--surface-0);
+    --foreground: var(--fg-high);
+
+    --card: var(--surface-1);
+    --card-foreground: var(--fg-high);
+
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--fg-high);
+
+    --primary: var(--accent-500);
     --primary-foreground: 220 14% 98%;
-    --secondary: 230 15% 16%;
-    --secondary-foreground: 220 14% 90%;
-    --muted: 230 15% 14%;
-    --muted-foreground: 220 9% 55%;
-    --accent: 230 15% 18%;
-    --accent-foreground: 220 14% 95%;
+
+    --secondary: var(--surface-2);
+    --secondary-foreground: var(--fg-high);
+
+    --muted: var(--surface-2);
+    --muted-foreground: var(--fg-mid);
+
+    --accent: var(--surface-3);
+    --accent-foreground: var(--fg-high);
+
     --destructive: 0 72% 51%;
     --destructive-foreground: 220 14% 98%;
-    --border: 230 15% 18%;
-    --input: 230 15% 18%;
-    --ring: 217 91% 60%;
+
+    --border: var(--border-subtle);
+    --input: var(--surface-3);
+    --ring: var(--accent-500);
 
     --radius: 0.625rem;
 
-    /* ───────── Narrative-specific surface scale ───────── */
-    /* Layered dark backgrounds: 0 = page, 3 = raised panels. */
-    --surface-0: 230 25% 7%;
-    --surface-1: 230 23% 10%;
-    --surface-2: 230 20% 13%;
-    --surface-3: 230 18% 16%;
-
-    --border-subtle: 230 15% 18%;
-    --border-strong: 230 15% 28%;
-
-    /* Brand accent (blue) used by Present button + focus rings. */
-    --accent-500: 217 91% 60%;
-    --accent-600: 217 83% 55%;
-
     /* ───────── Glow halo + glass sheet tokens ───────── */
-    --glow-accent: 0 0 32px 0 hsl(var(--accent-500) / 0.35);
+    --glow-accent: 0 0 0 1px hsl(var(--accent-500) / 0.45), 0 6px 24px 0 hsl(var(--accent-500) / 0.35);
     --glow-strong: 0 0 48px 0 hsl(var(--accent-500) / 0.55);
 
-    --glass-bg: hsl(230 25% 10% / 0.6);
-    --glass-border: hsl(230 15% 28% / 0.4);
-    --glass-blur: 24px;
+    /* Glass panels — slight translucency over the editor canvas. */
+    --glass-bg: hsl(230 22% 11% / 0.72);
+    --glass-border: hsl(220 20% 70% / 0.08);
+    --glass-blur: 20px;
 
-    /* Radius scale — match --radius as base (used by shadcn as --radius). */
+    /* Inner rim — 1 px inset top highlight that reads "lifted panel". */
+    --inner-rim: inset 0 1px 0 0 hsl(220 20% 100% / 0.04);
+
+    /* Subtle panel shadow (right / bottom sides, very soft). */
+    --panel-shadow: 1px 0 0 0 hsl(230 25% 3% / 0.6);
+
+    /* Radius scale. */
     --radius-sm: calc(var(--radius) - 4px);
     --radius-md: calc(var(--radius) - 2px);
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
   }
 
-  /* Reset / base tweaks */
   html,
   body,
   #root {
@@ -76,26 +103,89 @@
     font-feature-settings:
       'rlig' 1,
       'calt' 1;
+    /* Subtle radial vignette — gives the editor canvas focus even when
+       no slide is active. */
+    background-image:
+      radial-gradient(ellipse at 50% 0%, hsl(230 30% 16% / 0.6), transparent 60%),
+      radial-gradient(ellipse at 50% 100%, hsl(230 30% 14% / 0.5), transparent 55%);
+    background-attachment: fixed;
   }
 }
 
-/**
- * Glass sheet utility — frosted panel over any background.
- * Use via `className="glass"` on a container.
- */
 @layer utilities {
+  /* Glass sheet — frosted translucent panel with a faint top highlight. */
   .glass {
     background-color: var(--glass-bg);
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border: 1px solid var(--glass-border);
+    box-shadow: var(--inner-rim);
   }
 
-  /* Accent glow — apply to interactive elements (Present button, hover). */
+  /* Panel — lifted surface with a subtle top-to-bottom gradient and an
+     inner top rim. Use for toolbars and sidebar rails where full frosted
+     glass would bleed readings from the canvas behind. The gradient
+     keeps the panel brighter at the edges that touch the toolbar
+     (visual anchor) and slightly darker at the panel body. */
+  .panel {
+    background-color: hsl(var(--surface-1));
+    background-image: linear-gradient(
+      180deg,
+      hsl(232 20% 16%) 0%,
+      hsl(230 19% 13%) 40%,
+      hsl(230 19% 12%) 100%
+    );
+    box-shadow: var(--inner-rim);
+  }
+
+  /* Accent ring + halo for the Present button / CTA. */
   .glow-accent {
     box-shadow: var(--glow-accent);
   }
   .glow-strong {
     box-shadow: var(--glow-strong);
+  }
+
+  /* Subtle divider for nested sections — lighter than `border-border`. */
+  .divider-soft {
+    border-color: hsl(var(--surface-2));
+  }
+
+  /* Canvas working area — radial vignette so it reads as "artboard stage",
+     not dead black. The slide itself retains full contrast. */
+  .canvas-backdrop {
+    background-color: hsl(var(--surface-0));
+    background-image: radial-gradient(
+      ellipse at 50% 35%,
+      hsl(230 25% 13%) 0%,
+      hsl(230 32% 6%) 75%
+    );
+  }
+
+  /* Present / primary CTA — brand gradient from accent to warm violet.
+     Uses explicit colour refs so tailwind-merge can't collapse it with a
+     solid `bg-primary`. */
+  .btn-brand {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--accent-500)) 0%,
+      hsl(var(--brand-500)) 100%
+    );
+    color: hsl(var(--primary-foreground));
+    border: 1px solid hsl(var(--accent-400) / 0.35);
+    box-shadow:
+      0 1px 0 0 hsl(220 20% 100% / 0.1) inset,
+      0 0 0 1px hsl(var(--accent-500) / 0.45),
+      0 6px 20px -4px hsl(var(--accent-500) / 0.5);
+    transition:
+      filter 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .btn-brand:hover {
+    filter: brightness(1.1);
+    box-shadow:
+      0 1px 0 0 hsl(220 20% 100% / 0.15) inset,
+      0 0 0 1px hsl(var(--accent-400) / 0.6),
+      0 8px 28px -4px hsl(var(--accent-500) / 0.7);
   }
 }

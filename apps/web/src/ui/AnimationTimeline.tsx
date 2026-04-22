@@ -790,14 +790,14 @@ export function AnimationTimeline() {
   )
 
   return (
-    <div className="flex flex-shrink-0 flex-col border-t border-gray-800 bg-gray-900">
+    <div className="panel flex flex-shrink-0 flex-col border-t border-border">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-800 px-3 py-1.5">
+      <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Animations
           </span>
-          <span className="text-[10px] text-gray-600">{animations.length} step(s)</span>
+          <span className="text-[10px] text-muted-foreground/60">{animations.length} step(s)</span>
         </div>
         <div className="flex items-center gap-1">
           {!collapsed && !isViewer && (
@@ -806,7 +806,7 @@ export function AnimationTimeline() {
                 type="button"
                 onClick={handlePlayPause}
                 disabled={animations.length === 0 || canvasInstance === null}
-                className="rounded px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-blue-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+                className="rounded-md px-2 py-0.5 text-[10px] text-foreground/80 hover:bg-accent hover:text-primary transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80"
                 aria-label={isPlaying ? 'Pause animations preview' : 'Play animations preview'}
                 title={isPlaying ? 'Pause' : 'Play'}
               >
@@ -816,13 +816,13 @@ export function AnimationTimeline() {
                 type="button"
                 onClick={handleStop}
                 disabled={runtimeRef.current === null && playheadSec === 0}
-                className="rounded px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 hover:text-blue-300 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300"
+                className="rounded-md px-2 py-0.5 text-[10px] text-foreground/80 hover:bg-accent hover:text-primary transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80"
                 aria-label="Stop preview and reset canvas"
                 title="Stop and reset canvas"
               >
                 ■
               </button>
-              <span className="ml-1 font-mono text-[10px] tabular-nums text-gray-500">
+              <span className="ml-1 font-mono text-[10px] tabular-nums text-muted-foreground/80">
                 {playheadSec.toFixed(2)}s
               </span>
             </>
@@ -830,7 +830,7 @@ export function AnimationTimeline() {
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="rounded px-2 py-0.5 text-[10px] text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
             aria-label={collapsed ? 'Expand animations timeline' : 'Collapse animations timeline'}
           >
             {collapsed ? '▲ expand' : '▼ collapse'}
@@ -847,7 +847,7 @@ export function AnimationTimeline() {
         >
           {laidOut.length === 0 ? (
             <div className="flex items-center justify-center py-6">
-              <p className="text-[11px] text-gray-600 italic">
+              <p className="text-[11px] text-muted-foreground italic">
                 No animations on this slide. Add one from the Inspector.
               </p>
             </div>
@@ -855,7 +855,7 @@ export function AnimationTimeline() {
             <div style={{ width: trackWidthPx, position: 'relative' }}>
               {/* Ruler — click/drag to scrub */}
               <div
-                className="sticky top-0 z-10 cursor-col-resize border-b border-gray-800 bg-gray-900/95 backdrop-blur"
+                className="sticky top-0 z-10 cursor-col-resize border-b border-border bg-surface-1/90 backdrop-blur-glass"
                 style={{ height: RULER_HEIGHT, width: trackWidthPx }}
                 onPointerDown={(e) => {
                   if (isViewer || canvasInstance === null || animations.length === 0) return
@@ -938,8 +938,8 @@ export function AnimationTimeline() {
                     <div
                       key={objectId}
                       className={[
-                        'relative border-b border-gray-800',
-                        rowIdx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/60',
+                        'relative border-b divider-soft',
+                        rowIdx % 2 === 0 ? 'bg-surface-1' : 'bg-surface-2/50',
                         isRowDragged ? 'opacity-40' : '',
                       ].join(' ')}
                       style={{ height, width: trackWidthPx }}
@@ -948,7 +948,7 @@ export function AnimationTimeline() {
                           pinned during horizontal scroll so the row-to-object
                           mapping is always visible. */}
                       <div
-                        className="sticky left-0 z-10 flex h-full items-center border-r border-gray-800 bg-gray-900/90"
+                        className="sticky left-0 z-10 flex h-full items-center border-r border-border bg-surface-1/90"
                         style={{ width: TRACK_LABEL_WIDTH }}
                         title={objectId}
                       >

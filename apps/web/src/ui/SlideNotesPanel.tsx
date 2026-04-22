@@ -33,19 +33,19 @@ const COLLAPSE_STORAGE_KEY = 'narrative:slideNotes:collapsed'
 const EDITOR_CLASS = [
   'tiptap-notes',
   'prose prose-invert prose-sm max-w-none',
-  'min-h-[72px] w-full rounded border border-gray-800 bg-gray-950',
-  'px-2 py-1.5 text-xs text-gray-200',
-  'focus:border-blue-500 focus:outline-none',
+  'min-h-[72px] w-full rounded-md border border-input bg-surface-0/70',
+  'px-2 py-1.5 text-xs text-foreground',
+  'focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20 focus:outline-none',
   '[&_p]:my-1 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs',
   '[&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4',
-  '[&_blockquote]:border-l-2 [&_blockquote]:border-gray-700 [&_blockquote]:pl-2 [&_blockquote]:italic',
-  '[&_code]:rounded [&_code]:bg-gray-800 [&_code]:px-1',
+  '[&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:italic',
+  '[&_code]:rounded [&_code]:bg-secondary [&_code]:px-1',
 ].join(' ')
 
 const TOOLBAR_BTN = [
-  'rounded px-1.5 py-0.5 text-[10px] text-gray-300',
-  'hover:bg-gray-800 hover:text-white',
-  'data-[active=true]:bg-gray-700 data-[active=true]:text-white',
+  'rounded-md px-1.5 py-0.5 text-[10px] text-foreground/75 transition-colors',
+  'hover:bg-accent hover:text-foreground',
+  'data-[active=true]:bg-primary/15 data-[active=true]:text-primary',
   'disabled:opacity-40 disabled:hover:bg-transparent',
 ].join(' ')
 
@@ -101,19 +101,19 @@ export function SlideNotesPanel() {
   }, [editor, isViewer])
 
   return (
-    <div className="flex flex-shrink-0 flex-col border-t border-gray-800 bg-gray-900">
-      <div className="flex items-center justify-between border-b border-gray-800 px-3 py-1.5">
+    <div className="panel flex flex-shrink-0 flex-col border-t border-border">
+      <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Speaker notes
           </span>
           {text.length > 0 && (
-            <span className="text-[10px] text-gray-600">{text.length} chars</span>
+            <span className="text-[10px] text-muted-foreground/60">{text.length} chars</span>
           )}
         </div>
         <div className="flex items-center gap-1">
           {!collapsed && editor !== null && !isViewer && (
-            <div className="flex items-center gap-0.5 border-r border-gray-800 pr-1">
+            <div className="flex items-center gap-0.5 border-r border-border pr-1">
               <button
                 type="button"
                 className={TOOLBAR_BTN}
@@ -154,7 +154,7 @@ export function SlideNotesPanel() {
               >
                 {'</>'}
               </button>
-              <span className="mx-1 h-3 w-px bg-gray-800" />
+              <span className="mx-1 h-3 w-px bg-border" />
               <button
                 type="button"
                 className={TOOLBAR_BTN}
@@ -200,7 +200,7 @@ export function SlideNotesPanel() {
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="rounded px-2 py-0.5 text-[10px] text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+            className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
             aria-label={collapsed ? 'Expand speaker notes' : 'Collapse speaker notes'}
           >
             {collapsed ? '▲ expand' : '▼ collapse'}
@@ -211,7 +211,7 @@ export function SlideNotesPanel() {
       {!collapsed && (
         <div className="px-3 py-2">
           {fragment === null ? (
-            <p className="text-[11px] italic text-gray-600">No slide selected.</p>
+            <p className="text-[11px] italic text-muted-foreground">No slide selected.</p>
           ) : (
             <EditorContent editor={editor} />
           )}

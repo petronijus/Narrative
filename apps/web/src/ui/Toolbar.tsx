@@ -139,7 +139,7 @@ export function Toolbar() {
   return (
     <TooltipProvider delayDuration={200}>
       <div
-        className="flex items-center gap-1 border-b border-border bg-surface-1 px-3 py-1.5"
+        className="panel flex items-center gap-1 border-b border-border px-3 py-1.5"
         role="toolbar"
         aria-label="Object tools"
       >
@@ -273,14 +273,14 @@ export function Toolbar() {
           <TooltipContent side="bottom">Preview animations</TooltipContent>
         </Tooltip>
 
-        {/* Present button — accent glow */}
+        {/* Present button — brand gradient + accent glow */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               size="sm"
               onClick={() => navigate(`/deck/${id ?? ''}/present`)}
               aria-label="Present (Ctrl+Enter)"
-              className="gap-1.5 shadow-glow"
+              className="btn-brand gap-1.5"
             >
               <Play className="h-4 w-4 fill-current" aria-hidden="true" />
               <span className="hidden sm:inline">Present</span>
