@@ -220,57 +220,61 @@ function SlideItem({
         }}
         className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
       >
-        {/* Thumbnail card. Skipped slides collapse to a thin bar
-            (Keynote-style) via a maxHeight transition; the aspectRatio
-            hint still governs the "unskipped" size, max-height drives
-            the animation. */}
+        {/* Skipped slides keep full width and just clip the bottom of
+            the thumbnail — the outer wrapper transitions max-height,
+            the inner card keeps its 16:9 aspectRatio so width never
+            collapses with the animation. */}
         <div
-          className={[
-            'relative mx-2 cursor-pointer overflow-hidden rounded',
-            'transition-[max-height,opacity] duration-200 ease',
-            isActive
-              ? 'ring-2 ring-blue-500'
-              : ringClass !== ''
-                ? ringClass
-                : 'ring-1 ring-gray-700 hover:ring-gray-500',
-            slide.skipped === true ? 'opacity-60' : '',
-          ].join(' ')}
+          className="mx-2 overflow-hidden rounded transition-[max-height,opacity] duration-200 ease"
           style={{
-            aspectRatio: '16/9',
-            // Skipped → shrink to ~1/3 of the natural 16:9 height so
-            // the slide still reads as a bar but keeps proportion.
             maxHeight: slide.skipped === true ? 36 : 1000,
+            opacity: slide.skipped === true ? 0.65 : 1,
           }}
-          onPointerDown={(e) => onPointerDown(e, slide.id, index)}
-          onClick={(e) => onActivate(slide.id, e.shiftKey)}
-          aria-hidden="true"
         >
-          {thumbnailUrl !== undefined ? (
-            <img
-              src={thumbnailUrl}
-              alt=""
-              className="h-full w-full object-cover"
-              draggable={false}
-            />
-          ) : (
-            <div className="h-full w-full" style={{ backgroundColor: placeholderColour(index) }} />
-          )}
-
-          <span
-            id={labelId}
-            className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
+          <div
+            className={[
+              'relative cursor-pointer',
+              isActive
+                ? 'ring-2 ring-blue-500'
+                : ringClass !== ''
+                  ? ringClass
+                  : 'ring-1 ring-gray-700 hover:ring-gray-500',
+            ].join(' ')}
+            style={{ aspectRatio: '16/9', width: '100%' }}
+            onPointerDown={(e) => onPointerDown(e, slide.id, index)}
+            onClick={(e) => onActivate(slide.id, e.shiftKey)}
+            aria-hidden="true"
           >
-            {index + 1}
-          </span>
+            {thumbnailUrl !== undefined ? (
+              <img
+                src={thumbnailUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                draggable={false}
+              />
+            ) : (
+              <div
+                className="h-full w-full"
+                style={{ backgroundColor: placeholderColour(index) }}
+              />
+            )}
 
-          {slide.skipped === true && (
             <span
-              aria-label="Skipped in present mode"
-              className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+              id={labelId}
+              className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
             >
-              <EyeOff className="h-3 w-3" aria-hidden="true" />
+              {index + 1}
             </span>
-          )}
+
+            {slide.skipped === true && (
+              <span
+                aria-label="Skipped in present mode"
+                className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+              >
+                <EyeOff className="h-3 w-3" aria-hidden="true" />
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Name row — chevron + label, inline */}
