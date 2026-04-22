@@ -257,52 +257,14 @@ export function moveSlide(ctx: SlideMutationContext, slideId: string, toIndex: n
   if (fromIdx === clampedTo) return // Already in position
 
   ctx.doc.transact(() => {
-    // Snapshot the slide data BEFORE deletion.
-    // Y.Array items cannot be moved — must delete and re-insert a fresh Y.Map.
-    // We reconstruct the slide Y.Map from the current state of the original.
+    // Y.Array items cannot be moved in place — we delete and re-insert a
+    // detached clone at the target index. Y.Map.clone() deep-clones every
+    // field (including nested Y.Array / Y.XmlFragment / Y.Map), which is
+    // what we need so new schema fields (P2 background, P3 name + skipped,
+    // M19 notes XmlFragment) survive the reorder automatically.
     const originalMap = ctx.slides.get(fromIdx)
-    const id = originalMap.get('id') as string
-    const origObjects = originalMap.get('objects') as Y.Array<Y.Map<unknown>>
-    const origAnimations = originalMap.get('animations') as Y.Array<Y.Map<unknown>>
-    const origTransition = originalMap.get('transition') as Y.Map<unknown>
+    const newSlideMap = originalMap.clone()
 
-    // Build new slide Y.Map
-    const newSlideMap = new Y.Map<unknown>()
-    const newObjects = new Y.Array<Y.Map<unknown>>()
-    const newAnimations = new Y.Array<Y.Map<unknown>>()
-    const newTransition = new Y.Map<unknown>()
-
-    // Clone transition
-    origTransition.forEach((value, key) => {
-      newTransition.set(key, value)
-    })
-
-    // Clone objects
-    const objCopies: Y.Map<unknown>[] = []
-    for (let i = 0; i < origObjects.length; i++) {
-      const src = origObjects.get(i)
-      const copy = new Y.Map<unknown>()
-      src.forEach((value, key) => copy.set(key, value))
-      objCopies.push(copy)
-    }
-    if (objCopies.length > 0) newObjects.push(objCopies)
-
-    // Clone animations
-    const animCopies: Y.Map<unknown>[] = []
-    for (let i = 0; i < origAnimations.length; i++) {
-      const src = origAnimations.get(i)
-      const copy = new Y.Map<unknown>()
-      src.forEach((value, key) => copy.set(key, value))
-      animCopies.push(copy)
-    }
-    if (animCopies.length > 0) newAnimations.push(animCopies)
-
-    newSlideMap.set('id', id)
-    newSlideMap.set('objects', newObjects)
-    newSlideMap.set('animations', newAnimations)
-    newSlideMap.set('transition', newTransition)
-
-    // Delete original and insert clone at target position.
     // insertAt = clampedTo for backward moves (elements after insertAt shift right by 1 after insert).
     // insertAt = clampedTo for forward moves too (after delete fromIdx, elements shift left;
     // but clampedTo already accounts for the final desired position in the original array,
