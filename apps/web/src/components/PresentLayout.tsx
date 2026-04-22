@@ -113,35 +113,22 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M19 phase 3: BroadcastChannel keeps the pop-out presenter window and the
   // main present window in sync. Both windows are on the same origin, so the
   // channel is cheap and needs no server roundtrip. Payload: the active
-  // slide id; the receiver drives its local setActiveSlideId directly.
+  // slide id; the receiver runs the same transition-aware navigation the
+  // main window's keyboard handler would, so a popup-driven "next" plays
+  // the transition on the main canvas rather than snapping the slide.
   const bcRef = useRef<BroadcastChannel | null>(null)
   const suppressBroadcastRef = useRef(false)
 
+  // Refs so the BroadcastChannel onmessage handler (installed once) can
+  // read the latest slide list, active id, and navigateToSlide closure
+  // without reinstalling the listener on every render.
+  const slidesRef = useRef(slides)
+  const activeSlideIdRef = useRef(activeSlideId)
   useEffect(() => {
-    if (id === undefined || typeof BroadcastChannel === 'undefined') return
-    const channel = new BroadcastChannel(`narrative:deck:${id}:activeSlide`)
-    bcRef.current = channel
-    channel.onmessage = (e: MessageEvent<{ slideId: string }>) => {
-      const slideId = e.data?.slideId
-      if (typeof slideId !== 'string') return
-      suppressBroadcastRef.current = true
-      setActiveSlideId(slideId)
-    }
-    return () => {
-      channel.close()
-      bcRef.current = null
-    }
-  }, [id, setActiveSlideId])
-
-  // Broadcast every local activeSlideId change — except when the change was
-  // itself caused by a remote broadcast (flag flip around setState).
+    slidesRef.current = slides
+  }, [slides])
   useEffect(() => {
-    if (suppressBroadcastRef.current) {
-      suppressBroadcastRef.current = false
-      return
-    }
-    if (activeSlideId === null) return
-    bcRef.current?.postMessage({ slideId: activeSlideId })
+    activeSlideIdRef.current = activeSlideId
   }, [activeSlideId])
 
   const openPresenterWindow = useCallback(() => {
@@ -339,6 +326,60 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     },
     [slides, activeSlideId, setActiveSlideId, canvasInstance],
   )
+
+  // Mirror navigateToSlide into a ref so the one-time BroadcastChannel
+  // listener below can call the latest closure without re-installing.
+  const navigateToSlideRef = useRef(navigateToSlide)
+  useEffect(() => {
+    navigateToSlideRef.current = navigateToSlide
+  }, [navigateToSlide])
+
+  // BroadcastChannel setup — installed once per deck id. Receiver computes
+  // direction by comparing the current activeSlideId to the incoming id:
+  // an adjacent jump runs through navigateToSlide (plays transitions, plays
+  // in-slide animations on arrival); non-adjacent multi-step jumps fall
+  // back to a direct setActiveSlideId because there's no good transition to
+  // play through multiple slides.
+  useEffect(() => {
+    if (id === undefined || typeof BroadcastChannel === 'undefined') return
+    const channel = new BroadcastChannel(`narrative:deck:${id}:activeSlide`)
+    bcRef.current = channel
+    channel.onmessage = (e: MessageEvent<{ slideId: string }>) => {
+      const slideId = e.data?.slideId
+      if (typeof slideId !== 'string') return
+      const current = activeSlideIdRef.current
+      const localSlides = slidesRef.current
+      if (current === slideId) return
+
+      const currentIdx = localSlides.findIndex((s) => s.id === current)
+      const targetIdx = localSlides.findIndex((s) => s.id === slideId)
+
+      suppressBroadcastRef.current = true
+      if (currentIdx !== -1 && targetIdx === currentIdx + 1) {
+        navigateToSlideRef.current('next')
+      } else if (currentIdx !== -1 && targetIdx === currentIdx - 1) {
+        navigateToSlideRef.current('prev')
+      } else {
+        // Non-adjacent jump — direct set, no transition.
+        setActiveSlideId(slideId)
+      }
+    }
+    return () => {
+      channel.close()
+      bcRef.current = null
+    }
+  }, [id, setActiveSlideId])
+
+  // Broadcast every local activeSlideId change — except when the change was
+  // itself caused by a remote broadcast (flag flip around setState).
+  useEffect(() => {
+    if (suppressBroadcastRef.current) {
+      suppressBroadcastRef.current = false
+      return
+    }
+    if (activeSlideId === null) return
+    bcRef.current?.postMessage({ slideId: activeSlideId })
+  }, [activeSlideId])
 
   // ---------------------------------------------------------------------------
   // Keyboard handling
