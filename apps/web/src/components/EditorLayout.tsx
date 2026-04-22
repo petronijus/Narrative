@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
+import { AnimationTimeline } from '../ui/AnimationTimeline'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { TransformHandles } from '../ui/TransformHandles'
 import { SnapGuides } from '../ui/SnapGuides'
@@ -576,6 +577,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           {/* M11: Drop zone for image uploads — inert for viewer role */}
           <UploadDropZone canvasContainerRef={canvasContainerRef} />
         </div>
+
+        {/* M14 phase 1: bottom animations timeline panel. Read-only visual
+            layout with click-to-select and × to remove. Drag/play in a later
+            phase. Collapsible. */}
+        <AnimationTimeline />
       </main>
 
       {/* Right sidebar: inspector */}

@@ -58,8 +58,8 @@ const hoisted = vi.hoisted(() => {
     update: vi.fn(),
     destroy: vi.fn(),
   }
-  const mockRunSlideTransition = vi.fn<(...args: unknown[]) => Promise<void>>()
-  return { MockContainer, mockRenderer, mockRunSlideTransition }
+  const mockCompileSlideTransition = vi.fn<(...args: unknown[]) => unknown>()
+  return { MockContainer, mockRenderer, mockCompileSlideTransition }
 })
 
 vi.mock('pixi.js', () => ({
@@ -85,7 +85,7 @@ vi.mock('pixi.js', () => ({
 }))
 
 vi.mock('@narrative/animation', () => ({
-  runSlideTransition: (...args: unknown[]) => hoisted.mockRunSlideTransition(...args),
+  compileSlideTransition: (...args: unknown[]) => hoisted.mockCompileSlideTransition(...args),
 }))
 
 vi.mock('./objectRenderers/index.js', () => ({
@@ -93,7 +93,30 @@ vi.mock('./objectRenderers/index.js', () => ({
 }))
 
 type MockContainer = InstanceType<typeof hoisted.MockContainer>
-const { mockRenderer, mockRunSlideTransition } = hoisted
+const { mockRenderer, mockCompileSlideTransition } = hoisted
+
+/**
+ * Build a fake CompiledTransition whose timeline fires onComplete on the
+ * next microtask. playTransition drives adoption from that callback, so
+ * tests that want to observe adoption or done-resolution just `await
+ * handle.done`.
+ */
+function makeFakeCompiled() {
+  let onCompleteCb: (() => void) | undefined
+  const timeline = {
+    eventCallback(name: string, cb: () => void) {
+      if (name === 'onComplete') onCompleteCb = cb
+    },
+    play() {
+      // Fire onComplete async so the surrounding Promise is actually created
+      // before the callback walks the adopt path.
+      queueMicrotask(() => onCompleteCb?.())
+    },
+    kill: vi.fn(),
+  }
+  const dispose = vi.fn()
+  return { timeline, dispose }
+}
 
 // Now import the subject (dynamic import inside beforeEach to ensure mocks
 // are installed). Actually top-level import is fine — vi.mock calls above
@@ -159,7 +182,10 @@ const MAGIC: SlideTransition = { kind: 'magic', durationMs: 500 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockRunSlideTransition.mockResolvedValue(undefined)
+  // Default: compileSlideTransition returns a fake CompiledTransition whose
+  // play() fires onComplete on the next microtask. Individual tests can
+  // override per-call (e.g. to hold the onComplete for the abort test).
+  mockCompileSlideTransition.mockImplementation(() => makeFakeCompiled())
 })
 
 afterEach(() => {
@@ -202,9 +228,9 @@ describe('playTransition — wiring', () => {
     })
     await handle.done
 
-    expect(mockRunSlideTransition).toHaveBeenCalledTimes(1)
+    expect(mockCompileSlideTransition).toHaveBeenCalledTimes(1)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vi.fn mock.calls
-    const [targets, transition] = mockRunSlideTransition.mock.calls[0]! as any[]
+    const [targets, transition] = mockCompileSlideTransition.mock.calls[0]! as any[]
     expect(transition.kind).toBe('magic')
     expect(targets.magicPairs).toHaveLength(1)
     expect(targets.magicPairs[0].id).toBe('shared-1')
@@ -222,7 +248,7 @@ describe('playTransition — wiring', () => {
     })
     await handle.done
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vi.fn mock.calls
-    const [targets] = mockRunSlideTransition.mock.calls[0]! as any[]
+    const [targets] = mockCompileSlideTransition.mock.calls[0]! as any[]
     expect(targets.magicPairs).toBeUndefined()
   })
 
@@ -251,12 +277,23 @@ describe('playTransition — wiring', () => {
 
 describe('playTransition — abort', () => {
   it('abort() before settlement destroys the incoming root and skips adoption', async () => {
-    // Never-resolving transition so we can abort before it finishes.
-    let resolveTx!: () => void
-    const pending = new Promise<void>((r) => {
-      resolveTx = r
+    // Hold the onComplete callback so the transition never settles naturally
+    // — abort() must do the cleanup itself.
+    let heldOnComplete: (() => void) | undefined
+    const heldTimeline = {
+      eventCallback(name: string, cb: () => void) {
+        if (name === 'onComplete') heldOnComplete = cb
+      },
+      play() {
+        // Intentionally do not fire onComplete — simulates in-flight.
+      },
+      kill: vi.fn(),
+    }
+    const heldDispose = vi.fn()
+    mockCompileSlideTransition.mockReturnValueOnce({
+      timeline: heldTimeline,
+      dispose: heldDispose,
     })
-    mockRunSlideTransition.mockReturnValueOnce(pending)
 
     const sg = makeSceneGraph()
     const incoming = [rect('a')]
@@ -268,10 +305,12 @@ describe('playTransition — abort', () => {
 
     handle.abort()
 
-    // Free the dangling promise so the async IIFE can settle in tests.
-    resolveTx()
+    // abort() itself marks aborted + kills timeline + disposes. Resolve the
+    // done promise by firing the held onComplete so we can await cleanly.
+    heldOnComplete?.()
     await handle.done
 
+    expect(heldTimeline.kill).toHaveBeenCalled()
     expect(sg.adoptSlideRoot).not.toHaveBeenCalled()
   })
 })
