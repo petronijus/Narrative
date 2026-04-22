@@ -132,6 +132,10 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
         }
         const undoManager = createUndoManager(deckCtx)
         setValue({ deckCtx, undoManager, awareness: provider.awareness!, localUser })
+        // E2E: expose a dev-only hook on window for Playwright to seed
+        // reproducible Y.Doc fixtures (bypassing flaky editor-UI locators).
+        // Stripped from prod bundles via import.meta.env.DEV in testApi.ts.
+        void import('./testApi.js').then(({ installTestApi }) => installTestApi(deckCtx))
       },
     })
 
