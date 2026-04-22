@@ -151,6 +151,7 @@ function SlideItem({
   const labelId = `slide-item-label-${slide.id}`
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState(slide.name ?? '')
+  const [menuOpen, setMenuOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -192,6 +193,9 @@ function SlideItem({
         transition: `grid-template-rows ${COLLAPSE_MS}ms ease, opacity ${COLLAPSE_MS}ms ease`,
         opacity: hidden ? 0 : 1,
         pointerEvents: hidden ? 'none' : 'auto',
+        // Lift this row above siblings while its three-dot menu is
+        // open so the dropdown isn't covered by the following slide.
+        zIndex: menuOpen ? 40 : undefined,
       }}
     >
       {/* Drop indicators live on the OUTER wrapper so they escape the
@@ -233,7 +237,9 @@ function SlideItem({
           ].join(' ')}
           style={{
             aspectRatio: '16/9',
-            maxHeight: slide.skipped === true ? 10 : 1000,
+            // Skipped → shrink to ~1/3 of the natural 16:9 height so
+            // the slide still reads as a bar but keeps proportion.
+            maxHeight: slide.skipped === true ? 36 : 1000,
           }}
           onPointerDown={(e) => onPointerDown(e, slide.id, index)}
           onClick={(e) => onActivate(slide.id, e.shiftKey)}
@@ -344,6 +350,7 @@ function SlideItem({
               onTransition={onTransition}
               onRename={() => setEditing(true)}
               onToggleSkip={onToggleSkip}
+              onOpenChange={setMenuOpen}
             />
           </div>
         )}
