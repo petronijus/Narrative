@@ -50,9 +50,21 @@ export interface CanvasProps {
    * neměly referenci na zničený SceneGraph/Compositor.
    */
   onReady?: ((instance: CanvasInstance | null) => void) | undefined
+  /**
+   * P2: pixel margin added around the artboard. The Pixi canvas renders
+   * into artboard+bleed so objects dragged outside remain visible. Slide
+   * (0,0) is kept aligned to the artboard top-left via SceneGraph origin.
+   * Default 0 → legacy tight-to-artboard behaviour.
+   */
+  bleedPx?: number
+  /**
+   * P2: artboard CSS size. Drives background paint size + out-of-bounds
+   * fade. If omitted, falls back to the legacy nominal 1920×1080.
+   */
+  artboardSize?: { width: number; height: number }
 }
 
-export function Canvas({ onReady }: CanvasProps = {}) {
+export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
   const { token } = useAuth()
@@ -119,6 +131,9 @@ export function Canvas({ onReady }: CanvasProps = {}) {
       containerEl.appendChild(app.canvas)
 
       const sceneGraph = new SceneGraph(app)
+      if (bleedPx !== 0) {
+        sceneGraph.setSlideOrigin(bleedPx, bleedPx)
+      }
 
       // OverlayCompositor: DOM overlay sync nad Pixi canvasem.
       // overlayRootEl je sousedící <div> s position:absolute;inset:0;pointer-events:none.
@@ -200,18 +215,32 @@ export function Canvas({ onReady }: CanvasProps = {}) {
       }
     })()
     const rm = instance.resourceManager
+    const bgWidth =
+      artboardSize !== undefined && artboardSize.width > 0 ? artboardSize.width : SLIDE_WIDTH
+    const bgHeight =
+      artboardSize !== undefined && artboardSize.height > 0 ? artboardSize.height : SLIDE_HEIGHT
     applyBackground({
       container,
       background,
-      width: SLIDE_WIDTH,
-      height: SLIDE_HEIGHT,
+      width: bgWidth,
+      height: bgHeight,
       ...(resolver !== null
         ? { resolveAssetUrl: (assetId) => resolver({ assetId, variant: 'display' }) }
         : {}),
       acquireTexture: (url) => rm.acquireTexture(url),
       releaseTexture: (url) => rm.releaseTexture(url),
     })
-  }, [background])
+  }, [background, artboardSize?.width, artboardSize?.height])
+
+  // P2: propagate artboard size to SceneGraph so it can fade out-of-
+  // bounds objects.
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (instance === null) return
+    if (artboardSize === undefined) return
+    if (artboardSize.width <= 0 || artboardSize.height <= 0) return
+    instance.sceneGraph.setSlideBounds(artboardSize.width, artboardSize.height)
+  }, [artboardSize?.width, artboardSize?.height])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru
   useEffect(() => {
@@ -233,12 +262,19 @@ export function Canvas({ onReady }: CanvasProps = {}) {
   }, [])
 
   return (
-    // Wrapper je position:relative aby overlayRoot byl správně umístěn
-    <div style={{ position: 'absolute', inset: 0 }}>
-      {/* Canvas container — Pixi appenduje canvas sem */}
+    // Wrapper je position:relative aby overlayRoot byl správně umístěn.
+    // overflow:visible povolen aby bleed canvas/overlay vyčnívaly mimo
+    // artboard a objekty dragnuté mimo slide zůstaly vidět.
+    <div style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+      {/* Canvas container — Pixi appenduje canvas sem. Při bleedPx>0 se
+          roztahuje o bleedPx na každou stranu nad rámec artboardu. */}
       <div
         ref={containerRef}
-        style={{ position: 'absolute', inset: 0 }}
+        style={{
+          position: 'absolute',
+          inset: bleedPx !== 0 ? `-${bleedPx}px` : 0,
+          pointerEvents: 'none',
+        }}
         aria-label="Presentation canvas"
       />
       {/* Overlay root — DOM elementy nad canvasem, synchronizovány OverlayCompositor */}
@@ -246,7 +282,7 @@ export function Canvas({ onReady }: CanvasProps = {}) {
         ref={overlayRootRef}
         style={{
           position: 'absolute',
-          inset: 0,
+          inset: bleedPx !== 0 ? `-${bleedPx}px` : 0,
           pointerEvents: 'none',
           // overflow:hidden aby overlay elementy nevyčnívaly mimo canvas area
           overflow: 'hidden',

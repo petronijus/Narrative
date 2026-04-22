@@ -64,10 +64,63 @@ export class SceneGraph {
    */
   private backgroundContainer: Container | null = null
 
+  /**
+   * P2: slide bounds in pixi coords (= artboard CSS size). Used to fade
+   * objects whose AABB sits entirely outside the artboard. Zero means
+   * "no bounds set yet" → all objects at full alpha.
+   */
+  private slideBoundsW = 0
+  private slideBoundsH = 0
+
+  /**
+   * P2: bleed offset — pixi-world position of slide (0,0). Non-zero when
+   * Canvas renders with a bleed margin around the artboard so objects
+   * dragged outside remain visible.
+   */
+  private slideOriginX = 0
+  private slideOriginY = 0
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
+  }
+
+  /**
+   * P2: shifts the slide root so that slide (0,0) sits at
+   * (originX, originY) in pixi world coords. Used to give the canvas a
+   * bleed margin around the artboard.
+   */
+  setSlideOrigin(originX: number, originY: number): void {
+    this.slideOriginX = originX
+    this.slideOriginY = originY
+    this.root.x = originX
+    this.root.y = originY
+  }
+
+  /**
+   * P2: sets the artboard size in pixi coords (= slide-local px). Drives
+   * out-of-bounds fade. No-op if unchanged.
+   */
+  setSlideBounds(width: number, height: number): void {
+    if (this.slideBoundsW === width && this.slideBoundsH === height) return
+    this.slideBoundsW = width
+    this.slideBoundsH = height
+    for (const node of this.nodes.values()) {
+      this.applyOutsideFade(node)
+    }
+  }
+
+  private applyOutsideFade(node: SceneNode): void {
+    const w = this.slideBoundsW
+    const h = this.slideBoundsH
+    if (w === 0 || h === 0) {
+      node.container.alpha = 1
+      return
+    }
+    const { x, y, width, height } = node.data
+    const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
+    node.container.alpha = outside ? 0.4 : 1
   }
 
   /**
@@ -89,8 +142,10 @@ export class SceneGraph {
 
     const container = renderer.mount(data)
     this.root.addChild(container)
-    this.nodes.set(data.id, { container, data })
+    const node = { container, data }
+    this.nodes.set(data.id, node)
     this.nodeTypes.set(data.id, data.type)
+    this.applyOutsideFade(node)
   }
 
   /**
@@ -111,6 +166,7 @@ export class SceneGraph {
 
     renderer.update(node.container, node.data, next)
     node.data = next
+    this.applyOutsideFade(node)
   }
 
   /**
@@ -215,6 +271,7 @@ export class SceneGraph {
 
       // Aktualizuj data snapshot v node (merge patch do existujícího stavu)
       node.data = { ...node.data, ...patch } as SlideObject
+      this.applyOutsideFade(node)
     }
   }
 
@@ -304,6 +361,8 @@ export class SceneGraph {
     }
 
     this.root = nextRoot
+    this.root.x = this.slideOriginX
+    this.root.y = this.slideOriginY
     if (nextRoot.parent === null) {
       this.app.stage.addChild(nextRoot)
     }
@@ -313,8 +372,10 @@ export class SceneGraph {
     this.backgroundContainer = null
 
     for (const entry of nextNodes) {
-      this.nodes.set(entry.id, { container: entry.container, data: entry.data })
+      const node = { container: entry.container, data: entry.data }
+      this.nodes.set(entry.id, node)
       this.nodeTypes.set(entry.id, entry.data.type)
+      this.applyOutsideFade(node)
     }
   }
 

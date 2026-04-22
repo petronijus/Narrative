@@ -44,6 +44,8 @@ import { computeSnap } from '../editor/snap.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
+import { StageBgPicker } from '../ui/StageBgPicker.js'
+import { useStageBgColor } from '../state/useStageBgColor.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -119,6 +121,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const canvasInstance = useCanvasInstance()
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
+  const { color: stageBgColor } = useStageBgColor()
 
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection } = useAwarenessUpdater()
@@ -539,27 +542,46 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
         <div
           className="canvas-backdrop relative flex flex-1 items-center justify-center overflow-hidden p-6"
-          style={{ cursor: canvasCursor }}
+          style={{
+            cursor: canvasCursor,
+            ...(stageBgColor !== null ? { background: stageBgColor } : {}),
+          }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
         >
+          {/* Stage color picker — local view setting, not synced */}
+          <div className="pointer-events-none absolute right-3 top-3 z-10">
+            <StageBgPicker />
+          </div>
           {/* Artboard: fixed 16:9, scaled to fit the stage, thin rim
               border. canvasContainerRef is on THIS inner div so Pixi,
               SnapGuides, MarqueeOverlay, TransformHandles and the
               UploadDropZone all work in artboard-local coords. */}
           <div
             ref={canvasContainerRef}
-            className="artboard relative overflow-hidden rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
+            className="artboard relative rounded-md"
             style={{
               aspectRatio: '16 / 9',
               width: 'min(100%, calc(100vh * 16 / 9))',
               maxHeight: '100%',
               background: 'hsl(var(--surface-elevated))',
+              // overflow:visible intentional — objects dragged outside the
+              // artboard remain visible (faded) on the stage backdrop.
+              overflow: 'visible',
             }}
           >
-            <Canvas onReady={onCanvasReady} />
+            <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
+
+            {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
+                beyond the artboard rect and would otherwise occlude a border
+                on the artboard div. Pointer-events:none to pass clicks
+                through to overlays. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
+            />
 
             {/* Snap guide lines — viditelné jen během dragu */}
             <SnapGuides
