@@ -666,7 +666,7 @@ export function AnimationTimeline() {
                           onPointerMove={handleReorderMove}
                           onPointerUp={endReorder}
                           onPointerCancel={endReorder}
-                          className="absolute top-0 flex cursor-grab items-center justify-center text-gray-500 hover:text-gray-300 active:cursor-grabbing"
+                          className="absolute top-0 z-10 flex cursor-grab items-center justify-center border-r border-gray-800 bg-gray-900/80 text-gray-500 hover:bg-gray-800 hover:text-gray-200 active:cursor-grabbing"
                           style={{
                             left: 0,
                             width: GRIP_WIDTH,
@@ -675,10 +675,22 @@ export function AnimationTimeline() {
                           }}
                           title="Drag to reorder"
                         >
-                          {/* Two-column dots pattern — universal drag-handle glyph. */}
-                          <span aria-hidden="true" className="text-[10px] leading-none">
-                            ⋮⋮
-                          </span>
+                          {/* Inline SVG — six dots in two columns, always
+                              renders regardless of OS font fallback. */}
+                          <svg
+                            aria-hidden="true"
+                            width="8"
+                            height="14"
+                            viewBox="0 0 8 14"
+                            fill="currentColor"
+                          >
+                            <circle cx="1.5" cy="2" r="1" />
+                            <circle cx="6.5" cy="2" r="1" />
+                            <circle cx="1.5" cy="7" r="1" />
+                            <circle cx="6.5" cy="7" r="1" />
+                            <circle cx="1.5" cy="12" r="1" />
+                            <circle cx="6.5" cy="12" r="1" />
+                          </svg>
                         </div>
                       )}
 
