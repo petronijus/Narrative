@@ -158,12 +158,19 @@
     box-shadow: var(--inner-rim);
   }
 
-  /* Panel — flat lifted surface. Vercel-style: the depth comes from the
-     lightness step between surface-0 (page) and surface-1 (panel), not
-     from a gradient. A faint inner rim gives the top edge a material
-     hint; that's it. */
+  /* Panel — lifted surface with a very soft gradient from a brighter
+     top edge to the settled body. The deltas are small (≤ 3 pp
+     lightness) so it doesn't read as a "banner"; it just feels
+     physical, the way Keynote panels do. Inner rim highlights the
+     top edge as a material hint. */
   .panel {
     background-color: hsl(var(--surface-1));
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--surface-2)) 0%,
+      hsl(var(--surface-1)) 45%,
+      hsl(var(--surface-0)) 100%
+    );
     box-shadow: var(--inner-rim);
   }
 
