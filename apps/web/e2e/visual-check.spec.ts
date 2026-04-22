@@ -34,4 +34,13 @@ test('visual — editor with one rectangle', async ({ page }) => {
 
   await page.waitForTimeout(800)
   await page.screenshot({ path: 'test-results/p1-editor.png', fullPage: true })
+
+  // Now click back on the rectangle so the Inspector shows Position /
+  // Size / Transform / Appearance — the sections with NumberField and
+  // color picker chrome the user actually inspects.
+  const selectBtn = page.getByRole('button', { name: /^Select/i })
+  await selectBtn.click()
+  await canvas.click({ position: { x: 400, y: 260 } })
+  await page.waitForTimeout(500)
+  await page.screenshot({ path: 'test-results/p1-editor-selected.png', fullPage: true })
 })

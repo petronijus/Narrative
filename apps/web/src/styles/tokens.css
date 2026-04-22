@@ -199,9 +199,24 @@
     );
   }
 
+  /* Input / select / textarea surface — translucent white on the navy
+     panel. Auto-tints to a slightly lighter shade of the panel's
+     colour, so inputs always belong to the chrome family whatever
+     vertical gradient they land on. */
+  .field-surface {
+    background-color: hsl(0 0% 100% / 0.04);
+  }
+  .field-surface:hover:not(:disabled, :focus) {
+    background-color: hsl(0 0% 100% / 0.06);
+  }
+  .field-surface:focus,
+  .field-surface:focus-within {
+    background-color: hsl(0 0% 100% / 0.07);
+  }
+
   /* Chevron icon for native <select> — drawn via ::after-like
      background-image layer. Applied via `.select-chevron`. Keeps
-     bg-color (bg-input) intact because we're not touching background-image
+     bg-color intact because we're not touching background-image
      through a Tailwind class. */
   .select-chevron {
     background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%239aa3b2%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E");
