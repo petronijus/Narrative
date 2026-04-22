@@ -563,10 +563,25 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller. */}
           <div className="flex flex-1 overflow-auto">
-            {/* Centering wrapper — stretches to at least the scroll
-                viewport's size so the artboard stays centered when it
-                fits and scrolls naturally when it doesn't. */}
-            <div className="m-auto flex min-h-full min-w-full items-center justify-center p-6">
+            {/* Stage padding wrapper — 400 px of space around the
+                artboard on every side. width:fit-content makes it hug
+                the artboard + padding so scrollbars reveal the full
+                margin, min-width/min-height:100% stretch the wrapper
+                to at least the viewport when it's larger. Grid
+                place-items keeps the artboard centered in both
+                scenarios without the "stuck to the start" quirk that
+                flex centering has when the content overflows. */}
+            <div
+              style={{
+                width: 'fit-content',
+                minWidth: '100%',
+                minHeight: '100%',
+                padding: 400,
+                boxSizing: 'border-box',
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
               {/* Artboard: fixed 1920×1080 logical/CSS size. Slide object
               coordinates map 1:1 to these pixels, so resizing the
               window no longer moves objects relative to the slide —
