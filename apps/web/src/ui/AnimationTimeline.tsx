@@ -30,7 +30,7 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Play, Pause, Square } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
@@ -807,21 +807,25 @@ export function AnimationTimeline() {
                 type="button"
                 onClick={handlePlayPause}
                 disabled={animations.length === 0 || canvasInstance === null}
-                className="rounded-md px-2 py-0.5 text-[10px] text-foreground/80 hover:bg-accent hover:text-primary transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/80 hover:bg-accent hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 aria-label={isPlaying ? 'Pause animations preview' : 'Play animations preview'}
                 title={isPlaying ? 'Pause' : 'Play'}
               >
-                {isPlaying ? '⏸' : '▶'}
+                {isPlaying ? (
+                  <Pause className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                ) : (
+                  <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                )}
               </button>
               <button
                 type="button"
                 onClick={handleStop}
                 disabled={runtimeRef.current === null && playheadSec === 0}
-                className="rounded-md px-2 py-0.5 text-[10px] text-foreground/80 hover:bg-accent hover:text-primary transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/80 hover:bg-accent hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 aria-label="Stop preview and reset canvas"
                 title="Stop and reset canvas"
               >
-                ■
+                <Square className="h-3 w-3 fill-current" aria-hidden="true" />
               </button>
               <span className="ml-1 font-mono text-[10px] tabular-nums text-muted-foreground/80">
                 {playheadSec.toFixed(2)}s

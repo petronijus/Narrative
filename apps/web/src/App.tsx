@@ -20,6 +20,7 @@ import { ProtectedRoute } from './components/ProtectedRoute.js'
 import { AuthCallback } from './pages/AuthCallback.js'
 import { AuthLogin } from './pages/AuthLogin.js'
 import { AuthError } from './pages/AuthError.js'
+import { VersionChip } from './ui/VersionChip.js'
 
 export function App() {
   return (
@@ -40,6 +41,10 @@ export function App() {
             </Route>
           </Route>
         </Routes>
+        {/* Global build-version chip — bottom-left fixed. Auto-bumps via
+            the commit-count scheme in apps/web/vite.config.ts so every
+            push shows a new number in the UI. */}
+        <VersionChip />
       </AuthProvider>
     </BrowserRouter>
   )

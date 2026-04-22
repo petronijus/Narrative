@@ -107,8 +107,73 @@
     --radius-xl: calc(var(--radius) + 4px);
 
     /* Tell browsers we're in dark mode so native form controls (select,
-       scrollbar, option list on some platforms) pick dark defaults. */
+       scrollbar, option list on some platforms) pick dark defaults.
+       Overridden below inside @media (prefers-color-scheme: light). */
     color-scheme: dark;
+  }
+
+  /* ───────── Light theme — opt in via OS prefers-color-scheme ─────────
+     Mirror token structure of the dark palette so every surface /
+     border / text ref auto-switches. Strategy:
+
+       - Surfaces mirror the dark scale but flipped: the deepest panel
+         is now the brightest (near white), sidebars are slightly
+         darker to still read as "chrome vs. content".
+       - Borders stay low-alpha, but black instead of white.
+       - Text scale flips: fg-high = near black, fg-low = mid gray.
+       - Accent blue stays the same hue but slightly darker for
+         contrast against light backgrounds.
+
+     The editor stays usable because the canvas backdrop drops its
+     radial vignette (light canvas reads as "paper"). Slide thumbnails
+     retain their per-slide colour so nothing visually breaks. */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --surface-0: 220 20% 98%; /* Editor page (near white) */
+      --surface-1: 220 18% 95%; /* Toolbar + sidebar rails */
+      --surface-2: 220 16% 92%; /* Panel body */
+      --surface-3: 220 14% 88%; /* Controls / inputs */
+      --surface-elevated: 0 0% 100%; /* Popovers / dialogs (pure white) */
+
+      --border-subtle: 220 30% 10% / 0.09;
+      --border-strong: 220 30% 10% / 0.18;
+
+      --fg-high: 220 25% 10%; /* Primary text (near black) */
+      --fg-mid: 220 12% 30%; /* Secondary text */
+      --fg-low: 220 8% 48%; /* Hints */
+
+      --accent-400: 212 100% 52%;
+      --accent-500: 212 100% 44%;
+      --accent-600: 212 100% 36%;
+
+      --brand-500: 262 83% 55%;
+
+      --foreground: var(--fg-high);
+      --background: var(--surface-0);
+      --card: var(--surface-1);
+      --card-foreground: var(--fg-high);
+      --popover: var(--surface-elevated);
+      --popover-foreground: var(--fg-high);
+      --primary: var(--accent-500);
+      --primary-foreground: 0 0% 100%;
+      --secondary: var(--surface-2);
+      --secondary-foreground: var(--fg-high);
+      --muted: var(--surface-2);
+      --muted-foreground: var(--fg-mid);
+      --accent: var(--surface-3);
+      --accent-foreground: var(--fg-high);
+      --destructive: 0 72% 46%;
+      --destructive-foreground: 0 0% 100%;
+      --border: var(--border-subtle);
+      --input: 220 30% 10% / 0.1;
+      --ring: var(--accent-500);
+
+      --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.6);
+      --glass-bg: hsl(220 20% 98% / 0.75);
+      --glass-border: hsl(220 20% 10% / 0.06);
+
+      color-scheme: light;
+    }
   }
 
   html,
@@ -189,7 +254,9 @@
   }
 
   /* Canvas working area — very subtle centre-biased lift, similar to
-     Vercel's dashboard focus. The slide itself retains full contrast. */
+     Vercel's dashboard focus. Dark: dark-on-darker vignette. Light:
+     light-on-lighter washed linen. The slide itself retains full
+     contrast in both modes. */
   .canvas-backdrop {
     background-color: hsl(var(--surface-0));
     background-image: radial-gradient(
@@ -198,11 +265,21 @@
       hsl(0 0% 4%) 70%
     );
   }
+  @media (prefers-color-scheme: light) {
+    .canvas-backdrop {
+      background-image: radial-gradient(
+        ellipse at 50% 35%,
+        hsl(220 30% 94%) 0%,
+        hsl(220 20% 90%) 70%
+      );
+    }
+  }
 
-  /* Input / select / textarea surface — translucent white on the navy
-     panel. Auto-tints to a slightly lighter shade of the panel's
-     colour, so inputs always belong to the chrome family whatever
-     vertical gradient they land on. */
+  /* Input / select / textarea surface — a translucent overlay that
+     auto-tints to a shade of the panel behind it. Dark theme uses a
+     tiny white overlay (→ slightly lighter than panel); light theme
+     uses a tiny black overlay (→ slightly darker) so inputs read as
+     "carved into the panel" in either mode. */
   .field-surface {
     background-color: hsl(0 0% 100% / 0.04);
   }
@@ -212,6 +289,19 @@
   .field-surface:focus,
   .field-surface:focus-within {
     background-color: hsl(0 0% 100% / 0.07);
+  }
+
+  @media (prefers-color-scheme: light) {
+    .field-surface {
+      background-color: hsl(220 30% 10% / 0.04);
+    }
+    .field-surface:hover:not(:disabled, :focus) {
+      background-color: hsl(220 30% 10% / 0.07);
+    }
+    .field-surface:focus,
+    .field-surface:focus-within {
+      background-color: hsl(220 30% 10% / 0.09);
+    }
   }
 
   /* Chevron icon for native <select> — drawn via ::after-like
