@@ -23,7 +23,7 @@
  *   Alternativně přijmout `onCompositorReady: (c: OverlayCompositor) => void` prop.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
@@ -97,6 +97,13 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     compositor: OverlayCompositor
   } | null>(null)
 
+  /**
+   * State flag mirroring instanceRef's "Pixi initialised" moment so the
+   * background-paint / bounds effects can re-run the first time Pixi
+   * becomes available (instanceRef alone doesn't trigger React updates).
+   */
+  const [pixiReady, setPixiReady] = useState(false)
+
   // Efekt pro mount/unmount Pixi Application
   useEffect(() => {
     const containerEl = containerRef.current
@@ -159,6 +166,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       const compositor = new OverlayCompositor(app, overlayRootEl)
 
       instanceRef.current = { app, sceneGraph, resourceManager, compositor }
+      setPixiReady(true)
 
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
@@ -198,6 +206,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         liveApp.destroy(true, { children: true, texture: true })
 
         instanceRef.current = null
+        setPixiReady(false)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -247,7 +256,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       acquireTexture: (url) => rm.acquireTexture(url),
       releaseTexture: (url) => rm.releaseTexture(url),
     })
-  }, [background, artboardSize?.width, artboardSize?.height])
+  }, [background, artboardSize?.width, artboardSize?.height, pixiReady])
 
   // P2: propagate artboard size to SceneGraph so it can fade out-of-
   // bounds objects.
@@ -257,7 +266,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     if (artboardSize === undefined) return
     if (artboardSize.width <= 0 || artboardSize.height <= 0) return
     instance.sceneGraph.setSlideBounds(artboardSize.width, artboardSize.height)
-  }, [artboardSize?.width, artboardSize?.height])
+  }, [artboardSize?.width, artboardSize?.height, pixiReady])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru
   useEffect(() => {
