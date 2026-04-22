@@ -13,32 +13,37 @@
 
 @layer base {
   :root {
-    /* ───────── Narrative dark palette — warm-neutral navy ───────── */
-    /* Base hue: 230 (cool navy). Saturation gets mellower as surfaces
-       get brighter so the eye reads depth without the panels turning
-       cartoon-blue. */
-    --surface-0: 230 25% 6%; /* Editor page / canvas backdrop */
-    --surface-1: 230 19% 14%; /* Toolbar + sidebar rails */
-    --surface-2: 232 16% 17%; /* Panels nested inside a sidebar */
-    --surface-3: 232 14% 22%; /* Controls / inputs */
-    --surface-elevated: 234 18% 19%; /* Popovers / dialogs */
+    /* ───────── Narrative dark palette — Vercel Geist-inspired ─────────
+       Vercel's approach: near-black background, panels lifted by a few
+       percent lightness (not hue saturation), borders always expressed
+       as *low-alpha white* rather than a solid colour so they feel like
+       a faint rim instead of a hard line.
 
-    /* Borders — low-alpha white so they read as a faint rim over any
-       dark surface (Keynote-style). Consumed by `border-border`. */
-    --border-subtle: 220 20% 70% / 0.1;
-    --border-strong: 220 20% 80% / 0.18;
+       Reference: https://vercel.com/geist/colors. Borders at 0.06-0.08
+       alpha, not 0.15+.  */
+    --surface-0: 0 0% 4%; /* Editor page / canvas backdrop (~#0a0a0a) */
+    --surface-1: 0 0% 7%; /* Toolbar + sidebar rails (~#121212) */
+    --surface-2: 0 0% 9%; /* Panel body backgrounds (~#171717) */
+    --surface-3: 0 0% 11%; /* Controls / inputs (~#1c1c1c) */
+    --surface-elevated: 0 0% 13%; /* Popovers / dialogs (~#212121) */
 
-    --fg-high: 220 20% 96%; /* Primary text */
-    --fg-mid: 220 12% 72%; /* Secondary text, inactive labels */
-    --fg-low: 220 8% 48%; /* Hints, counts, separators */
+    /* Borders — low-alpha white so they only just separate surfaces.
+       Consumed by `border-border` and anywhere we use `--border`. */
+    --border-subtle: 0 0% 100% / 0.06;
+    --border-strong: 0 0% 100% / 0.12;
 
-    /* Accent — slightly indigo blue, distinguishes UI from neutral dark. */
-    --accent-400: 221 96% 72%;
-    --accent-500: 221 90% 64%;
-    --accent-600: 221 82% 55%;
+    --fg-high: 0 0% 98%; /* Primary text ~#fafafa */
+    --fg-mid: 0 0% 72%; /* Secondary text ~#b8b8b8 */
+    --fg-low: 0 0% 48%; /* Hints, counts ~#7a7a7a */
+
+    /* Accent — electric blue. Vercel's blue; reads as a "link / active"
+       marker on true-neutral grayscale surfaces. */
+    --accent-400: 212 100% 68%;
+    --accent-500: 212 100% 55%;
+    --accent-600: 212 100% 48%;
 
     /* Warm highlight for the Present button + state chips. */
-    --brand-500: 256 80% 65%;
+    --brand-500: 262 83% 58%;
 
     /* ───────── shadcn semantic layer (HSL triplets, no hsl()) ───────── */
     /* Mapped to Narrative's scale so shadcn primitives blend in. */
@@ -64,9 +69,11 @@
     --accent-foreground: var(--fg-high);
 
     --destructive: 0 72% 51%;
-    --destructive-foreground: 220 14% 98%;
+    --destructive-foreground: 0 0% 98%;
 
     --border: var(--border-subtle);
+    /* Input surface matches the panel body it sits inside; the subtle
+       border does the visual separation. */
     --input: var(--surface-3);
     --ring: var(--accent-500);
 
@@ -81,11 +88,12 @@
     --glass-border: hsl(220 20% 70% / 0.08);
     --glass-blur: 20px;
 
-    /* Inner rim — 1 px inset top highlight that reads "lifted panel". */
-    --inner-rim: inset 0 1px 0 0 hsl(220 20% 100% / 0.04);
+    /* Inner rim — 1 px inset top highlight that reads "lifted panel".
+       Kept very faint so it's a material hint, not a stripe. */
+    --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
 
     /* Subtle panel shadow (right / bottom sides, very soft). */
-    --panel-shadow: 1px 0 0 0 hsl(230 25% 3% / 0.6);
+    --panel-shadow: 1px 0 0 0 hsl(0 0% 0% / 0.6);
 
     /* Radius scale. */
     --radius-sm: calc(var(--radius) - 4px);
@@ -133,12 +141,6 @@
     font-feature-settings:
       'rlig' 1,
       'calt' 1;
-    /* Subtle radial vignette — gives the editor canvas focus even when
-       no slide is active. */
-    background-image:
-      radial-gradient(ellipse at 50% 0%, hsl(230 30% 16% / 0.6), transparent 60%),
-      radial-gradient(ellipse at 50% 100%, hsl(230 30% 14% / 0.5), transparent 55%);
-    background-attachment: fixed;
   }
 }
 
@@ -152,19 +154,12 @@
     box-shadow: var(--inner-rim);
   }
 
-  /* Panel — lifted surface with a subtle top-to-bottom gradient and an
-     inner top rim. Use for toolbars and sidebar rails where full frosted
-     glass would bleed readings from the canvas behind. The gradient
-     keeps the panel brighter at the edges that touch the toolbar
-     (visual anchor) and slightly darker at the panel body. */
+  /* Panel — flat lifted surface. Vercel-style: the depth comes from the
+     lightness step between surface-0 (page) and surface-1 (panel), not
+     from a gradient. A faint inner rim gives the top edge a material
+     hint; that's it. */
   .panel {
     background-color: hsl(var(--surface-1));
-    background-image: linear-gradient(
-      180deg,
-      hsl(232 20% 16%) 0%,
-      hsl(230 19% 13%) 40%,
-      hsl(230 19% 12%) 100%
-    );
     box-shadow: var(--inner-rim);
   }
 
@@ -181,14 +176,14 @@
     border-color: hsl(var(--surface-2));
   }
 
-  /* Canvas working area — radial vignette so it reads as "artboard stage",
-     not dead black. The slide itself retains full contrast. */
+  /* Canvas working area — very subtle centre-biased lift, similar to
+     Vercel's dashboard focus. The slide itself retains full contrast. */
   .canvas-backdrop {
     background-color: hsl(var(--surface-0));
     background-image: radial-gradient(
       ellipse at 50% 35%,
-      hsl(230 25% 13%) 0%,
-      hsl(230 32% 6%) 75%
+      hsl(0 0% 8%) 0%,
+      hsl(0 0% 4%) 70%
     );
   }
 
