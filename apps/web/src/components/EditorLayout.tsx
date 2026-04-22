@@ -83,6 +83,38 @@ function clientToCanvasCoords(
   }
 }
 
+/**
+ * Applies the Shift-key aspect-ratio constraint to a draft drag
+ * outcome. Shapes (rectangle / ellipse / triangle / polygon) snap to
+ * a square around the start point. Lines / arrows snap to the
+ * nearest 45° increment.
+ */
+function constrainDraft(
+  tool: SlideObjectType,
+  startX: number,
+  startY: number,
+  currentX: number,
+  currentY: number,
+): { currentX: number; currentY: number } {
+  const dx = currentX - startX
+  const dy = currentY - startY
+  if (tool === 'line' || tool === 'arrow') {
+    const angle = Math.atan2(dy, dx)
+    const snap = Math.PI / 4
+    const snapped = Math.round(angle / snap) * snap
+    const length = Math.hypot(dx, dy)
+    return {
+      currentX: startX + Math.cos(snapped) * length,
+      currentY: startY + Math.sin(snapped) * length,
+    }
+  }
+  const size = Math.max(Math.abs(dx), Math.abs(dy))
+  return {
+    currentX: startX + Math.sign(dx || 1) * size,
+    currentY: startY + Math.sign(dy || 1) * size,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Marquee rect
 // ---------------------------------------------------------------------------
@@ -129,11 +161,9 @@ function DraftOverlay({
   const h = Math.abs(draft.currentY - draft.startY)
   if (w < 1 && h < 1) return null
 
-  // Line + arrow draw from the actual start/current points; other
-  // shapes preview as an AABB outline — the hole in the preview shows
-  // the exact bounding box the new object will occupy.
+  // Line + arrow: thin coloured segment from start to current.
   if (draft.tool === 'line' || draft.tool === 'arrow') {
-    const length = Math.hypot(w, h)
+    const length = Math.hypot(draft.currentX - draft.startX, draft.currentY - draft.startY)
     const angle = Math.atan2(draft.currentY - draft.startY, draft.currentX - draft.startX)
     return (
       <div
@@ -152,18 +182,53 @@ function DraftOverlay({
     )
   }
 
-  const isEllipse = draft.tool === 'ellipse'
+  // Ellipse → rounded rect of the same bbox.
+  if (draft.tool === 'ellipse') {
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
+        style={{ left: x, top: y, width: w, height: h, borderRadius: '50%' }}
+      />
+    )
+  }
+
+  // Triangle / polygon → inline SVG so the preview matches the shape
+  // we'll draw on commit, not a misleading rectangle.
+  if (draft.tool === 'triangle' || draft.tool === 'polygon') {
+    const sides = draft.tool === 'triangle' ? 3 : 5
+    const points: string[] = []
+    for (let i = 0; i < sides; i++) {
+      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / sides
+      const px = 0.5 + 0.5 * Math.cos(angle)
+      const py = 0.5 + 0.5 * Math.sin(angle)
+      points.push(`${px},${py}`)
+    }
+    return (
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute"
+        style={{ left: x, top: y, width: w, height: h, overflow: 'visible' }}
+        viewBox="0 0 1 1"
+        preserveAspectRatio="none"
+      >
+        <polygon
+          points={points.join(' ')}
+          fill="rgb(96 165 250 / 0.15)"
+          stroke="rgb(96 165 250)"
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+    )
+  }
+
+  // Rectangle + everything else: outlined AABB.
   return (
     <div
       aria-hidden="true"
       className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
-      style={{
-        left: x,
-        top: y,
-        width: w,
-        height: h,
-        borderRadius: isEllipse ? '50%' : 0,
-      }}
+      style={{ left: x, top: y, width: w, height: h }}
     />
   )
 }
@@ -447,10 +512,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       const dr = draftRef.current
       if (dr !== null) {
         if (canvasCoords !== null) {
+          const { currentX, currentY } = e.shiftKey
+            ? constrainDraft(dr.tool, dr.startX, dr.startY, canvasCoords.x, canvasCoords.y)
+            : { currentX: canvasCoords.x, currentY: canvasCoords.y }
           const updated: DraftState = {
             ...dr,
-            currentX: canvasCoords.x,
-            currentY: canvasCoords.y,
+            currentX,
+            currentY,
           }
           draftRef.current = updated
           setDraft({ ...updated })
@@ -527,7 +595,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   )
 
   const handlePointerUp = useCallback(
-    (_e: React.PointerEvent<HTMLDivElement>) => {
+    (e: React.PointerEvent<HTMLDivElement>) => {
       if (panRef.current !== null) {
         panRef.current = null
         return
@@ -539,10 +607,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         draftRef.current = null
         setDraft(null)
         if (mutationCtx !== null) {
-          const x = Math.min(dr.startX, dr.currentX)
-          const y = Math.min(dr.startY, dr.currentY)
-          const w = Math.abs(dr.currentX - dr.startX)
-          const h = Math.abs(dr.currentY - dr.startY)
+          // Re-apply shift constraint at commit time — handles the
+          // case where shift was pressed after the last pointermove.
+          const { currentX: cx, currentY: cy } = e.shiftKey
+            ? constrainDraft(dr.tool, dr.startX, dr.startY, dr.currentX, dr.currentY)
+            : { currentX: dr.currentX, currentY: dr.currentY }
+          const x = Math.min(dr.startX, cx)
+          const y = Math.min(dr.startY, cy)
+          const w = Math.abs(cx - dr.startX)
+          const h = Math.abs(cy - dr.startY)
           // Tiny-drag fallback — treat as click-to-create with default size.
           const minSize = 6
           if (w < minSize && h < minSize) {
@@ -554,7 +627,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               width: w,
               height: h,
               p1: { x: dr.startX - x, y: dr.startY - y },
-              p2: { x: dr.currentX - x, y: dr.currentY - y },
+              p2: { x: cx - x, y: cy - y },
             })
           } else {
             createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
