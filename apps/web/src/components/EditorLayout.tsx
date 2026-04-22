@@ -131,6 +131,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
 
+  /** Ref on the scroll container so we can centre the artboard on mount. */
+  const stageScrollRef = useRef<HTMLDivElement>(null)
+
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
   // ---------------------------------------------------------------------------
@@ -161,6 +164,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   useEffect(() => {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
+
+  // On first mount, scroll the stage so the artboard sits in the
+  // horizontal and vertical centre (reveals equal margin on each side
+  // when the window is smaller than the artboard + full margin).
+  useEffect(() => {
+    const el = stageScrollRef.current
+    if (el === null) return
+    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
+    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
+  }, [])
 
   // Canvas size observer
   useEffect(() => {
@@ -562,7 +575,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         >
           {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller. */}
-          <div className="flex flex-1 overflow-auto">
+          <div ref={stageScrollRef} className="flex flex-1 overflow-auto">
             {/* Stage padding wrapper — 400 px of space around the
                 artboard on every side. width:fit-content makes it hug
                 the artboard + padding so scrollbars reveal the full
@@ -576,7 +589,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                 width: 'fit-content',
                 minWidth: '100%',
                 minHeight: '100%',
-                padding: 400,
+                padding: 200,
                 boxSizing: 'border-box',
                 display: 'grid',
                 placeItems: 'center',
