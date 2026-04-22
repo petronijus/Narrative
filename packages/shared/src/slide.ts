@@ -29,6 +29,59 @@ export interface EllipseObject extends BaseSlideObject {
   fill: number
 }
 
+/**
+ * P4b: triangle and regular polygon share the same AABB-based
+ * schema as Rectangle/Ellipse. `sides` controls the polygon — 3 for
+ * a triangle (top-pointing equilateral), 4+ for regular n-gons.
+ */
+export interface TriangleObject extends BaseSlideObject {
+  type: 'triangle'
+  fill: number
+}
+
+export interface PolygonObject extends BaseSlideObject {
+  type: 'polygon'
+  fill: number
+  /** Number of sides. Clamped to [3, 12] in the renderer. */
+  sides: number
+}
+
+/**
+ * P4b: line / arrow. Position (x,y) + width/height describe the AABB
+ * of the two endpoints — individual endpoint offsets live in
+ * `p1`/`p2` relative to (x,y), so a transform (move, rotate) on the
+ * object just shifts those two anchors together.
+ */
+export interface LineEndpoints {
+  /** First endpoint, relative to (x, y). */
+  p1: { x: number; y: number }
+  /** Second endpoint, relative to (x, y). */
+  p2: { x: number; y: number }
+}
+
+export type LineCap = 'none' | 'round' | 'square' | 'arrow'
+
+export interface LineObject extends BaseSlideObject, LineEndpoints {
+  type: 'line'
+  /** Stroke colour. */
+  stroke: number
+  /** Stroke width in slide-px. */
+  strokeWidth: number
+  startCap?: LineCap
+  endCap?: LineCap
+  /** Dashed stroke pattern — true = default dash, false/undefined = solid. */
+  dash?: boolean
+}
+
+export interface ArrowObject extends BaseSlideObject, LineEndpoints {
+  type: 'arrow'
+  stroke: number
+  strokeWidth: number
+  startCap?: LineCap
+  endCap?: LineCap
+  dash?: boolean
+}
+
 export interface TextObject extends BaseSlideObject {
   type: 'text'
   text: string
@@ -99,7 +152,16 @@ export interface VideoObject extends BaseSlideObject {
 /**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
-export type SlideObject = RectangleObject | EllipseObject | TextObject | ImageObject | VideoObject
+export type SlideObject =
+  | RectangleObject
+  | EllipseObject
+  | TriangleObject
+  | PolygonObject
+  | LineObject
+  | ArrowObject
+  | TextObject
+  | ImageObject
+  | VideoObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']

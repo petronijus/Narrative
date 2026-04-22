@@ -28,6 +28,10 @@ import {
   Hand,
   Undo2,
   Redo2,
+  Triangle,
+  Pentagon,
+  Minus,
+  MoveUpRight,
 } from 'lucide-react'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
@@ -55,6 +59,10 @@ const TOOL_BUTTONS: ToolButton[] = [
   { tool: 'hand', label: 'Hand', shortcut: 'H', icon: Hand },
   { tool: 'rectangle', label: 'Rectangle', shortcut: 'R', icon: Square },
   { tool: 'ellipse', label: 'Ellipse', shortcut: 'O', icon: Circle },
+  { tool: 'triangle', label: 'Triangle', shortcut: '', icon: Triangle },
+  { tool: 'polygon', label: 'Polygon', shortcut: '', icon: Pentagon },
+  { tool: 'line', label: 'Line', shortcut: 'L', icon: Minus },
+  { tool: 'arrow', label: 'Arrow', shortcut: 'A', icon: MoveUpRight },
   { tool: 'text', label: 'Text', shortcut: 'T', icon: Type },
 ]
 
@@ -63,6 +71,8 @@ const SHORTCUT_MAP: Record<string, ActiveTool> = {
   h: 'hand',
   r: 'rectangle',
   o: 'ellipse',
+  l: 'line',
+  a: 'arrow',
   t: 'text',
 }
 
