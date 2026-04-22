@@ -281,14 +281,17 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
       if (currentIdx === -1) return
 
-      let targetIdx: number
-      if (direction === 'next') {
-        if (currentIdx >= slides.length - 1) return // boundary — no wrap
-        targetIdx = currentIdx + 1
-      } else {
-        if (currentIdx <= 0) return // boundary — no wrap
-        targetIdx = currentIdx - 1
+      // P3: skip slides flagged with `skipped` — advance past them in the
+      // requested direction until we find a presentable slide or fall off
+      // the end.
+      const step = direction === 'next' ? 1 : -1
+      let targetIdx = currentIdx + step
+      while (targetIdx >= 0 && targetIdx < slides.length) {
+        const candidate = slides[targetIdx]
+        if (candidate !== undefined && candidate.skipped !== true) break
+        targetIdx += step
       }
+      if (targetIdx < 0 || targetIdx >= slides.length) return
 
       const targetSlide = slides[targetIdx]
       if (targetSlide === undefined) return

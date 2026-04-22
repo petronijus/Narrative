@@ -93,12 +93,19 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const backgroundMap = yMap.get('background') as Y.Map<unknown> | undefined
   const background = backgroundMap === undefined ? undefined : yMapToBackground(backgroundMap)
 
+  // P3: name + skipped. Both optional — name shows in the slides panel,
+  // skipped hides the slide from present-mode navigation.
+  const name = yMap.get('name') as string | undefined
+  const skipped = yMap.get('skipped') as boolean | undefined
+
   return {
     id,
     objects,
     animations,
     transition,
     ...(background !== undefined ? { background } : {}),
+    ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
+    ...(skipped === true ? { skipped: true } : {}),
   }
 }
 
@@ -334,6 +341,50 @@ export function updateSlideTransition(
     if (patch.durationMs !== undefined) transitionMap.set('durationMs', patch.durationMs)
     if (patch.direction !== undefined) {
       transitionMap.set('direction', patch.direction)
+    }
+  }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
+// P3: slide metadata — name + skipped
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets the slide's display name. Pass an empty string (or whitespace-only)
+ * to clear it; consumers fall back to "Slide {index+1}".
+ */
+export function setSlideName(ctx: SlideMutationContext, slideId: string, name: string): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    const trimmed = name.trim()
+    if (trimmed.length === 0) {
+      slideMap.delete('name')
+    } else {
+      slideMap.set('name', trimmed)
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Toggles (or explicitly sets) the slide's `skipped` flag. Skipped
+ * slides stay visible in the editor but are passed over by present-mode
+ * navigation.
+ */
+export function setSlideSkipped(
+  ctx: SlideMutationContext,
+  slideId: string,
+  skipped: boolean,
+): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (skipped) {
+      slideMap.set('skipped', true)
+    } else {
+      slideMap.delete('skipped')
     }
   }, LOCAL_ORIGIN)
 }

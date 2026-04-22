@@ -25,7 +25,7 @@
  * - resolution=1 is intentional — thumbnails are cheap display-only assets.
  */
 
-import { Application, Container } from 'pixi.js'
+import { Application, Container, Graphics } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
@@ -128,6 +128,16 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     const slideContainer = new Container()
     // Scale the entire slide down to thumbnail dimensions.
     slideContainer.scale.set(scale)
+
+    // P3: clip thumbnail content to the artboard rect so objects dragged
+    // outside the slide in the editor don't leak into the sidebar preview.
+    // Using a Graphics mask in SLIDE space — the mask is scaled together
+    // with slideContainer so the clip matches the artboard visually.
+    const clipMask = new Graphics()
+    clipMask.rect(0, 0, SLIDE_WIDTH, SLIDE_HEIGHT)
+    clipMask.fill({ color: 0xffffff })
+    slideContainer.addChild(clipMask)
+    slideContainer.mask = clipMask
 
     // P2: paint the artboard background first so objects stack above it.
     // `applyBackground` is synchronous for color + gradient kinds; image

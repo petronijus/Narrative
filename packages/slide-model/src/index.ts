@@ -54,6 +54,8 @@ export {
   moveSlide,
   updateSlideTransition,
   updateSlideBackground,
+  setSlideName,
+  setSlideSkipped,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,

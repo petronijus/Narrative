@@ -19,6 +19,7 @@ import { Inspector } from '../ui/Inspector'
 import { AnimationTimeline } from '../ui/AnimationTimeline'
 import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
+import { ResizableSidebar } from '../ui/ResizableSidebar'
 import { TransformHandles } from '../ui/TransformHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
@@ -531,10 +532,17 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
-      {/* Left sidebar — slides panel */}
-      <aside className="panel flex w-60 flex-shrink-0 flex-col border-r border-border overflow-hidden">
+      {/* Left sidebar — slides panel, user-resizable (P3) */}
+      <ResizableSidebar
+        storageKey="narrative:sidebarWidth"
+        minWidth={180}
+        maxWidth={420}
+        defaultWidth={240}
+        side="left"
+        className="panel border-r border-border overflow-hidden"
+      >
         <SlidesPanel />
-      </aside>
+      </ResizableSidebar>
 
       {/* Center: canvas area */}
       <main className="flex flex-1 flex-col overflow-hidden">
