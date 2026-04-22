@@ -18,14 +18,28 @@ import type { SceneGraph } from '../renderer/SceneGraph.js'
 
 /**
  * Vytvoří TargetResolver napojený na SceneGraph.
- * Resolve je lazy — voláno každý frame pro daný objectId.
+ * Resolve je lazy — voláno při kompilaci každého AnimationStep.
  * Pokud objekt neexistuje (nebyl přidán nebo byl smazán), vrátí null.
+ *
+ * M15: Proxy je per-objectId cachovaný uvnitř jednoho resolveru. Dva
+ * AnimationStepy na stejném objektu tak sdílí jeden proxy + jednu apply
+ * funkci. Bez sdílení by každá animace měla svůj proxy s vlastní kopií
+ * ostatních properties — a apply() druhé animace by přepisovala
+ * container hodnoty, které právě zapsala první animace (např. fadeIn
+ * zapíše scaleX=1 ze svého proxy přes wipeIn.scaleX=0.5).
  */
 export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver {
+  const cache = new Map<string, PixiTargetHandle>()
   return {
     resolve(objectId: string): PixiTargetHandle | null {
       const node = sceneGraph.getNode(objectId)
-      if (node === undefined) return null
+      if (node === undefined) {
+        cache.delete(objectId)
+        return null
+      }
+
+      const cached = cache.get(objectId)
+      if (cached !== undefined) return cached
 
       const { container } = node
 
@@ -43,7 +57,7 @@ export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver
         scaleY: container.scale.y,
       }
 
-      return {
+      const handle: PixiTargetHandle = {
         kind: 'pixi',
         proxy,
         apply(): void {
@@ -52,7 +66,10 @@ export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver
           container.alpha = proxy.alpha
           container.scale.set(proxy.scaleX, proxy.scaleY)
         },
-      } satisfies PixiTargetHandle
+      }
+
+      cache.set(objectId, handle)
+      return handle
     },
   }
 }
