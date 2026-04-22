@@ -70,6 +70,20 @@ export function createAnimationRuntime(
   const compiled = compileSteps(steps, ctx)
   const tl = compiled.gsapTimeline
 
+  // M14: force tween initialization so seek() renders on a paused timeline
+  // that has never played. GSAP fromTo tweens capture their "from" values
+  // lazily on the first onUpdate tick — before that, tl.seek(t) doesn't
+  // apply tween values to targets. We materialise the endpoints by
+  // progressing to 1 then back to 0. suppressEvents stays false — the
+  // whole point is that onUpdate must fire so tweens write to their
+  // targets. addPause / onComplete side effects don't matter here: they
+  // act on the timeline itself (pausing / marking complete), which we
+  // immediately override by progress(0).
+  if (tl.duration() > 0) {
+    tl.progress(1)
+    tl.progress(0)
+  }
+
   const runtime: AnimationRuntime = {
     play(): void {
       tl.play()
