@@ -1,3 +1,6 @@
+/* Design tokens — must precede @tailwind directives per CSS @import rules. */
+@import './styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,9 +13,5 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-  }
-
-  body {
-    @apply bg-gray-950 text-gray-100 font-sans;
   }
 }

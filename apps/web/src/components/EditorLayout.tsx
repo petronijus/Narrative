@@ -529,7 +529,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   return (
     <div className="flex h-full w-full overflow-hidden bg-gray-950">
       {/* Left sidebar — slides panel */}
-      <aside className="flex w-60 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-hidden">
+      <aside className="flex w-60 flex-shrink-0 flex-col border-r border-border bg-surface-1 overflow-hidden">
         <SlidesPanel />
       </aside>
 
@@ -590,9 +590,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       </main>
 
       {/* Right sidebar: inspector */}
-      <aside className="flex w-64 flex-shrink-0 flex-col border-l border-gray-800 bg-gray-900">
-        <div className="border-b border-gray-800 px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <aside className="flex w-64 flex-shrink-0 flex-col border-l border-border bg-surface-1">
+        <div className="border-b border-border px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Inspector
           </span>
         </div>

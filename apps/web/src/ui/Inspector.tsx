@@ -85,7 +85,7 @@ interface NumberFieldProps {
 function NumberField({ id, label, value, step = 1, disabled = false, onChange }: NumberFieldProps) {
   return (
     <div className="flex items-center gap-2">
-      <label htmlFor={id} className="w-16 flex-shrink-0 text-xs text-gray-400">
+      <label htmlFor={id} className="w-16 flex-shrink-0 text-xs text-muted-foreground">
         {label}
       </label>
       <input
@@ -99,9 +99,10 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
           if (Number.isFinite(parsed)) onChange(parsed)
         }}
         className={[
-          'w-full rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-          'text-right text-xs text-gray-200',
-          'focus:border-blue-500 focus:outline-none',
+          'w-full rounded-md border border-input bg-background px-2 py-0.5',
+          'text-right text-xs text-foreground',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'disabled:cursor-not-allowed disabled:opacity-50',
         ].join(' ')}
       />
     </div>
@@ -115,8 +116,8 @@ interface SectionProps {
 
 function Section({ title, children }: SectionProps) {
   return (
-    <div className="border-b border-gray-800 px-3 py-2">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+    <div className="border-b border-border px-3 py-2">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </p>
       <div className="flex flex-col gap-1.5">{children}</div>

@@ -1,0 +1,101 @@
+/**
+ * styles/tokens.css
+ *
+ * Design tokens for Narrative — CSS custom properties consumed by both
+ * shadcn/ui component primitives (`hsl(var(--background))` style) and our
+ * own Tailwind utilities (via `theme.extend.colors` in tailwind.config.js).
+ *
+ * Dark-first: Narrative is a Keynote-like editor, the light palette is a
+ * thin layer on top added later. For P1 we ship dark only.
+ */
+
+@layer base {
+  :root {
+    /* ───────── shadcn surfaces (HSL triplets, no hsl()) ───────── */
+    /* Re-used by shadcn components via `hsl(var(--background))`. */
+    --background: 230 23% 9%;
+    --foreground: 220 14% 90%;
+    --card: 230 23% 11%;
+    --card-foreground: 220 14% 90%;
+    --popover: 230 25% 8%;
+    --popover-foreground: 220 14% 95%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 220 14% 98%;
+    --secondary: 230 15% 16%;
+    --secondary-foreground: 220 14% 90%;
+    --muted: 230 15% 14%;
+    --muted-foreground: 220 9% 55%;
+    --accent: 230 15% 18%;
+    --accent-foreground: 220 14% 95%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 220 14% 98%;
+    --border: 230 15% 18%;
+    --input: 230 15% 18%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.625rem;
+
+    /* ───────── Narrative-specific surface scale ───────── */
+    /* Layered dark backgrounds: 0 = page, 3 = raised panels. */
+    --surface-0: 230 25% 7%;
+    --surface-1: 230 23% 10%;
+    --surface-2: 230 20% 13%;
+    --surface-3: 230 18% 16%;
+
+    --border-subtle: 230 15% 18%;
+    --border-strong: 230 15% 28%;
+
+    /* Brand accent (blue) used by Present button + focus rings. */
+    --accent-500: 217 91% 60%;
+    --accent-600: 217 83% 55%;
+
+    /* ───────── Glow halo + glass sheet tokens ───────── */
+    --glow-accent: 0 0 32px 0 hsl(var(--accent-500) / 0.35);
+    --glow-strong: 0 0 48px 0 hsl(var(--accent-500) / 0.55);
+
+    --glass-bg: hsl(230 25% 10% / 0.6);
+    --glass-border: hsl(230 15% 28% / 0.4);
+    --glass-blur: 24px;
+
+    /* Radius scale — match --radius as base (used by shadcn as --radius). */
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+  }
+
+  /* Reset / base tweaks */
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+}
+
+/**
+ * Glass sheet utility — frosted panel over any background.
+ * Use via `className="glass"` on a container.
+ */
+@layer utilities {
+  .glass {
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+  }
+
+  /* Accent glow — apply to interactive elements (Present button, hover). */
+  .glow-accent {
+    box-shadow: var(--glow-accent);
+  }
+  .glow-strong {
+    box-shadow: var(--glow-strong);
+  }
+}
