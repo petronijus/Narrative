@@ -1,19 +1,19 @@
 /**
  * ui/SlidesPanel.tsx
  *
- * Left sidebar slide panel.
+ * Left sidebar slide panel (Keynote-style outline).
  *
- * P3 outline behaviour (Keynote-style):
  * - Each slide carries an `indent` level (0 = top). Parent = nearest
- *   previous slide with smaller indent.
- * - Parents can `collapsed` — their descendants disappear from the panel
- *   (and only the panel; present-mode ignores collapse).
- * - Drag reorders (vertical) AND re-indents (horizontal delta). The
- *   resulting indent is clamped: a slide can be at most `previous.indent + 1`
- *   after the move, so you can't jump levels.
+ *   preceding slide with smaller indent.
+ * - Parents may be `collapsed`; descendants smoothly collapse to
+ *   height 0 in the panel. Present mode ignores collapse.
+ * - Drag reorders (vertical) AND re-indents (horizontal) in one gesture.
+ *   Dragging a parent drags all its descendants as one block.
+ * - Shift-click extends selection; plain click replaces it. Dragging
+ *   any selected slide drags the whole selection (with descendants).
  */
 
-import { useRef, useState, useCallback, useEffect, useId } from 'react'
+import { useRef, useState, useCallback, useEffect, useId, useMemo } from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -22,7 +22,7 @@ import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
 import {
   addSlide,
   removeSlide,
-  moveSlide,
+  moveSlidesBlock,
   setSlideName,
   setSlideSkipped,
   setSlideIndent,
@@ -45,28 +45,55 @@ function placeholderColour(index: number): string {
   return PLACEHOLDER_COLOURS[index % PLACEHOLDER_COLOURS.length] ?? '#1e293b'
 }
 
-/** Pixels of horizontal drag that equal one indent step. */
 const INDENT_STEP_PX = 24
-/** Visual inset per indent level (in px). */
 const INDENT_VISUAL_PX = 16
-/** Max indent level. Keynote caps around 5; 6 is plenty. */
 const MAX_INDENT = 6
+const COLLAPSE_MS = 180
+
+// ---------------------------------------------------------------------------
+// Outline helpers
+// ---------------------------------------------------------------------------
+
+function slideIndent(s: Slide): number {
+  return s.indent ?? 0
+}
+
+/**
+ * Returns the ids of the slide at `fromIndex` plus every following slide
+ * that belongs to its outline subtree (consecutive slides with a deeper
+ * indent).
+ */
+function subtreeIds(slides: Slide[], fromIndex: number): string[] {
+  const root = slides[fromIndex]
+  if (root === undefined) return []
+  const out: string[] = [root.id]
+  const rootIndent = slideIndent(root)
+  for (let i = fromIndex + 1; i < slides.length; i++) {
+    const s = slides[i]
+    if (s === undefined) break
+    if (slideIndent(s) <= rootIndent) break
+    out.push(s.id)
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // Drag state
 // ---------------------------------------------------------------------------
 
 interface DragState {
-  slideId: string
+  /** Ids being dragged, in array order. */
+  slideIds: string[]
+  /** Array index of the first dragged slide. */
   fromIndex: number
   fromIndent: number
   startX: number
   startY: number
   currentX: number
   currentY: number
-  /** Final drop index in the global slides array. */
+  /** Target insertion index (in pre-move array). */
   insertAt: number
-  /** Final indent after clamp. */
+  /** Final indent of the FIRST dragged slide after clamp. */
   indent: number
 }
 
@@ -80,13 +107,15 @@ interface SlideItemProps {
   indent: number
   hasChildren: boolean
   collapsed: boolean
+  hidden: boolean
   isActive: boolean
+  isSelected: boolean
   isDragging: boolean
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
   thumbnailUrl: string | undefined
   readOnly?: boolean
-  onActivate: (id: string) => void
+  onActivate: (id: string, shift: boolean) => void
   onToggleCollapsed: (id: string) => void
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>, id: string, index: number) => void
   onDuplicate: (id: string) => void
@@ -102,7 +131,9 @@ function SlideItem({
   indent,
   hasChildren,
   collapsed,
+  hidden,
   isActive,
+  isSelected,
   isDragging,
   dropIndicatorAbove,
   dropIndicatorBelow,
@@ -142,6 +173,10 @@ function SlideItem({
 
   const displayName = slide.name ?? `Slide ${index + 1}`
 
+  // Animated show/hide: we render a wrapper that uses grid-template-rows
+  // 0fr ↔ 1fr to smoothly collapse a row to zero without measuring.
+  const ringClass = isSelected && !isActive ? 'ring-2 ring-blue-400/70' : ''
+
   return (
     <div
       role="option"
@@ -149,143 +184,163 @@ function SlideItem({
       aria-labelledby={labelId}
       data-slide-id={slide.id}
       data-slide-index={index}
-      style={{ paddingLeft: indent * INDENT_VISUAL_PX }}
-      className={['group relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
+      aria-hidden={hidden || undefined}
+      className="group"
+      style={{
+        display: 'grid',
+        gridTemplateRows: hidden ? '0fr' : '1fr',
+        transition: `grid-template-rows ${COLLAPSE_MS}ms ease, opacity ${COLLAPSE_MS}ms ease`,
+        opacity: hidden ? 0 : 1,
+        pointerEvents: hidden ? 'none' : 'auto',
+      }}
     >
-      {/* Drop indicator — above */}
-      {dropIndicatorAbove && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
-        />
-      )}
-
-      {/* Collapse chevron — only rendered for parents */}
-      {hasChildren && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleCollapsed(slide.id)
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          aria-label={collapsed ? 'Expand children' : 'Collapse children'}
-          className="absolute left-0 top-2 z-10 flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-          style={{ left: Math.max(0, indent * INDENT_VISUAL_PX - 16) }}
-        >
-          <ChevronRight
-            className={'h-3 w-3 transition-transform ' + (collapsed ? '' : 'rotate-90')}
-            aria-hidden="true"
-          />
-        </button>
-      )}
-
-      {/* Thumbnail card */}
       <div
-        className={[
-          'relative mx-2 cursor-pointer overflow-hidden rounded',
-          'transition-shadow duration-100',
-          isActive ? 'ring-2 ring-blue-500' : 'ring-1 ring-gray-700 hover:ring-gray-500',
-          slide.skipped === true ? 'opacity-50' : '',
-        ].join(' ')}
-        style={{ aspectRatio: '16/9' }}
-        onClick={() => onActivate(slide.id)}
-        onPointerDown={(e) => onPointerDown(e, slide.id, index)}
-        aria-hidden="true"
+        style={{
+          overflow: 'hidden',
+          paddingLeft: indent * INDENT_VISUAL_PX,
+        }}
+        className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
       >
-        {thumbnailUrl !== undefined ? (
-          <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" draggable={false} />
-        ) : (
-          <div className="h-full w-full" style={{ backgroundColor: placeholderColour(index) }} />
-        )}
-
-        {/* Slide number badge — bottom left */}
-        <span
-          id={labelId}
-          className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
-        >
-          {index + 1}
-        </span>
-
-        {/* Skipped badge — corner eye-off icon */}
-        {slide.skipped === true && (
-          <span
-            aria-label="Skipped in present mode"
-            className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
-          >
-            <EyeOff className="h-3 w-3" aria-hidden="true" />
-          </span>
-        )}
-      </div>
-
-      {/* Slide name — double-click / F2 to edit */}
-      <div className="mx-2 mt-1 text-[11px] text-muted-foreground">
-        {editing ? (
-          <input
-            ref={inputRef}
-            type="text"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                commit()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                setDraftName(slide.name ?? '')
-                setEditing(false)
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            placeholder={`Slide ${index + 1}`}
-            className="w-full rounded border border-border bg-surface-1 px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-border-strong"
+        {dropIndicatorAbove && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
           />
-        ) : (
-          <button
-            type="button"
-            onDoubleClick={() => {
-              if (readOnly) return
-              setEditing(true)
-            }}
-            onKeyDown={(e) => {
-              if (!readOnly && e.key === 'F2') {
-                e.preventDefault()
-                setEditing(true)
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-2/60"
-            title={displayName}
-          >
-            {displayName}
-          </button>
         )}
-      </div>
 
-      {/* Drop indicator — below */}
-      {dropIndicatorBelow && (
+        {/* Thumbnail card */}
         <div
+          className={[
+            'relative mx-2 cursor-pointer overflow-hidden rounded',
+            'transition-shadow duration-100',
+            isActive
+              ? 'ring-2 ring-blue-500'
+              : ringClass !== ''
+                ? ringClass
+                : 'ring-1 ring-gray-700 hover:ring-gray-500',
+            slide.skipped === true ? 'opacity-50' : '',
+          ].join(' ')}
+          style={{ aspectRatio: '16/9' }}
+          onPointerDown={(e) => onPointerDown(e, slide.id, index)}
+          onClick={(e) => onActivate(slide.id, e.shiftKey)}
           aria-hidden="true"
-          className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
-        />
-      )}
+        >
+          {thumbnailUrl !== undefined ? (
+            <img
+              src={thumbnailUrl}
+              alt=""
+              className="h-full w-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <div className="h-full w-full" style={{ backgroundColor: placeholderColour(index) }} />
+          )}
 
-      {/* Three-dot menu button — hidden for viewer role */}
-      {!readOnly && (
-        <div className="absolute right-3 top-1">
-          <SlideItemMenu
-            slideId={slide.id}
-            skipped={slide.skipped === true}
-            onDuplicate={onDuplicate}
-            onDelete={onDelete}
-            onTransition={onTransition}
-            onRename={() => setEditing(true)}
-            onToggleSkip={onToggleSkip}
-          />
+          <span
+            id={labelId}
+            className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
+          >
+            {index + 1}
+          </span>
+
+          {slide.skipped === true && (
+            <span
+              aria-label="Skipped in present mode"
+              className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+            >
+              <EyeOff className="h-3 w-3" aria-hidden="true" />
+            </span>
+          )}
         </div>
-      )}
+
+        {/* Name row — chevron + label, inline */}
+        <div className="mx-2 mt-1 flex items-center gap-0.5 text-[11px] text-muted-foreground">
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleCollapsed(slide.id)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              aria-label={collapsed ? 'Expand children' : 'Collapse children'}
+              className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight
+                className={'h-3 w-3 transition-transform ' + (collapsed ? '' : 'rotate-90')}
+                aria-hidden="true"
+              />
+            </button>
+          ) : (
+            <span className="inline-block h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          )}
+
+          {editing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commit()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setDraftName(slide.name ?? '')
+                  setEditing(false)
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              placeholder={`Slide ${index + 1}`}
+              className="flex-1 rounded border border-border bg-surface-1 px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-border-strong"
+            />
+          ) : (
+            <button
+              type="button"
+              onDoubleClick={() => {
+                if (readOnly) return
+                setEditing(true)
+              }}
+              onKeyDown={(e) => {
+                if (!readOnly && e.key === 'F2') {
+                  e.preventDefault()
+                  setEditing(true)
+                }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="block flex-1 truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-2/60"
+              title={displayName}
+            >
+              {displayName}
+            </button>
+          )}
+        </div>
+
+        {dropIndicatorBelow && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
+          />
+        )}
+
+        {/* Three-dot menu button — hidden for viewer role */}
+        {!readOnly && (
+          <div className="absolute right-3 top-1">
+            <SlideItemMenu
+              slideId={slide.id}
+              skipped={slide.skipped === true}
+              onDuplicate={onDuplicate}
+              onDelete={onDelete}
+              onTransition={onTransition}
+              onRename={() => setEditing(true)}
+              onToggleSkip={onToggleSkip}
+            />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -311,8 +366,56 @@ export function SlidesPanel(): JSX.Element {
   const dragStateRef = useRef<DragState | null>(null)
   const itemHeightRef = useRef<number>(90)
 
+  // Panel-level multi-select (separate from the canvas SelectionContext).
+  // Always contains activeSlideId when not empty.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
+    activeSlideId !== null ? new Set([activeSlideId]) : new Set(),
+  )
+
+  // Keep selection in sync when the active slide changes externally
+  // (e.g. keyboard nav, Enter, remote peer).
+  useEffect(() => {
+    if (activeSlideId === null) return
+    setSelectedIds((prev) => {
+      if (prev.has(activeSlideId) && prev.size === 1) return prev
+      return new Set([activeSlideId])
+    })
+  }, [activeSlideId])
+
+  // Prune stale ids when the slide list shrinks.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const live = new Set(slides.map((s) => s.id))
+      let changed = false
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (live.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [slides])
+
+  // ---------------------------------------------------------------------------
+  // Activation / selection
+  // ---------------------------------------------------------------------------
+
   const handleActivate = useCallback(
-    (id: string) => {
+    (id: string, shift: boolean) => {
+      if (shift) {
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          if (next.has(id) && next.size > 1) {
+            next.delete(id)
+          } else {
+            next.add(id)
+          }
+          return next
+        })
+        // Don't change active slide on shift-click.
+        return
+      }
+      setSelectedIds(new Set([id]))
       setActiveSlideId(id)
       clearSelection()
     },
@@ -322,6 +425,7 @@ export function SlidesPanel(): JSX.Element {
   const handleAdd = useCallback(() => {
     const newSlide = addSlide(deckCtx)
     setActiveSlideId(newSlide.id)
+    setSelectedIds(new Set([newSlide.id]))
     clearSelection()
   }, [deckCtx, setActiveSlideId, clearSelection])
 
@@ -356,7 +460,7 @@ export function SlidesPanel(): JSX.Element {
 
   const handleTransition = useCallback(
     (slideId: string) => {
-      handleActivate(slideId)
+      handleActivate(slideId, false)
     },
     [handleActivate],
   )
@@ -387,7 +491,35 @@ export function SlidesPanel(): JSX.Element {
   )
 
   // ---------------------------------------------------------------------------
-  // Drag math helpers
+  // Derived outline state
+  // ---------------------------------------------------------------------------
+
+  const outline = useMemo(() => {
+    const hasChildrenMap = new Map<string, boolean>()
+    const hiddenIds = new Set<string>()
+    for (let i = 0; i < slides.length; i++) {
+      const s = slides[i]
+      if (s === undefined) continue
+      const next = slides[i + 1]
+      hasChildrenMap.set(s.id, next !== undefined && slideIndent(next) > slideIndent(s))
+    }
+    let suppressingIndent: number | null = null
+    for (const s of slides) {
+      const i = slideIndent(s)
+      if (suppressingIndent !== null && i > suppressingIndent) {
+        hiddenIds.add(s.id)
+      } else {
+        suppressingIndent = null
+      }
+      if (s.collapsed === true && suppressingIndent === null) {
+        suppressingIndent = i
+      }
+    }
+    return { hasChildrenMap, hiddenIds }
+  }, [slides])
+
+  // ---------------------------------------------------------------------------
+  // Drag math
   // ---------------------------------------------------------------------------
 
   const getItemHeight = useCallback((): number => {
@@ -401,20 +533,17 @@ export function SlidesPanel(): JSX.Element {
   }, [])
 
   /**
-   * Clamps a proposed indent given the previous slide in the post-move
-   * slide list. A slide can be at most one level deeper than the slide
-   * preceding its drop position. With no preceding slide (= top of
-   * list), the only legal indent is 0.
+   * Clamps a proposed indent against the post-move previous slide. An
+   * ancestor of the moving block cannot jump more than one level deeper
+   * than the slide immediately preceding its insertion point.
    */
   const clampIndent = useCallback(
-    (proposed: number, insertAt: number, movingSlideId: string): number => {
-      // Rebuild the list as it would look after the move: drop the
-      // moving slide from its current position, then consult the slide
-      // just before insertAt.
-      const filtered = slides.filter((s) => s.id !== movingSlideId)
+    (proposed: number, insertAt: number, movingIds: string[]): number => {
+      const movingSet = new Set(movingIds)
+      const filtered = slides.filter((s) => !movingSet.has(s.id))
       const clampedInsertAt = Math.max(0, Math.min(insertAt, filtered.length))
       const prev = clampedInsertAt > 0 ? filtered[clampedInsertAt - 1] : undefined
-      const maxAllowed = prev === undefined ? 0 : (prev.indent ?? 0) + 1
+      const maxAllowed = prev === undefined ? 0 : slideIndent(prev) + 1
       return Math.max(0, Math.min(MAX_INDENT, Math.min(proposed, maxAllowed)))
     },
     [slides],
@@ -426,51 +555,75 @@ export function SlidesPanel(): JSX.Element {
       const deltaY = ds.currentY - ds.startY
       const deltaX = ds.currentX - ds.startX
       const rawRowOffset = Math.round(deltaY / h)
-      const insertAt = Math.max(0, Math.min(slides.length - 1, ds.fromIndex + rawRowOffset))
+      const insertAt = Math.max(0, Math.min(slides.length, ds.fromIndex + rawRowOffset))
       const rawIndent = ds.fromIndent + Math.round(deltaX / INDENT_STEP_PX)
-      const indent = clampIndent(rawIndent, insertAt, ds.slideId)
+      const indent = clampIndent(rawIndent, insertAt, ds.slideIds)
       return { insertAt, indent }
     },
     [slides.length, getItemHeight, clampIndent],
   )
+
+  // ---------------------------------------------------------------------------
+  // Pointer handlers
+  // ---------------------------------------------------------------------------
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>, slideId: string, index: number) => {
       if (e.button !== 0) return
       const target = e.target as HTMLElement
       if (target.closest('[data-slide-menu]') !== null) return
-      const slide = slides.find((s) => s.id === slideId)
-      if (slide === undefined) return
+
+      // Determine the ids that should travel together:
+      // - If the slide is part of a multi-select, bring the whole
+      //   selection plus each member's outline descendants.
+      // - Otherwise, bring the clicked slide plus its descendants.
+      const membership = selectedIds.has(slideId) && selectedIds.size > 1
+      const baseIds: string[] = membership ? [...selectedIds] : [slideId]
+
+      const allIds = new Set<string>()
+      for (const id of baseIds) {
+        const idx = slides.findIndex((s) => s.id === id)
+        if (idx === -1) continue
+        for (const childId of subtreeIds(slides, idx)) {
+          allIds.add(childId)
+        }
+      }
+
+      // Drag ids in array order for deterministic insertion.
+      const orderedIds: string[] = slides.filter((s) => allIds.has(s.id)).map((s) => s.id)
+      if (orderedIds.length === 0) return
+
+      const firstIdx = slides.findIndex((s) => s.id === orderedIds[0])
+      const firstSlide = slides[firstIdx]
+      if (firstSlide === undefined) return
 
       e.currentTarget.setPointerCapture(e.pointerId)
 
       const state: DragState = {
-        slideId,
-        fromIndex: index,
-        fromIndent: slide.indent ?? 0,
+        slideIds: orderedIds,
+        fromIndex: firstIdx,
+        fromIndent: slideIndent(firstSlide),
         startX: e.clientX,
         startY: e.clientY,
         currentX: e.clientX,
         currentY: e.clientY,
-        insertAt: index,
-        indent: slide.indent ?? 0,
+        insertAt: firstIdx,
+        indent: slideIndent(firstSlide),
       }
       dragStateRef.current = state
       setDragState({ ...state })
+
+      // Suppress the accidental click-activation after a drag gesture.
+      void index
     },
-    [slides],
+    [slides, selectedIds],
   )
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       const ds = dragStateRef.current
       if (ds === null) return
-
-      const next: DragState = {
-        ...ds,
-        currentX: e.clientX,
-        currentY: e.clientY,
-      }
+      const next: DragState = { ...ds, currentX: e.clientX, currentY: e.clientY }
       const outcome = computeDragOutcome(next)
       next.insertAt = outcome.insertAt
       next.indent = outcome.indent
@@ -484,20 +637,29 @@ export function SlidesPanel(): JSX.Element {
     (_e: React.PointerEvent<HTMLElement>) => {
       const ds = dragStateRef.current
       if (ds === null) return
-
       dragStateRef.current = null
       setDragState(null)
 
-      // Apply position change first (if any), then indent. Both mutations
-      // sit inside LOCAL_ORIGIN transacts — paired within the same frame.
-      if (ds.insertAt !== ds.fromIndex) {
-        moveSlide(deckCtx, ds.slideId, ds.insertAt)
+      const movedPosition = ds.insertAt !== ds.fromIndex
+      const movedIndent = ds.indent !== ds.fromIndent
+
+      if (movedPosition) {
+        moveSlidesBlock(deckCtx, ds.slideIds, ds.insertAt)
       }
-      if (ds.indent !== ds.fromIndent) {
-        setSlideIndent(deckCtx, ds.slideId, ds.indent)
+      if (movedIndent) {
+        // Shift the whole subtree by the same delta so relative indents stay.
+        const delta = ds.indent - ds.fromIndent
+        for (const id of ds.slideIds) {
+          const s = slides.find((x) => x.id === id)
+          if (s === undefined) continue
+          const nextIndent = Math.max(0, Math.min(MAX_INDENT, slideIndent(s) + delta))
+          if (nextIndent !== slideIndent(s)) {
+            setSlideIndent(deckCtx, id, nextIndent)
+          }
+        }
       }
     },
-    [deckCtx],
+    [deckCtx, slides],
   )
 
   // ---------------------------------------------------------------------------
@@ -507,20 +669,19 @@ export function SlidesPanel(): JSX.Element {
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLUListElement>) => {
       const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
-
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         const nextIdx = Math.min(slides.length - 1, currentIdx + 1)
         const next = slides[nextIdx]
-        if (next !== undefined) handleActivate(next.id)
+        if (next !== undefined) handleActivate(next.id, false)
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         const prevIdx = Math.max(0, currentIdx - 1)
         const prev = slides[prevIdx]
-        if (prev !== undefined) handleActivate(prev.id)
+        if (prev !== undefined) handleActivate(prev.id, false)
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        if (activeSlideId !== null) handleActivate(activeSlideId)
+        if (activeSlideId !== null) handleActivate(activeSlideId, false)
       }
     },
     [slides, activeSlideId, handleActivate],
@@ -537,50 +698,14 @@ export function SlidesPanel(): JSX.Element {
   }, [activeSlideId])
 
   // ---------------------------------------------------------------------------
-  // Derived outline state — which slides have children + which are hidden
-  // ---------------------------------------------------------------------------
-
-  const outline = (() => {
-    const hasChildrenMap = new Map<string, boolean>()
-    const hiddenIds = new Set<string>()
-
-    for (let i = 0; i < slides.length; i++) {
-      const slide = slides[i]
-      if (slide === undefined) continue
-      const indent = slide.indent ?? 0
-
-      // Has children if the next slide is at a deeper indent.
-      const next = slides[i + 1]
-      const hasChildren = next !== undefined && (next.indent ?? 0) > indent
-      hasChildrenMap.set(slide.id, hasChildren)
-    }
-
-    // A slide is hidden if ANY ancestor (earlier slide with smaller
-    // indent) is collapsed. Walk left-to-right, track the deepest
-    // collapsed-ancestor indent we're still "under".
-    let suppressingIndent: number | null = null
-    for (const slide of slides) {
-      const indent = slide.indent ?? 0
-      if (suppressingIndent !== null && indent > suppressingIndent) {
-        hiddenIds.add(slide.id)
-      } else {
-        suppressingIndent = null
-      }
-      if (slide.collapsed === true && suppressingIndent === null) {
-        suppressingIndent = indent
-      }
-    }
-
-    return { hasChildrenMap, hiddenIds }
-  })()
-
-  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
+  const draggingSet = dragState !== null ? new Set(dragState.slideIds) : null
+
   return (
     <div
-      className="flex h-full flex-col"
+      className="flex h-full flex-col select-none"
       onPointerMove={handlePointerMove as unknown as React.PointerEventHandler<HTMLDivElement>}
       onPointerUp={handlePointerUp as unknown as React.PointerEventHandler<HTMLDivElement>}
     >
@@ -623,33 +748,33 @@ export function SlidesPanel(): JSX.Element {
           className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           {slides.map((slide, idx) => {
-            if (outline.hiddenIds.has(slide.id)) return null
-            const isDragging = dragState?.slideId === slide.id
+            const isDragging = draggingSet !== null && draggingSet.has(slide.id)
             const dropIndicatorAbove =
               dragState !== null &&
-              dragState.slideId !== slide.id &&
+              !draggingSet!.has(slide.id) &&
               dragState.insertAt === idx &&
               dragState.insertAt < dragState.fromIndex
             const dropIndicatorBelow =
               dragState !== null &&
-              dragState.slideId !== slide.id &&
+              !draggingSet!.has(slide.id) &&
               dragState.insertAt === idx &&
               dragState.insertAt > dragState.fromIndex
 
-            // During a drag, preview the moving slide's indent live — every
-            // other slide uses its committed indent.
-            const indent = isDragging && dragState !== null ? dragState.indent : (slide.indent ?? 0)
-            const hasChildren = outline.hasChildrenMap.get(slide.id) ?? false
+            // Live-preview indent only for the dragged *root* slide.
+            const isDragRoot = dragState !== null && dragState.slideIds[0] === slide.id
+            const indent = isDragRoot && dragState !== null ? dragState.indent : slideIndent(slide)
 
             return (
-              <li key={slide.id} className="flex-shrink-0">
+              <li key={slide.id}>
                 <SlideItem
                   slide={slide}
                   index={idx}
                   indent={indent}
-                  hasChildren={hasChildren}
+                  hasChildren={outline.hasChildrenMap.get(slide.id) ?? false}
                   collapsed={slide.collapsed === true}
+                  hidden={outline.hiddenIds.has(slide.id)}
                   isActive={slide.id === activeSlideId}
+                  isSelected={selectedIds.has(slide.id)}
                   isDragging={isDragging}
                   dropIndicatorAbove={dropIndicatorAbove}
                   dropIndicatorBelow={dropIndicatorBelow}

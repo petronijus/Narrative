@@ -52,6 +52,7 @@ export {
   addSlide,
   removeSlide,
   moveSlide,
+  moveSlidesBlock,
   updateSlideTransition,
   updateSlideBackground,
   setSlideName,

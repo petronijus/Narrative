@@ -279,6 +279,57 @@ export function moveSlide(ctx: SlideMutationContext, slideId: string, toIndex: n
 }
 
 /**
+ * P3: moves a set of slides — in the order they currently appear in
+ * the array — to a new position, as a single Yjs transaction. Used by
+ * the slides panel for subtree drag (drag a parent → drag its outline
+ * children too) and for multi-select drag.
+ *
+ * `toIndex` is interpreted relative to the array BEFORE the move.
+ * After the move the moved slides occupy `[adjustedTarget,
+ * adjustedTarget + N)` where adjustedTarget compensates for any
+ * deletions that happened before the target position.
+ */
+export function moveSlidesBlock(
+  ctx: SlideMutationContext,
+  slideIds: string[],
+  toIndex: number,
+): void {
+  if (slideIds.length === 0) return
+
+  ctx.doc.transact(() => {
+    // Collect original indices + clones in the order the caller passed
+    // them. Callers typically pass ids in array order so the clones are
+    // inserted in the same relative order at the target.
+    const originals: Array<{ idx: number; clone: Y.Map<unknown> }> = []
+    for (const id of slideIds) {
+      const idx = findSlideIndex(ctx.slides, id)
+      if (idx === -1) continue
+      originals.push({ idx, clone: ctx.slides.get(idx).clone() })
+    }
+    if (originals.length === 0) return
+
+    // Delete from highest to lowest so earlier deletes don't shift the
+    // later ones' indices.
+    const descendingIdx = [...originals].sort((a, b) => b.idx - a.idx)
+    for (const { idx } of descendingIdx) {
+      ctx.slides.delete(idx, 1)
+    }
+
+    // The caller asked for `toIndex` in the PRE-move array. After
+    // deletions, everything at or after the earliest-deleted index
+    // shifts left by the count of deletions that happened before
+    // `toIndex`. Compute the adjusted target.
+    const removedBeforeTarget = originals.filter((o) => o.idx < toIndex).length
+    const adjusted = Math.max(0, Math.min(ctx.slides.length, toIndex - removedBeforeTarget))
+
+    ctx.slides.insert(
+      adjusted,
+      originals.map((o) => o.clone),
+    )
+  }, LOCAL_ORIGIN)
+}
+
+/**
  * Updates transition metadata for a slide.
  * No-op + warn if slide not found.
  */
