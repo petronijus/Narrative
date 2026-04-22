@@ -53,6 +53,7 @@ export {
   removeSlide,
   moveSlide,
   updateSlideTransition,
+  updateSlideBackground,
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,

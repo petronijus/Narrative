@@ -12,7 +12,13 @@
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import { DEFAULT_TRANSITION } from '@narrative/shared'
-import type { Slide, SlideTransition } from '@narrative/shared'
+import type {
+  Slide,
+  SlideTransition,
+  SlideBackground,
+  GradientStop,
+  ImageBackground,
+} from '@narrative/shared'
 import type { SlideObject } from '@narrative/shared'
 import type { AnimationStep } from '@narrative/shared'
 import { LOCAL_ORIGIN } from './mutations.js'
@@ -80,7 +86,77 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     ...(direction !== undefined ? { direction } : {}),
   }
 
-  return { id, objects, animations, transition }
+  // P2: optional background. Stored as a plain Y.Map (flat keys) —
+  // gradient stops flatten to `stops:<index>:<field>` entries so Y.Doc
+  // sees them as atomic granular updates. Missing ⇒ undefined in the
+  // snapshot; consumers fall back to DEFAULT_BACKGROUND.
+  const backgroundMap = yMap.get('background') as Y.Map<unknown> | undefined
+  const background = backgroundMap === undefined ? undefined : yMapToBackground(backgroundMap)
+
+  return {
+    id,
+    objects,
+    animations,
+    transition,
+    ...(background !== undefined ? { background } : {}),
+  }
+}
+
+/**
+ * Reads a SlideBackground Y.Map back to its plain snapshot.
+ * Unknown / malformed shapes return undefined so the consumer falls
+ * through to the default.
+ */
+function yMapToBackground(m: Y.Map<unknown>): SlideBackground | undefined {
+  const kind = m.get('kind') as SlideBackground['kind'] | undefined
+  if (kind === undefined) return undefined
+  if (kind === 'color') {
+    return {
+      kind: 'color',
+      color: (m.get('color') as number) ?? 0xffffff,
+      alpha: (m.get('alpha') as number | undefined) ?? 1,
+    }
+  }
+  if (kind === 'linearGradient') {
+    return {
+      kind: 'linearGradient',
+      angleDeg: (m.get('angleDeg') as number) ?? 180,
+      stops: readGradientStops(m),
+    }
+  }
+  if (kind === 'radialGradient') {
+    return {
+      kind: 'radialGradient',
+      centerX: (m.get('centerX') as number) ?? 0.5,
+      centerY: (m.get('centerY') as number) ?? 0.5,
+      radius: (m.get('radius') as number) ?? 0.5,
+      stops: readGradientStops(m),
+    }
+  }
+  if (kind === 'image') {
+    return {
+      kind: 'image',
+      assetId: (m.get('assetId') as string) ?? '',
+      fit: (m.get('fit') as ImageBackground['fit']) ?? 'cover',
+      dim: (m.get('dim') as number | undefined) ?? 0,
+    }
+  }
+  return undefined
+}
+
+function readGradientStops(m: Y.Map<unknown>): GradientStop[] {
+  const arr = m.get('stops') as Y.Array<Y.Map<unknown>> | undefined
+  if (arr === undefined) return []
+  const out: GradientStop[] = []
+  for (let i = 0; i < arr.length; i++) {
+    const s = arr.get(i)
+    out.push({
+      offset: (s.get('offset') as number) ?? 0,
+      color: (s.get('color') as number) ?? 0xffffff,
+      alpha: (s.get('alpha') as number | undefined) ?? 1,
+    })
+  }
+  return out
 }
 
 function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
@@ -260,6 +336,81 @@ export function updateSlideTransition(
       transitionMap.set('direction', patch.direction)
     }
   }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
+// P2: background mutation
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the slide's background with the provided `next` value, or
+ * clears it (reverts to the default) when `next` is null.
+ *
+ * The whole background is overwritten atomically — gradient stop edits
+ * go through this too. It's cheap because the background Y.Map is small
+ * (≤ 6 keys + a stop array of ~3-5 entries) and authoring clicks are
+ * infrequent; granular per-stop editing is a later optimisation.
+ */
+export function updateSlideBackground(
+  ctx: SlideMutationContext,
+  slideId: string,
+  next: SlideBackground | null,
+): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) {
+    console.warn(`updateSlideBackground: slide '${slideId}' not found — no-op`)
+    return
+  }
+
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (next === null) {
+      slideMap.delete('background')
+      return
+    }
+    const bgMap = writeBackgroundYMap(next)
+    slideMap.set('background', bgMap)
+  }, LOCAL_ORIGIN)
+}
+
+function writeBackgroundYMap(bg: SlideBackground): Y.Map<unknown> {
+  const m = new Y.Map<unknown>()
+  m.set('kind', bg.kind)
+  if (bg.kind === 'color') {
+    m.set('color', bg.color)
+    m.set('alpha', bg.alpha ?? 1)
+    return m
+  }
+  if (bg.kind === 'linearGradient') {
+    m.set('angleDeg', bg.angleDeg)
+    m.set('stops', writeGradientStops(bg.stops))
+    return m
+  }
+  if (bg.kind === 'radialGradient') {
+    m.set('centerX', bg.centerX)
+    m.set('centerY', bg.centerY)
+    m.set('radius', bg.radius)
+    m.set('stops', writeGradientStops(bg.stops))
+    return m
+  }
+  // image
+  m.set('assetId', (bg as ImageBackground).assetId)
+  m.set('fit', (bg as ImageBackground).fit)
+  m.set('dim', (bg as ImageBackground).dim ?? 0)
+  return m
+}
+
+function writeGradientStops(stops: GradientStop[]): Y.Array<Y.Map<unknown>> {
+  const arr = new Y.Array<Y.Map<unknown>>()
+  const items = stops.map((s) => {
+    const sm = new Y.Map<unknown>()
+    sm.set('offset', s.offset)
+    sm.set('color', s.color)
+    sm.set('alpha', s.alpha ?? 1)
+    return sm
+  })
+  arr.push(items)
+  return arr
 }
 
 /**

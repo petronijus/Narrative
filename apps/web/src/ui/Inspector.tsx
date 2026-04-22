@@ -31,6 +31,7 @@ import {
   addAnimation,
   removeAnimation,
   updateSlideTransition,
+  updateSlideBackground,
 } from '@narrative/slide-model'
 import type { AnimationsMutationContext } from '@narrative/slide-model'
 import type {
@@ -44,7 +45,9 @@ import type {
   SlideTransition,
   SlideTransitionKind,
   SlidePushDirection,
+  SlideBackground,
 } from '@narrative/shared'
+import { DEFAULT_BACKGROUND } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -494,7 +497,177 @@ function SlideInspector() {
           </div>
         )}
       </Section>
+
+      {/* Background */}
+      <BackgroundSection
+        slideId={slide.id}
+        background={slide.background}
+        selectClass={SELECT_CLASS}
+      />
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Background section (per-slide)
+// ---------------------------------------------------------------------------
+
+interface BackgroundSectionProps {
+  slideId: string
+  background: SlideBackground | undefined
+  selectClass: string
+}
+
+function BackgroundSection({ slideId, background, selectClass }: BackgroundSectionProps) {
+  const { deckCtx } = useSlideDoc()
+  const current = background ?? DEFAULT_BACKGROUND
+  const kind = current.kind
+
+  function setKind(nextKind: SlideBackground['kind']): void {
+    if (nextKind === kind) return
+    // Minimal-shape preset per kind. Users then edit the specifics.
+    const next: SlideBackground = (() => {
+      switch (nextKind) {
+        case 'color':
+          return { kind: 'color', color: 0xffffff, alpha: 1 }
+        case 'linearGradient':
+          return {
+            kind: 'linearGradient',
+            angleDeg: 180,
+            stops: [
+              { offset: 0, color: 0xffffff, alpha: 1 },
+              { offset: 1, color: 0x111111, alpha: 1 },
+            ],
+          }
+        case 'radialGradient':
+          return {
+            kind: 'radialGradient',
+            centerX: 0.5,
+            centerY: 0.5,
+            radius: 0.6,
+            stops: [
+              { offset: 0, color: 0xffffff, alpha: 1 },
+              { offset: 1, color: 0x111111, alpha: 1 },
+            ],
+          }
+        case 'image':
+          return { kind: 'image', assetId: '', fit: 'cover', dim: 0 }
+      }
+    })()
+    updateSlideBackground(deckCtx, slideId, next)
+  }
+
+  function setSolidColor(color: number): void {
+    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: 1 })
+  }
+
+  function patchGradientStop(idx: 0 | 1, color: number): void {
+    if (current.kind !== 'linearGradient' && current.kind !== 'radialGradient') return
+    const stops = current.stops.slice()
+    const stop = stops[idx]
+    if (stop === undefined) return
+    stops[idx] = { ...stop, color }
+    updateSlideBackground(deckCtx, slideId, { ...current, stops })
+  }
+
+  function setAngle(angleDeg: number): void {
+    if (current.kind !== 'linearGradient') return
+    updateSlideBackground(deckCtx, slideId, { ...current, angleDeg })
+  }
+
+  return (
+    <Section title="Background" storageKey="background">
+      {/* Type */}
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`bg-kind-${slideId}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Type
+        </label>
+        <select
+          id={`bg-kind-${slideId}`}
+          value={kind}
+          onChange={(e) => setKind(e.target.value as SlideBackground['kind'])}
+          className={selectClass}
+        >
+          <option value="color">Solid color</option>
+          <option value="linearGradient">Linear gradient</option>
+          <option value="radialGradient">Radial gradient</option>
+          <option value="image">Image</option>
+        </select>
+      </div>
+
+      {/* Per-kind controls */}
+      {current.kind === 'color' && (
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`bg-color-${slideId}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Color
+          </label>
+          <input
+            id={`bg-color-${slideId}`}
+            type="color"
+            value={numberToHex(current.color)}
+            onChange={(e) => setSolidColor(hexToNumber(e.target.value))}
+            className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          />
+          <span className="font-mono text-[11px] text-muted-foreground/80">
+            {numberToHex(current.color).toUpperCase()}
+          </span>
+        </div>
+      )}
+
+      {(current.kind === 'linearGradient' || current.kind === 'radialGradient') && (
+        <>
+          <div className="flex items-center gap-2">
+            <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">Start</label>
+            <input
+              type="color"
+              value={numberToHex(current.stops[0]?.color ?? 0xffffff)}
+              onChange={(e) => patchGradientStop(0, hexToNumber(e.target.value))}
+              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">End</label>
+            <input
+              type="color"
+              value={numberToHex(current.stops[1]?.color ?? 0x111111)}
+              onChange={(e) => patchGradientStop(1, hexToNumber(e.target.value))}
+              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            />
+          </div>
+          {current.kind === 'linearGradient' && (
+            <NumberField
+              id={`bg-angle-${slideId}`}
+              label="Angle"
+              value={current.angleDeg}
+              step={1}
+              onChange={(v) => setAngle(((v % 360) + 360) % 360)}
+            />
+          )}
+        </>
+      )}
+
+      {current.kind === 'image' && (
+        <p className="text-[11px] italic text-muted-foreground/60">
+          Drag an image onto the slide, then come back to pick it as background. (Asset-picker UI
+          lands in the next polish pass.)
+        </p>
+      )}
+
+      {/* Reset */}
+      <button
+        type="button"
+        onClick={() => updateSlideBackground(deckCtx, slideId, null)}
+        className="mt-1 self-start rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        Reset to default
+      </button>
+    </Section>
   )
 }
 

@@ -56,10 +56,78 @@ export class SceneGraph {
   private _hitTestWorldPoint: Point | null = null
   private _hitTestLocalPoint: Point | null = null
 
+  /**
+   * P2: dedicated Container for the artboard background, always the
+   * FIRST child of `root` so every slide object stacks on top. Created
+   * lazily on first background access, persists across object adds /
+   * removes (it's not in the `nodes` map).
+   */
+  private backgroundContainer: Container | null = null
+
+  /**
+   * P2: slide bounds in pixi coords (= artboard CSS size). Used to fade
+   * objects whose AABB sits entirely outside the artboard. Zero means
+   * "no bounds set yet" → all objects at full alpha.
+   */
+  private slideBoundsW = 0
+  private slideBoundsH = 0
+
+  /**
+   * P2: bleed offset — pixi-world position of slide (0,0). Non-zero when
+   * Canvas renders with a bleed margin around the artboard so objects
+   * dragged outside remain visible.
+   */
+  private slideOriginX = 0
+  private slideOriginY = 0
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
+  }
+
+  /**
+   * P2: shifts the slide root so that slide (0,0) sits at
+   * (originX, originY) in pixi world coords. Used to give the canvas a
+   * bleed margin around the artboard.
+   */
+  setSlideOrigin(originX: number, originY: number): void {
+    this.slideOriginX = originX
+    this.slideOriginY = originY
+    this.root.x = originX
+    this.root.y = originY
+  }
+
+  /**
+   * P2: sets the artboard size in pixi coords (= slide-local px). Drives
+   * out-of-bounds fade. No-op if unchanged.
+   */
+  setSlideBounds(width: number, height: number): void {
+    if (this.slideBoundsW === width && this.slideBoundsH === height) return
+    this.slideBoundsW = width
+    this.slideBoundsH = height
+    for (const node of this.nodes.values()) {
+      this.applyOutsideFade(node)
+    }
+  }
+
+  private applyOutsideFade(node: SceneNode): void {
+    const w = this.slideBoundsW
+    const h = this.slideBoundsH
+    // Respect the object's authored opacity — outside-fade multiplies
+    // on top of it so tuning opacity in the Inspector still does what
+    // it says. Objects without an opacity field default to 1.
+    const baseAlpha =
+      typeof (node.data as { opacity?: number }).opacity === 'number'
+        ? (node.data as { opacity: number }).opacity
+        : 1
+    if (w === 0 || h === 0) {
+      node.container.alpha = baseAlpha
+      return
+    }
+    const { x, y, width, height } = node.data
+    const outside = x + width <= 0 || x >= w || y + height <= 0 || y >= h
+    node.container.alpha = outside ? baseAlpha * 0.35 : baseAlpha
   }
 
   /**
@@ -81,8 +149,10 @@ export class SceneGraph {
 
     const container = renderer.mount(data)
     this.root.addChild(container)
-    this.nodes.set(data.id, { container, data })
+    const node = { container, data }
+    this.nodes.set(data.id, node)
     this.nodeTypes.set(data.id, data.type)
+    this.applyOutsideFade(node)
   }
 
   /**
@@ -103,6 +173,7 @@ export class SceneGraph {
 
     renderer.update(node.container, node.data, next)
     node.data = next
+    this.applyOutsideFade(node)
   }
 
   /**
@@ -207,6 +278,7 @@ export class SceneGraph {
 
       // Aktualizuj data snapshot v node (merge patch do existujícího stavu)
       node.data = { ...node.data, ...patch } as SlideObject
+      this.applyOutsideFade(node)
     }
   }
 
@@ -238,6 +310,23 @@ export class SceneGraph {
    */
   getContainer(id: string): Container | undefined {
     return this.nodes.get(id)?.container
+  }
+
+  /**
+   * P2: returns (and lazily creates) the artboard-background Container —
+   * kept as the FIRST child of the active root so every slide object
+   * stacks above it. Consumers call this from the background observer +
+   * paint into it via `applyBackground()`.
+   */
+  ensureBackgroundContainer(): Container {
+    if (this.backgroundContainer === null || this.backgroundContainer.destroyed) {
+      this.backgroundContainer = new Container()
+      this.backgroundContainer.eventMode = 'none'
+      this.root.addChildAt(this.backgroundContainer, 0)
+    } else if (this.backgroundContainer.parent !== this.root) {
+      this.root.addChildAt(this.backgroundContainer, 0)
+    }
+    return this.backgroundContainer
   }
 
   /**
@@ -279,12 +368,21 @@ export class SceneGraph {
     }
 
     this.root = nextRoot
+    this.root.x = this.slideOriginX
+    this.root.y = this.slideOriginY
     if (nextRoot.parent === null) {
       this.app.stage.addChild(nextRoot)
     }
+    // Background container was a child of the OLD root and got destroyed
+    // with it. Drop the reference so the next `ensureBackgroundContainer()`
+    // call creates a fresh one on the new root.
+    this.backgroundContainer = null
+
     for (const entry of nextNodes) {
-      this.nodes.set(entry.id, { container: entry.container, data: entry.data })
+      const node = { container: entry.container, data: entry.data }
+      this.nodes.set(entry.id, node)
       this.nodeTypes.set(entry.id, entry.data.type)
+      this.applyOutsideFade(node)
     }
   }
 
@@ -331,7 +429,11 @@ export class SceneGraph {
     const worldPoint = this._hitTestWorldPoint
     const localPoint = this._hitTestLocalPoint!
 
-    worldPoint.set(worldX, worldY)
+    // Editor hands us slide-local coords (relative to the artboard
+    // top-left). With P2 bleed the pixi "world" origin is offset by
+    // slideOrigin, so we convert slide-local → pixi world before
+    // letting container.toLocal() walk the transform chain.
+    worldPoint.set(worldX + this.slideOriginX, worldY + this.slideOriginY)
 
     // Iterujeme v reverse insertion order — poslední přidaný je nahoře (highest z-order)
     const entries = [...this.nodes.entries()]
