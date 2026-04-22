@@ -46,6 +46,7 @@ import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
 import { StageBgPicker } from '../ui/StageBgPicker.js'
+import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
@@ -733,6 +734,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               scrolls the stage. */}
           <div className="pointer-events-none absolute right-3 top-3 z-10">
             <StageBgPicker />
+          </div>
+
+          {/* Zoom pill — bottom-right of the stage. */}
+          <div className="pointer-events-none absolute right-3 bottom-3 z-10">
+            <ZoomControl stageScrollRef={stageScrollRef} />
           </div>
         </div>
 
