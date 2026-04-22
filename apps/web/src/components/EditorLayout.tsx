@@ -21,6 +21,7 @@ import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { ResizableSidebar } from '../ui/ResizableSidebar'
 import { TransformHandles } from '../ui/TransformHandles'
+import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
 import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
@@ -914,19 +915,30 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
                   <PeerSelectionOverlays />
 
-                  {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
+                  {/* Transform handles — lines/arrows get endpoint handles
+                      instead of the 8-handle scale + rotate rig. */}
                   {!isViewer &&
                     selectedIds.size > 0 &&
                     canvasInstance !== null &&
-                    mutationCtx !== null && (
-                      <TransformHandles
-                        objectIds={[...selectedIds]}
-                        sceneGraph={canvasInstance.sceneGraph}
-                        mutationCtx={mutationCtx}
-                        onSnapGuides={handleSnapGuides}
-                        otherBounds={otherBounds}
-                      />
-                    )}
+                    mutationCtx !== null &&
+                    (() => {
+                      if (selectedIds.size === 1) {
+                        const onlyId = [...selectedIds][0]
+                        const obj = objects.find((o) => o.id === onlyId)
+                        if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
+                          return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
+                        }
+                      }
+                      return (
+                        <TransformHandles
+                          objectIds={[...selectedIds]}
+                          sceneGraph={canvasInstance.sceneGraph}
+                          mutationCtx={mutationCtx}
+                          onSnapGuides={handleSnapGuides}
+                          otherBounds={otherBounds}
+                        />
+                      )
+                    })()}
 
                   {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
                   <PeerCursors />
