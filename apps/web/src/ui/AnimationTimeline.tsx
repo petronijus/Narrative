@@ -803,7 +803,7 @@ export function AnimationTimeline() {
                     <div
                       key={objectId}
                       className={[
-                        'relative',
+                        'relative border-b border-gray-800',
                         rowIdx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/60',
                         isRowDragged ? 'opacity-40' : '',
                       ].join(' ')}
