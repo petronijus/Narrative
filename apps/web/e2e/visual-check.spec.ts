@@ -22,6 +22,22 @@ test('visual — home page (deck list)', async ({ page }) => {
   await page.screenshot({ path: 'test-results/p1-home.png', fullPage: true })
 })
 
+test('visual — editor in forced DARK theme', async ({ page }) => {
+  test.setTimeout(60_000)
+  // Force dark via the toggle's localStorage key before any page load.
+  await page.addInitScript(() => {
+    localStorage.setItem('narrative:theme', 'dark')
+  })
+
+  await createDeckAndOpen(page)
+  const rectBtn = page.getByRole('button', { name: /^Rectangle/i })
+  await rectBtn.click()
+  const canvas = page.locator('canvas').first()
+  await canvas.click({ position: { x: 400, y: 260 } })
+  await page.waitForTimeout(600)
+  await page.screenshot({ path: 'test-results/p1-editor-dark.png', fullPage: true })
+})
+
 test('visual — editor with one rectangle', async ({ page }) => {
   test.setTimeout(60_000)
 

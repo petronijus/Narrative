@@ -112,35 +112,39 @@
     color-scheme: dark;
   }
 
-  /* ───────── Light theme — opt in via OS prefers-color-scheme ─────────
-     Mirror token structure of the dark palette so every surface /
-     border / text ref auto-switches. Strategy:
+  /* ───────── Light theme —
+     Tri-state theme resolution:
+       - `<html>` (no `data-theme`): follow OS `prefers-color-scheme`.
+       - `<html data-theme="light">`: force light.
+       - `<html data-theme="dark">`:  force dark (matches the default).
 
-       - Surfaces mirror the dark scale but flipped: the deepest panel
-         is now the brightest (near white), sidebars are slightly
-         darker to still read as "chrome vs. content".
-       - Borders stay low-alpha, but black instead of white.
-       - Text scale flips: fg-high = near black, fg-low = mid gray.
-       - Accent blue stays the same hue but slightly darker for
-         contrast against light backgrounds.
+     The light token block lives in a reusable class-like selector so we
+     can apply it from both the media-query path and the explicit
+     data-theme path without duplicating values. */
 
-     The editor stays usable because the canvas backdrop drops its
-     radial vignette (light canvas reads as "paper"). Slide thumbnails
-     retain their per-slide colour so nothing visually breaks. */
+  /* Shared light-theme token values. Applied via the selectors below. */
+  :root[data-theme='light'],
+  :where(:root:not([data-theme='dark'])) {
+    /* This selector matches both the forced-light and no-preference
+       states; the no-preference branch then gets narrowed down by the
+       media query below. The `:where()` gives 0 specificity so the
+       forced-dark override (`[data-theme='dark']`) wins when present. */
+  }
+
   @media (prefers-color-scheme: light) {
-    :root {
-      --surface-0: 220 20% 98%; /* Editor page (near white) */
-      --surface-1: 220 18% 95%; /* Toolbar + sidebar rails */
-      --surface-2: 220 16% 92%; /* Panel body */
-      --surface-3: 220 14% 88%; /* Controls / inputs */
-      --surface-elevated: 0 0% 100%; /* Popovers / dialogs (pure white) */
+    :root:not([data-theme='dark']) {
+      --surface-0: 220 20% 98%;
+      --surface-1: 220 18% 95%;
+      --surface-2: 220 16% 92%;
+      --surface-3: 220 14% 88%;
+      --surface-elevated: 0 0% 100%;
 
       --border-subtle: 220 30% 10% / 0.09;
       --border-strong: 220 30% 10% / 0.18;
 
-      --fg-high: 220 25% 10%; /* Primary text (near black) */
-      --fg-mid: 220 12% 30%; /* Secondary text */
-      --fg-low: 220 8% 48%; /* Hints */
+      --fg-high: 220 25% 10%;
+      --fg-mid: 220 12% 30%;
+      --fg-low: 220 8% 48%;
 
       --accent-400: 212 100% 52%;
       --accent-500: 212 100% 44%;
@@ -174,6 +178,56 @@
 
       color-scheme: light;
     }
+  }
+
+  /* Explicit user override: `<html data-theme="light">`. Same values as
+     above, just outside the media query so the user's choice wins even
+     when the OS says dark. */
+  :root[data-theme='light'] {
+    --surface-0: 220 20% 98%;
+    --surface-1: 220 18% 95%;
+    --surface-2: 220 16% 92%;
+    --surface-3: 220 14% 88%;
+    --surface-elevated: 0 0% 100%;
+
+    --border-subtle: 220 30% 10% / 0.09;
+    --border-strong: 220 30% 10% / 0.18;
+
+    --fg-high: 220 25% 10%;
+    --fg-mid: 220 12% 30%;
+    --fg-low: 220 8% 48%;
+
+    --accent-400: 212 100% 52%;
+    --accent-500: 212 100% 44%;
+    --accent-600: 212 100% 36%;
+
+    --brand-500: 262 83% 55%;
+
+    --foreground: var(--fg-high);
+    --background: var(--surface-0);
+    --card: var(--surface-1);
+    --card-foreground: var(--fg-high);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--fg-high);
+    --primary: var(--accent-500);
+    --primary-foreground: 0 0% 100%;
+    --secondary: var(--surface-2);
+    --secondary-foreground: var(--fg-high);
+    --muted: var(--surface-2);
+    --muted-foreground: var(--fg-mid);
+    --accent: var(--surface-3);
+    --accent-foreground: var(--fg-high);
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--border-subtle);
+    --input: 220 30% 10% / 0.1;
+    --ring: var(--accent-500);
+
+    --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.6);
+    --glass-bg: hsl(220 20% 98% / 0.75);
+    --glass-border: hsl(220 20% 10% / 0.06);
+
+    color-scheme: light;
   }
 
   html,
@@ -266,13 +320,20 @@
     );
   }
   @media (prefers-color-scheme: light) {
-    .canvas-backdrop {
+    :root:not([data-theme='dark']) .canvas-backdrop {
       background-image: radial-gradient(
         ellipse at 50% 35%,
         hsl(220 30% 94%) 0%,
         hsl(220 20% 90%) 70%
       );
     }
+  }
+  :root[data-theme='light'] .canvas-backdrop {
+    background-image: radial-gradient(
+      ellipse at 50% 35%,
+      hsl(220 30% 94%) 0%,
+      hsl(220 20% 90%) 70%
+    );
   }
 
   /* Input / select / textarea surface — a translucent overlay that
@@ -292,16 +353,27 @@
   }
 
   @media (prefers-color-scheme: light) {
-    .field-surface {
+    :root:not([data-theme='dark']) .field-surface {
       background-color: hsl(220 30% 10% / 0.04);
     }
-    .field-surface:hover:not(:disabled, :focus) {
+    :root:not([data-theme='dark']) .field-surface:hover:not(:disabled, :focus) {
       background-color: hsl(220 30% 10% / 0.07);
     }
-    .field-surface:focus,
-    .field-surface:focus-within {
+    :root:not([data-theme='dark']) .field-surface:focus,
+    :root:not([data-theme='dark']) .field-surface:focus-within {
       background-color: hsl(220 30% 10% / 0.09);
     }
+  }
+
+  :root[data-theme='light'] .field-surface {
+    background-color: hsl(220 30% 10% / 0.04);
+  }
+  :root[data-theme='light'] .field-surface:hover:not(:disabled, :focus) {
+    background-color: hsl(220 30% 10% / 0.07);
+  }
+  :root[data-theme='light'] .field-surface:focus,
+  :root[data-theme='light'] .field-surface:focus-within {
+    background-color: hsl(220 30% 10% / 0.09);
   }
 
   /* Chevron icon for native <select> — drawn via ::after-like

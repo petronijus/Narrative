@@ -12,6 +12,7 @@
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './state/AuthContext.js'
+import { ThemeProvider } from './state/ThemeContext.js'
 import { Landing } from './pages/Landing.js'
 import { DeckEditor } from './pages/DeckEditor.js'
 import { DeckPresent } from './pages/DeckPresent.js'
@@ -21,31 +22,36 @@ import { AuthCallback } from './pages/AuthCallback.js'
 import { AuthLogin } from './pages/AuthLogin.js'
 import { AuthError } from './pages/AuthError.js'
 import { VersionChip } from './ui/VersionChip.js'
+import { ThemeToggle } from './ui/ThemeToggle.js'
 
 export function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          {/* Public auth routes */}
-          <Route path="/auth/login" element={<AuthLogin />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route path="/auth/error" element={<AuthError />} />
+      <ThemeProvider>
+        <AuthProvider>
+          <Routes>
+            {/* Public auth routes */}
+            <Route path="/auth/login" element={<AuthLogin />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/error" element={<AuthError />} />
 
-          {/* Protected routes — require session or share_token */}
-          <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<Landing />} />
-            <Route path="/deck/:id" element={<DeckShell />}>
-              <Route index element={<DeckEditor />} />
-              <Route path="present" element={<DeckPresent />} />
+            {/* Protected routes — require session or share_token */}
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<Landing />} />
+              <Route path="/deck/:id" element={<DeckShell />}>
+                <Route index element={<DeckEditor />} />
+                <Route path="present" element={<DeckPresent />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
-        {/* Global build-version chip — bottom-left fixed. Auto-bumps via
-            the commit-count scheme in apps/web/vite.config.ts so every
-            push shows a new number in the UI. */}
-        <VersionChip />
-      </AuthProvider>
+          </Routes>
+          {/* Global bottom-left chrome: auto-bumping build version + a
+              tri-state theme toggle (system / light / dark). */}
+          <div className="pointer-events-auto fixed bottom-2 left-2 z-50 flex items-center gap-1">
+            <VersionChip />
+            <ThemeToggle />
+          </div>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }
