@@ -185,7 +185,7 @@ function SlideItem({
       data-slide-id={slide.id}
       data-slide-index={index}
       aria-hidden={hidden || undefined}
-      className="group"
+      className="group relative"
       style={{
         display: 'grid',
         gridTemplateRows: hidden ? '0fr' : '1fr',
@@ -194,6 +194,21 @@ function SlideItem({
         pointerEvents: hidden ? 'none' : 'auto',
       }}
     >
+      {/* Drop indicators live on the OUTER wrapper so they escape the
+          inner overflow:hidden (which is required for the grid-rows
+          collapse animation). */}
+      {dropIndicatorAbove && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
+        />
+      )}
+      {dropIndicatorBelow && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -bottom-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
+        />
+      )}
       <div
         style={{
           overflow: 'hidden',
@@ -201,13 +216,6 @@ function SlideItem({
         }}
         className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
       >
-        {dropIndicatorAbove && (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -top-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
-          />
-        )}
-
         {/* Thumbnail card */}
         <div
           className={[
@@ -318,13 +326,6 @@ function SlideItem({
             </button>
           )}
         </div>
-
-        {dropIndicatorBelow && (
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute -bottom-0.5 left-2 right-2 h-0.5 rounded-full bg-blue-400"
-          />
-        )}
 
         {/* Three-dot menu button — hidden for viewer role */}
         {!readOnly && (
@@ -706,12 +707,17 @@ export function SlidesPanel(): JSX.Element {
   return (
     <div
       className="flex h-full flex-col select-none"
-      onMouseDown={(e) => {
-        // Shift-click extends the browser's text selection by default,
-        // which otherwise highlights the entire sidebar when users try
-        // to extend their multi-select. Cancelling the default aborts
-        // the text-range extension without blocking the click itself.
-        if (e.shiftKey) e.preventDefault()
+      onMouseDownCapture={(e) => {
+        // Shift-click would otherwise extend the browser's text selection
+        // across the panel (looks like "everything is highlighted blue").
+        // preventDefault at the capture phase stops the selection from
+        // even starting; we also clear any leftover range that was
+        // anchored outside the panel before the shift-click.
+        if (e.shiftKey) {
+          e.preventDefault()
+          const sel = typeof window !== 'undefined' ? window.getSelection() : null
+          sel?.removeAllRanges()
+        }
       }}
       onPointerMove={handlePointerMove as unknown as React.PointerEventHandler<HTMLDivElement>}
       onPointerUp={handlePointerUp as unknown as React.PointerEventHandler<HTMLDivElement>}
