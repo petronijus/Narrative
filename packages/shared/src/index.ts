@@ -11,6 +11,8 @@ export type {
   ArrowObject,
   LineCap,
   LineEndpoints,
+  PathObject,
+  PathAnchor,
   TextObject,
   ImageObject,
   VideoObject,

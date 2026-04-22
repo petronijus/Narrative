@@ -8,7 +8,7 @@
 import { createContext, useCallback, useContext, useState } from 'react'
 import type { SlideObjectType } from '@narrative/shared'
 
-export type ActiveTool = 'select' | 'hand' | SlideObjectType
+export type ActiveTool = 'select' | 'hand' | 'pen' | SlideObjectType
 
 interface ToolContextValue {
   activeTool: ActiveTool

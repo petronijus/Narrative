@@ -33,6 +33,7 @@ import {
   Minus,
   MoveUpRight,
   ChevronDown,
+  PenTool,
 } from 'lucide-react'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
@@ -62,6 +63,7 @@ const SHAPE_TOOL_SET = new Set<ActiveTool>([
   'polygon',
   'line',
   'arrow',
+  'pen',
 ])
 
 const TOOL_BUTTONS: ToolButton[] = [
@@ -77,6 +79,7 @@ const SHAPE_TOOLS: ToolButton[] = [
   { tool: 'polygon', label: 'Polygon', shortcut: '', icon: Pentagon },
   { tool: 'line', label: 'Line', shortcut: 'L', icon: Minus },
   { tool: 'arrow', label: 'Arrow', shortcut: 'A', icon: MoveUpRight },
+  { tool: 'pen', label: 'Pen', shortcut: 'P', icon: PenTool },
 ]
 
 const SHORTCUT_MAP: Record<string, ActiveTool> = {
@@ -86,6 +89,7 @@ const SHORTCUT_MAP: Record<string, ActiveTool> = {
   o: 'ellipse',
   l: 'line',
   a: 'arrow',
+  p: 'pen',
   t: 'text',
 }
 

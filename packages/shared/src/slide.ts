@@ -82,6 +82,34 @@ export interface ArrowObject extends BaseSlideObject, LineEndpoints {
   dash?: boolean
 }
 
+/**
+ * P4c: bezier path (pen tool output). Anchors live relative to
+ * (x, y); each optional cpIn / cpOut is a cubic-bezier control point
+ * relative to that anchor. Segments between two consecutive anchors
+ * use a cubic curve when the outgoing anchor has cpOut and the
+ * incoming has cpIn, otherwise a straight line.
+ */
+export interface PathAnchor {
+  x: number
+  y: number
+  /** Incoming control handle, relative to this anchor. */
+  cpIn?: { x: number; y: number }
+  /** Outgoing control handle, relative to this anchor. */
+  cpOut?: { x: number; y: number }
+}
+
+export interface PathObject extends BaseSlideObject {
+  type: 'path'
+  anchors: PathAnchor[]
+  stroke: number
+  strokeWidth: number
+  /** Optional fill for a closed path. */
+  fill?: number
+  /** When true, last anchor connects back to the first. */
+  closed?: boolean
+  dash?: boolean
+}
+
 export interface TextObject extends BaseSlideObject {
   type: 'text'
   text: string
@@ -159,6 +187,7 @@ export type SlideObject =
   | PolygonObject
   | LineObject
   | ArrowObject
+  | PathObject
   | TextObject
   | ImageObject
   | VideoObject
