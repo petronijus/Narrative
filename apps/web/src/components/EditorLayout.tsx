@@ -12,7 +12,7 @@
  *     SceneGraph.hitTest (rotation-aware), keyboard duplicate + nudge.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
@@ -185,15 +185,21 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
 
-  // On first mount, scroll the stage so the artboard sits in the
-  // horizontal and vertical centre (reveals equal margin on each side
-  // when the window is smaller than the artboard + full margin).
-  useEffect(() => {
-    const el = stageScrollRef.current
-    if (el === null) return
-    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
-    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
-  }, [])
+  // Keep the artboard centred in the viewport on mount AND after every
+  // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
+  // so the scroll adjustment is synchronous with the zoom-induced
+  // layout change — no visible jump.
+  useLayoutEffect(() => {
+    const scroller = stageScrollRef.current
+    const artboard = canvasContainerRef.current
+    if (scroller === null || artboard === null) return
+    const a = artboard.getBoundingClientRect()
+    const s = scroller.getBoundingClientRect()
+    const centerX = a.left - s.left + scroller.scrollLeft + a.width / 2
+    const centerY = a.top - s.top + scroller.scrollTop + a.height / 2
+    scroller.scrollLeft = Math.max(0, centerX - scroller.clientWidth / 2)
+    scroller.scrollTop = Math.max(0, centerY - scroller.clientHeight / 2)
+  }, [zoom])
 
   // Canvas size observer
   useEffect(() => {
@@ -736,8 +742,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             <StageBgPicker />
           </div>
 
-          {/* Zoom pill — bottom-right of the stage. */}
-          <div className="pointer-events-none absolute right-3 bottom-3 z-10">
+          {/* Zoom pill — bottom-right of the stage. Sits above the
+              scrollbar so it doesn't collide with it at any zoom. */}
+          <div className="pointer-events-none absolute right-3 bottom-6 z-10">
             <ZoomControl stageScrollRef={stageScrollRef} />
           </div>
         </div>

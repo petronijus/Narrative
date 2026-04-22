@@ -318,13 +318,12 @@ export function Toolbar() {
           <TooltipTrigger asChild>
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={() => navigate(`/deck/${id ?? ''}/present?preview=1`)}
               aria-label="Preview animations"
-              className="gap-1.5"
+              className="h-7 w-7"
             >
-              <Eye className="h-4 w-4" aria-hidden="true" />
-              <span className="hidden sm:inline">Preview</span>
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">Preview animations</TooltipContent>
@@ -334,13 +333,12 @@ export function Toolbar() {
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
-              size="sm"
+              size="icon"
               onClick={() => navigate(`/deck/${id ?? ''}/present`)}
               aria-label="Present (Ctrl+Enter)"
-              className="btn-brand gap-1.5"
+              className="btn-brand h-7 w-7"
             >
-              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-              <span className="hidden sm:inline">Present</span>
+              <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
