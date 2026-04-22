@@ -427,11 +427,32 @@ export function AnimationTimeline() {
   const MIN_DURATION_SEC = 0.1
   const DRAG_THRESHOLD_PX = 3
   const SNAP_SEC = 0.05
+  /** Magnetic snap threshold — a dragged edge within this many seconds of
+   *  another bar's start or end (any row) locks onto it. 0.1 s ≈ 8 px at
+   *  the current PX_PER_SEC. Hold Shift to disable. */
+  const MAGNET_THRESHOLD_SEC = 0.1
 
   /** Round to the nearest multiple of `step`, suppressed by holding Shift. */
   function quantize(valueSec: number, snap: number): number {
     if (snap <= 0) return valueSec
     return Math.round(valueSec / snap) * snap
+  }
+
+  /**
+   * Finds the closest candidate within `threshold` of `value`. Returns
+   * `value` unchanged when no candidate is within range.
+   */
+  function magnetSnap(value: number, candidates: number[], threshold: number): number {
+    let best = value
+    let bestDist = threshold + 1
+    for (const c of candidates) {
+      const d = Math.abs(c - value)
+      if (d < bestDist) {
+        bestDist = d
+        best = c
+      }
+    }
+    return bestDist <= threshold ? best : value
   }
 
   const beginDrag = useCallback(
@@ -473,18 +494,57 @@ export function AnimationTimeline() {
       }
 
       const snap = e.shiftKey ? 0 : SNAP_SEC
+      const magnet = e.shiftKey ? 0 : MAGNET_THRESHOLD_SEC
+
+      // Candidate snap points — the start and end of every other bar on
+      // every row, plus 0. Cheap to rebuild each move; only runs during drag.
+      const candidates: number[] = magnet > 0 ? [0] : []
+      if (magnet > 0) {
+        for (const r of rows) {
+          for (const it of r.items) {
+            if (it.step.id === drag.stepId) continue
+            candidates.push(it.startSec)
+            candidates.push(it.startSec + (it.step.duration ?? 0))
+          }
+        }
+      }
 
       if (drag.mode === 'resize') {
-        const newDuration = Math.max(
+        let newDuration = Math.max(
           MIN_DURATION_SEC,
           quantize(drag.originalDuration + dx / PX_PER_SEC, snap),
         )
+        if (magnet > 0) {
+          const rawEnd = drag.originalAbsStart + newDuration
+          const snapped = magnetSnap(rawEnd, candidates, magnet)
+          if (snapped !== rawEnd) {
+            newDuration = Math.max(MIN_DURATION_SEC, snapped - drag.originalAbsStart)
+          }
+        }
         updateAnimation(animationsCtx, drag.stepId, { duration: newDuration })
         return
       }
 
       // 'body' mode — Premiere-like absolute-time positioning.
-      const newAbsStart = Math.max(0, quantize(drag.originalAbsStart + dx / PX_PER_SEC, snap))
+      let newAbsStart = Math.max(0, quantize(drag.originalAbsStart + dx / PX_PER_SEC, snap))
+
+      // Magnetic snap: whichever edge (start or end) is closest to a
+      // candidate wins. The other edge pulls along so the bar keeps its
+      // duration.
+      if (magnet > 0) {
+        const dur = drag.originalDuration
+        const rawStart = newAbsStart
+        const rawEnd = newAbsStart + dur
+        const startSnap = magnetSnap(rawStart, candidates, magnet)
+        const endSnap = magnetSnap(rawEnd, candidates, magnet)
+        const startDist = Math.abs(startSnap - rawStart)
+        const endDist = Math.abs(endSnap - rawEnd)
+        if (startDist <= endDist && startDist <= magnet) {
+          newAbsStart = Math.max(0, startSnap)
+        } else if (endDist <= magnet) {
+          newAbsStart = Math.max(0, endSnap - dur)
+        }
+      }
 
       // First movement converts to onEnter so delay == absolute time. This
       // detaches the bar from any afterPrevious / withPrevious chain anchor
