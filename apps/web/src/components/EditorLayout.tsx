@@ -538,45 +538,62 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         <Toolbar />
 
         <div
-          ref={canvasContainerRef}
-          className="canvas-backdrop relative flex-1 overflow-hidden"
+          className="canvas-backdrop relative flex flex-1 items-center justify-center overflow-hidden p-6"
           style={{ cursor: canvasCursor }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
         >
-          <Canvas onReady={onCanvasReady} />
+          {/* Artboard: fixed 16:9, scaled to fit the stage, thin rim
+              border. canvasContainerRef is on THIS inner div so Pixi,
+              SnapGuides, MarqueeOverlay, TransformHandles and the
+              UploadDropZone all work in artboard-local coords. */}
+          <div
+            ref={canvasContainerRef}
+            className="artboard relative overflow-hidden rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
+            style={{
+              aspectRatio: '16 / 9',
+              width: 'min(100%, calc(100vh * 16 / 9))',
+              maxHeight: '100%',
+              background: 'hsl(var(--surface-elevated))',
+            }}
+          >
+            <Canvas onReady={onCanvasReady} />
 
-          {/* Snap guide lines — viditelné jen během dragu */}
-          <SnapGuides
-            guides={snapGuides}
-            canvasWidth={canvasSize.width}
-            canvasHeight={canvasSize.height}
-          />
-
-          {/* Marquee selection overlay */}
-          {marquee !== null && <MarqueeOverlay marquee={marquee} />}
-
-          {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
-          <PeerSelectionOverlays />
-
-          {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
-          {!isViewer && selectedIds.size > 0 && canvasInstance !== null && mutationCtx !== null && (
-            <TransformHandles
-              objectIds={[...selectedIds]}
-              sceneGraph={canvasInstance.sceneGraph}
-              mutationCtx={mutationCtx}
-              onSnapGuides={handleSnapGuides}
-              otherBounds={otherBounds}
+            {/* Snap guide lines — viditelné jen během dragu */}
+            <SnapGuides
+              guides={snapGuides}
+              canvasWidth={canvasSize.width}
+              canvasHeight={canvasSize.height}
             />
-          )}
 
-          {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
-          <PeerCursors />
+            {/* Marquee selection overlay */}
+            {marquee !== null && <MarqueeOverlay marquee={marquee} />}
 
-          {/* M11: Drop zone for image uploads — inert for viewer role */}
-          <UploadDropZone canvasContainerRef={canvasContainerRef} />
+            {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
+            <PeerSelectionOverlays />
+
+            {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
+            {!isViewer &&
+              selectedIds.size > 0 &&
+              canvasInstance !== null &&
+              mutationCtx !== null && (
+                <TransformHandles
+                  objectIds={[...selectedIds]}
+                  sceneGraph={canvasInstance.sceneGraph}
+                  mutationCtx={mutationCtx}
+                  onSnapGuides={handleSnapGuides}
+                  otherBounds={otherBounds}
+                />
+              )}
+
+            {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
+            <PeerCursors />
+
+            {/* M11: Drop zone for image uploads — inert for viewer role */}
+            <UploadDropZone canvasContainerRef={canvasContainerRef} />
+          </div>
         </div>
 
         {/* M14 phase 1: bottom animations timeline panel. Read-only visual

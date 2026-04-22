@@ -28,9 +28,16 @@ import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
-import { createImageUrlResolver, setDefaultImageUrlResolver } from './imageUrl.js'
+import {
+  createImageUrlResolver,
+  setDefaultImageUrlResolver,
+  getDefaultImageUrlResolver,
+} from './imageUrl.js'
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
+import { useSlideBackground } from '../state/useSlideBackground.js'
+import { applyBackground } from './ArtboardBackground.js'
+import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { useAuth } from '../state/AuthContext.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
@@ -176,6 +183,35 @@ export function Canvas({ onReady }: CanvasProps = {}) {
     }
     instance.sceneGraph.applyChanges(changes)
   })
+
+  // P2: paint the artboard background on every slide-background change.
+  // Ensures a background-only Container is mounted as child[0] of the
+  // slide root so objects stack above it.
+  const background = useSlideBackground()
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (instance === null) return
+    const container = instance.sceneGraph.ensureBackgroundContainer()
+    const resolver = (() => {
+      try {
+        return getDefaultImageUrlResolver()
+      } catch {
+        return null
+      }
+    })()
+    const rm = instance.resourceManager
+    applyBackground({
+      container,
+      background,
+      width: SLIDE_WIDTH,
+      height: SLIDE_HEIGHT,
+      ...(resolver !== null
+        ? { resolveAssetUrl: (assetId) => resolver({ assetId, variant: 'display' }) }
+        : {}),
+      acquireTexture: (url) => rm.acquireTexture(url),
+      releaseTexture: (url) => rm.releaseTexture(url),
+    })
+  }, [background])
 
   // ResizeObserver — reaguje na změnu velikosti parent kontejneru
   useEffect(() => {

@@ -24,6 +24,74 @@ export const DEFAULT_TRANSITION: SlideTransition = {
   durationMs: 0,
 }
 
+// ---------------------------------------------------------------------------
+// Slide background (P2: artboard + backgrounds)
+// ---------------------------------------------------------------------------
+
+export interface GradientStop {
+  /** Position along the gradient: 0 = start, 1 = end. */
+  offset: number
+  /** 0xRRGGBB integer colour. */
+  color: number
+  /** Alpha 0..1, default 1. */
+  alpha?: number
+}
+
+/** Solid colour fill. */
+export interface ColorBackground {
+  kind: 'color'
+  /** 0xRRGGBB integer colour. */
+  color: number
+  /** Alpha 0..1, default 1. */
+  alpha?: number
+}
+
+/** Linear gradient fill. */
+export interface LinearGradientBackground {
+  kind: 'linearGradient'
+  /** Clockwise, 0 = top→bottom, 90 = left→right, …  */
+  angleDeg: number
+  stops: GradientStop[]
+}
+
+/** Radial gradient fill. */
+export interface RadialGradientBackground {
+  kind: 'radialGradient'
+  /** Gradient origin, expressed as fraction of the slide (0..1). */
+  centerX: number
+  centerY: number
+  /** Outermost radius as a fraction of the slide diagonal. */
+  radius: number
+  stops: GradientStop[]
+}
+
+/** Image fill referencing an uploaded asset. */
+export interface ImageBackground {
+  kind: 'image'
+  assetId: string
+  /** 'cover' fills the artboard (may crop); 'contain' letterboxes. */
+  fit: 'cover' | 'contain'
+  /** Optional dim overlay for legibility (0..1, default 0). */
+  dim?: number
+}
+
+export type SlideBackground =
+  | ColorBackground
+  | LinearGradientBackground
+  | RadialGradientBackground
+  | ImageBackground
+
+/** Canonical default — near-white, readable in both themes. */
+export const DEFAULT_BACKGROUND: SlideBackground = {
+  kind: 'color',
+  color: 0xffffff,
+  alpha: 1,
+}
+
+// ---------------------------------------------------------------------------
+// Slide
+// ---------------------------------------------------------------------------
+
 /**
  * Slide = ordered collection of objects + animations + transition metadata.
  * One deck holds an ordered Y.Array of slides.
@@ -36,4 +104,6 @@ export interface Slide {
   objects: SlideObject[]
   animations: AnimationStep[]
   transition: SlideTransition
+  /** P2: optional per-slide background fill. Undefined ⇒ DEFAULT_BACKGROUND. */
+  background?: SlideBackground
 }

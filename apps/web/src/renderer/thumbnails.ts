@@ -29,7 +29,8 @@ import { Application, Container } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
-import type { SlideObject } from '@narrative/shared'
+import { applyBackground } from './ArtboardBackground.js'
+import type { SlideBackground, SlideObject } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -61,8 +62,12 @@ export interface ThumbnailRenderer {
    * (serialised queue — safe to call concurrently from multiple slide subscriptions).
    *
    * Rejects if the renderer has been destroyed.
+   *
+   * P2: `background` is painted first underneath objects. `undefined`
+   * leaves the canvas transparent so the SlidesPanel's card bg shows
+   * through (matches the pre-P2 behaviour).
    */
-  renderSlide(objects: SlideObject[]): Promise<string>
+  renderSlide(objects: SlideObject[], background?: SlideBackground): Promise<string>
 
   /**
    * Destroys the underlying offscreen Pixi Application and releases GPU resources.
@@ -115,11 +120,32 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // Internal render implementation
   // ---------------------------------------------------------------------------
 
-  async function renderSlideInternal(objects: SlideObject[]): Promise<string> {
+  async function renderSlideInternal(
+    objects: SlideObject[],
+    background?: SlideBackground,
+  ): Promise<string> {
     // Build a temp container that holds the full slide content scaled to thumbnail size.
     const slideContainer = new Container()
     // Scale the entire slide down to thumbnail dimensions.
     slideContainer.scale.set(scale)
+
+    // P2: paint the artboard background first so objects stack above it.
+    // `applyBackground` is synchronous for color + gradient kinds; image
+    // backgrounds start an async decode but the thumbnail renderer
+    // doesn't wait for it in this pass (the slide panel will re-render
+    // the thumbnail when the image data arrives — same cadence as slide
+    // changes). Skip if caller didn't pass a background — keep
+    // transparent canvas so the panel card bg shows through.
+    if (background !== undefined) {
+      const bgContainer = new Container()
+      slideContainer.addChild(bgContainer)
+      applyBackground({
+        container: bgContainer,
+        background,
+        width: SLIDE_WIDTH,
+        height: SLIDE_HEIGHT,
+      })
+    }
 
     // Mount each object through the registry (same path as the main SceneGraph).
     // Prefer thumbnailMount() when available. thumbnailMount MAY attach a
@@ -181,7 +207,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // ---------------------------------------------------------------------------
 
   return {
-    renderSlide(objects: SlideObject[]): Promise<string> {
+    renderSlide(objects: SlideObject[], background?: SlideBackground): Promise<string> {
       if (destroyed) {
         return Promise.reject(new Error('[ThumbnailRenderer] renderer has been destroyed'))
       }
@@ -202,7 +228,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
           return
         }
         try {
-          return renderSlideInternal(objects).then(resolveRender, rejectRender)
+          return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
         } catch (err) {
           rejectRender(err)
         }

@@ -56,6 +56,14 @@ export class SceneGraph {
   private _hitTestWorldPoint: Point | null = null
   private _hitTestLocalPoint: Point | null = null
 
+  /**
+   * P2: dedicated Container for the artboard background, always the
+   * FIRST child of `root` so every slide object stacks on top. Created
+   * lazily on first background access, persists across object adds /
+   * removes (it's not in the `nodes` map).
+   */
+  private backgroundContainer: Container | null = null
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
@@ -241,6 +249,23 @@ export class SceneGraph {
   }
 
   /**
+   * P2: returns (and lazily creates) the artboard-background Container —
+   * kept as the FIRST child of the active root so every slide object
+   * stacks above it. Consumers call this from the background observer +
+   * paint into it via `applyBackground()`.
+   */
+  ensureBackgroundContainer(): Container {
+    if (this.backgroundContainer === null || this.backgroundContainer.destroyed) {
+      this.backgroundContainer = new Container()
+      this.backgroundContainer.eventMode = 'none'
+      this.root.addChildAt(this.backgroundContainer, 0)
+    } else if (this.backgroundContainer.parent !== this.root) {
+      this.root.addChildAt(this.backgroundContainer, 0)
+    }
+    return this.backgroundContainer
+  }
+
+  /**
    * Adopts a pre-built "incoming" slide root as the new active root. Called
    * by the present-mode transition runner AFTER `runSlideTransition()`
    * resolves — swaps the SceneGraph's bookkeeping to match what's now on
@@ -282,6 +307,11 @@ export class SceneGraph {
     if (nextRoot.parent === null) {
       this.app.stage.addChild(nextRoot)
     }
+    // Background container was a child of the OLD root and got destroyed
+    // with it. Drop the reference so the next `ensureBackgroundContainer()`
+    // call creates a fresh one on the new root.
+    this.backgroundContainer = null
+
     for (const entry of nextNodes) {
       this.nodes.set(entry.id, { container: entry.container, data: entry.data })
       this.nodeTypes.set(entry.id, entry.data.type)

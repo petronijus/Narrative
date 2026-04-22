@@ -14,9 +14,20 @@ export type {
   ObjectChangeSet,
 } from './slide.js'
 
-export type { SlideTransitionKind, SlidePushDirection, SlideTransition, Slide } from './deck.js'
+export type {
+  SlideTransitionKind,
+  SlidePushDirection,
+  SlideTransition,
+  Slide,
+  GradientStop,
+  ColorBackground,
+  LinearGradientBackground,
+  RadialGradientBackground,
+  ImageBackground,
+  SlideBackground,
+} from './deck.js'
 
-export { DEFAULT_TRANSITION } from './deck.js'
+export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND } from './deck.js'
 
 export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animation.js'
 
