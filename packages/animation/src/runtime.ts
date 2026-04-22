@@ -99,7 +99,11 @@ export function createAnimationRuntime(
     },
 
     seek(timestamp: number): void {
-      tl.seek(timestamp)
+      // GSAP 3 defaults tl.seek(t, suppressEvents=true) — which suppresses
+      // onUpdate. Our presets write container values inside onUpdate, so
+      // seek with the default flag is silent visually. Pass suppressEvents
+      // explicitly = false so tweens re-apply to their Pixi targets.
+      tl.seek(timestamp, false)
     },
 
     advance(): void {
