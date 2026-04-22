@@ -113,6 +113,7 @@ import type {
   PolygonObject,
   LineObject,
   ArrowObject,
+  PathObject,
   TextObject,
   ImageObject,
   VideoObject,
@@ -204,6 +205,21 @@ registerObjectType<ArrowObject>({
     p2: { x: 200, y: 0 },
     startCap: 'none',
     endCap: 'arrow',
+  }),
+})
+
+registerObjectType<PathObject>({
+  type: 'path',
+  defaultProps: () => ({
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    rotation: 0,
+    opacity: 1,
+    stroke: 0xffffff,
+    strokeWidth: 3,
+    anchors: [],
   }),
 })
 

@@ -38,7 +38,7 @@ import {
   duplicateObject,
   bulkUpdateObjects,
 } from '@narrative/slide-model'
-import type { SlideObjectType } from '@narrative/shared'
+import type { SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -142,6 +142,67 @@ function MarqueeOverlay({ marquee }: { marquee: MarqueeState }) {
       className="pointer-events-none absolute border border-blue-400 bg-blue-400/10"
       style={{ left: x, top: y, width: w, height: h }}
     />
+  )
+}
+
+function PenPreview({ anchors }: { anchors: PathAnchor[] }) {
+  if (anchors.length === 0) return null
+  // Build an SVG path from the in-progress anchor list so the user can
+  // see the curve taking shape. The SVG itself fills the artboard at
+  // 1:1 slide coords (artboard is SLIDE_WIDTH × SLIDE_HEIGHT px).
+  let d = `M ${anchors[0]!.x} ${anchors[0]!.y}`
+  for (let i = 1; i < anchors.length; i++) {
+    const prev = anchors[i - 1]!
+    const cur = anchors[i]!
+    if (prev.cpOut !== undefined && cur.cpIn !== undefined) {
+      const c1x = prev.x + prev.cpOut.x
+      const c1y = prev.y + prev.cpOut.y
+      const c2x = cur.x + cur.cpIn.x
+      const c2y = cur.y + cur.cpIn.y
+      d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${cur.x} ${cur.y}`
+    } else {
+      d += ` L ${cur.x} ${cur.y}`
+    }
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0"
+      style={{ width: '100%', height: '100%', overflow: 'visible' }}
+    >
+      <path d={d} fill="none" stroke="rgb(96 165 250)" strokeWidth={2} />
+      {anchors.map((a, i) => (
+        <g key={i}>
+          {a.cpIn !== undefined && (
+            <line
+              x1={a.x}
+              y1={a.y}
+              x2={a.x + a.cpIn.x}
+              y2={a.y + a.cpIn.y}
+              stroke="rgb(96 165 250 / 0.5)"
+              strokeWidth={1}
+            />
+          )}
+          {a.cpOut !== undefined && (
+            <line
+              x1={a.x}
+              y1={a.y}
+              x2={a.x + a.cpOut.x}
+              y2={a.y + a.cpOut.y}
+              stroke="rgb(96 165 250 / 0.5)"
+              strokeWidth={1}
+            />
+          )}
+          <circle cx={a.x} cy={a.y} r={4} fill="white" stroke="rgb(96 165 250)" strokeWidth={2} />
+          {a.cpIn !== undefined && (
+            <circle cx={a.x + a.cpIn.x} cy={a.y + a.cpIn.y} r={3} fill="rgb(96 165 250)" />
+          )}
+          {a.cpOut !== undefined && (
+            <circle cx={a.x + a.cpOut.x} cy={a.y + a.cpOut.y} r={3} fill="rgb(96 165 250)" />
+          )}
+        </g>
+      ))}
+    </svg>
   )
 }
 
@@ -304,6 +365,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const [draft, setDraft] = useState<DraftState | null>(null)
   const draftRef = useRef<DraftState | null>(null)
 
+  /**
+   * Pen-tool session — accumulates anchor points while the user is
+   * drawing. Anchors live in SLIDE coords (absolute). `dragIndex` is
+   * the index of the anchor being shaped (cpOut + symmetric cpIn)
+   * while the pointer is held after a pointerdown.
+   */
+  interface PenSession {
+    anchors: PathAnchor[]
+    dragIndex: number | null
+  }
+  const [penSession, setPenSession] = useState<PenSession | null>(null)
+  const penSessionRef = useRef<PenSession | null>(null)
+
   /** Snap guides — aktivní během dragu/resize */
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([])
 
@@ -382,6 +456,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Create tool — viewer cannot create objects
         if (isViewer) return
         if (mutationCtx === null) return
+        // Pen tool — multi-click session. Each pointerdown drops a new
+        // anchor; the pointer drag between down + up shapes symmetric
+        // cubic controls on that anchor. Enter commits, Esc cancels.
+        if (activeTool === 'pen') {
+          const current = penSessionRef.current
+          const newAnchor: PathAnchor = { x, y }
+          const anchors = current === null ? [newAnchor] : [...current.anchors, newAnchor]
+          const next: PenSession = { anchors, dragIndex: anchors.length - 1 }
+          penSessionRef.current = next
+          setPenSession({ ...next })
+          ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+          return
+        }
         // Text + image stay click-to-create; every other creation tool
         // uses drag-to-draw so the user can size the new object in one
         // gesture (Keynote / Figma / Sketch convention).
@@ -509,6 +596,31 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         setCursor({ x: canvasCoords.x, y: canvasCoords.y })
       }
 
+      // Pen session — shape the outgoing control of the anchor the
+      // user just dropped. Symmetric: cpIn = -cpOut.
+      const pen = penSessionRef.current
+      if (pen !== null && pen.dragIndex !== null) {
+        if (canvasCoords !== null) {
+          const idx = pen.dragIndex
+          const anchor = pen.anchors[idx]
+          if (anchor !== undefined) {
+            const dx = canvasCoords.x - anchor.x
+            const dy = canvasCoords.y - anchor.y
+            const newAnchors = pen.anchors.slice()
+            newAnchors[idx] = {
+              x: anchor.x,
+              y: anchor.y,
+              cpOut: { x: dx, y: dy },
+              cpIn: { x: -dx, y: -dy },
+            }
+            const next: PenSession = { anchors: newAnchors, dragIndex: idx }
+            penSessionRef.current = next
+            setPenSession({ ...next })
+          }
+        }
+        return
+      }
+
       // Draft (drag-to-draw) update
       const dr = draftRef.current
       if (dr !== null) {
@@ -599,6 +711,29 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (panRef.current !== null) {
         panRef.current = null
+        return
+      }
+
+      // Pen session — just release the current drag (the controls set
+      // during pointermove stay on the anchor). If no drag delta, clear
+      // the controls so tap-clicks produce polyline segments.
+      const pen = penSessionRef.current
+      if (pen !== null && pen.dragIndex !== null) {
+        const idx = pen.dragIndex
+        const a = pen.anchors[idx]
+        if (a !== undefined && a.cpOut !== undefined) {
+          const len = Math.hypot(a.cpOut.x, a.cpOut.y)
+          if (len < 2) {
+            const newAnchors = pen.anchors.slice()
+            newAnchors[idx] = { x: a.x, y: a.y }
+            penSessionRef.current = { anchors: newAnchors, dragIndex: null }
+            setPenSession({ anchors: newAnchors, dragIndex: null })
+            return
+          }
+        }
+        const next: PenSession = { anchors: pen.anchors, dragIndex: null }
+        penSessionRef.current = next
+        setPenSession({ ...next })
         return
       }
 
@@ -704,6 +839,57 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Pen tool — Enter commits the session, Esc cancels it.
+      const pen = penSessionRef.current
+      if (pen !== null && (e.key === 'Enter' || e.key === 'Escape')) {
+        if (isInputFocused()) return
+        e.preventDefault()
+        if (e.key === 'Enter' && pen.anchors.length >= 2 && mutationCtx !== null) {
+          // Compute AABB over anchors + control handles so translations
+          // + selection stay inside the object box.
+          let minX = Infinity
+          let minY = Infinity
+          let maxX = -Infinity
+          let maxY = -Infinity
+          for (const a of pen.anchors) {
+            minX = Math.min(minX, a.x)
+            minY = Math.min(minY, a.y)
+            maxX = Math.max(maxX, a.x)
+            maxY = Math.max(maxY, a.y)
+            if (a.cpIn !== undefined) {
+              minX = Math.min(minX, a.x + a.cpIn.x)
+              minY = Math.min(minY, a.y + a.cpIn.y)
+              maxX = Math.max(maxX, a.x + a.cpIn.x)
+              maxY = Math.max(maxY, a.y + a.cpIn.y)
+            }
+            if (a.cpOut !== undefined) {
+              minX = Math.min(minX, a.x + a.cpOut.x)
+              minY = Math.min(minY, a.y + a.cpOut.y)
+              maxX = Math.max(maxX, a.x + a.cpOut.x)
+              maxY = Math.max(maxY, a.y + a.cpOut.y)
+            }
+          }
+          const rel: PathAnchor[] = pen.anchors.map((a) => {
+            const out: PathAnchor = { x: a.x - minX, y: a.y - minY }
+            if (a.cpIn !== undefined) out.cpIn = { ...a.cpIn }
+            if (a.cpOut !== undefined) out.cpOut = { ...a.cpOut }
+            return out
+          })
+          const override: Partial<PathObject> = {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+            anchors: rel,
+          }
+          createObjectOfType(mutationCtx, 'path', override)
+        }
+        penSessionRef.current = null
+        setPenSession(null)
+        setActiveTool('select')
+        return
+      }
+
       // Undo: Ctrl/Cmd+Z
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         if (isInputFocused()) return
@@ -911,6 +1097,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   {/* Marquee selection overlay */}
                   {marquee !== null && <MarqueeOverlay marquee={marquee} />}
                   {draft !== null && <DraftOverlay draft={draft} />}
+                  {penSession !== null && <PenPreview anchors={penSession.anchors} />}
 
                   {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
                   <PeerSelectionOverlays />
