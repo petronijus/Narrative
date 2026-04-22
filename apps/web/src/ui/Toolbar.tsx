@@ -24,6 +24,7 @@ import {
   LogOut,
   Play,
   Eye,
+  Home,
 } from 'lucide-react'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
@@ -143,6 +144,24 @@ export function Toolbar() {
         role="toolbar"
         aria-label="Object tools"
       >
+        {/* Home — back to deck list */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate('/')}
+              aria-label="Back to deck list"
+              className="h-7 w-7"
+            >
+              <Home className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Back to deck list</TooltipContent>
+        </Tooltip>
+
+        <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+
         {/* Tool buttons — hidden for viewer role */}
         {!isViewer &&
           TOOL_BUTTONS.map(({ tool, label, shortcut, icon: Icon }) => {
