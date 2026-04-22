@@ -30,6 +30,7 @@ import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
 import { applyBackground } from './ArtboardBackground.js'
+import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -139,19 +140,23 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     slideContainer.addChild(clipMask)
     slideContainer.mask = clipMask
 
-    // P2: paint the artboard background first so objects stack above it.
+    // P2/P3: paint the artboard background first so objects stack above
+    // it. The thumbnail always shows the artboard fill — if the caller
+    // didn't pass a background (pre-P2 slide), we fall back to
+    // DEFAULT_BACKGROUND so the panel card shows the same artboard
+    // area the editor does, not a transparent placeholder.
     // `applyBackground` is synchronous for color + gradient kinds; image
     // backgrounds start an async decode but the thumbnail renderer
-    // doesn't wait for it in this pass (the slide panel will re-render
-    // the thumbnail when the image data arrives — same cadence as slide
-    // changes). Skip if caller didn't pass a background — keep
-    // transparent canvas so the panel card bg shows through.
-    if (background !== undefined) {
+    // doesn't wait for it in this pass (the slide panel re-renders the
+    // thumbnail when the image data arrives — same cadence as slide
+    // changes).
+    const effectiveBackground: SlideBackground = background ?? DEFAULT_BACKGROUND
+    {
       const bgContainer = new Container()
       slideContainer.addChild(bgContainer)
       applyBackground({
         container: bgContainer,
-        background,
+        background: effectiveBackground,
         width: SLIDE_WIDTH,
         height: SLIDE_HEIGHT,
       })

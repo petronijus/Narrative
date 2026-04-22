@@ -28,8 +28,9 @@ import { subscribeToSlideObjects } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
-import type { SlideObject } from '@narrative/shared'
+import type { SlideObject, SlideBackground } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
+import { useSlides } from './useSlides.js'
 
 // ---------------------------------------------------------------------------
 // Debounce helper
@@ -79,6 +80,7 @@ const DEBOUNCE_MS = 500
  */
 export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   const deckCtx = useDeckCtx()
+  const allSlides = useSlides()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
 
   // Stable ref to the renderer instance (async init, may be null briefly).
@@ -86,6 +88,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
   // Track latest objects per slide so debounced callback always uses fresh state.
   const latestObjectsRef = useRef<Map<string, SlideObject[]>>(new Map())
+
+  // P3: track latest background per slide so thumbnails paint the same
+  // artboard fill the editor shows. We re-render the thumbnail when the
+  // background changes.
+  const latestBackgroundRef = useRef<Map<string, SlideBackground | undefined>>(new Map())
 
   // Per-slide debounce cancellers — cancelled on cleanup or slide removal.
   const debouncersRef = useRef<
@@ -104,9 +111,10 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     if (renderer === null) return
 
     const objects = latestObjectsRef.current.get(slideId) ?? []
+    const background = latestBackgroundRef.current.get(slideId)
 
     renderer
-      .renderSlide(objects)
+      .renderSlide(objects, background)
       .then((dataUrl) => {
         setThumbnails((prev) => {
           const next = new Map(prev)
@@ -160,6 +168,7 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     debouncersRef.current.delete(slideId)
 
     latestObjectsRef.current.delete(slideId)
+    latestBackgroundRef.current.delete(slideId)
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -242,6 +251,34 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
     lastSlideIdsRef.current = slideIds.slice()
   }, [slideIds, deckCtx, subscribeSlide, unsubscribeSlide])
+
+  // ---------------------------------------------------------------------------
+  // P3: watch slide backgrounds — re-render thumbnails when they change.
+  // Reads from the `useSlides()` snapshot, which already re-runs whenever
+  // any slide-level change lands (background, transition, name, …).
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    const tracked = new Set(slideIds)
+    for (const slide of allSlides) {
+      if (!tracked.has(slide.id)) continue
+      const prev = latestBackgroundRef.current.get(slide.id)
+      const next = slide.background
+      if (prev === next) continue
+      // Shallow compare kind + common fields to avoid re-render thrash on
+      // identical-but-fresh objects coming out of the Y.Doc binding.
+      if (
+        prev !== undefined &&
+        next !== undefined &&
+        prev.kind === next.kind &&
+        JSON.stringify(prev) === JSON.stringify(next)
+      ) {
+        continue
+      }
+      latestBackgroundRef.current.set(slide.id, next)
+      scheduleRender(slide.id)
+    }
+  }, [allSlides, slideIds, scheduleRender])
 
   // ---------------------------------------------------------------------------
   // Cleanup all subscriptions on unmount
