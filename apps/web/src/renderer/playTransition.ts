@@ -26,7 +26,11 @@
 
 import { Container } from 'pixi.js'
 import type { SlideObject, SlideTransition } from '@narrative/shared'
-import { runSlideTransition, type MagicMoveObjectPair } from '@narrative/animation'
+import {
+  compileSlideTransition,
+  type CompiledTransition,
+  type MagicMoveObjectPair,
+} from '@narrative/animation'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
@@ -97,10 +101,11 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
   app.stage.addChild(incomingRoot)
 
   let aborted = false
+  let compiled: CompiledTransition | undefined
 
-  const done = (async () => {
+  const done = new Promise<void>((resolve) => {
     try {
-      await runSlideTransition(
+      compiled = compileSlideTransition(
         {
           outgoing: outgoingRoot as unknown as MagicMoveObjectPair['outgoing'],
           incoming: incomingRoot as unknown as MagicMoveObjectPair['incoming'],
@@ -110,19 +115,45 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
         transition,
       )
     } catch (err) {
-      console.error('[playTransition] runSlideTransition threw', err)
+      console.error('[playTransition] compileSlideTransition threw', err)
+      resolve()
+      return
     }
 
-    if (aborted) return
+    const { timeline, dispose } = compiled
 
-    // Adopt incoming as the new SceneGraph root. Destroys outgoing root +
-    // children, clears node bookkeeping, installs incoming + its node map.
-    sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes)
-  })()
+    timeline.eventCallback('onComplete', () => {
+      dispose()
+      if (aborted) {
+        resolve()
+        return
+      }
+      // Adopt incoming as the new SceneGraph root. Destroys outgoing root +
+      // children, clears node bookkeeping, installs incoming + its node map.
+      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes)
+      resolve()
+    })
+
+    try {
+      timeline.play()
+    } catch (err) {
+      console.error('[playTransition] timeline.play threw', err)
+      dispose()
+      resolve()
+    }
+  })
 
   return {
     abort(): void {
+      if (aborted) return
       aborted = true
+      // Kill the GSAP timeline so no further onUpdate callbacks fire against
+      // the outgoing scene — the caller is about to swap activeSlideId and
+      // the reconciler will destroy the containers we were tweening.
+      if (compiled !== undefined) {
+        compiled.timeline.kill()
+        compiled.dispose()
+      }
       if (!incomingRoot.destroyed) {
         incomingRoot.destroy({ children: true })
       }

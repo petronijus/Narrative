@@ -206,11 +206,34 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M13: Transition-aware navigation. If the target slide defines a
   // non-trivial transition, mount it via playTransition() before swapping
   // activeSlideId so React state matches the already-painted new scene.
-  const transitionInFlightRef = useRef<{ abort(): void } | null>(null)
+  //
+  // Spam-press semantics: if the user hits ArrowRight again while a
+  // transition is mid-flight we abort it and snap instantly to the slide
+  // one past the aborted transition's target. That turns "five fast
+  // ArrowRight presses while animating" into "skip all animations and
+  // land five slides ahead" — matches Keynote-style presenter behaviour.
+  const transitionInFlightRef = useRef<{ abort(): void; targetId: string } | null>(null)
 
   const navigateToSlide = useCallback(
     (direction: 'next' | 'prev') => {
       if (slides.length === 0) return
+
+      // If a transition is already running, abort it and jump straight to
+      // the slide one step beyond its target — no animation.
+      if (transitionInFlightRef.current !== null) {
+        const runningTargetId = transitionInFlightRef.current.targetId
+        transitionInFlightRef.current.abort()
+        transitionInFlightRef.current = null
+
+        const runningIdx = slides.findIndex((s) => s.id === runningTargetId)
+        if (runningIdx === -1) return
+        const jumpIdx = direction === 'next' ? runningIdx + 1 : runningIdx - 1
+        const clampedIdx = Math.max(0, Math.min(jumpIdx, slides.length - 1))
+        const landing = slides[clampedIdx]
+        if (landing !== undefined) setActiveSlideId(landing.id)
+        return
+      }
+
       const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
       if (currentIdx === -1) return
 
@@ -232,9 +255,6 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         incomingTransition.kind !== 'none' &&
         incomingTransition.durationMs > 0
 
-      // Don't fire overlapping transitions.
-      if (transitionInFlightRef.current !== null) return
-
       if (!useTransition) {
         setActiveSlideId(targetSlide.id)
         return
@@ -245,11 +265,19 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         incomingObjects: targetSlide.objects,
         transition: incomingTransition,
       })
-      transitionInFlightRef.current = handle
+      transitionInFlightRef.current = {
+        abort: handle.abort,
+        targetId: targetSlide.id,
+      }
 
       handle.done.finally(() => {
-        transitionInFlightRef.current = null
-        setActiveSlideId(targetSlide.id)
+        // If a spam-press already aborted and nulled the ref (swapping us
+        // past this target), leave React state alone — that branch already
+        // called setActiveSlideId to the further landing slide.
+        if (transitionInFlightRef.current?.targetId === targetSlide.id) {
+          transitionInFlightRef.current = null
+          setActiveSlideId(targetSlide.id)
+        }
       })
     },
     [slides, activeSlideId, setActiveSlideId, canvasInstance],
