@@ -360,12 +360,12 @@ function SlideInspector() {
 
   // Native <select> styled to match our inputs. Chevron icon is drawn by a
   // dedicated CSS class (`.select-chevron`) because Tailwind's `bg-*`
-  // shorthands share a group — combining `bg-input` (color) with an
+  // shorthands share a group — combining `bg-surface-2` (color) with an
   // inline `bg-[url()]` (image) makes `tailwind-merge` collapse one of
   // them. Declaring both in raw CSS side-steps that.
   const SELECT_CLASS = [
     'select-chevron',
-    'flex-1 appearance-none rounded-md border border-input bg-input px-2 py-1 pr-7',
+    'flex-1 appearance-none rounded-md border border-input bg-surface-2 px-2 py-1 pr-7',
     'text-xs text-foreground cursor-pointer',
     'hover:border-border-strong',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-ring',
@@ -433,7 +433,7 @@ function SlideInspector() {
               }
             }}
             className={[
-              'w-full rounded border border-input bg-input px-2 py-0.5',
+              'w-full rounded border border-input bg-surface-2 px-2 py-0.5',
               'text-right text-xs text-foreground',
               'focus:border-ring focus:outline-none',
               'disabled:opacity-40 disabled:cursor-not-allowed',
@@ -541,7 +541,7 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
               }
             }}
             className={[
-              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'flex-1 rounded border border-input bg-surface-2 px-2 py-0.5',
               'font-mono text-xs text-foreground',
               'focus:border-ring focus:outline-none',
             ].join(' ')}
@@ -583,7 +583,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               }
             }}
             className={[
-              'w-full resize-none rounded border border-input bg-input px-2 py-1',
+              'w-full resize-none rounded border border-input bg-surface-2 px-2 py-1',
               'text-xs text-foreground',
               'focus:border-ring focus:outline-none',
             ].join(' ')}
@@ -611,7 +611,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             value={obj.fontWeight}
             onChange={(e) => patch({ fontWeight: e.target.value as 'normal' | 'bold' })}
             className={[
-              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'flex-1 rounded border border-input bg-surface-2 px-2 py-0.5',
               'text-xs text-foreground',
               'focus:border-ring focus:outline-none',
             ].join(' ')}
@@ -633,7 +633,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             value={obj.align}
             onChange={(e) => patch({ align: e.target.value as 'left' | 'center' | 'right' })}
             className={[
-              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'flex-1 rounded border border-input bg-surface-2 px-2 py-0.5',
               'text-xs text-foreground',
               'focus:border-ring focus:outline-none',
             ].join(' ')}
@@ -673,7 +673,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 }
               }}
               className={[
-                'flex-1 rounded border border-input bg-input px-2 py-0.5',
+                'flex-1 rounded border border-input bg-surface-2 px-2 py-0.5',
                 'font-mono text-xs text-foreground',
                 'focus:border-ring focus:outline-none',
               ].join(' ')}
@@ -764,7 +764,7 @@ function AnimationsSection({
         <select
           value=""
           aria-label="Add animation preset"
-          className="flex-1 rounded border border-input bg-input px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="flex-1 rounded border border-input bg-surface-2 px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
           onChange={(e) => {
             const val = e.target.value
             if (val === '') return
@@ -815,7 +815,7 @@ function AnimationsSection({
           {objectAnimations.map((step) => (
             <li
               key={step.id}
-              className="flex items-center justify-between rounded bg-input px-2 py-1"
+              className="flex items-center justify-between rounded bg-surface-2 px-2 py-1"
             >
               <div className="flex flex-col">
                 <span className="text-xs text-foreground">{animationLabel(step)}</span>

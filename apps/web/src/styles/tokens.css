@@ -21,20 +21,22 @@
 
        Reference: https://vercel.com/geist/colors. Borders at 0.06-0.08
        alpha, not 0.15+.  */
-    --surface-0: 0 0% 4%; /* Editor page / canvas backdrop (~#0a0a0a) */
-    --surface-1: 0 0% 7%; /* Toolbar + sidebar rails (~#121212) */
-    --surface-2: 0 0% 9%; /* Panel body backgrounds (~#171717) */
-    --surface-3: 0 0% 11%; /* Controls / inputs (~#1c1c1c) */
-    --surface-elevated: 0 0% 13%; /* Popovers / dialogs (~#212121) */
+    /* Cool-neutral navy — user asked for the slight blue tint back. Keep
+       saturation low so it doesn't read as "cartoon blue". */
+    --surface-0: 230 18% 5%; /* Editor page / canvas backdrop */
+    --surface-1: 230 14% 8%; /* Toolbar + sidebar rails */
+    --surface-2: 228 12% 10%; /* Panel body backgrounds */
+    --surface-3: 228 10% 12%; /* Controls / inputs */
+    --surface-elevated: 228 12% 14%; /* Popovers / dialogs */
 
     /* Borders — low-alpha white so they only just separate surfaces.
-       Consumed by `border-border` and anywhere we use `--border`. */
-    --border-subtle: 0 0% 100% / 0.06;
-    --border-strong: 0 0% 100% / 0.12;
+       Vercel uses 0.06-0.08; we stay at 0.07 for panel separators. */
+    --border-subtle: 0 0% 100% / 0.07;
+    --border-strong: 0 0% 100% / 0.14;
 
-    --fg-high: 0 0% 98%; /* Primary text ~#fafafa */
-    --fg-mid: 0 0% 72%; /* Secondary text ~#b8b8b8 */
-    --fg-low: 0 0% 48%; /* Hints, counts ~#7a7a7a */
+    --fg-high: 220 15% 97%; /* Primary text */
+    --fg-mid: 220 10% 72%; /* Secondary text */
+    --fg-low: 220 8% 48%; /* Hints, counts */
 
     /* Accent — electric blue. Vercel's blue; reads as a "link / active"
        marker on true-neutral grayscale surfaces. */
@@ -72,9 +74,11 @@
     --destructive-foreground: 0 0% 98%;
 
     --border: var(--border-subtle);
-    /* Input surface matches the panel body it sits inside; the subtle
-       border does the visual separation. */
-    --input: var(--surface-3);
+    /* `--input` is the BORDER colour of inputs (shadcn naming quirk).
+       Set to the same low-alpha white as surface borders so an input's
+       outline is just a rim, not a contrast frame. The input's own
+       background stays transparent so it sits on the panel surface. */
+    --input: 0 0% 100% / 0.08;
     --ring: var(--accent-500);
 
     --radius: 0.625rem;
