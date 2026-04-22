@@ -27,6 +27,8 @@ import { duplicateSlide } from './slideHelpers.js'
 import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { Plus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
 // Fallback palette for thumbnail placeholder colours
@@ -380,37 +382,25 @@ export function SlidesPanel(): JSX.Element {
       onPointerUp={handlePointerUp as unknown as React.PointerEventHandler<HTMLDivElement>}
     >
       {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-gray-800 px-3 py-2">
-        <h2 id={headerId} className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-3 py-2">
+        <h2
+          id={headerId}
+          className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+        >
           Slides
-          <span className="ml-1.5 font-normal text-gray-600">({slides.length})</span>
+          <span className="ml-1.5 font-normal opacity-60">({slides.length})</span>
         </h2>
         {/* Add slide button — hidden for viewer role */}
         {!isViewer && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={handleAdd}
             aria-label="Add slide"
-            className={[
-              'flex h-6 w-6 items-center justify-center rounded text-gray-400',
-              'hover:bg-gray-800 hover:text-gray-200',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
-              'transition-colors',
-            ].join(' ')}
+            className="h-6 w-6"
           >
-            <svg
-              aria-hidden="true"
-              width="14"
-              height="14"
-              viewBox="0 0 14 14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            >
-              <path d="M7 2v10M2 7h10" />
-            </svg>
-          </button>
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
         )}
       </div>
 
@@ -427,7 +417,7 @@ export function SlidesPanel(): JSX.Element {
           aria-orientation="vertical"
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          className="flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+          className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           {slides.map((slide, idx) => {
             const isDragging = dragState?.slideId === slide.id

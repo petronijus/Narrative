@@ -527,9 +527,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const canvasCursor = activeTool === 'select' ? 'default' : 'crosshair'
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-gray-950">
+    <div className="flex h-full w-full overflow-hidden bg-background">
       {/* Left sidebar — slides panel */}
-      <aside className="flex w-60 flex-shrink-0 flex-col border-r border-gray-800 bg-gray-900 overflow-hidden">
+      <aside className="panel flex w-60 flex-shrink-0 flex-col border-r border-border overflow-hidden">
         <SlidesPanel />
       </aside>
 
@@ -539,7 +539,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
         <div
           ref={canvasContainerRef}
-          className="relative flex-1 overflow-hidden bg-gray-950"
+          className="canvas-backdrop relative flex-1 overflow-hidden"
           style={{ cursor: canvasCursor }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -590,9 +590,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       </main>
 
       {/* Right sidebar: inspector */}
-      <aside className="flex w-64 flex-shrink-0 flex-col border-l border-gray-800 bg-gray-900">
-        <div className="border-b border-gray-800 px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <aside className="panel flex w-64 flex-shrink-0 flex-col border-l border-border">
+        <div className="border-b border-border px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Inspector
           </span>
         </div>

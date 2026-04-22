@@ -1,17 +1,20 @@
 /**
  * pages/Landing.tsx
  *
- * Minimalist landing page — list decks, create + navigate.
+ * Deck-list landing page.
  *
- * M10: Refactored to use centralized API client (useApi hook) which
- * automatically attaches Bearer token to all requests. Sign-out button
- * added to header using useAuth().
+ * P1 visual foundation pass: migrated to the semantic token palette
+ * (surface-* / border-border / muted-foreground) and shadcn Button. The
+ * deck grid cards use the `.panel` utility so they pick up the same
+ * gradient + rim as the editor's sidebars / toolbar.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { LogOut, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
+import { Button } from '@/components/ui/button'
 import type { DeckSummary } from '../api/client.js'
 
 export function Landing() {
@@ -64,32 +67,37 @@ export function Landing() {
   )
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-950 text-gray-100">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="border-b border-gray-800 px-8 py-4">
+      <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
           <div className="flex items-center gap-3">
             {user !== null && (
               <div className="flex items-center gap-2">
-                <span className="hidden sm:block text-sm text-gray-400">
+                <span className="hidden sm:block text-sm text-muted-foreground">
                   {user.name ?? user.email ?? user.sub.slice(0, 8)}
                 </span>
-                <button
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => void logout()}
-                  className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                  aria-label="Sign out"
+                  className="h-8 w-8"
                 >
-                  Sign out
-                </button>
+                  <LogOut className="h-4 w-4" aria-hidden="true" />
+                </Button>
               </div>
             )}
-            <button
+            <Button
               onClick={() => void handleCreateDeck()}
               disabled={creating}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              size="sm"
+              className="btn-brand gap-1.5"
             >
-              {creating ? 'Creating…' : '+ New Deck'}
-            </button>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {creating ? 'Creating…' : 'New Deck'}
+            </Button>
           </div>
         </div>
       </header>
@@ -97,17 +105,19 @@ export function Landing() {
       {/* Main content */}
       <main className="flex-1 px-8 py-6">
         {error !== null && (
-          <div className="mb-4 rounded-md bg-red-900/30 border border-red-800 px-4 py-3 text-sm text-red-300">
+          <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
             {error}
           </div>
         )}
 
         {loading ? (
-          <p className="text-sm text-gray-500">Loading decks…</p>
+          <p className="text-sm text-muted-foreground/80">Loading decks…</p>
         ) : decks.length === 0 ? (
           <div className="flex flex-col items-center justify-center pt-24 text-center">
-            <p className="text-gray-500">No decks yet.</p>
-            <p className="mt-1 text-sm text-gray-600">Click "+ New Deck" to get started.</p>
+            <p className="text-muted-foreground">No decks yet.</p>
+            <p className="mt-1 text-sm text-muted-foreground/60">
+              Click <span className="text-foreground/80">+ New Deck</span> to get started.
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -146,38 +156,23 @@ function DeckCard({ deck, onOpen, onDelete }: DeckCardProps) {
   return (
     <div
       onClick={onOpen}
-      className="group relative cursor-pointer rounded-lg border border-gray-800 bg-gray-900 p-4 hover:border-gray-600 hover:bg-gray-850 transition-colors"
+      className="panel group relative cursor-pointer rounded-lg border border-border p-4 hover:border-border-strong hover:shadow-glow transition-all"
     >
       {/* Thumbnail placeholder */}
-      <div className="mb-3 h-28 rounded bg-gray-800 flex items-center justify-center">
-        <span className="text-xs text-gray-600">No preview</span>
+      <div className="mb-3 h-28 rounded-md bg-surface-2 flex items-center justify-center">
+        <span className="text-xs text-muted-foreground/60">No preview</span>
       </div>
 
-      <p className="truncate text-sm font-medium text-gray-100">{deck.title}</p>
-      <p className="mt-0.5 text-xs text-gray-500">{date}</p>
+      <p className="truncate text-sm font-medium text-foreground">{deck.title}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground/80">{date}</p>
 
       {/* Delete button */}
       <button
         onClick={onDelete}
         aria-label="Delete deck"
-        className="absolute right-2 top-2 hidden rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400 group-hover:flex"
+        className="absolute right-2 top-2 hidden rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive group-hover:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
       >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-          <path d="M10 11v6M14 11v6" />
-          <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-        </svg>
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>
   )

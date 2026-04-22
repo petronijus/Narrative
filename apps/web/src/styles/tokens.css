@@ -1,0 +1,461 @@
+/**
+ * styles/tokens.css
+ *
+ * Design tokens for Narrative.
+ *
+ * Dark-first palette tuned to a warmer, slightly bluish Keynote-like look
+ * rather than neutral gray on pure black. Layered surfaces give panels
+ * visible depth without borders doing all the work.
+ *
+ * Values are HSL triplets so shadcn components can wrap them in `hsl()`
+ * and so per-theme overrides (M20 themes) can swap just the H/S axes.
+ */
+
+@layer base {
+  :root {
+    /* ───────── Narrative dark palette — Vercel Geist-inspired ─────────
+       Vercel's approach: near-black background, panels lifted by a few
+       percent lightness (not hue saturation), borders always expressed
+       as *low-alpha white* rather than a solid colour so they feel like
+       a faint rim instead of a hard line.
+
+       Reference: https://vercel.com/geist/colors. Borders at 0.06-0.08
+       alpha, not 0.15+.  */
+    /* Cool-neutral navy — enough saturation that inputs / panels read
+       as "dark blue-gray" and visibly belong to the same family, not
+       some as "gray on navy". */
+    --surface-0: 228 24% 6%; /* Editor page / canvas backdrop */
+    --surface-1: 228 22% 9%; /* Toolbar + sidebar rails */
+    --surface-2: 228 20% 12%; /* Panel body backgrounds */
+    --surface-3: 228 18% 15%; /* Controls / inputs */
+    --surface-elevated: 228 20% 16%; /* Popovers / dialogs */
+
+    /* Borders — low-alpha white so they only just separate surfaces.
+       Vercel uses 0.06-0.08; we stay at 0.07 for panel separators. */
+    --border-subtle: 0 0% 100% / 0.07;
+    --border-strong: 0 0% 100% / 0.14;
+
+    --fg-high: 220 15% 97%; /* Primary text */
+    --fg-mid: 220 10% 72%; /* Secondary text */
+    --fg-low: 220 8% 48%; /* Hints, counts */
+
+    /* Accent — electric blue. Vercel's blue; reads as a "link / active"
+       marker on true-neutral grayscale surfaces. */
+    --accent-400: 212 100% 68%;
+    --accent-500: 212 100% 55%;
+    --accent-600: 212 100% 48%;
+
+    /* Warm highlight for the Present button + state chips. */
+    --brand-500: 262 83% 58%;
+
+    /* ───────── shadcn semantic layer (HSL triplets, no hsl()) ───────── */
+    /* Mapped to Narrative's scale so shadcn primitives blend in. */
+    --background: var(--surface-0);
+    --foreground: var(--fg-high);
+
+    --card: var(--surface-1);
+    --card-foreground: var(--fg-high);
+
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--fg-high);
+
+    --primary: var(--accent-500);
+    --primary-foreground: 220 14% 98%;
+
+    --secondary: var(--surface-2);
+    --secondary-foreground: var(--fg-high);
+
+    --muted: var(--surface-2);
+    --muted-foreground: var(--fg-mid);
+
+    --accent: var(--surface-3);
+    --accent-foreground: var(--fg-high);
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: var(--border-subtle);
+    /* `--input` is the BORDER colour of inputs (shadcn naming quirk).
+       Set to the same low-alpha white as surface borders so an input's
+       outline is just a rim, not a contrast frame. The input's own
+       background stays transparent so it sits on the panel surface. */
+    --input: 0 0% 100% / 0.08;
+    --ring: var(--accent-500);
+
+    --radius: 0.625rem;
+
+    /* ───────── Glow halo + glass sheet tokens ───────── */
+    --glow-accent: 0 0 0 1px hsl(var(--accent-500) / 0.45), 0 6px 24px 0 hsl(var(--accent-500) / 0.35);
+    --glow-strong: 0 0 48px 0 hsl(var(--accent-500) / 0.55);
+
+    /* Glass panels — slight translucency over the editor canvas. */
+    --glass-bg: hsl(230 22% 11% / 0.72);
+    --glass-border: hsl(220 20% 70% / 0.08);
+    --glass-blur: 20px;
+
+    /* Inner rim — 1 px inset top highlight that reads "lifted panel".
+       Kept very faint so it's a material hint, not a stripe. */
+    --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.03);
+
+    /* Subtle panel shadow (right / bottom sides, very soft). */
+    --panel-shadow: 1px 0 0 0 hsl(0 0% 0% / 0.6);
+
+    /* Radius scale. */
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+
+    /* Tell browsers we're in dark mode so native form controls (select,
+       scrollbar, option list on some platforms) pick dark defaults.
+       Overridden below inside @media (prefers-color-scheme: light). */
+    color-scheme: dark;
+  }
+
+  /* ───────── Light theme —
+     Tri-state theme resolution:
+       - `<html>` (no `data-theme`): follow OS `prefers-color-scheme`.
+       - `<html data-theme="light">`: force light.
+       - `<html data-theme="dark">`:  force dark (matches the default).
+
+     The light token block lives in a reusable class-like selector so we
+     can apply it from both the media-query path and the explicit
+     data-theme path without duplicating values. */
+
+  /* Shared light-theme token values. Applied via the selectors below. */
+  :root[data-theme='light'],
+  :where(:root:not([data-theme='dark'])) {
+    /* This selector matches both the forced-light and no-preference
+       states; the no-preference branch then gets narrowed down by the
+       media query below. The `:where()` gives 0 specificity so the
+       forced-dark override (`[data-theme='dark']`) wins when present. */
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) {
+      --surface-0: 220 20% 98%;
+      --surface-1: 220 18% 95%;
+      --surface-2: 220 16% 92%;
+      --surface-3: 220 14% 88%;
+      --surface-elevated: 0 0% 100%;
+
+      --border-subtle: 220 30% 10% / 0.09;
+      --border-strong: 220 30% 10% / 0.18;
+
+      --fg-high: 220 25% 10%;
+      --fg-mid: 220 12% 30%;
+      --fg-low: 220 8% 48%;
+
+      --accent-400: 212 100% 52%;
+      --accent-500: 212 100% 44%;
+      --accent-600: 212 100% 36%;
+
+      --brand-500: 262 83% 55%;
+
+      --foreground: var(--fg-high);
+      --background: var(--surface-0);
+      --card: var(--surface-1);
+      --card-foreground: var(--fg-high);
+      --popover: var(--surface-elevated);
+      --popover-foreground: var(--fg-high);
+      --primary: var(--accent-500);
+      --primary-foreground: 0 0% 100%;
+      --secondary: var(--surface-2);
+      --secondary-foreground: var(--fg-high);
+      --muted: var(--surface-2);
+      --muted-foreground: var(--fg-mid);
+      --accent: var(--surface-3);
+      --accent-foreground: var(--fg-high);
+      --destructive: 0 72% 46%;
+      --destructive-foreground: 0 0% 100%;
+      --border: var(--border-subtle);
+      --input: 220 30% 10% / 0.1;
+      --ring: var(--accent-500);
+
+      --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.6);
+      --glass-bg: hsl(220 20% 98% / 0.75);
+      --glass-border: hsl(220 20% 10% / 0.06);
+
+      color-scheme: light;
+    }
+  }
+
+  /* Explicit user override: `<html data-theme="light">`. Same values as
+     above, just outside the media query so the user's choice wins even
+     when the OS says dark. */
+  :root[data-theme='light'] {
+    --surface-0: 220 20% 98%;
+    --surface-1: 220 18% 95%;
+    --surface-2: 220 16% 92%;
+    --surface-3: 220 14% 88%;
+    --surface-elevated: 0 0% 100%;
+
+    --border-subtle: 220 30% 10% / 0.09;
+    --border-strong: 220 30% 10% / 0.18;
+
+    --fg-high: 220 25% 10%;
+    --fg-mid: 220 12% 30%;
+    --fg-low: 220 8% 48%;
+
+    --accent-400: 212 100% 52%;
+    --accent-500: 212 100% 44%;
+    --accent-600: 212 100% 36%;
+
+    --brand-500: 262 83% 55%;
+
+    --foreground: var(--fg-high);
+    --background: var(--surface-0);
+    --card: var(--surface-1);
+    --card-foreground: var(--fg-high);
+    --popover: var(--surface-elevated);
+    --popover-foreground: var(--fg-high);
+    --primary: var(--accent-500);
+    --primary-foreground: 0 0% 100%;
+    --secondary: var(--surface-2);
+    --secondary-foreground: var(--fg-high);
+    --muted: var(--surface-2);
+    --muted-foreground: var(--fg-mid);
+    --accent: var(--surface-3);
+    --accent-foreground: var(--fg-high);
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: var(--border-subtle);
+    --input: 220 30% 10% / 0.1;
+    --ring: var(--accent-500);
+
+    --inner-rim: inset 0 1px 0 0 hsl(0 0% 100% / 0.6);
+    --glass-bg: hsl(220 20% 98% / 0.75);
+    --glass-border: hsl(220 20% 10% / 0.06);
+
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  /* Native <select> option list — dark background matching popover surface.
+     Browsers differ in how much of this they honour (Chromium respects
+     bg/color; Firefox ignores most), but the default white dropdown is at
+     least dimmed. */
+  option,
+  optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+  }
+
+  /* Smooth out all focus/hover state changes globally. Individual
+     components can still opt out with `transition-none`. */
+  button,
+  a,
+  [role='button'],
+  input,
+  textarea,
+  select {
+    transition-property: background-color, color, border-color, box-shadow,
+      transform, opacity;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+}
+
+@layer utilities {
+  /* Glass sheet — frosted translucent panel with a faint top highlight. */
+  .glass {
+    background-color: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--inner-rim);
+  }
+
+  /* Panel — lifted surface with a very soft gradient from a brighter
+     top edge to the settled body. The deltas are small (≤ 3 pp
+     lightness) so it doesn't read as a "banner"; it just feels
+     physical, the way Keynote panels do. Inner rim highlights the
+     top edge as a material hint. */
+  .panel {
+    background-color: hsl(var(--surface-1));
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--surface-2)) 0%,
+      hsl(var(--surface-1)) 45%,
+      hsl(var(--surface-0)) 100%
+    );
+    box-shadow: var(--inner-rim);
+  }
+
+  /* Accent ring + halo for the Present button / CTA. */
+  .glow-accent {
+    box-shadow: var(--glow-accent);
+  }
+  .glow-strong {
+    box-shadow: var(--glow-strong);
+  }
+
+  /* Subtle divider for nested sections — lighter than `border-border`. */
+  .divider-soft {
+    border-color: hsl(var(--surface-2));
+  }
+
+  /* Canvas working area — very subtle centre-biased lift, similar to
+     Vercel's dashboard focus. Dark: dark-on-darker vignette. Light:
+     light-on-lighter washed linen. The slide itself retains full
+     contrast in both modes. */
+  .canvas-backdrop {
+    background-color: hsl(var(--surface-0));
+    background-image: radial-gradient(
+      ellipse at 50% 35%,
+      hsl(0 0% 8%) 0%,
+      hsl(0 0% 4%) 70%
+    );
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) .canvas-backdrop {
+      background-image: radial-gradient(
+        ellipse at 50% 35%,
+        hsl(220 30% 94%) 0%,
+        hsl(220 20% 90%) 70%
+      );
+    }
+  }
+  :root[data-theme='light'] .canvas-backdrop {
+    background-image: radial-gradient(
+      ellipse at 50% 35%,
+      hsl(220 30% 94%) 0%,
+      hsl(220 20% 90%) 70%
+    );
+  }
+
+  /* Input / select / textarea surface — a translucent overlay that
+     auto-tints to a shade of the panel behind it. Dark theme uses a
+     tiny white overlay (→ slightly lighter than panel); light theme
+     uses a tiny black overlay (→ slightly darker) so inputs read as
+     "carved into the panel" in either mode. */
+  .field-surface {
+    background-color: hsl(0 0% 100% / 0.04);
+  }
+  .field-surface:hover:not(:disabled, :focus) {
+    background-color: hsl(0 0% 100% / 0.06);
+  }
+  .field-surface:focus,
+  .field-surface:focus-within {
+    background-color: hsl(0 0% 100% / 0.07);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme='dark']) .field-surface {
+      background-color: hsl(220 30% 10% / 0.04);
+    }
+    :root:not([data-theme='dark']) .field-surface:hover:not(:disabled, :focus) {
+      background-color: hsl(220 30% 10% / 0.07);
+    }
+    :root:not([data-theme='dark']) .field-surface:focus,
+    :root:not([data-theme='dark']) .field-surface:focus-within {
+      background-color: hsl(220 30% 10% / 0.09);
+    }
+  }
+
+  :root[data-theme='light'] .field-surface {
+    background-color: hsl(220 30% 10% / 0.04);
+  }
+  :root[data-theme='light'] .field-surface:hover:not(:disabled, :focus) {
+    background-color: hsl(220 30% 10% / 0.07);
+  }
+  :root[data-theme='light'] .field-surface:focus,
+  :root[data-theme='light'] .field-surface:focus-within {
+    background-color: hsl(220 30% 10% / 0.09);
+  }
+
+  /* Chevron icon for native <select> — drawn via ::after-like
+     background-image layer. Applied via `.select-chevron`. Keeps
+     bg-color intact because we're not touching background-image
+     through a Tailwind class. */
+  .select-chevron {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%239aa3b2%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E");
+    background-position: right 0.5rem center;
+    background-size: 12px 12px;
+    background-repeat: no-repeat;
+  }
+
+  /* Animated collapse wrapper — CSS-grid trick that lets an element's
+     height animate from 0 → auto. Apply `.collapsible` to a wrapper div,
+     toggle `data-collapsed="true"` to hide. The inner content wrapper
+     needs `min-height: 0; overflow: hidden` so clipping works during the
+     transition. */
+  .collapsible {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .collapsible[data-collapsed='true'] {
+    grid-template-rows: 0fr;
+  }
+  .collapsible > .collapsible-body {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* Custom scrollbar — thin, translucent, fades in on hover. Apply via
+     `className="scrollbar-narrative"` on any scrollable container. */
+  .scrollbar-narrative {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(220 15% 55% / 0.25) transparent;
+  }
+  .scrollbar-narrative::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-thumb {
+    background-color: hsl(220 15% 55% / 0.2);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition: background-color 200ms ease;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(220 15% 65% / 0.4);
+  }
+  .scrollbar-narrative::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Present / primary CTA — brand gradient from accent to warm violet.
+     Uses explicit colour refs so tailwind-merge can't collapse it with a
+     solid `bg-primary`. */
+  .btn-brand {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--accent-500)) 0%,
+      hsl(var(--brand-500)) 100%
+    );
+    color: hsl(var(--primary-foreground));
+    border: 1px solid hsl(var(--accent-400) / 0.35);
+    box-shadow:
+      0 1px 0 0 hsl(220 20% 100% / 0.1) inset,
+      0 0 0 1px hsl(var(--accent-500) / 0.45),
+      0 6px 20px -4px hsl(var(--accent-500) / 0.5);
+    transition:
+      filter 160ms ease,
+      box-shadow 160ms ease;
+  }
+  .btn-brand:hover {
+    filter: brightness(1.1);
+    box-shadow:
+      0 1px 0 0 hsl(220 20% 100% / 0.15) inset,
+      0 0 0 1px hsl(var(--accent-400) / 0.6),
+      0 8px 28px -4px hsl(var(--accent-500) / 0.7);
+  }
+}
