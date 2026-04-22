@@ -43,7 +43,7 @@ async function seedMagicMove(page: Page): Promise<void> {
     if (api === undefined) throw new Error('test api missing')
     api.seedMagicMoveFixture({
       objectId: 'e2e-rect',
-      fill: '#3b82f6',
+      fill: 0x3b82f6,
       durationMs: 600,
       from: { x: 200, y: 400, width: 300, height: 200, opacity: 1 },
       to: { x: 1200, y: 400, width: 300, height: 200, opacity: 1 },

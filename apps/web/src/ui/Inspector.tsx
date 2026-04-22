@@ -268,7 +268,17 @@ function SlideInspector() {
   const { deckCtx } = useSlideDoc()
   const slides = useSlides()
 
-  const slide = slides.find((s) => s.id === activeSlideId)
+  const slideIndex = slides.findIndex((s) => s.id === activeSlideId)
+  const slide = slideIndex === -1 ? undefined : slides[slideIndex]
+  const prevSlide = slideIndex > 0 ? slides[slideIndex - 1] : undefined
+
+  // Magic Move morphs objects that share ids across the previous slide and
+  // the active slide. Preview the count here so the user knows whether the
+  // transition will actually do anything before entering present mode.
+  const magicMatchedCount =
+    slide !== undefined && prevSlide !== undefined
+      ? slide.objects.filter((o) => prevSlide.objects.some((p) => p.id === o.id)).length
+      : 0
 
   if (slide === undefined) {
     return (
@@ -371,6 +381,34 @@ function SlideInspector() {
           />
           <span className="flex-shrink-0 text-[10px] text-gray-600">ms</span>
         </div>
+
+        {/* Magic Move — hint + matched-pair preview */}
+        {transition.kind === 'magic' && (
+          <div
+            className={[
+              'rounded border px-2 py-1.5 text-[11px] leading-snug',
+              prevSlide === undefined
+                ? 'border-amber-700/60 bg-amber-900/20 text-amber-300'
+                : magicMatchedCount === 0
+                  ? 'border-amber-700/60 bg-amber-900/20 text-amber-300'
+                  : 'border-gray-700 bg-gray-900/50 text-gray-400',
+            ].join(' ')}
+          >
+            {prevSlide === undefined ? (
+              <>Magic Move needs a previous slide to morph from.</>
+            ) : magicMatchedCount === 0 ? (
+              <>
+                No matched objects between this slide and the previous one. Duplicate the previous
+                slide to share object ids, then tweak positions here.
+              </>
+            ) : (
+              <>
+                {magicMatchedCount} matched {magicMatchedCount === 1 ? 'object' : 'objects'} will
+                morph. Other objects crossfade.
+              </>
+            )}
+          </div>
+        )}
 
         {/* Direction — only for push */}
         {transition.kind === 'push' && (

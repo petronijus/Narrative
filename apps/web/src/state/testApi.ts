@@ -27,8 +27,8 @@ import {
 export interface MagicMoveFixtureOptions {
   /** Transition duration on slide 2. Default 600 ms. */
   durationMs?: number
-  /** Rectangle fill colour (e.g. '#3b82f6'). Default blue. */
-  fill?: string
+  /** Rectangle fill colour as a 24-bit RGB integer (e.g. 0x3b82f6). */
+  fill?: number
   /** Shared object id used on both slides. Default 'e2e-rect'. */
   objectId?: string
   /** Slide 1 rectangle transform. */
@@ -58,7 +58,7 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
   const api: TestApi = {
     seedMagicMoveFixture(opts = {}) {
       const objectId = opts.objectId ?? 'e2e-rect'
-      const fill = opts.fill ?? '#3b82f6'
+      const fill = opts.fill ?? 0x3b82f6
       const durationMs = opts.durationMs ?? 600
       const from = {
         x: opts.from?.x ?? 200,
