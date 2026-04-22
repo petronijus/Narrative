@@ -496,16 +496,15 @@ export function AnimationTimeline() {
       const snap = e.shiftKey ? 0 : SNAP_SEC
       const magnet = e.shiftKey ? 0 : MAGNET_THRESHOLD_SEC
 
-      // Candidate snap points — the start and end of every other bar on
-      // every row, plus 0. Cheap to rebuild each move; only runs during drag.
+      // Candidate snap points — start and end of every other bar (any row),
+      // plus 0. Built from the flat `laidOut` snapshot (which lives in this
+      // handler's deps) so the candidates stay fresh as bars move around.
       const candidates: number[] = magnet > 0 ? [0] : []
       if (magnet > 0) {
-        for (const r of rows) {
-          for (const it of r.items) {
-            if (it.step.id === drag.stepId) continue
-            candidates.push(it.startSec)
-            candidates.push(it.startSec + (it.step.duration ?? 0))
-          }
+        for (const l of laidOut) {
+          if (l.step.id === drag.stepId) continue
+          candidates.push(l.startSec)
+          candidates.push(l.startSec + (l.step.duration ?? 0))
         }
       }
 
