@@ -12,7 +12,7 @@
  *     SceneGraph.hitTest (rotation-aware), keyboard duplicate + nudge.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
@@ -46,8 +46,10 @@ import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
 import { StageBgPicker } from '../ui/StageBgPicker.js'
+import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
+import { useZoomLevel } from '../state/useZoomLevel.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,19 +64,22 @@ function isInputFocused(): boolean {
 }
 
 /**
- * Převede CSS client souřadnice (z PointerEvent) na souřadnice relativní
- * k canvas containeru (= "world" souřadnice pro M7, bez zoom/pan).
- *
- * M8+: při zoom/pan zde přidat viewport transform.
+ * Converts viewport (clientX, clientY) coordinates into artboard-local
+ * slide coordinates. When the artboard is rendered under a CSS
+ * transform:scale, getBoundingClientRect already returns the scaled
+ * visual rect — we reverse that scale so slide-coord math stays in
+ * unscaled 1920×1080 space.
  */
 function clientToCanvasCoords(
   clientX: number,
   clientY: number,
   canvasRect: DOMRect,
+  zoom: number = 1,
 ): { x: number; y: number } {
+  const s = zoom === 0 ? 1 : zoom
   return {
-    x: clientX - canvasRect.left,
-    y: clientY - canvasRect.top,
+    x: (clientX - canvasRect.left) / s,
+    y: (clientY - canvasRect.top) / s,
   }
 }
 
@@ -124,6 +129,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const { color: stageBgColor } = useStageBgColor()
+  const { zoom } = useZoomLevel()
+
+  // Expose the latest zoom to the pointer callbacks without having to
+  // include it in their dependency arrays (which would churn the
+  // callbacks on every zoom change).
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
 
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection } = useAwarenessUpdater()
@@ -133,6 +145,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   /** Ref on the scroll container so we can centre the artboard on mount. */
   const stageScrollRef = useRef<HTMLDivElement>(null)
+
+  /** Hand-tool pan state — live while the pointer is held. */
+  const panRef = useRef<{
+    startX: number
+    startY: number
+    scrollLeft: number
+    scrollTop: number
+  } | null>(null)
 
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
@@ -165,15 +185,21 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
 
-  // On first mount, scroll the stage so the artboard sits in the
-  // horizontal and vertical centre (reveals equal margin on each side
-  // when the window is smaller than the artboard + full margin).
-  useEffect(() => {
-    const el = stageScrollRef.current
-    if (el === null) return
-    el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2)
-    el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2)
-  }, [])
+  // Keep the artboard centred in the viewport on mount AND after every
+  // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
+  // so the scroll adjustment is synchronous with the zoom-induced
+  // layout change — no visible jump.
+  useLayoutEffect(() => {
+    const scroller = stageScrollRef.current
+    const artboard = canvasContainerRef.current
+    if (scroller === null || artboard === null) return
+    const a = artboard.getBoundingClientRect()
+    const s = scroller.getBoundingClientRect()
+    const centerX = a.left - s.left + scroller.scrollLeft + a.width / 2
+    const centerY = a.top - s.top + scroller.scrollTop + a.height / 2
+    scroller.scrollLeft = Math.max(0, centerX - scroller.clientWidth / 2)
+    scroller.scrollTop = Math.max(0, centerY - scroller.clientHeight / 2)
+  }, [zoom])
 
   // Canvas size observer
   useEffect(() => {
@@ -199,11 +225,25 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return
 
+      // Hand tool — pan the scroll container while the pointer is held.
+      if (activeTool === 'hand') {
+        const scroller = stageScrollRef.current
+        if (scroller === null) return
+        ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+        panRef.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          scrollLeft: scroller.scrollLeft,
+          scrollTop: scroller.scrollTop,
+        }
+        return
+      }
+
       const containerEl = canvasContainerRef.current
       if (containerEl === null) return
 
       const rect = containerEl.getBoundingClientRect()
-      const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect)
+      const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect, zoomRef.current)
 
       if (activeTool !== 'select') {
         // Create tool — viewer cannot create objects
@@ -293,12 +333,28 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Hand-tool pan — scroll the backdrop instead of moving objects.
+      const pan = panRef.current
+      if (pan !== null) {
+        const scroller = stageScrollRef.current
+        if (scroller !== null) {
+          scroller.scrollLeft = pan.scrollLeft - (e.clientX - pan.startX)
+          scroller.scrollTop = pan.scrollTop - (e.clientY - pan.startY)
+        }
+        return
+      }
+
       // M8: Broadcast cursor position (throttled 30Hz na state-sync straně)
       // Získáme canvas-relative coords jednou a reuse pro marquee i cursor broadcast.
       const containerEl = canvasContainerRef.current
       const canvasCoords =
         containerEl !== null
-          ? clientToCanvasCoords(e.clientX, e.clientY, containerEl.getBoundingClientRect())
+          ? clientToCanvasCoords(
+              e.clientX,
+              e.clientY,
+              containerEl.getBoundingClientRect(),
+              zoomRef.current,
+            )
           : null
 
       if (canvasCoords !== null) {
@@ -375,6 +431,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   const handlePointerUp = useCallback(
     (_e: React.PointerEvent<HTMLDivElement>) => {
+      if (panRef.current !== null) {
+        panRef.current = null
+        return
+      }
       // Finalize marquee
       const mq = marqueeRef.current
       if (mq !== null) {
@@ -542,7 +602,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
 
   // Cursor style
-  const canvasCursor = activeTool === 'select' ? 'default' : 'crosshair'
+  const canvasCursor =
+    activeTool === 'hand'
+      ? panRef.current !== null
+        ? 'grabbing'
+        : 'grab'
+      : activeTool === 'select'
+        ? 'default'
+        : 'crosshair'
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
@@ -595,65 +662,75 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                 placeItems: 'center',
               }}
             >
-              {/* Artboard: fixed 1920×1080 logical/CSS size. Slide object
-              coordinates map 1:1 to these pixels, so resizing the
-              window no longer moves objects relative to the slide —
-              the backdrop simply scrolls when the artboard overflows.
-              Zoom-to-fit is a future feature and will adjust a single
-              scale factor on the Pixi stage instead. */}
+              {/* Zoom wrapper — its layout size is the scaled artboard
+                  (so the scroll container knows the real footprint),
+                  while the artboard itself is CSS-transformed from the
+                  top-left so slide coordinates stay in unscaled 1920×
+                  1080 space. Pointer math divides by `zoom` to recover
+                  slide coords from the transformed visual bounds. */}
               <div
-                ref={canvasContainerRef}
-                className="artboard relative flex-shrink-0 rounded-md"
+                className="relative flex-shrink-0"
                 style={{
-                  width: SLIDE_WIDTH,
-                  height: SLIDE_HEIGHT,
-                  background: 'hsl(var(--surface-elevated))',
-                  overflow: 'visible',
+                  width: SLIDE_WIDTH * zoom,
+                  height: SLIDE_HEIGHT * zoom,
                 }}
               >
-                <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
+                <div
+                  ref={canvasContainerRef}
+                  className="artboard relative rounded-md"
+                  style={{
+                    width: SLIDE_WIDTH,
+                    height: SLIDE_HEIGHT,
+                    background: 'hsl(var(--surface-elevated))',
+                    overflow: 'visible',
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'top left',
+                  }}
+                >
+                  <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
 
-                {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
+                  {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
                 beyond the artboard rect and would otherwise occlude a border
                 on the artboard div. Pointer-events:none to pass clicks
                 through to overlays. */}
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
-                />
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
+                  />
 
-                {/* Snap guide lines — viditelné jen během dragu */}
-                <SnapGuides
-                  guides={snapGuides}
-                  canvasWidth={canvasSize.width}
-                  canvasHeight={canvasSize.height}
-                />
+                  {/* Snap guide lines — viditelné jen během dragu */}
+                  <SnapGuides
+                    guides={snapGuides}
+                    canvasWidth={canvasSize.width}
+                    canvasHeight={canvasSize.height}
+                  />
 
-                {/* Marquee selection overlay */}
-                {marquee !== null && <MarqueeOverlay marquee={marquee} />}
+                  {/* Marquee selection overlay */}
+                  {marquee !== null && <MarqueeOverlay marquee={marquee} />}
 
-                {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
-                <PeerSelectionOverlays />
+                  {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
+                  <PeerSelectionOverlays />
 
-                {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
-                {!isViewer &&
-                  selectedIds.size > 0 &&
-                  canvasInstance !== null &&
-                  mutationCtx !== null && (
-                    <TransformHandles
-                      objectIds={[...selectedIds]}
-                      sceneGraph={canvasInstance.sceneGraph}
-                      mutationCtx={mutationCtx}
-                      onSnapGuides={handleSnapGuides}
-                      otherBounds={otherBounds}
-                    />
-                  )}
+                  {/* Transform handles + outline — not shown for viewer (they cannot resize/rotate) */}
+                  {!isViewer &&
+                    selectedIds.size > 0 &&
+                    canvasInstance !== null &&
+                    mutationCtx !== null && (
+                      <TransformHandles
+                        objectIds={[...selectedIds]}
+                        sceneGraph={canvasInstance.sceneGraph}
+                        mutationCtx={mutationCtx}
+                        onSnapGuides={handleSnapGuides}
+                        otherBounds={otherBounds}
+                      />
+                    )}
 
-                {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
-                <PeerCursors />
+                  {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
+                  <PeerCursors />
 
-                {/* M11: Drop zone for image uploads — inert for viewer role */}
-                <UploadDropZone canvasContainerRef={canvasContainerRef} />
+                  {/* M11: Drop zone for image uploads — inert for viewer role */}
+                  <UploadDropZone canvasContainerRef={canvasContainerRef} />
+                </div>
               </div>
             </div>
           </div>
@@ -663,6 +740,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               scrolls the stage. */}
           <div className="pointer-events-none absolute right-3 top-3 z-10">
             <StageBgPicker />
+          </div>
+
+          {/* Zoom pill — bottom-right of the stage. Sits above the
+              scrollbar so it doesn't collide with it at any zoom. */}
+          <div className="pointer-events-none absolute right-3 bottom-6 z-10">
+            <ZoomControl stageScrollRef={stageScrollRef} />
           </div>
         </div>
 
