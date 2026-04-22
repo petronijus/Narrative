@@ -2,13 +2,17 @@
  * state/useStageBgColor.ts
  *
  * P2: local editor preference for the stage backdrop colour (the area
- * around the artboard). Persisted to localStorage — NOT synced via Y.Doc,
- * because it's a per-viewer display choice, not deck content.
+ * around the artboard). This is a per-viewer display choice — NOT
+ * synced via Y.Doc AND NOT shared across browser tabs either, because
+ * two tabs often represent two independent "users" when we're testing
+ * multiplayer. We therefore use `sessionStorage` (per-tab), so the
+ * value persists across reloads of the same tab but never leaks to
+ * other tabs or other users.
  *
- * State is shared across all consumers via a tiny pub-sub so that e.g.
- * the picker and the EditorLayout backdrop both react to the same
- * current value without a React Context wrapper. `null` means "use the
- * themed default" (`.canvas-backdrop` CSS rule).
+ * State is shared across all consumers within a single tab via a tiny
+ * pub-sub so that e.g. the picker and the EditorLayout backdrop both
+ * react to the same current value. `null` means "use the themed
+ * default" (`.canvas-backdrop` CSS rule).
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -21,7 +25,7 @@ const listeners = new Set<Listener>()
 function readStored(): string | null {
   if (typeof window === 'undefined') return null
   try {
-    const v = window.localStorage.getItem(STORAGE_KEY)
+    const v = window.sessionStorage.getItem(STORAGE_KEY)
     return v === null || v === '' ? null : v
   } catch {
     return null
@@ -31,9 +35,9 @@ function readStored(): string | null {
 function writeStored(next: string | null): void {
   try {
     if (next === null) {
-      window.localStorage.removeItem(STORAGE_KEY)
+      window.sessionStorage.removeItem(STORAGE_KEY)
     } else {
-      window.localStorage.setItem(STORAGE_KEY, next)
+      window.sessionStorage.setItem(STORAGE_KEY, next)
     }
   } catch {
     // Storage disabled — in-memory state still holds.
@@ -49,17 +53,8 @@ export function useStageBgColor(): {
   useEffect(() => {
     const listener: Listener = (next) => setColorState(next)
     listeners.add(listener)
-
-    function onStorage(e: StorageEvent) {
-      if (e.key !== STORAGE_KEY) return
-      const next = e.newValue === null || e.newValue === '' ? null : e.newValue
-      setColorState(next)
-    }
-    window.addEventListener('storage', onStorage)
-
     return () => {
       listeners.delete(listener)
-      window.removeEventListener('storage', onStorage)
     }
   }, [])
 
