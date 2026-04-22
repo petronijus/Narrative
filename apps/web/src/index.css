@@ -6,6 +6,15 @@
 @tailwind utilities;
 
 @layer base {
+  /* shadcn/ui convention: default every element's border-color to our
+     subtle token so any `.border` / `.border-l` etc. produces a faint
+     rim instead of the Tailwind default of `currentColor` (= white
+     text colour on dark UI). Individual elements still override via
+     `border-input`, `border-ring`, etc. */
+  * {
+    border-color: hsl(var(--border));
+  }
+
   html,
   body,
   #root {
