@@ -1026,11 +1026,70 @@ export function AnimationTimeline() {
                             title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
                             aria-label={`Animation ${label}, trigger ${step.trigger}`}
                           >
-                            <span
-                              className={`flex-shrink-0 ${triggerColor(step.trigger)}`}
-                              style={{ width: 4, height: BAR_HEIGHT }}
-                            />
+                            {/* Trigger chip — colour-coded by trigger; click
+                                opens a native dropdown to switch onEnter /
+                                withPrevious / afterPrevious / onClick. The
+                                native <select> is used so we get accessible
+                                keyboard + platform-appropriate popup without
+                                building our own menu + outside-click logic. */}
+                            <select
+                              className={`flex-shrink-0 appearance-none cursor-pointer ${triggerColor(step.trigger)}`}
+                              style={{
+                                width: 6,
+                                height: BAR_HEIGHT,
+                                border: 0,
+                                outline: 'none',
+                                fontSize: 0,
+                                color: 'transparent',
+                              }}
+                              value={step.trigger}
+                              disabled={isViewer}
+                              aria-label={`Trigger for ${label}`}
+                              title={`Trigger: ${step.trigger}`}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                if (animationsCtx === null) return
+                                updateAnimation(animationsCtx, step.id, {
+                                  trigger: e.target.value as AnimationTrigger,
+                                })
+                              }}
+                            >
+                              <option value="onEnter">onEnter</option>
+                              <option value="withPrevious">withPrevious</option>
+                              <option value="afterPrevious">afterPrevious</option>
+                              <option value="onClick">onClick</option>
+                            </select>
                             <span className="truncate px-1">{label}</span>
+                            {!isViewer && isSelected && (
+                              <select
+                                className="flex-shrink-0 cursor-pointer rounded border border-transparent bg-black/30 px-1 text-[10px] text-gray-200 hover:border-gray-500"
+                                style={{ height: BAR_HEIGHT - 4 }}
+                                value={step.easing ?? 'power2.out'}
+                                aria-label={`Easing for ${label}`}
+                                title={`Easing: ${step.easing ?? 'power2.out'}`}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  if (animationsCtx === null) return
+                                  updateAnimation(animationsCtx, step.id, {
+                                    easing: e.target.value,
+                                  })
+                                }}
+                              >
+                                <option value="none">linear</option>
+                                <option value="power1.out">power1 out</option>
+                                <option value="power2.out">power2 out</option>
+                                <option value="power2.inOut">power2 in/out</option>
+                                <option value="power3.inOut">power3 in/out</option>
+                                <option value="sine.inOut">sine in/out</option>
+                                <option value="back.out">back out</option>
+                                <option value="bounce.out">bounce out</option>
+                                <option value="elastic.out">elastic out</option>
+                              </select>
+                            )}
                             {!isViewer && isSelected && (
                               <span
                                 role="button"
