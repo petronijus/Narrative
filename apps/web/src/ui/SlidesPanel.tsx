@@ -28,12 +28,19 @@ import {
   moveSlide,
   setSlideName,
   setSlideSkipped,
+  assignSlideToSection,
+  createSection,
+  removeSection,
+  renameSection,
+  setSectionCollapsed,
 } from '@narrative/slide-model'
 import { duplicateSlide } from './slideHelpers.js'
-import type { Slide } from '@narrative/shared'
+import type { Slide, DeckSection } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
+import { SectionHeader } from './SectionHeader.js'
+import { useSections } from '../state/useSections.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { Plus, EyeOff } from 'lucide-react'
+import { Plus, EyeOff, FolderPlus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
@@ -71,6 +78,8 @@ interface SlideItemProps {
   dropIndicatorAbove: boolean
   dropIndicatorBelow: boolean
   thumbnailUrl: string | undefined
+  /** P3: sections available for the "Move to section" submenu. */
+  sections: DeckSection[]
   /** M10: hide mutation controls for viewers */
   readOnly?: boolean
   onActivate: (id: string) => void
@@ -80,6 +89,7 @@ interface SlideItemProps {
   onTransition: (id: string) => void
   onRename: (id: string, name: string) => void
   onToggleSkip: (id: string) => void
+  onMoveToSection: (slideId: string, sectionId: string | null) => void
 }
 
 function SlideItem({
@@ -90,6 +100,7 @@ function SlideItem({
   dropIndicatorAbove,
   dropIndicatorBelow,
   thumbnailUrl,
+  sections,
   readOnly = false,
   onActivate,
   onPointerDown,
@@ -98,6 +109,7 @@ function SlideItem({
   onTransition,
   onRename,
   onToggleSkip,
+  onMoveToSection,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
   const [editing, setEditing] = useState(false)
@@ -239,11 +251,14 @@ function SlideItem({
           <SlideItemMenu
             slideId={slide.id}
             skipped={slide.skipped === true}
+            currentSectionId={slide.sectionId}
+            sections={sections}
             onDuplicate={onDuplicate}
             onDelete={onDelete}
             onTransition={onTransition}
             onRename={() => setEditing(true)}
             onToggleSkip={onToggleSkip}
+            onMoveToSection={onMoveToSection}
           />
         </div>
       )}
@@ -257,6 +272,7 @@ function SlideItem({
 
 export function SlidesPanel(): JSX.Element {
   const slides = useSlides()
+  const sections = useSections()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { deckCtx } = useSlideDoc()
   const { clear: clearSelection } = useSelection()
@@ -365,6 +381,44 @@ export function SlidesPanel(): JSX.Element {
       setSlideSkipped(deckCtx, slideId, s.skipped !== true)
     },
     [deckCtx, slides],
+  )
+
+  // ---------------------------------------------------------------------------
+  // Sections (P3)
+  // ---------------------------------------------------------------------------
+
+  const handleAddSection = useCallback(() => {
+    createSection(deckCtx)
+  }, [deckCtx])
+
+  const handleRenameSection = useCallback(
+    (sectionId: string, title: string) => {
+      renameSection(deckCtx, sectionId, title)
+    },
+    [deckCtx],
+  )
+
+  const handleToggleSectionCollapsed = useCallback(
+    (sectionId: string) => {
+      const s = sections.find((x) => x.id === sectionId)
+      if (s === undefined) return
+      setSectionCollapsed(deckCtx, sectionId, !s.collapsed)
+    },
+    [deckCtx, sections],
+  )
+
+  const handleDeleteSection = useCallback(
+    (sectionId: string) => {
+      removeSection(deckCtx, sectionId)
+    },
+    [deckCtx],
+  )
+
+  const handleMoveToSection = useCallback(
+    (slideId: string, sectionId: string | null) => {
+      assignSlideToSection(deckCtx, slideId, sectionId)
+    },
+    [deckCtx],
   )
 
   // ---------------------------------------------------------------------------
@@ -503,17 +557,30 @@ export function SlidesPanel(): JSX.Element {
           Slides
           <span className="ml-1.5 font-normal opacity-60">({slides.length})</span>
         </h2>
-        {/* Add slide button — hidden for viewer role */}
+        {/* Add slide + Add section buttons — hidden for viewer role */}
         {!isViewer && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleAdd}
-            aria-label="Add slide"
-            className="h-6 w-6"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
+          <div className="flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleAddSection}
+              aria-label="Add section"
+              className="h-6 w-6"
+              title="Add section"
+            >
+              <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleAdd}
+              aria-label="Add slide"
+              className="h-6 w-6"
+              title="Add slide"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </div>
         )}
       </div>
 
@@ -532,41 +599,89 @@ export function SlidesPanel(): JSX.Element {
           onKeyDown={handleKeyDown}
           className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
-          {slides.map((slide, idx) => {
-            const isDragging = dragState?.slideId === slide.id
-            const dropIndicatorAbove =
-              dragState !== null &&
-              dragState.slideId !== slide.id &&
-              dragState.insertAt === idx &&
-              dragState.insertAt < dragState.fromIndex
-            const dropIndicatorBelow =
-              dragState !== null &&
-              dragState.slideId !== slide.id &&
-              dragState.insertAt === idx &&
-              dragState.insertAt > dragState.fromIndex
+          {(() => {
+            // P3: group slides by section. Unsectioned slides render
+            // first (above the first section header), then each section
+            // with its member slides. Global drag index is preserved so
+            // existing moveSlide math keeps working.
+            const knownSectionIds = new Set(sections.map((s) => s.id))
+            const unsectioned: Array<{ slide: Slide; index: number }> = []
+            const bySection = new Map<string, Array<{ slide: Slide; index: number }>>()
+            slides.forEach((slide, index) => {
+              const sid = slide.sectionId
+              if (sid !== undefined && knownSectionIds.has(sid)) {
+                const bucket = bySection.get(sid) ?? []
+                bucket.push({ slide, index })
+                bySection.set(sid, bucket)
+              } else {
+                unsectioned.push({ slide, index })
+              }
+            })
+
+            const renderSlideEntry = ({ slide, index }: { slide: Slide; index: number }) => {
+              const isDragging = dragState?.slideId === slide.id
+              const dropIndicatorAbove =
+                dragState !== null &&
+                dragState.slideId !== slide.id &&
+                dragState.insertAt === index &&
+                dragState.insertAt < dragState.fromIndex
+              const dropIndicatorBelow =
+                dragState !== null &&
+                dragState.slideId !== slide.id &&
+                dragState.insertAt === index &&
+                dragState.insertAt > dragState.fromIndex
+
+              return (
+                <li key={slide.id} className="flex-shrink-0">
+                  <SlideItem
+                    slide={slide}
+                    index={index}
+                    isActive={slide.id === activeSlideId}
+                    isDragging={isDragging}
+                    dropIndicatorAbove={dropIndicatorAbove}
+                    dropIndicatorBelow={dropIndicatorBelow}
+                    thumbnailUrl={thumbnailMap.get(slide.id)}
+                    sections={sections}
+                    readOnly={isViewer}
+                    onActivate={handleActivate}
+                    onPointerDown={isViewer ? () => {} : handlePointerDown}
+                    onDuplicate={handleDuplicate}
+                    onDelete={handleDelete}
+                    onTransition={handleTransition}
+                    onRename={handleRename}
+                    onToggleSkip={handleToggleSkip}
+                    onMoveToSection={handleMoveToSection}
+                  />
+                </li>
+              )
+            }
 
             return (
-              <li key={slide.id} className="flex-shrink-0">
-                <SlideItem
-                  slide={slide}
-                  index={idx}
-                  isActive={slide.id === activeSlideId}
-                  isDragging={isDragging}
-                  dropIndicatorAbove={dropIndicatorAbove}
-                  dropIndicatorBelow={dropIndicatorBelow}
-                  thumbnailUrl={thumbnailMap.get(slide.id)}
-                  readOnly={isViewer}
-                  onActivate={handleActivate}
-                  onPointerDown={isViewer ? () => {} : handlePointerDown}
-                  onDuplicate={handleDuplicate}
-                  onDelete={handleDelete}
-                  onTransition={handleTransition}
-                  onRename={handleRename}
-                  onToggleSkip={handleToggleSkip}
-                />
-              </li>
+              <>
+                {unsectioned.map(renderSlideEntry)}
+                {sections.map((section) => {
+                  const members = bySection.get(section.id) ?? []
+                  return (
+                    <li key={`section-${section.id}`} className="flex-shrink-0 list-none">
+                      <SectionHeader
+                        section={section}
+                        slideCount={members.length}
+                        readOnly={isViewer}
+                        onToggleCollapsed={handleToggleSectionCollapsed}
+                        onRename={handleRenameSection}
+                        onDelete={handleDeleteSection}
+                      />
+                      {!section.collapsed && (
+                        <ul className="mt-1 flex flex-col gap-2">
+                          {members.map(renderSlideEntry)}
+                        </ul>
+                      )}
+                    </li>
+                  )
+                })}
+              </>
             )
-          })}
+          })()}
         </ul>
       )}
     </div>

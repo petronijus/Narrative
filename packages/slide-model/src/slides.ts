@@ -93,10 +93,10 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
   const backgroundMap = yMap.get('background') as Y.Map<unknown> | undefined
   const background = backgroundMap === undefined ? undefined : yMapToBackground(backgroundMap)
 
-  // P3: name + skipped. Both optional — name shows in the slides panel,
-  // skipped hides the slide from present-mode navigation.
+  // P3: name + skipped + sectionId. All optional.
   const name = yMap.get('name') as string | undefined
   const skipped = yMap.get('skipped') as boolean | undefined
+  const sectionId = yMap.get('sectionId') as string | undefined
 
   return {
     id,
@@ -106,6 +106,7 @@ function yMapToSlide(yMap: Y.Map<unknown>): Slide {
     ...(background !== undefined ? { background } : {}),
     ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
     ...(skipped === true ? { skipped: true } : {}),
+    ...(typeof sectionId === 'string' && sectionId.length > 0 ? { sectionId } : {}),
   }
 }
 
@@ -347,6 +348,27 @@ export function setSlideSkipped(
       slideMap.set('skipped', true)
     } else {
       slideMap.delete('skipped')
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Assigns a slide to a section (or clears its section when `sectionId`
+ * is null / empty).
+ */
+export function assignSlideToSection(
+  ctx: SlideMutationContext,
+  slideId: string,
+  sectionId: string | null,
+): void {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return
+  ctx.doc.transact(() => {
+    const slideMap = ctx.slides.get(idx)
+    if (sectionId === null || sectionId === '') {
+      slideMap.delete('sectionId')
+    } else {
+      slideMap.set('sectionId', sectionId)
     }
   }, LOCAL_ORIGIN)
 }

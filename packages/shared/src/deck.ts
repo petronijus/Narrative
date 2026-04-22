@@ -116,4 +116,25 @@ export interface Slide {
    * over it). Still visible + editable in the editor.
    */
   skipped?: boolean
+  /**
+   * P3: section membership. `undefined` means the slide lives outside
+   * any section (rendered at the top of the slides panel above the
+   * first section header).
+   */
+  sectionId?: string
+}
+
+// ---------------------------------------------------------------------------
+// Deck sections (P3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Keynote-style grouping of slides into collapsible sections. Stored as
+ * a deck-level Y.Array<Y.Map> at `doc.getArray('sections')`. Order is
+ * the Y.Array order. Slides declare membership via `slide.sectionId`.
+ */
+export interface DeckSection {
+  id: string
+  title: string
+  collapsed: boolean
 }
