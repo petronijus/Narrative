@@ -98,3 +98,308 @@ Next session, the first action is:
   dropdown-menu, popover, tooltip, scroll-area, separator, label, slot)
 
 No runtime framework changes.
+
+---
+
+## Technical approach per phase
+
+The Narrative stack today: Yjs CRDT for deck state, PixiJS v8 for the
+canvas scene graph, DOM overlay compositor for videos / future text
+edit overlays, Hocuspocus for WS sync, Tailwind + React for UI chrome.
+Every phase lands inside those primitives — no new architectural layer.
+
+### P1 — Visual foundation
+
+**Goal:** new look without touching functional code.
+
+- `apps/web/src/styles/tokens.css` — new file, defines CSS variables:
+  - `--surface-0..3` (layered backgrounds, dark→darker), `--glass-fg`,
+    `--glass-bg` (rgba, low alpha), `--border-subtle`, `--border-strong`,
+    `--accent-500/600`, `--accent-glow` (rgba w/ alpha).
+  - `--radius-sm/md/lg/xl`, `--shadow-sm/md/lg/glow`.
+- `apps/web/tailwind.config.ts` — extend `theme.colors`, `theme.borderRadius`,
+  `theme.boxShadow` to reference the vars so utility classes pull from
+  tokens (e.g. `bg-surface-1`, `shadow-glow`).
+- Initialise shadcn/ui into `apps/web/src/components/ui/` via its CLI.
+  Copy Button, Dialog, DropdownMenu, Popover, Tooltip, ScrollArea,
+  Separator, Input, Label, Slider. Adjust their default classes to
+  consume our tokens (shadcn copies code, so it's just an edit pass).
+- Swap inline SVGs and `<button className="...">` chrome throughout
+  Toolbar / SlidesPanel header / Inspector to use `<Button variant>`
+  and Lucide icons. Keep event handlers and data flow identical.
+- No Y.Doc / schema changes. No E2E changes beyond visual regression —
+  suite should stay green.
+
+**Verification:** manual smoke test of editor + present mode. E2E 2/2
+green. `pnpm --filter @narrative/web typecheck` clean.
+
+### P2 — Artboard + backgrounds
+
+**Goal:** visible 16:9 artboard with per-slide background.
+
+- Schema: add `background` field to slide Y.Map. Type:
+  `{ kind: 'color', color: number } | { kind: 'linearGradient', stops:
+Array<{ offset: number, color: number }>, angleDeg: number } |
+{ kind: 'radialGradient', stops, centerX, centerY } | { kind:
+'image', assetId: string, fit: 'cover'|'contain' }`.
+  Stored as nested Y.Map (not plain object) so gradient stops can be
+  co-edited atomically.
+- Renderer: new `ArtboardBackground` Pixi container mounted as the
+  first child of the slide root. Reads background via a subscription
+  (same pattern as `useSlideObjects`). For gradients, render into an
+  offscreen canvas → Pixi texture; for images, resolve via imgproxy
+  (existing `/api/media/:id/url`). Rebuild texture only when inputs
+  change.
+- Editor chrome: wrap the slide in a container that masks everything
+  outside the 16:9 area with a semi-transparent scrim. Artboard border
+  is a 1 px outline. Keep the Pixi canvas at its existing world size
+  (1920×1080) — the mask is pure CSS.
+- Thumbnails: `useSlideThumbnails` already invokes a headless Pixi
+  render of the slide. Extend `renderSlide` to mount the
+  `ArtboardBackground` container FIRST before the object children so
+  thumbnails show the right background.
+- Inspector: add a "Background" section to `SlideInspector` — a picker
+  that switches between kinds (color / linear / radial / image), shows
+  the appropriate editor per kind.
+
+**Risks:** Pixi texture memory for many-gradient decks; lazy-load per
+slide and reuse a single texture per background identity.
+
+### P3 — Slides sidebar polish
+
+**Goal:** richer slide panel UX.
+
+- Schema: add `name?: string`, `skipped?: boolean` to slide Y.Map. Add
+  a `section` Y.Map sibling to `slides` or a `sectionId?: string` on
+  each slide — decide at execution; the Y.Array approach keeps ordering
+  simple: slides carry `sectionId`, sections are metadata
+  `{ id, title, collapsed, order }`.
+- Resizable sidebar: flex wrapper with a drag handle on the right
+  edge. Width stored in `localStorage` (`narrative:sidebarWidth`).
+- Inline rename: double-click or F2 on the slide row switches to
+  `<input>` bound to `slide.name`.
+- Context menu: use shadcn DropdownMenu (P1 dependency), wired to the
+  existing `addSlide`, `removeSlide`, `duplicateSlide` helpers. New:
+  `toggleSkipSlide(ctx, slideId)`, `setSectionCollapsed`,
+  `createSection`.
+- "Back to overview" — new route `/deck/:id/overview` renders a grid of
+  slide thumbnails (reusing `useSlideThumbnails`). Click opens the
+  slide in the editor. A toolbar button + Esc from slide editor take
+  the user there.
+- Present mode must honour `slide.skipped` — `navigateToSlide` filters
+  skipped slides before computing next/prev.
+
+### P4 — Toolbar: shapes + tools
+
+**Goal:** richer creation toolset.
+
+- New object types in the registry (`packages/slide-model`):
+  - `line` (`{x1,y1,x2,y2,stroke,strokeWidth,startCap,endCap,dash}`)
+  - `arrow` — a `line` with `endCap: 'arrow'` default.
+  - `polygon` — `{points: number[], fill, stroke, ...}`. Star, triangle
+    emitted as specific polygons with computed points.
+  - `curve` — Bézier `{points: Array<{x,y,cp1x,cp1y,cp2x,cp2y}>,
+stroke, fill}`.
+  - `speechBubble` — composite: rect + triangle tail; stored as
+    polygon for simplicity.
+- Renderers in `apps/web/src/renderer/objectRenderers/`: one file per
+  type, following `rectangleRenderer` template. `applyPatch` path for
+  performance.
+- Toolbar modes: new `activeTool` state, one of
+  `'select'|'hand'|'zoom'|'rect'|'ellipse'|...`. Current implicit
+  state is always `'select'`. Hand tool gates pan. Zoom gates click →
+  zoom in / option-click → zoom out.
+- Shape-creation flow: pointer-down on canvas in shape tool mode →
+  drag to define bounding box → release creates the object. Reuse
+  existing `objectsCtx` + `createObjectOfType`.
+- Undo/Redo buttons: wire to existing `undoManager` (already lives in
+  `SlideDocProvider` since M7-ish). Keyboard (Cmd+Z / Shift+Cmd+Z) —
+  consolidate into P9.
+
+### P5 — Inspector Appearance
+
+**Goal:** rich object appearance controls.
+
+- Schema extension (applies to rect, ellipse, polygon, text, image):
+  - `fill`: union — solid number | `{kind:'linearGradient', stops,
+angleDeg}` | `{kind:'radialGradient', stops, center}` |
+    `{kind:'image', assetId, fit}`. Stored as a Y.Map per object.
+  - `stroke`: `{color, width, dash, lineCap, lineJoin}` optional.
+  - `shadow`: `{color, blur, offsetX, offsetY, opacity}` optional.
+  - `blur`: radius px.
+  - `cornerRadius`: `number | {tl, tr, bl, br}` for per-corner.
+  - `name`: string, drives Magic Move pairing + Inspector label.
+  - `locked`, `hidden`: booleans.
+- Renderers: Pixi v8 has `GradientFillStyle` — map our gradient shape
+  to it. Filter pipeline covers shadow / blur
+  (`new BlurFilter`, `new DropShadowFilter` from `@pixi/filters`).
+- Inspector UI: extend `AppearanceSection` — fill picker switches
+  between modes with sub-editors; gradient editor is a horizontal
+  track with draggable color stops.
+- Lock/hide flags: Select tool skips locked objects for picking; hidden
+  objects skip in render + in animation target resolver (warn once).
+
+**Deps to evaluate:** `@pixi/filters` for drop-shadow + blur. Install at
+execution, ~50 KB.
+
+### P6 — Object operations
+
+**Goal:** multi-object editor parity with design tools.
+
+- Group/Ungroup: new object type `group` — `{children: SlideObject[]}`.
+  OR model as a slide-level attribute `{groupId}` on each object.
+  Execution preference: `groupId` attribute — avoids cascading renderer
+  changes; a group is implicit ("all objects sharing a groupId").
+- Copy/Paste: in-memory clipboard (no Y.Doc ties). Serialize selected
+  objects to JSON, deserialize on paste with fresh ids. Cross-deck
+  paste lives in P11.
+- Duplicate: paste-at-offset convenience. Cmd+D = copy + paste +
+  offset(+10, +10).
+- Align / Distribute: compute bounding rects for selected objects,
+  solve for target positions, write in a single `doc.transact`.
+- Layer order: Y.Array index is the z-order (front = last in array).
+  Helpers: `moveObjectBy(ctx, id, delta)`, `moveObjectToFront/Back`.
+- Smart guides with distance labels: on drag, compute snap candidates
+  from other objects + artboard center/edges. When snap fires, render
+  a dashed line + px label (small overlay component on top of canvas).
+
+### P7 — Text overhaul
+
+**Goal:** Pixi text is rendered but not editable today. Upgrade.
+
+- Strategy: inline contenteditable DOM overlay above the Pixi text
+  container. Reuse `OverlayCompositor` (same primitive as videos). On
+  double-click, hide the Pixi text, mount a contenteditable div sized
+  and positioned to match. On blur or Esc, flush content into Y.Doc
+  and hide.
+- Rich text model: lean. Keep simple — inline rich text as a single
+  HTML string with allowed tags (`<b>`, `<i>`, `<u>`, `<span
+style=...>`). NO Tiptap here — keep it dumb, we render ourselves.
+  If complexity creeps, consider Tiptap in a later polish pass.
+- Typography: font family (from a curated list — bundled web fonts or
+  safe system stacks initially), weight, size, line-height,
+  letter-spacing, horizontal + vertical alignment. Vertical alignment
+  needs the bounding box of the text to be known; store an explicit
+  `height` on TextObject (already present).
+- Lists: `<ul>` / `<ol>` inside the contenteditable; in Pixi render,
+  parse the HTML and render with HTML.container (Pixi v8) OR fall
+  back to a pre-rendered canvas texture. Evaluate at execution.
+- Stroke / gradient on text: Pixi text `TextStyle` supports stroke and
+  gradient fills natively — wire through from Inspector.
+
+**Risk:** Pixi v8's HTML text rendering is still experimental; if it's
+shaky, fall back to a rasterised texture path (render to canvas, upload
+as texture).
+
+### P8 — Video polish
+
+**Goal:** video objects match other objects in transform + control.
+
+- Overlay transform: `OverlayCompositor` currently reads Pixi container
+  position + size. Extend to also read `rotation`, `scale`, and
+  `alpha`, and emit them as CSS `transform: translate() rotate()
+scale()` + `opacity` on the `<video>`'s wrapper element. Transform
+  origin → container pivot in DOM-space px.
+- In-editor click-to-play: today the editor shows the poster
+  (imgproxy). Wire a small `VideoObjectRenderer` chrome: overlay a
+  `<video>` behind the Pixi object for edit mode, pauseable via click.
+  Rebuild via same overlay compositor with `interactive: true` so the
+  click reaches the element.
+- Inspector: volume slider, loop toggle, autoplay toggle, muted
+  toggle, poster frame seek (shows a scrubber; on commit, worker
+  regenerates poster at that timestamp — reuse existing BullMQ
+  pipeline, new job type `regen-poster`).
+- Aspect ratio lock: editor-side only, constrains width/height
+  dragging to the video's native aspect.
+- Trim: add `trimStartSec`, `trimEndSec` to `VideoObject`. hls.js
+  supports media source buffering offsets; seek on load to trimStart;
+  pause at trimEnd. Worker does NOT recut the video — pure client
+  playback window. If we later want re-cut output, that's a separate
+  worker job.
+
+### P9 — Keyboard shortcuts
+
+**Goal:** global keybinds registry with scope awareness.
+
+- New `apps/web/src/state/useShortcuts.ts` — centralised registry.
+  Hooks into `document.keydown`. Dispatches to handlers based on:
+  - `scope` — `'slidePanel'`, `'canvas'`, `'timeline'`, `'global'`.
+  - Scope detection — `event.target.closest('[data-shortcut-scope]')`
+    walked up the DOM.
+- Consolidates the ad-hoc keydown listeners currently in EditorLayout,
+  PresentLayout, and AnimationTimeline.
+- Cheatsheet modal (Cmd+/) — shadcn Dialog listing all registered
+  shortcuts with scope labels.
+- Preserves existing scoped behaviour: Delete removes an animation step
+  only when the timeline has focus, removes a slide only when the
+  slide panel has focus, etc.
+
+### P10 — Animation timeline polish
+
+**Goal:** trigger visual clarity + timeline-first delete.
+
+- Bar chrome: replace the 6 px colour chip with a 14 px icon slot on
+  the left — clock (auto / withPrevious / afterPrevious), hand-pointer
+  (onClick). Lucide has both. Keep clicking the icon to open the
+  trigger dropdown (today's chip).
+- Delete: already hooked in the per-row × button; add a global
+  `keydown` handler scoped to the timeline container (using the P9
+  registry) that removes `selectedId` on Delete / Backspace.
+- "Play only this step": compile a one-step timeline via
+  `createAnimationRuntime([step], ctx)`, run, destroy. Safe against
+  the rest of the slide's animations because it's a fresh runtime.
+
+### P11 — Keynote extras
+
+**Goal:** Keynote-parity long tail.
+
+- Right-click menus: shadcn ContextMenu component. Distinct menus for
+  canvas (paste, insert shape here, select all, fit to screen), slide
+  row (rename, duplicate, delete, skip, add section, move to
+  section), object (cut, copy, paste, duplicate, bring front, send
+  back, lock, hide, delete, hyperlink).
+- Hyperlinks: `object.hyperlink` — `{kind:'slide', slideId} |
+{kind:'url', href, target}`. In present mode, pointer-events on
+  object's overlay; click → `navigate(slide)` or `window.open(url)`.
+  Inspector section with type picker.
+- Rulers + guides: overlay component with two 24 px pixel strips (top,
+  left). Drag out from ruler → creates a guide stored in a per-deck
+  Y.Array `guides` (position in world px + orientation). Snap uses
+  existing smart-guide infrastructure.
+- Eyedropper: use native `EyeDropper` API (Chromium; graceful fallback
+  with a message where unsupported).
+- Image cropping: CropMode boolean per ImageObject + extra `cropRect`
+  `{x,y,width,height}` in image pixels. Renderer uses Pixi sprite's
+  texture rectangle.
+- In-editor video controls: reuse the P8 overlay with a small
+  play/pause/mute chrome that appears on hover.
+- Recent-colors swatch: localStorage ring buffer (last 12 colors) per
+  user, surfaced in every color picker.
+- Cross-deck clipboard: extend the in-memory clipboard (P6) to also
+  write to `localStorage` on copy; read on paste if the in-memory
+  entry is empty.
+
+## Testing strategy
+
+- Each phase ships with Vitest unit coverage for the new primitives
+  (schema migrations, geometry helpers, alignment math…).
+- Each phase ends with an E2E smoke run (`pnpm --filter web exec
+playwright test`). Zero new spec files required unless the phase
+  introduces a new user-visible flow worth a regression (e.g. P7
+  double-click-to-edit, P8 video transform smoke).
+- Visual regression via Playwright `toHaveScreenshot` — reserved for
+  P1 (new visual baseline) and P2 (artboard appearance).
+
+## Rollback protocol
+
+- Each phase is an atomic fast-forward on main. If a phase breaks in
+  user testing, revert with `git revert -m 1 <merge-sha>` and iterate
+  on the re-created branch. Never amend history on main.
+
+## Out-of-scope reminders (do not scope creep)
+
+- Cross-tab sync for presenter view is already done (M19 phase 3).
+- AI-anything is deferred to M16–M18.
+- Templates + themes with masters is M20.
+- PDF / PNG / video export is parked (M28 in original plan).
+- Custom DSL editor (Monaco) is M23.
