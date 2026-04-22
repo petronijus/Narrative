@@ -56,6 +56,7 @@ export {
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
+  getSlideNotes,
 } from './slides.js'
 
 // Bindings — objects

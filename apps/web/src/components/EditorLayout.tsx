@@ -17,6 +17,7 @@ import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
 import { AnimationTimeline } from '../ui/AnimationTimeline'
+import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { TransformHandles } from '../ui/TransformHandles'
 import { SnapGuides } from '../ui/SnapGuides'
@@ -582,6 +583,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             layout with click-to-select and × to remove. Drag/play in a later
             phase. Collapsible. */}
         <AnimationTimeline />
+
+        {/* M19 phase 1: per-slide speaker notes. Plain text for now,
+            Tiptap rich text in phase 2. Collapsible. */}
+        <SlideNotesPanel />
       </main>
 
       {/* Right sidebar: inspector */}

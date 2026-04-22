@@ -88,6 +88,9 @@ function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
   const objects = new Y.Array<Y.Map<unknown>>()
   const animations = new Y.Array<Y.Map<unknown>>()
   const transition = new Y.Map<unknown>()
+  // M19: speaker notes as Y.Text — co-edited across peers, plain text for
+  // now. Phase 2 will bind this to Tiptap for rich text.
+  const notes = new Y.Text()
 
   transition.set('kind', DEFAULT_TRANSITION.kind)
   transition.set('durationMs', DEFAULT_TRANSITION.durationMs)
@@ -96,6 +99,7 @@ function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
   slideMap.set('objects', objects)
   slideMap.set('animations', animations)
   slideMap.set('transition', transition)
+  slideMap.set('notes', notes)
 
   void doc // reserved for future doc-level metadata
   return slideMap
@@ -310,4 +314,24 @@ export function getSlideAnimationsCtx(
   if (animations === undefined) return null
 
   return { doc: ctx.doc, animations }
+}
+
+/**
+ * Returns the Y.Text holding speaker notes for a given slide.
+ * Lazily created on first access if the slide pre-dates M19 (older decks
+ * where `notes` was not part of the schema). Returns null only if the slide
+ * itself does not exist.
+ */
+export function getSlideNotes(ctx: SlideMutationContext, slideId: string): Y.Text | null {
+  const idx = findSlideIndex(ctx.slides, slideId)
+  if (idx === -1) return null
+  const slideMap = ctx.slides.get(idx)
+  let notes = slideMap.get('notes') as Y.Text | undefined
+  if (notes === undefined) {
+    notes = new Y.Text()
+    ctx.doc.transact(() => {
+      slideMap.set('notes', notes)
+    }, LOCAL_ORIGIN)
+  }
+  return notes
 }
