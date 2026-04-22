@@ -219,7 +219,19 @@ export function AnimationTimeline() {
     originalDuration: number
     hasMoved: boolean
     converted: boolean
+    /** The lane the dragged bar occupied at drag-start. Re-applied on every
+     *  re-layout so the dragged bar doesn't hop lanes while it crosses
+     *  neighbours — only the neighbours move out of its way. */
+    originalLane: number
   } | null>(null)
+
+  /** Lane assignment seen on the previous render, keyed by step id. Used to
+   *  reconstruct the dragged bar's lane on drag-start (since at that point
+   *  the drag hasn't produced a new layout yet). */
+  const lastLanesRef = useRef<Record<string, number>>({})
+  /** Triggers a re-render whenever drag state toggles, so memoised `rows`
+   *  recomputes with / without the pinned-lane logic. */
+  const [dragStamp, setDragStamp] = useState(0)
 
   // ---------------------------------------------------------------------------
   // Row-order preference — purely visual, per-slide, in sessionStorage.
@@ -295,30 +307,86 @@ export function AnimationTimeline() {
       finalOrder = [...ordered, ...appended]
     }
 
+    const drag = dragStateRef.current
+    const pinnedId = drag?.mode === 'body' && drag.hasMoved ? drag.stepId : null
+    const pinnedLane = drag?.originalLane ?? 0
+
+    const nextLaneMap: Record<string, number> = {}
     let cumTop = 0
-    return finalOrder.map((oid) => {
+    const result = finalOrder.map((oid) => {
       const items = buckets.get(oid) ?? []
-      const sorted = [...items].sort((a, b) => a.startSec - b.startSec)
-      const laneEnds: number[] = []
+      /** Intervals already claimed per lane — modelled as arrays because the
+       *  pinned dragged bar can reserve a lane BEFORE other bars are
+       *  processed, leaving gaps that a later bar (earlier in time) might
+       *  still fit into. A single "laneEnds" scalar can't express that. */
+      const laneIntervals: { start: number; end: number }[][] = []
       const laid: { step: LaidOutStep['step']; startSec: number; lane: number }[] = []
-      for (const it of sorted) {
-        const end = it.startSec + (it.step.duration ?? 0)
-        let lane = laneEnds.findIndex((e) => e <= it.startSec + 1e-6)
-        if (lane === -1) {
-          lane = laneEnds.length
-          laneEnds.push(end)
-        } else {
-          laneEnds[lane] = end
+
+      const overlaps = (lane: number, s: number, e: number) => {
+        const laneArr = laneIntervals[lane]
+        if (laneArr === undefined) return false
+        for (const iv of laneArr) {
+          if (!(iv.end <= s + 1e-6 || iv.start >= e - 1e-6)) return true
         }
-        laid.push({ step: it.step, startSec: it.startSec, lane })
+        return false
       }
-      const lanes = Math.max(1, laneEnds.length)
+
+      // Pass 1: pin the dragged bar (if any) to its pre-drag lane. Ensure
+      // lower-index lanes exist (possibly empty) so the subsequent greedy
+      // pass can still claim them.
+      const sorted = [...items].sort((a, b) => a.startSec - b.startSec)
+      const pinned = pinnedId !== null ? sorted.find((x) => x.step.id === pinnedId) : undefined
+      if (pinned !== undefined) {
+        while (laneIntervals.length <= pinnedLane) laneIntervals.push([])
+        const end = pinned.startSec + (pinned.step.duration ?? 0)
+        laneIntervals[pinnedLane]!.push({ start: pinned.startSec, end })
+        laid.push({ step: pinned.step, startSec: pinned.startSec, lane: pinnedLane })
+        nextLaneMap[pinned.step.id] = pinnedLane
+      }
+
+      // Pass 2: non-dragged bars, greedy lowest free lane (not considering
+      // any prior preference — so a bar that got pushed up during a drag
+      // drops back down the moment the dragged bar moves away).
+      for (const it of sorted) {
+        if (pinned !== undefined && it.step.id === pinned.step.id) continue
+        const start = it.startSec
+        const end = start + (it.step.duration ?? 0)
+        let lane = -1
+        for (let i = 0; i < laneIntervals.length; i++) {
+          if (!overlaps(i, start, end)) {
+            lane = i
+            break
+          }
+        }
+        if (lane === -1) {
+          lane = laneIntervals.length
+          laneIntervals.push([])
+        }
+        laneIntervals[lane]!.push({ start, end })
+        laid.push({ step: it.step, startSec: start, lane })
+        nextLaneMap[it.step.id] = lane
+      }
+
+      // Restore the per-time-order sort for downstream consumers that expect
+      // items in startSec order.
+      laid.sort((a, b) => a.startSec - b.startSec || a.lane - b.lane)
+
+      const lanes = Math.max(1, laneIntervals.length)
       const height = rowHeightForLanes(lanes)
       const top = cumTop
       cumTop += height
       return { objectId: oid, items: laid, lanes, height, top }
     })
-  }, [laidOut, rowOrderPref])
+
+    // Stash the fresh lane map as a post-render side-effect. Using a ref is
+    // safe across strict-mode double-invocation — the value is deterministic
+    // per inputs.
+    lastLanesRef.current = nextLaneMap
+    return result
+    // dragStamp is included so toggling the drag state forces a re-layout
+    // without the pinned-lane pass, letting bumped bars drop back down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [laidOut, rowOrderPref, dragStamp])
 
   const rowsTotalHeight = rows.reduce((acc, r) => acc + r.height, 0)
   /** Y-offsets of each row boundary — rows.length + 1 entries (0..total). */
@@ -384,6 +452,7 @@ export function AnimationTimeline() {
         originalDuration: step.duration ?? 0,
         hasMoved: false,
         converted: false,
+        originalLane: lastLanesRef.current[step.id] ?? 0,
       }
     },
     [isViewer, animationsCtx],
@@ -397,7 +466,11 @@ export function AnimationTimeline() {
 
       const dx = e.clientX - drag.startPointerX
       if (!drag.hasMoved && Math.abs(dx) < DRAG_THRESHOLD_PX) return
-      drag.hasMoved = true
+      if (!drag.hasMoved) {
+        drag.hasMoved = true
+        // Wake up the rows memo so pass-1 pinning engages.
+        setDragStamp((s) => s + 1)
+      }
 
       const snap = e.shiftKey ? 0 : SNAP_SEC
 
@@ -458,6 +531,9 @@ export function AnimationTimeline() {
     // If the pointer never moved past the threshold, treat as click → select.
     if (!wasDrag) {
       setSelectedId(drag.stepId)
+    } else {
+      // Re-layout without pass-1 pinning so bumped bars drop back down.
+      setDragStamp((s) => s + 1)
     }
   }, [])
 
