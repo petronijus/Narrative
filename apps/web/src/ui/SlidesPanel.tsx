@@ -556,12 +556,33 @@ export function SlidesPanel(): JSX.Element {
       const deltaY = ds.currentY - ds.startY
       const deltaX = ds.currentX - ds.startX
       const rawRowOffset = Math.round(deltaY / h)
-      const insertAt = Math.max(0, Math.min(slides.length, ds.fromIndex + rawRowOffset))
+      let insertAt = Math.max(0, Math.min(slides.length, ds.fromIndex + rawRowOffset))
       const rawIndent = ds.fromIndent + Math.round(deltaX / INDENT_STEP_PX)
       const indent = clampIndent(rawIndent, insertAt, ds.slideIds)
+
+      // Don't let the drop split someone else's subtree. If the slide
+      // about to be pushed down by the insertion is at a DEEPER indent
+      // than the dropped block, walk past the whole run of deeper
+      // slides so the foreign subtree stays intact. The dragged slides
+      // themselves are skipped — they're "lifted out" during the drag.
+      const ownIds = new Set(ds.slideIds)
+      while (insertAt < slides.length) {
+        const next = slides[insertAt]
+        if (next === undefined) break
+        if (ownIds.has(next.id)) {
+          insertAt++
+          continue
+        }
+        if (slideIndent(next) > indent) {
+          insertAt++
+          continue
+        }
+        break
+      }
+
       return { insertAt, indent }
     },
-    [slides.length, getItemHeight, clampIndent],
+    [slides, getItemHeight, clampIndent],
   )
 
   // ---------------------------------------------------------------------------
