@@ -88,9 +88,10 @@ function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
   const objects = new Y.Array<Y.Map<unknown>>()
   const animations = new Y.Array<Y.Map<unknown>>()
   const transition = new Y.Map<unknown>()
-  // M19: speaker notes as Y.Text — co-edited across peers, plain text for
-  // now. Phase 2 will bind this to Tiptap for rich text.
-  const notes = new Y.Text()
+  // M19: speaker notes as Y.XmlFragment so Tiptap / ProseMirror can bind
+  // through y-prosemirror for rich-text collab. Plain-text access still
+  // works via getSlideNotesText() which serialises the fragment.
+  const notes = new Y.XmlFragment()
 
   transition.set('kind', DEFAULT_TRANSITION.kind)
   transition.set('durationMs', DEFAULT_TRANSITION.durationMs)
@@ -317,21 +318,21 @@ export function getSlideAnimationsCtx(
 }
 
 /**
- * Returns the Y.Text holding speaker notes for a given slide.
- * Lazily created on first access if the slide pre-dates M19 (older decks
- * where `notes` was not part of the schema). Returns null only if the slide
- * itself does not exist.
+ * Returns the Y.XmlFragment holding speaker notes for a given slide.
+ * Lazily created on first access if the slide pre-dates M19 phase 2 (any
+ * slide whose `notes` field is missing or is the older Y.Text type gets a
+ * fresh Y.XmlFragment installed). Returns null only if the slide itself
+ * does not exist.
  */
-export function getSlideNotes(ctx: SlideMutationContext, slideId: string): Y.Text | null {
+export function getSlideNotes(ctx: SlideMutationContext, slideId: string): Y.XmlFragment | null {
   const idx = findSlideIndex(ctx.slides, slideId)
   if (idx === -1) return null
   const slideMap = ctx.slides.get(idx)
-  let notes = slideMap.get('notes') as Y.Text | undefined
-  if (notes === undefined) {
-    notes = new Y.Text()
-    ctx.doc.transact(() => {
-      slideMap.set('notes', notes)
-    }, LOCAL_ORIGIN)
-  }
+  const existing = slideMap.get('notes')
+  if (existing instanceof Y.XmlFragment) return existing
+  const notes = new Y.XmlFragment()
+  ctx.doc.transact(() => {
+    slideMap.set('notes', notes)
+  }, LOCAL_ORIGIN)
   return notes
 }

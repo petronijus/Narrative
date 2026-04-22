@@ -1,67 +1,90 @@
 /**
  * state/useSlideNotes.ts
  *
- * M19 phase 1: speaker notes hook.
+ * M19 phase 2: resolves the active slide's Y.XmlFragment for speaker notes.
+ * The fragment is co-edited across peers via y-prosemirror bound to a Tiptap
+ * editor inside SlideNotesPanel.
  *
- * Resolves the active slide's notes Y.Text and exposes:
- *   - text: current plain-text snapshot (re-renders on any Yjs change)
- *   - yText: the Y.Text itself (so callers can run ytext.delete / insert
- *     inside doc.transact for collab-friendly edits)
- *   - setText(next): replaces the entire Y.Text content in one transaction
- *
- * Plain-text only for this phase — Tiptap rich text binding is phase 2.
+ * Also exposes a plain-text snapshot (read-only) for non-editor surfaces
+ * (e.g. presenter view's "next slide notes preview" in phase 3).
  */
 
 import { useEffect, useState } from 'react'
-import type * as Y from 'yjs'
-import { getSlideNotes, LOCAL_ORIGIN } from '@narrative/slide-model'
+import * as Y from 'yjs'
+import { getSlideNotes } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useActiveSlide } from './ActiveSlideContext.js'
 
 export interface UseSlideNotesResult {
-  /** Plain-text snapshot of the active slide's notes. */
+  /** Y.XmlFragment handle for Tiptap binding. Null when no slide is active. */
+  fragment: Y.XmlFragment | null
+  /** Plain-text snapshot (re-renders on any fragment change). */
   text: string
-  /** Y.Text handle, or null when no slide is active. */
-  yText: Y.Text | null
-  /** Replace the entire notes content. */
-  setText(next: string): void
+}
+
+function serialiseFragment(frag: Y.XmlFragment | null): string {
+  if (frag === null) return ''
+  // XmlFragment.toString() serialises to XML-ish source; not ideal for a
+  // plain preview. Walk children and concatenate text nodes instead.
+  const parts: string[] = []
+  const walk = (node: Y.XmlElement | Y.XmlText | Y.XmlHook | Y.XmlFragment): void => {
+    if (node instanceof Y.XmlText) {
+      parts.push(node.toString())
+      return
+    }
+    if (node instanceof Y.XmlElement || node instanceof Y.XmlFragment) {
+      for (const child of node.toArray() as Array<
+        Y.XmlElement | Y.XmlText | Y.XmlHook | Y.XmlFragment
+      >) {
+        walk(child)
+      }
+      // Insert a newline after block-ish elements to make the preview readable.
+      if (node instanceof Y.XmlElement && isBlockLike(node.nodeName)) parts.push('\n')
+    }
+  }
+  walk(frag)
+  return parts
+    .join('')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function isBlockLike(name: string): boolean {
+  return (
+    name === 'paragraph' ||
+    name === 'heading' ||
+    name === 'blockquote' ||
+    name === 'bulletList' ||
+    name === 'orderedList' ||
+    name === 'listItem'
+  )
 }
 
 export function useSlideNotes(): UseSlideNotesResult {
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
 
-  const [yText, setYText] = useState<Y.Text | null>(() =>
+  const [fragment, setFragment] = useState<Y.XmlFragment | null>(() =>
     activeSlideId === null ? null : getSlideNotes(deckCtx, activeSlideId),
   )
-  const [text, setTextSnapshot] = useState<string>(() => yText?.toString() ?? '')
+  const [text, setText] = useState<string>(() => serialiseFragment(fragment))
 
-  // Resolve the correct Y.Text whenever the active slide changes.
   useEffect(() => {
     const next = activeSlideId === null ? null : getSlideNotes(deckCtx, activeSlideId)
-    setYText(next)
-    setTextSnapshot(next?.toString() ?? '')
+    setFragment(next)
+    setText(serialiseFragment(next))
   }, [deckCtx, activeSlideId])
 
-  // Subscribe to the current Y.Text and mirror its content into React state.
   useEffect(() => {
-    if (yText === null) return
+    if (fragment === null) return
     const onChange = () => {
-      setTextSnapshot(yText.toString())
+      setText(serialiseFragment(fragment))
     }
-    yText.observe(onChange)
+    fragment.observeDeep(onChange)
     return () => {
-      yText.unobserve(onChange)
+      fragment.unobserveDeep(onChange)
     }
-  }, [yText])
+  }, [fragment])
 
-  function setText(next: string): void {
-    if (yText === null) return
-    deckCtx.doc.transact(() => {
-      yText.delete(0, yText.length)
-      if (next.length > 0) yText.insert(0, next)
-    }, LOCAL_ORIGIN)
-  }
-
-  return { text, yText, setText }
+  return { fragment, text }
 }
