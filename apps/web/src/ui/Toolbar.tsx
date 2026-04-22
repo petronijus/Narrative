@@ -25,9 +25,17 @@ import {
   Play,
   Eye,
   Home,
+  Hand,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Undo2,
+  Redo2,
 } from 'lucide-react'
 import { useTool } from '../state/ToolContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
+import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
+import { useUndoManager } from '../state/useUndoManager.js'
 import { AvatarChips } from './AvatarChips.js'
 import { useAuth } from '../state/AuthContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
@@ -48,6 +56,7 @@ interface ToolButton {
 
 const TOOL_BUTTONS: ToolButton[] = [
   { tool: 'select', label: 'Select', shortcut: 'V', icon: MousePointer2 },
+  { tool: 'hand', label: 'Hand', shortcut: 'H', icon: Hand },
   { tool: 'rectangle', label: 'Rectangle', shortcut: 'R', icon: Square },
   { tool: 'ellipse', label: 'Ellipse', shortcut: 'O', icon: Circle },
   { tool: 'text', label: 'Text', shortcut: 'T', icon: Type },
@@ -55,6 +64,7 @@ const TOOL_BUTTONS: ToolButton[] = [
 
 const SHORTCUT_MAP: Record<string, ActiveTool> = {
   v: 'select',
+  h: 'hand',
   r: 'rectangle',
   o: 'ellipse',
   t: 'text',
@@ -80,6 +90,8 @@ export function Toolbar() {
   const [shareOpen, setShareOpen] = useState(false)
   const isViewer = role === 'viewer'
   const isOwner = role === 'owner'
+  const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
+  const { undo, redo, canUndo, canRedo } = useUndoManager()
 
   // M11: Upload hook + hidden file input ref
   const { startUpload } = useMediaUpload()
@@ -274,6 +286,116 @@ export function Toolbar() {
             </Tooltip>
           </div>
         )}
+
+        {/* Undo / Redo */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={undo}
+              disabled={!canUndo}
+              aria-label="Undo"
+              className="h-7 w-7"
+            >
+              <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Undo <span className="ml-2 opacity-60">Ctrl+Z</span>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={redo}
+              disabled={!canRedo}
+              aria-label="Redo"
+              className="h-7 w-7"
+            >
+              <Redo2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Redo <span className="ml-2 opacity-60">Ctrl+Shift+Z</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
+
+        {/* Zoom controls */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={zoomOut}
+              disabled={zoom <= MIN_ZOOM + 0.001}
+              aria-label="Zoom out"
+              className="h-7 w-7"
+            >
+              <ZoomOut className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Zoom out</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={resetZoom}
+              aria-label="Reset zoom to 100%"
+              className="inline-flex h-7 min-w-[48px] items-center justify-center rounded px-1.5 text-xs tabular-nums text-foreground hover:bg-surface-2"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Reset to 100%</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={zoomIn}
+              disabled={zoom >= MAX_ZOOM - 0.001}
+              aria-label="Zoom in"
+              className="h-7 w-7"
+            >
+              <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Zoom in</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                // Fit the 1920×1080 artboard into the visible stage.
+                const stage = document.querySelector<HTMLDivElement>(
+                  '.canvas-backdrop > .flex.flex-1.overflow-auto',
+                )
+                const vw = stage?.clientWidth ?? window.innerWidth
+                const vh = stage?.clientHeight ?? window.innerHeight
+                const fit = Math.min((vw - 64) / 1920, (vh - 64) / 1080)
+                if (Number.isFinite(fit) && fit > 0) {
+                  setZoom(Math.round(fit * 100) / 100)
+                }
+              }}
+              aria-label="Fit to screen"
+              className="h-7 w-7"
+            >
+              <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Fit to screen</TooltipContent>
+        </Tooltip>
+
+        <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
 
         {/* Preview animations */}
         <Tooltip>
