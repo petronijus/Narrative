@@ -417,7 +417,7 @@ export function SlidesPanel(): JSX.Element {
           aria-orientation="vertical"
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          className="flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+          className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           {slides.map((slide, idx) => {
             const isDragging = dragState?.slideId === slide.id

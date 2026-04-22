@@ -17,7 +17,8 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import type { ChangeEvent } from 'react'
+import { useState, type ChangeEvent } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -112,15 +113,61 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
 interface SectionProps {
   title: string
   children: React.ReactNode
+  /** Persisted collapse state key. If omitted, section is always expanded. */
+  storageKey?: string
+  /** Initial collapsed state (ignored if `storageKey` has a stored value). */
+  defaultCollapsed?: boolean
 }
 
-function Section({ title, children }: SectionProps) {
+function Section({ title, children, storageKey, defaultCollapsed = false }: SectionProps) {
+  const fullKey = storageKey === undefined ? null : `narrative:inspector:collapsed:${storageKey}`
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (fullKey === null) return false
+    try {
+      const raw = sessionStorage.getItem(fullKey)
+      if (raw === '1') return true
+      if (raw === '0') return false
+    } catch {
+      /* storage unavailable */
+    }
+    return defaultCollapsed
+  })
+
+  const toggle = () => {
+    const next = !collapsed
+    setCollapsed(next)
+    if (fullKey !== null) {
+      try {
+        sessionStorage.setItem(fullKey, next ? '1' : '0')
+      } catch {
+        /* storage unavailable */
+      }
+    }
+  }
+
   return (
-    <div className="border-b border-border px-3 py-2">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </p>
-      <div className="flex flex-col gap-1.5">{children}</div>
+    <div className="border-b border-border">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-200 ${
+            collapsed ? '-rotate-90' : 'rotate-0'
+          }`}
+          aria-hidden="true"
+        />
+      </button>
+      <div className="collapsible" data-collapsed={collapsed ? 'true' : 'false'}>
+        <div className="collapsible-body">
+          <div className="flex flex-col gap-1.5 px-3 pb-2">{children}</div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -140,7 +187,7 @@ export function Inspector() {
   if (selectedIds.size > 1) {
     return (
       <div className="flex flex-1 items-center justify-center px-3 text-center">
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-muted-foreground/80">
           Multi-select — {selectedIds.size} objects selected.
           <br />
           Inspector not supported yet.
@@ -158,7 +205,7 @@ export function Inspector() {
   if (obj === undefined) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-xs text-gray-600">Object not found</p>
+        <p className="text-xs text-muted-foreground/50">Object not found</p>
       </div>
     )
   }
@@ -173,15 +220,15 @@ export function Inspector() {
   const rotationDeg = radToDeg(obj.rotation)
 
   return (
-    <div className="flex flex-col overflow-y-auto">
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {/* M10: viewer mode notice */}
       {isViewer && (
-        <div className="border-b border-gray-800 bg-gray-900/50 px-3 py-1.5">
-          <p className="text-[10px] text-gray-500">View only</p>
+        <div className="border-b border-border bg-muted/50 px-3 py-1.5">
+          <p className="text-[10px] text-muted-foreground/80">View only</p>
         </div>
       )}
       {/* Position */}
-      <Section title="Position">
+      <Section title="Position" storageKey="position">
         <NumberField
           id={`inspector-x-${obj.id}`}
           label="X"
@@ -197,7 +244,7 @@ export function Inspector() {
       </Section>
 
       {/* Size */}
-      <Section title="Size">
+      <Section title="Size" storageKey="size">
         <NumberField
           id={`inspector-w-${obj.id}`}
           label="Width"
@@ -213,7 +260,7 @@ export function Inspector() {
       </Section>
 
       {/* Transform */}
-      <Section title="Transform">
+      <Section title="Transform" storageKey="transform">
         <NumberField
           id={`inspector-rot-${obj.id}`}
           label="Rotation"
@@ -284,7 +331,7 @@ function SlideInspector() {
   if (slide === undefined) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <p className="text-xs text-gray-600">No selection</p>
+        <p className="text-xs text-muted-foreground/50">No selection</p>
       </div>
     )
   }
@@ -311,30 +358,42 @@ function SlideInspector() {
     { value: 'down', label: 'Down' },
   ]
 
+  // Native <select> styled to match our inputs. Chevron icon is drawn by a
+  // dedicated CSS class (`.select-chevron`) because Tailwind's `bg-*`
+  // shorthands share a group — combining `bg-input` (color) with an
+  // inline `bg-[url()]` (image) makes `tailwind-merge` collapse one of
+  // them. Declaring both in raw CSS side-steps that.
   const SELECT_CLASS = [
-    'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-    'text-xs text-gray-200',
-    'focus:border-blue-500 focus:outline-none',
+    'select-chevron',
+    'flex-1 appearance-none rounded-md border border-input bg-input px-2 py-1 pr-7',
+    'text-xs text-foreground cursor-pointer',
+    'hover:border-border-strong',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-ring',
     'disabled:opacity-40 disabled:cursor-not-allowed',
   ].join(' ')
 
   return (
-    <div className="flex flex-col overflow-y-auto">
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {/* Slide ID reference */}
-      <div className="border-b border-gray-800 px-3 py-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Slide</p>
-        <p className="mt-1 truncate font-mono text-[10px] text-gray-600" title={slide.id}>
+      <div className="border-b border-border px-3 py-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+          Slide
+        </p>
+        <p
+          className="mt-1 truncate font-mono text-[10px] text-muted-foreground/50"
+          title={slide.id}
+        >
           {slide.id}
         </p>
       </div>
 
       {/* Transition settings */}
-      <Section title="Transition">
+      <Section title="Transition" storageKey="transition">
         {/* Kind */}
         <div className="flex items-center gap-2">
           <label
             htmlFor={`transition-kind-${slide.id}`}
-            className="w-16 flex-shrink-0 text-xs text-gray-400"
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
             Kind
           </label>
@@ -356,7 +415,7 @@ function SlideInspector() {
         <div className="flex items-center gap-2">
           <label
             htmlFor={`transition-duration-${slide.id}`}
-            className="w-16 flex-shrink-0 text-xs text-gray-400"
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
             Duration
           </label>
@@ -374,13 +433,13 @@ function SlideInspector() {
               }
             }}
             className={[
-              'w-full rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-              'text-right text-xs text-gray-200',
-              'focus:border-blue-500 focus:outline-none',
+              'w-full rounded border border-input bg-input px-2 py-0.5',
+              'text-right text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
               'disabled:opacity-40 disabled:cursor-not-allowed',
             ].join(' ')}
           />
-          <span className="flex-shrink-0 text-[10px] text-gray-600">ms</span>
+          <span className="flex-shrink-0 text-[10px] text-muted-foreground/50">ms</span>
         </div>
 
         {/* Magic Move — hint + matched-pair preview */}
@@ -392,7 +451,7 @@ function SlideInspector() {
                 ? 'border-amber-700/60 bg-amber-900/20 text-amber-300'
                 : magicMatchedCount === 0
                   ? 'border-amber-700/60 bg-amber-900/20 text-amber-300'
-                  : 'border-gray-700 bg-gray-900/50 text-gray-400',
+                  : 'border-input bg-muted/50 text-muted-foreground',
             ].join(' ')}
           >
             {prevSlide === undefined ? (
@@ -416,7 +475,7 @@ function SlideInspector() {
           <div className="flex items-center gap-2">
             <label
               htmlFor={`transition-dir-${slide.id}`}
-              className="w-16 flex-shrink-0 text-xs text-gray-400"
+              className="w-16 flex-shrink-0 text-xs text-muted-foreground"
             >
               Direction
             </label>
@@ -452,11 +511,11 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
   const hexValue = numberToHex(obj.fill)
 
   return (
-    <Section title="Appearance">
+    <Section title="Appearance" storageKey="appearance">
       <div className="flex items-center gap-2">
         <label
           htmlFor={`inspector-fill-${obj.id}`}
-          className="w-16 flex-shrink-0 text-xs text-gray-400"
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
         >
           Fill
         </label>
@@ -468,7 +527,7 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
             onChange={(e: ChangeEvent<HTMLInputElement>) => {
               patch({ fill: hexToNumber(e.target.value) })
             }}
-            className="h-6 w-8 cursor-pointer rounded border border-gray-700 bg-transparent p-0.5"
+            className="h-6 w-8 cursor-pointer rounded border border-input bg-transparent p-0.5"
           />
           <input
             type="text"
@@ -482,9 +541,9 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
               }
             }}
             className={[
-              'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-              'font-mono text-xs text-gray-200',
-              'focus:border-blue-500 focus:outline-none',
+              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'font-mono text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
             ].join(' ')}
           />
         </div>
@@ -507,9 +566,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
 
   return (
     <>
-      <Section title="Text">
+      <Section title="Text" storageKey="text">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`inspector-text-${obj.id}`} className="text-xs text-gray-400">
+          <label htmlFor={`inspector-text-${obj.id}`} className="text-xs text-muted-foreground">
             Content
           </label>
           <textarea
@@ -524,15 +583,15 @@ function TextSection({ obj, patch }: TextSectionProps) {
               }
             }}
             className={[
-              'w-full resize-none rounded border border-gray-700 bg-gray-800 px-2 py-1',
-              'text-xs text-gray-200',
-              'focus:border-blue-500 focus:outline-none',
+              'w-full resize-none rounded border border-input bg-input px-2 py-1',
+              'text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
             ].join(' ')}
           />
         </div>
       </Section>
 
-      <Section title="Typography">
+      <Section title="Typography" storageKey="typography">
         <NumberField
           id={`inspector-fontsize-${obj.id}`}
           label="Size"
@@ -543,7 +602,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
         <div className="flex items-center gap-2">
           <label
             htmlFor={`inspector-fontweight-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-gray-400"
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
             Weight
           </label>
@@ -552,9 +611,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
             value={obj.fontWeight}
             onChange={(e) => patch({ fontWeight: e.target.value as 'normal' | 'bold' })}
             className={[
-              'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-              'text-xs text-gray-200',
-              'focus:border-blue-500 focus:outline-none',
+              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
             ].join(' ')}
           >
             <option value="normal">Normal</option>
@@ -565,7 +624,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
         <div className="flex items-center gap-2">
           <label
             htmlFor={`inspector-align-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-gray-400"
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
             Align
           </label>
@@ -574,9 +633,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
             value={obj.align}
             onChange={(e) => patch({ align: e.target.value as 'left' | 'center' | 'right' })}
             className={[
-              'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-              'text-xs text-gray-200',
-              'focus:border-blue-500 focus:outline-none',
+              'flex-1 rounded border border-input bg-input px-2 py-0.5',
+              'text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
             ].join(' ')}
           >
             <option value="left">Left</option>
@@ -588,7 +647,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
         <div className="flex items-center gap-2">
           <label
             htmlFor={`inspector-color-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-gray-400"
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
             Color
           </label>
@@ -600,7 +659,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               onChange={(e: ChangeEvent<HTMLInputElement>) => {
                 patch({ color: hexToNumber(e.target.value) })
               }}
-              className="h-6 w-8 cursor-pointer rounded border border-gray-700 bg-transparent p-0.5"
+              className="h-6 w-8 cursor-pointer rounded border border-input bg-transparent p-0.5"
             />
             <input
               type="text"
@@ -614,9 +673,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 }
               }}
               className={[
-                'flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5',
-                'font-mono text-xs text-gray-200',
-                'focus:border-blue-500 focus:outline-none',
+                'flex-1 rounded border border-input bg-input px-2 py-0.5',
+                'font-mono text-xs text-foreground',
+                'focus:border-ring focus:outline-none',
               ].join(' ')}
             />
           </div>
@@ -657,7 +716,7 @@ function defaultTrigger(totalAnimations: number): AnimationTrigger {
 }
 
 const ADD_BUTTON_CLASS = [
-  'rounded border border-gray-700 px-2 py-0.5 text-xs text-gray-300',
+  'rounded border border-input px-2 py-0.5 text-xs text-foreground/90',
   'hover:border-blue-500 hover:text-blue-400 transition-colors',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
 ].join(' ')
@@ -688,7 +747,7 @@ function AnimationsSection({
   }
 
   return (
-    <Section title="Animations">
+    <Section title="Animations" storageKey="animations">
       {/* Add dropdown — quick fadeIn button + full preset menu.
           Presets with direction variants (slideIn / slideOut) encode the
           direction in the value after a colon; onChange parses and forwards
@@ -705,7 +764,7 @@ function AnimationsSection({
         <select
           value=""
           aria-label="Add animation preset"
-          className="flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-0.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+          className="flex-1 rounded border border-input bg-input px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
           onChange={(e) => {
             const val = e.target.value
             if (val === '') return
@@ -750,24 +809,24 @@ function AnimationsSection({
 
       {/* Existing animations list */}
       {objectAnimations.length === 0 ? (
-        <p className="text-[10px] text-gray-600 italic">No animations</p>
+        <p className="text-[10px] text-muted-foreground/50 italic">No animations</p>
       ) : (
         <ul className="flex flex-col gap-1" aria-label="Object animations">
           {objectAnimations.map((step) => (
             <li
               key={step.id}
-              className="flex items-center justify-between rounded bg-gray-800 px-2 py-1"
+              className="flex items-center justify-between rounded bg-input px-2 py-1"
             >
               <div className="flex flex-col">
-                <span className="text-xs text-gray-200">{animationLabel(step)}</span>
-                <span className="text-[10px] text-gray-500">{step.trigger}</span>
+                <span className="text-xs text-foreground">{animationLabel(step)}</span>
+                <span className="text-[10px] text-muted-foreground/80">{step.trigger}</span>
               </div>
               <button
                 type="button"
                 onClick={() => handleRemove(step.id)}
                 aria-label={`Remove ${animationLabel(step)} animation`}
                 className={[
-                  'ml-2 rounded p-0.5 text-gray-600 transition-colors',
+                  'ml-2 rounded p-0.5 text-muted-foreground/50 transition-colors',
                   'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
                 ].join(' ')}
               >

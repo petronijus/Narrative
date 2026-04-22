@@ -22,6 +22,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -200,23 +201,29 @@ export function SlideNotesPanel() {
           <button
             type="button"
             onClick={toggleCollapsed}
-            className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            aria-expanded={!collapsed}
             aria-label={collapsed ? 'Expand speaker notes' : 'Collapse speaker notes'}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           >
-            {collapsed ? '▲ expand' : '▼ collapse'}
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${collapsed ? '-rotate-90' : 'rotate-0'}`}
+              aria-hidden="true"
+            />
           </button>
         </div>
       </div>
 
-      {!collapsed && (
-        <div className="px-3 py-2">
-          {fragment === null ? (
-            <p className="text-[11px] italic text-muted-foreground">No slide selected.</p>
-          ) : (
-            <EditorContent editor={editor} />
-          )}
+      <div className="collapsible" data-collapsed={collapsed ? 'true' : 'false'}>
+        <div className="collapsible-body">
+          <div className="px-3 py-2">
+            {fragment === null ? (
+              <p className="text-[11px] italic text-muted-foreground">No slide selected.</p>
+            ) : (
+              <EditorContent editor={editor} />
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }

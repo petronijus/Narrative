@@ -23,8 +23,10 @@
     --surface-3: 232 14% 22%; /* Controls / inputs */
     --surface-elevated: 234 18% 19%; /* Popovers / dialogs */
 
-    --border-subtle: 230 15% 20%;
-    --border-strong: 230 15% 32%;
+    /* Borders — low-alpha white so they read as a faint rim over any
+       dark surface (Keynote-style). Consumed by `border-border`. */
+    --border-subtle: 220 20% 70% / 0.1;
+    --border-strong: 220 20% 80% / 0.18;
 
     --fg-high: 220 20% 96%; /* Primary text */
     --fg-mid: 220 12% 72%; /* Secondary text, inactive labels */
@@ -90,12 +92,40 @@
     --radius-md: calc(var(--radius) - 2px);
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) + 4px);
+
+    /* Tell browsers we're in dark mode so native form controls (select,
+       scrollbar, option list on some platforms) pick dark defaults. */
+    color-scheme: dark;
   }
 
   html,
   body,
   #root {
     height: 100%;
+  }
+
+  /* Native <select> option list — dark background matching popover surface.
+     Browsers differ in how much of this they honour (Chromium respects
+     bg/color; Firefox ignores most), but the default white dropdown is at
+     least dimmed. */
+  option,
+  optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+  }
+
+  /* Smooth out all focus/hover state changes globally. Individual
+     components can still opt out with `transition-none`. */
+  button,
+  a,
+  [role='button'],
+  input,
+  textarea,
+  select {
+    transition-property: background-color, color, border-color, box-shadow,
+      transform, opacity;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
   body {
     background-color: hsl(var(--background));
@@ -160,6 +190,62 @@
       hsl(230 25% 13%) 0%,
       hsl(230 32% 6%) 75%
     );
+  }
+
+  /* Chevron icon for native <select> — drawn via ::after-like
+     background-image layer. Applied via `.select-chevron`. Keeps
+     bg-color (bg-input) intact because we're not touching background-image
+     through a Tailwind class. */
+  .select-chevron {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%239aa3b2%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E");
+    background-position: right 0.5rem center;
+    background-size: 12px 12px;
+    background-repeat: no-repeat;
+  }
+
+  /* Animated collapse wrapper — CSS-grid trick that lets an element's
+     height animate from 0 → auto. Apply `.collapsible` to a wrapper div,
+     toggle `data-collapsed="true"` to hide. The inner content wrapper
+     needs `min-height: 0; overflow: hidden` so clipping works during the
+     transition. */
+  .collapsible {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .collapsible[data-collapsed='true'] {
+    grid-template-rows: 0fr;
+  }
+  .collapsible > .collapsible-body {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* Custom scrollbar — thin, translucent, fades in on hover. Apply via
+     `className="scrollbar-narrative"` on any scrollable container. */
+  .scrollbar-narrative {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(220 15% 55% / 0.25) transparent;
+  }
+  .scrollbar-narrative::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-thumb {
+    background-color: hsl(220 15% 55% / 0.2);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    transition: background-color 200ms ease;
+  }
+  .scrollbar-narrative::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(220 15% 65% / 0.4);
+  }
+  .scrollbar-narrative::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   /* Present / primary CTA — brand gradient from accent to warm violet.
