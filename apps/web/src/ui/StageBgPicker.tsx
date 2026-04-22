@@ -22,7 +22,10 @@ export function StageBgPicker() {
   }
 
   return (
-    <div className="pointer-events-auto flex items-center gap-1 rounded-md border border-border bg-surface-1/80 p-1 shadow-sm backdrop-blur">
+    <div
+      className="pointer-events-auto flex items-center gap-1 rounded-md border border-border bg-surface-1/80 p-1 shadow-sm backdrop-blur"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         onClick={openPicker}

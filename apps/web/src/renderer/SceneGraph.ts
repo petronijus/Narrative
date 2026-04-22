@@ -422,7 +422,11 @@ export class SceneGraph {
     const worldPoint = this._hitTestWorldPoint
     const localPoint = this._hitTestLocalPoint!
 
-    worldPoint.set(worldX, worldY)
+    // Editor hands us slide-local coords (relative to the artboard
+    // top-left). With P2 bleed the pixi "world" origin is offset by
+    // slideOrigin, so we convert slide-local → pixi world before
+    // letting container.toLocal() walk the transform chain.
+    worldPoint.set(worldX + this.slideOriginX, worldY + this.slideOriginY)
 
     // Iterujeme v reverse insertion order — poslední přidaný je nahoře (highest z-order)
     const entries = [...this.nodes.entries()]
