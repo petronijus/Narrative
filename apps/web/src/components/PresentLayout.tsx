@@ -33,7 +33,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { playTransition } from '../renderer/playTransition.js'
@@ -71,6 +71,11 @@ export interface PresentLayoutProps {
 export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  // ?presenter=1 → render only the presenter overlay, no canvas. Used by
+  // the pop-out window so the user can put the projector in the main tab
+  // and the presenter notes on their laptop.
+  const isPresenterWindow = searchParams.get('presenter') === '1'
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState<number>(() =>
@@ -103,7 +108,49 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M19 phase 3: presenter overlay — toggled by 'N' key. When visible, the
   // canvas shrinks (via flex-1 min-h-0 on the wrapper) and the overlay takes
   // the bottom strip with notes / next-slide thumbnail / elapsed timer.
-  const [presenterVisible, setPresenterVisible] = useState(false)
+  const [presenterVisible, setPresenterVisible] = useState(isPresenterWindow)
+
+  // M19 phase 3: BroadcastChannel keeps the pop-out presenter window and the
+  // main present window in sync. Both windows are on the same origin, so the
+  // channel is cheap and needs no server roundtrip. Payload: the active
+  // slide id; the receiver drives its local setActiveSlideId directly.
+  const bcRef = useRef<BroadcastChannel | null>(null)
+  const suppressBroadcastRef = useRef(false)
+
+  useEffect(() => {
+    if (id === undefined || typeof BroadcastChannel === 'undefined') return
+    const channel = new BroadcastChannel(`narrative:deck:${id}:activeSlide`)
+    bcRef.current = channel
+    channel.onmessage = (e: MessageEvent<{ slideId: string }>) => {
+      const slideId = e.data?.slideId
+      if (typeof slideId !== 'string') return
+      suppressBroadcastRef.current = true
+      setActiveSlideId(slideId)
+    }
+    return () => {
+      channel.close()
+      bcRef.current = null
+    }
+  }, [id, setActiveSlideId])
+
+  // Broadcast every local activeSlideId change — except when the change was
+  // itself caused by a remote broadcast (flag flip around setState).
+  useEffect(() => {
+    if (suppressBroadcastRef.current) {
+      suppressBroadcastRef.current = false
+      return
+    }
+    if (activeSlideId === null) return
+    bcRef.current?.postMessage({ slideId: activeSlideId })
+  }, [activeSlideId])
+
+  const openPresenterWindow = useCallback(() => {
+    if (id === undefined) return
+    const url = `/deck/${id}/present?presenter=1`
+    // noopener keeps the popup's window.opener = null for security; the
+    // BroadcastChannel handles sync without needing a direct reference.
+    window.open(url, `narrative-presenter-${id}`, 'noopener,width=960,height=720')
+  }, [id])
 
   // ---------------------------------------------------------------------------
   // Scale-to-fit: ResizeObserver na fullscreen container
@@ -345,6 +392,21 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // Render
   // ---------------------------------------------------------------------------
 
+  // Dedicated presenter window — skip all canvas / video chrome, render
+  // only the overlay full-screen. Navigation still works (keyboard) and
+  // broadcasts back to the main window.
+  if (isPresenterWindow) {
+    return (
+      <div
+        className="fixed inset-0 bg-black"
+        role="application"
+        aria-label="Presenter view — synced with the main present window"
+      >
+        <PresenterOverlay activeSlideId={activeSlideId} visible={true} fullscreen />
+      </div>
+    )
+  }
+
   return (
     <div
       ref={containerRef}
@@ -453,12 +515,20 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
             : '1 / 1'}
         </div>
 
-        {/* Escape / presenter hint */}
-        <div
-          className="absolute bottom-4 left-4 select-none text-xs text-white/30"
-          aria-hidden="true"
-        >
-          Esc — back to editor · N — presenter view
+        {/* Escape / presenter hint + pop-out */}
+        <div className="absolute bottom-4 left-4 flex items-center gap-3">
+          <span className="select-none text-xs text-white/30" aria-hidden="true">
+            Esc — back to editor · N — presenter view
+          </span>
+          <button
+            type="button"
+            onClick={openPresenterWindow}
+            className="rounded border border-white/20 px-2 py-0.5 text-xs text-white/60 hover:border-white/40 hover:text-white"
+            title="Open presenter view in a separate window"
+            aria-label="Open presenter view in a separate window"
+          >
+            Pop out
+          </button>
         </div>
       </div>
 
