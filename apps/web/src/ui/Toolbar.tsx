@@ -465,22 +465,18 @@ function ShapesDropdown({ shapes, activeTool, setActiveTool }: ShapesDropdownPro
         <TooltipTrigger asChild>
           <Button
             variant={isActive ? 'default' : 'ghost'}
-            size="icon"
+            size="sm"
             onClick={() => {
-              // Click activates the last-used shape AND opens the picker.
               if (!isActive) setActiveTool(lastShape.tool)
               setOpen((v) => !v)
             }}
             aria-label="Shapes"
             aria-haspopup="menu"
             aria-expanded={open}
-            className="h-7 w-7"
+            className="flex h-7 items-center gap-0.5 px-1.5"
           >
             <TriggerIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            <ChevronDown
-              className="absolute -right-0.5 -bottom-0.5 h-2 w-2 opacity-70"
-              aria-hidden="true"
-            />
+            <ChevronDown className="h-3 w-3 opacity-60" aria-hidden="true" />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Shapes</TooltipContent>
@@ -488,9 +484,16 @@ function ShapesDropdown({ shapes, activeTool, setActiveTool }: ShapesDropdownPro
       {open && (
         <div
           role="menu"
-          className="absolute left-1/2 top-9 z-50 -translate-x-1/2 rounded border border-border bg-popover p-1 shadow-lg"
+          className="absolute left-1/2 top-9 z-50 -translate-x-1/2 rounded-md border border-border bg-popover shadow-lg"
+          style={{ padding: 8 }}
         >
-          <div className="grid grid-cols-3 gap-1">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 36px)',
+              gap: 6,
+            }}
+          >
             {shapes.map(({ tool, label, shortcut, icon: Icon }) => {
               const selected = activeTool === tool
               return (
@@ -503,11 +506,12 @@ function ShapesDropdown({ shapes, activeTool, setActiveTool }: ShapesDropdownPro
                   aria-pressed={selected}
                   title={shortcut === '' ? label : `${label} (${shortcut})`}
                   className={
-                    'flex h-8 w-8 items-center justify-center rounded transition ' +
+                    'flex items-center justify-center rounded-md transition ' +
                     (selected
                       ? 'bg-primary text-primary-foreground'
                       : 'text-foreground hover:bg-surface-2')
                   }
+                  style={{ height: 36, width: 36 }}
                 >
                   <Icon className="h-4 w-4" aria-hidden="true" />
                 </button>
