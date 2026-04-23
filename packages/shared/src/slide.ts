@@ -7,6 +7,24 @@
  * Žádný Yjs, žádný Pixi, žádný React. Pure TypeScript types only.
  */
 
+/**
+ * P5c: optional drop shadow. Applied as a DropShadowFilter on the
+ * Pixi container of any object type that declares this mixin — so
+ * shapes, text and images can all carry a shadow identically.
+ */
+export interface ShadowStyle {
+  /** Shadow color hex. */
+  color: number
+  /** Shadow blur radius in slide-px (≥ 0). */
+  blur: number
+  /** Horizontal offset in slide-px. */
+  offsetX: number
+  /** Vertical offset in slide-px. */
+  offsetY: number
+  /** Overall shadow alpha 0..1. */
+  opacity: number
+}
+
 export interface BaseSlideObject {
   id: string
   x: number
@@ -28,18 +46,84 @@ export interface BaseSlideObject {
    * still participate in animations. Toggled from the Inspector.
    */
   locked?: boolean
+  /**
+   * P5c: drop shadow. Missing ⇒ no shadow (no filter installed).
+   */
+  shadow?: ShadowStyle
+  /**
+   * P5c: gaussian blur radius in slide-px. 0 / missing ⇒ no blur.
+   */
+  blur?: number
 }
 
-export interface RectangleObject extends BaseSlideObject {
+/**
+ * P5b: optional stroke + per-corner radius for filled shapes. Every field
+ * is optional + missing ⇒ unchanged legacy behaviour (fill-only, no stroke,
+ * sharp corners). Putting the stroke fields directly on the shape types
+ * instead of a nested object keeps applyPatch call-sites trivial and
+ * matches the existing line/arrow/path convention.
+ */
+export interface StrokeStyleFields {
+  /** Stroke colour. Missing ⇒ no stroke. */
+  stroke?: number
+  /** Stroke width in slide-px. Rendered only when stroke is set. */
+  strokeWidth?: number
+  /** Dashed stroke pattern — true = dashed, false/undefined = solid. */
+  strokeDash?: boolean
+}
+
+/**
+ * P5b: rich fill variants. Missing `fillStyle` + present `fill: number`
+ * keeps the legacy solid-colour path intact. When `fillStyle` is set it
+ * takes precedence over `fill`, which is still stored so flipping the
+ * picker back to "solid" has a sensible starting point.
+ */
+export interface FillGradientStop {
+  /** Colour hex. */
+  color: number
+  /** Offset 0..1. */
+  offset: number
+}
+export interface LinearGradientFill {
+  kind: 'linearGradient'
+  stops: FillGradientStop[]
+  /** 0 = top-to-bottom, 90 = left-to-right, clockwise. */
+  angleDeg: number
+}
+export interface RadialGradientFill {
+  kind: 'radialGradient'
+  stops: FillGradientStop[]
+  /** Gradient centre as normalized object coord (0..1). Default 0.5, 0.5. */
+  centerX?: number
+  centerY?: number
+}
+export type FillStyle = LinearGradientFill | RadialGradientFill
+
+export type CornerRadius =
+  | number
+  | {
+      tl: number
+      tr: number
+      br: number
+      bl: number
+    }
+
+export interface RectangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'rectangle'
-  /** Pixi/CSS color hex číslo, např. 0x4060e0 */
+  /** Solid fallback colour hex. Rendered only when fillStyle is not set. */
   fill: number
+  /** Optional gradient / image fill. Takes precedence over `fill`. */
+  fillStyle?: FillStyle
+  /** Uniform or per-corner radius. Missing ⇒ 0 (sharp corners). */
+  cornerRadius?: CornerRadius
 }
 
-export interface EllipseObject extends BaseSlideObject {
+export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
   type: 'ellipse'
-  /** Pixi/CSS color hex číslo */
+  /** Solid fallback colour hex. */
   fill: number
+  /** Optional gradient / image fill. Takes precedence over `fill`. */
+  fillStyle?: FillStyle
 }
 
 /**
@@ -47,14 +131,16 @@ export interface EllipseObject extends BaseSlideObject {
  * schema as Rectangle/Ellipse. `sides` controls the polygon — 3 for
  * a triangle (top-pointing equilateral), 4+ for regular n-gons.
  */
-export interface TriangleObject extends BaseSlideObject {
+export interface TriangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'triangle'
   fill: number
+  fillStyle?: FillStyle
 }
 
-export interface PolygonObject extends BaseSlideObject {
+export interface PolygonObject extends BaseSlideObject, StrokeStyleFields {
   type: 'polygon'
   fill: number
+  fillStyle?: FillStyle
   /** Number of sides. Clamped to [3, 12] in the renderer. */
   sides: number
 }

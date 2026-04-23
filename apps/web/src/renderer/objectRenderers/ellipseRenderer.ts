@@ -16,6 +16,9 @@
 
 import { Container, Graphics } from 'pixi.js'
 import type { EllipseObject } from '../types'
+import { fillStyleToPixi } from '../fillStyleToPixi.js'
+import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { strokeDashedPolyline, sampleEllipse } from '../strokeDashed.js'
 
 /** Interní tag klíče pro identifikaci Graphics a cached fill uvnitř Containeru. */
 const GRAPHICS_TAG = Symbol('ellipseGraphics')
@@ -23,7 +26,7 @@ const GRAPHICS_TAG = Symbol('ellipseGraphics')
  * Cached fill hodnota — potřebná pro applyPatch při geometry změně bez fill v patch.
  * Pixi Graphics nemá veřejný getter na nakreslenou barvu.
  */
-const FILL_TAG = Symbol('ellipseFill')
+const DATA_TAG = Symbol('ellipseData')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol property na Pixi Container není typovaný
 const asAny = (node: Container): any => node as any
@@ -32,12 +35,12 @@ function getGraphics(node: Container): Graphics | undefined {
   return asAny(node)[GRAPHICS_TAG] as Graphics | undefined
 }
 
-function getCachedFill(node: Container): number {
-  return (asAny(node)[FILL_TAG] as number | undefined) ?? 0
+function getCachedData(node: Container): EllipseObject | undefined {
+  return asAny(node)[DATA_TAG] as EllipseObject | undefined
 }
 
-function setCachedFill(node: Container, fill: number): void {
-  asAny(node)[FILL_TAG] = fill
+function setCachedData(node: Container, data: EllipseObject): void {
+  asAny(node)[DATA_TAG] = data
 }
 
 function applyObjectTransform(container: Container, data: EllipseObject): void {
@@ -55,7 +58,18 @@ function drawEllipse(graphics: Graphics, data: EllipseObject): void {
   // Pixi v8 path API: ellipse(centerX, centerY, halfWidth, halfHeight)
   // Geometrie je vykreslena od (0,0) — container provede transform
   graphics.ellipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
-  graphics.fill({ color: data.fill })
+  const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+  graphics.fill(resolved.input)
+  if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
+    const w = data.strokeWidth ?? 1
+    if (data.strokeDash === true) {
+      const pts = sampleEllipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
+      strokeDashedPolyline(graphics, pts, true, { color: data.stroke, width: w })
+    } else {
+      graphics.ellipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
+      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5 })
+    }
+  }
 }
 
 export const ellipseRenderer = {
@@ -73,9 +87,10 @@ export const ellipseRenderer = {
     container.addChild(graphics)
 
     asAny(container)[GRAPHICS_TAG] = graphics
-    setCachedFill(container, data.fill)
+    setCachedData(container, data)
 
     applyObjectTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
 
     return container
   },
@@ -88,15 +103,25 @@ export const ellipseRenderer = {
     applyObjectTransform(node, next)
 
     const needsRedraw =
-      prev.fill !== next.fill || prev.width !== next.width || prev.height !== next.height
+      prev.fill !== next.fill ||
+      prev.width !== next.width ||
+      prev.height !== next.height ||
+      prev.stroke !== next.stroke ||
+      prev.strokeWidth !== next.strokeWidth ||
+      prev.strokeDash !== next.strokeDash ||
+      prev.fillStyle !== next.fillStyle
 
     if (needsRedraw) {
       const graphics = getGraphics(node)
       if (graphics !== undefined) {
         drawEllipse(graphics, next)
-        setCachedFill(node, next.fill)
+        setCachedData(node, next)
       }
+    } else {
+      setCachedData(node, next)
     }
+
+    applyFilterEffects(node, next.shadow, next.blur)
   },
 
   /**
@@ -126,46 +151,74 @@ export const ellipseRenderer = {
     }
 
     const geometryChanged = patch.width !== undefined || patch.height !== undefined
-    const fillChanged = patch.fill !== undefined
+    const visualChanged =
+      patch.fill !== undefined ||
+      'fillStyle' in patch ||
+      'stroke' in patch ||
+      patch.strokeWidth !== undefined ||
+      'strokeDash' in patch
+    const filterChanged = 'shadow' in patch || 'blur' in patch
 
-    if (geometryChanged || fillChanged) {
+    const cached = getCachedData(node)
+
+    if (geometryChanged || visualChanged) {
       const graphics = getGraphics(node)
-      if (graphics === undefined) return
+      if (graphics === undefined || cached === undefined) return
 
-      const currentPivotX = node.pivot.x
-      const currentPivotY = node.pivot.y
-      const currentWorldX = node.x
-      const currentWorldY = node.y
-      const dataX = currentWorldX - currentPivotX
-      const dataY = currentWorldY - currentPivotY
-      const currentWidth = currentPivotX * 2
-      const currentHeight = currentPivotY * 2
+      const newWidth = patch.width ?? cached.width
+      const newHeight = patch.height ?? cached.height
 
-      const newWidth = patch.width ?? currentWidth
-      const newHeight = patch.height ?? currentHeight
-      const newFill = patch.fill ?? getCachedFill(node)
+      const nextStroke = 'stroke' in patch ? patch.stroke : cached.stroke
+      const nextStrokeWidth = 'strokeWidth' in patch ? patch.strokeWidth : cached.strokeWidth
+      const nextStrokeDash = 'strokeDash' in patch ? patch.strokeDash : cached.strokeDash
+      const nextFillStyle = 'fillStyle' in patch ? patch.fillStyle : cached.fillStyle
 
-      const pseudoObj: EllipseObject = {
-        id: '',
-        type: 'ellipse',
-        x: dataX,
-        y: dataY,
+      const next: EllipseObject = {
+        ...cached,
         width: newWidth,
         height: newHeight,
-        fill: newFill,
-        rotation: node.rotation,
-        opacity: node.alpha,
+        fill: patch.fill ?? cached.fill,
+        ...(nextStroke !== undefined ? { stroke: nextStroke } : {}),
+        ...(nextStrokeWidth !== undefined ? { strokeWidth: nextStrokeWidth } : {}),
+        ...(nextStrokeDash !== undefined ? { strokeDash: nextStrokeDash } : {}),
+        ...(nextFillStyle !== undefined ? { fillStyle: nextFillStyle } : {}),
       }
-      drawEllipse(graphics, pseudoObj)
-      setCachedFill(node, newFill)
+      if (nextStroke === undefined) delete (next as { stroke?: number }).stroke
+      if (nextStrokeWidth === undefined) delete (next as { strokeWidth?: number }).strokeWidth
+      if (nextStrokeDash === undefined) delete (next as { strokeDash?: boolean }).strokeDash
+      if (nextFillStyle === undefined)
+        delete (next as { fillStyle?: EllipseObject['fillStyle'] }).fillStyle
+
+      drawEllipse(graphics, next)
+      setCachedData(node, next)
 
       if (geometryChanged) {
         const newPivotX = newWidth / 2
         const newPivotY = newHeight / 2
+        const currentPivotX = node.pivot.x
+        const currentPivotY = node.pivot.y
+        const dataX = node.x - currentPivotX
+        const dataY = node.y - currentPivotY
         node.pivot.set(newPivotX, newPivotY)
         node.x = dataX + newPivotX
         node.y = dataY + newPivotY
       }
+    }
+
+    if (filterChanged && cached !== undefined) {
+      const nextShadow = 'shadow' in patch ? patch.shadow : cached.shadow
+      const nextBlur = 'blur' in patch ? patch.blur : cached.blur
+      applyFilterEffects(node, nextShadow, nextBlur)
+      const updated: EllipseObject = { ...cached }
+      if ('shadow' in patch) {
+        if (nextShadow !== undefined) updated.shadow = nextShadow
+        else delete updated.shadow
+      }
+      if ('blur' in patch) {
+        if (nextBlur !== undefined) updated.blur = nextBlur
+        else delete updated.blur
+      }
+      setCachedData(node, updated)
     }
   },
 
@@ -175,6 +228,7 @@ export const ellipseRenderer = {
   destroy(node: Container): void {
     const graphics = getGraphics(node)
     graphics?.destroy()
+    destroyFilterEffects(node)
     node.destroy()
   },
 }

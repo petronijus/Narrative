@@ -38,6 +38,15 @@ import type {
   SlideObject,
   RectangleObject,
   EllipseObject,
+  TriangleObject,
+  PolygonObject,
+  LineObject,
+  ArrowObject,
+  PathObject,
+  CornerRadius,
+  ShadowStyle,
+  FillStyle,
+  FillGradientStop,
   TextObject,
   SlideObjectPatch,
   AnimationStep,
@@ -333,11 +342,30 @@ export function Inspector() {
         />
       </Section>
 
-      {/* Appearance — Rectangle + Ellipse */}
-      {(obj.type === 'rectangle' || obj.type === 'ellipse') && (
+      {/* Appearance — every filled shape. P5b extended the schema with
+          optional stroke + corner radius so the same section handles rect,
+          ellipse, triangle and polygon. Corner radius is rectangle-only
+          (ellipse/triangle/polygon don't have axis-aligned corners). */}
+      {(obj.type === 'rectangle' ||
+        obj.type === 'ellipse' ||
+        obj.type === 'triangle' ||
+        obj.type === 'polygon') && (
         <AppearanceSection
           obj={obj}
-          patch={patch as (p: SlideObjectPatch<RectangleObject | EllipseObject>) => void}
+          patch={
+            patch as (
+              p: SlideObjectPatch<RectangleObject | EllipseObject | TriangleObject | PolygonObject>,
+            ) => void
+          }
+        />
+      )}
+
+      {/* P5b: Line / Arrow / Path stroke controls. Schema already carried
+          stroke + strokeWidth + dash — Inspector just surfaces them. */}
+      {(obj.type === 'line' || obj.type === 'arrow' || obj.type === 'path') && (
+        <LineStrokeSection
+          obj={obj}
+          patch={patch as (p: SlideObjectPatch<LineObject | ArrowObject | PathObject>) => void}
         />
       )}
 
@@ -345,6 +373,10 @@ export function Inspector() {
       {obj.type === 'text' && (
         <TextSection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
       )}
+
+      {/* P5c: Shadow + Blur — every object type gets them through the
+          BaseSlideObject mixin + filterEffects helper on the renderer side. */}
+      <EffectsSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
       {/* Animations */}
       {animMutationCtx !== null && (
@@ -725,56 +757,664 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
 }
 
 // ---------------------------------------------------------------------------
-// Appearance section (rectangle + ellipse)
+// Appearance section — fill + stroke + (rectangle-only) corner radius
 // ---------------------------------------------------------------------------
 
+type FilledShape = RectangleObject | EllipseObject | TriangleObject | PolygonObject
+
 interface AppearanceSectionProps {
-  obj: RectangleObject | EllipseObject
-  patch: (p: SlideObjectPatch<RectangleObject | EllipseObject>) => void
+  obj: FilledShape
+  patch: (p: SlideObjectPatch<FilledShape>) => void
 }
 
 function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
-  const hexValue = numberToHex(obj.fill)
+  const hasStroke = obj.stroke !== undefined
+  const strokeHex = numberToHex(obj.stroke ?? 0x000000)
+  const strokeWidth = obj.strokeWidth ?? 1
 
   return (
     <Section title="Appearance" storageKey="appearance">
+      <FillPicker obj={obj} patch={patch} />
+
+      {/* Stroke — toggle + (when enabled) colour + width + dashed. Toggling
+          off sends `stroke: undefined` which the renderer treats as "no
+          stroke". */}
       <div className="flex items-center gap-2">
-        <label
-          htmlFor={`inspector-fill-${obj.id}`}
-          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-        >
-          Fill
-        </label>
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
         <div className="flex flex-1 items-center gap-1.5">
           <input
-            id={`inspector-fill-${obj.id}`}
-            type="color"
-            value={hexValue}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => {
-              patch({ fill: hexToNumber(e.target.value) })
+            type="checkbox"
+            aria-label="Enable stroke"
+            checked={hasStroke}
+            onChange={(e) => {
+              if (e.target.checked) {
+                patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<FilledShape>)
+              } else {
+                // Explicit undefined tells updateObject to clear the field.
+                patch({
+                  stroke: undefined,
+                  strokeWidth: undefined,
+                } as unknown as SlideObjectPatch<FilledShape>)
+              }
             }}
-            className="h-6 w-8 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            className="h-3.5 w-3.5"
+          />
+          {hasStroke && (
+            <>
+              <input
+                type="color"
+                aria-label="Stroke color"
+                value={strokeHex}
+                onChange={(e) =>
+                  patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<FilledShape>)
+                }
+                className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              />
+              <input
+                type="number"
+                aria-label="Stroke width"
+                min={0}
+                step={0.5}
+                value={strokeWidth}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value)
+                  if (Number.isFinite(v)) {
+                    patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>)
+                  }
+                }}
+                className={[
+                  'w-16 rounded border border-input field-surface px-2 py-0.5',
+                  'text-xs text-foreground focus:border-ring focus:outline-none',
+                ].join(' ')}
+              />
+            </>
+          )}
+        </div>
+      </div>
+
+      {hasStroke && (
+        <div className="flex items-center gap-2">
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Dashed</span>
+          <input
+            type="checkbox"
+            aria-label="Dashed stroke"
+            checked={obj.strokeDash === true}
+            onChange={(e) =>
+              patch({
+                strokeDash: e.target.checked ? true : undefined,
+              } as unknown as SlideObjectPatch<FilledShape>)
+            }
+            className="h-3.5 w-3.5"
+          />
+        </div>
+      )}
+
+      {/* Corner radius — rectangle only. Uniform slider + per-corner expand. */}
+      {obj.type === 'rectangle' && (
+        <CornerRadiusRow
+          obj={obj}
+          patch={patch as (p: SlideObjectPatch<RectangleObject>) => void}
+        />
+      )}
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Corner radius row — rectangle only
+// ---------------------------------------------------------------------------
+
+function CornerRadiusRow({
+  obj,
+  patch,
+}: {
+  obj: RectangleObject
+  patch: (p: SlideObjectPatch<RectangleObject>) => void
+}) {
+  const [perCorner, setPerCorner] = useState(
+    typeof obj.cornerRadius === 'object' && obj.cornerRadius !== null,
+  )
+
+  const maxR = Math.min(obj.width, obj.height) / 2
+  const current: { tl: number; tr: number; br: number; bl: number } =
+    typeof obj.cornerRadius === 'object' && obj.cornerRadius !== null
+      ? obj.cornerRadius
+      : {
+          tl: (obj.cornerRadius as number | undefined) ?? 0,
+          tr: (obj.cornerRadius as number | undefined) ?? 0,
+          br: (obj.cornerRadius as number | undefined) ?? 0,
+          bl: (obj.cornerRadius as number | undefined) ?? 0,
+        }
+
+  const setUniform = (v: number): void => {
+    const clamped = Math.max(0, Math.min(maxR, v))
+    // 0 ⇒ clear the field entirely so sharp-cornered rects keep their
+    // default legacy shape in the Y.Doc.
+    patch({
+      cornerRadius: clamped === 0 ? undefined : clamped,
+    } as unknown as SlideObjectPatch<RectangleObject>)
+  }
+  const setCorner = (which: 'tl' | 'tr' | 'br' | 'bl', v: number): void => {
+    const clamped = Math.max(0, Math.min(maxR, v))
+    const next: CornerRadius = { ...current, [which]: clamped }
+    patch({ cornerRadius: next })
+  }
+
+  const uniformVal =
+    typeof obj.cornerRadius === 'number'
+      ? obj.cornerRadius
+      : obj.cornerRadius === undefined
+        ? 0
+        : // per-corner currently active but user toggled back to uniform —
+          // seed from tl so the slider has a reasonable starting point.
+          current.tl
+
+  return (
+    <>
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Corners</span>
+        <div className="flex flex-1 items-center gap-1.5">
+          {!perCorner && (
+            <>
+              <input
+                type="range"
+                aria-label="Corner radius"
+                min={0}
+                max={Math.max(1, Math.round(maxR))}
+                step={1}
+                value={uniformVal}
+                onChange={(e) => setUniform(Number.parseFloat(e.target.value))}
+                className="flex-1 accent-primary"
+              />
+              <input
+                type="number"
+                aria-label="Corner radius value"
+                min={0}
+                max={Math.round(maxR)}
+                value={Math.round(uniformVal)}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value)
+                  if (Number.isFinite(v)) setUniform(v)
+                }}
+                className={[
+                  'w-14 rounded border border-input field-surface px-2 py-0.5',
+                  'text-xs text-foreground focus:border-ring focus:outline-none',
+                ].join(' ')}
+              />
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (perCorner) {
+                // Collapse to uniform — use the tl value.
+                setUniform(current.tl)
+              }
+              setPerCorner((v) => !v)
+            }}
+            aria-pressed={perCorner}
+            title={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}
+            className={[
+              'rounded border px-1.5 py-0.5 text-[10px]',
+              perCorner
+                ? 'border-primary bg-primary/15 text-primary'
+                : 'border-border text-muted-foreground hover:text-foreground',
+            ].join(' ')}
+          >
+            {perCorner ? '4x' : '1x'}
+          </button>
+        </div>
+      </div>
+
+      {perCorner && (
+        <div className="ml-[4.5rem] grid grid-cols-2 gap-1.5">
+          {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+            <div key={c} className="flex items-center gap-1">
+              <span className="w-5 text-[10px] uppercase text-muted-foreground">{c}</span>
+              <input
+                type="number"
+                aria-label={`${c} corner radius`}
+                min={0}
+                max={Math.round(maxR)}
+                value={Math.round(current[c])}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value)
+                  if (Number.isFinite(v)) setCorner(c, v)
+                }}
+                className={[
+                  'flex-1 rounded border border-input field-surface px-2 py-0.5',
+                  'text-xs text-foreground focus:border-ring focus:outline-none',
+                ].join(' ')}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Fill picker — solid / linear gradient / radial gradient
+// ---------------------------------------------------------------------------
+
+type FillMode = 'solid' | 'linearGradient' | 'radialGradient'
+
+function fillModeOf(style: FillStyle | undefined): FillMode {
+  if (style === undefined) return 'solid'
+  return style.kind
+}
+
+function FillPicker({
+  obj,
+  patch,
+}: {
+  obj: FilledShape
+  patch: (p: SlideObjectPatch<FilledShape>) => void
+}) {
+  const mode = fillModeOf(obj.fillStyle)
+  const solidHex = numberToHex(obj.fill)
+
+  const setMode = (next: FillMode): void => {
+    if (next === mode) return
+    if (next === 'solid') {
+      patch({ fillStyle: undefined } as unknown as SlideObjectPatch<FilledShape>)
+      return
+    }
+    // Seed a two-stop gradient from the current solid colour + its darker
+    // counterpart so the object doesn't visually flash to white/black.
+    const startColor = obj.fill
+    const endColor = 0x000000
+    const stops: FillGradientStop[] = [
+      { color: startColor, offset: 0 },
+      { color: endColor, offset: 1 },
+    ]
+    if (next === 'linearGradient') {
+      patch({
+        fillStyle: { kind: 'linearGradient', stops, angleDeg: 0 },
+      } as SlideObjectPatch<FilledShape>)
+    } else {
+      patch({ fillStyle: { kind: 'radialGradient', stops } } as SlideObjectPatch<FilledShape>)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Fill</span>
+        <select
+          aria-label="Fill type"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as FillMode)}
+          className="rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        >
+          <option value="solid">Solid</option>
+          <option value="linearGradient">Linear gradient</option>
+          <option value="radialGradient">Radial gradient</option>
+        </select>
+      </div>
+
+      {mode === 'solid' && (
+        <div className="ml-[4.5rem] flex items-center gap-1.5">
+          <input
+            type="color"
+            aria-label="Fill color"
+            value={solidHex}
+            onChange={(e) => patch({ fill: hexToNumber(e.target.value) })}
+            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
           />
           <input
             type="text"
             aria-label="Fill color hex"
-            value={hexValue.toUpperCase()}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => {
+            value={solidHex.toUpperCase()}
+            onChange={(e) => {
               const raw = e.target.value.trim()
               const hex = raw.startsWith('#') ? raw : `#${raw}`
               if (/^#[0-9a-f]{6}$/i.test(hex)) {
                 patch({ fill: hexToNumber(hex) })
               }
             }}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'font-mono text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
+            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
+          />
+        </div>
+      )}
+
+      {(mode === 'linearGradient' || mode === 'radialGradient') && obj.fillStyle !== undefined && (
+        <GradientEditor
+          fillStyle={obj.fillStyle}
+          onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+        />
+      )}
+    </div>
+  )
+}
+
+function GradientEditor({
+  fillStyle,
+  onChange,
+}: {
+  fillStyle: FillStyle
+  onChange: (next: FillStyle) => void
+}) {
+  const stops = fillStyle.stops
+  const stop0 = stops[0] ?? { color: 0xffffff, offset: 0 }
+  const stop1 = stops[stops.length - 1] ?? { color: 0x000000, offset: 1 }
+
+  const setStop = (idx: 0 | 1, color: number): void => {
+    const nextStops = [...stops]
+    if (idx === 0) nextStops[0] = { ...stop0, color }
+    else nextStops[nextStops.length - 1] = { ...stop1, color }
+    onChange({ ...fillStyle, stops: nextStops } as FillStyle)
+  }
+
+  return (
+    <div className="ml-[4.5rem] flex flex-col gap-1">
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 text-[10px] uppercase text-muted-foreground">Start</span>
+        <input
+          type="color"
+          aria-label="Gradient start color"
+          value={numberToHex(stop0.color)}
+          onChange={(e) => setStop(0, hexToNumber(e.target.value))}
+          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+        />
+        <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
+        <input
+          type="color"
+          aria-label="Gradient end color"
+          value={numberToHex(stop1.color)}
+          onChange={(e) => setStop(1, hexToNumber(e.target.value))}
+          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+        />
+      </div>
+      {fillStyle.kind === 'linearGradient' && (
+        <div className="flex items-center gap-1.5">
+          <span className="w-12 text-[10px] uppercase text-muted-foreground">Angle</span>
+          <input
+            type="range"
+            aria-label="Gradient angle"
+            min={0}
+            max={360}
+            value={fillStyle.angleDeg}
+            onChange={(e) =>
+              onChange({ ...fillStyle, angleDeg: Number.parseFloat(e.target.value) })
+            }
+            className="flex-1 accent-primary"
+          />
+          <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
+            {Math.round(fillStyle.angleDeg)}°
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Line / Arrow / Path stroke section
+// ---------------------------------------------------------------------------
+
+function LineStrokeSection({
+  obj,
+  patch,
+}: {
+  obj: LineObject | ArrowObject | PathObject
+  patch: (p: SlideObjectPatch<LineObject | ArrowObject | PathObject>) => void
+}) {
+  const strokeHex = numberToHex(obj.stroke)
+  const dashOn = obj.dash === true
+
+  return (
+    <Section title="Stroke" storageKey="stroke">
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Color</span>
+        <div className="flex flex-1 items-center gap-1.5">
+          <input
+            type="color"
+            aria-label="Stroke color"
+            value={strokeHex}
+            onChange={(e) =>
+              patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<typeof obj>)
+            }
+            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          />
+          <input
+            type="text"
+            aria-label="Stroke color hex"
+            value={strokeHex.toUpperCase()}
+            onChange={(e) => {
+              const raw = e.target.value.trim()
+              const hex = raw.startsWith('#') ? raw : `#${raw}`
+              if (/^#[0-9a-f]{6}$/i.test(hex)) {
+                patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)
+              }
+            }}
+            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
           />
         </div>
       </div>
+
+      <NumberField
+        id={`inspector-sw-${obj.id}`}
+        label="Width"
+        value={obj.strokeWidth}
+        step={0.5}
+        onChange={(v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<typeof obj>)}
+      />
+
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Dashed</span>
+        <input
+          type="checkbox"
+          aria-label="Dashed stroke"
+          checked={dashOn}
+          onChange={(e) =>
+            patch({ dash: e.target.checked ? true : undefined } as unknown as SlideObjectPatch<
+              typeof obj
+            >)
+          }
+          className="h-3.5 w-3.5"
+        />
+      </div>
+
+      {(obj.type === 'line' || obj.type === 'arrow') && (
+        <>
+          <CapPicker
+            label="Start cap"
+            value={obj.startCap ?? 'none'}
+            onChange={(v) =>
+              patch({ startCap: v === 'none' ? undefined : v } as unknown as SlideObjectPatch<
+                typeof obj
+              >)
+            }
+          />
+          <CapPicker
+            label="End cap"
+            value={obj.endCap ?? (obj.type === 'arrow' ? 'arrow' : 'none')}
+            onChange={(v) =>
+              patch({ endCap: v === 'none' ? undefined : v } as unknown as SlideObjectPatch<
+                typeof obj
+              >)
+            }
+          />
+        </>
+      )}
     </Section>
+  )
+}
+
+function CapPicker({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: 'none' | 'round' | 'square' | 'arrow'
+  onChange: (v: 'none' | 'round' | 'square' | 'arrow') => void
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as 'none' | 'round' | 'square' | 'arrow')}
+        className="flex-1 rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+      >
+        <option value="none">None</option>
+        <option value="round">Round</option>
+        <option value="square">Square</option>
+        <option value="arrow">Arrow</option>
+      </select>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Effects section — drop shadow + blur (P5c)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_SHADOW: ShadowStyle = {
+  color: 0x000000,
+  blur: 8,
+  offsetX: 4,
+  offsetY: 4,
+  opacity: 0.5,
+}
+
+function EffectsSection({
+  obj,
+  patch,
+}: {
+  obj: SlideObject
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+}) {
+  const hasShadow = obj.shadow !== undefined
+  const blur = obj.blur ?? 0
+
+  return (
+    <Section title="Effects" storageKey="effects">
+      {/* Shadow */}
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Shadow</span>
+        <input
+          type="checkbox"
+          aria-label="Enable shadow"
+          checked={hasShadow}
+          onChange={(e) =>
+            patch({
+              shadow: e.target.checked ? DEFAULT_SHADOW : undefined,
+            } as unknown as SlideObjectPatch<SlideObject>)
+          }
+          className="h-3.5 w-3.5"
+        />
+      </div>
+
+      {hasShadow && obj.shadow !== undefined && (
+        <ShadowControls
+          shadow={obj.shadow}
+          onChange={(next) => patch({ shadow: next } as SlideObjectPatch<SlideObject>)}
+        />
+      )}
+
+      {/* Blur */}
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Blur</span>
+        <input
+          type="range"
+          aria-label="Blur radius"
+          min={0}
+          max={40}
+          step={1}
+          value={blur}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            patch({ blur: v === 0 ? undefined : v } as unknown as SlideObjectPatch<SlideObject>)
+          }}
+          className="flex-1 accent-primary"
+        />
+        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
+          {Math.round(blur)}
+        </span>
+      </div>
+    </Section>
+  )
+}
+
+function ShadowControls({
+  shadow,
+  onChange,
+}: {
+  shadow: ShadowStyle
+  onChange: (next: ShadowStyle) => void
+}) {
+  return (
+    <div className="ml-[4.5rem] flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
+          Color
+        </span>
+        <input
+          type="color"
+          aria-label="Shadow color"
+          value={numberToHex(shadow.color)}
+          onChange={(e) => onChange({ ...shadow, color: hexToNumber(e.target.value) })}
+          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
+          Opacity
+        </span>
+        <input
+          type="range"
+          aria-label="Shadow opacity"
+          min={0}
+          max={1}
+          step={0.05}
+          value={shadow.opacity}
+          onChange={(e) => onChange({ ...shadow, opacity: Number.parseFloat(e.target.value) })}
+          className="flex-1 accent-primary"
+        />
+        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
+          {Math.round(shadow.opacity * 100)}%
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 text-[10px] uppercase text-muted-foreground">Blur</span>
+        <input
+          type="range"
+          min={0}
+          max={40}
+          step={1}
+          value={shadow.blur}
+          onChange={(e) => onChange({ ...shadow, blur: Number.parseFloat(e.target.value) })}
+          className="flex-1 accent-primary"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 text-[10px] uppercase text-muted-foreground">Offset</span>
+        <input
+          type="number"
+          aria-label="Shadow offset X"
+          value={shadow.offsetX}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            if (Number.isFinite(v)) onChange({ ...shadow, offsetX: v })
+          }}
+          className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        />
+        <input
+          type="number"
+          aria-label="Shadow offset Y"
+          value={shadow.offsetY}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            if (Number.isFinite(v)) onChange({ ...shadow, offsetY: v })
+          }}
+          className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        />
+      </div>
+    </div>
   )
 }
 
@@ -885,7 +1525,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               onChange={(e: ChangeEvent<HTMLInputElement>) => {
                 patch({ color: hexToNumber(e.target.value) })
               }}
-              className="h-6 w-8 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
             />
             <input
               type="text"

@@ -20,6 +20,13 @@ export type {
   SlideObjectType,
   SlideObjectPatch,
   ObjectChangeSet,
+  StrokeStyleFields,
+  CornerRadius,
+  ShadowStyle,
+  FillGradientStop,
+  LinearGradientFill,
+  RadialGradientFill,
+  FillStyle,
 } from './slide.js'
 
 export type {

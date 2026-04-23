@@ -10,6 +10,7 @@
 import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { PathObject, PathAnchor } from '@narrative/shared'
+import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
 const GRAPHICS_TAG = Symbol('pathGraphics')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -101,6 +102,7 @@ export const pathRenderer = {
     container.addChild(g)
     asAny(container)[GRAPHICS_TAG] = g
     applyTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
     return container
   },
   update(node: PixiContainer, prev: PathObject, next: PathObject): void {
@@ -117,10 +119,12 @@ export const pathRenderer = {
       const g = getGraphics(node)
       if (g !== undefined) drawPath(g, next)
     }
+    applyFilterEffects(node, next.shadow, next.blur)
   },
   destroy(node: PixiContainer): void {
     const g = getGraphics(node)
     g?.destroy()
+    destroyFilterEffects(node)
     node.destroy()
   },
 }

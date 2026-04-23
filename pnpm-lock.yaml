@@ -228,6 +228,9 @@ importers:
       oidc-client-ts:
         specifier: ^3.1.0
         version: 3.5.0
+      pixi-filters:
+        specifier: ^6.1.5
+        version: 6.1.5(pixi.js@8.18.1)
       pixi.js:
         specifier: ^8.9.2
         version: 8.18.1
@@ -2993,7 +2996,6 @@ packages:
       }
     cpu: [arm]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.60.2':
     resolution:
@@ -3002,7 +3004,6 @@ packages:
       }
     cpu: [arm]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.60.2':
     resolution:
@@ -3011,7 +3012,6 @@ packages:
       }
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.60.2':
     resolution:
@@ -3020,7 +3020,6 @@ packages:
       }
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.60.2':
     resolution:
@@ -3029,7 +3028,6 @@ packages:
       }
     cpu: [loong64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.60.2':
     resolution:
@@ -3038,7 +3036,6 @@ packages:
       }
     cpu: [loong64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.60.2':
     resolution:
@@ -3047,7 +3044,6 @@ packages:
       }
     cpu: [ppc64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.60.2':
     resolution:
@@ -3056,7 +3052,6 @@ packages:
       }
     cpu: [ppc64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.60.2':
     resolution:
@@ -3065,7 +3060,6 @@ packages:
       }
     cpu: [riscv64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.60.2':
     resolution:
@@ -3074,7 +3068,6 @@ packages:
       }
     cpu: [riscv64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.60.2':
     resolution:
@@ -3083,7 +3076,6 @@ packages:
       }
     cpu: [s390x]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.60.2':
     resolution:
@@ -3092,7 +3084,6 @@ packages:
       }
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.60.2':
     resolution:
@@ -3101,7 +3092,6 @@ packages:
       }
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.60.2':
     resolution:
@@ -3979,6 +3969,12 @@ packages:
     resolution:
       {
         integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==,
+      }
+
+  '@types/gradient-parser@0.1.5':
+    resolution:
+      {
+        integrity: sha512-r7K3NkJz3A95WkVVmjs0NcchhHstC2C/VIYNX4JC6tieviUNo774FFeOHjThr3Vw/WCeMP9kAT77MKbIRlO/4w==,
       }
 
   '@types/json-schema@7.0.15':
@@ -6491,6 +6487,14 @@ packages:
         integrity: sha512-TfySrs/5nm8fQJDcBDuUng3VOUKsd7S+zqvbOTiGXHfxX4wK31ard+hoNuvkicM/2YFzlpDgABOevKSsB4G/FA==,
       }
     engines: { node: '>= 6' }
+
+  pixi-filters@6.1.5:
+    resolution:
+      {
+        integrity: sha512-Ewb/J+kxAbaNN+0/ATJbglAJG+skGJfh7BIDP3ILIDdD6wWk1p0pGa25pVf1T8hGBOQSUNVAmwwJBwkj+cyLLA==,
+      }
+    peerDependencies:
+      pixi.js: '>=8.0.0-0'
 
   pixi.js@8.18.1:
     resolution:
@@ -10535,6 +10539,8 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
+  '@types/gradient-parser@0.1.5': {}
+
   '@types/json-schema@7.0.15': {}
 
   '@types/mysql@2.15.26':
@@ -12010,6 +12016,11 @@ snapshots:
       thread-stream: 3.1.0
 
   pirates@4.0.7: {}
+
+  pixi-filters@6.1.5(pixi.js@8.18.1):
+    dependencies:
+      '@types/gradient-parser': 0.1.5
+      pixi.js: 8.18.1
 
   pixi.js@8.18.1:
     dependencies:

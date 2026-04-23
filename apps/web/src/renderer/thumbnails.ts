@@ -29,6 +29,7 @@ import { Application, Container, Graphics } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
+import { stripFilterEffectsTree } from './filterEffects.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
@@ -109,6 +110,11 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     preference: 'webgl',
     // Prevent Pixi from attaching the canvas to document.body
     antialias: false,
+    // Offscreen app: we drive renders synchronously. Without this the rAF
+    // ticker also renders between our call and extract.base64(), and a
+    // filter crash on a later tick leaks out as an Uncaught TypeError.
+    autoStart: false,
+    sharedTicker: false,
   })
 
   let destroyed = false
@@ -196,6 +202,12 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       slideContainer.destroy({ children: true })
       throw new Error('[ThumbnailRenderer] renderer has been destroyed')
     }
+
+    // P5c: DropShadowFilter + BlurFilter crash the offscreen thumbnail
+    // renderer (BindGroup.setResource null deref). Strip every filter from
+    // the subtree before rendering — thumbnails accept the loss of shadow
+    // and blur in exchange for a render that actually succeeds.
+    stripFilterEffectsTree(slideContainer)
 
     app.stage.addChild(slideContainer)
 

@@ -32,6 +32,7 @@ import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
+import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state stored on Container instances
@@ -275,6 +276,7 @@ export const imageRenderer = {
     setPlaceholder(container, placeholder)
 
     applyObjectTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
 
     // Kick off async load.
     startLoad(container, data)
@@ -333,6 +335,8 @@ export const imageRenderer = {
         }
       }
     }
+
+    applyFilterEffects(node, next.shadow, next.blur)
   },
 
   /**
@@ -471,6 +475,10 @@ export const imageRenderer = {
 
       startLoad(node, synthetic)
     }
+
+    if ('shadow' in patch || 'blur' in patch) {
+      patchFilterEffects(node, 'shadow' in patch, patch.shadow, 'blur' in patch, patch.blur)
+    }
   },
 
   /**
@@ -489,6 +497,7 @@ export const imageRenderer = {
       setAcquiredUrl(node, undefined)
     }
 
+    destroyFilterEffects(node)
     node.destroy({ children: true })
   },
 
