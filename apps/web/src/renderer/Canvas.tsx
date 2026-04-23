@@ -135,7 +135,16 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
         backgroundAlpha: 0,
-        preference: 'webgpu',
+        // Pixi v8 WebGPU BindGroupSystem intermittently null-derefs on the
+        // first render tick when a Graphics instance has a texture-based
+        // fill (image fill, canvas-built gradient fill) — see console
+        // crash: `BindGroupSystem._createBindGroup → reading '2'` inside
+        // GpuGraphicsAdaptor.execute. The WebGL2 renderer path is stable,
+        // the feature set we use (Graphics fills + textures + filters) is
+        // fully covered, and the perf win from WebGPU isn't worth the
+        // reliability hit on a creative tool. Revisit when we upgrade past
+        // pixi.js 8.18.x.
+        preference: 'webgl',
         antialias: true,
       })
 

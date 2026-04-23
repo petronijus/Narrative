@@ -26,6 +26,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useMediaUpload } from '../state/useMediaUpload.js'
 import {
   updateObject,
   addAnimation,
@@ -47,6 +48,7 @@ import type {
   ShadowStyle,
   FillStyle,
   FillGradientStop,
+  ImageFillStyle,
   TextObject,
   SlideObjectPatch,
   AnimationStep,
@@ -998,7 +1000,7 @@ function CornerRadiusRow({
 // Fill picker — solid / linear gradient / radial gradient
 // ---------------------------------------------------------------------------
 
-type FillMode = 'solid' | 'linearGradient' | 'radialGradient'
+type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 
 function fillModeOf(style: FillStyle | undefined): FillMode {
   if (style === undefined) return 'solid'
@@ -1019,6 +1021,13 @@ function FillPicker({
     if (next === mode) return
     if (next === 'solid') {
       patch({ fillStyle: undefined } as unknown as SlideObjectPatch<FilledShape>)
+      return
+    }
+    if (next === 'image') {
+      // Empty assetId ⇒ placeholder until the user picks an upload.
+      patch({
+        fillStyle: { kind: 'image', assetId: '', fit: 'cover' },
+      } as SlideObjectPatch<FilledShape>)
       return
     }
     // Seed a two-stop gradient from the current solid colour + its darker
@@ -1051,6 +1060,7 @@ function FillPicker({
           <option value="solid">Solid</option>
           <option value="linearGradient">Linear gradient</option>
           <option value="radialGradient">Radial gradient</option>
+          <option value="image">Image</option>
         </select>
       </div>
 
@@ -1085,6 +1095,13 @@ function FillPicker({
           onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
         />
       )}
+
+      {mode === 'image' && obj.fillStyle?.kind === 'image' && (
+        <ImageFillEditor
+          fillStyle={obj.fillStyle}
+          onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+        />
+      )}
     </div>
   )
 }
@@ -1096,6 +1113,7 @@ function GradientEditor({
   fillStyle: FillStyle
   onChange: (next: FillStyle) => void
 }) {
+  if (fillStyle.kind === 'image') return null
   const stops = fillStyle.stops
   const stop0 = stops[0] ?? { color: 0xffffff, offset: 0 }
   const stop1 = stops[stops.length - 1] ?? { color: 0x000000, offset: 1 }
@@ -1145,6 +1163,70 @@ function GradientEditor({
             {Math.round(fillStyle.angleDeg)}°
           </span>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Image fill editor — picks an asset via the same upload input used by the
+// toolbar's Insert Image button, plus a fit (cover / contain) toggle.
+// ---------------------------------------------------------------------------
+
+function ImageFillEditor({
+  fillStyle,
+  onChange,
+}: {
+  fillStyle: ImageFillStyle
+  onChange: (next: ImageFillStyle) => void
+}) {
+  const { startUpload } = useMediaUpload()
+  const fileInputId = `inspector-fill-image-${fillStyle.assetId || 'empty'}`
+
+  const onFile = (file: File): void => {
+    startUpload(file, {
+      onDone: (entry) => {
+        if (entry.assetId === undefined || entry.assetId === '') return
+        onChange({ ...fillStyle, assetId: entry.assetId })
+      },
+    })
+  }
+
+  return (
+    <div className="ml-[4.5rem] flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <label
+          htmlFor={fileInputId}
+          className="flex-1 cursor-pointer rounded border border-input field-surface px-2 py-1 text-center text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {fillStyle.assetId === '' ? 'Choose image…' : 'Replace image'}
+        </label>
+        <input
+          id={fileInputId}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f !== undefined) onFile(f)
+            e.currentTarget.value = ''
+          }}
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 text-[10px] uppercase text-muted-foreground">Fit</span>
+        <select
+          aria-label="Image fill fit"
+          value={fillStyle.fit ?? 'cover'}
+          onChange={(e) => onChange({ ...fillStyle, fit: e.target.value as 'cover' | 'contain' })}
+          className="flex-1 rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        >
+          <option value="cover">Cover</option>
+          <option value="contain">Contain</option>
+        </select>
+      </div>
+      {fillStyle.assetId === '' && (
+        <p className="text-[10px] text-muted-foreground/70">Upload an image to fill the shape.</p>
       )}
     </div>
   )

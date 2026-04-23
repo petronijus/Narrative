@@ -92,6 +92,15 @@ export class ResourceManager {
   getRefCount(url: string): number {
     return this.textures.get(url)?.refCount ?? 0
   }
+
+  /**
+   * P5c: sync-friendly cache peek used by image fills on shapes. Does NOT
+   * change ref count — it's a read-only probe so the caller can decide
+   * whether to paint now or wait for an async acquire to finish.
+   */
+  peekTexture(url: string): Texture | null {
+    return this.textures.get(url)?.texture ?? null
+  }
 }
 
 // ---------------------------------------------------------------------------

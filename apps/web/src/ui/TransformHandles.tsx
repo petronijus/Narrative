@@ -54,6 +54,14 @@ interface DragState {
   objectIds: string[]
   /** Počáteční bounds všech vybraných objektů (pro group drag) */
   allInitialBounds: Array<{ id: string; x: number; y: number; w: number; h: number }>
+  /**
+   * Artboard client rect snapshotted at drag start — used by the
+   * rotate handle to convert screen-space mouse positions to
+   * slide-space so the angle math shares a coord system with
+   * `bounds.center`.
+   */
+  artboardLeft: number
+  artboardTop: number
 }
 
 export interface TransformHandlesProps {
@@ -314,6 +322,10 @@ export function TransformHandles({
         return [{ id, x: b.world.x, y: b.world.y, w: b.world.width, h: b.world.height }]
       })
 
+      // Snapshot the artboard's on-screen origin so the rotate handle
+      // can translate mouse events into slide-space.
+      const artboardEl = (e.currentTarget as HTMLElement).closest('.artboard') as HTMLElement | null
+      const rect = artboardEl?.getBoundingClientRect()
       dragRef.current = {
         kind,
         startMouseX: e.clientX,
@@ -321,6 +333,8 @@ export function TransformHandles({
         bounds: currentBounds,
         objectIds: [...objectIds],
         allInitialBounds,
+        artboardLeft: rect?.left ?? 0,
+        artboardTop: rect?.top ?? 0,
       }
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
     },
@@ -340,10 +354,18 @@ export function TransformHandles({
       const shiftHeld = e.shiftKey
 
       if (drag.kind === 'rotate') {
-        // Rotation handle — pouze single-select
+        // Convert both mouse positions to slide-space so they share a
+        // coord system with `bounds.center` (which is slide-space).
+        // atan2 of a vector in a different coord system than its pivot
+        // yields a meaningless angle — that produced the "I pull the
+        // handle right and the object rotates left" bug.
         const center = drag.bounds.center
-        const startAngle = Math.atan2(drag.startMouseY - center.y, drag.startMouseX - center.x)
-        const currentAngle = Math.atan2(e.clientY - center.y, e.clientX - center.x)
+        const sx = (drag.startMouseX - drag.artboardLeft) / z
+        const sy = (drag.startMouseY - drag.artboardTop) / z
+        const cx = (e.clientX - drag.artboardLeft) / z
+        const cy = (e.clientY - drag.artboardTop) / z
+        const startAngle = Math.atan2(sy - center.y, sx - center.x)
+        const currentAngle = Math.atan2(cy - center.y, cx - center.x)
         const deltaAngle = currentAngle - startAngle
         const initialRotation = drag.bounds.rotation
         const newRotation = initialRotation + deltaAngle

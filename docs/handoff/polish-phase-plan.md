@@ -406,6 +406,15 @@ phases create more):
 - **Image fill (deferred from P5c).** Same procedural-texture problem
   plus async resolve from `media_assets` → imgproxy → Pixi texture.
   Share the P12 lifecycle with the gradient fix.
+- **WebGPU preference forced back to WebGL.** `apps/web/src/renderer/Canvas.tsx`
+  currently runs with `preference: 'webgl'`. Pixi v8.18 WebGPU
+  `BindGroupSystem._createBindGroup` intermittently null-derefs on the
+  first render tick when a Graphics has a texture-based fill
+  (image fill, canvas-built gradient fill) — race between
+  `Texture.from(canvas)` upload and WebGPU bind-group construction.
+  Revisit with a newer pixi.js release; repro is "refresh the editor
+  with a shape that has gradient / image fill saved". Expected win:
+  ~1.5–2× draw call throughput for heavy decks.
 
 **Approach (proposed):**
 

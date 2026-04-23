@@ -97,7 +97,21 @@ export interface RadialGradientFill {
   centerX?: number
   centerY?: number
 }
-export type FillStyle = LinearGradientFill | RadialGradientFill
+/**
+ * P5c: image fill — use an uploaded asset (from media_assets) as the
+ * shape's fill instead of a solid colour or gradient. Texture is fetched
+ * through the same imgproxy pipeline as ImageObject so variants + signed
+ * URLs are shared. Cropped/scaled inside the shape according to `fit`:
+ * 'cover' (default) fills the shape and crops overflow, 'contain'
+ * letterboxes the image inside the shape.
+ */
+export interface ImageFillStyle {
+  kind: 'image'
+  assetId: string
+  fit?: 'cover' | 'contain'
+}
+
+export type FillStyle = LinearGradientFill | RadialGradientFill | ImageFillStyle
 
 export type CornerRadius =
   | number

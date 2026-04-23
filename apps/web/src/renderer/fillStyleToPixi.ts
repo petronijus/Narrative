@@ -20,8 +20,8 @@
  * onto the path's local bounds.
  */
 
-import { Texture } from 'pixi.js'
-import type { FillStyle } from '@narrative/shared'
+import { Matrix, Texture } from 'pixi.js'
+import type { FillStyle, ImageFillStyle } from '@narrative/shared'
 
 export interface ResolvedFillInput {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi fill accepts color number, Texture, or object
@@ -146,4 +146,47 @@ export function fillStyleToPixi(
     return { input: { texture } }
   }
   return { input: { color: solidFallback } }
+}
+
+/**
+ * Build the Pixi fill descriptor for an image fill. The texture is
+ * already loaded (caller got it from ensureImageFill).
+ *
+ * We go through `textureSpace: 'local'` so Pixi normalizes the shape
+ * AABB to 0..1 before it applies our matrix's inverse to get the UV.
+ * In that space our matrix expresses "UV → normalized-bounds": at
+ * UV (0,0) the texture's top-left lands at normalized-bounds (tx, ty),
+ * and UV (1,1) lands at (tx + a, ty + d). For `cover`, `a` / `d` are
+ * the texture's world size divided by the shape dim (`>= 1` in the
+ * overflowing axis), and `tx` / `ty` centre the overflow symmetrically.
+ *
+ * Going via `textureSpace: 'global'` would also drop the user matrix
+ * through an additional `.scale(1/texW, 1/texH)` step that shrinks
+ * the gradient by ~`texW` ×, leading to the "texture zoomed in past
+ * a single pixel" look the earlier revision had.
+ */
+export function imageFillToPixiFill(
+  fill: ImageFillStyle,
+  texture: Texture,
+  shapeWidth: number,
+  shapeHeight: number,
+): { texture: Texture; matrix: Matrix; textureSpace: 'local' } {
+  const texW = texture.width
+  const texH = texture.height
+  const fit = fill.fit ?? 'cover'
+  const k =
+    fit === 'cover'
+      ? Math.max(shapeWidth / texW, shapeHeight / texH)
+      : Math.min(shapeWidth / texW, shapeHeight / texH)
+  // Texture size expressed in fractions of the shape AABB.
+  const a = (texW * k) / shapeWidth
+  const d = (texH * k) / shapeHeight
+  const tx = (1 - a) / 2
+  const ty = (1 - d) / 2
+  const m = new Matrix()
+  m.a = a
+  m.d = d
+  m.tx = tx
+  m.ty = ty
+  return { texture, matrix: m, textureSpace: 'local' }
 }

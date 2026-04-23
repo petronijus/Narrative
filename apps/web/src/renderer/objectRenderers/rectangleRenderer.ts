@@ -13,9 +13,10 @@
 import { Container, Graphics } from 'pixi.js'
 import type { RectangleObject } from '../types'
 import type { CornerRadius } from '@narrative/shared'
-import { fillStyleToPixi } from '../fillStyleToPixi.js'
+import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleRoundedRect } from '../strokeDashed.js'
+import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 
 function cornerRadiusEqual(a: CornerRadius | undefined, b: CornerRadius | undefined): boolean {
   if (a === b) return true
@@ -77,11 +78,29 @@ function tracePath(g: Graphics, w: number, h: number, r: RectangleObject['corner
   g.closePath()
 }
 
-function drawRect(graphics: Graphics, data: RectangleObject): void {
+function drawRect(graphics: Graphics, container: Container, data: RectangleObject): void {
   graphics.clear()
   tracePath(graphics, data.width, data.height, data.cornerRadius)
-  const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
-  graphics.fill(resolved.input)
+  if (data.fillStyle?.kind === 'image') {
+    // Image fill: ask the loader for a cached texture. When we hit a
+    // cache miss, null is returned — we paint the solid fallback while
+    // the async chain resolves, and the onReady callback re-enters this
+    // draw routine with the texture in place.
+    const texture = ensureImageFill(container, data.fillStyle, () => {
+      const cached = getCachedData(container)
+      const g = getGraphics(container)
+      if (cached !== undefined && g !== undefined) drawRect(g, container, cached)
+    })
+    if (texture !== null) {
+      graphics.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
+    } else {
+      graphics.fill({ color: data.fill })
+    }
+  } else {
+    releaseImageFill(container)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    graphics.fill(resolved.input)
+  }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
     const w = data.strokeWidth ?? 1
     if (data.strokeDash === true) {
@@ -129,11 +148,11 @@ export const rectangleRenderer = {
     const container = new Container()
     const graphics = new Graphics()
 
-    drawRect(graphics, data)
-    container.addChild(graphics)
-
     asAny(container)[GRAPHICS_TAG] = graphics
     setCachedData(container, data)
+
+    drawRect(graphics, container, data)
+    container.addChild(graphics)
 
     applyObjectTransform(container, data)
 
@@ -168,8 +187,8 @@ export const rectangleRenderer = {
     if (needsRedraw) {
       const graphics = getGraphics(node)
       if (graphics !== undefined) {
-        drawRect(graphics, next)
         setCachedData(node, next)
+        drawRect(graphics, node, next)
       }
     } else {
       setCachedData(node, next)
@@ -253,8 +272,8 @@ export const rectangleRenderer = {
       if (nextFillStyle === undefined)
         delete (next as { fillStyle?: RectangleObject['fillStyle'] }).fillStyle
 
-      drawRect(graphics, next)
       setCachedData(node, next)
+      drawRect(graphics, node, next)
 
       if (geometryChanged) {
         const newPivotX = newWidth / 2
@@ -292,6 +311,7 @@ export const rectangleRenderer = {
    * Uvolní Graphics a Container. Volá se při removeObject.
    */
   destroy(node: Container): void {
+    releaseImageFill(node)
     const graphics = getGraphics(node)
     graphics?.destroy()
     destroyFilterEffects(node)

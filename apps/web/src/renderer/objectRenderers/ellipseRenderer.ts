@@ -16,9 +16,10 @@
 
 import { Container, Graphics } from 'pixi.js'
 import type { EllipseObject } from '../types'
-import { fillStyleToPixi } from '../fillStyleToPixi.js'
+import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleEllipse } from '../strokeDashed.js'
+import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 
 /** Interní tag klíče pro identifikaci Graphics a cached fill uvnitř Containeru. */
 const GRAPHICS_TAG = Symbol('ellipseGraphics')
@@ -53,13 +54,27 @@ function applyObjectTransform(container: Container, data: EllipseObject): void {
   container.y = data.y + data.height / 2
 }
 
-function drawEllipse(graphics: Graphics, data: EllipseObject): void {
+function drawEllipse(graphics: Graphics, container: Container, data: EllipseObject): void {
   graphics.clear()
   // Pixi v8 path API: ellipse(centerX, centerY, halfWidth, halfHeight)
   // Geometrie je vykreslena od (0,0) — container provede transform
   graphics.ellipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
-  const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
-  graphics.fill(resolved.input)
+  if (data.fillStyle?.kind === 'image') {
+    const texture = ensureImageFill(container, data.fillStyle, () => {
+      const cached = getCachedData(container)
+      const g = getGraphics(container)
+      if (cached !== undefined && g !== undefined) drawEllipse(g, container, cached)
+    })
+    if (texture !== null) {
+      graphics.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
+    } else {
+      graphics.fill({ color: data.fill })
+    }
+  } else {
+    releaseImageFill(container)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    graphics.fill(resolved.input)
+  }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
     const w = data.strokeWidth ?? 1
     if (data.strokeDash === true) {
@@ -83,11 +98,11 @@ export const ellipseRenderer = {
     const container = new Container()
     const graphics = new Graphics()
 
-    drawEllipse(graphics, data)
-    container.addChild(graphics)
-
     asAny(container)[GRAPHICS_TAG] = graphics
     setCachedData(container, data)
+
+    drawEllipse(graphics, container, data)
+    container.addChild(graphics)
 
     applyObjectTransform(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
@@ -114,8 +129,8 @@ export const ellipseRenderer = {
     if (needsRedraw) {
       const graphics = getGraphics(node)
       if (graphics !== undefined) {
-        drawEllipse(graphics, next)
         setCachedData(node, next)
+        drawEllipse(graphics, node, next)
       }
     } else {
       setCachedData(node, next)
@@ -189,8 +204,8 @@ export const ellipseRenderer = {
       if (nextFillStyle === undefined)
         delete (next as { fillStyle?: EllipseObject['fillStyle'] }).fillStyle
 
-      drawEllipse(graphics, next)
       setCachedData(node, next)
+      drawEllipse(graphics, node, next)
 
       if (geometryChanged) {
         const newPivotX = newWidth / 2
@@ -226,6 +241,7 @@ export const ellipseRenderer = {
    * Uvolní Graphics a Container. Volá se při removeObject.
    */
   destroy(node: Container): void {
+    releaseImageFill(node)
     const graphics = getGraphics(node)
     graphics?.destroy()
     destroyFilterEffects(node)

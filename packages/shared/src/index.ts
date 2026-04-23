@@ -26,6 +26,7 @@ export type {
   FillGradientStop,
   LinearGradientFill,
   RadialGradientFill,
+  ImageFillStyle,
   FillStyle,
 } from './slide.js'
 
