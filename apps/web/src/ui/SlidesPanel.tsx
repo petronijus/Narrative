@@ -109,6 +109,7 @@ interface SlideItemProps {
   collapsed: boolean
   hidden: boolean
   isActive: boolean
+  isActiveDescendant: boolean
   isSelected: boolean
   isDragging: boolean
   dropIndicatorAbove: boolean
@@ -133,6 +134,7 @@ function SlideItem({
   collapsed,
   hidden,
   isActive,
+  isActiveDescendant,
   isSelected,
   isDragging,
   dropIndicatorAbove,
@@ -176,7 +178,29 @@ function SlideItem({
 
   // Animated show/hide: we render a wrapper that uses grid-template-rows
   // 0fr ↔ 1fr to smoothly collapse a row to zero without measuring.
-  const ringClass = isSelected && !isActive ? 'ring-2 ring-blue-400/70' : ''
+  //
+  // Ring priority (strongest → weakest):
+  //   1. isActive            — bold blue ring, the slide shown in the editor.
+  //   2. isSelected          — multi-select ring (lighter, dashed feel).
+  //   3. isActiveDescendant  — faint tint so a parent selection visually
+  //                            claims its subtree without stealing the eye
+  //                            from the real active slide.
+  //
+  // The ring can't live on the card element itself — the <img> child with
+  // object-cover sits on top of the inset box-shadow, and the outer
+  // `overflow-hidden` wrapper (required by the grid-rows collapse animation)
+  // clips any outside ring. Instead we render a dedicated absolute overlay
+  // sibling on top of the thumbnail so the outline is painted above the img.
+  let overlayBorder: string | null
+  if (isActive) {
+    overlayBorder = 'border-2 border-blue-500'
+  } else if (isSelected) {
+    overlayBorder = 'border-2 border-blue-400/80'
+  } else if (isActiveDescendant) {
+    overlayBorder = 'border-2 border-blue-400/50'
+  } else {
+    overlayBorder = null
+  }
 
   return (
     <div
@@ -233,12 +257,7 @@ function SlideItem({
         >
           <div
             className={[
-              'relative cursor-pointer',
-              isActive
-                ? 'ring-2 ring-blue-500'
-                : ringClass !== ''
-                  ? ringClass
-                  : 'ring-1 ring-gray-700 hover:ring-gray-500',
+              'relative cursor-pointer rounded ring-1 ring-inset ring-gray-700 hover:ring-gray-500',
             ].join(' ')}
             style={{ aspectRatio: '16/9', width: '100%' }}
             onPointerDown={(e) => onPointerDown(e, slide.id, index)}
@@ -273,6 +292,17 @@ function SlideItem({
               >
                 <EyeOff className="h-3 w-3" aria-hidden="true" />
               </span>
+            )}
+
+            {/* Selection / active-descendant outline — rendered as a sibling
+                on top of the thumbnail so the <img> can't occlude it. */}
+            {overlayBorder !== null && (
+              <div
+                aria-hidden="true"
+                className={['pointer-events-none absolute inset-0 rounded', overlayBorder].join(
+                  ' ',
+                )}
+              />
             )}
           </div>
         </div>
@@ -537,6 +567,16 @@ export function SlidesPanel(): JSX.Element {
     }
     return { hasChildrenMap, hiddenIds }
   }, [slides])
+
+  // Descendants of the active slide — used to tint the thumbnails of the
+  // active subtree so a parent selection visually claims its children.
+  const activeDescendants = useMemo(() => {
+    if (activeSlideId === null) return new Set<string>()
+    const idx = slides.findIndex((s) => s.id === activeSlideId)
+    if (idx < 0) return new Set<string>()
+    const ids = subtreeIds(slides, idx)
+    return new Set<string>(ids.slice(1))
+  }, [slides, activeSlideId])
 
   // ---------------------------------------------------------------------------
   // Drag math
@@ -829,6 +869,7 @@ export function SlidesPanel(): JSX.Element {
                   collapsed={slide.collapsed === true}
                   hidden={outline.hiddenIds.has(slide.id)}
                   isActive={slide.id === activeSlideId}
+                  isActiveDescendant={activeDescendants.has(slide.id)}
                   isSelected={selectedIds.has(slide.id)}
                   isDragging={isDragging}
                   dropIndicatorAbove={dropIndicatorAbove}

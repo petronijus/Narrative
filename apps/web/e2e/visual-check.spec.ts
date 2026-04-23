@@ -30,9 +30,8 @@ test('visual — editor in forced DARK theme', async ({ page }) => {
   })
 
   await createDeckAndOpen(page)
-  const rectBtn = page.getByRole('button', { name: /^Rectangle/i })
-  await rectBtn.click()
-  const canvas = page.locator('canvas').first()
+  await page.keyboard.press('r')
+  const canvas = page.locator('.canvas-backdrop').first()
   await canvas.click({ position: { x: 400, y: 260 } })
   await page.waitForTimeout(600)
   await page.screenshot({ path: 'test-results/p1-editor-dark.png', fullPage: true })
@@ -43,9 +42,8 @@ test('visual — editor with one rectangle', async ({ page }) => {
 
   await createDeckAndOpen(page)
 
-  const rectBtn = page.getByRole('button', { name: /^Rectangle/i })
-  await rectBtn.click()
-  const canvas = page.locator('canvas').first()
+  await page.keyboard.press('r')
+  const canvas = page.locator('.canvas-backdrop').first()
   await canvas.click({ position: { x: 400, y: 260 } })
 
   await page.waitForTimeout(800)
@@ -54,8 +52,7 @@ test('visual — editor with one rectangle', async ({ page }) => {
   // Now click back on the rectangle so the Inspector shows Position /
   // Size / Transform / Appearance — the sections with NumberField and
   // color picker chrome the user actually inspects.
-  const selectBtn = page.getByRole('button', { name: /^Select/i })
-  await selectBtn.click()
+  await page.keyboard.press('v')
   await canvas.click({ position: { x: 400, y: 260 } })
   await page.waitForTimeout(500)
   await page.screenshot({ path: 'test-results/p1-editor-selected.png', fullPage: true })
