@@ -38,7 +38,12 @@ import {
   removeObject,
   duplicateObject,
   bulkUpdateObjects,
+  addObjects,
+  moveObjectsLayer,
+  groupObjects,
+  ungroupObjects,
 } from '@narrative/slide-model'
+import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
 import type { SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
@@ -525,21 +530,52 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         return
       }
 
+      // P6: click on a group member selects the whole group. Shift+click
+      // onto a single member still toggles (lets the user peel one member
+      // out of the current selection if they really want).
+      const hitObj = objects.find((o) => o.id === hitId)
+      const hitGroupId = hitObj?.groupId
+      const groupMembers: string[] =
+        hitGroupId !== undefined && hitGroupId !== ''
+          ? objects.filter((o) => o.groupId === hitGroupId).map((o) => o.id)
+          : [hitId]
+
       if (e.shiftKey) {
         // Shift-click: toggle selection, nestart drag
-        toggle(hitId)
+        if (groupMembers.length > 1) {
+          // Whole group toggles atomically.
+          const anySelected = groupMembers.some((id) => selectedIds.has(id))
+          if (anySelected) {
+            const next = new Set(selectedIds)
+            for (const id of groupMembers) next.delete(id)
+            selectMany([...next])
+          } else {
+            selectMany([...selectedIds, ...groupMembers])
+          }
+        } else {
+          toggle(hitId)
+        }
         return
       }
 
       // Normální klik na objekt: nahraď selection + start drag
-      if (!selectedIds.has(hitId)) {
+      if (groupMembers.length > 1) {
+        // If the whole group is already in selection, keep it as-is;
+        // otherwise replace selection with the group members.
+        const allInSelection = groupMembers.every((id) => selectedIds.has(id))
+        if (!allInSelection) selectMany(groupMembers)
+      } else if (!selectedIds.has(hitId)) {
         selectOne(hitId)
       }
 
       // P5a: locked objects can be selected but not moved — filter them out
       // of the drag set. If every hit id is locked, we skip drag entirely so
       // the pointer behaves like a plain selection click.
-      const rawDragIds = selectedIds.has(hitId) ? [...selectedIds] : [hitId]
+      const baseDragIds =
+        groupMembers.length > 1 || selectedIds.has(hitId)
+          ? Array.from(new Set([...selectedIds, ...groupMembers]))
+          : [hitId]
+      const rawDragIds = baseDragIds
       const dragIds = rawDragIds.filter((id) => {
         const obj = objects.find((o) => o.id === id)
         return obj !== undefined && obj.locked !== true
@@ -953,6 +989,65 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             selectMany(newIds)
           }
         }
+        return
+      }
+
+      // Ctrl/Cmd+C — copy selection to clipboard
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey) {
+        if (isInputFocused()) return
+        if (selectedIds.size === 0) return
+        const toCopy = [...selectedIds]
+          .map((id) => objects.find((o) => o.id === id))
+          .filter((o): o is (typeof objects)[number] => o !== undefined)
+        setClipboard(toCopy)
+        return
+      }
+
+      // Ctrl/Cmd+V — paste clipboard
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !e.shiftKey) {
+        if (isInputFocused()) return
+        if (!hasClipboard() || mutationCtx === null) return
+        const pasted = readClipboardForPaste({ x: 10, y: 10 })
+        if (pasted === null || pasted.length === 0) return
+        e.preventDefault()
+        addObjects(mutationCtx, pasted)
+        selectMany(pasted.map((o) => o.id))
+        return
+      }
+
+      // Ctrl/Cmd+G — group. Shift+Cmd+G — ungroup.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+        if (isInputFocused()) return
+        if (mutationCtx === null) return
+        e.preventDefault()
+        if (e.shiftKey) {
+          ungroupObjects(mutationCtx, [...selectedIds])
+        } else if (selectedIds.size >= 2) {
+          groupObjects(mutationCtx, [...selectedIds])
+        }
+        return
+      }
+
+      // Layer order: [ = backward, ] = forward.
+      // Ctrl/Cmd+[ = send to back, Ctrl/Cmd+] = bring to front.
+      if (e.key === '[' || e.key === ']') {
+        if (isInputFocused()) return
+        if (mutationCtx === null || selectedIds.size === 0) return
+        e.preventDefault()
+        const ids = [...selectedIds]
+        if (e.ctrlKey || e.metaKey) {
+          moveObjectsLayer(mutationCtx, ids, e.key === ']' ? 'front' : 'back')
+        } else {
+          moveObjectsLayer(mutationCtx, ids, e.key === ']' ? 'forward' : 'backward')
+        }
+        return
+      }
+
+      // Ctrl/Cmd+A — select everything on the active slide
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        if (isInputFocused()) return
+        e.preventDefault()
+        selectMany(objects.map((o) => o.id))
         return
       }
 

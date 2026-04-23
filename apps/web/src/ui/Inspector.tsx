@@ -33,8 +33,18 @@ import {
   removeAnimation,
   updateSlideTransition,
   updateSlideBackground,
+  alignObjects,
+  distributeObjects,
+  moveObjectsLayer,
+  groupObjects,
+  ungroupObjects,
 } from '@narrative/slide-model'
-import type { AnimationsMutationContext } from '@narrative/slide-model'
+import type {
+  AnimationsMutationContext,
+  AlignAxis,
+  DistributeAxis,
+  LayerMove,
+} from '@narrative/slide-model'
 import type {
   SlideObject,
   RectangleObject,
@@ -197,17 +207,9 @@ export function Inspector() {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
-  // Multi-select placeholder
+  // Multi-select inspector — align / distribute / layer order.
   if (selectedIds.size > 1) {
-    return (
-      <div className="flex flex-1 items-center justify-center px-3 text-center">
-        <p className="text-xs text-muted-foreground/80">
-          Multi-select — {selectedIds.size} objects selected.
-          <br />
-          Inspector not supported yet.
-        </p>
-      </div>
-    )
+    return <MultiSelectInspector selectedIds={[...selectedIds]} />
   }
 
   if (selectedId === null) {
@@ -396,6 +398,167 @@ export function Inspector() {
 // ---------------------------------------------------------------------------
 // SlideInspector — shown when no object is selected (M9)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Multi-select inspector — P6 object operations
+// ---------------------------------------------------------------------------
+
+function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
+  const { objectsCtx: mutationCtx } = useSlideObjects()
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
+  if (mutationCtx === null) return null
+
+  const runAlign = (axis: AlignAxis): void => {
+    if (!isViewer) alignObjects(mutationCtx, selectedIds, axis)
+  }
+  const runDistribute = (axis: DistributeAxis): void => {
+    if (!isViewer) distributeObjects(mutationCtx, selectedIds, axis)
+  }
+  const runLayer = (move: LayerMove): void => {
+    if (!isViewer) moveObjectsLayer(mutationCtx, selectedIds, move)
+  }
+  const runGroup = (): void => {
+    if (!isViewer) groupObjects(mutationCtx, selectedIds)
+  }
+  const runUngroup = (): void => {
+    if (!isViewer) ungroupObjects(mutationCtx, selectedIds)
+  }
+
+  return (
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
+      <Section title={`${selectedIds.length} objects`} storageKey="multi-header">
+        <p className="text-[10px] text-muted-foreground/70">
+          Align, distribute + layer actions apply to every selected object.
+        </p>
+      </Section>
+      <Section title="Align" storageKey="multi-align">
+        <div className="grid grid-cols-6 gap-1">
+          <MultiButton
+            label="L"
+            title="Align left"
+            onClick={() => runAlign('left')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="C"
+            title="Align horizontal center"
+            onClick={() => runAlign('center-x')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="R"
+            title="Align right"
+            onClick={() => runAlign('right')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="T"
+            title="Align top"
+            onClick={() => runAlign('top')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="M"
+            title="Align vertical middle"
+            onClick={() => runAlign('center-y')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="B"
+            title="Align bottom"
+            onClick={() => runAlign('bottom')}
+            disabled={isViewer}
+          />
+        </div>
+      </Section>
+      <Section title="Distribute" storageKey="multi-distribute">
+        <div className="grid grid-cols-2 gap-1">
+          <MultiButton
+            label="Distribute H"
+            title="Distribute horizontally"
+            onClick={() => runDistribute('horizontal')}
+            disabled={isViewer || selectedIds.length < 3}
+          />
+          <MultiButton
+            label="Distribute V"
+            title="Distribute vertically"
+            onClick={() => runDistribute('vertical')}
+            disabled={isViewer || selectedIds.length < 3}
+          />
+        </div>
+      </Section>
+      <Section title="Layer order" storageKey="multi-layer">
+        <div className="grid grid-cols-2 gap-1">
+          <MultiButton
+            label="⤒ Front"
+            title="Bring to front (Cmd+])"
+            onClick={() => runLayer('front')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="↑ Forward"
+            title="Bring forward (])"
+            onClick={() => runLayer('forward')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="↓ Backward"
+            title="Send backward ([)"
+            onClick={() => runLayer('backward')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="⤓ Back"
+            title="Send to back (Cmd+[)"
+            onClick={() => runLayer('back')}
+            disabled={isViewer}
+          />
+        </div>
+      </Section>
+      <Section title="Group" storageKey="multi-group">
+        <div className="grid grid-cols-2 gap-1">
+          <MultiButton
+            label="Group"
+            title="Group (Cmd+G)"
+            onClick={runGroup}
+            disabled={isViewer || selectedIds.length < 2}
+          />
+          <MultiButton
+            label="Ungroup"
+            title="Ungroup (Shift+Cmd+G)"
+            onClick={runUngroup}
+            disabled={isViewer}
+          />
+        </div>
+      </Section>
+    </div>
+  )
+}
+
+function MultiButton({
+  label,
+  title,
+  onClick,
+  disabled,
+}: {
+  label: string
+  title: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {label}
+    </button>
+  )
+}
 
 /**
  * Slide-level inspector: shows transition settings for the active slide.

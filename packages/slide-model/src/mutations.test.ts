@@ -9,11 +9,18 @@ import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
 import {
   addObject,
+  addObjects,
   removeObject,
   updateObject,
   createObjectOfType,
   duplicateObject,
   bulkUpdateObjects,
+  moveObjectsLayer,
+  alignObjects,
+  distributeObjects,
+  groupObjects,
+  ungroupObjects,
+  getGroupMembers,
   LOCAL_ORIGIN,
   type ObjectsMutationContext,
   type BulkUpdate,
@@ -662,5 +669,139 @@ describe('bulkUpdateObjects', () => {
     expect(ctx.objects.length).toBe(2)
     expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x).toBe(origX1)
     expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x).toBe(origX2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P6: layer order + align + distribute + group
+// ---------------------------------------------------------------------------
+
+describe('P6 object operations', () => {
+  function seed3(ctx: ObjectsMutationContext) {
+    const mk = (id: string, x: number, y: number, w = 100, h = 100): RectangleObject => ({
+      id,
+      type: 'rectangle',
+      x,
+      y,
+      width: w,
+      height: h,
+      rotation: 0,
+      opacity: 1,
+      fill: 0x4060e0,
+    })
+    addObject(ctx, mk('a', 0, 0))
+    addObject(ctx, mk('b', 200, 0))
+    addObject(ctx, mk('c', 400, 0))
+  }
+
+  it('moveObjectsLayer front → selected ends up last in Y.Array', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    moveObjectsLayer(ctx, ['a'], 'front')
+    const ids = [
+      ctx.objects.get(0).get('id'),
+      ctx.objects.get(1).get('id'),
+      ctx.objects.get(2).get('id'),
+    ]
+    expect(ids).toEqual(['b', 'c', 'a'])
+  })
+
+  it('moveObjectsLayer back → selected ends up first in Y.Array', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    moveObjectsLayer(ctx, ['c'], 'back')
+    const ids = [
+      ctx.objects.get(0).get('id'),
+      ctx.objects.get(1).get('id'),
+      ctx.objects.get(2).get('id'),
+    ]
+    expect(ids).toEqual(['c', 'a', 'b'])
+  })
+
+  it('alignObjects left snaps every object to union left edge', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    alignObjects(ctx, ['a', 'b', 'c'], 'left')
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x).toBe(0)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x).toBe(0)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(2)).x).toBe(0)
+  })
+
+  it('alignObjects center-x centers every object on union midpoint', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    alignObjects(ctx, ['a', 'b', 'c'], 'center-x')
+    // Union: 0..500. Midpoint 250. Each 100 wide → x = 250 - 50 = 200.
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(0)).x).toBe(200)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(1)).x).toBe(200)
+    expect(yMapToPlainObject<RectangleObject>(ctx.objects.get(2)).x).toBe(200)
+  })
+
+  it('distributeObjects horizontal → equal gaps between objects', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    // a at x=0, c at x=400. Middle b should land so gap(a,b) == gap(b,c).
+    distributeObjects(ctx, ['a', 'b', 'c'], 'horizontal')
+    const a = yMapToPlainObject<RectangleObject>(ctx.objects.get(0))
+    const b = yMapToPlainObject<RectangleObject>(ctx.objects.get(1))
+    const c = yMapToPlainObject<RectangleObject>(ctx.objects.get(2))
+    expect(a.x).toBe(0)
+    expect(c.x).toBe(400)
+    // Gap before b = b.x - (a.x + a.width) = b.x - 100. After b = c.x - (b.x + 100).
+    expect(b.x - 100).toBe(c.x - b.x - 100)
+  })
+
+  it('groupObjects assigns the same groupId to all members', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    groupObjects(ctx, ['a', 'b'])
+    const ga = ctx.objects.get(0).get('groupId')
+    const gb = ctx.objects.get(1).get('groupId')
+    const gc = ctx.objects.get(2).get('groupId')
+    expect(typeof ga).toBe('string')
+    expect(ga).toBe(gb)
+    expect(gc).toBeUndefined()
+  })
+
+  it('ungroupObjects removes groupId', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    groupObjects(ctx, ['a', 'b'])
+    ungroupObjects(ctx, ['a', 'b'])
+    expect(ctx.objects.get(0).get('groupId')).toBeUndefined()
+    expect(ctx.objects.get(1).get('groupId')).toBeUndefined()
+  })
+
+  it('getGroupMembers expands a single id into all group siblings', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    groupObjects(ctx, ['a', 'c'])
+    const members = getGroupMembers(ctx, 'a').sort()
+    expect(members).toEqual(['a', 'c'])
+  })
+
+  it('getGroupMembers on an ungrouped object returns just that id', () => {
+    const ctx = makeCtx()
+    seed3(ctx)
+    expect(getGroupMembers(ctx, 'b')).toEqual(['b'])
+  })
+
+  it('addObjects pushes multiple objects in one transaction', () => {
+    const ctx = makeCtx()
+    const mk = (id: string, x: number): RectangleObject => ({
+      id,
+      type: 'rectangle',
+      x,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      fill: 0x4060e0,
+    })
+    addObjects(ctx, [mk('x', 0), mk('y', 100), mk('z', 200)])
+    expect(ctx.objects.length).toBe(3)
+    expect(ctx.objects.get(0).get('id')).toBe('x')
+    expect(ctx.objects.get(2).get('id')).toBe('z')
   })
 })

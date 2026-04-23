@@ -209,6 +209,318 @@ export function bulkUpdateObjects(ctx: ObjectsMutationContext, updates: BulkUpda
 }
 
 // ---------------------------------------------------------------------------
+// P6: layer order (z-order)
+// ---------------------------------------------------------------------------
+
+export type LayerMove = 'front' | 'back' | 'forward' | 'backward'
+
+/**
+ * Reorder objects in the Y.Array according to a layer-order intent.
+ * Y.Array index 0 = back, last = front (matches SceneGraph reconciliation
+ * walk that addChilds in order).
+ *
+ * `front`: move selected to the end. `back`: move to the start.
+ * `forward`: each selected jumps past one unselected neighbour toward front.
+ * `backward`: symmetric toward back.
+ *
+ * Multi-id semantics: selected objects keep their relative order; the group
+ * moves as a block. For `forward` / `backward` the block shifts by one
+ * position past the nearest unselected neighbour.
+ */
+export function moveObjectsLayer(
+  ctx: ObjectsMutationContext,
+  ids: ReadonlyArray<string>,
+  move: LayerMove,
+): void {
+  if (ids.length === 0) return
+  ctx.doc.transact(() => {
+    const arr = ctx.objects
+    const idSet = new Set(ids)
+    const currentOrder: Array<{ id: string; selected: boolean }> = []
+    for (let i = 0; i < arr.length; i++) {
+      const id = arr.get(i).get('id') as string
+      currentOrder.push({ id, selected: idSet.has(id) })
+    }
+    const selectedBlock = currentOrder.filter((e) => e.selected).map((e) => e.id)
+    const unselected = currentOrder.filter((e) => !e.selected).map((e) => e.id)
+    if (selectedBlock.length === 0) return
+
+    let nextOrder: string[]
+    if (move === 'front') {
+      nextOrder = [...unselected, ...selectedBlock]
+    } else if (move === 'back') {
+      nextOrder = [...selectedBlock, ...unselected]
+    } else {
+      // forward / backward — shift selected block by one past the next
+      // unselected neighbour.
+      const indexOfFirstSelected = currentOrder.findIndex((e) => e.selected)
+      const indexOfLastSelected = (() => {
+        for (let i = currentOrder.length - 1; i >= 0; i--) {
+          if (currentOrder[i]!.selected) return i
+        }
+        return -1
+      })()
+      if (move === 'forward') {
+        if (indexOfLastSelected >= currentOrder.length - 1) return
+        // Swap the block with the single element after it.
+        const neighbour = currentOrder[indexOfLastSelected + 1]!
+        nextOrder = []
+        for (let i = 0; i < currentOrder.length; i++) {
+          if (i === indexOfFirstSelected) {
+            nextOrder.push(neighbour.id)
+          } else if (currentOrder[i]!.selected) {
+            // selected items shift back by one relative to the block
+            nextOrder.push(currentOrder[i]!.id)
+          } else if (i === indexOfLastSelected + 1) {
+            // already placed as neighbour
+          } else {
+            nextOrder.push(currentOrder[i]!.id)
+          }
+        }
+      } else {
+        // backward
+        if (indexOfFirstSelected <= 0) return
+        const neighbour = currentOrder[indexOfFirstSelected - 1]!
+        nextOrder = []
+        for (let i = 0; i < currentOrder.length; i++) {
+          if (i === indexOfFirstSelected - 1) {
+            // skip, will be placed after block
+          } else if (currentOrder[i]!.selected) {
+            nextOrder.push(currentOrder[i]!.id)
+          } else if (i === indexOfLastSelected) {
+            nextOrder.push(currentOrder[i]!.id)
+            nextOrder.push(neighbour.id)
+          } else {
+            nextOrder.push(currentOrder[i]!.id)
+          }
+        }
+      }
+    }
+
+    // Apply the reorder by snapshotting each YMap, deleting all, and
+    // re-inserting in the new order. Y.Array has no `move` primitive.
+    const snapshots = new Map<string, Record<string, unknown>>()
+    for (let i = 0; i < arr.length; i++) {
+      const m = arr.get(i)
+      snapshots.set(
+        m.get('id') as string,
+        Object.fromEntries(m.entries()) as Record<string, unknown>,
+      )
+    }
+    arr.delete(0, arr.length)
+    for (const id of nextOrder) {
+      const plain = snapshots.get(id)
+      if (plain === undefined) continue
+      const ym = new Y.Map<unknown>()
+      for (const [key, value] of Object.entries(plain)) ym.set(key, value)
+      arr.push([ym])
+    }
+  }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
+// P6: align + distribute
+// ---------------------------------------------------------------------------
+
+export type AlignAxis = 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom'
+export type DistributeAxis = 'horizontal' | 'vertical'
+
+interface Rect {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function readRect(yMap: Y.Map<unknown>): Rect {
+  return {
+    id: yMap.get('id') as string,
+    x: (yMap.get('x') as number) ?? 0,
+    y: (yMap.get('y') as number) ?? 0,
+    width: (yMap.get('width') as number) ?? 0,
+    height: (yMap.get('height') as number) ?? 0,
+  }
+}
+
+/**
+ * Align selected objects along an axis. Alignment uses the union bounding
+ * box of the selection as the reference — "left" snaps every object's
+ * left edge to the left edge of the union, "center-x" to its horizontal
+ * midpoint, etc. Matches Figma / Keynote expectations.
+ */
+export function alignObjects(
+  ctx: ObjectsMutationContext,
+  ids: ReadonlyArray<string>,
+  axis: AlignAxis,
+): void {
+  if (ids.length < 2) return
+  ctx.doc.transact(() => {
+    const rects: Rect[] = []
+    for (let i = 0; i < ctx.objects.length; i++) {
+      const m = ctx.objects.get(i)
+      if (ids.includes(m.get('id') as string)) rects.push(readRect(m))
+    }
+    if (rects.length < 2) return
+
+    const minX = Math.min(...rects.map((r) => r.x))
+    const maxX = Math.max(...rects.map((r) => r.x + r.width))
+    const minY = Math.min(...rects.map((r) => r.y))
+    const maxY = Math.max(...rects.map((r) => r.y + r.height))
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+
+    for (const r of rects) {
+      const idx = findIndexById(ctx.objects, r.id)
+      if (idx === -1) continue
+      const m = ctx.objects.get(idx)
+      switch (axis) {
+        case 'left':
+          m.set('x', minX)
+          break
+        case 'center-x':
+          m.set('x', cx - r.width / 2)
+          break
+        case 'right':
+          m.set('x', maxX - r.width)
+          break
+        case 'top':
+          m.set('y', minY)
+          break
+        case 'center-y':
+          m.set('y', cy - r.height / 2)
+          break
+        case 'bottom':
+          m.set('y', maxY - r.height)
+          break
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Distribute >= 3 objects with even spacing between adjacent edges along
+ * the chosen axis. End objects keep their positions; interior objects
+ * shift so the gaps are uniform. Figma convention.
+ */
+export function distributeObjects(
+  ctx: ObjectsMutationContext,
+  ids: ReadonlyArray<string>,
+  axis: DistributeAxis,
+): void {
+  if (ids.length < 3) return
+  ctx.doc.transact(() => {
+    const rects: Rect[] = []
+    for (let i = 0; i < ctx.objects.length; i++) {
+      const m = ctx.objects.get(i)
+      if (ids.includes(m.get('id') as string)) rects.push(readRect(m))
+    }
+    if (rects.length < 3) return
+
+    if (axis === 'horizontal') {
+      rects.sort((a, b) => a.x - b.x)
+      const first = rects[0]!
+      const last = rects[rects.length - 1]!
+      const totalSpan = last.x + last.width - first.x
+      const sumWidths = rects.reduce((acc, r) => acc + r.width, 0)
+      const gap = (totalSpan - sumWidths) / (rects.length - 1)
+      let cursor = first.x
+      for (const r of rects) {
+        const idx = findIndexById(ctx.objects, r.id)
+        if (idx === -1) continue
+        ctx.objects.get(idx).set('x', cursor)
+        cursor += r.width + gap
+      }
+    } else {
+      rects.sort((a, b) => a.y - b.y)
+      const first = rects[0]!
+      const last = rects[rects.length - 1]!
+      const totalSpan = last.y + last.height - first.y
+      const sumHeights = rects.reduce((acc, r) => acc + r.height, 0)
+      const gap = (totalSpan - sumHeights) / (rects.length - 1)
+      let cursor = first.y
+      for (const r of rects) {
+        const idx = findIndexById(ctx.objects, r.id)
+        if (idx === -1) continue
+        ctx.objects.get(idx).set('y', cursor)
+        cursor += r.height + gap
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
+// P6: group / ungroup
+// ---------------------------------------------------------------------------
+
+/**
+ * Assign a fresh groupId to every selected object. Any prior groupId is
+ * overwritten (no nested groups for now — Keynote-ish behaviour).
+ */
+export function groupObjects(ctx: ObjectsMutationContext, ids: ReadonlyArray<string>): string {
+  const groupId = nanoid()
+  if (ids.length === 0) return groupId
+  ctx.doc.transact(() => {
+    for (const id of ids) {
+      const idx = findIndexById(ctx.objects, id)
+      if (idx === -1) continue
+      ctx.objects.get(idx).set('groupId', groupId)
+    }
+  }, LOCAL_ORIGIN)
+  return groupId
+}
+
+/** Clear the groupId on every selected object. */
+export function ungroupObjects(ctx: ObjectsMutationContext, ids: ReadonlyArray<string>): void {
+  if (ids.length === 0) return
+  ctx.doc.transact(() => {
+    for (const id of ids) {
+      const idx = findIndexById(ctx.objects, id)
+      if (idx === -1) continue
+      ctx.objects.get(idx).delete('groupId')
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Read the groupId of an object (helper for selection expansion — a
+ * click on one group member should select the whole group).
+ */
+export function getGroupMembers(ctx: ObjectsMutationContext, id: string): string[] {
+  const idx = findIndexById(ctx.objects, id)
+  if (idx === -1) return [id]
+  const groupId = ctx.objects.get(idx).get('groupId') as string | undefined
+  if (groupId === undefined || groupId === '') return [id]
+  const members: string[] = []
+  for (let i = 0; i < ctx.objects.length; i++) {
+    const m = ctx.objects.get(i)
+    if ((m.get('groupId') as string | undefined) === groupId) {
+      members.push(m.get('id') as string)
+    }
+  }
+  return members
+}
+
+// ---------------------------------------------------------------------------
+// P6: bulk clone (paste)
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a batch of plain SlideObject records to the Y.Array. Each entry
+ * must have a fresh id (caller's responsibility — usually from the
+ * clipboard helper that regenerates ids on paste). Stamped in one
+ * transaction so a paste is one undo step.
+ */
+export function addObjects(ctx: ObjectsMutationContext, objects: ReadonlyArray<SlideObject>): void {
+  if (objects.length === 0) return
+  ctx.doc.transact(() => {
+    for (const obj of objects) {
+      ctx.objects.push([plainObjectToYMap(obj)])
+    }
+  }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
 // Interní helper
 // ---------------------------------------------------------------------------
 
