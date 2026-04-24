@@ -182,6 +182,14 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       instanceRef.current = { app, sceneGraph, resourceManager, compositor }
       setPixiReady(true)
 
+      // E2E hook (P6): expose the live SceneGraph so Playwright specs can
+      // assert that the Pixi side is in sync with Y.Doc after layer
+      // reorder. Dev-only — stripped from prod bundles.
+      if (import.meta.env.DEV) {
+        ;(window as unknown as { __narrative_scene_graph?: SceneGraph }).__narrative_scene_graph =
+          sceneGraph
+      }
+
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
       for (const pending of pendingChangesRef.current) {

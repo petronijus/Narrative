@@ -250,7 +250,26 @@ export class SceneGraph {
       this.addObject(obj)
     }
 
-    // 3. Update (patch-based)
+    // 3. Re-sync Pixi child order to match Y.Array / `changes.snapshot`.
+    // `addObject` appends to the end of root.children; without this
+    // step a layer-order mutation that expressed itself as "removed X +
+    // added X" would leave X drawn on top even though Y.Doc moved it
+    // to the back. The artboard-background container (P2) is pinned at
+    // child 0, so object containers live from `bgOffset` onward.
+    const bgOffset = this.backgroundContainer !== null ? 1 : 0
+    for (let i = 0; i < changes.snapshot.length; i++) {
+      const obj = changes.snapshot[i]
+      if (obj === undefined) continue
+      const node = this.nodes.get(obj.id)
+      if (node === undefined) continue
+      const targetIdx = i + bgOffset
+      const currentIdx = this.root.getChildIndex(node.container)
+      if (currentIdx !== targetIdx && targetIdx < this.root.children.length) {
+        this.root.setChildIndex(node.container, targetIdx)
+      }
+    }
+
+    // 4. Update (patch-based)
     for (const { id, patch } of changes.updated) {
       const node = this.nodes.get(id)
       const type = this.nodeTypes.get(id)
@@ -310,6 +329,15 @@ export class SceneGraph {
    */
   getContainer(id: string): Container | undefined {
     return this.nodes.get(id)?.container
+  }
+
+  /**
+   * P6 E2E: full list of ids currently mounted in the scene graph. Used
+   * by Playwright specs to assert the Pixi side matches Y.Doc after a
+   * layer reorder.
+   */
+  getMountedIds(): string[] {
+    return [...this.nodes.keys()]
   }
 
   /**
