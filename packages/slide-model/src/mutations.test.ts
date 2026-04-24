@@ -718,6 +718,45 @@ describe('P6 object operations', () => {
     expect(ids).toEqual(['c', 'a', 'b'])
   })
 
+  it('moveObjectsLayer forward on a single middle object shifts it past one neighbour', () => {
+    const ctx = makeCtx()
+    seed3(ctx) // [a, b, c]
+    moveObjectsLayer(ctx, ['b'], 'forward')
+    const ids = [
+      ctx.objects.get(0).get('id'),
+      ctx.objects.get(1).get('id'),
+      ctx.objects.get(2).get('id'),
+    ]
+    expect(ids).toEqual(['a', 'c', 'b'])
+    // All 3 objects still present — the old bug dropped the selected id.
+    expect(ctx.objects.length).toBe(3)
+  })
+
+  it('moveObjectsLayer backward on a single middle object shifts it past one neighbour', () => {
+    const ctx = makeCtx()
+    seed3(ctx) // [a, b, c]
+    moveObjectsLayer(ctx, ['b'], 'backward')
+    const ids = [
+      ctx.objects.get(0).get('id'),
+      ctx.objects.get(1).get('id'),
+      ctx.objects.get(2).get('id'),
+    ]
+    expect(ids).toEqual(['b', 'a', 'c'])
+    expect(ctx.objects.length).toBe(3)
+  })
+
+  it('moveObjectsLayer forward at the top edge is a no-op', () => {
+    const ctx = makeCtx()
+    seed3(ctx) // [a, b, c]
+    moveObjectsLayer(ctx, ['c'], 'forward')
+    const ids = [
+      ctx.objects.get(0).get('id'),
+      ctx.objects.get(1).get('id'),
+      ctx.objects.get(2).get('id'),
+    ]
+    expect(ids).toEqual(['a', 'b', 'c'])
+  })
+
   it('alignObjects left snaps every object to union left edge', () => {
     const ctx = makeCtx()
     seed3(ctx)

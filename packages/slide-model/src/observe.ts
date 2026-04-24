@@ -152,11 +152,16 @@ export function subscribeToObjectChangesWithFlush(
   // Interní snapshot — udržujeme aktuální stav pro výpočet snapshot field a inicializaci
   // Key = id, value = plain SlideObject
   const currentSnapshot = new Map<string, SlideObject>()
+  // Poslední emitovaný order — potřebný pro detekci reorderu uvnitř flush
+  // (delete-all + push-all v rámci jednoho rAF ticku vypadá jako net-zero
+  //  podle id setu, ale Y.Array pořadí se změní a consumery musí dostat event).
+  let lastEmittedOrder: string[] = []
 
   // Inicializuj snapshot z aktuálního stavu doc
   for (let i = 0; i < ctx.objects.length; i++) {
     const obj = yMapToPlainObject(ctx.objects.get(i))
     currentSnapshot.set(obj.id, obj)
+    lastEmittedOrder.push(obj.id)
   }
 
   // Pending batch — akumulují se zde changes než přijde flush
@@ -245,24 +250,36 @@ export function subscribeToObjectChangesWithFlush(
 
     // Compute ordered snapshot z Y.Array (pro správné pořadí)
     const snapshot: SlideObject[] = []
+    const currentOrder: string[] = []
     for (let i = 0; i < ctx.objects.length; i++) {
       const id = ctx.objects.get(i).get('id') as string | undefined
       if (id !== undefined) {
         const obj = currentSnapshot.get(id)
         if (obj !== undefined) {
           snapshot.push(obj)
+          currentOrder.push(id)
         }
       }
     }
 
-    // Emituj jen pokud jsou skutečné changes
-    if (netAdded.length > 0 || netRemoved.length > 0 || netUpdated.length > 0) {
+    // P6: detekce čistého reorderu (Y.Array má novou sekvenci id, ale
+    // net-zero zjedl added/removed). Layer-order mutations používají
+    // delete-all + push-all; bez této detekce consumery (React state +
+    // Pixi reconciler) dostanou žádnou notifikaci a UI zůstane stale.
+    let orderChanged = currentOrder.length !== lastEmittedOrder.length
+    for (let i = 0; !orderChanged && i < currentOrder.length; i++) {
+      if (currentOrder[i] !== lastEmittedOrder[i]) orderChanged = true
+    }
+
+    // Emituj jen pokud jsou skutečné changes (nebo reorder)
+    if (netAdded.length > 0 || netRemoved.length > 0 || netUpdated.length > 0 || orderChanged) {
       callback({
         added: netAdded,
         removed: netRemoved,
         updated: netUpdated,
         snapshot,
       })
+      lastEmittedOrder = currentOrder
     }
 
     dispatching = false

@@ -236,85 +236,125 @@ export function moveObjectsLayer(
   ctx.doc.transact(() => {
     const arr = ctx.objects
     const idSet = new Set(ids)
-    const currentOrder: Array<{ id: string; selected: boolean }> = []
+    const currentOrder: string[] = []
     for (let i = 0; i < arr.length; i++) {
-      const id = arr.get(i).get('id') as string
-      currentOrder.push({ id, selected: idSet.has(id) })
+      currentOrder.push(arr.get(i).get('id') as string)
     }
-    const selectedBlock = currentOrder.filter((e) => e.selected).map((e) => e.id)
-    const unselected = currentOrder.filter((e) => !e.selected).map((e) => e.id)
-    if (selectedBlock.length === 0) return
+    const selected = currentOrder.filter((id) => idSet.has(id))
+    const unselected = currentOrder.filter((id) => !idSet.has(id))
+    if (selected.length === 0) return
+
+    const firstSelectedOriginalIdx = currentOrder.findIndex((id) => idSet.has(id))
+    const lastSelectedOriginalIdx = (() => {
+      for (let i = currentOrder.length - 1; i >= 0; i--) {
+        if (idSet.has(currentOrder[i]!)) return i
+      }
+      return -1
+    })()
+    const unselectedBeforeBlock = currentOrder
+      .slice(0, firstSelectedOriginalIdx)
+      .filter((id) => !idSet.has(id)).length
 
     let nextOrder: string[]
     if (move === 'front') {
-      nextOrder = [...unselected, ...selectedBlock]
+      nextOrder = [...unselected, ...selected]
     } else if (move === 'back') {
-      nextOrder = [...selectedBlock, ...unselected]
+      nextOrder = [...selected, ...unselected]
+    } else if (move === 'forward') {
+      if (lastSelectedOriginalIdx >= currentOrder.length - 1) return
+      const insertAt = Math.min(unselected.length, unselectedBeforeBlock + 1)
+      nextOrder = [...unselected.slice(0, insertAt), ...selected, ...unselected.slice(insertAt)]
     } else {
-      // forward / backward — shift selected block by one past the next
-      // unselected neighbour.
-      const indexOfFirstSelected = currentOrder.findIndex((e) => e.selected)
-      const indexOfLastSelected = (() => {
-        for (let i = currentOrder.length - 1; i >= 0; i--) {
-          if (currentOrder[i]!.selected) return i
-        }
-        return -1
-      })()
-      if (move === 'forward') {
-        if (indexOfLastSelected >= currentOrder.length - 1) return
-        // Swap the block with the single element after it.
-        const neighbour = currentOrder[indexOfLastSelected + 1]!
-        nextOrder = []
-        for (let i = 0; i < currentOrder.length; i++) {
-          if (i === indexOfFirstSelected) {
-            nextOrder.push(neighbour.id)
-          } else if (currentOrder[i]!.selected) {
-            // selected items shift back by one relative to the block
-            nextOrder.push(currentOrder[i]!.id)
-          } else if (i === indexOfLastSelected + 1) {
-            // already placed as neighbour
-          } else {
-            nextOrder.push(currentOrder[i]!.id)
-          }
-        }
-      } else {
-        // backward
-        if (indexOfFirstSelected <= 0) return
-        const neighbour = currentOrder[indexOfFirstSelected - 1]!
-        nextOrder = []
-        for (let i = 0; i < currentOrder.length; i++) {
-          if (i === indexOfFirstSelected - 1) {
-            // skip, will be placed after block
-          } else if (currentOrder[i]!.selected) {
-            nextOrder.push(currentOrder[i]!.id)
-          } else if (i === indexOfLastSelected) {
-            nextOrder.push(currentOrder[i]!.id)
-            nextOrder.push(neighbour.id)
-          } else {
-            nextOrder.push(currentOrder[i]!.id)
-          }
-        }
-      }
+      if (firstSelectedOriginalIdx <= 0) return
+      const insertAt = Math.max(0, unselectedBeforeBlock - 1)
+      nextOrder = [...unselected.slice(0, insertAt), ...selected, ...unselected.slice(insertAt)]
     }
 
-    // Apply the reorder by snapshotting each YMap, deleting all, and
-    // re-inserting in the new order. Y.Array has no `move` primitive.
-    const snapshots = new Map<string, Record<string, unknown>>()
+    applyReorderMinimal(arr, currentOrder, nextOrder)
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Minimal-churn reorder of a Y.Array. Y.Array has no native `move`, so
+ * any positional change is expressed as delete + insert (which creates
+ * a new Y.Map — the moved item loses Y.Map identity). The trick is to
+ * only do this for items whose INDEX actually changed, leaving every
+ * unaffected Y.Map untouched.
+ *
+ * Algorithm: walk the target positions front-to-back; whenever the id
+ * currently sitting at that position differs from the desired one, move
+ * the desired id from its current location to here. After at most
+ * `ids.length` passes the array matches `nextOrder` exactly.
+ *
+ * Why this matters for the layer UI: the previous "snapshot all + wipe
+ * + refill" approach told every observer "every object was destroyed
+ * and re-added". Hocuspocus propagated that too, Pixi tore down the
+ * whole scene, TransformHandles looked at stale bounds, thumbnails
+ * re-rendered mid-transaction, and the pointer handlers couldn't find
+ * the selected id any more — user saw a frozen editor that needed a
+ * refresh.
+ */
+function applyReorderMinimal(
+  arr: Y.Array<Y.Map<unknown>>,
+  currentOrder: string[],
+  nextOrder: string[],
+): void {
+  let unchanged = nextOrder.length === currentOrder.length
+  for (let i = 0; unchanged && i < currentOrder.length; i++) {
+    if (nextOrder[i] !== currentOrder[i]) unchanged = false
+  }
+  if (unchanged) return
+
+  const order = [...currentOrder]
+  for (let targetIdx = 0; targetIdx < nextOrder.length; targetIdx++) {
+    const desiredId = nextOrder[targetIdx]!
+    if (order[targetIdx] === desiredId) continue
+    const sourceIdx = order.indexOf(desiredId)
+    if (sourceIdx === -1) continue
+
+    // Snapshot the moving Y.Map's values. delete + insert creates a new
+    // Y.Map with the same data — the old identity is gone but only for
+    // THIS item, not every sibling.
+    const yMap = arr.get(sourceIdx)
+    const plain = Object.fromEntries(yMap.entries()) as Record<string, unknown>
+    arr.delete(sourceIdx, 1)
+
+    // Build replacement Y.Map.
+    const freshMap = new Y.Map<unknown>()
+    for (const [key, value] of Object.entries(plain)) freshMap.set(key, value)
+
+    // Keep our local `order` array in sync so subsequent iterations
+    // compute correct indices.
+    order.splice(sourceIdx, 1)
+    order.splice(targetIdx, 0, desiredId)
+    arr.insert(targetIdx, [freshMap])
+  }
+}
+
+/**
+ * P6: move a single object to an explicit index in the Y.Array. Used by
+ * the Layers panel drag + drop. `targetIndex` refers to the position in
+ * the *new* array (so 0 = back, length-1 = front). The snapshot-refill
+ * pattern mirrors moveObjectsLayer for CRDT correctness.
+ */
+export function moveObjectToIndex(
+  ctx: ObjectsMutationContext,
+  id: string,
+  targetIndex: number,
+): void {
+  ctx.doc.transact(() => {
+    const arr = ctx.objects
+    const currentOrder: string[] = []
     for (let i = 0; i < arr.length; i++) {
-      const m = arr.get(i)
-      snapshots.set(
-        m.get('id') as string,
-        Object.fromEntries(m.entries()) as Record<string, unknown>,
-      )
+      currentOrder.push(arr.get(i).get('id') as string)
     }
-    arr.delete(0, arr.length)
-    for (const id of nextOrder) {
-      const plain = snapshots.get(id)
-      if (plain === undefined) continue
-      const ym = new Y.Map<unknown>()
-      for (const [key, value] of Object.entries(plain)) ym.set(key, value)
-      arr.push([ym])
-    }
+    const fromIdx = currentOrder.indexOf(id)
+    if (fromIdx === -1) return
+    const clamped = Math.max(0, Math.min(arr.length - 1, targetIndex))
+    if (clamped === fromIdx) return
+    const without = currentOrder.filter((x) => x !== id)
+    const nextOrder = [...without.slice(0, clamped), id, ...without.slice(clamped)]
+    applyReorderMinimal(arr, currentOrder, nextOrder)
   }, LOCAL_ORIGIN)
 }
 

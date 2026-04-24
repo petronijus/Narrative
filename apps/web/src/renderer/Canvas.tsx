@@ -28,6 +28,11 @@ import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
+import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
+
+// Install the BindGroup crash workaround once at module load. See the
+// patch file for the full Pixi v8 bug writeup.
+installPixiBindGroupPatch()
 import {
   createImageUrlResolver,
   setDefaultImageUrlResolver,

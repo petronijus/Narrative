@@ -25,6 +25,7 @@ export {
   duplicateObject,
   bulkUpdateObjects,
   moveObjectsLayer,
+  moveObjectToIndex,
   alignObjects,
   distributeObjects,
   groupObjects,
