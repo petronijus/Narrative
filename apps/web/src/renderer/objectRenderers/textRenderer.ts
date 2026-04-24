@@ -39,16 +39,66 @@ function hexToColorString(hex: number): string {
   return `#${hex.toString(16).padStart(6, '0')}`
 }
 
+/**
+ * P7: prefix each line with a list marker. Bullet uses `•`, numbered
+ * uses `1. 2. 3.` Applied to the rendered string only (Y.Doc stores
+ * plain text) so editing doesn't have to strip markers.
+ */
+function applyListMarkers(raw: string, style: TextObject['listStyle']): string {
+  if (style === undefined) return raw
+  const lines = raw.split('\n')
+  if (style === 'bullet') return lines.map((l) => (l.length > 0 ? `•  ${l}` : l)).join('\n')
+  let n = 1
+  return lines
+    .map((l) => {
+      if (l.length === 0) return l
+      const out = `${n}.  ${l}`
+      n += 1
+      return out
+    })
+    .join('\n')
+}
+
 function buildStyle(data: TextObject): TextStyle {
-  return new TextStyle({
-    fontFamily: 'system-ui, -apple-system, sans-serif',
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
+  const opts: any = {
+    fontFamily: data.fontFamily ?? 'system-ui, -apple-system, sans-serif',
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
+    fontStyle: data.italic === true ? 'italic' : 'normal',
     fill: hexToColorString(data.color),
     align: data.align,
     wordWrap: true,
     wordWrapWidth: data.width,
-  })
+    letterSpacing: data.letterSpacing ?? 0,
+  }
+  if (data.lineHeight !== undefined && data.lineHeight > 0) {
+    opts.lineHeight = data.lineHeight * data.fontSize
+  }
+  if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
+    opts.stroke = { color: hexToColorString(data.stroke), width: data.strokeWidth ?? 1 }
+  }
+  return new TextStyle(opts)
+}
+
+/**
+ * P7: shift the Text node's local Y so the rendered glyph block sits
+ * at top / middle / bottom of the object's bounding box. Pixi Text
+ * measures itself lazily — we read `text.height` after the style has
+ * been set to get the current pixel height.
+ */
+function applyVerticalAlign(textNode: Text, data: TextObject): void {
+  const vAlign = data.vAlign ?? 'top'
+  if (vAlign === 'top') {
+    textNode.y = 0
+    return
+  }
+  const textHeight = textNode.height
+  if (vAlign === 'middle') {
+    textNode.y = Math.max(0, (data.height - textHeight) / 2)
+  } else {
+    textNode.y = Math.max(0, data.height - textHeight)
+  }
 }
 
 function applyObjectTransform(container: Container, data: TextObject): void {
@@ -78,13 +128,14 @@ export const textRenderer = {
   mount(data: TextObject): Container {
     const container = new Container()
     const style = buildStyle(data)
-    const textNode = new Text({ text: data.text, style })
+    const textNode = new Text({ text: applyListMarkers(data.text, data.listStyle), style })
 
     container.addChild(textNode)
 
     asAny(container)[TEXT_TAG] = textNode
 
     applyObjectTransform(container, data)
+    applyVerticalAlign(textNode, data)
     applyFilterEffects(container, data.shadow, data.blur)
 
     return container
@@ -101,8 +152,8 @@ export const textRenderer = {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
 
-    if (prev.text !== next.text) {
-      textNode.text = next.text
+    if (prev.text !== next.text || prev.listStyle !== next.listStyle) {
+      textNode.text = applyListMarkers(next.text, next.listStyle)
     }
 
     const styleChanged =
@@ -110,11 +161,23 @@ export const textRenderer = {
       prev.fontWeight !== next.fontWeight ||
       prev.color !== next.color ||
       prev.align !== next.align ||
-      prev.width !== next.width
+      prev.width !== next.width ||
+      prev.fontFamily !== next.fontFamily ||
+      prev.italic !== next.italic ||
+      prev.underline !== next.underline ||
+      prev.letterSpacing !== next.letterSpacing ||
+      prev.lineHeight !== next.lineHeight ||
+      prev.stroke !== next.stroke ||
+      prev.strokeWidth !== next.strokeWidth
 
     if (styleChanged) {
       textNode.style = buildStyle(next)
     }
+
+    // P7: vertical alignment applies to the text node's Y offset inside
+    // the container (container pivot + transform is applied to the box,
+    // the text node positions itself inside).
+    applyVerticalAlign(textNode, next)
 
     applyFilterEffects(node, next.shadow, next.blur)
   },
@@ -160,36 +223,98 @@ export const textRenderer = {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
 
-    // Text content — bez TextStyle rebuild
-    if (patch.text !== undefined) {
-      textNode.text = patch.text
-    }
+    // Text content — if listStyle is also in patch, marker prefix must
+    // be regenerated. Otherwise write raw text directly (list markers
+    // already in node.text stay intact because we ignore them in Y.Doc).
+    const textChanged = patch.text !== undefined
+    const listChanged = 'listStyle' in patch
 
-    // Style-affecting fields — rebuild TextStyle jen pokud se něco změnilo
+    // P7: any typography-affecting field forces a style rebuild. Rather
+    // than hand-patch every combination, we read the last known snapshot
+    // merged with the patch and call buildStyle() — cost is one
+    // TextStyle allocation per change, which is negligible compared to
+    // Pixi's glyph layout work that follows.
     const needsStyleRebuild =
       patch.fontSize !== undefined ||
       patch.fontWeight !== undefined ||
       patch.color !== undefined ||
       patch.align !== undefined ||
-      patch.width !== undefined
+      patch.width !== undefined ||
+      patch.fontFamily !== undefined ||
+      patch.italic !== undefined ||
+      patch.underline !== undefined ||
+      patch.letterSpacing !== undefined ||
+      patch.lineHeight !== undefined ||
+      'stroke' in patch ||
+      patch.strokeWidth !== undefined
 
-    if (needsStyleRebuild) {
-      // Přečteme aktuální style z Text node a aplikujeme jen změny.
-      // Pixi TextStyle je mutable — updatujeme přímo místo rebuild.
-      const currentStyle = textNode.style as TextStyle
-
-      if (patch.fontSize !== undefined) currentStyle.fontSize = patch.fontSize
-      if (patch.fontWeight !== undefined) currentStyle.fontWeight = patch.fontWeight
-      if (patch.color !== undefined) currentStyle.fill = hexToColorString(patch.color)
-      if (patch.align !== undefined) currentStyle.align = patch.align
+    // Reconstruct the merged next-state by reading Pixi + style fields.
+    // We intentionally keep the code coarse here — text objects don't
+    // get hammered at 60Hz, so a rebuild per patch is fine.
+    if (textChanged || listChanged || needsStyleRebuild) {
+      // Build a synthetic "merged" TextObject from current Pixi state +
+      // patch. SceneGraph's node.data copy is authoritative but unreachable
+      // from here, so we approximate with Pixi's current style values.
+      const style = textNode.style as TextStyle
+      const current: TextObject = {
+        id: '',
+        type: 'text',
+        x: node.x - node.pivot.x,
+        y: node.y - node.pivot.y,
+        width: node.pivot.x * 2,
+        height: node.pivot.y * 2,
+        rotation: node.rotation,
+        opacity: node.alpha,
+        text: textNode.text,
+        fontSize: style.fontSize as number,
+        fontWeight: style.fontWeight as TextObject['fontWeight'],
+        color: parseInt(((style.fill as string) ?? '#000000').slice(1), 16),
+        align: style.align as TextObject['align'],
+      }
+      const merged: TextObject = { ...current, ...patch } as TextObject
+      textNode.style = buildStyle(merged)
+      if (textChanged || listChanged) {
+        textNode.text = applyListMarkers(merged.text, merged.listStyle)
+      }
       if (patch.width !== undefined) {
-        currentStyle.wordWrapWidth = patch.width
-        // width mění i pivot.x a pozici containeru
         const dataX = node.x - node.pivot.x
         const newPivotX = patch.width / 2
         node.pivot.set(newPivotX, node.pivot.y)
         node.x = dataX + newPivotX
       }
+      applyVerticalAlign(textNode, merged)
+    } else if (textChanged) {
+      // Fast path — only text changed, no list, no style.
+      textNode.text = patch.text!
+    }
+    if (patch.vAlign !== undefined || patch.height !== undefined) {
+      // Re-align vertically when height or vAlign flips.
+      const style = textNode.style as TextStyle
+      const snap: TextObject = {
+        id: '',
+        type: 'text',
+        x: 0,
+        y: 0,
+        width: node.pivot.x * 2,
+        height: node.pivot.y * 2,
+        rotation: 0,
+        opacity: 1,
+        text: textNode.text,
+        fontSize: style.fontSize as number,
+        fontWeight: 'normal',
+        color: 0,
+        align: 'left',
+        ...(patch.vAlign !== undefined ? { vAlign: patch.vAlign } : {}),
+      }
+      applyVerticalAlign(textNode, snap)
+    }
+
+    if ('shadow' in patch || 'blur' in patch) {
+      applyFilterEffects(
+        node,
+        'shadow' in patch ? patch.shadow : undefined,
+        'blur' in patch ? patch.blur : undefined,
+      )
     }
   },
 

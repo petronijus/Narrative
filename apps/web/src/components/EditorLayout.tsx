@@ -28,6 +28,8 @@ import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
 import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
+import { useTextEdit } from '../state/TextEditContext'
+import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
@@ -311,6 +313,7 @@ export interface EditorLayoutProps {
 
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedIds, selectedId, selectOne, selectMany, toggle, clear } = useSelection()
+  const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { activeTool, setActiveTool } = useTool()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
@@ -881,6 +884,27 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     setCursor(null)
   }, [setCursor])
 
+  // P7: double-click a text object → enter inline edit mode. Hit-test
+  // via the scene graph (same path as single-click select) and begin
+  // editing if the hit is a text object. Non-text objects ignore the
+  // second click and keep normal selection behaviour.
+  const handleDoubleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>): void => {
+      if (canvasInstance === null) return
+      const containerEl = canvasContainerRef.current
+      if (containerEl === null) return
+      const rect = containerEl.getBoundingClientRect()
+      const { x, y } = clientToCanvasCoords(e.clientX, e.clientY, rect, zoomRef.current)
+      const hitId = canvasInstance.sceneGraph.hitTest(x, y)
+      if (hitId === null) return
+      const hit = objects.find((o) => o.id === hitId)
+      if (hit?.type !== 'text') return
+      selectOne(hitId)
+      beginEdit(hitId)
+    },
+    [canvasInstance, objects, selectOne, beginEdit],
+  )
+
   // ---------------------------------------------------------------------------
   // Keyboard shortcuts
   // ---------------------------------------------------------------------------
@@ -1139,6 +1163,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerLeave}
+          onDoubleClick={handleDoubleClick}
         >
           {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller. */}
@@ -1256,6 +1281,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
                   {/* M11: Drop zone for image uploads — inert for viewer role */}
                   <UploadDropZone canvasContainerRef={canvasContainerRef} />
+
+                  {/* P7: inline text edit overlay. Sits above the Pixi
+                      text and takes focus while the user edits. */}
+                  {editingTextId !== null &&
+                    mutationCtx !== null &&
+                    (() => {
+                      const obj = objects.find((o) => o.id === editingTextId)
+                      if (obj === undefined || obj.type !== 'text') return null
+                      return <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
+                    })()}
                 </div>
               </div>
             </div>

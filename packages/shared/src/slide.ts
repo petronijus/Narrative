@@ -229,14 +229,57 @@ export interface PathObject extends BaseSlideObject {
   dash?: boolean
 }
 
+/**
+ * P7: broader weight scale than the original `'normal' | 'bold'`. Numeric
+ * values match CSS / Pixi conventions — `normal` is 400, `bold` is 700.
+ * Legacy 'normal' / 'bold' strings are accepted so existing Y.Docs keep
+ * rendering without migration.
+ */
+export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+
+export type TextVerticalAlign = 'top' | 'middle' | 'bottom'
+export type TextListStyle = 'bullet' | 'numbered'
+
 export interface TextObject extends BaseSlideObject {
   type: 'text'
   text: string
   fontSize: number
-  fontWeight: 'normal' | 'bold'
+  fontWeight: FontWeight
   /** Pixi/CSS color hex číslo, např. 0x000000 */
   color: number
   align: 'left' | 'center' | 'right'
+  /**
+   * P7: font family. Missing ⇒ renderer default
+   * (`system-ui, -apple-system, sans-serif`). Value is a full CSS
+   * font-family string so the Inspector can offer curated presets while
+   * still letting power users type their own stack.
+   */
+  fontFamily?: string
+  /** Vertical alignment inside the text box. Default 'top'. */
+  vAlign?: TextVerticalAlign
+  /**
+   * Line-height multiplier (1 = font size, 1.4 = typical body). Pixi's
+   * TextStyle expects absolute lineHeight in px — renderer multiplies
+   * by fontSize.
+   */
+  lineHeight?: number
+  /** Letter spacing in px. Default 0. */
+  letterSpacing?: number
+  /**
+   * Italic toggle. Pixi maps to fontStyle. Missing ⇒ regular.
+   */
+  italic?: boolean
+  /** Underline. Missing ⇒ false. Renderer composes with CanvasKit's decoration. */
+  underline?: boolean
+  /**
+   * List marker — 'bullet' for •, 'numbered' for 1. 2. 3. Missing ⇒
+   * plain paragraph. Renderer prepends the glyph per line.
+   */
+  listStyle?: TextListStyle
+  /** Optional stroke on glyphs. */
+  stroke?: number
+  /** Stroke width in px. Rendered only when stroke is set. Default 1. */
+  strokeWidth?: number
 }
 
 export interface ImageObject extends BaseSlideObject {

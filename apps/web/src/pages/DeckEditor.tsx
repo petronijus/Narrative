@@ -16,6 +16,7 @@
 import { useOutletContext } from 'react-router-dom'
 import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
+import { TextEditProvider } from '../state/TextEditContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
 
@@ -25,7 +26,9 @@ export function DeckEditor() {
   return (
     <SelectionProvider>
       <ToolProvider>
-        <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+        <TextEditProvider>
+          <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+        </TextEditProvider>
       </ToolProvider>
     </SelectionProvider>
   )
