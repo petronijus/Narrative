@@ -8,7 +8,7 @@
  * M7: multi-select — ReadonlySet<string>, shift-click, marquee.
  */
 
-import { createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 
 export interface SelectionContextValue {
   selectedIds: ReadonlySet<string>
@@ -34,6 +34,30 @@ const SelectionContext = createContext<SelectionContextValue | null>(null)
 
 export function SelectionProvider({ children }: { children: React.ReactNode }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+
+  // P6 E2E: write the current selection to a global snapshot so Playwright
+  // specs can observe selection changes without walking React internals.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    ;(
+      window as unknown as {
+        __narrative_selection_snapshot?: { selectedIds: string[] }
+      }
+    ).__narrative_selection_snapshot = { selectedIds: [...selectedIds] }
+  }, [selectedIds])
+
+  // P6 E2E: listen for a window event that lets specs programmatically
+  // set the selection without having to hit-test via the canvas.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const handler = (e: Event): void => {
+      const detail = (e as CustomEvent<{ ids: string[] }>).detail
+      if (detail?.ids === undefined) return
+      setSelectedIds(new Set(detail.ids))
+    }
+    window.addEventListener('narrative:test-set-selection', handler)
+    return () => window.removeEventListener('narrative:test-set-selection', handler)
+  }, [])
 
   const selectOne = useCallback((id: string) => {
     setSelectedIds(new Set([id]))

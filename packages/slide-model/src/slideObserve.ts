@@ -168,9 +168,15 @@ export function subscribeToSlideObjectsWithFlush(
 
   // Internal snapshot
   const currentSnapshot = new Map<string, SlideObject>()
+  // Last emitted order — needed to detect layer-order reorders that Yjs
+  // expresses as delete-all + push-all (a net-zero set of ids but a new
+  // sequence). Without this, the Pixi reconciler and React consumers
+  // see no event and the UI stays stale until refresh.
+  let lastEmittedOrder: string[] = []
   for (let i = 0; i < objectsArr.length; i++) {
     const obj = yMapToPlainObject(objectsArr.get(i))
     currentSnapshot.set(obj.id, obj)
+    lastEmittedOrder.push(obj.id)
   }
 
   let pending: PendingBatch = createPendingBatch()
@@ -228,21 +234,44 @@ export function subscribeToSlideObjectsWithFlush(
     }
 
     const snapshot: SlideObject[] = []
+    const currentOrder: string[] = []
     for (let i = 0; i < objectsArr.length; i++) {
       const id = objectsArr.get(i).get('id') as string | undefined
       if (id !== undefined) {
         const obj = currentSnapshot.get(id)
-        if (obj !== undefined) snapshot.push(obj)
+        if (obj !== undefined) {
+          snapshot.push(obj)
+          currentOrder.push(id)
+        }
       }
     }
 
-    if (netAdded.length > 0 || netRemoved.length > 0 || netUpdated.length > 0) {
+    // P6: detect a pure reorder (delete-all + push-all inside one tick).
+    // The net-zero pass suppressed added/removed for the shared ids, but
+    // the Y.Array sequence has changed and the Pixi reconciler needs to
+    // rebuild in the new z-order. We push every affected id into both
+    // netRemoved + netAdded so the reconciler tears down + re-mounts
+    // into the correct order, and so React consumers re-render.
+    let orderChanged = currentOrder.length !== lastEmittedOrder.length
+    for (let i = 0; !orderChanged && i < currentOrder.length; i++) {
+      if (currentOrder[i] !== lastEmittedOrder[i]) orderChanged = true
+    }
+    if (orderChanged && netZeroIds.size > 0) {
+      for (const id of netZeroIds) {
+        netRemoved.push(id)
+        const obj = batchToProcess.addedObjects.get(id)
+        if (obj !== undefined) netAdded.push(obj)
+      }
+    }
+
+    if (netAdded.length > 0 || netRemoved.length > 0 || netUpdated.length > 0 || orderChanged) {
       callback({
         added: netAdded,
         removed: netRemoved,
         updated: netUpdated,
         snapshot,
       })
+      lastEmittedOrder = currentOrder
     }
 
     dispatching = false

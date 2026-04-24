@@ -18,17 +18,28 @@ export type { SlideDocHandles } from './yDoc.js'
 export {
   LOCAL_ORIGIN,
   addObject,
+  addObjects,
   removeObject,
   updateObject,
   createObjectOfType,
   duplicateObject,
   bulkUpdateObjects,
+  moveObjectsLayer,
+  moveObjectToIndex,
+  alignObjects,
+  distributeObjects,
+  groupObjects,
+  ungroupObjects,
+  getGroupMembers,
 } from './mutations.js'
 export type {
   ObjectsMutationContext,
   /** @deprecated Use ObjectsMutationContext */
   MutationContext,
   BulkUpdate,
+  LayerMove,
+  AlignAxis,
+  DistributeAxis,
 } from './mutations.js'
 
 // Mutations — animations (M6)

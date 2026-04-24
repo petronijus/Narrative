@@ -33,8 +33,19 @@ import {
   removeAnimation,
   updateSlideTransition,
   updateSlideBackground,
+  alignObjects,
+  distributeObjects,
+  moveObjectsLayer,
+  moveObjectToIndex,
+  groupObjects,
+  ungroupObjects,
 } from '@narrative/slide-model'
-import type { AnimationsMutationContext } from '@narrative/slide-model'
+import type {
+  AnimationsMutationContext,
+  AlignAxis,
+  DistributeAxis,
+  LayerMove,
+} from '@narrative/slide-model'
 import type {
   SlideObject,
   RectangleObject,
@@ -197,17 +208,9 @@ export function Inspector() {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
-  // Multi-select placeholder
+  // Multi-select inspector — align / distribute / layer order.
   if (selectedIds.size > 1) {
-    return (
-      <div className="flex flex-1 items-center justify-center px-3 text-center">
-        <p className="text-xs text-muted-foreground/80">
-          Multi-select — {selectedIds.size} objects selected.
-          <br />
-          Inspector not supported yet.
-        </p>
-      </div>
-    )
+    return <MultiSelectInspector selectedIds={[...selectedIds]} />
   }
 
   if (selectedId === null) {
@@ -380,6 +383,11 @@ export function Inspector() {
           BaseSlideObject mixin + filterEffects helper on the renderer side. */}
       <EffectsSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
+      {/* P6: Layer order — always available for the selected object. */}
+      {mutationCtx !== null && (
+        <LayerOrderSection ids={[obj.id]} mutationCtx={mutationCtx} disabled={isViewer} />
+      )}
+
       {/* Animations */}
       {animMutationCtx !== null && (
         <AnimationsSection
@@ -389,6 +397,13 @@ export function Inspector() {
           totalAnimations={animations.length}
         />
       )}
+
+      {/* P6: Layers panel — full ordered list of slide objects with
+          drag-drop reorder. Shown at the bottom so it scrolls
+          independently of the focused object's properties. */}
+      {mutationCtx !== null && (
+        <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
+      )}
     </div>
   )
 }
@@ -396,6 +411,359 @@ export function Inspector() {
 // ---------------------------------------------------------------------------
 // SlideInspector — shown when no object is selected (M9)
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Multi-select inspector — P6 object operations
+// ---------------------------------------------------------------------------
+
+function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
+  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
+  if (mutationCtx === null) return null
+
+  // Derive group state of the current selection so Group / Ungroup
+  // buttons reflect what the next click would actually do:
+  //   - Group disabled when every selected object already shares the
+  //     same non-empty groupId (they're already grouped together) OR
+  //     selection has fewer than 2 members.
+  //   - Ungroup disabled when no selected object carries a groupId —
+  //     there's nothing to ungroup.
+  const selectedObjects = selectedIds
+    .map((id) => objects.find((o) => o.id === id))
+    .filter((o): o is NonNullable<typeof o> => o !== undefined)
+  const groupIds = new Set(
+    selectedObjects.map((o) => o.groupId).filter((g): g is string => g !== undefined && g !== ''),
+  )
+  const allSameGroup =
+    selectedObjects.length >= 2 &&
+    groupIds.size === 1 &&
+    selectedObjects.every((o) => o.groupId !== undefined && o.groupId !== '')
+  const anyHasGroup = groupIds.size > 0
+  const groupLabel = allSameGroup ? 'Grouped' : 'Group'
+  const groupTitle = allSameGroup
+    ? 'Already grouped'
+    : selectedObjects.length < 2
+      ? 'Select 2+ objects to group'
+      : 'Group (Cmd+G)'
+
+  const runAlign = (axis: AlignAxis): void => {
+    if (!isViewer) alignObjects(mutationCtx, selectedIds, axis)
+  }
+  const runDistribute = (axis: DistributeAxis): void => {
+    if (!isViewer) distributeObjects(mutationCtx, selectedIds, axis)
+  }
+  const runGroup = (): void => {
+    if (!isViewer) groupObjects(mutationCtx, selectedIds)
+  }
+  const runUngroup = (): void => {
+    if (!isViewer) ungroupObjects(mutationCtx, selectedIds)
+  }
+
+  return (
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
+      <Section title={`${selectedIds.length} objects`} storageKey="multi-header">
+        <p className="text-[10px] text-muted-foreground/70">
+          Align, distribute + layer actions apply to every selected object.
+        </p>
+      </Section>
+      <Section title="Align" storageKey="multi-align">
+        <div className="grid grid-cols-6 gap-1">
+          <MultiButton
+            label="L"
+            title="Align left"
+            onClick={() => runAlign('left')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="C"
+            title="Align horizontal center"
+            onClick={() => runAlign('center-x')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="R"
+            title="Align right"
+            onClick={() => runAlign('right')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="T"
+            title="Align top"
+            onClick={() => runAlign('top')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="M"
+            title="Align vertical middle"
+            onClick={() => runAlign('center-y')}
+            disabled={isViewer}
+          />
+          <MultiButton
+            label="B"
+            title="Align bottom"
+            onClick={() => runAlign('bottom')}
+            disabled={isViewer}
+          />
+        </div>
+      </Section>
+      <Section title="Distribute" storageKey="multi-distribute">
+        <div className="grid grid-cols-2 gap-1">
+          <MultiButton
+            label="Distribute H"
+            title="Distribute horizontally"
+            onClick={() => runDistribute('horizontal')}
+            disabled={isViewer || selectedIds.length < 3}
+          />
+          <MultiButton
+            label="Distribute V"
+            title="Distribute vertically"
+            onClick={() => runDistribute('vertical')}
+            disabled={isViewer || selectedIds.length < 3}
+          />
+        </div>
+      </Section>
+      <LayerOrderSection ids={selectedIds} mutationCtx={mutationCtx} disabled={isViewer} />
+      <Section title="Group" storageKey="multi-group">
+        <div className="grid grid-cols-2 gap-1">
+          <MultiButton
+            label={groupLabel}
+            title={groupTitle}
+            onClick={runGroup}
+            disabled={isViewer || selectedIds.length < 2 || allSameGroup}
+          />
+          <MultiButton
+            label="Ungroup"
+            title={anyHasGroup ? 'Ungroup (Shift+Cmd+G)' : 'Nothing to ungroup'}
+            onClick={runUngroup}
+            disabled={isViewer || !anyHasGroup}
+          />
+        </div>
+        {allSameGroup && (
+          <p className="mt-1 text-[10px] text-muted-foreground/70">
+            Already grouped. Use Ungroup to break up.
+          </p>
+        )}
+      </Section>
+      <LayersPanel activeIds={selectedIds} mutationCtx={mutationCtx} readOnly={isViewer} />
+    </div>
+  )
+}
+
+function MultiButton({
+  label,
+  title,
+  onClick,
+  disabled,
+}: {
+  label: string
+  title: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {label}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Layer order section — shared between single-object and multi-select
+// ---------------------------------------------------------------------------
+
+function LayerOrderSection({
+  ids,
+  mutationCtx,
+  disabled,
+}: {
+  ids: string[]
+  mutationCtx: Parameters<typeof moveObjectsLayer>[0]
+  disabled: boolean
+}) {
+  const run = (move: LayerMove): void => {
+    if (!disabled) moveObjectsLayer(mutationCtx, ids, move)
+  }
+  return (
+    <Section title="Layer order" storageKey="layer-order">
+      <div className="grid grid-cols-2 gap-1">
+        <MultiButton
+          label="⤒ Front"
+          title="Bring to front (Cmd+])"
+          onClick={() => run('front')}
+          disabled={disabled}
+        />
+        <MultiButton
+          label="↑ Forward"
+          title="Bring forward (])"
+          onClick={() => run('forward')}
+          disabled={disabled}
+        />
+        <MultiButton
+          label="↓ Backward"
+          title="Send backward ([)"
+          onClick={() => run('backward')}
+          disabled={disabled}
+        />
+        <MultiButton
+          label="⤓ Back"
+          title="Send to back (Cmd+[)"
+          onClick={() => run('back')}
+          disabled={disabled}
+        />
+      </div>
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Layers panel — drag + drop reorder of every object on the active slide
+// ---------------------------------------------------------------------------
+
+/**
+ * Short label for a layer row. Falls back to the object name (P5a), then
+ * the type + short id suffix.
+ */
+function layerLabel(obj: SlideObject): string {
+  if (obj.name !== undefined && obj.name !== '') return obj.name
+  return `${obj.type}-${obj.id.slice(0, 4)}`
+}
+
+function LayersPanel({
+  activeIds,
+  mutationCtx,
+  readOnly,
+}: {
+  activeIds: string[]
+  mutationCtx: Parameters<typeof moveObjectToIndex>[0]
+  readOnly: boolean
+}) {
+  const { objects } = useSlideObjects()
+  const { selectOne, selectMany } = useSelection()
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dropBeforeId, setDropBeforeId] = useState<string | null>(null)
+
+  // Layer panel convention matches Figma / Illustrator: front of the
+  // canvas (last in Y.Array) is rendered at the TOP of the list.
+  const rows = [...objects].reverse()
+  const activeSet = new Set(activeIds)
+
+  const onDragStart = (id: string) => (e: React.DragEvent) => {
+    if (readOnly) return
+    setDraggingId(id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', id)
+  }
+  const onDragOver = (id: string) => (e: React.DragEvent) => {
+    if (readOnly || draggingId === null) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropBeforeId(id)
+  }
+  const onDragEnd = () => {
+    setDraggingId(null)
+    setDropBeforeId(null)
+  }
+  const onDrop = (targetId: string) => (e: React.DragEvent) => {
+    e.preventDefault()
+    if (readOnly || draggingId === null) {
+      onDragEnd()
+      return
+    }
+    if (draggingId === targetId) {
+      onDragEnd()
+      return
+    }
+    // rows is reversed (front at top). Dropping "before" a row in the
+    // reversed list means placing the dragged item just above it, i.e.
+    // at a higher z-index than the target. Translate to Y.Array index.
+    const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
+    if (visualTargetIdx === -1) {
+      onDragEnd()
+      return
+    }
+    // Visual index → Y.Array index (front=top=visual0=last in Y.Array).
+    // Dropping BEFORE target in reversed order = placing at the same
+    // Y.Array index the target currently occupies, which pushes target
+    // down by one.
+    const yIndex = objects.length - 1 - visualTargetIdx
+    moveObjectToIndex(mutationCtx, draggingId, yIndex)
+    onDragEnd()
+  }
+
+  const onRowClick = (id: string) => (e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      const next = new Set(activeIds)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      selectMany([...next])
+    } else {
+      selectOne(id)
+    }
+  }
+
+  return (
+    <Section title={`Layers (${objects.length})`} storageKey="layers-panel">
+      {rows.length === 0 && (
+        <p className="text-[10px] text-muted-foreground/70">No objects on this slide yet.</p>
+      )}
+      <ul className="flex flex-col gap-0.5" onDragEnd={onDragEnd}>
+        {rows.map((o) => {
+          const active = activeSet.has(o.id)
+          const isDragging = draggingId === o.id
+          const highlightDrop = dropBeforeId === o.id && draggingId !== null && draggingId !== o.id
+          return (
+            <li
+              key={o.id}
+              draggable={!readOnly}
+              onDragStart={onDragStart(o.id)}
+              onDragOver={onDragOver(o.id)}
+              onDrop={onDrop(o.id)}
+              onClick={onRowClick(o.id)}
+              className={[
+                'relative flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px]',
+                'cursor-pointer select-none',
+                active
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border text-foreground hover:bg-accent/40',
+                isDragging ? 'opacity-40' : '',
+                readOnly ? 'cursor-default' : '',
+              ].join(' ')}
+            >
+              {highlightDrop && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+                />
+              )}
+              <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>
+              <span className="flex-1 truncate">{layerLabel(o)}</span>
+              {o.locked === true && (
+                <span className="text-muted-foreground/60" aria-hidden="true">
+                  <Lock className="h-3 w-3" />
+                </span>
+              )}
+              {o.groupId !== undefined && o.groupId !== '' && (
+                <span
+                  className="rounded bg-muted px-1 text-[9px] text-muted-foreground"
+                  title={`Group ${o.groupId.slice(0, 4)}`}
+                >
+                  ∘
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+    </Section>
+  )
+}
 
 /**
  * Slide-level inspector: shows transition settings for the active slide.

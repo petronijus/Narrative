@@ -54,6 +54,12 @@ export interface BaseSlideObject {
    * P5c: gaussian blur radius in slide-px. 0 / missing ⇒ no blur.
    */
   blur?: number
+  /**
+   * P6: implicit group membership. Objects sharing a groupId are
+   * selected, moved, duplicated, deleted as a unit. No dedicated group
+   * object type — the attribute itself IS the grouping.
+   */
+  groupId?: string
 }
 
 /**
