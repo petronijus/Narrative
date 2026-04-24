@@ -77,7 +77,14 @@ export function updateObject<T extends SlideObject>(
 
     const yMap = ctx.objects.get(idx)
     for (const [key, value] of Object.entries(patch)) {
-      yMap.set(key, value)
+      // P5b: explicit undefined ⇒ delete the key so optional schema fields
+      // (stroke, strokeWidth, cornerRadius, …) don't persist as `undefined`
+      // which would defeat `exactOptionalPropertyTypes` downstream.
+      if (value === undefined) {
+        yMap.delete(key)
+      } else {
+        yMap.set(key, value)
+      }
     }
   }, LOCAL_ORIGIN)
 }

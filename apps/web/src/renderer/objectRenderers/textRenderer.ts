@@ -29,6 +29,7 @@
 
 import { Container, Text, TextStyle } from 'pixi.js'
 import type { TextObject } from '../types'
+import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
 /** Interní tag klíče pro identifikaci Text node uvnitř Containeru. */
 const TEXT_TAG = Symbol('textNode')
@@ -84,6 +85,7 @@ export const textRenderer = {
     asAny(container)[TEXT_TAG] = textNode
 
     applyObjectTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
 
     return container
   },
@@ -113,6 +115,8 @@ export const textRenderer = {
     if (styleChanged) {
       textNode.style = buildStyle(next)
     }
+
+    applyFilterEffects(node, next.shadow, next.blur)
   },
 
   /**
@@ -195,6 +199,7 @@ export const textRenderer = {
   destroy(node: Container): void {
     const textNode = getTextNode(node)
     textNode?.destroy()
+    destroyFilterEffects(node)
     node.destroy()
   },
 }

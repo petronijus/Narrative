@@ -14,6 +14,8 @@
 import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { LineObject, ArrowObject, LineCap } from '@narrative/shared'
+import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { strokeDashedPolyline } from '../strokeDashed.js'
 
 type LineLike = LineObject | ArrowObject
 
@@ -66,23 +68,22 @@ function drawLine(g: Graphics, data: LineLike): void {
   g.clear()
   const { p1, p2, stroke, strokeWidth } = data
   const dash = data.dash === true
-  g.moveTo(p1.x, p1.y)
-  g.lineTo(p2.x, p2.y)
-  g.stroke({
-    color: stroke,
-    width: strokeWidth,
-    cap:
-      data.startCap === 'round' || data.endCap === 'round'
-        ? 'round'
-        : data.startCap === 'square' || data.endCap === 'square'
-          ? 'square'
-          : 'butt',
-    ...(dash
-      ? {
-          /* Pixi v8 doesn't have a dash option on stroke; simulated dash would go here */
-        }
-      : {}),
-  })
+  if (dash) {
+    strokeDashedPolyline(g, [p1, p2], false, { color: stroke, width: strokeWidth })
+  } else {
+    g.moveTo(p1.x, p1.y)
+    g.lineTo(p2.x, p2.y)
+    g.stroke({
+      color: stroke,
+      width: strokeWidth,
+      cap:
+        data.startCap === 'round' || data.endCap === 'round'
+          ? 'round'
+          : data.startCap === 'square' || data.endCap === 'square'
+            ? 'square'
+            : 'butt',
+    })
+  }
   // Arrow cap — filled triangle at the pointed endpoint.
   const endCap = effectiveEndCap(data)
   if (endCap === 'arrow') {
@@ -113,6 +114,7 @@ function makeRenderer<T extends LineLike>(type: T['type']) {
       container.addChild(g)
       asAny(container)[GRAPHICS_TAG] = g
       applyTransform(container, data)
+      applyFilterEffects(container, data.shadow, data.blur)
       return container
     },
     update(node: PixiContainer, prev: T, next: T): void {
@@ -131,10 +133,12 @@ function makeRenderer<T extends LineLike>(type: T['type']) {
         const g = getGraphics(node)
         if (g !== undefined) drawLine(g, next)
       }
+      applyFilterEffects(node, next.shadow, next.blur)
     },
     destroy(node: PixiContainer): void {
       const g = getGraphics(node)
       g?.destroy()
+      destroyFilterEffects(node)
       node.destroy()
     },
   }

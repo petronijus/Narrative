@@ -13,10 +13,20 @@
 import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { TriangleObject, PolygonObject } from '@narrative/shared'
+import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
+import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { strokeDashedPolyline } from '../strokeDashed.js'
+import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 
 type PolygonLike = TriangleObject | PolygonObject
 
 const GRAPHICS_TAG = Symbol('polyGraphics')
+/**
+ * P5c: cache the latest data on the container so the image-fill async
+ * onReady callback can redraw with current props even if the original
+ * `next` has been superseded by a later update/patch tick.
+ */
+const LATEST_DATA_TAG = Symbol('polyLatestData')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asAny = (n: PixiContainer): any => n
 
@@ -29,7 +39,7 @@ function sidesFor(data: PolygonLike): number {
   return Math.max(3, Math.min(12, Math.round(data.sides ?? 5)))
 }
 
-function drawPolygon(g: Graphics, data: PolygonLike): void {
+function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): void {
   g.clear()
   const n = sidesFor(data)
   const cx = data.width / 2
@@ -44,7 +54,38 @@ function drawPolygon(g: Graphics, data: PolygonLike): void {
     points.push(cx + rx * Math.cos(angle), cy + ry * Math.sin(angle))
   }
   g.poly(points)
-  g.fill({ color: data.fill })
+  if (data.fillStyle?.kind === 'image') {
+    const texture = ensureImageFill(container, data.fillStyle, () => {
+      const cachedData = asAny(container)[LATEST_DATA_TAG] as PolygonLike | undefined
+      const cachedG = getGraphics(container)
+      if (cachedData !== undefined && cachedG !== undefined)
+        drawPolygon(cachedG, container, cachedData)
+    })
+    if (texture !== null) {
+      g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
+    } else {
+      g.fill({ color: data.fill })
+    }
+  } else {
+    releaseImageFill(container)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    g.fill(resolved.input)
+  }
+  // Save latest data for async redraw in image-fill onReady.
+  asAny(container)[LATEST_DATA_TAG] = data
+  if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
+    const w = data.strokeWidth ?? 1
+    if (data.strokeDash === true) {
+      const pts: Array<{ x: number; y: number }> = []
+      for (let i = 0; i < points.length; i += 2) {
+        pts.push({ x: points[i]!, y: points[i + 1]! })
+      }
+      strokeDashedPolyline(g, pts, true, { color: data.stroke, width: w })
+    } else {
+      g.poly(points)
+      g.stroke({ color: data.stroke, width: w, alignment: 0.5 })
+    }
+  }
 }
 
 function applyTransform(node: PixiContainer, data: PolygonLike): void {
@@ -61,10 +102,11 @@ function makeRenderer<T extends PolygonLike>(type: T['type']) {
     mount(data: T): PixiContainer {
       const container = new Container()
       const g = new Graphics()
-      drawPolygon(g, data)
-      container.addChild(g)
       asAny(container)[GRAPHICS_TAG] = g
+      drawPolygon(g, container, data)
+      container.addChild(g)
       applyTransform(container, data)
+      applyFilterEffects(container, data.shadow, data.blur)
       return container
     },
     update(node: PixiContainer, prev: T, next: T): void {
@@ -75,15 +117,22 @@ function makeRenderer<T extends PolygonLike>(type: T['type']) {
         prev.fill !== next.fill ||
         prev.width !== next.width ||
         prev.height !== next.height ||
-        prevSides !== nextSides
+        prevSides !== nextSides ||
+        prev.stroke !== next.stroke ||
+        prev.strokeWidth !== next.strokeWidth ||
+        prev.strokeDash !== next.strokeDash ||
+        prev.fillStyle !== next.fillStyle
       if (redraw) {
         const g = getGraphics(node)
-        if (g !== undefined) drawPolygon(g, next)
+        if (g !== undefined) drawPolygon(g, node, next)
       }
+      applyFilterEffects(node, next.shadow, next.blur)
     },
     destroy(node: PixiContainer): void {
+      releaseImageFill(node)
       const g = getGraphics(node)
       g?.destroy()
+      destroyFilterEffects(node)
       node.destroy()
     },
   }

@@ -49,6 +49,7 @@ expected to test each branch before merge.
 | P9  | Keyboard shortcuts        | Cmd+D duplicate (context-sensitive: slide in sidebar focus, object on canvas focus). Delete / Backspace remove in context (slide / object / animation step). Arrow-key nudge 1 px (Shift = 10 px). Esc deselect. Cmd+A select all objects on active slide. [ / ] layer order. Cmd+]/[ and Shift variants. Cmd+Z / Shift+Cmd+Z undo/redo. Space+drag for pan. Cmd+= / Cmd+- / Cmd+0 zoom. Cmd+/ opens shortcut cheatsheet modal. |
 | P10 | Animation timeline polish | Per-bar trigger icon (clock = auto, hand = onClick, play = withPrevious, chain = afterPrevious). Delete key removes selected step. "Play only this step" button. Current-state preview during scrub (already present; verify).                                                                                                                                                                                                  |
 | P11 | Keynote extras            | Right-click context menus (canvas / slide / object). Hyperlinks — objects link to another slide or URL, clickable in present mode. Rulers (top + left). Draggable horizontal / vertical guides. Eyedropper for color. Image cropping + basic rectangular mask. In-editor video playback controls. Recent-colors swatch in color pickers. Clipboard across decks (paste objects from another deck).                              |
+| P12 | Performance pass          | Procedural-texture lifecycle (gradient / pattern / image fill / noise / mask reuse the same acquire+ref-count+release flow, extending `ResourceManager`). Filter instance reuse (shadow / blur). Frame pacing + render scheduler audit under rapid slider scrubs. Texture atlas / GC sweep for long editing sessions. Measure-first: add a perf scratchpad (FPS + texture count + DrawCall count) before tuning.                |
 
 ## Explicitly rejected during planning
 
@@ -378,6 +379,76 @@ scale()` + `opacity` on the `<video>`'s wrapper element. Transform
 - Cross-deck clipboard: extend the in-memory clipboard (P6) to also
   write to `localStorage` on copy; read on paste if the in-memory
   entry is empty.
+
+### P12 — Performance pass
+
+**Goal:** clean up lifecycle debt accumulated during feature phases and
+keep the editor fast under rapid Inspector scrubs + long editing
+sessions.
+
+**Known technical debt entering P12** (add to this list as future
+phases create more):
+
+- **Procedural texture leak (gradients).** `apps/web/src/renderer/fillStyleToPixi.ts`
+  builds a fresh `Texture.from(canvas)` on every redraw for linear and
+  radial gradient fills. `rectangleRenderer` / `ellipseRenderer` /
+  `polygonRenderer` call it from `drawRect` / `drawEllipse` /
+  `drawPolygon` which run on every `update` / `applyPatch` — so each
+  slider tick on the angle or stop colour allocates another GPU texture
+  and drops the old one on the floor. Intentional trade-off to ship
+  around Pixi v8's `FillGradient.buildLinearGradient` quadrant bug; see
+  memory note `procedural-texture-leak.md` for context.
+- **Filter instance churn.** `apps/web/src/renderer/filterEffects.ts`
+  now destroys + re-allocates `DropShadowFilter` / `BlurFilter` on
+  every change (needed to avoid Pixi's bind-group desync bug), but a
+  per-container slot cache would still dedupe across unchanged tick
+  dispatches if we time the calls right.
+- **Image fill (deferred from P5c).** Same procedural-texture problem
+  plus async resolve from `media_assets` → imgproxy → Pixi texture.
+  Share the P12 lifecycle with the gradient fix.
+- **WebGPU preference forced back to WebGL.** `apps/web/src/renderer/Canvas.tsx`
+  currently runs with `preference: 'webgl'`. Pixi v8.18 WebGPU
+  `BindGroupSystem._createBindGroup` intermittently null-derefs on the
+  first render tick when a Graphics has a texture-based fill
+  (image fill, canvas-built gradient fill) — race between
+  `Texture.from(canvas)` upload and WebGPU bind-group construction.
+  Revisit with a newer pixi.js release; repro is "refresh the editor
+  with a shape that has gradient / image fill saved". Expected win:
+  ~1.5–2× draw call throughput for heavy decks.
+
+**Approach (proposed):**
+
+1. **Shared procedural-texture registry.** Extend `ResourceManager` with
+   `acquireProceduralTexture(key, factory) → Texture` +
+   `releaseProceduralTexture(key)`. Keys are structural — a stable
+   string hash of `{kind, stops, angleDeg, centerX/Y, width, height}`
+   for gradients; analogous for patterns / noise / procedural masks.
+   Factory only runs on cache miss. Ref-count identical to the image
+   path so a container can `acquire` on redraw and `release` on destroy
+   / fill-change without worrying about double-frees.
+2. **Per-container fill slot.** Each filled renderer stores the last
+   acquired texture key under a Symbol tag (same pattern as `DATA_TAG`).
+   On `drawX()` redraw: compute new key → if unchanged, reuse; else
+   `release(oldKey) + acquire(newKey)`. Drops the allocation to "once
+   per distinct fill descriptor" even during slider drags (every tick
+   hits the same (colors, angle±ε) bucket).
+3. **LRU cap.** `ResourceManager` evicts the least-recently-acquired
+   procedural texture above some cap (e.g. 128 textures) so unbounded
+   scrubbing over time doesn't leak GPU memory even if `release` is
+   missed somewhere.
+4. **Perf scratchpad.** Before tuning, add a debug overlay (gated on
+   `?perf=1`) showing FPS, active texture count from ResourceManager,
+   and Pixi `renderer.stats`. Without measurement the "fix" is guessing.
+5. **Long-session texture GC.** Investigate `TextureGCSystem` in Pixi
+   v8 — it has a GC pass already; make sure our procedural textures are
+   tagged so it can sweep them. If we mark them as "managed by
+   ResourceManager" the built-in GC should leave them alone and ours
+   reclaims instead.
+
+**Exit criteria:** running the editor for 10 minutes with active slider
+scrubbing (gradient angle, stop colour, shadow blur, stroke width) does
+not grow the active texture count beyond ~2× the count of filled
+shapes visible on screen. FPS stays ≥ 55 during the scrub.
 
 ## Testing strategy
 
