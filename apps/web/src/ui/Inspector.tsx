@@ -18,7 +18,7 @@
  */
 
 import { useState, type ChangeEvent } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Lock, Unlock } from 'lucide-react'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -230,6 +230,59 @@ export function Inspector() {
           <p className="text-[10px] text-muted-foreground/80">View only</p>
         </div>
       )}
+      {/* P5a: Identity — authored name + lock toggle. Name feeds Magic Move
+          pair key and the layer label. Lock disables transform handles +
+          click-picking but keeps the Inspector functional so the flag can
+          be toggled back off. A padlock badge is rendered over the object
+          in the canvas so the state is visible without opening this panel. */}
+      <Section title="Identity" storageKey="identity">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-name-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Name
+          </label>
+          <input
+            id={`inspector-name-${obj.id}`}
+            type="text"
+            value={obj.name ?? ''}
+            placeholder={obj.type}
+            disabled={isViewer}
+            onChange={(e) => {
+              const v = e.target.value.trim()
+              patch({ name: v.length === 0 ? undefined : v } as SlideObjectPatch<SlideObject>)
+            }}
+            className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                locked: obj.locked === true ? undefined : true,
+              } as SlideObjectPatch<SlideObject>)
+            }
+            disabled={isViewer}
+            aria-pressed={obj.locked === true}
+            aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
+            title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
+            className={[
+              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border',
+              obj.locked === true
+                ? 'border-primary bg-primary/15 text-primary'
+                : 'border-border text-muted-foreground hover:text-foreground',
+              'disabled:opacity-40',
+            ].join(' ')}
+          >
+            {obj.locked === true ? (
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </Section>
+
       {/* Position */}
       <Section title="Position" storageKey="position">
         <NumberField

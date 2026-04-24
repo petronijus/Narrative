@@ -30,6 +30,7 @@ import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
 import { bulkUpdateObjects } from '@narrative/slide-model'
 import { computeSnap } from '../editor/snap.js'
 import type { SnapGuide } from '../editor/snap.js'
+import { useZoomLevel } from '../state/useZoomLevel.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,7 +85,7 @@ function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
  * Pro single-select s rotací: handles jsou v rotated space (z corners).
  * Pro multi-select (rotation=0): handles jsou na AABB.
  */
-function computeHandlePoints(bounds: ObjectBounds): HandlePoint[] {
+function computeHandlePoints(bounds: ObjectBounds, rotateOffsetMul = 1): HandlePoint[] {
   const [tl, tr, br, bl] = bounds.corners
 
   if (tl === undefined || tr === undefined || br === undefined || bl === undefined) {
@@ -107,8 +108,8 @@ function computeHandlePoints(bounds: ObjectBounds): HandlePoint[] {
 
   const rotHandle: HandlePoint = {
     kind: 'rotate',
-    x: tc.x + normalX * ROTATION_OFFSET,
-    y: tc.y + normalY * ROTATION_OFFSET,
+    x: tc.x + normalX * ROTATION_OFFSET * rotateOffsetMul,
+    y: tc.y + normalY * ROTATION_OFFSET * rotateOffsetMul,
     cursor: 'grab',
     ariaLabel: 'Rotate handle',
   }
@@ -275,6 +276,14 @@ export function TransformHandles({
 }: TransformHandlesProps) {
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
+  const { zoom } = useZoomLevel()
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  // Invert-scale for handle chrome so TL/BR dots, the selection outline
+  // stroke, and the rotation handle stay at a constant SCREEN size regardless
+  // of artboard zoom. All ARE positioned by slide-space bounds and inherit
+  // the artboard's CSS transform scale.
+  const inv = 1 / (zoom || 1)
 
   // Bounds pro render (re-fetch každý render z SceneGraph)
   const bounds: ObjectBounds | null =
@@ -323,8 +332,10 @@ export function TransformHandles({
       const drag = dragRef.current
       if (drag === null) return
 
-      const dx = e.clientX - drag.startMouseX
-      const dy = e.clientY - drag.startMouseY
+      // Screen-px delta → slide-space delta (artboard CSS scaled by zoom).
+      const z = zoomRef.current || 1
+      const dx = (e.clientX - drag.startMouseX) / z
+      const dy = (e.clientY - drag.startMouseY) / z
 
       const shiftHeld = e.shiftKey
 
@@ -414,7 +425,10 @@ export function TransformHandles({
 
   if (bounds === null || objectIds.length === 0) return null
 
-  const handlePoints = computeHandlePoints(bounds)
+  // Rotation handle sits ROTATION_OFFSET slide-px above the top edge; with
+  // CSS scale(zoom) that becomes ROTATION_OFFSET*zoom screen-px which stays
+  // glued to the edge at low zoom. Feed inv so the on-screen gap is constant.
+  const handlePoints = computeHandlePoints(bounds, inv)
   // Multi-select: skip rotation handle
   const visibleHandles = isMulti ? handlePoints.filter((h) => h.kind !== 'rotate') : handlePoints
 
@@ -431,7 +445,9 @@ export function TransformHandles({
 
   return (
     <>
-      {/* Selection outline jako SVG polygon — rotation-aware */}
+      {/* Selection outline jako SVG polygon — rotation-aware. Stroke je
+          dělený zoomem aby vypadal konstantně tlustý na obrazovce
+          bez ohledu na CSS scale artboardu. */}
       <svg
         aria-hidden="true"
         className="pointer-events-none absolute left-0 top-0 overflow-visible"
@@ -443,12 +459,14 @@ export function TransformHandles({
           )}
           fill="none"
           stroke="#60a5fa"
-          strokeWidth="1.5"
-          strokeDasharray={isMulti ? '4 3' : undefined}
+          strokeWidth={1.5 * inv}
+          strokeDasharray={isMulti ? `${4 * inv} ${3 * inv}` : undefined}
         />
       </svg>
 
-      {/* Transform handles */}
+      {/* Transform handles — positioned at slide-space bounds, but the
+          artboard wrapper applies CSS scale(zoom) so we invert-scale each
+          handle so it stays at a constant SCREEN size. */}
       {visibleHandles.map((h) => (
         <div
           key={h.kind}
@@ -457,12 +475,14 @@ export function TransformHandles({
           tabIndex={-1}
           className="absolute box-border border-2 border-blue-400 bg-white"
           style={{
-            left: h.x - HANDLE_SIZE / 2,
-            top: h.y - HANDLE_SIZE / 2,
+            left: h.x,
+            top: h.y,
             width: HANDLE_SIZE,
             height: HANDLE_SIZE,
             cursor: h.cursor,
             borderRadius: h.kind === 'rotate' ? '50%' : 0,
+            transform: `translate(-50%, -50%) scale(${inv})`,
+            transformOrigin: 'center',
           }}
           onPointerDown={(e) => handlePointerDown(e, h.kind)}
         />

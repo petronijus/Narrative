@@ -130,10 +130,12 @@ export function LineEndpointHandles({ object, mutationCtx }: Props) {
   const p2X = object.x + object.p2.x
   const p2Y = object.y + object.p2.y
 
+  const inv = 1 / (zoomRef.current || 1)
+
   return (
     <>
-      <Handle x={p1X} y={p1Y} onPointerDown={(e) => startDrag(e, 'p1')} />
-      <Handle x={p2X} y={p2Y} onPointerDown={(e) => startDrag(e, 'p2')} />
+      <Handle x={p1X} y={p1Y} inv={inv} onPointerDown={(e) => startDrag(e, 'p1')} />
+      <Handle x={p2X} y={p2Y} inv={inv} onPointerDown={(e) => startDrag(e, 'p2')} />
     </>
   )
 }
@@ -141,21 +143,25 @@ export function LineEndpointHandles({ object, mutationCtx }: Props) {
 function Handle({
   x,
   y,
+  inv,
   onPointerDown,
 }: {
   x: number
   y: number
+  inv: number
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
 }) {
   return (
     <div
       className="pointer-events-auto absolute rounded-full border-2 border-white bg-blue-500 shadow"
       style={{
-        left: x - HANDLE_SIZE / 2,
-        top: y - HANDLE_SIZE / 2,
+        left: x,
+        top: y,
         width: HANDLE_SIZE,
         height: HANDLE_SIZE,
         cursor: 'grab',
+        transform: `translate(-50%, -50%) scale(${inv})`,
+        transformOrigin: 'center',
       }}
       onPointerDown={onPointerDown}
       aria-label="Line endpoint"

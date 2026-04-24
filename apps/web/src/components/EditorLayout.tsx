@@ -25,6 +25,7 @@ import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
 import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
+import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useSlideObjects } from '../state/useSlideObjects'
@@ -535,8 +536,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         selectOne(hitId)
       }
 
-      // Sberi selected IDs (pokud kliknutý objekt byl už selected, drag pohne celý group)
-      const dragIds = selectedIds.has(hitId) ? [...selectedIds] : [hitId]
+      // P5a: locked objects can be selected but not moved — filter them out
+      // of the drag set. If every hit id is locked, we skip drag entirely so
+      // the pointer behaves like a plain selection click.
+      const rawDragIds = selectedIds.has(hitId) ? [...selectedIds] : [hitId]
+      const dragIds = rawDragIds.filter((id) => {
+        const obj = objects.find((o) => o.id === id)
+        return obj !== undefined && obj.locked !== true
+      })
+      if (dragIds.length === 0) return
 
       const initialPositions = dragIds.flatMap((id) => {
         const obj = objects.find((o) => o.id === id)
@@ -659,8 +667,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       if (drag === null || !drag.active) return
       if (mutationCtx === null) return
 
-      const dx = e.clientX - drag.startX
-      const dy = e.clientY - drag.startY
+      // Pointer deltas are screen-px; divide by the current CSS zoom to
+      // recover a slide-space delta so the object tracks the cursor 1:1
+      // at any zoom level.
+      const z = zoomRef.current || 1
+      const dx = (e.clientX - drag.startX) / z
+      const dy = (e.clientY - drag.startY) / z
 
       // Propose new positions
       const proposed = drag.initialPositions.map((init) => ({
@@ -909,14 +921,18 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         return
       }
 
-      // Delete/Backspace → odstraň vybrané objekty
+      // Delete/Backspace → odstraň vybrané objekty (locked objekty se přeskočí)
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isInputFocused()) return
         if (selectedIds.size > 0 && mutationCtx !== null) {
+          let removed = 0
           for (const id of selectedIds) {
+            const obj = objects.find((o) => o.id === id)
+            if (obj !== undefined && obj.locked === true) continue
             removeObject(mutationCtx, id)
+            removed += 1
           }
-          clear()
+          if (removed > 0) clear()
         }
         return
       }
@@ -961,10 +977,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         if (mutationCtx !== null) {
           const updates = [...selectedIds].flatMap((id) => {
             const obj = objects.find((o) => o.id === id)
-            if (obj === undefined) return []
+            if (obj === undefined || obj.locked === true) return []
             return [{ id, patch: { x: obj.x + dx, y: obj.y + dy } }]
           })
-          bulkUpdateObjects(mutationCtx, updates)
+          if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
         }
         return
       }
@@ -1102,15 +1118,28 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
                   <PeerSelectionOverlays />
 
+                  {/* P5a: padlock badge over each locked object. */}
+                  <LockBadges />
+
                   {/* Transform handles — lines/arrows get endpoint handles
-                      instead of the 8-handle scale + rotate rig. */}
+                      instead of the 8-handle scale + rotate rig. Locked
+                      objects (P5a) skip the handles entirely; the object
+                      stays selected (Inspector is still useful for
+                      toggling the flag) but can't be dragged / resized. */}
                   {!isViewer &&
                     selectedIds.size > 0 &&
                     canvasInstance !== null &&
                     mutationCtx !== null &&
                     (() => {
-                      if (selectedIds.size === 1) {
-                        const onlyId = [...selectedIds][0]
+                      // Build the subset of selected ids that are editable.
+                      const editableIds = [...selectedIds].filter((sid) => {
+                        const o = objects.find((x) => x.id === sid)
+                        return o !== undefined && o.locked !== true
+                      })
+                      if (editableIds.length === 0) return null
+
+                      if (editableIds.length === 1) {
+                        const onlyId = editableIds[0]
                         const obj = objects.find((o) => o.id === onlyId)
                         if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
                           return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
@@ -1118,7 +1147,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                       }
                       return (
                         <TransformHandles
-                          objectIds={[...selectedIds]}
+                          objectIds={editableIds}
                           sceneGraph={canvasInstance.sceneGraph}
                           mutationCtx={mutationCtx}
                           onSnapGuides={handleSnapGuides}

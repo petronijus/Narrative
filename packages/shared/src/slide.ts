@@ -15,6 +15,19 @@ export interface BaseSlideObject {
   height: number
   rotation: number
   opacity: number
+  /**
+   * Authored display name (P5a). Optional. When set, the Inspector and the
+   * layer list show this instead of the generic type label. Also feeds
+   * Magic Move pairing via shared names across slides.
+   */
+  name?: string
+  /**
+   * Editor-only. Locked objects can't be picked by the Select tool, can't
+   * be transformed (transform handles hide), and the Inspector renders
+   * disabled inputs. Locked objects render normally in present mode and
+   * still participate in animations. Toggled from the Inspector.
+   */
+  locked?: boolean
 }
 
 export interface RectangleObject extends BaseSlideObject {
