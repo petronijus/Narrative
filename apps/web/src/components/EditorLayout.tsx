@@ -60,18 +60,12 @@ import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useShortcuts } from '../state/useShortcuts.js'
+import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Je fokus v textovém inputu? */
-function isInputFocused(): boolean {
-  const el = document.activeElement
-  if (el === null) return false
-  const tag = el.tagName.toLowerCase()
-  return tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable
-}
 
 /**
  * Converts viewport (clientX, clientY) coordinates into artboard-local
@@ -313,7 +307,7 @@ export interface EditorLayoutProps {
 }
 
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
-  const { selectedIds, selectedId, selectOne, selectMany, toggle, clear } = useSelection()
+  const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { activeTool, setActiveTool } = useTool()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
@@ -907,19 +901,30 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   )
 
   // ---------------------------------------------------------------------------
-  // Keyboard shortcuts
+  // Cheatsheet modal state
   // ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Pen tool — Enter commits the session, Esc cancels it.
-      const pen = penSessionRef.current
-      if (pen !== null && (e.key === 'Enter' || e.key === 'Escape')) {
-        if (isInputFocused()) return
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false)
+
+  // ---------------------------------------------------------------------------
+  // Keyboard shortcuts — P9 centralised registry
+  // ---------------------------------------------------------------------------
+
+  // Pen tool: Enter commits path, Escape cancels. These fire globally because
+  // the user shouldn't have to click the canvas first to commit a pen path.
+  useShortcuts([
+    {
+      keys: 'Enter',
+      scope: 'global',
+      // preventDefault is called conditionally inside handler — only fires
+      // when pen tool is active with an in-progress path.
+      description: 'Commit pen path',
+      handler: (e) => {
+        const pen = penSessionRef.current
+        // Only intercept Enter when a pen session is in progress.
+        if (pen === null) return
         e.preventDefault()
-        if (e.key === 'Enter' && pen.anchors.length >= 2 && mutationCtx !== null) {
-          // Compute AABB over anchors + control handles so translations
-          // + selection stay inside the object box.
+        if (pen.anchors.length >= 2 && mutationCtx !== null) {
           let minX = Infinity
           let minY = Infinity
           let maxX = -Infinity
@@ -960,31 +965,69 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         penSessionRef.current = null
         setPenSession(null)
         setActiveTool('select')
-        return
-      }
+      },
+    },
+    {
+      keys: 'Escape',
+      scope: 'global',
+      // No preventDefault here — Escape should still propagate to
+      // dropdown-close handlers (StageBgPicker, SlideItemMenu, etc.)
+      description: 'Cancel pen path / clear canvas selection',
+      handler: (e) => {
+        const pen = penSessionRef.current
+        if (pen !== null) {
+          e.preventDefault()
+          penSessionRef.current = null
+          setPenSession(null)
+          setActiveTool('select')
+          return
+        }
+        // Clear canvas selection on Escape. No preventDefault — other
+        // Escape handlers (dropdowns etc.) need to keep working.
+        clear()
+      },
+    },
+  ])
 
-      // Undo: Ctrl/Cmd+Z
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        if (isInputFocused()) return
-        e.preventDefault()
+  useShortcuts([
+    // Undo
+    {
+      keys: 'Mod+z',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Undo',
+      handler: () => {
         undo()
-        return
-      }
-
-      // Redo: Ctrl/Cmd+Shift+Z nebo Ctrl+Y
-      if (
-        ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) ||
-        (e.ctrlKey && e.key === 'y')
-      ) {
-        if (isInputFocused()) return
-        e.preventDefault()
+      },
+    },
+    // Redo — Mod+Shift+Z
+    {
+      keys: 'Mod+Shift+z',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Redo',
+      handler: () => {
         redo()
-        return
-      }
+      },
+    },
+    // Redo alternate — Ctrl+Y (non-mac)
+    {
+      keys: 'Ctrl+y',
+      scope: 'global',
+      preventDefault: true,
+      handler: () => {
+        redo()
+      },
+    },
+  ])
 
-      // Delete/Backspace → odstraň vybrané objekty (locked objekty se přeskočí)
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (isInputFocused()) return
+  // Canvas-scoped shortcuts — only fire when the artboard area has focus.
+  useShortcuts([
+    {
+      keys: ['Delete', 'Backspace'],
+      scope: 'canvas',
+      description: 'Delete selected object(s)',
+      handler: () => {
         if (selectedIds.size > 0 && mutationCtx !== null) {
           let removed = 0
           for (const id of selectedIds) {
@@ -995,120 +1038,196 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           }
           if (removed > 0) clear()
         }
-        return
-      }
-
-      // Ctrl/Cmd+D — duplicate selected
-      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
-        if (isInputFocused()) return
-        e.preventDefault()
+      },
+    },
+    {
+      keys: 'Mod+d',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Duplicate selected object(s)',
+      handler: () => {
         if (selectedIds.size > 0 && mutationCtx !== null) {
           const newIds: string[] = []
           for (const id of selectedIds) {
             const dup = duplicateObject(mutationCtx, id, { x: 20, y: 20 })
-            if (dup !== null) {
-              newIds.push(dup.id)
-            }
+            if (dup !== null) newIds.push(dup.id)
           }
-          if (newIds.length > 0) {
-            selectMany(newIds)
-          }
+          if (newIds.length > 0) selectMany(newIds)
         }
-        return
-      }
-
-      // Ctrl/Cmd+C — copy selection to clipboard
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey) {
-        if (isInputFocused()) return
+      },
+    },
+    {
+      keys: 'Mod+c',
+      scope: 'canvas',
+      description: 'Copy selected object(s)',
+      handler: () => {
         if (selectedIds.size === 0) return
         const toCopy = [...selectedIds]
           .map((id) => objects.find((o) => o.id === id))
           .filter((o): o is (typeof objects)[number] => o !== undefined)
         setClipboard(toCopy)
-        return
-      }
-
-      // Ctrl/Cmd+V — paste clipboard
-      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !e.shiftKey) {
-        if (isInputFocused()) return
+      },
+    },
+    {
+      keys: 'Mod+v',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Paste object(s)',
+      handler: () => {
         if (!hasClipboard() || mutationCtx === null) return
         const pasted = readClipboardForPaste({ x: 10, y: 10 })
         if (pasted === null || pasted.length === 0) return
-        e.preventDefault()
         addObjects(mutationCtx, pasted)
         selectMany(pasted.map((o) => o.id))
-        return
-      }
-
-      // Ctrl/Cmd+G — group. Shift+Cmd+G — ungroup.
-      if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
-        if (isInputFocused()) return
+      },
+    },
+    {
+      keys: 'Mod+g',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Group selected objects',
+      handler: () => {
         if (mutationCtx === null) return
-        e.preventDefault()
-        if (e.shiftKey) {
-          ungroupObjects(mutationCtx, [...selectedIds])
-        } else if (selectedIds.size >= 2) {
-          groupObjects(mutationCtx, [...selectedIds])
-        }
-        return
-      }
-
-      // Layer order: [ = backward, ] = forward.
-      // Ctrl/Cmd+[ = send to back, Ctrl/Cmd+] = bring to front.
-      if (e.key === '[' || e.key === ']') {
-        if (isInputFocused()) return
+        if (selectedIds.size >= 2) groupObjects(mutationCtx, [...selectedIds])
+      },
+    },
+    {
+      keys: 'Mod+Shift+g',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Ungroup selected objects',
+      handler: () => {
+        if (mutationCtx === null) return
+        ungroupObjects(mutationCtx, [...selectedIds])
+      },
+    },
+    {
+      keys: ']',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Bring forward',
+      handler: () => {
         if (mutationCtx === null || selectedIds.size === 0) return
-        e.preventDefault()
-        const ids = [...selectedIds]
-        if (e.ctrlKey || e.metaKey) {
-          moveObjectsLayer(mutationCtx, ids, e.key === ']' ? 'front' : 'back')
-        } else {
-          moveObjectsLayer(mutationCtx, ids, e.key === ']' ? 'forward' : 'backward')
-        }
-        return
-      }
-
-      // Ctrl/Cmd+A — select everything on the active slide
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        if (isInputFocused()) return
-        e.preventDefault()
+        moveObjectsLayer(mutationCtx, [...selectedIds], 'forward')
+      },
+    },
+    {
+      keys: '[',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Send backward',
+      handler: () => {
+        if (mutationCtx === null || selectedIds.size === 0) return
+        moveObjectsLayer(mutationCtx, [...selectedIds], 'backward')
+      },
+    },
+    {
+      keys: 'Mod+]',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Bring to front',
+      handler: () => {
+        if (mutationCtx === null || selectedIds.size === 0) return
+        moveObjectsLayer(mutationCtx, [...selectedIds], 'front')
+      },
+    },
+    {
+      keys: 'Mod+[',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Send to back',
+      handler: () => {
+        if (mutationCtx === null || selectedIds.size === 0) return
+        moveObjectsLayer(mutationCtx, [...selectedIds], 'back')
+      },
+    },
+    {
+      keys: 'Mod+a',
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Select all objects',
+      handler: () => {
         selectMany(objects.map((o) => o.id))
-        return
-      }
-
-      // Arrow keys — nudge selected
-      if (
-        selectedIds.size > 0 &&
-        (e.key === 'ArrowLeft' ||
-          e.key === 'ArrowRight' ||
-          e.key === 'ArrowUp' ||
-          e.key === 'ArrowDown')
-      ) {
-        if (isInputFocused()) return
-        e.preventDefault()
+      },
+    },
+    {
+      keys: ['ArrowLeft', 'Shift+ArrowLeft'],
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Nudge left (hold Shift for ×10)',
+      handler: (e) => {
+        if (selectedIds.size === 0 || mutationCtx === null) return
         const step = e.shiftKey ? 10 : 1
-        let dx = 0
-        let dy = 0
-        if (e.key === 'ArrowLeft') dx = -step
-        if (e.key === 'ArrowRight') dx = step
-        if (e.key === 'ArrowUp') dy = -step
-        if (e.key === 'ArrowDown') dy = step
+        const updates = [...selectedIds].flatMap((id) => {
+          const obj = objects.find((o) => o.id === id)
+          if (obj === undefined || obj.locked === true) return []
+          return [{ id, patch: { x: obj.x - step, y: obj.y } }]
+        })
+        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+      },
+    },
+    {
+      keys: ['ArrowRight', 'Shift+ArrowRight'],
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Nudge right (hold Shift for ×10)',
+      handler: (e) => {
+        if (selectedIds.size === 0 || mutationCtx === null) return
+        const step = e.shiftKey ? 10 : 1
+        const updates = [...selectedIds].flatMap((id) => {
+          const obj = objects.find((o) => o.id === id)
+          if (obj === undefined || obj.locked === true) return []
+          return [{ id, patch: { x: obj.x + step, y: obj.y } }]
+        })
+        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+      },
+    },
+    {
+      keys: ['ArrowUp', 'Shift+ArrowUp'],
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Nudge up (hold Shift for ×10)',
+      handler: (e) => {
+        if (selectedIds.size === 0 || mutationCtx === null) return
+        const step = e.shiftKey ? 10 : 1
+        const updates = [...selectedIds].flatMap((id) => {
+          const obj = objects.find((o) => o.id === id)
+          if (obj === undefined || obj.locked === true) return []
+          return [{ id, patch: { x: obj.x, y: obj.y - step } }]
+        })
+        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+      },
+    },
+    {
+      keys: ['ArrowDown', 'Shift+ArrowDown'],
+      scope: 'canvas',
+      preventDefault: true,
+      description: 'Nudge down (hold Shift for ×10)',
+      handler: (e) => {
+        if (selectedIds.size === 0 || mutationCtx === null) return
+        const step = e.shiftKey ? 10 : 1
+        const updates = [...selectedIds].flatMap((id) => {
+          const obj = objects.find((o) => o.id === id)
+          if (obj === undefined || obj.locked === true) return []
+          return [{ id, patch: { x: obj.x, y: obj.y + step } }]
+        })
+        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+      },
+    },
+  ])
 
-        if (mutationCtx !== null) {
-          const updates = [...selectedIds].flatMap((id) => {
-            const obj = objects.find((o) => o.id === id)
-            if (obj === undefined || obj.locked === true) return []
-            return [{ id, patch: { x: obj.x + dx, y: obj.y + dy } }]
-          })
-          if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
-        }
-        return
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedIds, selectedId, mutationCtx, undo, redo, clear, selectMany, objects])
+  // Cheatsheet: Mod+/ — global so it works from anywhere in the editor.
+  useShortcuts([
+    {
+      keys: 'Mod+/',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Keyboard shortcuts cheatsheet',
+      handler: () => {
+        setCheatsheetOpen((prev) => !prev)
+      },
+    },
+  ])
 
   // ---------------------------------------------------------------------------
   // Snap guide callback z TransformHandles
@@ -1139,16 +1258,20 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
       {/* Left sidebar — slides panel, user-resizable (P3) */}
-      <ResizableSidebar
-        storageKey="narrative:sidebarWidth"
-        minWidth={180}
-        maxWidth={420}
-        defaultWidth={240}
-        side="left"
-        className="panel border-r border-border overflow-hidden"
-      >
-        <SlidesPanel />
-      </ResizableSidebar>
+      {/* Left sidebar — slides panel. data-shortcut-scope marks it for
+          scope-aware shortcut dispatch (P9). */}
+      <div data-shortcut-scope="slidePanel" className="contents">
+        <ResizableSidebar
+          storageKey="narrative:sidebarWidth"
+          minWidth={180}
+          maxWidth={420}
+          defaultWidth={240}
+          side="left"
+          className="panel border-r border-border overflow-hidden"
+        >
+          <SlidesPanel />
+        </ResizableSidebar>
+      </div>
 
       {/* Center: canvas area */}
       <main className="flex flex-1 flex-col overflow-hidden">
@@ -1156,6 +1279,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
         <div
           className="canvas-backdrop relative flex flex-1 overflow-hidden"
+          data-shortcut-scope="canvas"
           style={{
             cursor: canvasCursor,
             ...(stageBgColor !== null ? { background: stageBgColor } : {}),
@@ -1335,7 +1459,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         {/* M14 phase 1: bottom animations timeline panel. Read-only visual
             layout with click-to-select and × to remove. Drag/play in a later
             phase. Collapsible. */}
-        <AnimationTimeline />
+        <div data-shortcut-scope="timeline">
+          <AnimationTimeline />
+        </div>
 
         {/* M19 phase 1: per-slide speaker notes. Plain text for now,
             Tiptap rich text in phase 2. Collapsible. */}
@@ -1356,6 +1482,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
       {/* M11: Upload progress stack — fixed bottom-right, visible across the editor */}
       <UploadProgressStack />
+
+      {/* P9: Keyboard shortcuts cheatsheet — triggered by Mod+/ */}
+      <ShortcutsCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
     </div>
   )
 }

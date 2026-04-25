@@ -30,6 +30,7 @@
  */
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useShortcuts } from '../state/useShortcuts.js'
 import { ChevronDown, Play, Pause, Square } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
@@ -420,6 +421,20 @@ export function AnimationTimeline() {
     },
     [animationsCtx],
   )
+
+  // P9: Delete / Backspace removes the selected step when the timeline has
+  // focus. Scoped to 'timeline' so it does NOT fire when the user is
+  // deleting text on the canvas or a slide in the slide panel.
+  useShortcuts([
+    {
+      keys: ['Delete', 'Backspace'],
+      scope: 'timeline',
+      description: 'Delete selected animation step',
+      handler: () => {
+        if (selectedId !== null && !isViewer) handleRemove(selectedId)
+      },
+    },
+  ])
 
   // ---------------------------------------------------------------------------
   // Drag to edit (body → delay, right-edge grip → duration)

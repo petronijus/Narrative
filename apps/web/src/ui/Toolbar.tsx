@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState, type ComponentType, type SVGProps } from 'react'
+import { useShortcuts } from '../state/useShortcuts.js'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   MousePointer2,
@@ -82,24 +83,6 @@ const SHAPE_TOOLS: ToolButton[] = [
   { tool: 'pen', label: 'Pen', shortcut: 'P', icon: PenTool },
 ]
 
-const SHORTCUT_MAP: Record<string, ActiveTool> = {
-  v: 'select',
-  h: 'hand',
-  r: 'rectangle',
-  o: 'ellipse',
-  l: 'line',
-  a: 'arrow',
-  p: 'pen',
-  t: 'text',
-}
-
-function isInputFocused(): boolean {
-  const el = document.activeElement
-  if (el === null) return false
-  const tag = el.tagName.toLowerCase()
-  return tag === 'input' || tag === 'textarea' || (el as HTMLElement).isContentEditable
-}
-
 // Default image drop position — slide centre in 1920×1080 world coords
 const DEFAULT_IMAGE_X = 960
 const DEFAULT_IMAGE_Y = 540
@@ -141,35 +124,90 @@ export function Toolbar() {
     e.target.value = ''
   }
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Present mode: Ctrl/Cmd+Enter
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        if (isInputFocused()) return
-        e.preventDefault()
+  // P9: tool + present-mode shortcuts via centralised registry.
+  useShortcuts([
+    {
+      keys: 'Mod+Enter',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Start presenting',
+      handler: () => {
         navigate(`/deck/${id ?? ''}/present`)
-        return
-      }
-
-      if (isInputFocused()) return
-      if (e.ctrlKey || e.metaKey || e.altKey) return
-
-      const tool = SHORTCUT_MAP[e.key.toLowerCase()]
-      if (tool !== undefined) {
-        e.preventDefault()
-        setActiveTool(tool)
-        return
-      }
-
-      if (e.key.toLowerCase() === 'i' && !isViewer) {
-        e.preventDefault()
-        fileInputRef.current?.click()
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [id, navigate, setActiveTool, isViewer])
+      },
+    },
+    {
+      keys: 'v',
+      scope: 'global',
+      description: 'Select tool',
+      handler: () => {
+        setActiveTool('select')
+      },
+    },
+    {
+      keys: 'h',
+      scope: 'global',
+      description: 'Hand / pan tool',
+      handler: () => {
+        setActiveTool('hand')
+      },
+    },
+    {
+      keys: 't',
+      scope: 'global',
+      description: 'Text tool',
+      handler: () => {
+        setActiveTool('text')
+      },
+    },
+    {
+      keys: 'r',
+      scope: 'global',
+      description: 'Rectangle tool',
+      handler: () => {
+        setActiveTool('rectangle')
+      },
+    },
+    {
+      keys: 'o',
+      scope: 'global',
+      description: 'Ellipse tool',
+      handler: () => {
+        setActiveTool('ellipse')
+      },
+    },
+    {
+      keys: 'l',
+      scope: 'global',
+      description: 'Line tool',
+      handler: () => {
+        setActiveTool('line')
+      },
+    },
+    {
+      keys: 'a',
+      scope: 'global',
+      description: 'Arrow tool',
+      handler: () => {
+        setActiveTool('arrow')
+      },
+    },
+    {
+      keys: 'p',
+      scope: 'global',
+      description: 'Pen tool',
+      handler: () => {
+        setActiveTool('pen')
+      },
+    },
+    {
+      keys: 'i',
+      scope: 'global',
+      description: 'Insert image',
+      handler: () => {
+        if (!isViewer) fileInputRef.current?.click()
+      },
+    },
+  ])
 
   return (
     <TooltipProvider delayDuration={200}>
