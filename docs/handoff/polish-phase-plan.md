@@ -406,6 +406,16 @@ phases create more):
 - **Image fill (deferred from P5c).** Same procedural-texture problem
   plus async resolve from `media_assets` → imgproxy → Pixi texture.
   Share the P12 lifecycle with the gradient fix.
+- **Video sidebar thumbnail can render the gray placeholder instead of
+  the poster (P8 follow-up).** `useSlideThumbnails` doesn't re-render
+  when a VideoObject's transcode flips from pending → done. If the
+  thumbnail was generated while the asset was still transcoding, it
+  bakes in the gray placeholder at the object's bounding box and never
+  refreshes until something else on the slide changes. Visually that
+  looks like a "squished" rectangle (especially after the user resized
+  the video bbox to a non-native aspect). Fix: subscribe the thumbnail
+  pipeline to per-asset video-info polls and invalidate affected
+  slides on terminal transcode transitions.
 - **Video editor preview duplicates VideoOverlay (P8 quick fix).**
   `apps/web/src/ui/EditorVideoPreview.tsx` was added because the
   present-mode `VideoOverlay` positions via `OverlayCompositor` /

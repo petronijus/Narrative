@@ -1242,6 +1242,18 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   {/* P5a: padlock badge over each locked object. */}
                   <LockBadges />
 
+                  {/* P8: click-to-play video preview in the editor.
+                      Mounted BEFORE TransformHandles so the handles +
+                      selection outline + snap guides render ON TOP of
+                      the <video> element. EditorVideoPreview itself
+                      is pointer-events:none on its wrapper; only the
+                      <video> child is interactive. */}
+                  {objects
+                    .filter((o) => o.type === 'video')
+                    .map((vidObj) => (
+                      <EditorVideoPreview key={`editor-video-${vidObj.id}`} videoObject={vidObj} />
+                    ))}
+
                   {/* Transform handles — lines/arrows get endpoint handles
                       instead of the 8-handle scale + rotate rig. Locked
                       objects (P5a) skip the handles entirely; the object
@@ -1291,18 +1303,6 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
                   {/* M11: Drop zone for image uploads — inert for viewer role */}
                   <UploadDropZone canvasContainerRef={canvasContainerRef} />
-
-                  {/* P8: click-to-play video preview in the editor.
-                      Uses EditorVideoPreview (NOT the present-mode
-                      VideoOverlay) — it positions in slide-space CSS
-                      coords so the artboard's CSS scale handles zoom
-                      uniformly and the preview stays in lockstep with
-                      the Pixi-painted poster. */}
-                  {objects
-                    .filter((o) => o.type === 'video')
-                    .map((vidObj) => (
-                      <EditorVideoPreview key={`editor-video-${vidObj.id}`} videoObject={vidObj} />
-                    ))}
 
                   {/* P7: inline text edit overlay. Sits above the Pixi
                       text and takes focus while the user edits. */}
