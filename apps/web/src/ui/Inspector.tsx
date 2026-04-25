@@ -2556,7 +2556,6 @@ function AnimationItem({
             className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
           >
-            <option value="onEnter">onEnter</option>
             <option value="withPrevious">withPrevious</option>
             <option value="afterPrevious">afterPrevious</option>
             <option value="onClick">onClick</option>

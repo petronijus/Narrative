@@ -309,6 +309,28 @@ export function AnimationTimeline() {
 
   const laidOut = useMemo(() => layoutSteps(animations), [animations])
 
+  // One-shot migration: rewrite any legacy onEnter steps to afterPrevious
+  // with a delay that preserves their absolute start time. onEnter is no
+  // longer exposed in the dropdown (drag also stopped converting to it),
+  // so leaving stale values around would leave the <select> showing a
+  // mismatched first option for any pre-migration step. Idempotent —
+  // once migrated, subsequent renders find no onEnter steps and bail.
+  useEffect(() => {
+    if (animationsCtx === null || isViewer) return
+    for (let i = 0; i < laidOut.length; i++) {
+      const l = laidOut[i]
+      if (l === undefined || l.step.trigger !== 'onEnter') continue
+      // anchor = prev.end (afterPrevious) for i > 0, else 0
+      const prev = i > 0 ? laidOut[i - 1] : undefined
+      const anchor = prev !== undefined ? prev.startSec + (prev.step.duration ?? 0) : 0
+      const newDelay = Math.max(0, l.startSec - anchor)
+      updateAnimation(animationsCtx, l.step.id, {
+        trigger: 'afterPrevious',
+        delay: newDelay,
+      })
+    }
+  }, [laidOut, animationsCtx, isViewer])
+
   // Group laidOut steps by objectId. Base order is "first-seen in the
   // current Y.Array". If the user has a saved preference for this slide,
   // apply it: keep preferred ids in their saved positions, then append any
@@ -594,18 +616,30 @@ export function AnimationTimeline() {
         }
       }
 
-      // First movement converts to onEnter so delay == absolute time. This
-      // detaches the bar from any afterPrevious / withPrevious chain anchor
-      // — subsequent drags are pure absolute writes. Chain-triggered
-      // successors downstream may shift visually since their predecessor
-      // changed; that's the accepted trade-off for the Premiere model.
+      // Translate the new absolute start into a delay that is relative to
+      // the step's existing trigger anchor. This keeps the dragged bar's
+      // trigger (withPrevious / afterPrevious / onClick) intact rather
+      // than silently rewriting it to onEnter — which used to leave the
+      // dropdown showing a stale value because onEnter is no longer in
+      // the option list.
+      //   i === 0          → anchor is 0
+      //   withPrevious     → anchor is prev.startSec
+      //   afterPrevious /
+      //   onClick / onEnter → anchor is prev.endSec
+      // Negative deltas would put the bar before its anchor; clamp to 0
+      // so the bar can't escape its trigger semantics.
       const draggedStep = animations.find((a) => a.id === drag.stepId)
-      const patch: Partial<AnimationStep> = { delay: newAbsStart }
-      if (!drag.converted && draggedStep !== undefined && draggedStep.trigger !== 'onEnter') {
-        ;(patch as { trigger?: AnimationTrigger }).trigger = 'onEnter'
-        drag.converted = true
+      const draggedIdx = laidOut.findIndex((l) => l.step.id === drag.stepId)
+      let anchor = 0
+      if (draggedStep !== undefined && draggedIdx > 0) {
+        const prev = laidOut[draggedIdx - 1]
+        if (prev !== undefined) {
+          if (draggedStep.trigger === 'withPrevious') anchor = prev.startSec
+          else anchor = prev.startSec + (prev.step.duration ?? 0)
+        }
       }
-      updateAnimation(animationsCtx, drag.stepId, patch)
+      const newDelay = Math.max(0, newAbsStart - anchor)
+      updateAnimation(animationsCtx, drag.stepId, { delay: newDelay })
 
       // Sort Y.Array by effective absolute start to keep array order in
       // sync with visual order. Use current laidOut but replace the dragged
@@ -1173,7 +1207,6 @@ export function AnimationTimeline() {
                                     })
                                   }}
                                 >
-                                  <option value="onEnter">onEnter</option>
                                   <option value="withPrevious">withPrevious</option>
                                   <option value="afterPrevious">afterPrevious</option>
                                   <option value="onClick">onClick</option>
