@@ -26,7 +26,7 @@
  *   to keep the offscreen thumbnail Pixi app cheap.
  */
 
-import { Container, Graphics, Sprite, Texture } from 'pixi.js'
+import { Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js'
 import type { ImageObject } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
@@ -50,6 +50,8 @@ const SPRITE_WRAP_TAG = Symbol('imgSpriteWrap')
 const ABORTED_TAG = Symbol('imgAborted')
 /** URL of the currently acquired texture (for release on update/destroy). */
 const ACQUIRED_URL_TAG = Symbol('imgAcquiredUrl')
+/** Last crop rectangle applied to the sprite (for surgical patch diffs). */
+const CROP_TAG = Symbol('imgCrop')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -104,6 +106,45 @@ function getAcquiredUrl(node: Container): string | undefined {
 
 function setAcquiredUrl(node: Container, url: string | undefined): void {
   asAny(node)[ACQUIRED_URL_TAG] = url
+}
+
+function getStoredCrop(node: Container): ImageObject['cropRect'] {
+  return asAny(node)[CROP_TAG] as ImageObject['cropRect']
+}
+
+function setStoredCrop(node: Container, crop: ImageObject['cropRect']): void {
+  asAny(node)[CROP_TAG] = crop
+}
+
+/**
+ * P11: build the texture instance to feed the sprite, taking `cropRect`
+ * into account. When the object has a cropRect we wrap the source in a
+ * fresh `Texture` referencing the same TextureSource but with a custom
+ * frame — this leaves the underlying cached texture untouched (so the
+ * ResourceManager can keep sharing it across objects).
+ */
+function buildSpriteTexture(source: Texture, crop: ImageObject['cropRect']): Texture {
+  if (crop === undefined) return source
+  // Clamp the crop rect to the texture's source dimensions so an out-of-
+  // range crop (e.g. from a future re-upload at a smaller size) doesn't
+  // crash Pixi. We treat zero / negative widths as "no crop" too.
+  const sw = source.source.width
+  const sh = source.source.height
+  if (sw <= 0 || sh <= 0) return source
+  const x = Math.max(0, Math.min(sw - 1, crop.x))
+  const y = Math.max(0, Math.min(sh - 1, crop.y))
+  const w = Math.max(1, Math.min(sw - x, crop.width))
+  const h = Math.max(1, Math.min(sh - y, crop.height))
+  return new Texture({
+    source: source.source,
+    frame: new Rectangle(x, y, w, h),
+  })
+}
+
+function isCropEqual(a: ImageObject['cropRect'], b: ImageObject['cropRect']): boolean {
+  if (a === undefined && b === undefined) return true
+  if (a === undefined || b === undefined) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 // ---------------------------------------------------------------------------
@@ -232,11 +273,15 @@ function startLoad(container: Container, data: ImageObject): void {
 
     setAcquiredUrl(container, url)
 
-    // Build sprite wrap + sprite.
+    // Build sprite wrap + sprite. P11: respect cropRect by wrapping the
+    // shared texture in a frame-bounded Texture instance that points at
+    // the same source pixels.
     const spriteWrap = new Container()
-    const sprite = new Sprite(texture)
+    const spriteTex = buildSpriteTexture(texture, data.cropRect)
+    const sprite = new Sprite(spriteTex)
+    setStoredCrop(container, data.cropRect)
 
-    applyFit(sprite, texture, box, fit)
+    applyFit(sprite, spriteTex, box, fit)
     spriteWrap.addChild(sprite)
 
     if (fit === 'cover') {
@@ -303,6 +348,7 @@ export const imageRenderer = {
     const assetChanged = prev.assetId !== next.assetId || prev.variant !== next.variant
     const fitChanged = prev.fit !== next.fit
     const sizeChanged = prev.width !== next.width || prev.height !== next.height
+    const cropChanged = !isCropEqual(prev.cropRect, next.cropRect)
 
     if (assetChanged) {
       // Full re-load: startLoad handles old texture release.
@@ -310,8 +356,22 @@ export const imageRenderer = {
       return
     }
 
+    // P11: crop change — swap the sprite's framed texture in place. We
+    // can recover the underlying TextureSource from the existing sprite
+    // (sprite.texture.source) so no async re-load is needed.
+    if (cropChanged) {
+      const sprite = getSprite(node)
+      if (sprite !== undefined && sprite.texture !== undefined) {
+        const baseSource = sprite.texture.source
+        const fullTex = new Texture({ source: baseSource })
+        const newTex = buildSpriteTexture(fullTex, next.cropRect)
+        sprite.texture = newTex
+        setStoredCrop(node, next.cropRect)
+      }
+    }
+
     // If only size or fit changed, update sprite in place.
-    if (fitChanged || sizeChanged) {
+    if (fitChanged || sizeChanged || cropChanged) {
       const sprite = getSprite(node)
       if (sprite !== undefined && sprite.texture !== undefined) {
         const fit = next.fit ?? 'cover'
@@ -389,7 +449,21 @@ export const imageRenderer = {
       }
     }
 
-    if (sizeChanged || fitChanged) {
+    // P11: cropRect patch — rebuild the sprite's framed texture from the
+    // existing TextureSource without going through the async loader.
+    const cropChanged = 'cropRect' in patch
+    if (cropChanged) {
+      const sprite = getSprite(node)
+      if (sprite !== undefined && sprite.texture !== undefined) {
+        const baseSource = sprite.texture.source
+        const fullTex = new Texture({ source: baseSource })
+        const newTex = buildSpriteTexture(fullTex, patch.cropRect)
+        sprite.texture = newTex
+        setStoredCrop(node, patch.cropRect)
+      }
+    }
+
+    if (sizeChanged || fitChanged || cropChanged) {
       const sprite = getSprite(node)
       if (sprite !== undefined && sprite.texture !== undefined) {
         // Reconstruct current box dimensions from pivot.
@@ -452,6 +526,10 @@ export const imageRenderer = {
         return
       }
 
+      // P11: preserve the current cropRect across an asset re-load unless
+      // the patch explicitly clears it. The stored crop is the last value
+      // applied to the sprite by buildSpriteTexture / setStoredCrop.
+      const cropForReload = 'cropRect' in patch ? patch.cropRect : getStoredCrop(node)
       const synthetic: ImageObject = {
         id: '',
         type: 'image',
@@ -464,6 +542,7 @@ export const imageRenderer = {
         assetId: newAssetId,
         ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
         fit: patch.fit ?? (getMask(node) !== undefined ? 'cover' : 'contain'),
+        ...(cropForReload !== undefined ? { cropRect: cropForReload } : {}),
       }
 
       // Show placeholder again while re-loading.
@@ -555,10 +634,11 @@ export const imageRenderer = {
 
       // Per-thumbnail Texture — not cached, not shared across Pixi apps.
       const texture = Texture.from(img)
+      const spriteTex = buildSpriteTexture(texture, data.cropRect)
 
       const spriteWrap = new Container()
-      const sprite = new Sprite(texture)
-      applyFit(sprite, texture, box, fit)
+      const sprite = new Sprite(spriteTex)
+      applyFit(sprite, spriteTex, box, fit)
       spriteWrap.addChild(sprite)
 
       if (fit === 'cover') {

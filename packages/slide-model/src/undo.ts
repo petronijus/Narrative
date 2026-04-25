@@ -20,9 +20,13 @@ import type { SlideMutationContext } from './slideMutationContext.js'
 /**
  * Creates Y.UndoManager tracking the slides Y.Array (and all nested content).
  * Tracks only operations with LOCAL_ORIGIN — local user edits only.
+ *
+ * P11: also tracks the deck-level `guides` Y.Array so add/move/remove of
+ * a ruler-dragged guide takes part in undo/redo.
  */
 export function createUndoManager(ctx: SlideMutationContext): Y.UndoManager {
-  return new Y.UndoManager([ctx.slides], {
+  const guides = ctx.doc.getArray<Y.Map<unknown>>('guides')
+  return new Y.UndoManager([ctx.slides, guides], {
     trackedOrigins: new Set([LOCAL_ORIGIN]),
   })
 }

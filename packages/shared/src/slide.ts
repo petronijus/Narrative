@@ -12,6 +12,17 @@
  * Pixi container of any object type that declares this mixin — so
  * shapes, text and images can all carry a shadow identically.
  */
+/**
+ * P11: hyperlink target attached to any object. In present mode, a click on
+ * a hyperlinked object navigates instead of advancing the timeline.
+ *
+ * - 'slide' → jump to the deck slide whose id matches `slideId`.
+ * - 'url'   → open `href` in the named browsing context (`_blank` default).
+ */
+export type ObjectHyperlink =
+  | { kind: 'slide'; slideId: string }
+  | { kind: 'url'; href: string; target?: '_self' | '_blank' }
+
 export interface ShadowStyle {
   /** Shadow color hex. */
   color: number
@@ -60,6 +71,13 @@ export interface BaseSlideObject {
    * object type — the attribute itself IS the grouping.
    */
   groupId?: string
+  /**
+   * P11: optional hyperlink target. Present mode intercepts clicks on
+   * hyperlinked objects BEFORE animation triggers fire, so a hyperlink
+   * navigates instead of advancing the slide timeline. Editor inspector
+   * surfaces the field via a "Link" section.
+   */
+  hyperlink?: ObjectHyperlink
 }
 
 /**
@@ -305,6 +323,13 @@ export interface ImageObject extends BaseSlideObject {
    * Optional alt text for accessibility / PDF export.
    */
   alt?: string
+  /**
+   * P11: optional crop rectangle in source-image pixel coordinates.
+   * Renderer feeds this to the Pixi sprite via `texture.frame` so only
+   * the cropped sub-region fills the object's bounding box. Missing ⇒
+   * use the full source image.
+   */
+  cropRect?: { x: number; y: number; width: number; height: number }
 }
 
 export interface VideoObject extends BaseSlideObject {

@@ -131,3 +131,19 @@ export interface Slide {
    */
   collapsed?: boolean
 }
+
+// ---------------------------------------------------------------------------
+// P11: deck-level rulers + guides
+// ---------------------------------------------------------------------------
+
+/**
+ * Author-placed alignment guide drawn across the artboard. Stored at the
+ * deck level (shared by every slide) and persisted in Y.Doc. Positions
+ * are in slide-space pixels: `position` is X for vertical guides, Y for
+ * horizontal guides.
+ */
+export interface DeckGuide {
+  id: string
+  orientation: 'horizontal' | 'vertical'
+  position: number
+}

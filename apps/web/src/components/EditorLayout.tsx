@@ -64,6 +64,9 @@ import { useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { CanvasContextMenu } from '../ui/CanvasContextMenu.js'
 import { ObjectContextMenu } from '../ui/ObjectContextMenu.js'
+import { Rulers, GuideOverlay } from '../ui/Rulers.js'
+import { useRulers } from '../state/RulersContext.js'
+import { useDeckGuides } from '../state/useDeckGuides.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -319,6 +322,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const isViewer = role === 'viewer'
   const { color: stageBgColor } = useStageBgColor()
   const { zoom } = useZoomLevel()
+  // P11: rulers + deck-level guides.
+  const { visible: rulersVisible } = useRulers()
+  const { guides: deckGuides, guidesCtx } = useDeckGuides()
+  // Mirror the live guide list into a ref so the pointermove callback's
+  // computeSnap(...) call always sees the latest set without forcing a
+  // dependency-array churn on the heavy drag handler.
+  const deckGuidesRef = useRef(deckGuides)
+  deckGuidesRef.current = deckGuides
 
   // Expose the latest zoom to the pointer callbacks without having to
   // include it in their dependency arrays (which would churn the
@@ -734,6 +745,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               height: firstObj.height,
             },
             otherBounds,
+            10,
+            6,
+            // P11: deck-level guides feed in as extra snap targets. Read
+            // from the ref so the closure always reflects the current set.
+            deckGuidesRef.current.map((g) => ({
+              orientation: g.orientation,
+              position: g.position,
+            })),
           )
 
           setSnapGuides(snapResult.guides)
@@ -1328,6 +1347,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                     height: SLIDE_HEIGHT * zoom,
                   }}
                 >
+                  {/* P11: ruler strips — drawn OUTSIDE the artboard's
+                      transform:scale wrapper so the ticks live in
+                      screen-space px and stay 24 px thick at any zoom.
+                      Their drag-out gesture inserts deck-level guides. */}
+                  {rulersVisible && (
+                    <Rulers
+                      slideWidth={SLIDE_WIDTH}
+                      slideHeight={SLIDE_HEIGHT}
+                      zoom={zoom}
+                      artboardRef={canvasContainerRef}
+                      guidesCtx={guidesCtx}
+                    />
+                  )}
                   <ObjectContextMenu>
                     <div
                       ref={canvasContainerRef}
@@ -1358,6 +1390,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         canvasWidth={canvasSize.width}
                         canvasHeight={canvasSize.height}
                       />
+
+                      {/* P11: deck-level alignment guides. Hidden when
+                          the rulers UI is collapsed — the guides only
+                          make sense alongside the strips that created
+                          them. */}
+                      {rulersVisible && (
+                        <GuideOverlay
+                          guides={deckGuides}
+                          slideWidth={SLIDE_WIDTH}
+                          slideHeight={SLIDE_HEIGHT}
+                          guidesCtx={guidesCtx}
+                        />
+                      )}
 
                       {/* Marquee selection overlay */}
                       {marquee !== null && <MarqueeOverlay marquee={marquee} />}
@@ -1428,6 +1473,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                               onSnapGuides={handleSnapGuides}
                               otherBounds={otherBounds}
                               forceAspectLock={aspectLock}
+                              extraGuides={deckGuides.map((g) => ({
+                                orientation: g.orientation,
+                                position: g.position,
+                              }))}
                             />
                           )
                         })()}

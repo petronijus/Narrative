@@ -31,6 +31,7 @@ export type {
   RadialGradientFill,
   ImageFillStyle,
   FillStyle,
+  ObjectHyperlink,
 } from './slide.js'
 
 export type {
@@ -44,6 +45,7 @@ export type {
   RadialGradientBackground,
   ImageBackground,
   SlideBackground,
+  DeckGuide,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND } from './deck.js'

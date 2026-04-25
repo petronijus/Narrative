@@ -80,6 +80,11 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   const isPresenterWindow = searchParams.get('presenter') === '1'
 
   const containerRef = useRef<HTMLDivElement>(null)
+  // P11: ref on the 1920×1080 slide container — the bounding box drives
+  // viewport→slide-space coordinate conversion for the hyperlink click
+  // interceptor. The container is CSS-transform: scale(...)-ed, so its
+  // getBoundingClientRect already reflects the current scale.
+  const slideContainerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState<number>(() =>
     computeScale(window.innerWidth, window.innerHeight),
   )
@@ -100,6 +105,14 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M12: active slide objects for VideoOverlay
   const { objects } = useSlideObjects()
   const videoObjects = objects.filter((o): o is VideoObject => o.type === 'video')
+
+  // P11: keep the latest objects snapshot in a ref so the click-capture
+  // hyperlink interceptor (installed once) reads the up-to-date list
+  // without re-binding the listener each render.
+  const objectsRef = useRef(objects)
+  useEffect(() => {
+    objectsRef.current = objects
+  }, [objects])
 
   // M12: Media preload
   const { start: startPreload, progress: preloadProgress, isPreloading } = useMediaPreload()
@@ -339,6 +352,75 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     navigateToSlideRef.current = navigateToSlide
   }, [navigateToSlide])
 
+  // P11: hyperlink interceptor. Installed once on the slide container
+  // in capture phase so it fires BEFORE the document-level click bridge
+  // that advances onClick animation triggers. When the click hits an
+  // object that carries a `hyperlink` field, we navigate / open the URL
+  // and stop propagation so the timeline doesn't advance underneath.
+  //
+  // Hit-testing uses AABB on the object's slide-space rect. That ignores
+  // rotation, but it's good enough for hyperlinks (the user clicks what
+  // they see; a small dead-zone past a rotated edge is acceptable).
+  useEffect(() => {
+    const el = slideContainerRef.current
+    if (el === null) return
+
+    function handleClick(e: MouseEvent) {
+      const rect = el!.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      // CSS-scaled container → recover slide coords (1920×1080).
+      const sx = ((e.clientX - rect.left) / rect.width) * SLIDE_WIDTH
+      const sy = ((e.clientY - rect.top) / rect.height) * SLIDE_HEIGHT
+
+      const list = objectsRef.current
+      // Walk top-to-bottom (last in array = top of z-order).
+      for (let i = list.length - 1; i >= 0; i--) {
+        const o = list[i]
+        if (o === undefined) continue
+        if (o.hyperlink === undefined) continue
+        if (sx < o.x || sx > o.x + o.width) continue
+        if (sy < o.y || sy > o.y + o.height) continue
+
+        // Match — handle the hyperlink and stop propagation so the
+        // animation bridge doesn't also advance the timeline.
+        e.stopPropagation()
+        e.preventDefault()
+        const link = o.hyperlink
+        if (link.kind === 'slide') {
+          if (link.slideId !== '') setActiveSlideId(link.slideId)
+        } else {
+          window.open(link.href, link.target ?? '_blank')
+        }
+        return
+      }
+    }
+
+    function handleMove(e: MouseEvent) {
+      const rect = el!.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+      const sx = ((e.clientX - rect.left) / rect.width) * SLIDE_WIDTH
+      const sy = ((e.clientY - rect.top) / rect.height) * SLIDE_HEIGHT
+      const list = objectsRef.current
+      let hit = false
+      for (let i = list.length - 1; i >= 0; i--) {
+        const o = list[i]
+        if (o === undefined || o.hyperlink === undefined) continue
+        if (sx < o.x || sx > o.x + o.width) continue
+        if (sy < o.y || sy > o.y + o.height) continue
+        hit = true
+        break
+      }
+      el!.style.cursor = hit ? 'pointer' : ''
+    }
+
+    el.addEventListener('click', handleClick, true)
+    el.addEventListener('mousemove', handleMove)
+    return () => {
+      el.removeEventListener('click', handleClick, true)
+      el.removeEventListener('mousemove', handleMove)
+    }
+  }, [setActiveSlideId])
+
   // BroadcastChannel setup — installed once per deck id. Receiver computes
   // direction by comparing the current activeSlideId to the incoming id:
   // an adjacent jump runs through navigateToSlide (plays transitions, plays
@@ -489,6 +571,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       */}
       <div ref={slideAreaRef} className="relative flex min-h-0 flex-1 items-center justify-center">
         <div
+          ref={slideContainerRef}
           className={[
             'relative',
             showPreloadOverlay ? 'opacity-40' : '',

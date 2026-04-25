@@ -193,8 +193,13 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
 
         <ContextMenuSeparator />
 
-        {/* Hyperlink: inspector section lands in P12 */}
-        <ContextMenuItem disabled title="Hyperlinks not yet implemented (P12)">
+        {/* P11: Hyperlink — focuses the Inspector's Link section. */}
+        <ContextMenuItem
+          disabled={singleSelected === undefined}
+          onSelect={() => {
+            window.dispatchEvent(new CustomEvent('narrative:focus-link-inspector'))
+          }}
+        >
           Hyperlink…
         </ContextMenuItem>
 

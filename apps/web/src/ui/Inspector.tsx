@@ -17,7 +17,7 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { ChevronDown, Lock, Unlock } from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
 import { useSelection } from '../state/SelectionContext.js'
@@ -63,6 +63,7 @@ import type {
   FillStyle,
   FillGradientStop,
   ImageFillStyle,
+  ImageObject,
   TextObject,
   VideoObject,
   SlideObjectPatch,
@@ -72,6 +73,7 @@ import type {
   SlideTransitionKind,
   SlidePushDirection,
   SlideBackground,
+  ObjectHyperlink,
 } from '@narrative/shared'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 
@@ -388,6 +390,16 @@ export function Inspector() {
       {obj.type === 'video' && (
         <VideoSection obj={obj} patch={patch as (p: SlideObjectPatch<VideoObject>) => void} />
       )}
+
+      {/* P11: Image crop — minimal viable UI (4 number fields + reset).
+          Crop rect is in source-image pixel space. */}
+      {obj.type === 'image' && (
+        <ImageCropSection obj={obj} patch={patch as (p: SlideObjectPatch<ImageObject>) => void} />
+      )}
+
+      {/* P11: Link — hyperlink target on any object. Only visible for
+          single selection (multi-select inspector skips it). */}
+      <LinkSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
       {/* P5c: Shadow + Blur — every object type gets them through the
           BaseSlideObject mixin + filterEffects helper on the renderer side. */}
@@ -2657,6 +2669,264 @@ function AnimationsSection({
             />
           ))}
         </ul>
+      )}
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// P11: Link (hyperlink) section — visible for any single-selected object.
+// Listens for 'narrative:focus-link-inspector' so the object context menu's
+// "Hyperlink…" item can scroll + focus this section without prop drilling.
+// ---------------------------------------------------------------------------
+
+interface LinkSectionProps {
+  obj: SlideObject
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+}
+
+function LinkSection({ obj, patch }: LinkSectionProps) {
+  const slides = useSlides()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const typeSelectRef = useRef<HTMLSelectElement>(null)
+
+  useEffect(() => {
+    function focusHandler() {
+      const root = containerRef.current
+      if (root === null) return
+      // Scroll the panel into view first; the type picker autofocus
+      // afterwards positions the cursor on the right control.
+      root.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // Focus the picker on the next frame so the scroll animation
+      // doesn't fight the focus ring placement.
+      window.setTimeout(() => {
+        typeSelectRef.current?.focus()
+      }, 0)
+    }
+    window.addEventListener('narrative:focus-link-inspector', focusHandler as EventListener)
+    return () => {
+      window.removeEventListener('narrative:focus-link-inspector', focusHandler as EventListener)
+    }
+  }, [])
+
+  const link = obj.hyperlink
+  const kind: 'none' | 'slide' | 'url' = link?.kind ?? 'none'
+
+  function setKind(next: 'none' | 'slide' | 'url') {
+    if (next === 'none') {
+      patch({ hyperlink: undefined } as unknown as SlideObjectPatch<SlideObject>)
+      return
+    }
+    if (next === 'slide') {
+      const firstOther = slides.find((s) => s.id !== undefined)?.id ?? ''
+      const nextLink: ObjectHyperlink = { kind: 'slide', slideId: firstOther }
+      patch({ hyperlink: nextLink } as SlideObjectPatch<SlideObject>)
+      return
+    }
+    const nextLink: ObjectHyperlink = { kind: 'url', href: '', target: '_blank' }
+    patch({ hyperlink: nextLink } as SlideObjectPatch<SlideObject>)
+  }
+
+  return (
+    <div ref={containerRef}>
+      <Section title="Link" storageKey="link">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-link-type-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Type
+          </label>
+          <select
+            ref={typeSelectRef}
+            id={`inspector-link-type-${obj.id}`}
+            value={kind}
+            onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
+            className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+          >
+            <option value="none">None</option>
+            <option value="slide">Slide</option>
+            <option value="url">URL</option>
+          </select>
+        </div>
+
+        {link?.kind === 'slide' && (
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor={`inspector-link-slide-${obj.id}`}
+              className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+            >
+              Target
+            </label>
+            <select
+              id={`inspector-link-slide-${obj.id}`}
+              value={link.slideId}
+              onChange={(e) => {
+                patch({
+                  hyperlink: { kind: 'slide', slideId: e.target.value },
+                } as SlideObjectPatch<SlideObject>)
+              }}
+              className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+            >
+              {slides.map((s, i) => (
+                <option key={s.id} value={s.id}>
+                  {s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {link?.kind === 'url' && (
+          <>
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor={`inspector-link-href-${obj.id}`}
+                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+              >
+                URL
+              </label>
+              <input
+                id={`inspector-link-href-${obj.id}`}
+                type="url"
+                value={link.href}
+                placeholder="https://example.com"
+                onChange={(e) => {
+                  const target = link.target
+                  patch({
+                    hyperlink: {
+                      kind: 'url',
+                      href: e.target.value,
+                      ...(target !== undefined ? { target } : {}),
+                    },
+                  } as SlideObjectPatch<SlideObject>)
+                }}
+                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor={`inspector-link-target-${obj.id}`}
+                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+              >
+                Open in
+              </label>
+              <select
+                id={`inspector-link-target-${obj.id}`}
+                value={link.target ?? '_blank'}
+                onChange={(e) => {
+                  patch({
+                    hyperlink: {
+                      kind: 'url',
+                      href: link.href,
+                      target: e.target.value as '_self' | '_blank',
+                    },
+                  } as SlideObjectPatch<SlideObject>)
+                }}
+                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              >
+                <option value="_blank">New tab</option>
+                <option value="_self">Same tab</option>
+              </select>
+            </div>
+          </>
+        )}
+      </Section>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// P11: Image crop section — minimum viable, four number fields + reset.
+// `cropRect` is in source-image pixel coordinates; the renderer wraps the
+// shared texture in a frame-bounded sub-texture.
+// ---------------------------------------------------------------------------
+
+interface ImageCropSectionProps {
+  obj: ImageObject
+  patch: (p: SlideObjectPatch<ImageObject>) => void
+}
+
+function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
+  const enabled = obj.cropRect !== undefined
+  const crop = obj.cropRect ?? { x: 0, y: 0, width: 0, height: 0 }
+
+  function patchCrop(next: Partial<{ x: number; y: number; width: number; height: number }>) {
+    patch({
+      cropRect: {
+        x: next.x ?? crop.x,
+        y: next.y ?? crop.y,
+        width: next.width ?? crop.width,
+        height: next.height ?? crop.height,
+      },
+    })
+  }
+
+  return (
+    <Section title="Crop" storageKey="imageCrop">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-crop-toggle-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Crop
+        </label>
+        <input
+          id={`inspector-crop-toggle-${obj.id}`}
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            if (e.target.checked) {
+              // Default crop: a 100x100 box at origin. Inspector reads
+              // from the asset's natural size only after the user types
+              // something — keeps the toggle cheap.
+              patch({ cropRect: { x: 0, y: 0, width: 100, height: 100 } })
+            } else {
+              patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
+            }
+          }}
+          className="h-3.5 w-3.5"
+        />
+      </div>
+
+      {enabled && (
+        <>
+          <NumberField
+            id={`inspector-crop-x-${obj.id}`}
+            label="X"
+            value={crop.x}
+            onChange={(v) => patchCrop({ x: Math.max(0, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-y-${obj.id}`}
+            label="Y"
+            value={crop.y}
+            onChange={(v) => patchCrop({ y: Math.max(0, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-w-${obj.id}`}
+            label="Width"
+            value={crop.width}
+            onChange={(v) => patchCrop({ width: Math.max(1, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-h-${obj.id}`}
+            label="Height"
+            value={crop.height}
+            onChange={(v) => patchCrop({ height: Math.max(1, v) })}
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
+              }
+              className="rounded border border-border bg-input px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Reset
+            </button>
+          </div>
+        </>
       )}
     </Section>
   )
