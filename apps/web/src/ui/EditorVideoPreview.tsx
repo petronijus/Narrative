@@ -27,10 +27,13 @@
  * there's no CSS scale to fight with there.
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import Hls from 'hls.js'
-import type { VideoObject } from '@narrative/shared'
+import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
+import type { VideoObject, SlideObjectPatch } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
+import { useSlideObjects } from '../state/useSlideObjects.js'
+import { updateObject } from '@narrative/slide-model'
 
 export interface EditorVideoPreviewProps {
   videoObject: VideoObject
@@ -48,6 +51,51 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const { objectsCtx } = useSlideObjects()
+
+  // Hover controls state — only shown in edit mode.
+  const [hovered, setHovered] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const [muted, setMutedState] = useState(videoObject.muted ?? true)
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Sync muted state when prop changes (e.g. Inspector toggle).
+  useEffect(() => {
+    setMutedState(videoObject.muted ?? true)
+    const el = videoRef.current
+    if (el !== null) el.muted = videoObject.muted ?? true
+  }, [videoObject.muted])
+
+  const handlePlayPause = useCallback(() => {
+    const el = videoRef.current
+    if (el === null) return
+    if (el.paused) {
+      void el.play().catch(() => undefined)
+    } else {
+      el.pause()
+    }
+  }, [])
+
+  const handleMuteToggle = useCallback(() => {
+    const el = videoRef.current
+    if (el === null) return
+    const next = !muted
+    el.muted = next
+    setMutedState(next)
+    // Persist to the object via Y.Doc so Inspector stays in sync.
+    if (objectsCtx !== null) {
+      updateObject(objectsCtx, videoObject.id, {
+        muted: next,
+      } as SlideObjectPatch<VideoObject>)
+    }
+  }, [muted, objectsCtx, videoObject.id])
+
+  // Clean up hover timeout on unmount.
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current !== null) clearTimeout(hoverTimeoutRef.current)
+    }
+  }, [])
 
   // Wire up HLS the moment we have a hlsManifestUrl.
   useEffect(() => {
@@ -124,8 +172,16 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     videoEl.addEventListener('timeupdate', onTime)
     videoEl.addEventListener('seeked', onTime)
 
+    // Track play/pause state for the hover controls bar icon.
+    const onPlayIcon = (): void => setPlaying(true)
+    const onPauseIcon = (): void => setPlaying(false)
+    videoEl.addEventListener('play', onPlayIcon)
+    videoEl.addEventListener('pause', onPauseIcon)
+
     return () => {
       videoEl.removeEventListener('play', onPlay)
+      videoEl.removeEventListener('play', onPlayIcon)
+      videoEl.removeEventListener('pause', onPauseIcon)
       videoEl.removeEventListener('timeupdate', onTimeUpdate)
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
@@ -165,20 +221,35 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
         opacity: videoObject.opacity,
-        // Editor: pointer-events:none lets transform handles + selection
-        // clicks through. Present: accept clicks so the user can play/pause.
+        // Editor: pointer-events:none passes clicks through to transform handles.
+        // Present: accept clicks so the user can play/pause.
         pointerEvents: isPresent ? 'auto' : 'none',
       }}
     >
       <video
         ref={videoRef}
-        muted={videoObject.muted ?? true}
+        muted={muted}
         autoPlay={false}
         loop={videoObject.loop ?? false}
         playsInline
         controls={videoObject.showControls === true}
         aria-label={videoObject.alt ?? undefined}
+        onMouseEnter={() => {
+          if (isPresent) return
+          if (hoverTimeoutRef.current !== null) {
+            clearTimeout(hoverTimeoutRef.current)
+            hoverTimeoutRef.current = null
+          }
+          setHovered(true)
+        }}
+        onMouseLeave={() => {
+          if (isPresent) return
+          // Short debounce: allows the mouse to move from the video to the
+          // controls bar without the bar disappearing.
+          hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
+        }}
         onClick={(e) => {
+          if (!isPresent) return
           const v = e.currentTarget
           if (v.paused) void v.play().catch(() => undefined)
           else v.pause()
@@ -191,6 +262,54 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           background: 'transparent',
         }}
       />
+
+      {/* Edit-mode hover controls bar.
+          Hover state is tracked on the video element (pointer-events:auto)
+          with a short leave debounce so moving from the video to the bar
+          doesn't immediately dismiss it. The bar buttons restore hover on
+          mouseenter and clear the timeout. */}
+      {!isPresent && hovered && (
+        <div
+          style={{ pointerEvents: 'auto' }}
+          onMouseEnter={() => {
+            if (hoverTimeoutRef.current !== null) {
+              clearTimeout(hoverTimeoutRef.current)
+              hoverTimeoutRef.current = null
+            }
+          }}
+          onMouseLeave={() => {
+            hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
+          }}
+          className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-sm"
+        >
+          <button
+            type="button"
+            onClick={handlePlayPause}
+            aria-label={playing ? 'Pause' : 'Play'}
+            title={playing ? 'Pause' : 'Play'}
+            className="flex h-6 w-6 items-center justify-center rounded text-white/90 hover:text-white"
+          >
+            {playing ? (
+              <Pause className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Play className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleMuteToggle}
+            aria-label={muted ? 'Unmute' : 'Mute'}
+            title={muted ? 'Unmute' : 'Mute'}
+            className="flex h-6 w-6 items-center justify-center rounded text-white/90 hover:text-white"
+          >
+            {muted ? (
+              <VolumeX className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

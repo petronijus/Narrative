@@ -14,6 +14,7 @@
  */
 
 import { useRef, useState, useCallback, useEffect, useId, useMemo } from 'react'
+import { SlideRowContextMenu } from './SlideRowContextMenu.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -204,195 +205,205 @@ function SlideItem({
   }
 
   return (
-    <div
-      role="option"
-      aria-selected={isActive}
-      aria-labelledby={labelId}
-      data-slide-id={slide.id}
-      data-slide-index={index}
-      aria-hidden={hidden || undefined}
-      className="group relative"
-      style={{
-        display: 'grid',
-        gridTemplateRows: hidden ? '0fr' : '1fr',
-        transition: `grid-template-rows ${COLLAPSE_MS}ms ease, opacity ${COLLAPSE_MS}ms ease`,
-        opacity: hidden ? 0 : 1,
-        pointerEvents: hidden ? 'none' : 'auto',
-        // Lift this row above siblings while its three-dot menu is
-        // open so the dropdown isn't covered by the following slide.
-        zIndex: menuOpen ? 40 : undefined,
-      }}
+    <SlideRowContextMenu
+      slideId={slide.id}
+      skipped={slide.skipped === true}
+      readOnly={readOnly}
+      onRename={() => setEditing(true)}
+      onDuplicate={(id) => onDuplicate(id)}
+      onDelete={(id) => onDelete(id)}
+      onToggleSkip={(id) => onToggleSkip(id)}
     >
-      {/* Drop indicators live on the OUTER wrapper so they escape the
+      <div
+        role="option"
+        aria-selected={isActive}
+        aria-labelledby={labelId}
+        data-slide-id={slide.id}
+        data-slide-index={index}
+        aria-hidden={hidden || undefined}
+        className="group relative"
+        style={{
+          display: 'grid',
+          gridTemplateRows: hidden ? '0fr' : '1fr',
+          transition: `grid-template-rows ${COLLAPSE_MS}ms ease, opacity ${COLLAPSE_MS}ms ease`,
+          opacity: hidden ? 0 : 1,
+          pointerEvents: hidden ? 'none' : 'auto',
+          // Lift this row above siblings while its three-dot menu is
+          // open so the dropdown isn't covered by the following slide.
+          zIndex: menuOpen ? 40 : undefined,
+        }}
+      >
+        {/* Drop indicators live on the OUTER wrapper so they escape the
           inner overflow:hidden (which is required for the grid-rows
           collapse animation). */}
-      {dropIndicatorAbove && (
+        {dropIndicatorAbove && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
+          />
+        )}
+        {dropIndicatorBelow && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
+          />
+        )}
         <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -top-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
-        />
-      )}
-      {dropIndicatorBelow && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -bottom-1 left-2 right-2 z-10 h-0.5 rounded-full bg-blue-400"
-        />
-      )}
-      <div
-        style={{
-          overflow: 'hidden',
-          paddingLeft: indent * INDENT_VISUAL_PX,
-        }}
-        className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
-      >
-        {/* Skipped slides keep full width and just clip the bottom of
+          style={{
+            overflow: 'hidden',
+            paddingLeft: indent * INDENT_VISUAL_PX,
+          }}
+          className={['relative flex-shrink-0', isDragging ? 'opacity-40' : ''].join(' ')}
+        >
+          {/* Skipped slides keep full width and just clip the bottom of
             the thumbnail — the outer wrapper transitions max-height,
             the inner card keeps its 16:9 aspectRatio so width never
             collapses with the animation. */}
-        <div
-          className="mx-2 overflow-hidden rounded transition-[max-height,opacity] duration-200 ease"
-          style={{
-            maxHeight: slide.skipped === true ? 36 : 1000,
-            opacity: slide.skipped === true ? 0.65 : 1,
-          }}
-        >
           <div
-            className={[
-              'relative cursor-pointer rounded ring-1 ring-inset ring-gray-700 hover:ring-gray-500',
-            ].join(' ')}
-            style={{ aspectRatio: '16/9', width: '100%' }}
-            onPointerDown={(e) => onPointerDown(e, slide.id, index)}
-            onClick={(e) => onActivate(slide.id, e.shiftKey)}
-            aria-hidden="true"
+            className="mx-2 overflow-hidden rounded transition-[max-height,opacity] duration-200 ease"
+            style={{
+              maxHeight: slide.skipped === true ? 36 : 1000,
+              opacity: slide.skipped === true ? 0.65 : 1,
+            }}
           >
-            {thumbnailUrl !== undefined ? (
-              <img
-                src={thumbnailUrl}
-                alt=""
-                className="h-full w-full object-cover"
-                draggable={false}
+            <div
+              className={[
+                'relative cursor-pointer rounded ring-1 ring-inset ring-gray-700 hover:ring-gray-500',
+              ].join(' ')}
+              style={{ aspectRatio: '16/9', width: '100%' }}
+              onPointerDown={(e) => onPointerDown(e, slide.id, index)}
+              onClick={(e) => onActivate(slide.id, e.shiftKey)}
+              aria-hidden="true"
+            >
+              {thumbnailUrl !== undefined ? (
+                <img
+                  src={thumbnailUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+              ) : (
+                <div
+                  className="h-full w-full"
+                  style={{ backgroundColor: placeholderColour(index) }}
+                />
+              )}
+
+              <span
+                id={labelId}
+                className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
+              >
+                {index + 1}
+              </span>
+
+              {slide.skipped === true && (
+                <span
+                  aria-label="Skipped in present mode"
+                  className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+                >
+                  <EyeOff className="h-3 w-3" aria-hidden="true" />
+                </span>
+              )}
+
+              {/* Selection / active-descendant outline — rendered as a sibling
+                on top of the thumbnail so the <img> can't occlude it. */}
+              {overlayBorder !== null && (
+                <div
+                  aria-hidden="true"
+                  className={['pointer-events-none absolute inset-0 rounded', overlayBorder].join(
+                    ' ',
+                  )}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Name row — chevron + label, inline */}
+          <div className="mx-2 mt-1 flex items-center gap-0.5 text-[11px] text-muted-foreground">
+            {hasChildren ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onToggleCollapsed(slide.id)
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                aria-label={collapsed ? 'Expand children' : 'Collapse children'}
+                className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight
+                  className={'h-3 w-3 transition-transform ' + (collapsed ? '' : 'rotate-90')}
+                  aria-hidden="true"
+                />
+              </button>
+            ) : (
+              <span className="inline-block h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            )}
+
+            {editing ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commit()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setDraftName(slide.name ?? '')
+                    setEditing(false)
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                placeholder={`Slide ${index + 1}`}
+                className="flex-1 rounded border border-border bg-surface-1 px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-border-strong"
               />
             ) : (
-              <div
-                className="h-full w-full"
-                style={{ backgroundColor: placeholderColour(index) }}
-              />
-            )}
-
-            <span
-              id={labelId}
-              className="absolute bottom-1 left-1.5 rounded bg-black/50 px-1 text-[10px] font-medium text-white/80 select-none"
-            >
-              {index + 1}
-            </span>
-
-            {slide.skipped === true && (
-              <span
-                aria-label="Skipped in present mode"
-                className="absolute right-1 bottom-1 rounded bg-black/55 p-0.5 text-white/80"
+              <button
+                type="button"
+                onDoubleClick={() => {
+                  if (readOnly) return
+                  setEditing(true)
+                }}
+                onKeyDown={(e) => {
+                  if (!readOnly && e.key === 'F2') {
+                    e.preventDefault()
+                    setEditing(true)
+                  }
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="block flex-1 truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-2/60"
+                title={displayName}
               >
-                <EyeOff className="h-3 w-3" aria-hidden="true" />
-              </span>
-            )}
-
-            {/* Selection / active-descendant outline — rendered as a sibling
-                on top of the thumbnail so the <img> can't occlude it. */}
-            {overlayBorder !== null && (
-              <div
-                aria-hidden="true"
-                className={['pointer-events-none absolute inset-0 rounded', overlayBorder].join(
-                  ' ',
-                )}
-              />
+                {displayName}
+              </button>
             )}
           </div>
         </div>
 
-        {/* Name row — chevron + label, inline */}
-        <div className="mx-2 mt-1 flex items-center gap-0.5 text-[11px] text-muted-foreground">
-          {hasChildren ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                onToggleCollapsed(slide.id)
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              aria-label={collapsed ? 'Expand children' : 'Collapse children'}
-              className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight
-                className={'h-3 w-3 transition-transform ' + (collapsed ? '' : 'rotate-90')}
-                aria-hidden="true"
-              />
-            </button>
-          ) : (
-            <span className="inline-block h-4 w-4 flex-shrink-0" aria-hidden="true" />
-          )}
-
-          {editing ? (
-            <input
-              ref={inputRef}
-              type="text"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  commit()
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  setDraftName(slide.name ?? '')
-                  setEditing(false)
-                }
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              placeholder={`Slide ${index + 1}`}
-              className="flex-1 rounded border border-border bg-surface-1 px-1 py-0.5 text-[11px] text-foreground outline-none focus:border-border-strong"
-            />
-          ) : (
-            <button
-              type="button"
-              onDoubleClick={() => {
-                if (readOnly) return
-                setEditing(true)
-              }}
-              onKeyDown={(e) => {
-                if (!readOnly && e.key === 'F2') {
-                  e.preventDefault()
-                  setEditing(true)
-                }
-              }}
-              onClick={(e) => e.stopPropagation()}
-              className="block flex-1 truncate rounded px-1 py-0.5 text-left text-[11px] hover:bg-surface-2/60"
-              title={displayName}
-            >
-              {displayName}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Three-dot menu — placed OUTSIDE the inner overflow:hidden
+        {/* Three-dot menu — placed OUTSIDE the inner overflow:hidden
           wrapper so its dropdown isn't clipped by the collapse-animation
           container. Sits absolute against the outer row instead. */}
-      {!readOnly && (
-        <div className="absolute right-3 top-1">
-          <SlideItemMenu
-            slideId={slide.id}
-            skipped={slide.skipped === true}
-            onDuplicate={onDuplicate}
-            onDelete={onDelete}
-            onTransition={onTransition}
-            onRename={() => setEditing(true)}
-            onToggleSkip={onToggleSkip}
-            onOpenChange={setMenuOpen}
-          />
-        </div>
-      )}
-    </div>
+        {!readOnly && (
+          <div className="absolute right-3 top-1">
+            <SlideItemMenu
+              slideId={slide.id}
+              skipped={slide.skipped === true}
+              onDuplicate={onDuplicate}
+              onDelete={onDelete}
+              onTransition={onTransition}
+              onRename={() => setEditing(true)}
+              onToggleSkip={onToggleSkip}
+              onOpenChange={setMenuOpen}
+            />
+          </div>
+        )}
+      </div>
+    </SlideRowContextMenu>
   )
 }
 

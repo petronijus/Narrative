@@ -19,6 +19,7 @@
 
 import { useState, type ChangeEvent } from 'react'
 import { ChevronDown, Lock, Unlock } from 'lucide-react'
+import { ColorInput } from './ColorInput.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -1071,16 +1072,12 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
           >
             Color
           </label>
-          <input
-            id={`bg-color-${slideId}`}
-            type="color"
+          <ColorInput
             value={numberToHex(current.color)}
-            onChange={(e) => setSolidColor(hexToNumber(e.target.value))}
-            className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            onChange={(hex) => setSolidColor(hexToNumber(hex))}
+            ariaLabel="Background color"
+            showHex
           />
-          <span className="font-mono text-[11px] text-muted-foreground/80">
-            {numberToHex(current.color).toUpperCase()}
-          </span>
         </div>
       )}
 
@@ -1088,20 +1085,20 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
         <>
           <div className="flex items-center gap-2">
             <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">Start</label>
-            <input
-              type="color"
+            <ColorInput
               value={numberToHex(current.stops[0]?.color ?? 0xffffff)}
-              onChange={(e) => patchGradientStop(0, hexToNumber(e.target.value))}
-              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              onChange={(hex) => patchGradientStop(0, hexToNumber(hex))}
+              ariaLabel="Gradient start color"
+              showHex={false}
             />
           </div>
           <div className="flex items-center gap-2">
             <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">End</label>
-            <input
-              type="color"
+            <ColorInput
               value={numberToHex(current.stops[1]?.color ?? 0x111111)}
-              onChange={(e) => patchGradientStop(1, hexToNumber(e.target.value))}
-              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              onChange={(hex) => patchGradientStop(1, hexToNumber(hex))}
+              ariaLabel="Gradient end color"
+              showHex={false}
             />
           </div>
           {current.kind === 'linearGradient' && (
@@ -1180,14 +1177,13 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
           />
           {hasStroke && (
             <>
-              <input
-                type="color"
-                aria-label="Stroke color"
+              <ColorInput
                 value={strokeHex}
-                onChange={(e) =>
-                  patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<FilledShape>)
+                onChange={(hex) =>
+                  patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<FilledShape>)
                 }
-                className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+                ariaLabel="Stroke color"
+                showHex={false}
               />
               <input
                 type="number"
@@ -1442,26 +1438,12 @@ function FillPicker({
       </div>
 
       {mode === 'solid' && (
-        <div className="ml-[4.5rem] flex items-center gap-1.5">
-          <input
-            type="color"
-            aria-label="Fill color"
+        <div className="ml-[4.5rem]">
+          <ColorInput
             value={solidHex}
-            onChange={(e) => patch({ fill: hexToNumber(e.target.value) })}
-            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-          />
-          <input
-            type="text"
-            aria-label="Fill color hex"
-            value={solidHex.toUpperCase()}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const hex = raw.startsWith('#') ? raw : `#${raw}`
-              if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                patch({ fill: hexToNumber(hex) })
-              }
-            }}
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(hex) => patch({ fill: hexToNumber(hex) })}
+            ariaLabel="Fill color"
+            showHex
           />
         </div>
       )}
@@ -1506,20 +1488,18 @@ function GradientEditor({
     <div className="ml-[4.5rem] flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Start</span>
-        <input
-          type="color"
-          aria-label="Gradient start color"
+        <ColorInput
           value={numberToHex(stop0.color)}
-          onChange={(e) => setStop(0, hexToNumber(e.target.value))}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => setStop(0, hexToNumber(hex))}
+          ariaLabel="Gradient start color"
+          showHex={false}
         />
         <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
-        <input
-          type="color"
-          aria-label="Gradient end color"
+        <ColorInput
           value={numberToHex(stop1.color)}
-          onChange={(e) => setStop(1, hexToNumber(e.target.value))}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => setStop(1, hexToNumber(hex))}
+          ariaLabel="Gradient end color"
+          showHex={false}
         />
       </div>
       {fillStyle.kind === 'linearGradient' && (
@@ -1628,27 +1608,11 @@ function LineStrokeSection({
       <div className="flex items-center gap-2">
         <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Color</span>
         <div className="flex flex-1 items-center gap-1.5">
-          <input
-            type="color"
-            aria-label="Stroke color"
+          <ColorInput
             value={strokeHex}
-            onChange={(e) =>
-              patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<typeof obj>)
-            }
-            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-          />
-          <input
-            type="text"
-            aria-label="Stroke color hex"
-            value={strokeHex.toUpperCase()}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const hex = raw.startsWith('#') ? raw : `#${raw}`
-              if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)
-              }
-            }}
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
+            ariaLabel="Stroke color"
+            showHex
           />
         </div>
       </div>
@@ -1812,12 +1776,11 @@ function ShadowControls({
         <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
           Color
         </span>
-        <input
-          type="color"
-          aria-label="Shadow color"
+        <ColorInput
           value={numberToHex(shadow.color)}
-          onChange={(e) => onChange({ ...shadow, color: hexToNumber(e.target.value) })}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
+          ariaLabel="Shadow color"
+          showHex={false}
         />
       </div>
       <div className="flex items-center gap-1.5">
@@ -2124,31 +2087,11 @@ function TextSection({ obj, patch }: TextSectionProps) {
             Color
           </label>
           <div className="flex flex-1 items-center gap-1.5">
-            <input
-              id={`inspector-color-${obj.id}`}
-              type="color"
+            <ColorInput
               value={colorHex}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                patch({ color: hexToNumber(e.target.value) })
-              }}
-              className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-            />
-            <input
-              type="text"
-              aria-label="Text color hex"
-              value={colorHex.toUpperCase()}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                const raw = e.target.value.trim()
-                const hex = raw.startsWith('#') ? raw : `#${raw}`
-                if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                  patch({ color: hexToNumber(hex) })
-                }
-              }}
-              className={[
-                'flex-1 rounded border border-input field-surface px-2 py-0.5',
-                'font-mono text-xs text-foreground',
-                'focus:border-ring focus:outline-none',
-              ].join(' ')}
+              onChange={(hex) => patch({ color: hexToNumber(hex) })}
+              ariaLabel="Text color"
+              showHex
             />
           </div>
         </div>
@@ -2175,14 +2118,13 @@ function TextSection({ obj, patch }: TextSectionProps) {
             />
             {obj.stroke !== undefined && (
               <>
-                <input
-                  type="color"
-                  aria-label="Text stroke color"
+                <ColorInput
                   value={numberToHex(obj.stroke)}
-                  onChange={(e) =>
-                    patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<TextObject>)
+                  onChange={(hex) =>
+                    patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
                   }
-                  className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+                  ariaLabel="Text stroke color"
+                  showHex={false}
                 />
                 <input
                   type="number"
