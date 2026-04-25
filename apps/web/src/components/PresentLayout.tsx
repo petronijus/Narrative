@@ -46,7 +46,7 @@ import { useMediaPreload } from '../state/useMediaPreload.js'
 import { createAnimationRuntime } from '@narrative/animation'
 import { createClickInputBridge } from '@narrative/animation'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
-import { VideoOverlay } from '../ui/VideoOverlay.js'
+import { EditorVideoPreview } from '../ui/EditorVideoPreview.js'
 import { PresenterOverlay } from '../ui/PresenterOverlay.js'
 import type { AnimationRuntime } from '@narrative/animation'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
@@ -482,19 +482,22 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         >
           {/* Canvas itself is pointer-events:none */}
           <div className="pointer-events-none absolute inset-0">
-            <Canvas onReady={onCanvasReady} />
+            <Canvas
+              onReady={onCanvasReady}
+              artboardSize={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT }}
+            />
           </div>
 
-          {/* Video DOM overlays — one per VideoObject on active slide */}
-          {canvasInstance !== null &&
-            videoObjects.map((vidObj) => (
-              <VideoOverlay
-                key={vidObj.id}
-                videoObject={vidObj}
-                sceneGraph={canvasInstance.sceneGraph}
-                compositor={canvasInstance.compositor}
-              />
-            ))}
+          {/* Video DOM overlays — slide-space positioned, no compositor.
+              Same component as editor; mode='present' enables autoplay +
+              volume + click-to-toggle. */}
+          {videoObjects.map((vidObj) => (
+            <EditorVideoPreview
+              key={`present-video-${vidObj.id}`}
+              videoObject={vidObj}
+              mode="present"
+            />
+          ))}
         </div>
 
         {/* M12: Preload overlay */}

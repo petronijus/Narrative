@@ -94,14 +94,62 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       videoEl.autoplay = videoObject.autoplay ?? false
       videoEl.loop = videoObject.loop ?? false
       videoEl.muted = videoObject.muted ?? true
+      // P8: explicit volume — ignored when muted but still set so unmute
+      // produces the right level.
+      videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
       videoEl.playsInline = true
-      // Always show native controls in present mode so the user has a play
-      // button, progress bar and volume. Without this the overlay shows only
-      // the first frame and no UI — looks broken.
-      videoEl.controls = true
+      // P8: native control bar is opt-in. Default off (clean canvas
+      // preview). When off, click-to-toggle still gives the user
+      // play / pause via the addEventListener('click') handler below.
+      videoEl.controls = videoObject.showControls === true
       if (videoObject.alt !== undefined && videoObject.alt !== '') {
         videoEl.setAttribute('aria-label', videoObject.alt)
       }
+
+      // P8: playback range guards. Best-effort — no actual file
+      // clipping, just seek + pause based on schema fields.
+      const trimStart = Math.max(0, videoObject.trimStart ?? 0)
+      const trimEnd = videoObject.trimEnd
+      const posterTime = videoObject.posterTime
+
+      // Initial seek: poster frame wins (it's a still preview), falls
+      // back to trimStart, otherwise stays at 0. Single listener so
+      // duplicates can't fight each other (the previous version had
+      // two separate listeners, the second one — poster — clobbered
+      // trimStart and made play() start from posterTime).
+      const initialSeek =
+        posterTime !== undefined && posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
+      if (initialSeek > 0) {
+        videoEl.addEventListener(
+          'loadedmetadata',
+          () => {
+            videoEl.currentTime = initialSeek
+          },
+          { once: true },
+        )
+      }
+
+      // Before each play, rewind to trimStart so the user gets a
+      // proper "from the top" start instead of resuming from the
+      // poster frame the overlay was showing as a still preview.
+      videoEl.addEventListener('play', () => {
+        // Only rewind if we're sitting on the poster preview AND
+        // playback would otherwise start past it.
+        if (
+          posterTime !== undefined &&
+          posterTime > 0 &&
+          Math.abs(videoEl.currentTime - posterTime) < 0.05
+        ) {
+          videoEl.currentTime = trimStart
+        }
+      })
+
+      if (trimEnd !== undefined && trimEnd > 0) {
+        videoEl.addEventListener('timeupdate', () => {
+          if (videoEl.currentTime >= trimEnd) videoEl.pause()
+        })
+      }
+
       // Fallback click-to-toggle as safety net.
       videoEl.addEventListener('click', () => {
         if (videoEl.paused) {
@@ -109,6 +157,24 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
         } else {
           videoEl.pause()
         }
+      })
+
+      // P8: publish the live currentTime so Inspector's "Use current
+      // frame as poster" button can capture it without reaching into
+      // the React tree. Keyed by object id so multiple videos coexist.
+      const reg = window as unknown as {
+        __narrative_video_currents?: Record<string, { currentTime: number }>
+      }
+      if (reg.__narrative_video_currents === undefined) {
+        reg.__narrative_video_currents = {}
+      }
+      const currents = reg.__narrative_video_currents
+      currents[videoObject.id] = { currentTime: 0 }
+      videoEl.addEventListener('timeupdate', () => {
+        currents[videoObject.id] = { currentTime: videoEl.currentTime }
+      })
+      videoEl.addEventListener('seeked', () => {
+        currents[videoObject.id] = { currentTime: videoEl.currentTime }
       })
 
       videoRef.current = videoEl
@@ -119,6 +185,9 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
         domElement: videoEl,
         worldOffset: { x: 0, y: 0 },
         interactive: true,
+        // P8: rotation + opacity flow through from Pixi container so the
+        // present-mode video reflects transforms authored in the editor.
+        applyContainerTransform: true,
       })
       overlayHandleRef.current = handle
     }
@@ -168,7 +237,12 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     videoObject.autoplay,
     videoObject.loop,
     videoObject.muted,
+    videoObject.volume,
+    videoObject.showControls,
     videoObject.fit,
+    videoObject.trimStart,
+    videoObject.trimEnd,
+    videoObject.posterTime,
     sceneGraph,
     compositor,
   ])

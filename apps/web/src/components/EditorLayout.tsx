@@ -30,6 +30,7 @@ import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
+import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
@@ -1241,6 +1242,18 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   {/* P5a: padlock badge over each locked object. */}
                   <LockBadges />
 
+                  {/* P8: click-to-play video preview in the editor.
+                      Mounted BEFORE TransformHandles so the handles +
+                      selection outline + snap guides render ON TOP of
+                      the <video> element. EditorVideoPreview itself
+                      is pointer-events:none on its wrapper; only the
+                      <video> child is interactive. */}
+                  {objects
+                    .filter((o) => o.type === 'video')
+                    .map((vidObj) => (
+                      <EditorVideoPreview key={`editor-video-${vidObj.id}`} videoObject={vidObj} />
+                    ))}
+
                   {/* Transform handles — lines/arrows get endpoint handles
                       instead of the 8-handle scale + rotate rig. Locked
                       objects (P5a) skip the handles entirely; the object
@@ -1265,6 +1278,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                         }
                       }
+                      // P8: lock aspect ratio when any selected object is a
+                      // VideoObject with aspectLocked=true. Resizing then
+                      // behaves as if Shift were held (corner handles
+                      // preserve native ratio).
+                      const aspectLock = editableIds.some((sid) => {
+                        const o = objects.find((x) => x.id === sid)
+                        return o !== undefined && o.type === 'video' && o.aspectLocked === true
+                      })
                       return (
                         <TransformHandles
                           objectIds={editableIds}
@@ -1272,6 +1293,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           mutationCtx={mutationCtx}
                           onSnapGuides={handleSnapGuides}
                           otherBounds={otherBounds}
+                          forceAspectLock={aspectLock}
                         />
                       )
                     })()}

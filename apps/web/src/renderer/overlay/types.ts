@@ -37,6 +37,18 @@ export interface OverlayOpts {
    * Default: false — pointer eventy propadají na Pixi canvas.
    */
   interactive?: boolean
+
+  /**
+   * P8: when true, the compositor also propagates the Pixi container's
+   * `rotation` and `alpha` onto the DOM element (CSS rotate + opacity).
+   * Default: false — only the translate is synced (legacy behaviour
+   * relied on by editor-mode chrome that shouldn't rotate with the
+   * underlying object).
+   *
+   * Used by the present-mode video overlay so a rotated / faded video
+   * object on a slide actually renders rotated / faded in DOM.
+   */
+  applyContainerTransform?: boolean
 }
 
 /**
