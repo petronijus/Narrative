@@ -31,7 +31,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
-import { ChevronDown, Play, Pause, Square } from 'lucide-react'
+import { ChevronDown, Play, Pause, Square, Clock, MousePointerClick } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
@@ -92,6 +92,8 @@ export function layoutSteps(steps: AnimationStep[]): LaidOutStep[] {
 
 const PX_PER_SEC = 80
 const ROW_HEIGHT = 28
+/** Width of the trigger icon slot in the bar chrome (px). */
+const TRIGGER_ICON_WIDTH = 14
 const RULER_HEIGHT = 18
 const BAR_TOP = 4
 const BAR_HEIGHT = ROW_HEIGHT - 2 * BAR_TOP
@@ -120,17 +122,33 @@ const GRIP_WIDTH = TRACK_LABEL_WIDTH
 
 const COLLAPSE_STORAGE_KEY = 'narrative:animTimeline:collapsed'
 
-function triggerColor(trigger: AnimationTrigger): string {
+/**
+ * Icon backdrop colour as an inline rgba string — a slightly-tinted version
+ * of the trigger colour, matching the existing chip colour map.
+ */
+function triggerIconBg(trigger: AnimationTrigger): string {
   switch (trigger) {
     case 'onEnter':
-      return 'bg-emerald-500'
+      return 'rgba(16,185,129,0.85)' // emerald-500
     case 'withPrevious':
-      return 'bg-sky-500'
+      return 'rgba(14,165,233,0.85)' // sky-500
     case 'afterPrevious':
-      return 'bg-violet-500'
+      return 'rgba(139,92,246,0.85)' // violet-500
     case 'onClick':
-      return 'bg-amber-500'
+      return 'rgba(245,158,11,0.85)' // amber-500
   }
+}
+
+/**
+ * Returns the Lucide icon component for a given trigger.
+ * auto / withPrevious / afterPrevious → Clock (time-driven)
+ * onClick → MousePointerClick (user-driven)
+ */
+function TriggerIcon({ trigger }: { trigger: AnimationTrigger }) {
+  if (trigger === 'onClick') {
+    return <MousePointerClick className="h-full w-full" aria-hidden="true" />
+  }
+  return <Clock className="h-full w-full" aria-hidden="true" />
 }
 
 function barBaseClass(selected: boolean, isViewer: boolean): string {
@@ -1057,41 +1075,58 @@ export function AnimationTimeline() {
                               title={`${label} • trigger: ${step.trigger} • ${(step.duration ?? 0).toFixed(2)}s • delay ${(step.delay ?? 0).toFixed(2)}s`}
                               aria-label={`Animation ${label}, trigger ${step.trigger}`}
                             >
-                              {/* Trigger chip — colour-coded by trigger; click
-                                opens a native dropdown to switch onEnter /
-                                withPrevious / afterPrevious / onClick. The
-                                native <select> is used so we get accessible
-                                keyboard + platform-appropriate popup without
-                                building our own menu + outside-click logic. */}
-                              <select
-                                className={`flex-shrink-0 appearance-none cursor-pointer ${triggerColor(step.trigger)}`}
-                                style={{
-                                  width: 6,
-                                  height: BAR_HEIGHT,
-                                  border: 0,
-                                  outline: 'none',
-                                  fontSize: 0,
-                                  color: 'transparent',
-                                }}
-                                value={step.trigger}
-                                disabled={isViewer}
-                                aria-label={`Trigger for ${label}`}
-                                title={`Trigger: ${step.trigger}`}
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={(e) => {
-                                  if (animationsCtx === null) return
-                                  updateAnimation(animationsCtx, step.id, {
-                                    trigger: e.target.value as AnimationTrigger,
-                                  })
-                                }}
+                              {/* Trigger icon slot — 14 px wide, colour-coded
+                                by trigger type. The icon is visual-only
+                                (pointer-events: none); the invisible <select>
+                                underneath captures the click and opens the
+                                native platform dropdown. This replaces the
+                                old 6 px colour chip while reusing the same
+                                colour token map. */}
+                              <div
+                                className="relative flex-shrink-0"
+                                style={{ width: TRIGGER_ICON_WIDTH, height: BAR_HEIGHT }}
                               >
-                                <option value="onEnter">onEnter</option>
-                                <option value="withPrevious">withPrevious</option>
-                                <option value="afterPrevious">afterPrevious</option>
-                                <option value="onClick">onClick</option>
-                              </select>
+                                {/* Invisible select — full-size, z-index above
+                                  the icon, opacity 0 so only the icon shows. */}
+                                <select
+                                  className="absolute inset-0 appearance-none cursor-pointer"
+                                  style={{
+                                    width: TRIGGER_ICON_WIDTH,
+                                    height: BAR_HEIGHT,
+                                    border: 0,
+                                    outline: 'none',
+                                    opacity: 0,
+                                    zIndex: 1,
+                                  }}
+                                  value={step.trigger}
+                                  disabled={isViewer}
+                                  aria-label={`Trigger for ${label}`}
+                                  title={`Trigger: ${step.trigger}`}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => {
+                                    if (animationsCtx === null) return
+                                    updateAnimation(animationsCtx, step.id, {
+                                      trigger: e.target.value as AnimationTrigger,
+                                    })
+                                  }}
+                                >
+                                  <option value="onEnter">onEnter</option>
+                                  <option value="withPrevious">withPrevious</option>
+                                  <option value="afterPrevious">afterPrevious</option>
+                                  <option value="onClick">onClick</option>
+                                </select>
+                                {/* Icon backdrop + icon — purely visual. */}
+                                <div
+                                  className="absolute inset-0 flex items-center justify-center rounded-l"
+                                  style={{ backgroundColor: triggerIconBg(step.trigger) }}
+                                >
+                                  <div className="text-white" style={{ width: 9, height: 9 }}>
+                                    <TriggerIcon trigger={step.trigger} />
+                                  </div>
+                                </div>
+                              </div>
                               <span className="truncate px-1">{label}</span>
                               {!isViewer && isSelected && (
                                 <select
