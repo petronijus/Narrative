@@ -32,7 +32,16 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
 import { useSelection } from '../state/SelectionContext.js'
-import { ChevronDown, Play, Pause, Square, Clock, MousePointerClick } from 'lucide-react'
+import {
+  ChevronDown,
+  Play,
+  Pause,
+  Square,
+  Clock,
+  MousePointerClick,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
@@ -91,7 +100,11 @@ export function layoutSteps(steps: AnimationStep[]): LaidOutStep[] {
 // Visual helpers
 // ---------------------------------------------------------------------------
 
-const PX_PER_SEC = 80
+const DEFAULT_PX_PER_SEC = 80
+const ZOOM_STORAGE_KEY = 'narrative:animTimeline:zoom'
+const ZOOM_STEPS = [20, 30, 40, 60, 80, 120, 180, 240, 320] as const
+const MIN_ZOOM: number = ZOOM_STEPS[0]
+const MAX_ZOOM: number = ZOOM_STEPS[ZOOM_STEPS.length - 1] ?? ZOOM_STEPS[0]
 const ROW_HEIGHT = 28
 /** Width of the trigger icon slot in the bar chrome (px). */
 const TRIGGER_ICON_WIDTH = 14
@@ -219,6 +232,45 @@ export function AnimationTimeline() {
       return false
     }
   })
+
+  const [pxPerSec, setPxPerSec] = useState<number>(() => {
+    try {
+      const raw = sessionStorage.getItem(ZOOM_STORAGE_KEY)
+      const parsed = raw === null ? NaN : parseFloat(raw)
+      if (!Number.isFinite(parsed) || parsed < MIN_ZOOM || parsed > MAX_ZOOM) {
+        return DEFAULT_PX_PER_SEC
+      }
+      return parsed
+    } catch {
+      return DEFAULT_PX_PER_SEC
+    }
+  })
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(ZOOM_STORAGE_KEY, String(pxPerSec))
+    } catch {
+      // storage unavailable — in-memory only
+    }
+  }, [pxPerSec])
+  const zoomIn = useCallback(() => {
+    setPxPerSec((cur) => {
+      const next: number | undefined = ZOOM_STEPS.find((s) => s > cur)
+      return next ?? MAX_ZOOM
+    })
+  }, [])
+  const zoomOut = useCallback(() => {
+    setPxPerSec((cur) => {
+      // Walk steps in reverse to find the largest one strictly less than cur.
+      for (let i = ZOOM_STEPS.length - 1; i >= 0; i--) {
+        const s = ZOOM_STEPS[i]
+        if (s !== undefined && s < cur) return s
+      }
+      return MIN_ZOOM
+    })
+  }, [])
+  const zoomReset = useCallback(() => {
+    setPxPerSec(DEFAULT_PX_PER_SEC)
+  }, [])
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Preview playback state. The runtime is created on demand from the current
@@ -465,7 +517,7 @@ export function AnimationTimeline() {
     )
   }, [laidOut])
 
-  const trackWidthPx = GRIP_WIDTH + Math.ceil(totalSec * PX_PER_SEC) + 32
+  const trackWidthPx = GRIP_WIDTH + Math.ceil(totalSec * pxPerSec) + 32
   const tickCount = Math.ceil(totalSec) + 1
 
   const handleRemove = useCallback(
@@ -500,7 +552,7 @@ export function AnimationTimeline() {
   const SNAP_SEC = 0.05
   /** Magnetic snap threshold — a dragged edge within this many seconds of
    *  another bar's start or end (any row) locks onto it. 0.1 s ≈ 8 px at
-   *  the current PX_PER_SEC. Hold Shift to disable. */
+   *  the current pxPerSec. Hold Shift to disable. */
   const MAGNET_THRESHOLD_SEC = 0.1
 
   /** Round to the nearest multiple of `step`, suppressed by holding Shift. */
@@ -582,7 +634,7 @@ export function AnimationTimeline() {
       if (drag.mode === 'resize') {
         let newDuration = Math.max(
           MIN_DURATION_SEC,
-          quantize(drag.originalDuration + dx / PX_PER_SEC, snap),
+          quantize(drag.originalDuration + dx / pxPerSec, snap),
         )
         if (magnet > 0) {
           const rawEnd = drag.originalAbsStart + newDuration
@@ -596,7 +648,7 @@ export function AnimationTimeline() {
       }
 
       // 'body' mode — Premiere-like absolute-time positioning.
-      let newAbsStart = Math.max(0, quantize(drag.originalAbsStart + dx / PX_PER_SEC, snap))
+      let newAbsStart = Math.max(0, quantize(drag.originalAbsStart + dx / pxPerSec, snap))
 
       // Magnetic snap: whichever edge (start or end) is closest to a
       // candidate wins. The other edge pulls along so the bar keeps its
@@ -917,6 +969,39 @@ export function AnimationTimeline() {
               <span className="ml-1 font-mono text-[10px] tabular-nums text-muted-foreground/80">
                 {playheadSec.toFixed(2)}s
               </span>
+              {/* Zoom controls — px/sec ladder. Double-click the % label to
+                  reset to default. Persisted in sessionStorage. */}
+              <div className="ml-1 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  disabled={pxPerSec <= MIN_ZOOM}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/80 hover:bg-accent hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  aria-label="Zoom out timeline"
+                  title="Zoom out"
+                >
+                  <ZoomOut className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onDoubleClick={zoomReset}
+                  className="font-mono text-[10px] tabular-nums text-muted-foreground/80 px-1 hover:text-foreground"
+                  aria-label="Reset timeline zoom (double-click)"
+                  title="Double-click to reset"
+                >
+                  {Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  disabled={pxPerSec >= MAX_ZOOM}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-foreground/80 hover:bg-accent hover:text-primary disabled:opacity-40 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  aria-label="Zoom in timeline"
+                  title="Zoom in"
+                >
+                  <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
             </>
           )}
           <button
@@ -961,12 +1046,12 @@ export function AnimationTimeline() {
                     if (isViewer || canvasInstance === null || animations.length === 0) return
                     e.currentTarget.setPointerCapture(e.pointerId)
                     const bounds = e.currentTarget.getBoundingClientRect()
-                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
+                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / pxPerSec)
                   }}
                   onPointerMove={(e) => {
                     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
                     const bounds = e.currentTarget.getBoundingClientRect()
-                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / PX_PER_SEC)
+                    handleScrub((e.clientX - bounds.left - GRIP_WIDTH) / pxPerSec)
                   }}
                   onPointerUp={(e) => {
                     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
@@ -983,7 +1068,7 @@ export function AnimationTimeline() {
                     <div
                       key={i}
                       className="absolute flex h-full items-center text-[9px] text-gray-500"
-                      style={{ left: GRIP_WIDTH + i * PX_PER_SEC, transform: 'translateX(-50%)' }}
+                      style={{ left: GRIP_WIDTH + i * pxPerSec, transform: 'translateX(-50%)' }}
                     >
                       {i}s
                     </div>
@@ -1000,7 +1085,7 @@ export function AnimationTimeline() {
                         key={`click-icon-${l.step.id}`}
                         className="pointer-events-none absolute top-0 z-20 flex items-center justify-center"
                         style={{
-                          left: GRIP_WIDTH + l.startSec * PX_PER_SEC,
+                          left: GRIP_WIDTH + l.startSec * pxPerSec,
                           height: RULER_HEIGHT,
                           width: 14,
                           transform: 'translateX(-50%)',
@@ -1022,7 +1107,7 @@ export function AnimationTimeline() {
                       key={`click-guide-${l.step.id}`}
                       className="pointer-events-none absolute z-10"
                       style={{
-                        left: GRIP_WIDTH + Math.round(l.startSec * PX_PER_SEC),
+                        left: GRIP_WIDTH + Math.round(l.startSec * pxPerSec),
                         top: RULER_HEIGHT,
                         height: rowsTotalHeight,
                         width: 1,
@@ -1035,7 +1120,7 @@ export function AnimationTimeline() {
                 <div
                   className="pointer-events-none absolute top-0 z-20"
                   style={{
-                    left: GRIP_WIDTH + Math.round(playheadSec * PX_PER_SEC),
+                    left: GRIP_WIDTH + Math.round(playheadSec * pxPerSec),
                     height: RULER_HEIGHT + rowsTotalHeight,
                     width: 1,
                     backgroundColor: 'rgb(239 68 68)', // red-500
@@ -1133,11 +1218,8 @@ export function AnimationTimeline() {
                         {/* Bars — one per animation on this object. */}
                         {items.map(({ step, startSec, lane }) => {
                           const isSelected = selectedId === step.id
-                          const leftPx = GRIP_WIDTH + Math.round(startSec * PX_PER_SEC)
-                          const widthPx = Math.max(
-                            Math.round((step.duration ?? 0) * PX_PER_SEC),
-                            24,
-                          )
+                          const leftPx = GRIP_WIDTH + Math.round(startSec * pxPerSec)
+                          const widthPx = Math.max(Math.round((step.duration ?? 0) * pxPerSec), 24)
                           const dir =
                             (step.params as { direction?: string } | undefined)?.direction ??
                             undefined
