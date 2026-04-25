@@ -334,6 +334,33 @@ export interface VideoObject extends BaseSlideObject {
    */
   muted?: boolean
   /**
+   * P8: playback volume 0..1. Default 1. Ignored when muted.
+   */
+  volume?: number
+  /**
+   * P8: aspect-ratio lock. When true, transform handles preserve the
+   * native video aspect ratio derived from media_assets.
+   * Inspector reads asset width/height to compute the locked ratio.
+   */
+  aspectLocked?: boolean
+  /**
+   * P8: poster frame override — seconds into the clip to use as the
+   * still image displayed in the editor before play. The transcode
+   * worker writes the default poster at t=0; this lets the author pick
+   * a later frame. Renderer requests `?t=N` against the poster URL
+   * when the field is set.
+   */
+  posterTime?: number
+  /**
+   * P8: trim start in seconds. Player skips to this offset on first
+   * play and treats earlier frames as out-of-range. Stretch goal —
+   * renderer respects, but the ffmpeg worker doesn't actually clip
+   * the underlying file yet.
+   */
+  trimStart?: number
+  /** P8: trim end in seconds. */
+  trimEnd?: number
+  /**
    * Accessibility alt text / video description.
    */
   alt?: string

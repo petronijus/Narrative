@@ -30,6 +30,7 @@ import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
+import { VideoOverlay } from '../ui/VideoOverlay'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
@@ -1265,6 +1266,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                         }
                       }
+                      // P8: lock aspect ratio when any selected object is a
+                      // VideoObject with aspectLocked=true. Resizing then
+                      // behaves as if Shift were held (corner handles
+                      // preserve native ratio).
+                      const aspectLock = editableIds.some((sid) => {
+                        const o = objects.find((x) => x.id === sid)
+                        return o !== undefined && o.type === 'video' && o.aspectLocked === true
+                      })
                       return (
                         <TransformHandles
                           objectIds={editableIds}
@@ -1272,6 +1281,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           mutationCtx={mutationCtx}
                           onSnapGuides={handleSnapGuides}
                           otherBounds={otherBounds}
+                          forceAspectLock={aspectLock}
                         />
                       )
                     })()}
@@ -1281,6 +1291,28 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
                   {/* M11: Drop zone for image uploads — inert for viewer role */}
                   <UploadDropZone canvasContainerRef={canvasContainerRef} />
+
+                  {/* P8: click-to-play video preview in the editor.
+                      Mounts the same VideoOverlay used by present mode
+                      with autoplay forced off so the editor canvas
+                      isn't a wall of looping clips. The overlay shows
+                      native controls so the author can scrub / play /
+                      pause without leaving the editor. */}
+                  {canvasInstance !== null &&
+                    objects
+                      .filter((o) => o.type === 'video')
+                      .map((vidObj) => (
+                        <VideoOverlay
+                          key={`editor-video-${vidObj.id}`}
+                          videoObject={
+                            // Force autoplay off in editor, regardless of
+                            // the schema flag (present mode still respects it).
+                            { ...vidObj, autoplay: false } as typeof vidObj
+                          }
+                          sceneGraph={canvasInstance.sceneGraph}
+                          compositor={canvasInstance.compositor}
+                        />
+                      ))}
 
                   {/* P7: inline text edit overlay. Sits above the Pixi
                       text and takes focus while the user edits. */}

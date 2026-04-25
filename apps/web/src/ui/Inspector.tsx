@@ -61,6 +61,7 @@ import type {
   FillGradientStop,
   ImageFillStyle,
   TextObject,
+  VideoObject,
   SlideObjectPatch,
   AnimationStep,
   AnimationTrigger,
@@ -377,6 +378,12 @@ export function Inspector() {
       {/* Text properties */}
       {obj.type === 'text' && (
         <TextSection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
+      )}
+
+      {/* P8: Video properties — autoplay/loop/muted, volume, fit,
+          poster frame override, aspect ratio lock, trim. */}
+      {obj.type === 'video' && (
+        <VideoSection obj={obj} patch={patch as (p: SlideObjectPatch<VideoObject>) => void} />
       )}
 
       {/* P5c: Shadow + Blur — every object type gets them through the
@@ -2195,6 +2202,153 @@ function TextSection({ obj, patch }: TextSectionProps) {
         </div>
       </Section>
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// P8: Video properties section
+// ---------------------------------------------------------------------------
+
+function VideoSection({
+  obj,
+  patch,
+}: {
+  obj: VideoObject
+  patch: (p: SlideObjectPatch<VideoObject>) => void
+}) {
+  const muted = obj.muted ?? true
+  const volume = obj.volume ?? 1
+  const fit = obj.fit ?? 'contain'
+
+  return (
+    <Section title="Video" storageKey="video">
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Playback</span>
+        <div className="flex flex-1 flex-wrap items-center gap-1.5">
+          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={obj.autoplay ?? false}
+              onChange={(e) =>
+                patch({ autoplay: e.target.checked } as SlideObjectPatch<VideoObject>)
+              }
+            />
+            Autoplay
+          </label>
+          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={obj.loop ?? false}
+              onChange={(e) => patch({ loop: e.target.checked } as SlideObjectPatch<VideoObject>)}
+            />
+            Loop
+          </label>
+          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={muted}
+              onChange={(e) => patch({ muted: e.target.checked } as SlideObjectPatch<VideoObject>)}
+            />
+            Muted
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-video-vol-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Volume
+        </label>
+        <input
+          id={`inspector-video-vol-${obj.id}`}
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={volume}
+          onChange={(e) =>
+            patch({ volume: Number.parseFloat(e.target.value) } as SlideObjectPatch<VideoObject>)
+          }
+          disabled={muted}
+          className="flex-1 accent-primary disabled:opacity-40"
+        />
+        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
+          {Math.round(volume * 100)}%
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-video-fit-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Fit
+        </label>
+        <select
+          id={`inspector-video-fit-${obj.id}`}
+          value={fit}
+          onChange={(e) =>
+            patch({ fit: e.target.value as 'cover' | 'contain' } as SlideObjectPatch<VideoObject>)
+          }
+          className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        >
+          <option value="contain">Contain</option>
+          <option value="cover">Cover</option>
+        </select>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Aspect</span>
+        <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={obj.aspectLocked === true}
+            onChange={(e) =>
+              patch({
+                aspectLocked: e.target.checked ? true : undefined,
+              } as unknown as SlideObjectPatch<VideoObject>)
+            }
+          />
+          Lock to native ratio
+        </label>
+      </div>
+
+      <NumberField
+        id={`inspector-video-poster-${obj.id}`}
+        label="Poster"
+        value={obj.posterTime ?? 0}
+        step={0.1}
+        onChange={(v) =>
+          patch({
+            posterTime: v <= 0 ? undefined : v,
+          } as unknown as SlideObjectPatch<VideoObject>)
+        }
+      />
+      <NumberField
+        id={`inspector-video-trim-start-${obj.id}`}
+        label="Trim ⏵"
+        value={obj.trimStart ?? 0}
+        step={0.1}
+        onChange={(v) =>
+          patch({
+            trimStart: v <= 0 ? undefined : v,
+          } as unknown as SlideObjectPatch<VideoObject>)
+        }
+      />
+      <NumberField
+        id={`inspector-video-trim-end-${obj.id}`}
+        label="Trim ⏵|"
+        value={obj.trimEnd ?? 0}
+        step={0.1}
+        onChange={(v) =>
+          patch({
+            trimEnd: v <= 0 ? undefined : v,
+          } as unknown as SlideObjectPatch<VideoObject>)
+        }
+      />
+    </Section>
   )
 }
 

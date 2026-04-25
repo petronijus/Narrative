@@ -94,6 +94,9 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       videoEl.autoplay = videoObject.autoplay ?? false
       videoEl.loop = videoObject.loop ?? false
       videoEl.muted = videoObject.muted ?? true
+      // P8: explicit volume — ignored when muted but still set so unmute
+      // produces the right level.
+      videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
       videoEl.playsInline = true
       // Always show native controls in present mode so the user has a play
       // button, progress bar and volume. Without this the overlay shows only
@@ -102,6 +105,41 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       if (videoObject.alt !== undefined && videoObject.alt !== '') {
         videoEl.setAttribute('aria-label', videoObject.alt)
       }
+
+      // P8: trim start. Seek to trimStart on first metadata load. trimEnd
+      // pauses playback once reached. Both are best-effort — no actual
+      // file clipping, just playback range guard.
+      const trimStart = Math.max(0, videoObject.trimStart ?? 0)
+      const trimEnd = videoObject.trimEnd
+      if (trimStart > 0) {
+        videoEl.addEventListener(
+          'loadedmetadata',
+          () => {
+            videoEl.currentTime = trimStart
+          },
+          { once: true },
+        )
+      }
+      if (trimEnd !== undefined && trimEnd > 0) {
+        videoEl.addEventListener('timeupdate', () => {
+          if (videoEl.currentTime >= trimEnd) videoEl.pause()
+        })
+      }
+      // P8: poster frame override. The transcode worker exposes a poster
+      // for t=0 — when posterTime is set we ask the same video element
+      // to seek there once HLS is ready, capture the frame as a poster,
+      // and rewind. Lightweight and works without server-side support.
+      const posterTime = videoObject.posterTime
+      if (posterTime !== undefined && posterTime > 0) {
+        videoEl.addEventListener(
+          'loadedmetadata',
+          () => {
+            videoEl.currentTime = Math.max(trimStart, posterTime)
+          },
+          { once: true },
+        )
+      }
+
       // Fallback click-to-toggle as safety net.
       videoEl.addEventListener('click', () => {
         if (videoEl.paused) {
@@ -119,6 +157,9 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
         domElement: videoEl,
         worldOffset: { x: 0, y: 0 },
         interactive: true,
+        // P8: rotation + opacity flow through from Pixi container so the
+        // present-mode video reflects transforms authored in the editor.
+        applyContainerTransform: true,
       })
       overlayHandleRef.current = handle
     }
@@ -168,7 +209,11 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     videoObject.autoplay,
     videoObject.loop,
     videoObject.muted,
+    videoObject.volume,
     videoObject.fit,
+    videoObject.trimStart,
+    videoObject.trimEnd,
+    videoObject.posterTime,
     sceneGraph,
     compositor,
   ])

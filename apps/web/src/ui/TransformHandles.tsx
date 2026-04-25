@@ -72,6 +72,12 @@ export interface TransformHandlesProps {
   onSnapGuides?: (guides: SnapGuide[]) => void
   /** Bounds ostatních objektů pro snapping (all objects minus selected). */
   otherBounds: Array<{ id: string; x: number; y: number; width: number; height: number }>
+  /**
+   * P8: when true, corner resizes preserve the original aspect ratio
+   * even without Shift held. Used by VideoObject (aspectLocked flag in
+   * Inspector) so the user can't accidentally squish a clip.
+   */
+  forceAspectLock?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +287,7 @@ export function TransformHandles({
   mutationCtx,
   onSnapGuides,
   otherBounds,
+  forceAspectLock = false,
 }: TransformHandlesProps) {
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
@@ -384,7 +391,7 @@ export function TransformHandles({
         const initial = drag.allInitialBounds[0]
         if (initial === undefined) return
 
-        const newRect = computeResize(drag.kind, initial, dx, dy, shiftHeld)
+        const newRect = computeResize(drag.kind, initial, dx, dy, shiftHeld || forceAspectLock)
 
         // Snap
         const snapResult = computeSnap(

@@ -101,6 +101,7 @@ export class OverlayCompositor {
       domElement: opts.domElement,
       worldOffset: opts.worldOffset ?? { x: 0, y: 0 },
       interactive: opts.interactive ?? false,
+      applyContainerTransform: opts.applyContainerTransform ?? false,
     }
 
     const entry: OverlayEntry = { opts: fullOpts, destroyed: false }
@@ -143,6 +144,9 @@ export class OverlayCompositor {
           entry.opts.interactive = partial.interactive
           entry.opts.domElement.style.pointerEvents = partial.interactive ? 'auto' : 'none'
         }
+        if (partial.applyContainerTransform !== undefined) {
+          entry.opts.applyContainerTransform = partial.applyContainerTransform
+        }
       },
 
       setInteractive: (on: boolean) => {
@@ -173,7 +177,7 @@ export class OverlayCompositor {
   private _syncEntry(entry: OverlayEntry): void {
     if (entry.destroyed) return
 
-    const { pixiContainer, domElement, worldOffset } = entry.opts
+    const { pixiContainer, domElement, worldOffset, applyContainerTransform } = entry.opts
 
     // Scratch point s world offset — toGlobal transformuje do Pixi render space (fyzické px)
     this._scratch.x = worldOffset.x
@@ -186,7 +190,17 @@ export class OverlayCompositor {
     const cssY = global.y / this._dpr
 
     // Přímý CSS transform — no GC, no layout thrash (transform je compositor-only)
-    domElement.style.transform = `translate(${cssX}px, ${cssY}px)`
+    if (applyContainerTransform) {
+      // P8: propagate the container's rotation + alpha so a rotated /
+      // faded VideoObject reflects on the DOM <video> overlay.
+      const rot = pixiContainer.rotation || 0
+      const alpha = pixiContainer.alpha
+      domElement.style.transform = `translate(${cssX}px, ${cssY}px) rotate(${rot}rad)`
+      domElement.style.transformOrigin = '0 0'
+      domElement.style.opacity = String(alpha)
+    } else {
+      domElement.style.transform = `translate(${cssX}px, ${cssY}px)`
+    }
   }
 
   /**
