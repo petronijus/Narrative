@@ -1915,6 +1915,39 @@ function TextSection({ obj, patch }: TextSectionProps) {
           onChange={(v) => patch({ fontSize: Math.max(1, v) })}
         />
 
+        {/* Font family — a curated set of web-safe + system stacks. User
+            can still type a custom value because we use a combo pattern. */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-fontfamily-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Family
+          </label>
+          <select
+            id={`inspector-fontfamily-${obj.id}`}
+            value={obj.fontFamily ?? ''}
+            onChange={(e) =>
+              patch({
+                fontFamily: e.target.value === '' ? undefined : e.target.value,
+              } as unknown as SlideObjectPatch<TextObject>)
+            }
+            className={[
+              'flex-1 rounded border border-input field-surface px-2 py-0.5',
+              'text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
+            ].join(' ')}
+          >
+            <option value="">System default</option>
+            <option value="Inter, system-ui, sans-serif">Inter</option>
+            <option value="'Helvetica Neue', Helvetica, Arial, sans-serif">Helvetica</option>
+            <option value="Georgia, 'Times New Roman', serif">Georgia</option>
+            <option value="'Times New Roman', Times, serif">Times</option>
+            <option value="'Courier New', Courier, monospace">Courier</option>
+            <option value="'SF Mono', Menlo, monospace">SF Mono</option>
+          </select>
+        </div>
+
         <div className="flex items-center gap-2">
           <label
             htmlFor={`inspector-fontweight-${obj.id}`}
@@ -1924,17 +1957,92 @@ function TextSection({ obj, patch }: TextSectionProps) {
           </label>
           <select
             id={`inspector-fontweight-${obj.id}`}
-            value={obj.fontWeight}
-            onChange={(e) => patch({ fontWeight: e.target.value as 'normal' | 'bold' })}
+            value={String(obj.fontWeight)}
+            onChange={(e) => {
+              const v = e.target.value
+              const parsed =
+                v === 'normal' || v === 'bold'
+                  ? (v as 'normal' | 'bold')
+                  : (Number.parseInt(v, 10) as 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900)
+              patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
+            }}
             className={[
               'flex-1 rounded border border-input field-surface px-2 py-0.5',
               'text-xs text-foreground',
               'focus:border-ring focus:outline-none',
             ].join(' ')}
           >
+            <option value="100">Thin 100</option>
+            <option value="200">Extra light 200</option>
+            <option value="300">Light 300</option>
+            <option value="400">Regular 400</option>
             <option value="normal">Normal</option>
-            <option value="bold">Bold</option>
+            <option value="500">Medium 500</option>
+            <option value="600">Semibold 600</option>
+            <option value="700">Bold 700</option>
+            <option value="bold">Bold (css)</option>
+            <option value="800">Extra bold 800</option>
+            <option value="900">Black 900</option>
           </select>
+        </div>
+
+        {/* Italic + Underline toggles + List style row — three toggle
+            buttons share a row for compactness. */}
+        <div className="flex items-center gap-2">
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Style</span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() =>
+                patch({
+                  italic: obj.italic === true ? undefined : true,
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              aria-pressed={obj.italic === true}
+              className={[
+                'rounded border px-2 py-0.5 text-[11px] italic',
+                obj.italic === true
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+              title="Italic"
+            >
+              I
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                patch({
+                  underline: obj.underline === true ? undefined : true,
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              aria-pressed={obj.underline === true}
+              className={[
+                'rounded border px-2 py-0.5 text-[11px] underline',
+                obj.underline === true
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+              title="Underline"
+            >
+              U
+            </button>
+            <select
+              value={obj.listStyle ?? ''}
+              onChange={(e) =>
+                patch({
+                  listStyle:
+                    e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              title="List style"
+            >
+              <option value="">No list</option>
+              <option value="bullet">• Bullet</option>
+              <option value="numbered">1. Numbered</option>
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -1959,6 +2067,45 @@ function TextSection({ obj, patch }: TextSectionProps) {
             <option value="right">Right</option>
           </select>
         </div>
+
+        {/* Vertical alignment (new in P7). Default top. */}
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-valign-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            V-align
+          </label>
+          <select
+            id={`inspector-valign-${obj.id}`}
+            value={obj.vAlign ?? 'top'}
+            onChange={(e) =>
+              patch({
+                vAlign: e.target.value as 'top' | 'middle' | 'bottom',
+              } as SlideObjectPatch<TextObject>)
+            }
+            className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          >
+            <option value="top">Top</option>
+            <option value="middle">Middle</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </div>
+
+        <NumberField
+          id={`inspector-lineheight-${obj.id}`}
+          label="Line-h"
+          value={obj.lineHeight ?? 1.2}
+          step={0.1}
+          onChange={(v) => patch({ lineHeight: Math.max(0.1, v) } as SlideObjectPatch<TextObject>)}
+        />
+        <NumberField
+          id={`inspector-letterspacing-${obj.id}`}
+          label="Letter"
+          value={obj.letterSpacing ?? 0}
+          step={0.5}
+          onChange={(v) => patch({ letterSpacing: v } as SlideObjectPatch<TextObject>)}
+        />
 
         <div className="flex items-center gap-2">
           <label
@@ -1994,6 +2141,56 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 'focus:border-ring focus:outline-none',
               ].join(' ')}
             />
+          </div>
+        </div>
+
+        {/* Text stroke (outline on glyphs) — optional. */}
+        <div className="flex items-center gap-2">
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
+          <div className="flex flex-1 items-center gap-1.5">
+            <input
+              type="checkbox"
+              aria-label="Enable text stroke"
+              checked={obj.stroke !== undefined}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<TextObject>)
+                } else {
+                  patch({
+                    stroke: undefined,
+                    strokeWidth: undefined,
+                  } as unknown as SlideObjectPatch<TextObject>)
+                }
+              }}
+              className="h-3.5 w-3.5"
+            />
+            {obj.stroke !== undefined && (
+              <>
+                <input
+                  type="color"
+                  aria-label="Text stroke color"
+                  value={numberToHex(obj.stroke)}
+                  onChange={(e) =>
+                    patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<TextObject>)
+                  }
+                  className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+                />
+                <input
+                  type="number"
+                  aria-label="Text stroke width"
+                  min={0}
+                  step={0.5}
+                  value={obj.strokeWidth ?? 1}
+                  onChange={(e) => {
+                    const v = Number.parseFloat(e.target.value)
+                    if (Number.isFinite(v)) {
+                      patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
+                    }
+                  }}
+                  className="w-16 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                />
+              </>
+            )}
           </div>
         </div>
       </Section>
