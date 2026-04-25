@@ -17,8 +17,9 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { ChevronDown, Lock, Unlock } from 'lucide-react'
+import { ColorInput } from './ColorInput.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -62,6 +63,7 @@ import type {
   FillStyle,
   FillGradientStop,
   ImageFillStyle,
+  ImageObject,
   TextObject,
   VideoObject,
   SlideObjectPatch,
@@ -71,6 +73,7 @@ import type {
   SlideTransitionKind,
   SlidePushDirection,
   SlideBackground,
+  ObjectHyperlink,
 } from '@narrative/shared'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 
@@ -387,6 +390,16 @@ export function Inspector() {
       {obj.type === 'video' && (
         <VideoSection obj={obj} patch={patch as (p: SlideObjectPatch<VideoObject>) => void} />
       )}
+
+      {/* P11: Image crop — minimal viable UI (4 number fields + reset).
+          Crop rect is in source-image pixel space. */}
+      {obj.type === 'image' && (
+        <ImageCropSection obj={obj} patch={patch as (p: SlideObjectPatch<ImageObject>) => void} />
+      )}
+
+      {/* P11: Link — hyperlink target on any object. Only visible for
+          single selection (multi-select inspector skips it). */}
+      <LinkSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
       {/* P5c: Shadow + Blur — every object type gets them through the
           BaseSlideObject mixin + filterEffects helper on the renderer side. */}
@@ -1071,16 +1084,12 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
           >
             Color
           </label>
-          <input
-            id={`bg-color-${slideId}`}
-            type="color"
+          <ColorInput
             value={numberToHex(current.color)}
-            onChange={(e) => setSolidColor(hexToNumber(e.target.value))}
-            className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+            onChange={(hex) => setSolidColor(hexToNumber(hex))}
+            ariaLabel="Background color"
+            showHex
           />
-          <span className="font-mono text-[11px] text-muted-foreground/80">
-            {numberToHex(current.color).toUpperCase()}
-          </span>
         </div>
       )}
 
@@ -1088,20 +1097,20 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
         <>
           <div className="flex items-center gap-2">
             <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">Start</label>
-            <input
-              type="color"
+            <ColorInput
               value={numberToHex(current.stops[0]?.color ?? 0xffffff)}
-              onChange={(e) => patchGradientStop(0, hexToNumber(e.target.value))}
-              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              onChange={(hex) => patchGradientStop(0, hexToNumber(hex))}
+              ariaLabel="Gradient start color"
+              showHex={false}
             />
           </div>
           <div className="flex items-center gap-2">
             <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">End</label>
-            <input
-              type="color"
+            <ColorInput
               value={numberToHex(current.stops[1]?.color ?? 0x111111)}
-              onChange={(e) => patchGradientStop(1, hexToNumber(e.target.value))}
-              className="h-6 w-10 cursor-pointer rounded border border-input bg-transparent p-0.5"
+              onChange={(hex) => patchGradientStop(1, hexToNumber(hex))}
+              ariaLabel="Gradient end color"
+              showHex={false}
             />
           </div>
           {current.kind === 'linearGradient' && (
@@ -1180,14 +1189,13 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
           />
           {hasStroke && (
             <>
-              <input
-                type="color"
-                aria-label="Stroke color"
+              <ColorInput
                 value={strokeHex}
-                onChange={(e) =>
-                  patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<FilledShape>)
+                onChange={(hex) =>
+                  patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<FilledShape>)
                 }
-                className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+                ariaLabel="Stroke color"
+                showHex={false}
               />
               <input
                 type="number"
@@ -1442,26 +1450,12 @@ function FillPicker({
       </div>
 
       {mode === 'solid' && (
-        <div className="ml-[4.5rem] flex items-center gap-1.5">
-          <input
-            type="color"
-            aria-label="Fill color"
+        <div className="ml-[4.5rem]">
+          <ColorInput
             value={solidHex}
-            onChange={(e) => patch({ fill: hexToNumber(e.target.value) })}
-            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-          />
-          <input
-            type="text"
-            aria-label="Fill color hex"
-            value={solidHex.toUpperCase()}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const hex = raw.startsWith('#') ? raw : `#${raw}`
-              if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                patch({ fill: hexToNumber(hex) })
-              }
-            }}
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(hex) => patch({ fill: hexToNumber(hex) })}
+            ariaLabel="Fill color"
+            showHex
           />
         </div>
       )}
@@ -1506,20 +1500,18 @@ function GradientEditor({
     <div className="ml-[4.5rem] flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Start</span>
-        <input
-          type="color"
-          aria-label="Gradient start color"
+        <ColorInput
           value={numberToHex(stop0.color)}
-          onChange={(e) => setStop(0, hexToNumber(e.target.value))}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => setStop(0, hexToNumber(hex))}
+          ariaLabel="Gradient start color"
+          showHex={false}
         />
         <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
-        <input
-          type="color"
-          aria-label="Gradient end color"
+        <ColorInput
           value={numberToHex(stop1.color)}
-          onChange={(e) => setStop(1, hexToNumber(e.target.value))}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => setStop(1, hexToNumber(hex))}
+          ariaLabel="Gradient end color"
+          showHex={false}
         />
       </div>
       {fillStyle.kind === 'linearGradient' && (
@@ -1628,27 +1620,11 @@ function LineStrokeSection({
       <div className="flex items-center gap-2">
         <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Color</span>
         <div className="flex flex-1 items-center gap-1.5">
-          <input
-            type="color"
-            aria-label="Stroke color"
+          <ColorInput
             value={strokeHex}
-            onChange={(e) =>
-              patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<typeof obj>)
-            }
-            className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-          />
-          <input
-            type="text"
-            aria-label="Stroke color hex"
-            value={strokeHex.toUpperCase()}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const hex = raw.startsWith('#') ? raw : `#${raw}`
-              if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)
-              }
-            }}
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 font-mono text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
+            ariaLabel="Stroke color"
+            showHex
           />
         </div>
       </div>
@@ -1812,12 +1788,11 @@ function ShadowControls({
         <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
           Color
         </span>
-        <input
-          type="color"
-          aria-label="Shadow color"
+        <ColorInput
           value={numberToHex(shadow.color)}
-          onChange={(e) => onChange({ ...shadow, color: hexToNumber(e.target.value) })}
-          className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+          onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
+          ariaLabel="Shadow color"
+          showHex={false}
         />
       </div>
       <div className="flex items-center gap-1.5">
@@ -2124,31 +2099,11 @@ function TextSection({ obj, patch }: TextSectionProps) {
             Color
           </label>
           <div className="flex flex-1 items-center gap-1.5">
-            <input
-              id={`inspector-color-${obj.id}`}
-              type="color"
+            <ColorInput
               value={colorHex}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                patch({ color: hexToNumber(e.target.value) })
-              }}
-              className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
-            />
-            <input
-              type="text"
-              aria-label="Text color hex"
-              value={colorHex.toUpperCase()}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                const raw = e.target.value.trim()
-                const hex = raw.startsWith('#') ? raw : `#${raw}`
-                if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                  patch({ color: hexToNumber(hex) })
-                }
-              }}
-              className={[
-                'flex-1 rounded border border-input field-surface px-2 py-0.5',
-                'font-mono text-xs text-foreground',
-                'focus:border-ring focus:outline-none',
-              ].join(' ')}
+              onChange={(hex) => patch({ color: hexToNumber(hex) })}
+              ariaLabel="Text color"
+              showHex
             />
           </div>
         </div>
@@ -2175,14 +2130,13 @@ function TextSection({ obj, patch }: TextSectionProps) {
             />
             {obj.stroke !== undefined && (
               <>
-                <input
-                  type="color"
-                  aria-label="Text stroke color"
+                <ColorInput
                   value={numberToHex(obj.stroke)}
-                  onChange={(e) =>
-                    patch({ stroke: hexToNumber(e.target.value) } as SlideObjectPatch<TextObject>)
+                  onChange={(hex) =>
+                    patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
                   }
-                  className="h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5"
+                  ariaLabel="Text stroke color"
+                  showHex={false}
                 />
                 <input
                   type="number"
@@ -2715,6 +2669,264 @@ function AnimationsSection({
             />
           ))}
         </ul>
+      )}
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// P11: Link (hyperlink) section — visible for any single-selected object.
+// Listens for 'narrative:focus-link-inspector' so the object context menu's
+// "Hyperlink…" item can scroll + focus this section without prop drilling.
+// ---------------------------------------------------------------------------
+
+interface LinkSectionProps {
+  obj: SlideObject
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+}
+
+function LinkSection({ obj, patch }: LinkSectionProps) {
+  const slides = useSlides()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const typeSelectRef = useRef<HTMLSelectElement>(null)
+
+  useEffect(() => {
+    function focusHandler() {
+      const root = containerRef.current
+      if (root === null) return
+      // Scroll the panel into view first; the type picker autofocus
+      // afterwards positions the cursor on the right control.
+      root.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // Focus the picker on the next frame so the scroll animation
+      // doesn't fight the focus ring placement.
+      window.setTimeout(() => {
+        typeSelectRef.current?.focus()
+      }, 0)
+    }
+    window.addEventListener('narrative:focus-link-inspector', focusHandler as EventListener)
+    return () => {
+      window.removeEventListener('narrative:focus-link-inspector', focusHandler as EventListener)
+    }
+  }, [])
+
+  const link = obj.hyperlink
+  const kind: 'none' | 'slide' | 'url' = link?.kind ?? 'none'
+
+  function setKind(next: 'none' | 'slide' | 'url') {
+    if (next === 'none') {
+      patch({ hyperlink: undefined } as unknown as SlideObjectPatch<SlideObject>)
+      return
+    }
+    if (next === 'slide') {
+      const firstOther = slides.find((s) => s.id !== undefined)?.id ?? ''
+      const nextLink: ObjectHyperlink = { kind: 'slide', slideId: firstOther }
+      patch({ hyperlink: nextLink } as SlideObjectPatch<SlideObject>)
+      return
+    }
+    const nextLink: ObjectHyperlink = { kind: 'url', href: '', target: '_blank' }
+    patch({ hyperlink: nextLink } as SlideObjectPatch<SlideObject>)
+  }
+
+  return (
+    <div ref={containerRef}>
+      <Section title="Link" storageKey="link">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-link-type-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Type
+          </label>
+          <select
+            ref={typeSelectRef}
+            id={`inspector-link-type-${obj.id}`}
+            value={kind}
+            onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
+            className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+          >
+            <option value="none">None</option>
+            <option value="slide">Slide</option>
+            <option value="url">URL</option>
+          </select>
+        </div>
+
+        {link?.kind === 'slide' && (
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor={`inspector-link-slide-${obj.id}`}
+              className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+            >
+              Target
+            </label>
+            <select
+              id={`inspector-link-slide-${obj.id}`}
+              value={link.slideId}
+              onChange={(e) => {
+                patch({
+                  hyperlink: { kind: 'slide', slideId: e.target.value },
+                } as SlideObjectPatch<SlideObject>)
+              }}
+              className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+            >
+              {slides.map((s, i) => (
+                <option key={s.id} value={s.id}>
+                  {s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {link?.kind === 'url' && (
+          <>
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor={`inspector-link-href-${obj.id}`}
+                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+              >
+                URL
+              </label>
+              <input
+                id={`inspector-link-href-${obj.id}`}
+                type="url"
+                value={link.href}
+                placeholder="https://example.com"
+                onChange={(e) => {
+                  const target = link.target
+                  patch({
+                    hyperlink: {
+                      kind: 'url',
+                      href: e.target.value,
+                      ...(target !== undefined ? { target } : {}),
+                    },
+                  } as SlideObjectPatch<SlideObject>)
+                }}
+                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor={`inspector-link-target-${obj.id}`}
+                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+              >
+                Open in
+              </label>
+              <select
+                id={`inspector-link-target-${obj.id}`}
+                value={link.target ?? '_blank'}
+                onChange={(e) => {
+                  patch({
+                    hyperlink: {
+                      kind: 'url',
+                      href: link.href,
+                      target: e.target.value as '_self' | '_blank',
+                    },
+                  } as SlideObjectPatch<SlideObject>)
+                }}
+                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              >
+                <option value="_blank">New tab</option>
+                <option value="_self">Same tab</option>
+              </select>
+            </div>
+          </>
+        )}
+      </Section>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// P11: Image crop section — minimum viable, four number fields + reset.
+// `cropRect` is in source-image pixel coordinates; the renderer wraps the
+// shared texture in a frame-bounded sub-texture.
+// ---------------------------------------------------------------------------
+
+interface ImageCropSectionProps {
+  obj: ImageObject
+  patch: (p: SlideObjectPatch<ImageObject>) => void
+}
+
+function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
+  const enabled = obj.cropRect !== undefined
+  const crop = obj.cropRect ?? { x: 0, y: 0, width: 0, height: 0 }
+
+  function patchCrop(next: Partial<{ x: number; y: number; width: number; height: number }>) {
+    patch({
+      cropRect: {
+        x: next.x ?? crop.x,
+        y: next.y ?? crop.y,
+        width: next.width ?? crop.width,
+        height: next.height ?? crop.height,
+      },
+    })
+  }
+
+  return (
+    <Section title="Crop" storageKey="imageCrop">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-crop-toggle-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Crop
+        </label>
+        <input
+          id={`inspector-crop-toggle-${obj.id}`}
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            if (e.target.checked) {
+              // Default crop: a 100x100 box at origin. Inspector reads
+              // from the asset's natural size only after the user types
+              // something — keeps the toggle cheap.
+              patch({ cropRect: { x: 0, y: 0, width: 100, height: 100 } })
+            } else {
+              patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
+            }
+          }}
+          className="h-3.5 w-3.5"
+        />
+      </div>
+
+      {enabled && (
+        <>
+          <NumberField
+            id={`inspector-crop-x-${obj.id}`}
+            label="X"
+            value={crop.x}
+            onChange={(v) => patchCrop({ x: Math.max(0, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-y-${obj.id}`}
+            label="Y"
+            value={crop.y}
+            onChange={(v) => patchCrop({ y: Math.max(0, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-w-${obj.id}`}
+            label="Width"
+            value={crop.width}
+            onChange={(v) => patchCrop({ width: Math.max(1, v) })}
+          />
+          <NumberField
+            id={`inspector-crop-h-${obj.id}`}
+            label="Height"
+            value={crop.height}
+            onChange={(v) => patchCrop({ height: Math.max(1, v) })}
+          />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() =>
+                patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
+              }
+              className="rounded border border-border bg-input px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Reset
+            </button>
+          </div>
+        </>
       )}
     </Section>
   )

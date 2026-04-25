@@ -35,6 +35,7 @@ import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
+import { RulersProvider } from '../state/RulersContext.js'
 
 export interface DeckShellContextValue {
   /**
@@ -63,11 +64,13 @@ export function DeckShell() {
         <SlideDocProvider deckId={id}>
           <ActiveSlideProvider>
             <MediaUploadProvider deckId={id}>
-              <CanvasInstanceContext.Provider value={canvasInstance}>
-                <Outlet
-                  context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
-                />
-              </CanvasInstanceContext.Provider>
+              <RulersProvider>
+                <CanvasInstanceContext.Provider value={canvasInstance}>
+                  <Outlet
+                    context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
+                  />
+                </CanvasInstanceContext.Provider>
+              </RulersProvider>
             </MediaUploadProvider>
           </ActiveSlideProvider>
         </SlideDocProvider>

@@ -28,7 +28,7 @@ import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
 import { bulkUpdateObjects } from '@narrative/slide-model'
-import { computeSnap } from '../editor/snap.js'
+import { computeSnap, type SnapGuideTarget } from '../editor/snap.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 
@@ -78,6 +78,11 @@ export interface TransformHandlesProps {
    * Inspector) so the user can't accidentally squish a clip.
    */
   forceAspectLock?: boolean
+  /**
+   * P11: deck-level alignment guides — fed straight into computeSnap as
+   * extra snap targets so resizing also snaps to user-dropped guides.
+   */
+  extraGuides?: ReadonlyArray<SnapGuideTarget>
 }
 
 // ---------------------------------------------------------------------------
@@ -287,6 +292,7 @@ export function TransformHandles({
   mutationCtx,
   onSnapGuides,
   otherBounds,
+  extraGuides = [],
   forceAspectLock = false,
 }: TransformHandlesProps) {
   const dragRef = useRef<DragState | null>(null)
@@ -397,6 +403,9 @@ export function TransformHandles({
         const snapResult = computeSnap(
           { x: newRect.x, y: newRect.y, width: newRect.width, height: newRect.height },
           otherBounds,
+          10,
+          6,
+          extraGuides,
         )
 
         const snappedX = newRect.x + snapResult.dx
@@ -434,7 +443,7 @@ export function TransformHandles({
       // Force re-render aby handles sledovaly novou pozici
       forceUpdate((n) => n + 1)
     },
-    [mutationCtx, otherBounds, onSnapGuides],
+    [mutationCtx, otherBounds, onSnapGuides, extraGuides],
   )
 
   const handlePointerUp = useCallback(() => {

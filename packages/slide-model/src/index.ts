@@ -76,6 +76,17 @@ export {
   getSlideNotes,
 } from './slides.js'
 
+// P11: deck-level rulers + guides
+export {
+  getDeckGuidesCtx,
+  listDeckGuides,
+  addGuide,
+  updateGuide,
+  removeGuide,
+  subscribeToDeckGuides,
+} from './deckGuides.js'
+export type { DeckGuidesContext } from './deckGuides.js'
+
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 

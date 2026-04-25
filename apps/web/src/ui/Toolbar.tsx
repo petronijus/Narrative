@@ -35,8 +35,10 @@ import {
   MoveUpRight,
   ChevronDown,
   PenTool,
+  Ruler,
 } from 'lucide-react'
 import { useTool } from '../state/ToolContext.js'
+import { useRulers } from '../state/RulersContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
 import { useUndoManager } from '../state/useUndoManager.js'
 import { AvatarChips } from './AvatarChips.js'
@@ -97,6 +99,7 @@ export function Toolbar() {
   const isViewer = role === 'viewer'
   const isOwner = role === 'owner'
   const { undo, redo, canUndo, canRedo } = useUndoManager()
+  const { visible: rulersVisible, toggle: toggleRulers } = useRulers()
 
   // M11: Upload hook + hidden file input ref
   const { startUpload } = useMediaUpload()
@@ -266,6 +269,24 @@ export function Toolbar() {
           <TooltipContent side="bottom">
             Redo <span className="ml-2 opacity-60">Ctrl+Shift+Z</span>
           </TooltipContent>
+        </Tooltip>
+
+        {/* P11: Rulers toggle — show/hide the editor ruler strips + drag-out
+            guides. Default off (rulers can be visually busy). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={rulersVisible ? 'default' : 'ghost'}
+              size="icon"
+              onClick={toggleRulers}
+              aria-label="Toggle rulers"
+              aria-pressed={rulersVisible}
+              className="h-7 w-7"
+            >
+              <Ruler className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Toggle rulers</TooltipContent>
         </Tooltip>
 
         {/* Centered tool cluster — icon-only, labels live in tooltips. */}

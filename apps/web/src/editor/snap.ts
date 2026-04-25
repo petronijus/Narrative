@@ -38,6 +38,18 @@ export interface OtherObjectBounds extends BoundsRect {
 }
 
 /**
+ * P11: extra snap target — a single deck-level alignment guide. Each
+ * guide is a 1D constraint on either the X axis (vertical guide) or
+ * the Y axis (horizontal guide). Shape mirrors `DeckGuide` from
+ * @narrative/shared but kept local to avoid a cross-package coupling
+ * for what's a tiny dataclass.
+ */
+export interface SnapGuideTarget {
+  orientation: 'horizontal' | 'vertical'
+  position: number
+}
+
+/**
  * Vypočítá snap korekci a guideline pro drag/resize operace.
  *
  * @param proposedBounds - Navrhované bounds po aktuálním dragu (před snap korekcí)
@@ -50,6 +62,7 @@ export function computeSnap(
   otherObjectBounds: OtherObjectBounds[],
   gridSize: number = 10,
   threshold: number = 6,
+  extraGuides: ReadonlyArray<SnapGuideTarget> = [],
 ): SnapResult {
   const { x, y, width, height } = proposedBounds
 
@@ -148,6 +161,43 @@ export function computeSnap(
           rangeStart,
           rangeEnd,
         })
+      }
+    }
+  }
+
+  // P11: deck-level alignment guides act like a free-floating "edge" at
+  // a fixed slide-px coord. Match against all three proposed-X edges
+  // (left, centerX, right) for vertical guides; same for Y on horizontal
+  // guides. Range spans the full slide so the snap line draws across
+  // the artboard at the guide's position.
+  for (const g of extraGuides) {
+    if (g.orientation === 'vertical') {
+      const proposedXs: Array<number> = [proposedLeft, proposedCenterX, proposedRight]
+      for (const proposedEdge of proposedXs) {
+        const dist = Math.abs(proposedEdge - g.position)
+        if (dist <= threshold) {
+          verticalCandidates.push({
+            dx: g.position - proposedEdge,
+            dist,
+            position: g.position,
+            rangeStart: y,
+            rangeEnd: y + height,
+          })
+        }
+      }
+    } else {
+      const proposedYs: Array<number> = [proposedTop, proposedCenterY, proposedBottom]
+      for (const proposedEdge of proposedYs) {
+        const dist = Math.abs(proposedEdge - g.position)
+        if (dist <= threshold) {
+          horizontalCandidates.push({
+            dy: g.position - proposedEdge,
+            dist,
+            position: g.position,
+            rangeStart: x,
+            rangeEnd: x + width,
+          })
+        }
       }
     }
   }
