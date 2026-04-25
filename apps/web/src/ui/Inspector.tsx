@@ -2556,9 +2556,7 @@ function AnimationItem({
             className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
           >
-            {/* onEnter omitted — first step plays onEnter implicitly. Existing
-                onEnter values still display correctly because <select> tolerates
-                unknown selected values; switching to any visible option commits. */}
+            <option value="onEnter">onEnter</option>
             <option value="withPrevious">withPrevious</option>
             <option value="afterPrevious">afterPrevious</option>
             <option value="onClick">onClick</option>

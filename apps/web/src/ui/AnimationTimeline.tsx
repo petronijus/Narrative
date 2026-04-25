@@ -31,6 +31,7 @@
 
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
+import { useSelection } from '../state/SelectionContext.js'
 import { ChevronDown, Play, Pause, Square, Clock, MousePointerClick } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
@@ -195,7 +196,21 @@ export function AnimationTimeline() {
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
   const { objects: slideObjects } = useSlideObjects()
+  const { selectOne } = useSelection()
   const isViewer = role === 'viewer'
+
+  /**
+   * Select a step + sync selection to the artboard so the inspector and
+   * transform handles light up for the underlying object. Used by both
+   * keyboard activation (Enter/Space on a bar) and pointer-down dragging.
+   */
+  const selectStep = useCallback(
+    (step: AnimationStep) => {
+      setSelectedId(step.id)
+      selectOne(step.objectId)
+    },
+    [selectOne],
+  )
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
@@ -613,22 +628,27 @@ export function AnimationTimeline() {
     [animationsCtx, animations, laidOut],
   )
 
-  const endDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    const drag = dragStateRef.current
-    if (drag === null) return
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    }
-    const wasDrag = drag.hasMoved
-    dragStateRef.current = null
-    // If the pointer never moved past the threshold, treat as click → select.
-    if (!wasDrag) {
-      setSelectedId(drag.stepId)
-    } else {
-      // Re-layout without pass-1 pinning so bumped bars drop back down.
-      setDragStamp((s) => s + 1)
-    }
-  }, [])
+  const endDrag = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      const drag = dragStateRef.current
+      if (drag === null) return
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }
+      const wasDrag = drag.hasMoved
+      dragStateRef.current = null
+      // If the pointer never moved past the threshold, treat as click → select.
+      if (!wasDrag) {
+        const step = animations.find((a) => a.id === drag.stepId)
+        if (step !== undefined) selectStep(step)
+        else setSelectedId(drag.stepId)
+      } else {
+        // Re-layout without pass-1 pinning so bumped bars drop back down.
+        setDragStamp((s) => s + 1)
+      }
+    },
+    [animations, selectStep],
+  )
 
   // ---------------------------------------------------------------------------
   // Row grip drag — vertical reorder of the ROW layout preference only.
@@ -1102,7 +1122,7 @@ export function AnimationTimeline() {
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter' || e.key === ' ') {
                                   e.stopPropagation()
-                                  setSelectedId(step.id)
+                                  selectStep(step)
                                 }
                               }}
                               className={barBaseClass(isSelected, isViewer)}
@@ -1153,10 +1173,7 @@ export function AnimationTimeline() {
                                     })
                                   }}
                                 >
-                                  {/* onEnter is omitted — first step in the sequence plays
-                                      onEnter automatically when not onClick, so exposing it
-                                      explicitly is redundant. Existing onEnter steps still
-                                      render the Clock icon (see TriggerIcon). */}
+                                  <option value="onEnter">onEnter</option>
                                   <option value="withPrevious">withPrevious</option>
                                   <option value="afterPrevious">afterPrevious</option>
                                   <option value="onClick">onClick</option>
