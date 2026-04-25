@@ -32,7 +32,9 @@
  * - Subtle escape hint v rohu (aria-hidden).
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
+import { useShortcuts } from '../state/useShortcuts.js'
+import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -385,52 +387,72 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   }, [activeSlideId])
 
   // ---------------------------------------------------------------------------
-  // Keyboard handling
+  // Cheatsheet modal state
   // ---------------------------------------------------------------------------
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      switch (e.key) {
-        case 'Escape':
-          e.preventDefault()
-          // Abort preload overlay and navigate back to editor
-          setPreloadDismissed(true)
-          navigate(`/deck/${id ?? ''}`)
-          break
+  const [cheatsheetOpen, setCheatsheetOpen] = useState(false)
 
-        case 'ArrowRight':
-        case ' ':
-        case 'PageDown':
-          e.preventDefault()
-          navigateToSlide('next')
-          break
+  // ---------------------------------------------------------------------------
+  // Keyboard handling — P9 centralised registry
+  // ---------------------------------------------------------------------------
 
-        case 'ArrowLeft':
-        case 'PageUp':
-          e.preventDefault()
-          navigateToSlide('prev')
-          break
-
-        case 'f':
-        case 'F11':
-          e.preventDefault()
-          void toggleFullscreen()
-          break
-
-        case 'n':
-        case 'N':
-          e.preventDefault()
-          setPresenterVisible((v) => !v)
-          break
-
-        default:
-          break
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [id, navigate, toggleFullscreen, navigateToSlide])
+  useShortcuts([
+    {
+      keys: 'Escape',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Exit presentation',
+      handler: () => {
+        setPreloadDismissed(true)
+        navigate(`/deck/${id ?? ''}`)
+      },
+    },
+    {
+      keys: ['ArrowRight', ' ', 'PageDown'],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Next slide',
+      handler: () => {
+        navigateToSlide('next')
+      },
+    },
+    {
+      keys: ['ArrowLeft', 'PageUp'],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Previous slide',
+      handler: () => {
+        navigateToSlide('prev')
+      },
+    },
+    {
+      keys: ['f', 'F11'],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Toggle fullscreen',
+      handler: () => {
+        void toggleFullscreen()
+      },
+    },
+    {
+      keys: ['n', 'N'],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Toggle presenter view',
+      handler: () => {
+        setPresenterVisible((v) => !v)
+      },
+    },
+    {
+      keys: 'Mod+/',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Keyboard shortcuts cheatsheet',
+      handler: () => {
+        setCheatsheetOpen((prev) => !prev)
+      },
+    },
+  ])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -585,6 +607,9 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
 
       {/* M19 phase 3: presenter overlay — toggled by 'N' */}
       <PresenterOverlay activeSlideId={activeSlideId} visible={presenterVisible} />
+
+      {/* P9: Keyboard shortcuts cheatsheet — triggered by Mod+/ */}
+      <ShortcutsCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
     </div>
   )
 }

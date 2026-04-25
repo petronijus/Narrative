@@ -19,6 +19,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { useShortcuts } from '../state/useShortcuts.js'
 import {
   addSlide,
   removeSlide,
@@ -747,26 +748,51 @@ export function SlidesPanel(): JSX.Element {
   // Keyboard navigation
   // ---------------------------------------------------------------------------
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLUListElement>) => {
-      const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        const nextIdx = Math.min(slides.length - 1, currentIdx + 1)
-        const next = slides[nextIdx]
+  // Slide navigation via arrows / Enter — slidePanel scope so it only
+  // fires when the user has interacted with the slide list (pointer-down
+  // tracker in useShortcuts), not while editing on the canvas.
+  useShortcuts([
+    {
+      keys: 'ArrowDown',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Next slide',
+      handler: () => {
+        const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
+        const next = slides[Math.min(slides.length - 1, currentIdx + 1)]
         if (next !== undefined) handleActivate(next.id, false)
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        const prevIdx = Math.max(0, currentIdx - 1)
-        const prev = slides[prevIdx]
-        if (prev !== undefined) handleActivate(prev.id, false)
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
-        if (activeSlideId !== null) handleActivate(activeSlideId, false)
-      }
+      },
     },
-    [slides, activeSlideId, handleActivate],
-  )
+    {
+      keys: 'ArrowUp',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Previous slide',
+      handler: () => {
+        const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
+        const prev = slides[Math.max(0, currentIdx - 1)]
+        if (prev !== undefined) handleActivate(prev.id, false)
+      },
+    },
+    {
+      keys: 'Enter',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Open active slide',
+      handler: () => {
+        if (activeSlideId !== null) handleActivate(activeSlideId, false)
+      },
+    },
+    {
+      keys: ['Delete', 'Backspace'],
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Delete active slide',
+      handler: () => {
+        if (activeSlideId !== null && slides.length > 1) handleDelete(activeSlideId)
+      },
+    },
+  ])
 
   useEffect(() => {
     if (activeSlideId === null) return
@@ -836,9 +862,7 @@ export function SlidesPanel(): JSX.Element {
           role="listbox"
           aria-labelledby={headerId}
           aria-orientation="vertical"
-          tabIndex={0}
-          onKeyDown={handleKeyDown}
-          className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2"
         >
           {slides.map((slide, idx) => {
             const isDragging = draggingSet !== null && draggingSet.has(slide.id)
