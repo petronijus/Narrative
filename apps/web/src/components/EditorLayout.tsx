@@ -30,7 +30,7 @@ import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
-import { VideoOverlay } from '../ui/VideoOverlay'
+import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
@@ -1293,26 +1293,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                   <UploadDropZone canvasContainerRef={canvasContainerRef} />
 
                   {/* P8: click-to-play video preview in the editor.
-                      Mounts the same VideoOverlay used by present mode
-                      with autoplay forced off so the editor canvas
-                      isn't a wall of looping clips. The overlay shows
-                      native controls so the author can scrub / play /
-                      pause without leaving the editor. */}
-                  {canvasInstance !== null &&
-                    objects
-                      .filter((o) => o.type === 'video')
-                      .map((vidObj) => (
-                        <VideoOverlay
-                          key={`editor-video-${vidObj.id}`}
-                          videoObject={
-                            // Force autoplay off in editor, regardless of
-                            // the schema flag (present mode still respects it).
-                            { ...vidObj, autoplay: false } as typeof vidObj
-                          }
-                          sceneGraph={canvasInstance.sceneGraph}
-                          compositor={canvasInstance.compositor}
-                        />
-                      ))}
+                      Uses EditorVideoPreview (NOT the present-mode
+                      VideoOverlay) — it positions in slide-space CSS
+                      coords so the artboard's CSS scale handles zoom
+                      uniformly and the preview stays in lockstep with
+                      the Pixi-painted poster. */}
+                  {objects
+                    .filter((o) => o.type === 'video')
+                    .map((vidObj) => (
+                      <EditorVideoPreview key={`editor-video-${vidObj.id}`} videoObject={vidObj} />
+                    ))}
 
                   {/* P7: inline text edit overlay. Sits above the Pixi
                       text and takes focus while the user edits. */}

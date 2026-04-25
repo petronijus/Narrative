@@ -406,6 +406,21 @@ phases create more):
 - **Image fill (deferred from P5c).** Same procedural-texture problem
   plus async resolve from `media_assets` → imgproxy → Pixi texture.
   Share the P12 lifecycle with the gradient fix.
+- **Video editor preview duplicates VideoOverlay (P8 quick fix).**
+  `apps/web/src/ui/EditorVideoPreview.tsx` was added because the
+  present-mode `VideoOverlay` positions via `OverlayCompositor` /
+  `toGlobal`, which doesn't account for the editor artboard's
+  `transform: scale(zoom)` parent — the result was a DOM `<video>` that
+  drifted away from the Pixi-painted poster as zoom changed and stayed
+  at unscaled pixel size. Editor preview now mounts directly inside
+  the scaled artboard in slide-space CSS coords, sidestepping the
+  compositor entirely. Two near-identical HLS / trim / poster /
+  play-from-top blocks now live in `EditorVideoPreview` and
+  `VideoOverlay`. Consolidation: either teach `OverlayCompositor` to
+  observe ancestor CSS transforms (proper fix, also helps any future
+  DOM overlay), or extract the shared HLS + trim + poster wiring into
+  a hook that both surfaces consume. Pick one in P12 alongside the
+  rest of the renderer-lifecycle work.
 - **WebGPU preference forced back to WebGL.** `apps/web/src/renderer/Canvas.tsx`
   currently runs with `preference: 'webgl'`. Pixi v8.18 WebGPU
   `BindGroupSystem._createBindGroup` intermittently null-derefs on the
