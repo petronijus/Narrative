@@ -32,6 +32,7 @@ import {
   updateObject,
   addAnimation,
   removeAnimation,
+  updateAnimation,
   updateSlideTransition,
   updateSlideBackground,
   alignObjects,
@@ -2499,6 +2500,124 @@ const ADD_BUTTON_CLASS = [
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
 ].join(' ')
 
+/**
+ * Per-animation row inside the inspector. Mirrors the AnimationTimeline
+ * controls (trigger / duration / delay / easing) so authors can edit a
+ * single animation without opening the timeline panel. Trigger options
+ * intentionally exclude `onEnter` — the first non-onClick step in the
+ * sequence runs onEnter implicitly (see compileSteps), so exposing it
+ * here would be redundant.
+ */
+function AnimationItem({
+  step,
+  onRemove,
+  mutationCtx,
+}: {
+  step: AnimationStep
+  onRemove: (stepId: string) => void
+  mutationCtx: AnimationsMutationContext
+}) {
+  function patch(p: Partial<AnimationStep>): void {
+    updateAnimation(mutationCtx, step.id, p)
+  }
+  return (
+    <li className="flex flex-col gap-1 rounded field-surface px-2 py-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-foreground">{animationLabel(step)}</span>
+        <button
+          type="button"
+          onClick={() => onRemove(step.id)}
+          aria-label={`Remove ${animationLabel(step)} animation`}
+          className={[
+            'ml-2 rounded p-0.5 text-muted-foreground/50 transition-colors',
+            'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
+          ].join(' ')}
+        >
+          <svg
+            aria-hidden="true"
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <path d="M2 2l8 8M10 2l-8 8" />
+          </svg>
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-1">
+        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+          Trigger
+          <select
+            value={step.trigger}
+            aria-label="Trigger"
+            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
+          >
+            {/* onEnter omitted — first step plays onEnter implicitly. Existing
+                onEnter values still display correctly because <select> tolerates
+                unknown selected values; switching to any visible option commits. */}
+            <option value="withPrevious">withPrevious</option>
+            <option value="afterPrevious">afterPrevious</option>
+            <option value="onClick">onClick</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+          Easing
+          <select
+            value={step.easing ?? 'power2.out'}
+            aria-label="Easing"
+            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(e) => patch({ easing: e.target.value })}
+          >
+            <option value="none">none</option>
+            <option value="power1.out">power1 out</option>
+            <option value="power2.out">power2 out</option>
+            <option value="power2.inOut">power2 in/out</option>
+            <option value="power3.inOut">power3 in/out</option>
+            <option value="sine.inOut">sine in/out</option>
+            <option value="back.out">back out</option>
+            <option value="bounce.out">bounce out</option>
+            <option value="elastic.out">elastic out</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+          Duration (s)
+          <input
+            type="number"
+            min={0}
+            step={0.05}
+            value={step.duration ?? 0}
+            aria-label="Duration in seconds"
+            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(e) => {
+              const v = parseFloat(e.target.value)
+              if (!Number.isNaN(v) && v >= 0) patch({ duration: v })
+            }}
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+          Delay (s)
+          <input
+            type="number"
+            min={0}
+            step={0.05}
+            value={step.delay ?? 0}
+            aria-label="Delay in seconds"
+            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            onChange={(e) => {
+              const v = parseFloat(e.target.value)
+              if (!Number.isNaN(v) && v >= 0) patch({ delay: v })
+            }}
+          />
+        </label>
+      </div>
+    </li>
+  )
+}
+
 function AnimationsSection({
   objectId,
   animations,
@@ -2589,39 +2708,14 @@ function AnimationsSection({
       {objectAnimations.length === 0 ? (
         <p className="text-[10px] text-muted-foreground/50 italic">No animations</p>
       ) : (
-        <ul className="flex flex-col gap-1" aria-label="Object animations">
+        <ul className="flex flex-col gap-1.5" aria-label="Object animations">
           {objectAnimations.map((step) => (
-            <li
+            <AnimationItem
               key={step.id}
-              className="flex items-center justify-between rounded field-surface px-2 py-1"
-            >
-              <div className="flex flex-col">
-                <span className="text-xs text-foreground">{animationLabel(step)}</span>
-                <span className="text-[10px] text-muted-foreground/80">{step.trigger}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleRemove(step.id)}
-                aria-label={`Remove ${animationLabel(step)} animation`}
-                className={[
-                  'ml-2 rounded p-0.5 text-muted-foreground/50 transition-colors',
-                  'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
-                ].join(' ')}
-              >
-                <svg
-                  aria-hidden="true"
-                  width="12"
-                  height="12"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                >
-                  <path d="M2 2l8 8M10 2l-8 8" />
-                </svg>
-              </button>
-            </li>
+              step={step}
+              onRemove={handleRemove}
+              mutationCtx={mutationCtx}
+            />
           ))}
         </ul>
       )}
