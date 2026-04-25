@@ -34,9 +34,17 @@ import { useVideoInfo } from '../state/useVideoInfo.js'
 
 export interface EditorVideoPreviewProps {
   videoObject: VideoObject
+  /**
+   * 'edit'    → never autoplay, ignore volume, wrapper is pointer-events:none
+   *             so selection / transform handles win the click.
+   * 'present' → honor videoObject.autoplay + volume; wrapper accepts clicks
+   *             so the user can play/pause.
+   */
+  mode?: 'edit' | 'present'
 }
 
-export function EditorVideoPreview({ videoObject }: EditorVideoPreviewProps) {
+export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPreviewProps) {
+  const isPresent = mode === 'present'
   const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
@@ -49,6 +57,11 @@ export function EditorVideoPreview({ videoObject }: EditorVideoPreviewProps) {
     const videoEl = videoRef.current
     if (videoEl === null) return
 
+    // Volume + autoplay only matter in present mode. Editor stays muted/paused.
+    if (isPresent) {
+      videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
+    }
+
     if (Hls.isSupported()) {
       const hls = new Hls()
       hlsRef.current = hls
@@ -56,6 +69,13 @@ export function EditorVideoPreview({ videoObject }: EditorVideoPreviewProps) {
       hls.attachMedia(videoEl)
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
       videoEl.src = hlsUrl
+    }
+
+    if (isPresent && videoObject.autoplay === true) {
+      const onCanPlay = (): void => {
+        void videoEl.play().catch(() => undefined)
+      }
+      videoEl.addEventListener('canplay', onCanPlay, { once: true })
     }
 
     // Initial seek: poster frame wins, then trimStart, then 0.
@@ -121,6 +141,9 @@ export function EditorVideoPreview({ videoObject }: EditorVideoPreviewProps) {
     videoObject.trimStart,
     videoObject.trimEnd,
     videoObject.posterTime,
+    videoObject.autoplay,
+    videoObject.volume,
+    isPresent,
   ])
 
   // While transcode hasn't finished, render nothing — the Pixi
@@ -142,10 +165,9 @@ export function EditorVideoPreview({ videoObject }: EditorVideoPreviewProps) {
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
         opacity: videoObject.opacity,
-        // pointer-events:none lets transform handles + selection clicks
-        // through. The <video> child re-enables pointer-events for its
-        // own controls + click-to-toggle.
-        pointerEvents: 'none',
+        // Editor: pointer-events:none lets transform handles + selection
+        // clicks through. Present: accept clicks so the user can play/pause.
+        pointerEvents: isPresent ? 'auto' : 'none',
       }}
     >
       <video
