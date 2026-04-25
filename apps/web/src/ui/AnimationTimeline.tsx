@@ -934,7 +934,48 @@ export function AnimationTimeline() {
                       {i}s
                     </div>
                   ))}
+                  {/* onClick markers — show one per onClick step on the ruler
+                      so the author sees how many clicks the slide needs and
+                      where each click lands in the timeline. The vertical
+                      line extends down through all rows (rendered separately
+                      below to escape the ruler's overflow). */}
+                  {laidOut
+                    .filter((l) => l.step.trigger === 'onClick')
+                    .map((l, idx) => (
+                      <div
+                        key={`click-icon-${l.step.id}`}
+                        className="pointer-events-none absolute top-0 z-20 flex items-center justify-center"
+                        style={{
+                          left: GRIP_WIDTH + l.startSec * PX_PER_SEC,
+                          height: RULER_HEIGHT,
+                          width: 14,
+                          transform: 'translateX(-50%)',
+                        }}
+                        title={`Click ${idx + 1}`}
+                      >
+                        <MousePointerClick className="h-3 w-3 text-white" aria-hidden="true" />
+                      </div>
+                    ))}
                 </div>
+                {/* onClick vertical guides — span the full row stack. Drawn
+                    outside the ruler so the line escapes ruler overflow.
+                    Thin white, low-opacity so it doesn't compete with the
+                    red playhead. */}
+                {laidOut
+                  .filter((l) => l.step.trigger === 'onClick')
+                  .map((l) => (
+                    <div
+                      key={`click-guide-${l.step.id}`}
+                      className="pointer-events-none absolute z-10"
+                      style={{
+                        left: GRIP_WIDTH + Math.round(l.startSec * PX_PER_SEC),
+                        top: RULER_HEIGHT,
+                        height: rowsTotalHeight,
+                        width: 1,
+                        backgroundColor: 'rgba(255, 255, 255, 0.35)',
+                      }}
+                    />
+                  ))}
 
                 {/* Playhead — vertical line spanning all rows + a small chevron at the top */}
                 <div
@@ -1112,7 +1153,10 @@ export function AnimationTimeline() {
                                     })
                                   }}
                                 >
-                                  <option value="onEnter">onEnter</option>
+                                  {/* onEnter is omitted — first step in the sequence plays
+                                      onEnter automatically when not onClick, so exposing it
+                                      explicitly is redundant. Existing onEnter steps still
+                                      render the Clock icon (see TriggerIcon). */}
                                   <option value="withPrevious">withPrevious</option>
                                   <option value="afterPrevious">afterPrevious</option>
                                   <option value="onClick">onClick</option>
