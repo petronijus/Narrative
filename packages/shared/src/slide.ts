@@ -338,6 +338,12 @@ export interface VideoObject extends BaseSlideObject {
    */
   volume?: number
   /**
+   * P8: show the browser's native <video> control bar (play / scrub /
+   * volume / fullscreen). Default false — author wants a clean canvas
+   * preview, not chrome. Toggled per-object from the Inspector.
+   */
+  showControls?: boolean
+  /**
    * P8: aspect-ratio lock. When true, transform handles preserve the
    * native video aspect ratio derived from media_assets.
    * Inspector reads asset width/height to compute the locked ratio.

@@ -27,6 +27,7 @@ import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
+import { useVideoInfo } from '../state/useVideoInfo.js'
 import {
   updateObject,
   addAnimation,
@@ -2209,6 +2210,111 @@ function TextSection({ obj, patch }: TextSectionProps) {
 // P8: Video properties section
 // ---------------------------------------------------------------------------
 
+/**
+ * P8: poster-frame picker — number input + scrub slider + "Use current
+ * frame" button that snapshots whatever time the editor's <video>
+ * overlay is paused at. The overlay publishes its currentTime to a
+ * window registry keyed by VideoObject id.
+ */
+function PosterFrameRow({
+  obj,
+  patch,
+}: {
+  obj: VideoObject
+  patch: (p: SlideObjectPatch<VideoObject>) => void
+}) {
+  const { info } = useVideoInfo(obj.assetId !== '' ? obj.assetId : null)
+  const duration = info?.durationSec ?? 0
+  const hasDuration = duration > 0
+  const value = obj.posterTime ?? 0
+
+  const setPoster = (v: number): void => {
+    const clamped = hasDuration ? Math.max(0, Math.min(duration, v)) : Math.max(0, v)
+    patch({
+      posterTime: clamped <= 0 ? undefined : clamped,
+    } as unknown as SlideObjectPatch<VideoObject>)
+  }
+
+  const captureCurrent = (): void => {
+    const reg = (
+      window as unknown as {
+        __narrative_video_currents?: Record<string, { currentTime: number }>
+      }
+    ).__narrative_video_currents
+    const t = reg?.[obj.id]?.currentTime
+    if (typeof t === 'number' && t > 0) setPoster(t)
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-video-poster-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Poster
+        </label>
+        <input
+          id={`inspector-video-poster-${obj.id}`}
+          type="number"
+          step={0.1}
+          min={0}
+          {...(hasDuration ? { max: duration } : {})}
+          value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
+          onChange={(e) => {
+            const parsed = Number.parseFloat(e.target.value)
+            if (Number.isFinite(parsed)) setPoster(parsed)
+          }}
+          className={[
+            'w-20 rounded-md border border-input field-surface px-2 py-0.5',
+            'text-right text-xs text-foreground',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          ].join(' ')}
+        />
+        <span className="text-[10px] text-muted-foreground/70">
+          {hasDuration ? `/ ${duration.toFixed(1)}s` : 's'}
+        </span>
+      </div>
+      {hasDuration && (
+        <div className="ml-[4.5rem] flex items-center gap-1.5">
+          <input
+            type="range"
+            aria-label="Scrub poster frame"
+            min={0}
+            max={duration}
+            step={Math.max(0.05, duration / 200)}
+            value={value}
+            onChange={(e) => setPoster(Number.parseFloat(e.target.value))}
+            className="flex-1 accent-primary"
+          />
+        </div>
+      )}
+      <div className="ml-[4.5rem] flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={captureCurrent}
+          title="Pause the video at the frame you want, then click to capture its time as the poster."
+          className="rounded border border-border field-surface px-2 py-0.5 text-[10px] text-foreground hover:bg-accent"
+        >
+          Use current frame
+        </button>
+        {value > 0 && (
+          <button
+            type="button"
+            onClick={() =>
+              patch({ posterTime: undefined } as unknown as SlideObjectPatch<VideoObject>)
+            }
+            title="Reset poster to the auto-generated thumbnail at t=0"
+            className="rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function VideoSection({
   obj,
   patch,
@@ -2250,6 +2356,21 @@ function VideoSection({
               onChange={(e) => patch({ muted: e.target.checked } as SlideObjectPatch<VideoObject>)}
             />
             Muted
+          </label>
+          <label
+            className="flex items-center gap-1 text-[10px] text-muted-foreground"
+            title="Show native play / scrub / volume controls. Off = clean preview, click-to-toggle still works."
+          >
+            <input
+              type="checkbox"
+              checked={obj.showControls === true}
+              onChange={(e) =>
+                patch({
+                  showControls: e.target.checked ? true : undefined,
+                } as unknown as SlideObjectPatch<VideoObject>)
+              }
+            />
+            Controls
           </label>
         </div>
       </div>
@@ -2315,17 +2436,7 @@ function VideoSection({
         </label>
       </div>
 
-      <NumberField
-        id={`inspector-video-poster-${obj.id}`}
-        label="Poster"
-        value={obj.posterTime ?? 0}
-        step={0.1}
-        onChange={(v) =>
-          patch({
-            posterTime: v <= 0 ? undefined : v,
-          } as unknown as SlideObjectPatch<VideoObject>)
-        }
-      />
+      <PosterFrameRow obj={obj} patch={patch} />
       <NumberField
         id={`inspector-video-trim-start-${obj.id}`}
         label="Trim ⏵"

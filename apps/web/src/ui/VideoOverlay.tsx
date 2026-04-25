@@ -98,46 +98,56 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       // produces the right level.
       videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
       videoEl.playsInline = true
-      // Always show native controls in present mode so the user has a play
-      // button, progress bar and volume. Without this the overlay shows only
-      // the first frame and no UI — looks broken.
-      videoEl.controls = true
+      // P8: native control bar is opt-in. Default off (clean canvas
+      // preview). When off, click-to-toggle still gives the user
+      // play / pause via the addEventListener('click') handler below.
+      videoEl.controls = videoObject.showControls === true
       if (videoObject.alt !== undefined && videoObject.alt !== '') {
         videoEl.setAttribute('aria-label', videoObject.alt)
       }
 
-      // P8: trim start. Seek to trimStart on first metadata load. trimEnd
-      // pauses playback once reached. Both are best-effort — no actual
-      // file clipping, just playback range guard.
+      // P8: playback range guards. Best-effort — no actual file
+      // clipping, just seek + pause based on schema fields.
       const trimStart = Math.max(0, videoObject.trimStart ?? 0)
       const trimEnd = videoObject.trimEnd
-      if (trimStart > 0) {
+      const posterTime = videoObject.posterTime
+
+      // Initial seek: poster frame wins (it's a still preview), falls
+      // back to trimStart, otherwise stays at 0. Single listener so
+      // duplicates can't fight each other (the previous version had
+      // two separate listeners, the second one — poster — clobbered
+      // trimStart and made play() start from posterTime).
+      const initialSeek =
+        posterTime !== undefined && posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
+      if (initialSeek > 0) {
         videoEl.addEventListener(
           'loadedmetadata',
           () => {
-            videoEl.currentTime = trimStart
+            videoEl.currentTime = initialSeek
           },
           { once: true },
         )
       }
+
+      // Before each play, rewind to trimStart so the user gets a
+      // proper "from the top" start instead of resuming from the
+      // poster frame the overlay was showing as a still preview.
+      videoEl.addEventListener('play', () => {
+        // Only rewind if we're sitting on the poster preview AND
+        // playback would otherwise start past it.
+        if (
+          posterTime !== undefined &&
+          posterTime > 0 &&
+          Math.abs(videoEl.currentTime - posterTime) < 0.05
+        ) {
+          videoEl.currentTime = trimStart
+        }
+      })
+
       if (trimEnd !== undefined && trimEnd > 0) {
         videoEl.addEventListener('timeupdate', () => {
           if (videoEl.currentTime >= trimEnd) videoEl.pause()
         })
-      }
-      // P8: poster frame override. The transcode worker exposes a poster
-      // for t=0 — when posterTime is set we ask the same video element
-      // to seek there once HLS is ready, capture the frame as a poster,
-      // and rewind. Lightweight and works without server-side support.
-      const posterTime = videoObject.posterTime
-      if (posterTime !== undefined && posterTime > 0) {
-        videoEl.addEventListener(
-          'loadedmetadata',
-          () => {
-            videoEl.currentTime = Math.max(trimStart, posterTime)
-          },
-          { once: true },
-        )
       }
 
       // Fallback click-to-toggle as safety net.
@@ -147,6 +157,24 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
         } else {
           videoEl.pause()
         }
+      })
+
+      // P8: publish the live currentTime so Inspector's "Use current
+      // frame as poster" button can capture it without reaching into
+      // the React tree. Keyed by object id so multiple videos coexist.
+      const reg = window as unknown as {
+        __narrative_video_currents?: Record<string, { currentTime: number }>
+      }
+      if (reg.__narrative_video_currents === undefined) {
+        reg.__narrative_video_currents = {}
+      }
+      const currents = reg.__narrative_video_currents
+      currents[videoObject.id] = { currentTime: 0 }
+      videoEl.addEventListener('timeupdate', () => {
+        currents[videoObject.id] = { currentTime: videoEl.currentTime }
+      })
+      videoEl.addEventListener('seeked', () => {
+        currents[videoObject.id] = { currentTime: videoEl.currentTime }
       })
 
       videoRef.current = videoEl
@@ -210,6 +238,7 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     videoObject.loop,
     videoObject.muted,
     videoObject.volume,
+    videoObject.showControls,
     videoObject.fit,
     videoObject.trimStart,
     videoObject.trimEnd,
