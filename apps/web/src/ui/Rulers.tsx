@@ -29,6 +29,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DeckGuide } from '@narrative/shared'
 import { addGuide, removeGuide, updateGuide, type DeckGuidesContext } from '@narrative/slide-model'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from '../components/ui/context-menu.js'
+import { Trash2 } from 'lucide-react'
 
 export interface RulersProps {
   /** Slide width in slide-space px (1920). */
@@ -330,34 +337,44 @@ export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: Gui
             ? { top: live, left: 0, width: slideWidth, height: 1 }
             : { left: live, top: 0, width: 1, height: slideHeight }
         return (
-          <div
-            key={g.id}
-            role="separator"
-            aria-orientation={g.orientation}
-            onPointerDown={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDrag({ id: g.id, pos: g.position })
-              dragRef.current = { id: g.id, pos: g.position }
-            }}
-            onContextMenu={(e) => {
-              // Quick delete: right-click a guide removes it.
-              e.preventDefault()
-              removeGuide(guidesCtx, g.id)
-            }}
-            className="pointer-events-auto absolute"
-            style={{
-              ...style,
-              background: 'rgb(34, 211, 238)',
-              opacity: 0.5,
-              cursor: g.orientation === 'horizontal' ? 'ns-resize' : 'ew-resize',
-              // Make a wider hit area around the 1-px line.
-              boxShadow:
-                g.orientation === 'horizontal'
-                  ? '0 -3px 0 -2px transparent, 0 3px 0 -2px transparent'
-                  : '-3px 0 0 -2px transparent, 3px 0 0 -2px transparent',
-            }}
-          />
+          <ContextMenu key={g.id}>
+            <ContextMenuTrigger asChild>
+              <div
+                role="separator"
+                aria-orientation={g.orientation}
+                onPointerDown={(e) => {
+                  // Don't start a drag from a right-click — Radix needs the
+                  // contextmenu event to fire after pointerdown to position
+                  // the menu at the cursor.
+                  if (e.button !== 0) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setDrag({ id: g.id, pos: g.position })
+                  dragRef.current = { id: g.id, pos: g.position }
+                }}
+                className="pointer-events-auto absolute"
+                style={{
+                  ...style,
+                  background: 'rgb(34, 211, 238)',
+                  opacity: 0.5,
+                  cursor: g.orientation === 'horizontal' ? 'ns-resize' : 'ew-resize',
+                  boxShadow:
+                    g.orientation === 'horizontal'
+                      ? '0 -3px 0 -2px transparent, 0 3px 0 -2px transparent'
+                      : '-3px 0 0 -2px transparent, 3px 0 0 -2px transparent',
+                }}
+              />
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem
+                onSelect={() => removeGuide(guidesCtx, g.id)}
+                className="text-red-500 focus:text-red-500"
+              >
+                <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                Delete guide
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )
       })}
     </div>
