@@ -44,6 +44,11 @@ interface SlideRowContextMenuProps {
   onDuplicate: (id: string) => void
   onDelete: (id: string) => void
   onToggleSkip: (id: string) => void
+  /** P11: cross-deck slide clipboard. Copy the slide(s) currently
+   *  selected in the panel; paste lands AFTER `slideId`. */
+  onCopy: (id: string) => void
+  onPaste: (afterSlideId: string) => void
+  canPaste: boolean
   children: React.ReactNode
 }
 
@@ -55,6 +60,9 @@ export function SlideRowContextMenu({
   onDuplicate,
   onDelete,
   onToggleSkip,
+  onCopy,
+  onPaste,
+  canPaste,
   children,
 }: SlideRowContextMenuProps) {
   if (readOnly) {
@@ -69,6 +77,11 @@ export function SlideRowContextMenu({
       <ContextMenuContent className="w-48">
         <ContextMenuItem onSelect={() => onRename(slideId)}>Rename</ContextMenuItem>
         <ContextMenuItem onSelect={() => onDuplicate(slideId)}>Duplicate</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => onCopy(slideId)}>Copy slide</ContextMenuItem>
+        <ContextMenuItem disabled={!canPaste} onSelect={() => onPaste(slideId)}>
+          Paste slide
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => onToggleSkip(slideId)}>
           {skipped ? 'Unskip in present' : 'Skip in present'}
