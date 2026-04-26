@@ -389,7 +389,14 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         if (link.kind === 'slide') {
           if (link.slideId !== '') setActiveSlideId(link.slideId)
         } else {
-          window.open(link.href, link.target ?? '_blank')
+          // Normalise href: bare 'google.com' must become 'https://google.com'
+          // — browsers without a protocol resolve it relative to the
+          // current location (so we'd land on /deck/.../google.com).
+          let href = link.href.trim()
+          if (href !== '' && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('//')) {
+            href = `https://${href}`
+          }
+          window.open(href, link.target ?? '_blank')
         }
         return
       }
@@ -572,8 +579,15 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       <div ref={slideAreaRef} className="relative flex min-h-0 flex-1 items-center justify-center">
         <div
           ref={slideContainerRef}
+          // flex-shrink-0 is critical: the parent slideArea is flex-row
+          // by default, and a flex item with explicit width:1920 still
+          // shrinks to fit the parent on viewports narrower than 1920.
+          // The shrink kicks in BEFORE the CSS scale transform runs, so
+          // the slide ended up 1280×1080 (viewport-clamped) layout size,
+          // breaking aspect ratio + the scale-to-fit math + hyperlink
+          // hit-test (which divides clientX by rect.width).
           className={[
-            'relative',
+            'relative flex-shrink-0',
             showPreloadOverlay ? 'opacity-40' : '',
             'transition-opacity duration-300',
           ].join(' ')}
