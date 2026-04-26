@@ -160,6 +160,16 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
 
       containerEl.appendChild(app.canvas)
 
+      // Pixi v8's EventSystem installs `canvas.oncontextmenu = (e) => e.preventDefault()`
+      // by default to suppress the native browser context menu over the
+      // canvas. We need contextmenu events to bubble up to Radix's
+      // ContextMenuTrigger above the artboard, so wipe Pixi's handler and
+      // install one that just preventDefault's the BROWSER menu but lets
+      // the event propagate to React.
+      app.canvas.oncontextmenu = (e: MouseEvent): void => {
+        e.preventDefault()
+      }
+
       const sceneGraph = new SceneGraph(app)
       if (bleedPx !== 0) {
         sceneGraph.setSlideOrigin(bleedPx, bleedPx)
