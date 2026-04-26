@@ -1,32 +1,30 @@
 /**
  * ui/ColorInput.tsx
  *
- * P11: Drop-in replacement / wrapper for every <input type="color"> in the
- * Inspector and StageBgPicker. Provides two extras:
+ * P11 (round 2): popover-based custom color picker built on `react-colorful`.
  *
- *  1. Recent-colors swatches — a row of up to 12 recent colors above the
- *     native picker, backed by useRecentColors (localStorage ring buffer).
+ * Why custom over native `<input type="color">`:
+ *   The native picker delegates to the OS, so we cannot inject the recent-
+ *   colors row into the picker UI itself — the user sees recents only as
+ *   a sibling row outside the picker. The popover variant brings recents,
+ *   hex input, eyedropper, and the saturation/hue picker into one chrome
+ *   that opens in-page when the user clicks the swatch.
  *
- *  2. Eyedropper button — uses the native EyeDropper API (Chromium).
- *     Rendered disabled with an explanatory title where unsupported
- *     (Firefox, Safari). On pick, calls onChange AND pushes to recent.
+ * Trigger: a small swatch button rendering the current color.
+ * Popover content: HexColorPicker + hex text field + eyedropper button +
+ *   recent-colors swatches (12).
  *
- * Usage:
- *   <ColorInput
- *     value={hexString}        // #rrggbb
- *     onChange={(hex) => ...}  // called on every color input change
- *     onCommit={(hex) => ...}  // optional — called when the user settles
- *                              // (eyedropper pick, swatch click, hex input blur)
- *   />
- *
- * The component renders the native <input type="color"> together with an
- * optional hex text field (set showHex={false} to suppress it). It does NOT
- * render the label — the caller is responsible for that, same as before.
+ * Commit semantics:
+ *   - onChange fires on every drag / hex character (live preview).
+ *   - onCommit fires on close, eyedropper pick, hex blur, swatch click.
+ *     If omitted, onChange is used for commits too.
  */
 
-import { useId, type ChangeEvent } from 'react'
+import { useState, type ChangeEvent } from 'react'
+import { HexColorPicker } from 'react-colorful'
 import { Pipette } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
 
 // ---------------------------------------------------------------------------
 // EyeDropper API types — not yet in the official TypeScript lib.
@@ -55,25 +53,31 @@ const EYEDROPPER_SUPPORTED = typeof window !== 'undefined' && 'EyeDropper' in wi
 export interface ColorInputProps {
   /** Current color as #rrggbb. */
   value: string
-  /** Called on every color change (native picker + hex text field). */
+  /** Live updates on drag / hex typing. */
   onChange: (hex: string) => void
   /**
-   * Called when the user definitively commits a color:
-   * - eyedropper pick
-   * - swatch click
-   * - hex text field blur with a valid value
-   *
-   * If omitted, `onChange` is used for commits too.
+   * Definitive commits — popover close, eyedropper pick, swatch click,
+   * hex blur. Defaults to `onChange` if omitted.
    */
   onCommit?: (hex: string) => void
-  /** Render the hex text input alongside the color swatch. Default: true. */
+  /** Render the hex text input alongside the swatch button. Default: true. */
   showHex?: boolean
-  /** aria-label for the color swatch input. */
+  /** aria-label for the swatch trigger. */
   ariaLabel?: string
-  /** Extra className for the color swatch <input>. */
+  /** Extra className for the swatch trigger. */
   inputClassName?: string
-  /** Extra className for the hex text <input>. */
+  /** Extra className for the hex text input. */
   hexClassName?: string
+}
+
+function isValidHex(s: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(s)
+}
+
+function normalizeHex(raw: string): string | null {
+  const trimmed = raw.trim()
+  const hex = trimmed.startsWith('#') ? trimmed : `#${trimmed}`
+  return isValidHex(hex) ? hex.toLowerCase() : null
 }
 
 export function ColorInput({
@@ -85,48 +89,35 @@ export function ColorInput({
   inputClassName = '',
   hexClassName = '',
 }: ColorInputProps) {
-  const colorInputId = useId()
   const { colors: recentColors, push } = useRecentColors()
+  const [open, setOpen] = useState(false)
 
   const commit = onCommit ?? onChange
 
-  const handleSwatchClick = (hex: string) => {
+  const handlePickerChange = (hex: string): void => {
+    onChange(hex)
+  }
+
+  const handleSwatchClick = (hex: string): void => {
     onChange(hex)
     commit(hex)
     push(hex)
   }
 
-  const handleNativeChange = (e: ChangeEvent<HTMLInputElement>) => {
-    onChange(e.target.value)
+  const handleHexChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    const hex = normalizeHex(e.target.value)
+    if (hex !== null) onChange(hex)
   }
 
-  /**
-   * Push to recent on blur of the native color input — the browser opens
-   * its color picker; we only know the user "committed" when focus leaves.
-   */
-  const handleNativeBlur = () => {
-    commit(value)
-    push(value)
-  }
-
-  const handleHexChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.trim()
-    const hex = raw.startsWith('#') ? raw : `#${raw}`
-    if (/^#[0-9a-f]{6}$/i.test(hex)) {
-      onChange(hex)
-    }
-  }
-
-  const handleHexBlur = (e: ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.trim()
-    const hex = raw.startsWith('#') ? raw : `#${raw}`
-    if (/^#[0-9a-f]{6}$/i.test(hex)) {
+  const handleHexBlur = (e: ChangeEvent<HTMLInputElement>): void => {
+    const hex = normalizeHex(e.target.value)
+    if (hex !== null) {
       commit(hex)
       push(hex)
     }
   }
 
-  const handleEyedropper = () => {
+  const handleEyedropper = (): void => {
     if (!EYEDROPPER_SUPPORTED || window.EyeDropper === undefined) return
     const picker = new window.EyeDropper()
     picker
@@ -142,82 +133,127 @@ export function ColorInput({
       })
   }
 
-  return (
-    <div className="flex flex-col gap-1">
-      {/* Recent colors row */}
-      {recentColors.length > 0 && (
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Recent colors">
-          {recentColors.map((hex) => (
-            <button
-              key={hex}
-              type="button"
-              title={hex.toUpperCase()}
-              aria-label={`Recent color ${hex.toUpperCase()}`}
-              onClick={() => handleSwatchClick(hex)}
-              className={[
-                'h-4 w-4 rounded-sm border transition',
-                hex.toLowerCase() === value.toLowerCase()
-                  ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                  : 'border-border hover:border-border-strong',
-              ].join(' ')}
-              style={{ background: hex }}
-            />
-          ))}
-        </div>
-      )}
+  const handleOpenChange = (next: boolean): void => {
+    setOpen(next)
+    if (!next) {
+      // Closing → commit current value + add to recent.
+      commit(value)
+      push(value)
+    }
+  }
 
-      {/* Main input row */}
-      <div className="flex items-center gap-1.5">
+  return (
+    <div className="flex items-center gap-1.5">
+      <Popover open={open} onOpenChange={handleOpenChange}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={ariaLabel}
+            className={[
+              'h-7 w-10 flex-shrink-0 cursor-pointer rounded border border-input p-0.5',
+              'focus:border-ring focus:outline-none',
+              inputClassName,
+            ].join(' ')}
+          >
+            <span
+              aria-hidden="true"
+              className="block h-full w-full rounded-sm"
+              style={{ background: value }}
+            />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          className="w-56 p-3"
+          side="bottom"
+          align="start"
+          sideOffset={4}
+          // Keep keyboard scope inside the popover; outside-click closes
+          // (Radix default).
+        >
+          <div className="flex flex-col gap-3">
+            {/* Saturation/hue picker. The library renders its own canvas. */}
+            <HexColorPicker
+              color={value}
+              onChange={handlePickerChange}
+              style={{ width: '100%', height: 140 }}
+            />
+
+            {/* Hex + eyedropper row. */}
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                aria-label={`${ariaLabel} hex`}
+                value={value.toUpperCase()}
+                onChange={handleHexChange}
+                onBlur={handleHexBlur}
+                className={[
+                  'flex-1 rounded border border-input field-surface px-2 py-1',
+                  'font-mono text-xs text-foreground',
+                  'focus:border-ring focus:outline-none',
+                  hexClassName,
+                ].join(' ')}
+              />
+              <button
+                type="button"
+                onClick={EYEDROPPER_SUPPORTED ? handleEyedropper : undefined}
+                disabled={!EYEDROPPER_SUPPORTED}
+                aria-label="Pick color from screen"
+                title={
+                  EYEDROPPER_SUPPORTED
+                    ? 'Pick color from screen'
+                    : 'Eyedropper not supported in this browser'
+                }
+                className={[
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-input',
+                  EYEDROPPER_SUPPORTED
+                    ? 'cursor-pointer text-muted-foreground hover:border-border-strong hover:text-foreground'
+                    : 'cursor-not-allowed text-muted-foreground/40',
+                ].join(' ')}
+              >
+                <Pipette className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Recent colors swatch row inside the popover. */}
+            {recentColors.length > 0 && (
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Recent colors">
+                {recentColors.map((hex) => (
+                  <button
+                    key={hex}
+                    type="button"
+                    title={hex.toUpperCase()}
+                    aria-label={`Recent color ${hex.toUpperCase()}`}
+                    onClick={() => handleSwatchClick(hex)}
+                    className={[
+                      'h-5 w-5 rounded-sm border transition',
+                      hex.toLowerCase() === value.toLowerCase()
+                        ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                        : 'border-border hover:border-border-strong',
+                    ].join(' ')}
+                    style={{ background: hex }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      {showHex && (
         <input
-          id={colorInputId}
-          type="color"
-          aria-label={ariaLabel}
-          value={value}
-          onChange={handleNativeChange}
-          onBlur={handleNativeBlur}
+          type="text"
+          aria-label={`${ariaLabel} hex`}
+          value={value.toUpperCase()}
+          onChange={handleHexChange}
+          onBlur={handleHexBlur}
           className={[
-            'h-7 w-14 flex-shrink-0 cursor-pointer rounded border border-input bg-transparent p-0.5',
-            inputClassName,
+            'flex-1 rounded border border-input field-surface px-2 py-0.5',
+            'font-mono text-xs text-foreground',
+            'focus:border-ring focus:outline-none',
+            hexClassName,
           ].join(' ')}
         />
-
-        {showHex && (
-          <input
-            type="text"
-            aria-label={`${ariaLabel} hex`}
-            value={value.toUpperCase()}
-            onChange={handleHexChange}
-            onBlur={handleHexBlur}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'font-mono text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-              hexClassName,
-            ].join(' ')}
-          />
-        )}
-
-        {/* Eyedropper */}
-        <button
-          type="button"
-          onClick={EYEDROPPER_SUPPORTED ? handleEyedropper : undefined}
-          disabled={!EYEDROPPER_SUPPORTED}
-          aria-label="Pick color from screen"
-          title={
-            EYEDROPPER_SUPPORTED
-              ? 'Pick color from screen'
-              : 'Eyedropper not supported in this browser'
-          }
-          className={[
-            'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border border-input',
-            EYEDROPPER_SUPPORTED
-              ? 'cursor-pointer text-muted-foreground hover:border-border-strong hover:text-foreground'
-              : 'cursor-not-allowed text-muted-foreground/40',
-          ].join(' ')}
-        >
-          <Pipette className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
-      </div>
+      )}
     </div>
   )
 }
