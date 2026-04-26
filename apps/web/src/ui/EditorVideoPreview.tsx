@@ -277,18 +277,19 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         <div
           style={{
             pointerEvents: 'auto',
-            // The bar lives inside the artboard, which is CSS-scaled by
-            // `zoom`. Counter-scale by 1/zoom so the bar always renders
-            // at native viewport size — at zoom=0.4 the bar would
-            // otherwise be 40% of intended pixels (icons unreadable,
-            // hit-targets tiny). transformOrigin: bottom keeps it
-            // anchored to the video's bottom edge as it un-shrinks.
             transform: `translateX(-50%) scale(${zoom === 0 ? 1 : 1 / zoom})`,
             transformOrigin: 'bottom center',
-            // Bump above transform handles (they sit on the same
-            // coordinate space and would otherwise eat the click).
             zIndex: 50,
           }}
+          // Stop pointer events from bubbling to canvas-backdrop. Without
+          // this, EditorLayout's onPointerDown hit-tests the click,
+          // selects the video, and (worse) sets pointer-capture on the
+          // backdrop — so the subsequent mouseup never reaches our
+          // button and click never fires.
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current !== null) {
               clearTimeout(hoverTimeoutRef.current)
@@ -298,8 +299,6 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           onMouseLeave={() => {
             hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
           }}
-          // -translate-x-1/2 is replaced by the inline transform above; the
-          // class wrapper just provides positioning + visual chrome.
           className="absolute bottom-1.5 left-1/2 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-sm"
         >
           <button
