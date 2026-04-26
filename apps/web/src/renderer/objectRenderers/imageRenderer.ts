@@ -3,34 +3,23 @@
  *
  * Object renderer for type 'image'.
  *
- * Responsibilities:
- * - mount(): Creates Container + placeholder Graphics. Kicks off async URL resolve
- *   → texture acquire. On texture ready: creates Sprite with cover/contain fit.
- *   On error: shows error indicator Graphics.
- * - update(): Full object update — re-acquires texture if assetId/variant changed,
- *   recomputes fit if dimensions/fit changed, applies transform.
- * - applyPatch(): Surgical patch — handles async re-load for assetId/variant changes.
- * - destroy(): Releases acquired texture, sets aborted flag, destroys Container.
+ * Keynote-style crop model (replaces the old `cropRect` source-pixel
+ * frame). The image's visible window is the object's own
+ * x/y/width/height. The actual sprite is drawn at `imageRect` (slide
+ * coords) — when imageRect is larger than / offset from the object's
+ * frame, only the part covered by the frame is visible. A Pixi mask
+ * Graphics covering 0,0 → object.width × object.height clips the
+ * sprite to the frame.
  *
- * Fit modes (within width × height bounding box):
- * - 'cover'  (default): scale = max(boxW/texW, boxH/texH). Masked to box size.
- * - 'contain': scale = min(boxW/texW, boxH/texH). Centered, no mask needed.
- *
- * Async safety:
- * - An `aborted` flag (Symbol-tagged on the Container) is set to true in destroy().
- * - Any in-flight URL resolve or texture acquire checks this flag and becomes a no-op.
- *
- * Thumbnail context:
- * - thumbnailMount loads the small `thumb` imgproxy variant (400w JPEG) so
- *   sidebar thumbnails show actual image content. The raster is small enough
- *   to keep the offscreen thumbnail Pixi app cheap.
+ * Defaults: imageRect undefined ⇒ rendered as if equal to the object's
+ * own x/y/width/height (sprite fills the frame, fit applied).
  */
 
-import { Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Texture } from 'pixi.js'
 import type { ImageObject } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
-import { applyFit, applyCoverMask } from '../mediaFit.js'
+import { applyFit } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 
@@ -38,20 +27,14 @@ import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '..
 // Symbol tags for internal state stored on Container instances
 // ---------------------------------------------------------------------------
 
-/** Currently displayed Sprite (may be null while loading). */
 const SPRITE_TAG = Symbol('imgSprite')
-/** Placeholder / error Graphics. */
 const PLACEHOLDER_TAG = Symbol('imgPlaceholder')
-/** Mask Graphics applied to sprite container in 'cover' mode. */
 const MASK_TAG = Symbol('imgMask')
-/** Inner container wrapping the Sprite (needed for cover masking). */
 const SPRITE_WRAP_TAG = Symbol('imgSpriteWrap')
-/** Abort flag — set to true on destroy() to cancel in-flight async work. */
 const ABORTED_TAG = Symbol('imgAborted')
-/** URL of the currently acquired texture (for release on update/destroy). */
 const ACQUIRED_URL_TAG = Symbol('imgAcquiredUrl')
-/** Last crop rectangle applied to the sprite (for surgical patch diffs). */
-const CROP_TAG = Symbol('imgCrop')
+/** Last imageRect applied (for surgical patch diffs / preserve-across-asset-swap). */
+const IMAGE_RECT_TAG = Symbol('imgImageRect')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -108,43 +91,55 @@ function setAcquiredUrl(node: Container, url: string | undefined): void {
   asAny(node)[ACQUIRED_URL_TAG] = url
 }
 
-function getStoredCrop(node: Container): ImageObject['cropRect'] {
-  return asAny(node)[CROP_TAG] as ImageObject['cropRect']
+function getStoredImageRect(node: Container): ImageObject['imageRect'] {
+  return asAny(node)[IMAGE_RECT_TAG] as ImageObject['imageRect']
 }
 
-function setStoredCrop(node: Container, crop: ImageObject['cropRect']): void {
-  asAny(node)[CROP_TAG] = crop
+function setStoredImageRect(node: Container, r: ImageObject['imageRect']): void {
+  asAny(node)[IMAGE_RECT_TAG] = r
 }
 
-/**
- * P11: build the texture instance to feed the sprite, taking `cropRect`
- * into account. When the object has a cropRect we wrap the source in a
- * fresh `Texture` referencing the same TextureSource but with a custom
- * frame — this leaves the underlying cached texture untouched (so the
- * ResourceManager can keep sharing it across objects).
- */
-function buildSpriteTexture(source: Texture, crop: ImageObject['cropRect']): Texture {
-  if (crop === undefined) return source
-  // Clamp the crop rect to the texture's source dimensions so an out-of-
-  // range crop (e.g. from a future re-upload at a smaller size) doesn't
-  // crash Pixi. We treat zero / negative widths as "no crop" too.
-  const sw = source.source.width
-  const sh = source.source.height
-  if (sw <= 0 || sh <= 0) return source
-  const x = Math.max(0, Math.min(sw - 1, crop.x))
-  const y = Math.max(0, Math.min(sh - 1, crop.y))
-  const w = Math.max(1, Math.min(sw - x, crop.width))
-  const h = Math.max(1, Math.min(sh - y, crop.height))
-  return new Texture({
-    source: source.source,
-    frame: new Rectangle(x, y, w, h),
-  })
-}
-
-function isCropEqual(a: ImageObject['cropRect'], b: ImageObject['cropRect']): boolean {
+function isImageRectEqual(a: ImageObject['imageRect'], b: ImageObject['imageRect']): boolean {
   if (a === undefined && b === undefined) return true
   if (a === undefined || b === undefined) return false
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/**
+ * Resolve the effective imageRect (slide coords) for a given object.
+ * When imageRect is undefined the sprite occupies the object's own
+ * frame — the fit ('cover' / 'contain') still applies inside that box.
+ */
+function effectiveImageRect(data: ImageObject): {
+  x: number
+  y: number
+  width: number
+  height: number
+} {
+  if (data.imageRect !== undefined) return data.imageRect
+  return { x: data.x, y: data.y, width: data.width, height: data.height }
+}
+
+// ---------------------------------------------------------------------------
+// Mask helper — clips visible pixels to the object's frame.
+// ---------------------------------------------------------------------------
+
+function applyFrameMask(node: Container, w: number, h: number): Graphics {
+  let mask = getMask(node)
+  if (mask === undefined || mask.destroyed) {
+    mask = new Graphics()
+    node.addChild(mask)
+    setMask(node, mask)
+  }
+  mask.clear()
+  mask.rect(0, 0, w, h)
+  mask.fill({ color: 0xffffff, alpha: 1 })
+  // Apply the mask to the sprite-wrap (so the placeholder is unmasked).
+  const wrap = getSpriteWrap(node)
+  if (wrap !== undefined) {
+    wrap.mask = mask
+  }
+  return mask
 }
 
 // ---------------------------------------------------------------------------
@@ -160,63 +155,84 @@ function applyObjectTransform(container: Container, data: ImageObject): void {
 }
 
 // ---------------------------------------------------------------------------
+// Sprite layout — positions + sizes the sprite according to imageRect.
+// ---------------------------------------------------------------------------
+
+/**
+ * Position + scale the sprite so it visually occupies imageRect (in
+ * slide coords) inside the object's container (which is positioned at
+ * the object's x/y, with pivot at center). The container's local
+ * origin is the object's top-left; we translate the sprite to
+ * (imageRect.x - object.x, imageRect.y - object.y) and scale it so the
+ * raw texture maps to imageRect.width × imageRect.height.
+ *
+ * Fit mode is honoured INSIDE the imageRect rectangle the same way it
+ * was before — 'cover' fills the box (cropping internally), 'contain'
+ * letterboxes.
+ */
+function layoutSprite(
+  sprite: Sprite,
+  texture: Texture,
+  data: ImageObject,
+  spriteWrap: Container,
+): void {
+  const ir = effectiveImageRect(data)
+  const fit = data.fit ?? 'cover'
+  // applyFit sets sprite.x/y/scale to fill / contain a `box`. We keep
+  // that semantics inside the imageRect so existing behaviour for
+  // non-cropped images is unchanged. The sprite is parented to
+  // spriteWrap which we translate so applyFit's local (0,0) lands at
+  // (ir.x - data.x, ir.y - data.y) inside the object container.
+  applyFit(sprite, texture, { w: ir.width, h: ir.height }, fit)
+  spriteWrap.x = ir.x - data.x
+  spriteWrap.y = ir.y - data.y
+}
+
+// ---------------------------------------------------------------------------
 // Placeholder / error drawing
 // ---------------------------------------------------------------------------
 
-/** Draws a gray placeholder rectangle representing the loading state. */
 function drawPlaceholder(g: Graphics, width: number, height: number): void {
   g.clear()
   g.rect(0, 0, width, height)
   g.fill({ color: 0xcccccc, alpha: 1 })
 }
 
-/** Draws a red error indicator rectangle with a small exclamation mark in Graphics. */
 function drawErrorIndicator(g: Graphics, width: number, height: number): void {
   g.clear()
-  // Background
   g.rect(0, 0, width, height)
   g.fill({ color: 0xffe0e0, alpha: 1 })
-  // Red border
   g.rect(0, 0, width, height)
   g.stroke({ color: 0xcc0000, width: 2, alpha: 1 })
-  // Central exclamation mark: vertical bar
   const cx = width / 2
   const cy = height / 2
   const barW = Math.max(2, width * 0.04)
   const barH = Math.max(8, height * 0.3)
   g.rect(cx - barW / 2, cy - barH / 2 - barH * 0.15, barW, barH)
   g.fill({ color: 0xcc0000, alpha: 1 })
-  // Dot
   const dotR = Math.max(2, width * 0.04)
   g.circle(cx, cy + barH / 2 + dotR, dotR)
   g.fill({ color: 0xcc0000, alpha: 1 })
 }
 
 // ---------------------------------------------------------------------------
-// Core async load logic
+// Core async load
 // ---------------------------------------------------------------------------
 
-/**
- * Starts the async flow: resolve URL → acquire texture → apply to container.
- * Checks aborted flag at each await point to avoid work after destroy().
- */
 function startLoad(container: Container, data: ImageObject): void {
   const assetId = data.assetId
   const variant = data.variant ?? 'display'
-  const fit = data.fit ?? 'cover'
   const box = { w: data.width, h: data.height }
 
   const resolver = getDefaultImageUrlResolver()
   const rm = getDefaultResourceManager()
 
-  // Release any previously acquired texture before starting a new load.
   const prevUrl = getAcquiredUrl(container)
   if (prevUrl !== undefined) {
     rm.releaseTexture(prevUrl)
     setAcquiredUrl(container, undefined)
   }
 
-  // Restore / reset placeholder (hide error state from previous failed load).
   const placeholder = getPlaceholder(container)
   if (placeholder !== undefined) {
     drawPlaceholder(placeholder, box.w, box.h)
@@ -225,16 +241,19 @@ function startLoad(container: Container, data: ImageObject): void {
     }
   }
 
-  // Remove any existing sprite wrap so we start clean.
   const oldWrap = getSpriteWrap(container)
   if (oldWrap !== undefined) {
     oldWrap.destroy({ children: true })
     setSpriteWrap(container, undefined)
     setSprite(container, undefined)
+  }
+  // Drop any stale mask too — we'll create a fresh one once the sprite is up.
+  const oldMask = getMask(container)
+  if (oldMask !== undefined && !oldMask.destroyed) {
+    oldMask.destroy()
     setMask(container, undefined)
   }
 
-  // Empty assetId — remain in placeholder state (broken object, upload pending).
   if (assetId === '') return
 
   void (async () => {
@@ -243,7 +262,6 @@ function startLoad(container: Container, data: ImageObject): void {
       url = await resolver({ assetId, variant })
     } catch {
       if (isAborted(container)) return
-      // Show error indicator.
       const errG = getPlaceholder(container)
       if (errG !== undefined) {
         drawErrorIndicator(errG, box.w, box.h)
@@ -266,39 +284,46 @@ function startLoad(container: Container, data: ImageObject): void {
     }
 
     if (isAborted(container)) {
-      // We acquired a texture we'll never use — release it immediately.
       rm.releaseTexture(url)
       return
     }
 
     setAcquiredUrl(container, url)
 
-    // Build sprite wrap + sprite. P11: respect cropRect by wrapping the
-    // shared texture in a frame-bounded Texture instance that points at
-    // the same source pixels.
     const spriteWrap = new Container()
-    const spriteTex = buildSpriteTexture(texture, data.cropRect)
-    const sprite = new Sprite(spriteTex)
-    setStoredCrop(container, data.cropRect)
+    const sprite = new Sprite(texture)
+    setStoredImageRect(container, data.imageRect)
 
-    applyFit(sprite, spriteTex, box, fit)
+    layoutSprite(sprite, texture, data, spriteWrap)
     spriteWrap.addChild(sprite)
-
-    if (fit === 'cover') {
-      const mask = applyCoverMask(spriteWrap, undefined, box)
-      setMask(container, mask)
-    }
 
     container.addChild(spriteWrap)
     setSpriteWrap(container, spriteWrap)
     setSprite(container, sprite)
 
-    // Hide placeholder now that the sprite is ready.
+    // Frame mask — always clip to the object's frame so a larger /
+    // offset imageRect doesn't bleed past it. For 'cover' fit with
+    // imageRect undefined this matches the old applyCoverMask behaviour.
+    applyFrameMask(container, data.width, data.height)
+
     const ph = getPlaceholder(container)
     if (ph !== undefined && !ph.destroyed) {
       ph.visible = false
     }
   })()
+}
+
+// ---------------------------------------------------------------------------
+// Helpers used by update / applyPatch — re-layout the sprite without async.
+// ---------------------------------------------------------------------------
+
+function relayoutExistingSprite(node: Container, data: ImageObject): void {
+  const sprite = getSprite(node)
+  const wrap = getSpriteWrap(node)
+  if (sprite === undefined || wrap === undefined || sprite.texture === undefined) return
+  layoutSprite(sprite, sprite.texture, data, wrap)
+  applyFrameMask(node, data.width, data.height)
+  setStoredImageRect(node, data.imageRect)
 }
 
 // ---------------------------------------------------------------------------
@@ -308,13 +333,9 @@ function startLoad(container: Container, data: ImageObject): void {
 export const imageRenderer = {
   type: 'image' as const,
 
-  /**
-   * Creates a Container with a gray placeholder Graphics and kicks off async load.
-   */
   mount(data: ImageObject): Container {
     const container = new Container()
 
-    // Placeholder visible while loading.
     const placeholder = new Graphics()
     drawPlaceholder(placeholder, data.width, data.height)
     container.addChild(placeholder)
@@ -323,92 +344,43 @@ export const imageRenderer = {
     applyObjectTransform(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
 
-    // Kick off async load.
     startLoad(container, data)
 
     return container
   },
 
-  /**
-   * Full update — rebuilds everything from new data.
-   * Async re-load triggered if assetId or variant changed.
-   */
   update(node: Container, prev: ImageObject, next: ImageObject): void {
     applyObjectTransform(node, next)
 
-    const box = { w: next.width, h: next.height }
-
-    // Resize placeholder.
     const ph = getPlaceholder(node)
     if (ph !== undefined && !ph.destroyed) {
-      drawPlaceholder(ph, box.w, box.h)
-      ph.visible = true
+      drawPlaceholder(ph, next.width, next.height)
+      // Only show placeholder if there's no sprite yet.
+      ph.visible = getSprite(node) === undefined
     }
 
     const assetChanged = prev.assetId !== next.assetId || prev.variant !== next.variant
-    const fitChanged = prev.fit !== next.fit
-    const sizeChanged = prev.width !== next.width || prev.height !== next.height
-    const cropChanged = !isCropEqual(prev.cropRect, next.cropRect)
 
     if (assetChanged) {
-      // Full re-load: startLoad handles old texture release.
       startLoad(node, next)
+      applyFilterEffects(node, next.shadow, next.blur)
       return
     }
 
-    // P11: crop change — swap the sprite's framed texture in place. We
-    // can recover the underlying TextureSource from the existing sprite
-    // (sprite.texture.source) so no async re-load is needed.
-    if (cropChanged) {
-      const sprite = getSprite(node)
-      if (sprite !== undefined && sprite.texture !== undefined) {
-        const baseSource = sprite.texture.source
-        const fullTex = new Texture({ source: baseSource })
-        const newTex = buildSpriteTexture(fullTex, next.cropRect)
-        sprite.texture = newTex
-        setStoredCrop(node, next.cropRect)
-      }
-    }
+    // Anything geometry-ish: re-layout the existing sprite and refresh the mask.
+    const fitChanged = prev.fit !== next.fit
+    const sizeChanged = prev.width !== next.width || prev.height !== next.height
+    const posChanged = prev.x !== next.x || prev.y !== next.y
+    const imageRectChanged = !isImageRectEqual(prev.imageRect, next.imageRect)
 
-    // If only size or fit changed, update sprite in place.
-    if (fitChanged || sizeChanged || cropChanged) {
-      const sprite = getSprite(node)
-      if (sprite !== undefined && sprite.texture !== undefined) {
-        const fit = next.fit ?? 'cover'
-        applyFit(sprite, sprite.texture, box, fit)
-
-        const spriteWrap = getSpriteWrap(node)
-        if (spriteWrap !== undefined) {
-          if (fit === 'cover') {
-            const existingMask = getMask(node)
-            const newMask = applyCoverMask(spriteWrap, existingMask, box)
-            setMask(node, newMask)
-          } else {
-            // Remove cover mask if switching to contain.
-            const existingMask = getMask(node)
-            if (existingMask !== undefined) {
-              spriteWrap.mask = null
-              existingMask.destroy()
-              setMask(node, undefined)
-            }
-          }
-        }
-      }
+    if (fitChanged || sizeChanged || posChanged || imageRectChanged) {
+      relayoutExistingSprite(node, next)
     }
 
     applyFilterEffects(node, next.shadow, next.blur)
   },
 
-  /**
-   * Surgical patch update — updates only touched fields.
-   *
-   * Cases:
-   * - x | y | rotation | opacity → container transform only
-   * - width | height | fit → recompute fit + mask on existing sprite
-   * - assetId | variant → async re-load
-   */
   applyPatch(node: Container, patch: Partial<ImageObject>): void {
-    // Transform fields.
     if (patch.x !== undefined) {
       node.x = patch.x + node.pivot.x
     }
@@ -422,12 +394,12 @@ export const imageRenderer = {
       node.alpha = patch.opacity
     }
 
-    // Geometry / fit fields.
     const sizeChanged = patch.width !== undefined || patch.height !== undefined
     const fitChanged = patch.fit !== undefined
+    const imageRectChanged = 'imageRect' in patch
+    const posChanged = patch.x !== undefined || patch.y !== undefined
 
     if (sizeChanged) {
-      // Recalculate pivot and position.
       const currentPivotX = node.pivot.x
       const currentPivotY = node.pivot.y
       const dataX = node.x - currentPivotX
@@ -442,94 +414,58 @@ export const imageRenderer = {
       node.x = dataX + newW / 2
       node.y = dataY + newH / 2
 
-      // Resize placeholder.
       const ph = getPlaceholder(node)
       if (ph !== undefined && !ph.destroyed) {
         drawPlaceholder(ph, newW, newH)
       }
     }
 
-    // P11: cropRect patch — rebuild the sprite's framed texture from the
-    // existing TextureSource without going through the async loader.
-    const cropChanged = 'cropRect' in patch
-    if (cropChanged) {
-      const sprite = getSprite(node)
-      if (sprite !== undefined && sprite.texture !== undefined) {
-        const baseSource = sprite.texture.source
-        const fullTex = new Texture({ source: baseSource })
-        const newTex = buildSpriteTexture(fullTex, patch.cropRect)
-        sprite.texture = newTex
-        setStoredCrop(node, patch.cropRect)
-      }
-    }
-
-    if (sizeChanged || fitChanged || cropChanged) {
-      const sprite = getSprite(node)
-      if (sprite !== undefined && sprite.texture !== undefined) {
-        // Reconstruct current box dimensions from pivot.
-        const currentW = node.pivot.x * 2
-        const currentH = node.pivot.y * 2
-        const box = { w: currentW, h: currentH }
-
-        // Determine current fit — can't read from node, use patch.fit or infer from mask presence.
-        // We resolve: if patch.fit is given, use it; else keep existing behaviour (mask = cover).
-        let fit: 'cover' | 'contain'
-        if (patch.fit !== undefined) {
-          fit = patch.fit
-        } else {
-          // Infer from whether a mask exists.
-          fit = getMask(node) !== undefined ? 'cover' : 'contain'
-        }
-
-        applyFit(sprite, sprite.texture, box, fit)
-
-        const spriteWrap = getSpriteWrap(node)
-        if (spriteWrap !== undefined) {
-          if (fit === 'cover') {
-            const existingMask = getMask(node)
-            const newMask = applyCoverMask(spriteWrap, existingMask, box)
-            setMask(node, newMask)
-          } else {
-            const existingMask = getMask(node)
-            if (existingMask !== undefined) {
-              spriteWrap.mask = null
-              existingMask.destroy()
-              setMask(node, undefined)
-            }
-          }
-        }
-      }
-    }
-
-    // Asset change → full async re-load.
-    const assetChanged = patch.assetId !== undefined || patch.variant !== undefined
-    if (assetChanged) {
-      // Build a synthetic full ImageObject from node state + patch.
+    if (sizeChanged || fitChanged || imageRectChanged || posChanged) {
+      // Reconstruct effective ImageObject state from node + patch.
       const currentW = node.pivot.x * 2
       const currentH = node.pivot.y * 2
       const dataX = node.x - node.pivot.x
       const dataY = node.y - node.pivot.y
 
-      // We need assetId and variant to load. Read cached URL to infer assetId?
-      // We can't easily recover the original assetId from the node, so we require
-      // the caller to pass a full-enough patch. The startLoad function uses
-      // patch.assetId if present, otherwise keeps previous — but we don't track
-      // previous assetId on the node. Solution: store assetId on node.
-      //
-      // However, the full assetId must be in the patch when assetChanged is true
-      // (state-sync always sends the new value in the patch). If it's missing,
-      // we can't do anything useful.
-      const newAssetId = patch.assetId
-      if (newAssetId === undefined) {
-        // variant changed but assetId not in patch — we need the full object.
-        // Fallback: no-op. (Shouldn't happen in practice — state-sync sends full object on type changes.)
-        return
+      // Resolve current imageRect: patch wins, otherwise stored.
+      const currentImageRect = imageRectChanged ? patch.imageRect : getStoredImageRect(node)
+
+      // Infer current fit. We can't read fit from the node directly
+      // (no symbol stored) — use patch.fit if given, otherwise infer
+      // from mask presence. With Keynote-style crop we ALWAYS keep a
+      // frame mask, so this defaults to 'cover'.
+      const fit: 'cover' | 'contain' = patch.fit ?? 'cover'
+
+      const synthetic: ImageObject = {
+        id: '',
+        type: 'image',
+        x: dataX,
+        y: dataY,
+        width: currentW,
+        height: currentH,
+        rotation: node.rotation,
+        opacity: node.alpha,
+        assetId: '',
+        fit,
+        ...(currentImageRect !== undefined ? { imageRect: currentImageRect } : {}),
       }
 
-      // P11: preserve the current cropRect across an asset re-load unless
-      // the patch explicitly clears it. The stored crop is the last value
-      // applied to the sprite by buildSpriteTexture / setStoredCrop.
-      const cropForReload = 'cropRect' in patch ? patch.cropRect : getStoredCrop(node)
+      relayoutExistingSprite(node, synthetic)
+    }
+
+    const assetChanged = patch.assetId !== undefined || patch.variant !== undefined
+    if (assetChanged) {
+      const currentW = node.pivot.x * 2
+      const currentH = node.pivot.y * 2
+      const dataX = node.x - node.pivot.x
+      const dataY = node.y - node.pivot.y
+
+      const newAssetId = patch.assetId
+      if (newAssetId === undefined) return
+
+      // Preserve the imageRect across an asset re-load unless the patch
+      // explicitly clears it.
+      const imageRectForReload = 'imageRect' in patch ? patch.imageRect : getStoredImageRect(node)
       const synthetic: ImageObject = {
         id: '',
         type: 'image',
@@ -541,11 +477,10 @@ export const imageRenderer = {
         opacity: node.alpha,
         assetId: newAssetId,
         ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
-        fit: patch.fit ?? (getMask(node) !== undefined ? 'cover' : 'contain'),
-        ...(cropForReload !== undefined ? { cropRect: cropForReload } : {}),
+        fit: patch.fit ?? 'cover',
+        ...(imageRectForReload !== undefined ? { imageRect: imageRectForReload } : {}),
       }
 
-      // Show placeholder again while re-loading.
       const ph = getPlaceholder(node)
       if (ph !== undefined && !ph.destroyed) {
         drawPlaceholder(ph, currentW, currentH)
@@ -560,9 +495,6 @@ export const imageRenderer = {
     }
   },
 
-  /**
-   * Releases acquired texture, aborts in-flight async work, destroys Container.
-   */
   destroy(node: Container): void {
     setAborted(node)
 
@@ -571,7 +503,7 @@ export const imageRenderer = {
       try {
         getDefaultResourceManager().releaseTexture(url)
       } catch {
-        // Renderer may be destroyed before ResourceManager is installed in tests — safe to ignore.
+        // RM may be torn down already.
       }
       setAcquiredUrl(node, undefined)
     }
@@ -580,16 +512,6 @@ export const imageRenderer = {
     node.destroy({ children: true })
   },
 
-  /**
-   * Thumbnail variant of mount — loads the imgproxy `thumb` variant (400w JPEG)
-   * so the sidebar shows real image content.
-   *
-   * Does NOT go through the main Canvas's ResourceManager. That RM's textures
-   * are bound to the main Pixi Application's WebGL context; the sidebar
-   * thumbnails run in a separate offscreen Pixi Application with its own
-   * context and cannot reuse them. Each thumbnail creates its own lightweight
-   * TextureSource from a fresh HTMLImageElement decoded per-call.
-   */
   thumbnailMount(data: ImageObject): Container {
     const container = new Container()
     const placeholder = new Graphics()
@@ -597,7 +519,6 @@ export const imageRenderer = {
     container.addChild(placeholder)
     setPlaceholder(container, placeholder)
 
-    // Apply transform (same as mount).
     container.rotation = data.rotation
     container.alpha = data.opacity
     container.pivot.set(data.width / 2, data.height / 2)
@@ -608,11 +529,8 @@ export const imageRenderer = {
     if (assetId === '') return container
 
     const fit = data.fit ?? 'cover'
-    const box = { w: data.width, h: data.height }
     const resolver = getDefaultImageUrlResolver()
 
-    // Expose a ready-promise so the offscreen thumbnail renderer can await
-    // the async decode before capturing its one-shot frame.
     const ready = (async () => {
       let url: string
       try {
@@ -632,23 +550,26 @@ export const imageRenderer = {
       }
       if (isAborted(container)) return
 
-      // Per-thumbnail Texture — not cached, not shared across Pixi apps.
       const texture = Texture.from(img)
-      const spriteTex = buildSpriteTexture(texture, data.cropRect)
-
       const spriteWrap = new Container()
-      const sprite = new Sprite(spriteTex)
-      applyFit(sprite, spriteTex, box, fit)
+      const sprite = new Sprite(texture)
+      // Reuse the same imageRect-aware layout so cropped thumbnails
+      // mirror the editor view.
+      layoutSprite(sprite, texture, data, spriteWrap)
       spriteWrap.addChild(sprite)
-
-      if (fit === 'cover') {
-        const mask = applyCoverMask(spriteWrap, undefined, box)
-        setMask(container, mask)
-      }
 
       container.addChild(spriteWrap)
       setSpriteWrap(container, spriteWrap)
       setSprite(container, sprite)
+
+      // Frame mask — clip sprite to the object's frame.
+      applyFrameMask(container, data.width, data.height)
+
+      // applyCoverMask is no longer needed — applyFrameMask handles it
+      // generically. The fit-related behaviour for the un-cropped case
+      // (imageRect undefined, fit='cover') is preserved because
+      // layoutSprite still runs applyFit inside imageRect = full frame.
+      void fit
 
       const ph = getPlaceholder(container)
       if (ph !== undefined && !ph.destroyed) {

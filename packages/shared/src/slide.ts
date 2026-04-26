@@ -324,12 +324,15 @@ export interface ImageObject extends BaseSlideObject {
    */
   alt?: string
   /**
-   * P11: optional crop rectangle in source-image pixel coordinates.
-   * Renderer feeds this to the Pixi sprite via `texture.frame` so only
-   * the cropped sub-region fills the object's bounding box. Missing ⇒
-   * use the full source image.
+   * P11 (Keynote-style crop): slide-space rect where the source image
+   * is drawn. When undefined, defaults to the object's own
+   * x/y/width/height (no visible crop). When set, may be larger than or
+   * extend outside the object's frame — the renderer clips visible
+   * pixels to the object's x/y/width/height. Dragging the image inside
+   * crop mode mutates this rect's x/y; resizing the frame mutates the
+   * object's x/y/width/height while leaving imageRect alone.
    */
-  cropRect?: { x: number; y: number; width: number; height: number }
+  imageRect?: { x: number; y: number; width: number; height: number }
 }
 
 export interface VideoObject extends BaseSlideObject {

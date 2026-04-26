@@ -17,6 +17,7 @@ import { useOutletContext } from 'react-router-dom'
 import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
 import { TextEditProvider } from '../state/TextEditContext.js'
+import { CropModeProvider } from '../state/CropModeContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
 
@@ -27,7 +28,9 @@ export function DeckEditor() {
     <SelectionProvider>
       <ToolProvider>
         <TextEditProvider>
-          <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+          <CropModeProvider>
+            <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+          </CropModeProvider>
         </TextEditProvider>
       </ToolProvider>
     </SelectionProvider>
