@@ -62,8 +62,7 @@ import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
-import { CanvasContextMenu } from '../ui/CanvasContextMenu.js'
-import { ObjectContextMenu } from '../ui/ObjectContextMenu.js'
+import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
@@ -1298,7 +1297,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       <main className="flex flex-1 flex-col overflow-hidden">
         <Toolbar />
 
-        <CanvasContextMenu canvasContainerRef={canvasContainerRef}>
+        <EditorContextMenu canvasContainerRef={canvasContainerRef}>
           <div
             className="canvas-backdrop relative flex flex-1 overflow-hidden"
             data-shortcut-scope="canvas"
@@ -1314,7 +1313,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           >
             {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller. */}
-            <div ref={stageScrollRef} className="flex flex-1 overflow-auto">
+            <div ref={stageScrollRef} className="flex flex-1 overflow-auto" data-stage-scroll>
               {/* Stage padding wrapper — 400 px of space around the
                 artboard on every side. width:fit-content makes it hug
                 the artboard + padding so scrollbars reveal the full
@@ -1360,146 +1359,141 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                       guidesCtx={guidesCtx}
                     />
                   )}
-                  <ObjectContextMenu canvasContainerRef={canvasContainerRef}>
-                    <div
-                      ref={canvasContainerRef}
-                      className="artboard relative rounded-md"
-                      style={{
-                        width: SLIDE_WIDTH,
-                        height: SLIDE_HEIGHT,
-                        background: 'hsl(var(--surface-elevated))',
-                        overflow: 'visible',
-                        transform: `scale(${zoom})`,
-                        transformOrigin: 'top left',
-                      }}
-                    >
-                      <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
+                  <div
+                    ref={canvasContainerRef}
+                    className="artboard relative rounded-md"
+                    style={{
+                      width: SLIDE_WIDTH,
+                      height: SLIDE_HEIGHT,
+                      background: 'hsl(var(--surface-elevated))',
+                      overflow: 'visible',
+                      transform: `scale(${zoom})`,
+                      transformOrigin: 'top left',
+                    }}
+                  >
+                    <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
 
-                      {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
+                    {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
                 beyond the artboard rect and would otherwise occlude a border
                 on the artboard div. Pointer-events:none to pass clicks
                 through to overlays. */}
-                      <div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
-                      />
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 rounded-md border border-border shadow-[0_0_0_1px_hsl(var(--border-strong))]"
+                    />
 
-                      {/* Snap guide lines — viditelné jen během dragu */}
-                      <SnapGuides
-                        guides={snapGuides}
-                        canvasWidth={canvasSize.width}
-                        canvasHeight={canvasSize.height}
-                      />
+                    {/* Snap guide lines — viditelné jen během dragu */}
+                    <SnapGuides
+                      guides={snapGuides}
+                      canvasWidth={canvasSize.width}
+                      canvasHeight={canvasSize.height}
+                    />
 
-                      {/* P11: deck-level alignment guides. Hidden when
+                    {/* P11: deck-level alignment guides. Hidden when
                           the rulers UI is collapsed — the guides only
                           make sense alongside the strips that created
                           them. */}
-                      {rulersVisible && (
-                        <GuideOverlay
-                          guides={deckGuides}
-                          slideWidth={SLIDE_WIDTH}
-                          slideHeight={SLIDE_HEIGHT}
-                          guidesCtx={guidesCtx}
-                        />
-                      )}
+                    {rulersVisible && (
+                      <GuideOverlay
+                        guides={deckGuides}
+                        slideWidth={SLIDE_WIDTH}
+                        slideHeight={SLIDE_HEIGHT}
+                        guidesCtx={guidesCtx}
+                      />
+                    )}
 
-                      {/* Marquee selection overlay */}
-                      {marquee !== null && <MarqueeOverlay marquee={marquee} />}
-                      {draft !== null && <DraftOverlay draft={draft} />}
-                      {penSession !== null && <PenPreview anchors={penSession.anchors} />}
+                    {/* Marquee selection overlay */}
+                    {marquee !== null && <MarqueeOverlay marquee={marquee} />}
+                    {draft !== null && <DraftOverlay draft={draft} />}
+                    {penSession !== null && <PenPreview anchors={penSession.anchors} />}
 
-                      {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
-                      <PeerSelectionOverlays />
+                    {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
+                    <PeerSelectionOverlays />
 
-                      {/* P5a: padlock badge over each locked object. */}
-                      <LockBadges />
+                    {/* P5a: padlock badge over each locked object. */}
+                    <LockBadges />
 
-                      {/* P8: click-to-play video preview in the editor.
+                    {/* P8: click-to-play video preview in the editor.
                       Mounted BEFORE TransformHandles so the handles +
                       selection outline + snap guides render ON TOP of
                       the <video> element. EditorVideoPreview itself
                       is pointer-events:none on its wrapper; only the
                       <video> child is interactive. */}
-                      {objects
-                        .filter((o) => o.type === 'video')
-                        .map((vidObj) => (
-                          <EditorVideoPreview
-                            key={`editor-video-${vidObj.id}`}
-                            videoObject={vidObj}
-                          />
-                        ))}
+                    {objects
+                      .filter((o) => o.type === 'video')
+                      .map((vidObj) => (
+                        <EditorVideoPreview
+                          key={`editor-video-${vidObj.id}`}
+                          videoObject={vidObj}
+                        />
+                      ))}
 
-                      {/* Transform handles — lines/arrows get endpoint handles
+                    {/* Transform handles — lines/arrows get endpoint handles
                       instead of the 8-handle scale + rotate rig. Locked
                       objects (P5a) skip the handles entirely; the object
                       stays selected (Inspector is still useful for
                       toggling the flag) but can't be dragged / resized. */}
-                      {!isViewer &&
-                        selectedIds.size > 0 &&
-                        canvasInstance !== null &&
-                        mutationCtx !== null &&
-                        (() => {
-                          // Build the subset of selected ids that are editable.
-                          const editableIds = [...selectedIds].filter((sid) => {
-                            const o = objects.find((x) => x.id === sid)
-                            return o !== undefined && o.locked !== true
-                          })
-                          if (editableIds.length === 0) return null
+                    {!isViewer &&
+                      selectedIds.size > 0 &&
+                      canvasInstance !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        // Build the subset of selected ids that are editable.
+                        const editableIds = [...selectedIds].filter((sid) => {
+                          const o = objects.find((x) => x.id === sid)
+                          return o !== undefined && o.locked !== true
+                        })
+                        if (editableIds.length === 0) return null
 
-                          if (editableIds.length === 1) {
-                            const onlyId = editableIds[0]
-                            const obj = objects.find((o) => o.id === onlyId)
-                            if (
-                              obj !== undefined &&
-                              (obj.type === 'line' || obj.type === 'arrow')
-                            ) {
-                              return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
-                            }
+                        if (editableIds.length === 1) {
+                          const onlyId = editableIds[0]
+                          const obj = objects.find((o) => o.id === onlyId)
+                          if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
+                            return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                           }
-                          // P8: lock aspect ratio when any selected object is a
-                          // VideoObject with aspectLocked=true. Resizing then
-                          // behaves as if Shift were held (corner handles
-                          // preserve native ratio).
-                          const aspectLock = editableIds.some((sid) => {
-                            const o = objects.find((x) => x.id === sid)
-                            return o !== undefined && o.type === 'video' && o.aspectLocked === true
-                          })
-                          return (
-                            <TransformHandles
-                              objectIds={editableIds}
-                              sceneGraph={canvasInstance.sceneGraph}
-                              mutationCtx={mutationCtx}
-                              onSnapGuides={handleSnapGuides}
-                              otherBounds={otherBounds}
-                              forceAspectLock={aspectLock}
-                              extraGuides={deckGuides.map((g) => ({
-                                orientation: g.orientation,
-                                position: g.position,
-                              }))}
-                            />
-                          )
-                        })()}
+                        }
+                        // P8: lock aspect ratio when any selected object is a
+                        // VideoObject with aspectLocked=true. Resizing then
+                        // behaves as if Shift were held (corner handles
+                        // preserve native ratio).
+                        const aspectLock = editableIds.some((sid) => {
+                          const o = objects.find((x) => x.id === sid)
+                          return o !== undefined && o.type === 'video' && o.aspectLocked === true
+                        })
+                        return (
+                          <TransformHandles
+                            objectIds={editableIds}
+                            sceneGraph={canvasInstance.sceneGraph}
+                            mutationCtx={mutationCtx}
+                            onSnapGuides={handleSnapGuides}
+                            otherBounds={otherBounds}
+                            forceAspectLock={aspectLock}
+                            extraGuides={deckGuides.map((g) => ({
+                              orientation: g.orientation,
+                              position: g.position,
+                            }))}
+                          />
+                        )
+                      })()}
 
-                      {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
-                      <PeerCursors />
+                    {/* M8: Remote peer cursors — DOM overlays přes OverlayCompositor */}
+                    <PeerCursors />
 
-                      {/* M11: Drop zone for image uploads — inert for viewer role */}
-                      <UploadDropZone canvasContainerRef={canvasContainerRef} />
+                    {/* M11: Drop zone for image uploads — inert for viewer role */}
+                    <UploadDropZone canvasContainerRef={canvasContainerRef} />
 
-                      {/* P7: inline text edit overlay. Sits above the Pixi
+                    {/* P7: inline text edit overlay. Sits above the Pixi
                       text and takes focus while the user edits. */}
-                      {editingTextId !== null &&
-                        mutationCtx !== null &&
-                        (() => {
-                          const obj = objects.find((o) => o.id === editingTextId)
-                          if (obj === undefined || obj.type !== 'text') return null
-                          return (
-                            <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
-                          )
-                        })()}
-                    </div>
-                  </ObjectContextMenu>
+                    {editingTextId !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const obj = objects.find((o) => o.id === editingTextId)
+                        if (obj === undefined || obj.type !== 'text') return null
+                        return (
+                          <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
+                        )
+                      })()}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1517,7 +1511,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               <ZoomControl stageScrollRef={stageScrollRef} />
             </div>
           </div>
-        </CanvasContextMenu>
+        </EditorContextMenu>
 
         {/* M14 phase 1: bottom animations timeline panel. Read-only visual
             layout with click-to-select and × to remove. Drag/play in a later
