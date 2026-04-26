@@ -33,6 +33,7 @@ import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
 import type { VideoObject, SlideObjectPatch } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useZoomLevel } from '../state/useZoomLevel.js'
 import { updateObject } from '@narrative/slide-model'
 
 export interface EditorVideoPreviewProps {
@@ -52,6 +53,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const hlsRef = useRef<Hls | null>(null)
   const { objectsCtx } = useSlideObjects()
+  // Editor only — counter-scales the hover bar so it stays a constant
+  // size in viewport pixels regardless of artboard zoom. In present mode
+  // the slide container is scaled too but we don't render the bar there.
+  const { zoom } = useZoomLevel()
 
   // Hover controls state — only shown in edit mode.
   const [hovered, setHovered] = useState(false)
@@ -270,7 +275,20 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           mouseenter and clear the timeout. */}
       {!isPresent && hovered && (
         <div
-          style={{ pointerEvents: 'auto' }}
+          style={{
+            pointerEvents: 'auto',
+            // The bar lives inside the artboard, which is CSS-scaled by
+            // `zoom`. Counter-scale by 1/zoom so the bar always renders
+            // at native viewport size — at zoom=0.4 the bar would
+            // otherwise be 40% of intended pixels (icons unreadable,
+            // hit-targets tiny). transformOrigin: bottom keeps it
+            // anchored to the video's bottom edge as it un-shrinks.
+            transform: `translateX(-50%) scale(${zoom === 0 ? 1 : 1 / zoom})`,
+            transformOrigin: 'bottom center',
+            // Bump above transform handles (they sit on the same
+            // coordinate space and would otherwise eat the click).
+            zIndex: 50,
+          }}
           onMouseEnter={() => {
             if (hoverTimeoutRef.current !== null) {
               clearTimeout(hoverTimeoutRef.current)
@@ -280,7 +298,9 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           onMouseLeave={() => {
             hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
           }}
-          className="absolute bottom-1.5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-sm"
+          // -translate-x-1/2 is replaced by the inline transform above; the
+          // class wrapper just provides positioning + visual chrome.
+          className="absolute bottom-1.5 left-1/2 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-sm"
         >
           <button
             type="button"
