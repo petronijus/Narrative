@@ -180,7 +180,7 @@ export function CanvasContextMenu({ canvasContainerRef, children }: CanvasContex
         <ContextMenuSeparator />
 
         <ContextMenuItem onSelect={handleSelectAll}>Select all</ContextMenuItem>
-        <ContextMenuItem onSelect={handleFitToScreen}>Fit to screen</ContextMenuItem>
+        <ContextMenuItem onSelect={handleFitToScreen}>Reset zoom</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )

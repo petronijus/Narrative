@@ -1360,7 +1360,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                       guidesCtx={guidesCtx}
                     />
                   )}
-                  <ObjectContextMenu>
+                  <ObjectContextMenu canvasContainerRef={canvasContainerRef}>
                     <div
                       ref={canvasContainerRef}
                       className="artboard relative rounded-md"
