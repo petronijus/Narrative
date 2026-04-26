@@ -29,6 +29,7 @@ import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
+import { useCropMode } from '../state/CropModeContext.js'
 import {
   updateObject,
   addAnimation,
@@ -2837,9 +2838,9 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
 }
 
 // ---------------------------------------------------------------------------
-// P11: Image crop section — minimum viable, four number fields + reset.
-// `cropRect` is in source-image pixel coordinates; the renderer wraps the
-// shared texture in a frame-bounded sub-texture.
+// P11 (Keynote-style image crop): the actual crop UX is a modal overlay
+// (CropOverlay) entered via double-click on the image. The Inspector
+// section just exposes two buttons: enter crop mode, or reset.
 // ---------------------------------------------------------------------------
 
 interface ImageCropSectionProps {
@@ -2848,86 +2849,33 @@ interface ImageCropSectionProps {
 }
 
 function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
-  const enabled = obj.cropRect !== undefined
-  const crop = obj.cropRect ?? { x: 0, y: 0, width: 0, height: 0 }
-
-  function patchCrop(next: Partial<{ x: number; y: number; width: number; height: number }>) {
-    patch({
-      cropRect: {
-        x: next.x ?? crop.x,
-        y: next.y ?? crop.y,
-        width: next.width ?? crop.width,
-        height: next.height ?? crop.height,
-      },
-    })
-  }
-
+  const { enterCrop } = useCropMode()
+  const cropped = obj.imageRect !== undefined
   return (
     <Section title="Crop" storageKey="imageCrop">
-      <div className="flex items-center gap-2">
-        <label
-          htmlFor={`inspector-crop-toggle-${obj.id}`}
-          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => enterCrop(obj.id)}
+          className="rounded border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70"
         >
-          Crop
-        </label>
-        <input
-          id={`inspector-crop-toggle-${obj.id}`}
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => {
-            if (e.target.checked) {
-              // Default crop: a 100x100 box at origin. Inspector reads
-              // from the asset's natural size only after the user types
-              // something — keeps the toggle cheap.
-              patch({ cropRect: { x: 0, y: 0, width: 100, height: 100 } })
-            } else {
-              patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
-            }
-          }}
-          className="h-3.5 w-3.5"
-        />
+          Crop image…
+        </button>
+        <button
+          type="button"
+          disabled={!cropped}
+          onClick={() =>
+            patch({ imageRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
+          }
+          className="rounded border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Reset crop
+        </button>
+        <p className="text-[11px] text-muted-foreground">
+          Double-click the image on the canvas to enter crop mode. Drag the picture to reposition,
+          drag a frame edge to resize the visible window.
+        </p>
       </div>
-
-      {enabled && (
-        <>
-          <NumberField
-            id={`inspector-crop-x-${obj.id}`}
-            label="X"
-            value={crop.x}
-            onChange={(v) => patchCrop({ x: Math.max(0, v) })}
-          />
-          <NumberField
-            id={`inspector-crop-y-${obj.id}`}
-            label="Y"
-            value={crop.y}
-            onChange={(v) => patchCrop({ y: Math.max(0, v) })}
-          />
-          <NumberField
-            id={`inspector-crop-w-${obj.id}`}
-            label="Width"
-            value={crop.width}
-            onChange={(v) => patchCrop({ width: Math.max(1, v) })}
-          />
-          <NumberField
-            id={`inspector-crop-h-${obj.id}`}
-            label="Height"
-            value={crop.height}
-            onChange={(v) => patchCrop({ height: Math.max(1, v) })}
-          />
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() =>
-                patch({ cropRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
-              }
-              className="rounded border border-border bg-input px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground"
-            >
-              Reset
-            </button>
-          </div>
-        </>
-      )}
     </Section>
   )
 }

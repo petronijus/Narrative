@@ -29,6 +29,8 @@ import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
+import { useCropMode } from '../state/CropModeContext'
+import { CropOverlay } from '../ui/CropOverlay'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
@@ -313,6 +315,7 @@ export interface EditorLayoutProps {
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
+  const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { activeTool, setActiveTool } = useTool()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
@@ -447,6 +450,26 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return
+
+      // P11 (Keynote crop): if we're in crop mode and the pointer hit
+      // anything other than the crop UI (image-drag overlay or
+      // resize handles), exit crop mode and continue processing the
+      // click as a regular selection / draw / marquee gesture.
+      if (cropImageId !== null) {
+        const target = e.target as HTMLElement | null
+        const inCropUI =
+          target !== null &&
+          (target.closest('[data-crop-overlay-image="true"]') !== null ||
+            target.closest('[data-crop-overlay-handle="true"]') !== null)
+        if (!inCropUI) {
+          exitCrop()
+          // fall through — the click should still select / start
+          // marquee / etc., now in normal-mode terms.
+        } else {
+          // Pointer is on the crop UI; let the overlay handle it.
+          return
+        }
+      }
 
       // Hand tool — pan the scroll container while the pointer is held.
       if (activeTool === 'hand') {
@@ -617,6 +640,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       toggle,
       clear,
       canvasInstance,
+      cropImageId,
+      exitCrop,
     ],
   )
 
@@ -913,11 +938,23 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       const hitId = canvasInstance.sceneGraph.hitTest(x, y)
       if (hitId === null) return
       const hit = objects.find((o) => o.id === hitId)
-      if (hit?.type !== 'text') return
-      selectOne(hitId)
-      beginEdit(hitId)
+      if (hit === undefined) return
+      if (hit.type === 'text') {
+        selectOne(hitId)
+        beginEdit(hitId)
+        return
+      }
+      if (hit.type === 'image') {
+        // Keynote-style crop: dbl-click enters crop mode for this image.
+        // Editing role only — viewer's selection model still works,
+        // but mutating imageRect / frame would no-op anyway.
+        if (isViewer) return
+        selectOne(hitId)
+        enterCrop(hitId)
+        return
+      }
     },
-    [canvasInstance, objects, selectOne, beginEdit],
+    [canvasInstance, objects, selectOne, beginEdit, enterCrop, isViewer],
   )
 
   // ---------------------------------------------------------------------------
@@ -1000,6 +1037,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           penSessionRef.current = null
           setPenSession(null)
           setActiveTool('select')
+          return
+        }
+        // Crop mode wins over plain selection clearing — Esc exits it.
+        if (cropImageId !== null) {
+          exitCrop()
           return
         }
         // Clear canvas selection on Escape. No preventDefault — other
@@ -1441,7 +1483,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         // Build the subset of selected ids that are editable.
                         const editableIds = [...selectedIds].filter((sid) => {
                           const o = objects.find((x) => x.id === sid)
-                          return o !== undefined && o.locked !== true
+                          if (o === undefined || o.locked === true) return false
+                          // While in crop mode, the cropped image is
+                          // driven by CropOverlay — suppress the normal
+                          // 8-handle transform rig.
+                          if (cropImageId !== null && sid === cropImageId) return false
+                          return true
                         })
                         if (editableIds.length === 0) return null
 
@@ -1492,6 +1539,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         return (
                           <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
                         )
+                      })()}
+
+                    {/* P11: Keynote-style image crop overlay. */}
+                    {cropImageId !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const obj = objects.find((o) => o.id === cropImageId)
+                        if (obj === undefined || obj.type !== 'image') return null
+                        return <CropOverlay obj={obj} mutationCtx={mutationCtx} />
                       })()}
                   </div>
                 </div>
