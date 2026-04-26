@@ -30,7 +30,12 @@ import {
   setSlideIndent,
   setSlideCollapsed,
 } from '@narrative/slide-model'
-import { duplicateSlide } from './slideHelpers.js'
+import { duplicateSlide, pasteSlides } from './slideHelpers.js'
+import {
+  setSlideClipboard,
+  hasSlideClipboard,
+  readSlideClipboard,
+} from '../state/slideClipboard.js'
 import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
@@ -126,6 +131,9 @@ interface SlideItemProps {
   onTransition: (id: string) => void
   onRename: (id: string, name: string) => void
   onToggleSkip: (id: string) => void
+  onCopy: (id: string) => void
+  onPaste: (afterSlideId: string) => void
+  canPaste: boolean
 }
 
 function SlideItem({
@@ -151,6 +159,9 @@ function SlideItem({
   onTransition,
   onRename,
   onToggleSkip,
+  onCopy,
+  onPaste,
+  canPaste,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
   const [editing, setEditing] = useState(false)
@@ -213,6 +224,9 @@ function SlideItem({
       onDuplicate={(id) => onDuplicate(id)}
       onDelete={(id) => onDelete(id)}
       onToggleSkip={(id) => onToggleSkip(id)}
+      onCopy={(id) => onCopy(id)}
+      onPaste={(id) => onPaste(id)}
+      canPaste={canPaste}
     >
       <div
         role="option"
@@ -520,6 +534,43 @@ export function SlidesPanel(): JSX.Element {
     [deckCtx, slides, activeSlideId, setActiveSlideId, clearSelection],
   )
 
+  // P11: cross-deck slide clipboard. canPaste is reactive — bumps a tick
+  // whenever copy or paste runs so the menu's disabled state updates
+  // without a global storage event listener.
+  const [clipboardTick, setClipboardTick] = useState(0)
+  const canPaste = clipboardTick >= 0 && hasSlideClipboard()
+  const _trackClipboard = clipboardTick // keep dep referenced
+
+  const handleCopy = useCallback(
+    (slideId: string) => {
+      // If the right-clicked slide is part of the multi-selection, copy the
+      // whole selection (in slide-list order). Otherwise copy just that one.
+      const ids = selectedIds.has(slideId) ? new Set(selectedIds) : new Set([slideId])
+      const ordered = slides.filter((s) => ids.has(s.id))
+      if (ordered.length === 0) return
+      setSlideClipboard(ordered)
+      setClipboardTick((t) => t + 1)
+    },
+    [slides, selectedIds],
+  )
+
+  const handlePaste = useCallback(
+    (afterSlideId: string) => {
+      const payload = readSlideClipboard()
+      if (payload === null || payload.length === 0) return
+      const idx = slides.findIndex((s) => s.id === afterSlideId)
+      const insertAt = idx === -1 ? slides.length : idx + 1
+      const newIds = pasteSlides(deckCtx, payload, insertAt)
+      const firstNew = newIds[0]
+      if (firstNew !== undefined) {
+        setActiveSlideId(firstNew)
+        setSelectedIds(new Set(newIds))
+      }
+      setClipboardTick((t) => t + 1)
+    },
+    [deckCtx, slides, setActiveSlideId],
+  )
+
   const handleTransition = useCallback(
     (slideId: string) => {
       handleActivate(slideId, false)
@@ -803,6 +854,25 @@ export function SlidesPanel(): JSX.Element {
         if (activeSlideId !== null && slides.length > 1) handleDelete(activeSlideId)
       },
     },
+    {
+      keys: 'Mod+c',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Copy slide(s)',
+      handler: () => {
+        if (activeSlideId !== null) handleCopy(activeSlideId)
+      },
+    },
+    {
+      keys: 'Mod+v',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Paste slide(s) after active',
+      handler: () => {
+        const target = activeSlideId ?? slides[slides.length - 1]?.id ?? null
+        if (target !== null) handlePaste(target)
+      },
+    },
   ])
 
   useEffect(() => {
@@ -919,6 +989,9 @@ export function SlidesPanel(): JSX.Element {
                   onTransition={handleTransition}
                   onRename={handleRename}
                   onToggleSkip={handleToggleSkip}
+                  onCopy={handleCopy}
+                  onPaste={handlePaste}
+                  canPaste={canPaste}
                 />
               </li>
             )
