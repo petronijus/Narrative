@@ -48,25 +48,54 @@ import {
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useRef, type RefObject } from 'react'
 import type { SlideObject, SlideObjectPatch } from '@narrative/shared'
 
 interface ObjectContextMenuProps {
   children: React.ReactNode
+  /** The artboard div — used to hit-test the right-click position so we
+   *  can promote a non-selected hit object to the selection before the
+   *  menu opens. Without this, right-clicking an unselected object
+   *  yields hasSelection === false and Cut/Copy/Delete silently bail. */
+  canvasContainerRef?: RefObject<HTMLDivElement | null>
 }
 
-export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
+export function ObjectContextMenu({ children, canvasContainerRef }: ObjectContextMenuProps) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
-  const { selectedIds, selectMany, clear } = useSelection()
+  const { selectedIds, selectOne, selectMany, clear } = useSelection()
+  const canvasInstance = useCanvasInstance()
+  const { zoom } = useZoomLevel()
+  /** Snapshot of the right-click hit-test result so menu handlers can
+   *  bypass React-state-dependent reads of selectedIds. The selection
+   *  promotion in handleContextMenuCapture races React's state batch;
+   *  by the time onSelect fires, selectedIds may or may not reflect
+   *  the promoted id. The ref always does. */
+  const lastHitIdsRef = useRef<string[] | null>(null)
 
   // ---------------------------------------------------------------------------
   // Derived state
   // ---------------------------------------------------------------------------
 
+  /** Resolve the effective target ids at handler time. Prefer the live
+   *  React selection; fall back to the hit-test snapshot taken on the
+   *  contextmenu event if the React state hasn't caught up yet. */
+  const resolveTargetIds = (): string[] => {
+    if (selectedIds.size > 0) return [...selectedIds]
+    return lastHitIdsRef.current ?? []
+  }
+  const resolveTargets = (): SlideObject[] =>
+    resolveTargetIds()
+      .map((id) => objects.find((o) => o.id === id))
+      .filter((o): o is SlideObject => o !== undefined)
+
+  // Reactive state for menu item disabled flags. Recomputed each render —
+  // OK because handlers use resolveTargets() instead of these.
   const selectedObjects: SlideObject[] = [...selectedIds]
     .map((id) => objects.find((o) => o.id === id))
     .filter((o): o is SlideObject => o !== undefined)
-
-  const hasSelection = selectedObjects.length > 0
+  const hasSelection = selectedObjects.length > 0 || (lastHitIdsRef.current?.length ?? 0) > 0
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] : undefined
   const isLocked = singleSelected?.locked === true
 
@@ -75,9 +104,11 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
   // ---------------------------------------------------------------------------
 
   const handleCut = () => {
-    if (!hasSelection || mutationCtx === null) return
-    setClipboard(selectedObjects)
-    for (const obj of selectedObjects) {
+    if (mutationCtx === null) return
+    const targets = resolveTargets()
+    if (targets.length === 0) return
+    setClipboard(targets)
+    for (const obj of targets) {
       if (obj.locked === true) continue
       removeObject(mutationCtx, obj.id)
     }
@@ -85,8 +116,9 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
   }
 
   const handleCopy = () => {
-    if (!hasSelection) return
-    setClipboard(selectedObjects)
+    const targets = resolveTargets()
+    if (targets.length === 0) return
+    setClipboard(targets)
   }
 
   const handlePaste = () => {
@@ -98,9 +130,11 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
   }
 
   const handleDuplicate = () => {
-    if (!hasSelection || mutationCtx === null) return
+    if (mutationCtx === null) return
+    const targets = resolveTargets()
+    if (targets.length === 0) return
     const newIds: string[] = []
-    for (const obj of selectedObjects) {
+    for (const obj of targets) {
       const dup = duplicateObject(mutationCtx, obj.id, { x: 20, y: 20 })
       if (dup !== null) newIds.push(dup.id)
     }
@@ -108,20 +142,27 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
   }
 
   const handleLayerMove = (move: 'front' | 'forward' | 'backward' | 'back') => {
-    if (!hasSelection || mutationCtx === null) return
-    moveObjectsLayer(mutationCtx, [...selectedIds], move)
+    if (mutationCtx === null) return
+    const ids = resolveTargetIds()
+    if (ids.length === 0) return
+    moveObjectsLayer(mutationCtx, ids, move)
   }
 
   const handleToggleLock = () => {
-    if (singleSelected === undefined || mutationCtx === null) return
-    updateObject(mutationCtx, singleSelected.id, {
-      locked: singleSelected.locked === true ? undefined : true,
+    if (mutationCtx === null) return
+    const targets = resolveTargets()
+    const target = targets.length === 1 ? targets[0] : singleSelected
+    if (target === undefined) return
+    updateObject(mutationCtx, target.id, {
+      locked: target.locked === true ? undefined : true,
     } as SlideObjectPatch<SlideObject>)
   }
 
   const handleDelete = () => {
-    if (!hasSelection || mutationCtx === null) return
-    for (const obj of selectedObjects) {
+    if (mutationCtx === null) return
+    const targets = resolveTargets()
+    if (targets.length === 0) return
+    for (const obj of targets) {
       if (obj.locked === true) continue
       removeObject(mutationCtx, obj.id)
     }
@@ -130,9 +171,48 @@ export function ObjectContextMenu({ children }: ObjectContextMenuProps) {
 
   const canPaste = hasClipboard()
 
+  /**
+   * Pixi handles object selection on its own pointerdown — but a contextmenu
+   * event from a right-click never reaches Pixi's selection logic, so the
+   * React selection state stays whatever it was before the right-click.
+   * Result: Cut / Copy / Delete silently bail because hasSelection is false.
+   *
+   * Hit-test the right-click position against the SceneGraph BEFORE Radix
+   * opens the menu and promote the hit object to the selection. If the
+   * click misses everything, leave the existing selection alone (the menu
+   * still opens; items become disabled).
+   */
+  const handleContextMenuCapture = (e: React.MouseEvent<HTMLDivElement>): void => {
+    if (canvasInstance === null || canvasContainerRef?.current == null) {
+      // Best-effort: keep the existing selection in the snapshot so menu
+      // handlers don't lose it to the React-state-batching race.
+      lastHitIdsRef.current = [...selectedIds]
+      return
+    }
+    const rect = canvasContainerRef.current.getBoundingClientRect()
+    const z = zoom === 0 ? 1 : zoom
+    const x = (e.clientX - rect.left) / z
+    const y = (e.clientY - rect.top) / z
+    const hitId = canvasInstance.sceneGraph.hitTest(x, y)
+    if (hitId === null) {
+      lastHitIdsRef.current = [...selectedIds]
+      return
+    }
+    // If the right-click landed on something already in the selection,
+    // operate on the whole multi-select. Otherwise promote just the hit.
+    if (selectedIds.has(hitId)) {
+      lastHitIdsRef.current = [...selectedIds]
+    } else {
+      selectOne(hitId)
+      lastHitIdsRef.current = [hitId]
+    }
+  }
+
   return (
     <ContextMenu>
-      <ContextMenuTrigger style={{ display: 'contents' }}>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger style={{ display: 'contents' }} onContextMenu={handleContextMenuCapture}>
+        {children}
+      </ContextMenuTrigger>
 
       <ContextMenuContent className="w-52">
         <ContextMenuItem disabled={!hasSelection || mutationCtx === null} onSelect={handleCut}>

@@ -74,14 +74,6 @@ export function SlideRowContextMenu({
           {skipped ? 'Unskip in present' : 'Skip in present'}
         </ContextMenuItem>
         <ContextMenuSeparator />
-        {/* Sections are not yet in the schema — disabled with a comment */}
-        <ContextMenuItem disabled title="Sections not yet implemented (P12)">
-          Add section above
-        </ContextMenuItem>
-        <ContextMenuItem disabled title="Sections not yet implemented (P12)">
-          Move to section
-        </ContextMenuItem>
-        <ContextMenuSeparator />
         <ContextMenuItem
           onSelect={() => onDelete(slideId)}
           className="text-destructive focus:text-destructive"
