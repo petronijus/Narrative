@@ -14,7 +14,6 @@
  */
 
 import { useRef, useState, useCallback, useEffect, useId, useMemo } from 'react'
-import { SlideRowContextMenu } from './SlideRowContextMenu.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -31,6 +30,7 @@ import {
   setSlideCollapsed,
 } from '@narrative/slide-model'
 import { duplicateSlide, pasteSlides } from './slideHelpers.js'
+import { SlidesPanelContextMenu } from './SlidesPanelContextMenu.js'
 import {
   setSlideClipboard,
   hasSlideClipboard,
@@ -131,9 +131,12 @@ interface SlideItemProps {
   onTransition: (id: string) => void
   onRename: (id: string, name: string) => void
   onToggleSkip: (id: string) => void
-  onCopy: (id: string) => void
-  onPaste: (afterSlideId: string) => void
-  canPaste: boolean
+  /** When set to this slide's id, it enters edit mode on next render.
+   *  Used by the panel-level context menu's "Rename" action so it can
+   *  reach into the row from outside. The row clears the request via
+   *  onConsumeEditRequest after entering edit mode. */
+  editRequestId: string | null
+  onConsumeEditRequest: () => void
 }
 
 function SlideItem({
@@ -159,9 +162,8 @@ function SlideItem({
   onTransition,
   onRename,
   onToggleSkip,
-  onCopy,
-  onPaste,
-  canPaste,
+  editRequestId,
+  onConsumeEditRequest,
 }: SlideItemProps) {
   const labelId = `slide-item-label-${slide.id}`
   const [editing, setEditing] = useState(false)
@@ -181,6 +183,14 @@ function SlideItem({
     el.focus()
     el.select()
   }, [editing])
+
+  // Panel-level context menu requested rename of this row.
+  useEffect(() => {
+    if (editRequestId === slide.id && !editing) {
+      setEditing(true)
+      onConsumeEditRequest()
+    }
+  }, [editRequestId, slide.id, editing, onConsumeEditRequest])
 
   const commit = useCallback(() => {
     onRename(slide.id, draftName)
@@ -216,18 +226,7 @@ function SlideItem({
   }
 
   return (
-    <SlideRowContextMenu
-      slideId={slide.id}
-      skipped={slide.skipped === true}
-      readOnly={readOnly}
-      onRename={() => setEditing(true)}
-      onDuplicate={(id) => onDuplicate(id)}
-      onDelete={(id) => onDelete(id)}
-      onToggleSkip={(id) => onToggleSkip(id)}
-      onCopy={(id) => onCopy(id)}
-      onPaste={(id) => onPaste(id)}
-      canPaste={canPaste}
-    >
+    <>
       <div
         role="option"
         aria-selected={isActive}
@@ -417,7 +416,7 @@ function SlideItem({
           </div>
         )}
       </div>
-    </SlideRowContextMenu>
+    </>
   )
 }
 
@@ -534,6 +533,12 @@ export function SlidesPanel(): JSX.Element {
     [deckCtx, slides, activeSlideId, setActiveSlideId, clearSelection],
   )
 
+  /** Panel-level rename request — set by the context menu's Rename
+   *  action; the matching SlideItem consumes it on next render and
+   *  clears it via onConsumeEditRequest. */
+  const [editRequestId, setEditRequestId] = useState<string | null>(null)
+  const consumeEditRequest = useCallback(() => setEditRequestId(null), [])
+
   // P11: cross-deck slide clipboard. canPaste is reactive — bumps a tick
   // whenever copy or paste runs so the menu's disabled state updates
   // without a global storage event listener.
@@ -555,11 +560,17 @@ export function SlidesPanel(): JSX.Element {
   )
 
   const handlePaste = useCallback(
-    (afterSlideId: string) => {
+    (afterSlideId: string | null) => {
       const payload = readSlideClipboard()
       if (payload === null || payload.length === 0) return
-      const idx = slides.findIndex((s) => s.id === afterSlideId)
-      const insertAt = idx === -1 ? slides.length : idx + 1
+      // afterSlideId === null → paste at end (used by panel-empty-area menu).
+      const insertAt =
+        afterSlideId === null
+          ? slides.length
+          : (() => {
+              const idx = slides.findIndex((s) => s.id === afterSlideId)
+              return idx === -1 ? slides.length : idx + 1
+            })()
       const newIds = pasteSlides(deckCtx, payload, insertAt)
       const firstNew = newIds[0]
       if (firstNew !== undefined) {
@@ -932,72 +943,87 @@ export function SlidesPanel(): JSX.Element {
         )}
       </div>
 
-      {/* Slide list */}
-      {slides.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-xs text-gray-600">No slides</p>
-        </div>
-      ) : (
-        <ul
-          ref={listRef}
-          role="listbox"
-          aria-labelledby={headerId}
-          aria-orientation="vertical"
-          className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2"
-        >
-          {slides.map((slide, idx) => {
-            const isDragging = draggingSet !== null && draggingSet.has(slide.id)
-            // Drop indicator fires on the slide that will be pushed by
-            // the insertion. moveSlidesBlock re-inserts at `insertAt`
-            // in the PRE-move array, so the block lands immediately
-            // before the slide currently at `insertAt` (or after the
-            // last slide when insertAt >= slides.length).
-            const showIndicator =
-              dragState !== null &&
-              !draggingSet!.has(slide.id) &&
-              dragState.insertAt !== dragState.fromIndex
-            const dropIndicatorAbove = showIndicator && dragState!.insertAt === idx
-            const dropIndicatorBelow =
-              showIndicator && dragState!.insertAt >= slides.length && idx === slides.length - 1
+      {/* Slide list — wrapped in panel-level context menu so right-click
+          on empty area (below last slide / when there are no slides)
+          shows a 'Paste slide' option. Per-row items are rendered by the
+          same menu via mode='row'. */}
+      <SlidesPanelContextMenu
+        readOnly={isViewer}
+        isSkipped={(id) => slides.find((s) => s.id === id)?.skipped === true}
+        onRename={(id) => setEditRequestId(id)}
+        onDuplicate={handleDuplicate}
+        onDelete={handleDelete}
+        onToggleSkip={handleToggleSkip}
+        onCopy={handleCopy}
+        onPaste={handlePaste}
+        canPaste={canPaste}
+      >
+        {slides.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-xs text-gray-600">No slides</p>
+          </div>
+        ) : (
+          <ul
+            ref={listRef}
+            role="listbox"
+            aria-labelledby={headerId}
+            aria-orientation="vertical"
+            className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2"
+          >
+            {slides.map((slide, idx) => {
+              const isDragging = draggingSet !== null && draggingSet.has(slide.id)
+              // Drop indicator fires on the slide that will be pushed by
+              // the insertion. moveSlidesBlock re-inserts at `insertAt`
+              // in the PRE-move array, so the block lands immediately
+              // before the slide currently at `insertAt` (or after the
+              // last slide when insertAt >= slides.length).
+              const showIndicator =
+                dragState !== null &&
+                !draggingSet!.has(slide.id) &&
+                dragState.insertAt !== dragState.fromIndex
+              const dropIndicatorAbove = showIndicator && dragState!.insertAt === idx
+              const dropIndicatorBelow =
+                showIndicator && dragState!.insertAt >= slides.length && idx === slides.length - 1
 
-            // Live-preview indent only for the dragged *root* slide.
-            const isDragRoot = dragState !== null && dragState.slideIds[0] === slide.id
-            const indent = isDragRoot && dragState !== null ? dragState.indent : slideIndent(slide)
+              // Live-preview indent only for the dragged *root* slide.
+              const isDragRoot = dragState !== null && dragState.slideIds[0] === slide.id
+              const indent =
+                isDragRoot && dragState !== null ? dragState.indent : slideIndent(slide)
 
-            return (
-              <li key={slide.id}>
-                <SlideItem
-                  slide={slide}
-                  index={idx}
-                  indent={indent}
-                  hasChildren={outline.hasChildrenMap.get(slide.id) ?? false}
-                  collapsed={slide.collapsed === true}
-                  hidden={outline.hiddenIds.has(slide.id)}
-                  isActive={slide.id === activeSlideId}
-                  isActiveDescendant={activeDescendants.has(slide.id)}
-                  isSelected={selectedIds.has(slide.id)}
-                  isDragging={isDragging}
-                  dropIndicatorAbove={dropIndicatorAbove}
-                  dropIndicatorBelow={dropIndicatorBelow}
-                  thumbnailUrl={thumbnailMap.get(slide.id)}
-                  readOnly={isViewer}
-                  onActivate={handleActivate}
-                  onToggleCollapsed={handleToggleCollapsed}
-                  onPointerDown={isViewer ? () => {} : handlePointerDown}
-                  onDuplicate={handleDuplicate}
-                  onDelete={handleDelete}
-                  onTransition={handleTransition}
-                  onRename={handleRename}
-                  onToggleSkip={handleToggleSkip}
-                  onCopy={handleCopy}
-                  onPaste={handlePaste}
-                  canPaste={canPaste}
-                />
-              </li>
-            )
-          })}
-        </ul>
-      )}
+              return (
+                <li key={slide.id}>
+                  <SlideItem
+                    slide={slide}
+                    index={idx}
+                    indent={indent}
+                    hasChildren={outline.hasChildrenMap.get(slide.id) ?? false}
+                    collapsed={slide.collapsed === true}
+                    hidden={outline.hiddenIds.has(slide.id)}
+                    isActive={slide.id === activeSlideId}
+                    isActiveDescendant={activeDescendants.has(slide.id)}
+                    isSelected={selectedIds.has(slide.id)}
+                    isDragging={isDragging}
+                    dropIndicatorAbove={dropIndicatorAbove}
+                    dropIndicatorBelow={dropIndicatorBelow}
+                    thumbnailUrl={thumbnailMap.get(slide.id)}
+                    readOnly={isViewer}
+                    onActivate={handleActivate}
+                    onToggleCollapsed={handleToggleCollapsed}
+                    onPointerDown={isViewer ? () => {} : handlePointerDown}
+                    onDuplicate={handleDuplicate}
+                    onDelete={handleDelete}
+                    onTransition={handleTransition}
+                    onRename={handleRename}
+                    onToggleSkip={handleToggleSkip}
+                    editRequestId={editRequestId}
+                    onConsumeEditRequest={consumeEditRequest}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </SlidesPanelContextMenu>
     </div>
   )
 }
