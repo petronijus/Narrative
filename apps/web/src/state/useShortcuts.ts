@@ -122,12 +122,31 @@ function nextId(): string {
 // ---------------------------------------------------------------------------
 
 function parseKey(combo: string): ParsedKey {
-  const parts = combo.split('+')
+  // Special-case combos whose key character IS '+'. Naive
+  // `combo.split('+')` mangles them into empty strings — `'+'` →
+  // `['', '']`, `'Mod++'` → `['Mod', '', '']`. Detect the standalone
+  // or trailing literal plus before the modifier-split.
   let mod = false
   let ctrl = false
   let alt = false
   let shift = false
   let key = ''
+
+  if (combo === '+' || combo.endsWith('++')) {
+    key = '+'
+    const prefix = combo.endsWith('++') ? combo.slice(0, -2) : ''
+    if (prefix.length > 0) {
+      for (const part of prefix.split('+')) {
+        if (part === 'Mod') mod = true
+        else if (part === 'Ctrl') ctrl = true
+        else if (part === 'Alt') alt = true
+        else if (part === 'Shift') shift = true
+      }
+    }
+    return { mod, ctrl, alt, shift, key }
+  }
+
+  const parts = combo.split('+')
 
   for (const part of parts) {
     switch (part) {

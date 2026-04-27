@@ -102,7 +102,7 @@ export function SlideNotesPanel() {
   }, [editor, isViewer])
 
   return (
-    <div className="flex flex-shrink-0 flex-col border-t border-border bg-surface-1">
+    <div className="panel flex flex-shrink-0 flex-col border-t border-border">
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

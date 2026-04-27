@@ -29,6 +29,10 @@ interface ResizableSidebarProps {
   collapsed?: boolean
   collapsedWidth?: number
   collapsedContent?: ReactNode
+  /** P15: fires on every width change (drag + initial mount). Lets
+   *  the parent mirror the live width and inset siblings (toolbar /
+   *  bottom panels) so they don't slide under this sidebar. */
+  onWidthChange?: (width: number) => void
 }
 
 function readStored(key: string, fallback: number): number {
@@ -54,6 +58,7 @@ export function ResizableSidebar({
   collapsed = false,
   collapsedWidth = 36,
   collapsedContent,
+  onWidthChange,
 }: ResizableSidebarProps) {
   const [width, setWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return defaultWidth
@@ -68,7 +73,8 @@ export function ResizableSidebar({
     } catch {
       // Storage disabled — in-memory width still works for this session.
     }
-  }, [storageKey, width])
+    onWidthChange?.(width)
+  }, [storageKey, width, onWidthChange])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {

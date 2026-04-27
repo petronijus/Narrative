@@ -62,7 +62,7 @@ import { StageBgPicker } from '../ui/StageBgPicker.js'
 import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
 import { useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
@@ -363,13 +363,20 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     'narrative:inspector:collapsed',
     false,
   )
+  // P15: mirror the slides panel's live width so the toolbar and
+  // bottom panels can inset themselves between the side panels and
+  // not extend behind them. The Inspector is fixed-width so its
+  // inset is just `inspectorCollapsed ? 36 : 256`.
+  const [slidesWidth, setSlidesWidth] = useState(240)
+  const slidesInset = slidesCollapsed ? 36 : slidesWidth
+  const inspectorInset = inspectorCollapsed ? 36 : 256
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const { color: stageBgColor } = useStageBgColor()
-  const { zoom } = useZoomLevel()
+  const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
   // P11: rulers + deck-level guides.
   const { visible: rulersVisible } = useRulers()
   const { guides: deckGuides, guidesCtx } = useDeckGuides()
@@ -1237,7 +1244,57 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     },
   ])
 
+  // P15: Ctrl/Cmd + mousewheel zooms the artboard. React attaches
+  // wheel listeners as passive, so `preventDefault` inside an
+  // `onWheel` handler is silently ignored — the page scrolls under us
+  // and the zoom feels broken. Native addEventListener with
+  // `{ passive: false }` is the only way to block the page-zoom.
+  // Attach to the scrollable stage so the wheel catches anywhere
+  // inside the canvas area (backdrop padding included).
+  useEffect(() => {
+    const el = stageScrollRef.current
+    if (el === null) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      // deltaY is positive on wheel-down (typical zoom-out gesture).
+      // Per-tick step roughly matches the zoomIn/Out 1.25× factor but
+      // scales smoothly with the wheel delta so trackpad pinch feels
+      // natural too. clamp to MIN_ZOOM..MAX_ZOOM.
+      const factor = Math.exp(-e.deltaY / 200)
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * factor))
+      setZoom(next)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [setZoom])
+
   useShortcuts([
+    // Zoom — works in any focused area except inputs (blocked by the
+    // global-scope input check). Plain `+` covers `=` on most layouts;
+    // include both so US keyboards (Shift+= → `+`) and direct numpad
+    // `+` both fire. Mod+0 resets to 100%.
+    {
+      keys: ['+', '='],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Zoom in',
+      handler: () => zoomIn(),
+    },
+    {
+      keys: '-',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Zoom out',
+      handler: () => zoomOut(),
+    },
+    {
+      keys: 'Mod+0',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Reset zoom (100%)',
+      handler: () => resetZoom(),
+    },
     // Undo
     {
       keys: 'Mod+z',
@@ -1504,11 +1561,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         : 'crosshair'
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background">
+    <div className="relative flex h-full w-full overflow-hidden bg-background">
+      {/* Canvas main column extends edge-to-edge underneath the
+          panels (stacked first, z-0). Side panels are positioned
+          absolutely on top with z-10 so their frosted-glass
+          backdrop-filter actually has artboard / stage content
+          behind to blur. The flex parent keeps Toolbar / Canvas /
+          AnimationTimeline / SlideNotesPanel laid out vertically
+          inside main exactly as before. */}
+
       {/* Left sidebar — slides panel, user-resizable (P3) +
           collapsible (P15). Width animates between collapsed (36 px)
           and the user's stored expanded width. */}
-      <div data-shortcut-scope="slidePanel" className="contents">
+      <div data-shortcut-scope="slidePanel" className="absolute inset-y-0 left-0 z-10 flex">
         <ResizableSidebar
           storageKey="narrative:sidebarWidth"
           minWidth={180}
@@ -1517,6 +1582,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           side="left"
           className="panel border-r border-border"
           collapsed={slidesCollapsed}
+          onWidthChange={setSlidesWidth}
           collapsedContent={
             <Button
               variant="ghost"
@@ -1534,10 +1600,22 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         </ResizableSidebar>
       </div>
 
-      {/* Center: canvas area */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <Toolbar />
+      {/* Toolbar — absolute layer at the top of the inner channel
+          between the side panels. Sits above the canvas with the
+          same frosted-glass `.panel` effect, so the artboard is
+          visible behind it just like the side panels. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex"
+        style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
+      >
+        <div className="pointer-events-auto w-full">
+          <Toolbar />
+        </div>
+      </div>
 
+      {/* Center: canvas area — fills the entire editor; the toolbar
+          and bottom panels float above. */}
+      <main className="relative z-0 flex flex-1 flex-col overflow-hidden">
         <EditorContextMenu canvasContainerRef={canvasContainerRef}>
           <div
             className="canvas-backdrop relative flex flex-1 overflow-hidden"
@@ -1553,8 +1631,28 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             onDoubleClick={handleDoubleClick}
           >
             {/* Scrollable stage: artboard has a fixed size, so the
-              backdrop provides scrollbars when the window is smaller. */}
-            <div ref={stageScrollRef} className="flex flex-1 overflow-auto" data-stage-scroll>
+              backdrop provides scrollbars when the window is smaller.
+              P15: insets match the side-panel widths so scrollbars
+              and artboard content sit in the visible channel
+              between the side panels. The stage colour painted on
+              the canvas-backdrop still extends behind the panels for
+              the frosted-glass blur. */}
+            <div
+              ref={stageScrollRef}
+              className="flex flex-1 overflow-auto"
+              data-stage-scroll
+              style={{
+                marginLeft: slidesInset,
+                marginRight: inspectorInset,
+                // Top: clears the floating Toolbar (~40 px). Bottom:
+                // approximate clearance for the AnimationTimeline +
+                // SlideNotesPanel headers when both are collapsed; if
+                // either is expanded the user can scroll naturally
+                // and the panels remain on top.
+                marginTop: 40,
+                marginBottom: 56,
+              }}
+            >
               {/* Stage padding wrapper — 400 px of space around the
                 artboard on every side. width:fit-content makes it hug
                 the artboard + padding so scrollbars reveal the full
@@ -1754,75 +1852,96 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               </div>
             </div>
 
-            {/* Stage color picker — absolute to the non-scrolling backdrop
-              so it stays pinned to the editor corner while the user
-              scrolls the stage. */}
-            <div className="pointer-events-none absolute right-3 top-3 z-10">
-              <StageBgPicker />
-            </div>
-
-            {/* Zoom pill — bottom-right of the stage. Sits above the
-              scrollbar so it doesn't collide with it at any zoom. */}
-            <div className="pointer-events-none absolute right-3 bottom-6 z-10">
-              <ZoomControl stageScrollRef={stageScrollRef} />
-            </div>
+            {/* StageBgPicker + ZoomControl moved to editor-root level
+              (see below) so they can sit in a higher stacking context
+              than the toolbar / bottom panels. */}
           </div>
         </EditorContextMenu>
+      </main>
 
-        {/* M14 phase 1: bottom animations timeline panel. Read-only visual
-            layout with click-to-select and × to remove. Drag/play in a later
-            phase. Collapsible. */}
-        <div data-shortcut-scope="timeline">
+      {/* Bottom panels — absolute layer at the bottom of the inner
+          channel between the side panels. Same frosted-glass effect,
+          same compositing pattern as the toolbar above. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col"
+        style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
+      >
+        <div className="pointer-events-auto w-full" data-shortcut-scope="timeline">
           <AnimationTimeline />
         </div>
+        <div className="pointer-events-auto w-full">
+          <SlideNotesPanel />
+        </div>
+      </div>
 
-        {/* M19 phase 1: per-slide speaker notes. Plain text for now,
-            Tiptap rich text in phase 2. Collapsible. */}
-        <SlideNotesPanel />
-      </main>
+      {/* Floating canvas controls — StageBgPicker top-right, ZoomControl
+          bottom-right. Rendered at editor-root level with z-30 so they
+          sit above BOTH the canvas (z-0) and the toolbar / bottom
+          panels (z-10). Right inset clears the Inspector. Bottom inset
+          clears the SlideNotesPanel toolbar. */}
+      <div
+        className="pointer-events-none absolute top-3 z-30"
+        style={{ right: inspectorInset + 12 }}
+      >
+        <div className="pointer-events-auto">
+          <StageBgPicker />
+        </div>
+      </div>
+      <div
+        className="pointer-events-none absolute z-30"
+        style={{ right: inspectorInset + 12, bottom: 12 }}
+      >
+        <div className="pointer-events-auto">
+          <ZoomControl stageScrollRef={stageScrollRef} />
+        </div>
+      </div>
 
       {/* Right sidebar: inspector — collapsible (P15) with width
           animation. Reuses ResizableSidebar even though the user
           can't drag-resize it (min == max == defaultWidth) so the
-          collapse animation comes for free. */}
-      <ResizableSidebar
-        storageKey="narrative:inspectorWidth"
-        minWidth={256}
-        maxWidth={256}
-        defaultWidth={256}
-        side="right"
-        className="panel border-l border-border"
-        collapsed={inspectorCollapsed}
-        collapsedContent={
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setInspectorCollapsed(false)}
-            aria-label="Show inspector"
-            title="Show inspector"
-            className="mx-auto mt-2 h-7 w-7"
-          >
-            <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        }
-      >
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Inspector
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setInspectorCollapsed(true)}
-            aria-label="Hide inspector"
-            title="Hide inspector"
-            className="h-6 w-6"
-          >
-            <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
-          </Button>
-        </div>
-        <Inspector />
-      </ResizableSidebar>
+          collapse animation comes for free. Sits over the canvas
+          main column for the frosted-glass backdrop to read the
+          artboard behind it. */}
+      <div className="absolute inset-y-0 right-0 z-10 flex">
+        <ResizableSidebar
+          storageKey="narrative:inspectorWidth"
+          minWidth={256}
+          maxWidth={256}
+          defaultWidth={256}
+          side="right"
+          className="panel border-l border-border"
+          collapsed={inspectorCollapsed}
+          collapsedContent={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInspectorCollapsed(false)}
+              aria-label="Show inspector"
+              title="Show inspector"
+              className="mx-auto mt-2 h-7 w-7"
+            >
+              <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          }
+        >
+          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Inspector
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInspectorCollapsed(true)}
+              aria-label="Hide inspector"
+              title="Hide inspector"
+              className="h-6 w-6"
+            >
+              <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </div>
+          <Inspector />
+        </ResizableSidebar>
+      </div>
 
       {import.meta.env.DEV && <DevMetricsOverlay />}
 
