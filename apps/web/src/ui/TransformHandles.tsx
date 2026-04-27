@@ -56,6 +56,15 @@ interface DragState {
   /** Počáteční bounds všech vybraných objektů (pro group drag) */
   allInitialBounds: Array<{ id: string; x: number; y: number; w: number; h: number }>
   /**
+   * Snapshot of the initial imageRect for any selected ImageObject
+   * that has one. Required for the cropped-image-resize math: each
+   * pointermove computes a NEW imageRect from this snapshot + the
+   * absolute scale factor (newW / initialW). Reading the live
+   * obj.imageRect would compound previously-applied scales every
+   * tick → feedback loop, image shrinks to zero.
+   */
+  initialImageRects: Map<string, { x: number; y: number; width: number; height: number }>
+  /**
    * Artboard client rect snapshotted at drag start — used by the
    * rotate handle to convert screen-space mouse positions to
    * slide-space so the angle math shares a coord system with
@@ -346,6 +355,19 @@ export function TransformHandles({
         return [{ id, x: b.world.x, y: b.world.y, w: b.world.width, h: b.world.height }]
       })
 
+      // Snapshot imageRect for any selected ImageObject — needed by the
+      // resize loop to avoid re-multiplying scale on each tick.
+      const initialImageRects = new Map<
+        string,
+        { x: number; y: number; width: number; height: number }
+      >()
+      for (const id of objectIds) {
+        const o = objects.find((x) => x.id === id)
+        if (o !== undefined && o.type === 'image' && o.imageRect !== undefined) {
+          initialImageRects.set(id, { ...o.imageRect })
+        }
+      }
+
       // Snapshot the artboard's on-screen origin so the rotate handle
       // can translate mouse events into slide-space.
       const artboardEl = (e.currentTarget as HTMLElement).closest('.artboard') as HTMLElement | null
@@ -357,6 +379,7 @@ export function TransformHandles({
         bounds: currentBounds,
         objectIds: [...objectIds],
         allInitialBounds,
+        initialImageRects,
         artboardLeft: rect?.left ?? 0,
         artboardTop: rect?.top ?? 0,
       }
@@ -428,22 +451,23 @@ export function TransformHandles({
         if (id !== undefined) {
           // Image with imageRect → scale imageRect proportionally so
           // the cropped output behaves as one unit (Keynote parity).
-          const obj = objects.find((o) => o.id === id)
+          // Crucially, read from the SNAPSHOT taken on pointer-down,
+          // not the live object — otherwise each tick would multiply
+          // an already-scaled imageRect by the absolute scale factor,
+          // producing exponential shrink.
+          const initialIR = drag.initialImageRects.get(id)
           let imagePatch: Partial<ImageObject> | null = null
-          if (obj !== undefined && obj.type === 'image' && obj.imageRect !== undefined) {
+          if (initialIR !== undefined) {
             const sx = initial.w === 0 ? 1 : newRect.width / initial.w
             const sy = initial.h === 0 ? 1 : newRect.height / initial.h
-            // Position imageRect's top-left relative to the OLD frame
-            // origin, then re-anchor to the new (snapped) frame origin
-            // and scale offset + dimensions.
-            const relX = obj.imageRect.x - initial.x
-            const relY = obj.imageRect.y - initial.y
+            const relX = initialIR.x - initial.x
+            const relY = initialIR.y - initial.y
             imagePatch = {
               imageRect: {
                 x: snappedX + relX * sx,
                 y: snappedY + relY * sy,
-                width: obj.imageRect.width * sx,
-                height: obj.imageRect.height * sy,
+                width: initialIR.width * sx,
+                height: initialIR.height * sy,
               },
             }
           }
