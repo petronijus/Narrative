@@ -233,56 +233,57 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename }: DeckCardProps
         )}
       </div>
 
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              commit()
-            } else if (e.key === 'Escape') {
-              e.preventDefault()
-              cancel()
-            }
-          }}
-          onBlur={commit}
-          maxLength={200}
-          className="w-full rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
-          aria-label="Deck title"
-        />
-      ) : (
-        <p
-          className="truncate text-sm font-medium text-foreground"
-          onDoubleClick={startEdit}
-          title="Double-click to rename"
-        >
-          {deck.title}
-        </p>
-      )}
+      {/* Title row + hover actions inline on the same Y axis. */}
+      <div className="flex items-center gap-1.5">
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commit()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                cancel()
+              }
+            }}
+            onBlur={commit}
+            maxLength={200}
+            className="min-w-0 flex-1 rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+            aria-label="Deck title"
+          />
+        ) : (
+          <>
+            <p
+              className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+              onDoubleClick={startEdit}
+              title="Double-click to rename"
+            >
+              {deck.title}
+            </p>
+            <div className="hidden shrink-0 gap-0.5 group-hover:flex">
+              <button
+                onClick={startEdit}
+                aria-label="Rename deck"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+              <button
+                onClick={onDelete}
+                aria-label="Delete deck"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          </>
+        )}
+      </div>
       <p className="mt-0.5 text-xs text-muted-foreground/80">{date}</p>
-
-      {/* Hover actions */}
-      {!editing && (
-        <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
-          <button
-            onClick={startEdit}
-            aria-label="Rename deck"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-          <button
-            onClick={onDelete}
-            aria-label="Delete deck"
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </div>
-      )}
     </div>
   )
 }
