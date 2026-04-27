@@ -69,6 +69,8 @@ import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
+import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -313,11 +315,53 @@ export interface EditorLayoutProps {
   onCanvasReady?: ((instance: CanvasInstance | null) => void) | undefined
 }
 
+/**
+ * P15: localStorage-backed boolean state for sidebar collapse.
+ * Identical contract to the panel-collapse pattern in
+ * AnimationTimeline / SlideNotesPanel — read once on mount, persist
+ * on every change.
+ */
+function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [value, setValueRaw] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(key)
+      if (stored === '1' || stored === 'true') return true
+      if (stored === '0' || stored === 'false') return false
+      return fallback
+    } catch {
+      return fallback
+    }
+  })
+  const setValue = useCallback(
+    (v: boolean): void => {
+      setValueRaw(v)
+      try {
+        localStorage.setItem(key, v ? '1' : '0')
+      } catch {
+        // storage unavailable — drop silently
+      }
+    },
+    [key],
+  )
+  return [value, setValue]
+}
+
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { activeTool, setActiveTool } = useTool()
+  // P15: collapse state for the left (Slides) and right (Inspector)
+  // sidebars. Persisted per-device via localStorage. Mirrors the
+  // existing collapse pattern on AnimationTimeline + SlideNotesPanel.
+  const [slidesCollapsed, setSlidesCollapsed] = usePersistedBool(
+    'narrative:slidesPanel:collapsed',
+    false,
+  )
+  const [inspectorCollapsed, setInspectorCollapsed] = usePersistedBool(
+    'narrative:inspector:collapsed',
+    false,
+  )
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
@@ -643,14 +687,51 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         }
       }
 
+      // P15: Alt+drag duplicates instead of moving. Mirrors the Figma /
+      // Keynote / Illustrator standard — pressing Alt at pointer-down
+      // clones each dragged id in place; the new ids become the drag
+      // set and follow the cursor while the originals stay put. The
+      // whole clone batch shares a single transaction so undo
+      // collapses into one step.
+      let activeDragIds = dragIds
+      let activeInitialPositions = initialPositions
+      let activeInitialImageRects = initialImageRects
+      if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
+        const newIds: string[] = []
+        const newPositions: typeof initialPositions = []
+        const newImageRects = new Map<
+          string,
+          { x: number; y: number; width: number; height: number }
+        >()
+        // Yjs collapses nested doc.transact calls — duplicateObject
+        // wraps its own transact internally, but our outer wrapper
+        // here makes the whole batch one undo step.
+        mutationCtx.doc.transact(() => {
+          for (const id of dragIds) {
+            const dup = duplicateObject(mutationCtx, id, { x: 0, y: 0 })
+            if (dup === null) continue
+            newIds.push(dup.id)
+            newPositions.push({ id: dup.id, x: dup.x, y: dup.y })
+            const rect = initialImageRects.get(id)
+            if (rect !== undefined) newImageRects.set(dup.id, rect)
+          }
+        })
+        if (newIds.length > 0) {
+          activeDragIds = newIds
+          activeInitialPositions = newPositions
+          activeInitialImageRects = newImageRects
+          selectMany(newIds)
+        }
+      }
+
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       dragRef.current = {
         active: true,
-        objectIds: dragIds,
+        objectIds: activeDragIds,
         startX: e.clientX,
         startY: e.clientY,
-        initialPositions,
-        initialImageRects,
+        initialPositions: activeInitialPositions,
+        initialImageRects: activeInitialImageRects,
       }
     },
     [
@@ -665,6 +746,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       canvasInstance,
       cropImageId,
       exitCrop,
+      selectMany,
     ],
   )
 
@@ -1395,9 +1477,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-background">
-      {/* Left sidebar — slides panel, user-resizable (P3) */}
-      {/* Left sidebar — slides panel. data-shortcut-scope marks it for
-          scope-aware shortcut dispatch (P9). */}
+      {/* Left sidebar — slides panel, user-resizable (P3) +
+          collapsible (P15). Width animates between collapsed (36 px)
+          and the user's stored expanded width. */}
       <div data-shortcut-scope="slidePanel" className="contents">
         <ResizableSidebar
           storageKey="narrative:sidebarWidth"
@@ -1405,9 +1487,22 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           maxWidth={420}
           defaultWidth={240}
           side="left"
-          className="panel border-r border-border overflow-hidden"
+          className="panel border-r border-border"
+          collapsed={slidesCollapsed}
+          collapsedContent={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSlidesCollapsed(false)}
+              aria-label="Show slides panel"
+              title="Show slides panel"
+              className="mx-auto mt-2 h-7 w-7"
+            >
+              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          }
         >
-          <SlidesPanel />
+          <SlidesPanel onCollapse={(): void => setSlidesCollapsed(true)} />
         </ResizableSidebar>
       </div>
 
@@ -1658,15 +1753,48 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         <SlideNotesPanel />
       </main>
 
-      {/* Right sidebar: inspector */}
-      <aside className="panel flex w-64 flex-shrink-0 flex-col border-l border-border">
-        <div className="border-b border-border px-3 py-2">
+      {/* Right sidebar: inspector — collapsible (P15) with width
+          animation. Reuses ResizableSidebar even though the user
+          can't drag-resize it (min == max == defaultWidth) so the
+          collapse animation comes for free. */}
+      <ResizableSidebar
+        storageKey="narrative:inspectorWidth"
+        minWidth={256}
+        maxWidth={256}
+        defaultWidth={256}
+        side="right"
+        className="panel border-l border-border"
+        collapsed={inspectorCollapsed}
+        collapsedContent={
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setInspectorCollapsed(false)}
+            aria-label="Show inspector"
+            title="Show inspector"
+            className="mx-auto mt-2 h-7 w-7"
+          >
+            <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        }
+      >
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Inspector
           </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setInspectorCollapsed(true)}
+            aria-label="Hide inspector"
+            title="Hide inspector"
+            className="h-6 w-6"
+          >
+            <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
         </div>
         <Inspector />
-      </aside>
+      </ResizableSidebar>
 
       {import.meta.env.DEV && <DevMetricsOverlay />}
 
