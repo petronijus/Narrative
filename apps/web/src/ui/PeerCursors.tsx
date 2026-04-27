@@ -44,7 +44,7 @@ function createCursorSvg(color: string): string {
   // the cursor was effectively invisible.
   return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="22" viewBox="0 0 14 18" fill="none">
     <path d="M2 2L2 14L5.5 10.5L8 16L10 15L7.5 9.5L12 9.5L2 2Z"
-      fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="1" stroke-linejoin="round"/>
+      fill="${color}" stroke-linejoin="round"/>
   </svg>`
 }
 
@@ -67,11 +67,13 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
   // will-change pro GPU compositing — kurzory se mění každý frame
   wrapper.style.willChange = 'transform'
 
-  // SVG arrow (Figma-style mouse pointer at the cursor tip)
+  // SVG arrow (Figma-style mouse pointer at the cursor tip).
+  // Black outline replaced with a soft drop-shadow that matches the badge.
   const svgContainer = document.createElement('div')
   svgContainer.dataset['role'] = 'pointer'
   svgContainer.style.display = 'inline-block'
   svgContainer.style.lineHeight = '0'
+  svgContainer.style.filter = 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))'
   svgContainer.innerHTML = createCursorSvg(peer.state.user.color)
 
   // Name badge — sits just below + right of the pointer tip.
