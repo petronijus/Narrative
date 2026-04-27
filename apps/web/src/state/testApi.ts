@@ -109,6 +109,13 @@ export interface TestApi {
    * contradicts the logical z-order.
    */
   sceneGraphChildOrder(): string[]
+  /**
+   * Read x,y directly from the live Y.Map for a given object on a slide.
+   * Bypasses the React state and SceneGraph — lets specs compare
+   * "what is in Y.Doc" vs "what Pixi is rendering" independently.
+   * Returns null if the slide or object is not found.
+   */
+  getObjectPositionFromYDoc(objectId: string, slideId: string): { x: number; y: number } | null
 }
 
 declare global {
@@ -303,6 +310,31 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         if (id !== undefined) out.push(id)
       }
       return out
+    },
+    getObjectPositionFromYDoc(objectId, slideId) {
+      for (let i = 0; i < deckCtx.slides.length; i++) {
+        const slideMap = deckCtx.slides.get(i)
+        if ((slideMap.get('id') as string) !== slideId) continue
+        // Found the slide — walk objects array
+        const objectsArr = slideMap.get('objects') as {
+          length: number
+          get: (i: number) => {
+            get: (k: string) => unknown
+            entries: () => Iterable<[string, unknown]>
+          }
+        }
+        for (let j = 0; j < objectsArr.length; j++) {
+          const objMap = objectsArr.get(j)
+          if ((objMap.get('id') as string) === objectId) {
+            return {
+              x: objMap.get('x') as number,
+              y: objMap.get('y') as number,
+            }
+          }
+        }
+        return null // slide found, object not found
+      }
+      return null // slide not found
     },
   }
 
