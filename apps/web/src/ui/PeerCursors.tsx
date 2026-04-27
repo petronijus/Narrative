@@ -37,12 +37,14 @@ import type { PeerInfo } from '@narrative/shared'
  * Viewbox: 14×18, origin v tip pointeru (top-left).
  */
 function createCursorSvg(color: string): string {
-  // Encode color pro použití v SVG inline (HSL string je safe)
-  const fill = encodeURIComponent(color)
-  const stroke = 'rgba(0,0,0,0.5)'
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="18" viewBox="0 0 14 18" fill="none">
+  // SVG injected as innerHTML — fill/stroke go inside double-quoted attributes,
+  // so `hsl(142, 70%, 55%)` and `rgba(...)` work as-is. Earlier code wrapped
+  // these in encodeURIComponent which produced `hsl(142%2C%2070%25...)` —
+  // an invalid CSS color, so the path painted with no fill/stroke and
+  // the cursor was effectively invisible.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="22" viewBox="0 0 14 18" fill="none">
     <path d="M2 2L2 14L5.5 10.5L8 16L10 15L7.5 9.5L12 9.5L2 2Z"
-      fill="${fill}" stroke="${encodeURIComponent(stroke)}" stroke-width="1" stroke-linejoin="round"/>
+      fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="1" stroke-linejoin="round"/>
   </svg>`
 }
 
