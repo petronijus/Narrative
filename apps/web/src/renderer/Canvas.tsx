@@ -220,11 +220,17 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       // perf HUD can sample FPS, draw counts and texture refcounts
       // without prop-drilling through every editor surface. Available
       // in dev and prod — the HUD itself is opt-in (toolbar toggle).
-      ;(
-        window as unknown as {
-          __narrative_perf?: { app: Application; resourceManager: ResourceManager }
+      // Preserve any fields already on `__narrative_perf` (notably the
+      // loadTimings that `markDeckLoadStart()` wrote in DeckShell BEFORE
+      // Pixi finished initialising). A naive overwrite here clobbered
+      // the timings and the HUD showed nothing.
+      {
+        const w = window as unknown as {
+          __narrative_perf?: Record<string, unknown>
         }
-      ).__narrative_perf = { app, resourceManager }
+        const existing = w.__narrative_perf ?? {}
+        w.__narrative_perf = { ...existing, app, resourceManager }
+      }
 
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
