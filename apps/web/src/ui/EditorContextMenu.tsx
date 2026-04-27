@@ -46,6 +46,7 @@ import {
   createObjectOfType,
 } from '@narrative/slide-model'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
+import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
@@ -194,6 +195,38 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     window.dispatchEvent(new CustomEvent('narrative:focus-link-inspector'))
   }
 
+  /**
+   * Mask-with-shape: only valid when the right-click selection contains
+   * exactly 1 image and 1 maskable shape with the shape z-above the image.
+   * Returns the resolved pair (image + shape) or null otherwise. Used both
+   * to disable the menu entry and to drive the action handler.
+   */
+  const resolveMaskPair = (): { imageId: string; shapeId: string } | null => {
+    const targets = resolveTargets()
+    if (targets.length !== 2) return null
+    const a = targets[0]!
+    const b = targets[1]!
+    const aIdx = objects.indexOf(a)
+    const bIdx = objects.indexOf(b)
+    if (a.type === 'image' && isMaskableShape(b) && bIdx > aIdx) {
+      return { imageId: a.id, shapeId: b.id }
+    }
+    if (b.type === 'image' && isMaskableShape(a) && aIdx > bIdx) {
+      return { imageId: b.id, shapeId: a.id }
+    }
+    return null
+  }
+
+  const handleMaskWithShape = (): void => {
+    if (mutationCtx === null) return
+    const pair = resolveMaskPair()
+    if (pair === null) return
+    applyShapeMask(mutationCtx, pair.imageId, pair.shapeId)
+    // After the action the shape is gone — collapse selection to the
+    // surviving image so the user lands on it for further crop edits.
+    selectOne(pair.imageId)
+  }
+
   const handleDelete = (): void => {
     if (mutationCtx === null) return
     const targets = resolveTargets()
@@ -332,6 +365,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
             <ContextMenuItem disabled={target === undefined} onSelect={handleHyperlink}>
               Hyperlink…
+            </ContextMenuItem>
+
+            <ContextMenuItem
+              disabled={mutationCtx === null || resolveMaskPair() === null}
+              onSelect={handleMaskWithShape}
+            >
+              Mask with shape
             </ContextMenuItem>
 
             <ContextMenuSeparator />
