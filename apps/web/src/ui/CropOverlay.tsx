@@ -182,9 +182,12 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return
       e.stopPropagation()
-      // Click on the image (anywhere outside the frame body) → image
-      // sub-mode: blue handles + image-only drag/scale.
-      setMode('image')
+      // Same two-step rule as the frame ring: first click switches
+      // mode, second click + drag manipulates.
+      if (mode !== 'image') {
+        setMode('image')
+        return
+      }
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       draggingRef.current = true
       imageDragRef.current = {
@@ -195,7 +198,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         initialY: imageRect.y,
       }
     },
-    [imageRect.x, imageRect.y],
+    [imageRect.x, imageRect.y, mode],
   )
 
   const onImagePointerMove = useCallback(
@@ -275,9 +278,13 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return
       e.stopPropagation()
-      // Always switch to frame mode on click so the orange handles
-      // appear and the user can resize.
-      setMode('frame')
+      // Two-step Keynote interaction: if we're not already in frame
+      // sub-mode, the FIRST click on the frame edge just toggles the
+      // mode. Only clicks while ALREADY in frame mode start a drag.
+      if (mode !== 'frame') {
+        setMode('frame')
+        return
+      }
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       draggingRef.current = true
       frameDragRef.current = {
@@ -288,7 +295,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         initialY: frame.y,
       }
     },
-    [frame.x, frame.y],
+    [frame.x, frame.y, mode],
   )
 
   const onFrameBodyPointerMove = useCallback(
@@ -531,7 +538,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
           top: imageRect.y,
           width: imageRect.width,
           height: imageRect.height,
-          cursor: 'move',
+          cursor: mode === 'image' ? 'move' : 'pointer',
           touchAction: 'none',
         }}
         onPointerDown={onImagePointerDown}
@@ -542,25 +549,54 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         data-crop-overlay-image="true"
       />
 
-      {/* 2b. Frame-body overlay — covers the frame rectangle on top of
-          the image-drag layer. Click → frame mode + drag = move
-          object x/y. Image stays at its slide-space imageRect. */}
-      <div
-        className="absolute"
-        style={{
-          left: frame.x,
-          top: frame.y,
-          width: frame.width,
-          height: frame.height,
-          cursor: 'move',
-          touchAction: 'none',
-        }}
-        onPointerDown={onFrameBodyPointerDown}
-        onPointerMove={onFrameBodyPointerMove}
-        onPointerUp={onFrameBodyPointerUp}
-        onPointerCancel={onFrameBodyPointerUp}
-        data-crop-overlay-frame="true"
-      />
+      {/* 2b. Frame ring — 4 thin strips around the frame border (top,
+          right, bottom, left). Hit area only — interior of the frame
+          falls through to the image-drag layer below, so clicking the
+          centre of the crop window switches to image mode. Tolerance
+          is computed in slide-space px to keep ~16 viewport-px hit
+          area at any zoom. */}
+      {(() => {
+        const tol = 16 * inv // 16 viewport-px in slide-space
+        const ringStrips = [
+          // top
+          { x: frame.x - tol, y: frame.y - tol, w: frame.width + 2 * tol, h: 2 * tol },
+          // bottom
+          {
+            x: frame.x - tol,
+            y: frame.y + frame.height - tol,
+            w: frame.width + 2 * tol,
+            h: 2 * tol,
+          },
+          // left (between top and bottom strips)
+          { x: frame.x - tol, y: frame.y + tol, w: 2 * tol, h: frame.height - 2 * tol },
+          // right
+          {
+            x: frame.x + frame.width - tol,
+            y: frame.y + tol,
+            w: 2 * tol,
+            h: frame.height - 2 * tol,
+          },
+        ]
+        return ringStrips.map((s, i) => (
+          <div
+            key={`ring-${i}`}
+            className="absolute"
+            style={{
+              left: s.x,
+              top: s.y,
+              width: s.w,
+              height: s.h,
+              cursor: mode === 'frame' ? 'move' : 'pointer',
+              touchAction: 'none',
+            }}
+            onPointerDown={onFrameBodyPointerDown}
+            onPointerMove={onFrameBodyPointerMove}
+            onPointerUp={onFrameBodyPointerUp}
+            onPointerCancel={onFrameBodyPointerUp}
+            data-crop-overlay-frame="true"
+          />
+        ))
+      })()}
 
       {/* 3a. Frame outline — orange always (so user knows where the
           crop window is even in image sub-mode). */}
