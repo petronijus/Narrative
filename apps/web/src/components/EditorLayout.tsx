@@ -367,6 +367,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     startY: number
     /** Počáteční pozice objektů v dragu */
     initialPositions: Array<{ id: string; x: number; y: number }>
+    /**
+     * Snapshot of the initial imageRect for any selected ImageObject
+     * that has one. Translation must move the imageRect by the same
+     * delta as the frame so the cropped image moves as a single unit.
+     * Snapshotted at pointer-down to avoid the same feedback loop the
+     * resize path hit.
+     */
+    initialImageRects: Map<string, { x: number; y: number; width: number; height: number }>
   } | null>(null)
 
   /** Marquee drag state */
@@ -620,6 +628,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         if (obj === undefined) return []
         return [{ id, x: obj.x, y: obj.y }]
       })
+      const initialImageRects = new Map<
+        string,
+        { x: number; y: number; width: number; height: number }
+      >()
+      for (const id of dragIds) {
+        const o = objects.find((x) => x.id === id)
+        if (o !== undefined && o.type === 'image' && o.imageRect !== undefined) {
+          initialImageRects.set(id, { ...o.imageRect })
+        }
+      }
 
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       dragRef.current = {
@@ -628,6 +646,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         startX: e.clientX,
         startY: e.clientY,
         initialPositions,
+        initialImageRects,
       }
     },
     [
@@ -781,10 +800,30 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
           setSnapGuides(snapResult.guides)
 
-          const updates = proposed.map((p) => ({
-            id: p.id,
-            patch: { x: p.x + snapResult.dx, y: p.y + snapResult.dy },
-          }))
+          const updates = proposed.map((p) => {
+            const ir = drag.initialImageRects.get(p.id)
+            const totalDx =
+              p.x + snapResult.dx - (drag.initialPositions.find((q) => q.id === p.id)?.x ?? p.x)
+            const totalDy =
+              p.y + snapResult.dy - (drag.initialPositions.find((q) => q.id === p.id)?.y ?? p.y)
+            return {
+              id: p.id,
+              patch: {
+                x: p.x + snapResult.dx,
+                y: p.y + snapResult.dy,
+                ...(ir !== undefined
+                  ? {
+                      imageRect: {
+                        x: ir.x + totalDx,
+                        y: ir.y + totalDy,
+                        width: ir.width,
+                        height: ir.height,
+                      },
+                    }
+                  : {}),
+              },
+            }
+          })
           bulkUpdateObjects(mutationCtx, updates)
           return
         }
@@ -792,7 +831,29 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
       bulkUpdateObjects(
         mutationCtx,
-        proposed.map((p) => ({ id: p.id, patch: { x: p.x, y: p.y } })),
+        proposed.map((p) => {
+          const init = drag.initialPositions.find((q) => q.id === p.id)
+          const ir = drag.initialImageRects.get(p.id)
+          const tdx = init !== undefined ? p.x - init.x : 0
+          const tdy = init !== undefined ? p.y - init.y : 0
+          return {
+            id: p.id,
+            patch: {
+              x: p.x,
+              y: p.y,
+              ...(ir !== undefined
+                ? {
+                    imageRect: {
+                      x: ir.x + tdx,
+                      y: ir.y + tdy,
+                      width: ir.width,
+                      height: ir.height,
+                    },
+                  }
+                : {}),
+            },
+          }
+        }),
       )
     },
     [mutationCtx, objects, setCursor],
