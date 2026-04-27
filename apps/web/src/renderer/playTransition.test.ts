@@ -169,7 +169,7 @@ function rect(id: string, x = 0, y = 0): SlideObject {
     height: 100,
     rotation: 0,
     opacity: 1,
-    fill: '#ff0000',
+    fill: 0xff0000,
   }
 }
 

@@ -36,6 +36,19 @@ vi.mock('pixi.js', () => {
       return child
     }
 
+    // P12f: SceneGraph.applyChanges now reorders root children to match
+    // `changes.snapshot` (P12a layer-reorder fix). The stub root needs
+    // these two so the reorder pass doesn't throw.
+    getChildIndex(child: MockContainer): number {
+      return this.children.indexOf(child)
+    }
+    setChildIndex(child: MockContainer, idx: number): void {
+      const cur = this.children.indexOf(child)
+      if (cur === -1) return
+      this.children.splice(cur, 1)
+      this.children.splice(idx, 0, child)
+    }
+
     destroy(): void {
       this.destroyed = true
     }

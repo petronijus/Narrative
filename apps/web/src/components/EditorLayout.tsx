@@ -310,7 +310,7 @@ function DraftOverlay({
 // ---------------------------------------------------------------------------
 
 export interface EditorLayoutProps {
-  onCanvasReady?: ((instance: CanvasInstance) => void) | undefined
+  onCanvasReady?: ((instance: CanvasInstance | null) => void) | undefined
 }
 
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {

@@ -177,8 +177,11 @@ describe('useSlideThumbnails', () => {
   it('renderer.destroy() is called on unmount', async () => {
     const { unmount } = renderWithContext(['slide-1'])
 
-    // Let renderer init promise resolve
+    // P12d: thumbnail renderer is now mounted via setTimeout(0) so the
+    // editor's first paint runs first. Advance timers so the deferred
+    // init fires, then flush the createThumbnailRenderer promise.
     await act(async () => {
+      vi.advanceTimersByTime(0)
       await Promise.resolve()
     })
 

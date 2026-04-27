@@ -111,7 +111,7 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
           outgoing: outgoingRoot as unknown as MagicMoveObjectPair['outgoing'],
           incoming: incomingRoot as unknown as MagicMoveObjectPair['incoming'],
           slideSize: { width: SLIDE_WIDTH, height: SLIDE_HEIGHT },
-          magicPairs,
+          ...(magicPairs !== undefined ? { magicPairs } : {}),
         },
         transition,
       )

@@ -68,7 +68,7 @@ export interface PresentLayoutProps {
    * Callback předaný do Canvas.onReady — signalizuje že Pixi je ready.
    * DeckPresent získá z DeckShell přes useOutletContext a pasuje sem.
    */
-  onCanvasReady?: ((instance: CanvasInstance) => void) | undefined
+  onCanvasReady?: ((instance: CanvasInstance | null) => void) | undefined
 }
 
 export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {

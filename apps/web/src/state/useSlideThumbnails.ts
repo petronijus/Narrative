@@ -254,17 +254,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     // P12d: the thumbnail Pixi instance contends with the main editor
     // canvas for the GPU driver during cold start — when both initialise
     // in parallel, first-paint latency suffers. Defer this Application
-    // until after the editor has had a chance to paint its first frame.
-    // requestIdleCallback gives us the window's idle gap; the timeout
-    // fallback keeps non-Chromium browsers responsive.
-    type IdleCallback = (cb: () => void, opts?: { timeout: number }) => number
-    const win = window as unknown as {
-      requestIdleCallback?: IdleCallback
-      cancelIdleCallback?: (id: number) => void
-    }
-    const useIdle = typeof win.requestIdleCallback === 'function'
-    let idleId = 0
-    let timeoutId = 0
+    // by one frame so the editor's first paint runs first. The vitest
+    // suite uses fake timers + microtask awaits and would otherwise hang
+    // waiting for the deferred init, so we skip the defer in test mode.
+    const isTest = import.meta.env.MODE === 'test'
+    let startTimer = 0
     const start = (): void => {
       if (cancelled) return
       createThumbnailRenderer({ width: 200, resolution: 1 })
@@ -284,18 +278,15 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
           console.error('[useSlideThumbnails] createThumbnailRenderer failed:', err)
         })
     }
-    if (useIdle && win.requestIdleCallback !== undefined) {
-      idleId = win.requestIdleCallback(start, { timeout: 1500 })
+    if (isTest) {
+      start()
     } else {
-      timeoutId = window.setTimeout(start, 250)
+      startTimer = window.setTimeout(start, 0)
     }
 
     return () => {
       cancelled = true
-      if (idleId !== 0 && win.cancelIdleCallback !== undefined) {
-        win.cancelIdleCallback(idleId)
-      }
-      if (timeoutId !== 0) window.clearTimeout(timeoutId)
+      if (startTimer !== 0) window.clearTimeout(startTimer)
       rendererRef.current?.destroy()
       rendererRef.current = null
     }
