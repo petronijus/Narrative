@@ -165,6 +165,24 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
         compiled.timeline.kill()
         compiled.dispose()
       }
+      // P12g: route every incoming node through its renderer's
+      // destroy hook BEFORE destroying the root. A bare
+      // `incomingRoot.destroy({ children: true })` bypasses
+      // renderer-side cleanup — most importantly,
+      // videoRenderer.destroy()'s `stopPolling()` and texture release.
+      // Without this, every aborted transition with a pending video
+      // poster left a 5 s setInterval timer firing against a destroyed
+      // container.
+      for (const node of incomingNodes) {
+        const renderer = getRenderer(node.data.type)
+        if (renderer !== undefined && !node.container.destroyed) {
+          try {
+            renderer.destroy(node.container)
+          } catch (err) {
+            console.error('[playTransition] renderer.destroy threw on abort', err)
+          }
+        }
+      }
       if (!incomingRoot.destroyed) {
         incomingRoot.destroy({ children: true })
       }
