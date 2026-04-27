@@ -175,6 +175,13 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // taking the one-shot render frame, otherwise the PNG captures only the
     // grey placeholder.
     const readyPromises: Promise<void>[] = []
+    // P12g: remember which renderer mounted each child so the destroy
+    // pass below can route through `renderer.destroy()` instead of
+    // Pixi's generic `Container.destroy({ children: true })`. Without
+    // it, image / video child containers leaked their acquired
+    // ResourceManager textures every render — the registered
+    // releasePosterTexture / releaseTexture hooks never fired.
+    const mounted: Array<{ node: Container; type: string }> = []
     for (const obj of objects) {
       const renderer = getRenderer(obj.type)
       if (renderer === undefined) {
@@ -184,6 +191,7 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
       const mountFn = renderer.thumbnailMount ?? renderer.mount
       const node = mountFn.call(renderer, obj)
       slideContainer.addChild(node)
+      mounted.push({ node, type: obj.type })
       const ready = getThumbnailReady(node)
       if (ready !== undefined) readyPromises.push(ready)
     }
@@ -226,12 +234,24 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Cleanup: remove from stage, destroy temp container and all mounted children.
     app.stage.removeChild(slideContainer)
 
-    // Destroy child nodes via their registered renderers to release Pixi resources.
-    for (const child of [...slideContainer.children]) {
-      // We don't have a direct renderer reference here, so use Pixi's own destroy.
-      // Graphics/Text children are self-contained in thumbnail context.
-      if (!child.destroyed) {
-        child.destroy({ children: true })
+    // P12g: route destroy through the registered renderer for each
+    // mounted child so texture / poll / Symbol-tag cleanup actually
+    // runs. The previous bare `child.destroy({ children: true })`
+    // bypassed videoRenderer.destroy()'s `releasePosterTexture` and
+    // imageRenderer.destroy()'s `releaseImageFill`, slowly draining
+    // ResourceManager refcounts on every thumbnail re-render.
+    for (const { node, type } of mounted) {
+      if (node.destroyed) continue
+      const renderer = getRenderer(type)
+      if (renderer !== undefined) {
+        try {
+          renderer.destroy(node)
+        } catch (err) {
+          console.error(`[thumbnails] renderer.destroy(${type}) threw`, err)
+          if (!node.destroyed) node.destroy({ children: true })
+        }
+      } else if (!node.destroyed) {
+        node.destroy({ children: true })
       }
     }
     if (!slideContainer.destroyed) {

@@ -86,7 +86,14 @@ export function subscribeToSlides(
   // Synchronous initial emission
   callback(getSnapshot())
 
+  // P12g: guard against double-unsubscribe. Yjs silently ignores an
+  // `unobserveDeep` of an already-removed handler, but a stale closure
+  // calling unsubscribe twice in quick succession is a sign of a deps
+  // bug — defensive flag here avoids debugging surprise later.
+  let unsubscribed = false
   return (): void => {
+    if (unsubscribed) return
+    unsubscribed = true
     ctx.slides.unobserveDeep(observer)
   }
 }

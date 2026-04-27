@@ -221,6 +221,16 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
         URL.revokeObjectURL(objectUrlRef.current)
         objectUrlRef.current = null
       }
+      // P12g: drop the per-video currentTime publication so the global
+      // registry doesn't grow unbounded across present-mode mounts /
+      // unmounts. Without this, every reopen of a deck added another
+      // entry that nothing ever cleared.
+      const reg = window as unknown as {
+        __narrative_video_currents?: Record<string, { currentTime: number }>
+      }
+      if (reg.__narrative_video_currents !== undefined) {
+        delete reg.__narrative_video_currents[videoObject.id]
+      }
       videoRef.current = null
     }
     // Re-run when video geometry or playback props change, or when the

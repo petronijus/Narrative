@@ -104,18 +104,11 @@ export function ensureImageFill(
       if (active === undefined || active !== slot) {
         return
       }
-      // Sync fast path: someone else may have loaded the same URL between
-      // our resolver call and here. Check peek first.
-      const cached = rm.peekTexture(url)
-      if (cached !== null) {
-        slot.texture = cached
-        slot.url = url
-        slot.loading = false
-        // Bump refcount to own it.
-        await rm.acquireTexture(url)
-        onReady()
-        return
-      }
+      // Always go through acquireTexture so the ref-count we own pairs
+      // with releaseImageFill on destroy. The previous "peek then async
+      // acquire" fast path leaked one ref permanently if the slot
+      // rotated between peek and the awaited acquire — the cleanup path
+      // bailed without releasing the bumped count.
       const texture = await rm.acquireTexture(url)
       // Re-check slot identity — may have rotated during the await.
       const stillActive = getSlot(container)
