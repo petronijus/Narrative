@@ -3,8 +3,8 @@
  *
  * Typy pro OverlayCompositor — DOM overlay nad Pixi canvasem.
  *
- * Spike C nález (DPR): container.toGlobal() vrací fyzické pixely.
- * CSS translate() pracuje v logical pixelech. Vždy dělíme DPR.
+ * DPR: Pixi v8 s autoDensity:true používá logické pixely ve všech container
+ * souřadnicích. container.toGlobal() vrací logické (CSS) px — DPR se nekompenzuje.
  */
 
 import type { Container } from 'pixi.js'

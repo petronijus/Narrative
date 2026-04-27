@@ -11,11 +11,12 @@
  *
  * Omezení M8:
  * - OverlayCompositor vyžaduje Pixi Container jako anchor pro toGlobal().
- *   Cursor pozice jsou world coords — potřebujeme fake Pixi Container na dané
- *   world position. OverlayCompositor pozicuje přes worldOffset na root container.
- *   Implementace: používáme SceneGraph.root container + worldOffset = cursor position.
- *   Tím obcházíme nutnost vytvářet Container per cursor. Root je na (0,0), worldOffset
- *   je pak přímo cursor.x / cursor.y.
+ *   Cursor pozice jsou v artboard-local souřadnicích (0–1920, 0–1080).
+ *   Implementace: používáme SceneGraph.rootContainer + worldOffset = cursor position.
+ *   rootContainer.toGlobal({cx, cy}) převede artboard-local bod na globální CSS px —
+ *   root má x = y = bleedPx (viz setSlideOrigin), tedy výsledek = bleedPx + cursor.
+ *   overlayRoot má inset: -bleedPx, takže výsledný vizuální offset = cursor. ✓
+ *   Tím obcházíme nutnost vytvářet Container per cursor.
  *
  * Pointer-events: none — overlay nesmí blokovat canvas input.
  */
@@ -122,8 +123,8 @@ export function PeerCursors(): null {
       return
     }
 
-    // SceneGraph root container je na world (0,0). Worldoffset = cursor world coords.
-    // Tím obcházíme nutnost per-cursor Pixi Container.
+    // rootContainer je v Pixi world na (bleedPx, bleedPx); toGlobal(cursor) vrátí
+    // (bleedPx+cx, bleedPx+cy), overlayRoot je inset:-bleedPx → vizuálně (cx, cy). ✓
     const rootContainer = sceneGraph.rootContainer
 
     const currentOverlays = overlaysRef.current
@@ -142,8 +143,10 @@ export function PeerCursors(): null {
       const existing = currentOverlays.get(peer.clientId)
 
       if (existing !== undefined) {
-        // Update: posun kurzoru
+        // Update: posun kurzoru. pixiContainer se také aktualizuje — po přechodu
+        // na jiný slide mohl adoptSlideRoot() změnit aktivní root container.
         existing.handle.update({
+          pixiContainer: rootContainer,
           worldOffset: { x: peer.state.cursor.x, y: peer.state.cursor.y },
         })
         // Update jméno pokud se změnilo
