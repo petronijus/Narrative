@@ -147,21 +147,32 @@ export function subscribeToSlideObjects(
 
 /**
  * Variant with explicit flush — for testing and SSR.
+ *
+ * P14: rebinds the inner observer when the slide's Y.Map identity is
+ * replaced under us. moveSlide / Hocuspocus sync of an empty-then-
+ * remote-arrives slide replaces the Y.Map (delete + insert at the same
+ * index, same id). If the inner observer were attached to the OLD Y.Map's
+ * `objects` Y.Array, it would never see updates on the NEW one. We
+ * watch ctx.slides for any change and re-resolve the target Y.Map by
+ * id; if its identity differs from the one we're observing, we
+ * unobserve the old Y.Array and observe the new one.
  */
 export function subscribeToSlideObjectsWithFlush(
   ctx: SlideMutationContext,
   slideId: string,
   callback: (changes: ObjectChangeSet) => void,
 ): { unsubscribe: () => void; flush: () => void } {
-  // Find the slide
-  let slideObjectsArr: Y.Array<Y.Map<unknown>> | null = null
-  for (let i = 0; i < ctx.slides.length; i++) {
-    const m = ctx.slides.get(i)
-    if (m.get('id') === slideId) {
-      slideObjectsArr = m.get('objects') as Y.Array<Y.Map<unknown>>
-      break
+  function resolveObjectsArr(): Y.Array<Y.Map<unknown>> | null {
+    for (let i = 0; i < ctx.slides.length; i++) {
+      const m = ctx.slides.get(i)
+      if (m.get('id') === slideId) {
+        return m.get('objects') as Y.Array<Y.Map<unknown>>
+      }
     }
+    return null
   }
+
+  let slideObjectsArr: Y.Array<Y.Map<unknown>> | null = resolveObjectsArr()
 
   if (slideObjectsArr === null) {
     // Slide not found — no-op subscribe
@@ -171,7 +182,7 @@ export function subscribeToSlideObjectsWithFlush(
     }
   }
 
-  const objectsArr = slideObjectsArr
+  let objectsArr = slideObjectsArr
 
   // Internal snapshot
   const currentSnapshot = new Map<string, SlideObject>()
@@ -297,7 +308,6 @@ export function subscribeToSlideObjectsWithFlush(
 
   const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
     if (unsubscribed) return
-
     for (const event of events) {
       if (event.target === objectsArr) {
         processArrayEvent(event as Y.YArrayEvent<Y.Map<unknown>>, pending, currentSnapshot)
@@ -322,6 +332,44 @@ export function subscribeToSlideObjectsWithFlush(
 
   objectsArr.observeDeep(observer)
 
+  // P14: watch the deck's slides Y.Array for Y.Map replacement of the
+  // active slide. If a sibling slide is added/removed/reordered the
+  // target Y.Map keeps its identity, so we don't rebind. But if the
+  // target slide's Y.Map is replaced (delete + insert at same id —
+  // happens on moveSlide and on Hocuspocus sync that swaps a locally
+  // hydrated empty Y.Map for the remote one), we need to detach the
+  // old observer and attach to the new objects Y.Array. Otherwise the
+  // subscriber stops seeing peer events for "the same slide" and the
+  // editor silently desyncs.
+  const slidesObserver = (): void => {
+    if (unsubscribed) return
+    const fresh = resolveObjectsArr()
+    if (fresh === null || fresh === objectsArr) return
+    // Identity of the target slide's objects Y.Array changed.
+    objectsArr.unobserveDeep(observer)
+    objectsArr = fresh
+    objectsArr.observeDeep(observer)
+    // Resync internal snapshot from the fresh array. Emit a
+    // remove-all-then-add-all change set so consumers see the swap.
+    const oldIds = [...currentSnapshot.keys()]
+    currentSnapshot.clear()
+    lastEmittedOrder = []
+    const fresh_ordered: SlideObject[] = []
+    for (let i = 0; i < objectsArr.length; i++) {
+      const obj = yMapToPlainObject(objectsArr.get(i))
+      currentSnapshot.set(obj.id, obj)
+      lastEmittedOrder.push(obj.id)
+      fresh_ordered.push(obj)
+    }
+    callback({
+      added: fresh_ordered,
+      removed: oldIds,
+      updated: [],
+      snapshot: fresh_ordered,
+    })
+  }
+  ctx.slides.observe(slidesObserver)
+
   // Initial synchronous emission
   const orderedInitial: SlideObject[] = []
   for (let i = 0; i < objectsArr.length; i++) {
@@ -336,6 +384,7 @@ export function subscribeToSlideObjectsWithFlush(
   const unsubscribe = (): void => {
     unsubscribed = true
     objectsArr.unobserveDeep(observer)
+    ctx.slides.unobserve(slidesObserver)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const caf = (globalThis as any).cancelAnimationFrame as ((id: number) => void) | undefined
     if (rafHandle !== -1 && caf !== undefined) caf(rafHandle)

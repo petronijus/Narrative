@@ -40,6 +40,9 @@ export function useSlideObjects(): UseSlideObjectsResult {
       setObjects([])
       return
     }
+    // subscribeToSlideObjects rebinds itself when the slide's Y.Map
+    // identity is replaced (P14), so this useEffect only needs to
+    // re-run when activeSlideId actually changes.
     const unsubscribe = subscribeToSlideObjects(deckCtx, activeSlideId, (changes) => {
       setObjects(changes.snapshot)
     })
@@ -48,6 +51,11 @@ export function useSlideObjects(): UseSlideObjectsResult {
     }
   }, [deckCtx, activeSlideId])
 
+  // Do NOT memoize: a remote moveSlide / sync swap can replace the
+  // slide's Y.Map (and therefore its `objects` Y.Array) without
+  // changing the id or position, so any cached reference would point
+  // at a Y.Array no longer in the doc tree. Fresh lookup per render
+  // is cheap (O(slides) scan, no mutation).
   const objectsCtx = activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null
 
   return { objects, objectsCtx, mutationCtx: objectsCtx }
