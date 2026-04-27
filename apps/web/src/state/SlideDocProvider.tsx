@@ -40,6 +40,7 @@ import type { SlideMutationContext } from '@narrative/slide-model'
 import type { PeerUser } from '@narrative/shared'
 import { SlideDocContext } from './slideDocContext.js'
 import type { SlideDocContextValue, WsStatus } from './slideDocContext.js'
+import { markWsConnected, markWsSynced } from './loadTimings.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
@@ -106,6 +107,7 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
       document: doc,
       ...authOptions,
       onConnect() {
+        markWsConnected()
         setWsStatus('connected')
         // M8: Restore awareness state on (re)connect — Hocuspocus clears it after reconnect.
         provider.awareness?.setLocalState({
@@ -123,6 +125,7 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
         }
       },
       onSynced() {
+        markWsSynced()
         // P12d: hydrate AFTER sync so we don't race the server with an
         // empty default slide. Children have already mounted with the
         // pre-sync deckCtx (the doc reference is stable); Yjs observers

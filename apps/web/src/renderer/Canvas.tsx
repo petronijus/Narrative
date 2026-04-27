@@ -45,6 +45,7 @@ import { useSlideBackground } from '../state/useSlideBackground.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { useAuth } from '../state/AuthContext.js'
+import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
 
@@ -204,6 +205,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       compositor.setRenderScheduler(scheduler)
 
       instanceRef.current = { app, sceneGraph, resourceManager, compositor, scheduler }
+      markPixiReady()
       setPixiReady(true)
 
       // E2E hook (P6): expose the live SceneGraph so Playwright specs can
@@ -236,6 +238,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       // the first user interaction. SceneGraph's markDirty() calls take
       // over from here.
       scheduler.renderNow()
+      markFirstPaint()
 
       // Informuj konzumenty (DeckShell → CanvasInstanceContext) o dostupné instanci
       onReady?.({ sceneGraph, compositor })
