@@ -46,8 +46,57 @@ import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { useAuth } from '../state/AuthContext.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
+import { isLocallyDragging } from '../state/dragLock.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
+import type { SlideObject } from '@narrative/shared'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
+
+/**
+ * P14: fields the local drag handler authoritatively owns while a
+ * pointer is down. Y.Doc patches that touch any of these for a
+ * locally-dragging object id are stripped before the reconciler
+ * applies them — avoids the "snap back to peer position" jitter when
+ * two clients drag the same object.
+ */
+const DRAG_LOCKED_FIELDS = new Set<keyof SlideObject>([
+  'x',
+  'y',
+  'width',
+  'height',
+  'rotation',
+  'imageRect' as keyof SlideObject,
+])
+
+function filterDragLockedFields(changes: ObjectChangeSet): ObjectChangeSet {
+  // Hot path — bail without allocating when nothing is locked.
+  if (changes.updated.length === 0) return changes
+  let needsCopy = false
+  for (const u of changes.updated) {
+    if (isLocallyDragging(u.id)) {
+      needsCopy = true
+      break
+    }
+  }
+  if (!needsCopy) return changes
+
+  const filtered = changes.updated.map((u) => {
+    if (!isLocallyDragging(u.id)) return u
+    const next: Partial<SlideObject> = {}
+    let kept = 0
+    for (const key in u.patch) {
+      if (DRAG_LOCKED_FIELDS.has(key as keyof SlideObject)) continue
+      ;(next as Record<string, unknown>)[key] = (u.patch as Record<string, unknown>)[key]
+      kept++
+    }
+    return kept > 0 ? { id: u.id, patch: next } : null
+  })
+  return {
+    added: changes.added,
+    removed: changes.removed,
+    updated: filtered.filter((u): u is { id: string; patch: Partial<SlideObject> } => u !== null),
+    snapshot: changes.snapshot,
+  }
+}
 
 export interface CanvasProps {
   /**
@@ -313,7 +362,14 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       pendingChangesRef.current.push(changes)
       return
     }
-    instance.sceneGraph.applyChanges(changes)
+    // P14: while a local drag is active, the user's pointer is the
+    // source of truth for the dragged object's position / size /
+    // rotation / image-rect. Strip those fields from incoming patches
+    // so neither local echoes nor concurrent peer writes snap the
+    // object away from where the cursor is. On pointer-up the lock
+    // clears and the next change set (or an explicit resync) brings
+    // the object back in line with Y.Doc.
+    instance.sceneGraph.applyChanges(filterDragLockedFields(changes))
   })
 
   // P2: paint the artboard background on every slide-background change.

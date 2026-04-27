@@ -34,6 +34,7 @@ import { CropOverlay } from '../ui/CropOverlay'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
+import { lockLocalDrag, unlockLocalDrag } from '../state/dragLock'
 import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
@@ -644,6 +645,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       }
 
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      // P14: while the pointer is down, claim authoritative ownership
+      // of these ids' position/size — Y.Doc echoes (local + remote)
+      // are filtered out of the reconciler so concurrent peer drags
+      // can't snap our object away from the cursor.
+      lockLocalDrag(dragIds)
       dragRef.current = {
         active: true,
         objectIds: dragIds,
@@ -982,6 +988,21 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         }
       }
 
+      // P14: clear the drag lock now that the pointer is up. The next
+      // change set from the observer carries the final Y.Doc state
+      // and will move the Pixi container to whatever position both
+      // clients converged on.
+      const releasingIds = dragRef.current?.objectIds ?? []
+      if (releasingIds.length > 0) unlockLocalDrag(releasingIds)
+      // Force the SceneGraph to reapply current Y.Doc state for the
+      // released ids — the observer doesn't fire after lock release on
+      // its own, and the lock may have hidden a peer's final position.
+      if (releasingIds.length > 0 && canvasInstance !== null) {
+        for (const id of releasingIds) {
+          const live = objects.find((o) => o.id === id)
+          if (live !== undefined) canvasInstance.sceneGraph.updateObject(id, live)
+        }
+      }
       dragRef.current = null
       setSnapGuides([])
     },
