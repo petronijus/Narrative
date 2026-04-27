@@ -21,7 +21,7 @@ import {
   subscribeToSlideObjects,
   subscribeToSlideAnimations,
 } from './slideObserve.js'
-import { addObject, removeObject, updateObject } from './mutations.js'
+import { addObject, removeObject, updateObject, moveObjectsLayer } from './mutations.js'
 import { addAnimation } from './animationMutations.js'
 import { plainObjectToYMap } from './bindings.js'
 import type { RectangleObject } from '@narrative/shared'
@@ -235,6 +235,42 @@ describe('subscribeToSlideObjects', () => {
     addObject(objectsCtx, makeRect('r1'))
     flush()
     expect(cb).not.toHaveBeenCalled()
+  })
+
+  it('reorder via moveObjectsLayer back keeps the moved id in snapshot', () => {
+    // P12 regression: when moveObjectsLayer expresses a move as
+    // delete+insert of the same id (netZero), the rebuilt snapshot
+    // must still contain the moved object so the SceneGraph can
+    // setChildIndex it. Previously the netZero pass dropped the id
+    // from currentSnapshot, leaving snapshot=[A] for what should be
+    // [B, A] — Pixi never repositioned B and the visual order stayed
+    // stale until a page refresh.
+    const ctx = makeCtx()
+    const slide1Id = ctx.slides.get(0).get('id') as string
+    const slideCtx = getSlideObjectsCtx(ctx, slide1Id)!
+    addObject(slideCtx, makeRect('A'))
+    addObject(slideCtx, makeRect('B'))
+
+    const cb = vi.fn()
+    const { unsubscribe, flush } = subscribeToSlideObjectsWithFlush(ctx, slide1Id, cb)
+    cb.mockClear()
+
+    // "Send to back" on B → applyReorderMinimal does delete+insert of B.
+    moveObjectsLayer(slideCtx, ['B'], 'back')
+    flush()
+
+    expect(cb).toHaveBeenCalledTimes(1)
+    const change = cb.mock.calls[0]![0] as {
+      added: ReadonlyArray<{ id: string }>
+      removed: ReadonlyArray<string>
+      snapshot: ReadonlyArray<{ id: string }>
+    }
+    expect(change.snapshot.map((o) => o.id)).toEqual(['B', 'A'])
+    // The reorder branch re-emits the moved id as remove + add so the
+    // reconciler tears down + re-mounts into the correct order.
+    expect(change.removed).toContain('B')
+    expect(change.added.map((o) => o.id)).toContain('B')
+    unsubscribe()
   })
 
   it('is scoped to the specific slide — not emitting for other slides', () => {

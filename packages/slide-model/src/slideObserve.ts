@@ -216,7 +216,18 @@ export function subscribeToSlideObjectsWithFlush(
     }
 
     for (const [id, obj] of batchToProcess.addedObjects) {
-      if (netZeroIds.has(id)) continue
+      if (netZeroIds.has(id)) {
+        // Pure reorder via applyReorderMinimal expresses itself as
+        // delete + insert of the same id within one tick. The remove
+        // pass above cleared this id from currentSnapshot; restore it
+        // from the freshly inserted Y.Map so the rebuilt `snapshot`
+        // below still contains the moved object. Otherwise the
+        // SceneGraph reconciler would receive an incomplete snapshot
+        // and skip the setChildIndex call, leaving the visual order
+        // stale until a full reload.
+        currentSnapshot.set(id, obj)
+        continue
+      }
       currentSnapshot.set(id, obj)
       netAdded.push(obj)
       batchToProcess.updatedPatches.delete(id)

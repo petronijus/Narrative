@@ -200,6 +200,16 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
           sceneGraph
       }
 
+      // P12: expose the live Pixi Application + ResourceManager so the
+      // perf HUD can sample FPS, draw counts and texture refcounts
+      // without prop-drilling through every editor surface. Available
+      // in dev and prod — the HUD itself is opt-in (toolbar toggle).
+      ;(
+        window as unknown as {
+          __narrative_perf?: { app: Application; resourceManager: ResourceManager }
+        }
+      ).__narrative_perf = { app, resourceManager }
+
       // Flush pending changes co přišly před initem (např. initial emission
       // z useSlideObjectChanges subscribe synchronně po subscribe).
       for (const pending of pendingChangesRef.current) {
@@ -247,6 +257,10 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         // Compositor musí být zničen PŘED app.destroy() — potřebuje ticker pro cleanup
         liveCompositor.destroy()
         liveApp.destroy(true, { children: true, texture: true })
+
+        // Drop the perf HUD's reference so it doesn't sample a torn-down app.
+        const w = window as unknown as { __narrative_perf?: unknown }
+        if (w.__narrative_perf !== undefined) delete w.__narrative_perf
 
         instanceRef.current = null
         setPixiReady(false)

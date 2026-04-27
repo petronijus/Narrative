@@ -725,7 +725,9 @@ function LayersPanel({
   const { objects } = useSlideObjects()
   const { selectOne, selectMany } = useSelection()
   const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [dropBeforeId, setDropBeforeId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(
+    null,
+  )
 
   // Layer panel convention matches Figma / Illustrator: front of the
   // canvas (last in Y.Array) is rendered at the TOP of the list.
@@ -742,11 +744,23 @@ function LayersPanel({
     if (readOnly || draggingId === null) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
-    setDropBeforeId(id)
+    // Top half of the row → "drop above this row"; bottom half → "drop
+    // below". The previous version always showed the indicator at the
+    // top edge of the hovered row, which lied to the user when they
+    // tried to drop after the last row: the cue said "above" but the
+    // mutation actually placed the item at the back. Splitting the row
+    // in half fixes both ends and gives a real "drop at the bottom"
+    // affordance.
+    const rect = e.currentTarget.getBoundingClientRect()
+    const midY = rect.top + rect.height / 2
+    const position: 'before' | 'after' = e.clientY < midY ? 'before' : 'after'
+    setDropTarget((prev) =>
+      prev !== null && prev.id === id && prev.position === position ? prev : { id, position },
+    )
   }
   const onDragEnd = () => {
     setDraggingId(null)
-    setDropBeforeId(null)
+    setDropTarget(null)
   }
   const onDrop = (targetId: string) => (e: React.DragEvent) => {
     e.preventDefault()
@@ -758,19 +772,23 @@ function LayersPanel({
       onDragEnd()
       return
     }
-    // rows is reversed (front at top). Dropping "before" a row in the
-    // reversed list means placing the dragged item just above it, i.e.
-    // at a higher z-index than the target. Translate to Y.Array index.
     const visualTargetIdx = rows.findIndex((o) => o.id === targetId)
     if (visualTargetIdx === -1) {
       onDragEnd()
       return
     }
-    // Visual index → Y.Array index (front=top=visual0=last in Y.Array).
-    // Dropping BEFORE target in reversed order = placing at the same
-    // Y.Array index the target currently occupies, which pushes target
-    // down by one.
-    const yIndex = objects.length - 1 - visualTargetIdx
+    // rows is reversed: visual 0 = front = last in Y.Array.
+    // 'before' = above target visually = same Y.Array slot the target
+    // currently holds (target shifts down one).
+    // 'after'  = below target visually = one slot lower in Y.Array,
+    //            which clamps to 0 when dropping after the last row
+    //            so "drag to the bottom of the panel" sends the item
+    //            all the way to the back.
+    const position = dropTarget?.id === targetId ? dropTarget.position : 'before'
+    const yIndex =
+      position === 'before'
+        ? objects.length - 1 - visualTargetIdx
+        : objects.length - 2 - visualTargetIdx
     moveObjectToIndex(mutationCtx, draggingId, yIndex)
     onDragEnd()
   }
@@ -795,7 +813,11 @@ function LayersPanel({
         {rows.map((o) => {
           const active = activeSet.has(o.id)
           const isDragging = draggingId === o.id
-          const highlightDrop = dropBeforeId === o.id && draggingId !== null && draggingId !== o.id
+          const dropOnThis =
+            dropTarget !== null &&
+            dropTarget.id === o.id &&
+            draggingId !== null &&
+            draggingId !== o.id
           return (
             <li
               key={o.id}
@@ -814,10 +836,16 @@ function LayersPanel({
                 readOnly ? 'cursor-default' : '',
               ].join(' ')}
             >
-              {highlightDrop && (
+              {dropOnThis && dropTarget!.position === 'before' && (
                 <span
                   aria-hidden="true"
                   className="pointer-events-none absolute -top-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
+                />
+              )}
+              {dropOnThis && dropTarget!.position === 'after' && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -bottom-0.5 left-0 right-0 h-0.5 rounded-full bg-primary"
                 />
               )}
               <span className="w-3 text-[9px] text-muted-foreground/60">⋮⋮</span>

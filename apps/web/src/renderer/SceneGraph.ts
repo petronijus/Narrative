@@ -50,6 +50,13 @@ export class SceneGraph {
    */
   private readonly nodeTypes = new Map<string, SlideObjectType>()
   /**
+   * Reverse lookup Container → objectId, kept in sync with `nodes`.
+   * Used by hitTest to walk root.children (visual z-order is the source
+   * of truth after layer reorder) and resolve the topmost container
+   * back to its slide-object id in O(1).
+   */
+  private readonly containerToId = new Map<Container, string>()
+  /**
    * Scratch Point pro hitTest — reuse per-frame, žádný GC churn.
    * Inicializován lazily při prvním hitTest volání.
    */
@@ -152,6 +159,7 @@ export class SceneGraph {
     const node = { container, data }
     this.nodes.set(data.id, node)
     this.nodeTypes.set(data.id, data.type)
+    this.containerToId.set(container, data.id)
     this.applyOutsideFade(node)
   }
 
@@ -192,6 +200,7 @@ export class SceneGraph {
 
     this.nodes.delete(id)
     this.nodeTypes.delete(id)
+    this.containerToId.delete(node.container)
   }
 
   /**
@@ -393,6 +402,7 @@ export class SceneGraph {
       // Same-instance no-op guard.
       this.nodes.clear()
       this.nodeTypes.clear()
+      this.containerToId.clear()
     }
 
     this.root = nextRoot
@@ -410,6 +420,7 @@ export class SceneGraph {
       const node = { container: entry.container, data: entry.data }
       this.nodes.set(entry.id, node)
       this.nodeTypes.set(entry.id, entry.data.type)
+      this.containerToId.set(entry.container, entry.id)
       this.applyOutsideFade(node)
     }
   }
@@ -463,20 +474,31 @@ export class SceneGraph {
     // letting container.toLocal() walk the transform chain.
     worldPoint.set(worldX + this.slideOriginX, worldY + this.slideOriginY)
 
-    // Iterujeme v reverse insertion order — poslední přidaný je nahoře (highest z-order)
-    const entries = [...this.nodes.entries()]
-
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i]
-      if (entry === undefined) continue
-      const [id, node] = entry
+    // Walk the live Pixi child list in reverse so the topmost (last
+    // drawn) container wins. Iterating `this.nodes` insertion order
+    // looked correct historically — every newly added object both
+    // appended to root.children AND was the most-recently inserted
+    // map entry. P6 layer reorder broke that invariant: setChildIndex
+    // mutates Pixi z-order without touching the Map, so the Map's
+    // reverse iteration ends up returning the object that USED to be
+    // on top, leaving the moved rect "stuck" as the hit-test winner
+    // even after Send-to-back. The Pixi child list is the source of
+    // truth for visual stacking; use it.
+    const children = this.root.children
+    for (let i = children.length - 1; i >= 0; i--) {
+      const container = children[i] as Container | undefined
+      if (container === undefined) continue
+      // Skip the artboard background container (when present it sits
+      // at index 0 and is not registered in `nodes`); also skip
+      // anything else not tracked as a slide object.
+      const id = this.containerToId.get(container)
+      if (id === undefined) continue
+      const node = this.nodes.get(id)
+      if (node === undefined) continue
       const { width, height } = node.data
 
-      // Transformace world → object local space (respektuje pivot + rotaci)
-      // container.toLocal() je Pixi v8 public API, zohledňuje celou transform chain
       node.container.toLocal(worldPoint, undefined, localPoint)
 
-      // Test vůči local AABB: objekt je renderován od (0,0) do (width, height)
       if (
         localPoint.x >= 0 &&
         localPoint.x <= width &&
