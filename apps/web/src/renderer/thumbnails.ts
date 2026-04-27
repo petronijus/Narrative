@@ -214,10 +214,14 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Render one frame synchronously — the offscreen app is not running a ticker.
     app.renderer.render(app.stage)
 
-    // Extract PNG from the rendered frame.
-    // extract.base64() returns a data URL string synchronously in PixiJS v8.
+    // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
+    // earlier code path treated it as sync and destroyed the source
+    // container before the extract finished — first render usually
+    // succeeded thanks to the framebuffer still holding pixels, but
+    // subsequent renders intermittently produced blank thumbnails or
+    // dropped silently when the GPU resources had been freed mid-extract.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PixiJS v8 extract API type varies by version
-    const dataUrl: string = (app.renderer as any).extract.base64(slideContainer, 'image/png')
+    const dataUrl: string = await (app.renderer as any).extract.base64(slideContainer, 'image/png')
 
     // Cleanup: remove from stage, destroy temp container and all mounted children.
     app.stage.removeChild(slideContainer)
