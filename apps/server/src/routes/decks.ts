@@ -174,6 +174,35 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   )
 
   // ---------------------------------------------------------------------------
+  // PATCH /decks/:id — rename deck (owner or editor)
+  // ---------------------------------------------------------------------------
+  app.patch<{ Params: { id: string }; Body: { title?: string } }>(
+    '/decks/:id',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (request, reply) => {
+      const { id } = request.params
+      const title = request.body?.title?.trim()
+      if (title === undefined || title === '') {
+        return reply.status(400).send({ error: 'title is required' })
+      }
+      if (title.length > 200) {
+        return reply.status(400).send({ error: 'title too long (max 200)' })
+      }
+
+      const [updated] = await db
+        .update(decks)
+        .set({ title, updatedAt: new Date() })
+        .where(eq(decks.id, id))
+        .returning()
+
+      if (!updated) {
+        return reply.status(404).send({ error: 'Deck not found' })
+      }
+      return reply.send(updated)
+    },
+  )
+
+  // ---------------------------------------------------------------------------
   // DELETE /decks/:id — delete deck (owner only)
   // ---------------------------------------------------------------------------
   app.delete<{ Params: { id: string } }>(
