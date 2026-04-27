@@ -33,6 +33,7 @@ import type {
   RadialGradientBackground,
   ImageBackground,
 } from '@narrative/shared'
+import { markRenderDirty } from './RenderScheduler'
 
 // ---------------------------------------------------------------------------
 // Internal metadata keys (Symbol-tagged on the Container)
@@ -274,6 +275,10 @@ async function mountImageBackground(
     dim.fill({ color: 0x000000, alpha: clamp01(bg.dim) })
     container.addChild(dim)
   }
+
+  // P12b: Pixi auto-render is OFF — when this async path resolves it has
+  // mutated the scene without anyone calling markDirty for us.
+  markRenderDirty()
 }
 
 function clearContainer(container: Container, release?: (url: string) => void): void {

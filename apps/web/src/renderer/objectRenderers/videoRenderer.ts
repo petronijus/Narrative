@@ -35,6 +35,7 @@ import { getDefaultVideoInfoResolver } from '../videoInfo.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
+import { markRenderDirty } from '../RenderScheduler.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state on Container instances
@@ -324,6 +325,11 @@ function applyVideoInfoResult(
 
   // Load poster texture.
   void loadPosterTexture(container, posterUrl, box, fit)
+
+  // P12b: this function flips placeholder visibility / spawns play icons /
+  // kicks off async poster loads — all of which mutate the scene without
+  // SceneGraph's knowledge. With auto-render off we must request a frame.
+  markRenderDirty()
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +471,10 @@ async function loadPosterTexture(
 
   // Add play icon on top.
   ensurePlayIcon(container, box)
+
+  // P12b: async branch landed a sprite without going through SceneGraph;
+  // poke the scheduler so the new poster shows up under autoStart:false.
+  markRenderDirty()
 }
 
 // ---------------------------------------------------------------------------

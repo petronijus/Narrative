@@ -38,6 +38,7 @@
 import { Point } from 'pixi.js'
 import type { Application } from 'pixi.js'
 import type { OverlayHandle, OverlayOpts } from './types'
+import type { RenderScheduler } from '../RenderScheduler'
 
 /** Interní stav jednoho registrovaného overlay. */
 interface OverlayEntry {
@@ -57,11 +58,23 @@ export class OverlayCompositor {
    *  protože toGlobal() s autoDensity:true vrací logické px (viz komentář výše). */
   private _dpr: number
 
-  /** Ticker sync funkce — potřebujeme referenci pro remove. */
-  private readonly _tickerFn: () => void
+  /** Postrender hook — replaces the per-tick ticker subscriber under P12b
+   *  so overlay sync only runs after Pixi actually drew a frame. */
+  private readonly _postRenderFn: () => void
 
   /** Window resize listener pro DPR change detection. */
   private readonly _resizeFn: () => void
+
+  /**
+   * P12b: optional scheduler. When set, mutations that move overlays
+   * (registerOverlay, update, destroy) poke the scheduler so a frame
+   * is queued — otherwise the new overlay would only sync on the next
+   * unrelated render and could appear at stale coords for one frame.
+   */
+  private scheduler: RenderScheduler | null = null
+
+  /** Cleanup handle returned by `scheduler.onAfterRender(...)`. */
+  private unsubscribeAfterRender: (() => void) | null = null
 
   /**
    * @param app - Pixi Application instance (musí být plně inicializována).
@@ -73,7 +86,7 @@ export class OverlayCompositor {
     this.overlayRoot = overlayRoot
     this._dpr = window.devicePixelRatio || 1
 
-    this._tickerFn = () => {
+    this._postRenderFn = () => {
       this._syncAllOverlays()
     }
 
@@ -83,13 +96,31 @@ export class OverlayCompositor {
       if (newDpr !== this._dpr) {
         this._dpr = newDpr
       }
-      // I bez DPR změny mohlo dojít k resize — resync pozic
+      // Resize doesn't trigger a Pixi render on its own; bounce through
+      // the scheduler so the overlay sync runs on the resulting frame.
+      this.scheduler?.markDirty()
       this._syncAllOverlays()
     }
 
-    // Ticker na NORMAL priority — po Pixi scene update, před render
-    this.app.ticker.add(this._tickerFn)
+    // P12b: subscription hook lands when setRenderScheduler is called.
     window.addEventListener('resize', this._resizeFn)
+  }
+
+  /**
+   * P12b: install (or replace) the render scheduler. Canvas.tsx wires this
+   * up after `app.init()`. Replaces the per-tick ticker subscriber with a
+   * post-render hook on the scheduler so overlay positions resync once
+   * per painted frame instead of once per rAF.
+   */
+  setRenderScheduler(scheduler: RenderScheduler | null): void {
+    if (this.unsubscribeAfterRender !== null) {
+      this.unsubscribeAfterRender()
+      this.unsubscribeAfterRender = null
+    }
+    this.scheduler = scheduler
+    if (scheduler !== null) {
+      this.unsubscribeAfterRender = scheduler.onAfterRender(this._postRenderFn)
+    }
   }
 
   /**
@@ -124,6 +155,10 @@ export class OverlayCompositor {
 
     // Okamžitá sync (před dalším tickem) — aby nebyl frame s element na (0,0)
     this._syncEntry(entry)
+    // P12b: queue a render so subsequent ticks observe the new overlay
+    // and so postrender resyncs catch any container the overlay tracks
+    // whose transform changes between now and the next frame.
+    this.scheduler?.markDirty()
 
     const handle: OverlayHandle = {
       update: (partial: Partial<OverlayOpts>) => {
@@ -153,6 +188,12 @@ export class OverlayCompositor {
         if (partial.applyContainerTransform !== undefined) {
           entry.opts.applyContainerTransform = partial.applyContainerTransform
         }
+        // P12b: an `update` is the only signal we get when something like
+        // a peer cursor moves to a new worldOffset — sync immediately so
+        // it doesn't sit at the old position until the next render, and
+        // queue a frame so the scheduler-driven onAfterRender re-checks.
+        this._syncEntry(entry)
+        this.scheduler?.markDirty()
       },
 
       setInteractive: (on: boolean) => {
@@ -227,7 +268,10 @@ export class OverlayCompositor {
    * Volat před app.destroy() při unmount Canvas.
    */
   destroy(): void {
-    this.app.ticker.remove(this._tickerFn)
+    if (this.unsubscribeAfterRender !== null) {
+      this.unsubscribeAfterRender()
+      this.unsubscribeAfterRender = null
+    }
     window.removeEventListener('resize', this._resizeFn)
 
     this.entries.forEach((entry) => {

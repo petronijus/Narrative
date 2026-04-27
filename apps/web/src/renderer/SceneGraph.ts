@@ -24,6 +24,7 @@ import type { Application } from 'pixi.js'
 import { getRenderer } from './objectRenderers'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
+import type { RenderScheduler } from './RenderScheduler'
 
 interface SceneNode {
   container: Container
@@ -87,10 +88,33 @@ export class SceneGraph {
   private slideOriginX = 0
   private slideOriginY = 0
 
+  /**
+   * P12b: optional render scheduler. When set, every Pixi scene mutation
+   * (add/remove/update/reorder/origin/bounds change) calls `markDirty()`
+   * so a rAF-coalesced render lands on the next frame. Pixi's auto-render
+   * loop is OFF (`autoStart: false` in Canvas.tsx), so without this poke
+   * the new scene state would never reach the screen.
+   *
+   * Null is allowed for tests + headless thumbnail rendering.
+   */
+  private scheduler: RenderScheduler | null = null
+
   constructor(app: Application) {
     this.app = app
     this.root = new Container()
     this.app.stage.addChild(this.root)
+  }
+
+  /**
+   * P12b: install (or replace) the render scheduler. Canvas.tsx wires this
+   * up after `app.init()`.
+   */
+  setRenderScheduler(scheduler: RenderScheduler | null): void {
+    this.scheduler = scheduler
+  }
+
+  private markDirty(): void {
+    this.scheduler?.markDirty()
   }
 
   /**
@@ -99,10 +123,12 @@ export class SceneGraph {
    * bleed margin around the artboard.
    */
   setSlideOrigin(originX: number, originY: number): void {
+    if (this.slideOriginX === originX && this.slideOriginY === originY) return
     this.slideOriginX = originX
     this.slideOriginY = originY
     this.root.x = originX
     this.root.y = originY
+    this.markDirty()
   }
 
   /**
@@ -116,6 +142,7 @@ export class SceneGraph {
     for (const node of this.nodes.values()) {
       this.applyOutsideFade(node)
     }
+    this.markDirty()
   }
 
   private applyOutsideFade(node: SceneNode): void {
@@ -161,6 +188,7 @@ export class SceneGraph {
     this.nodeTypes.set(data.id, data.type)
     this.containerToId.set(container, data.id)
     this.applyOutsideFade(node)
+    this.markDirty()
   }
 
   /**
@@ -182,6 +210,7 @@ export class SceneGraph {
     renderer.update(node.container, node.data, next)
     node.data = next
     this.applyOutsideFade(node)
+    this.markDirty()
   }
 
   /**
@@ -201,6 +230,7 @@ export class SceneGraph {
     this.nodes.delete(id)
     this.nodeTypes.delete(id)
     this.containerToId.delete(node.container)
+    this.markDirty()
   }
 
   /**
@@ -308,6 +338,10 @@ export class SceneGraph {
       node.data = { ...node.data, ...patch } as SlideObject
       this.applyOutsideFade(node)
     }
+
+    if (changes.removed.length > 0 || changes.added.length > 0 || changes.updated.length > 0) {
+      this.markDirty()
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -360,8 +394,10 @@ export class SceneGraph {
       this.backgroundContainer = new Container()
       this.backgroundContainer.eventMode = 'none'
       this.root.addChildAt(this.backgroundContainer, 0)
+      this.markDirty()
     } else if (this.backgroundContainer.parent !== this.root) {
       this.root.addChildAt(this.backgroundContainer, 0)
+      this.markDirty()
     }
     return this.backgroundContainer
   }
@@ -423,6 +459,7 @@ export class SceneGraph {
       this.containerToId.set(entry.container, entry.id)
       this.applyOutsideFade(node)
     }
+    this.markDirty()
   }
 
   /**

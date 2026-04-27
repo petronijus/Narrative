@@ -69,33 +69,81 @@ import { OverlayCompositor } from './OverlayCompositor'
 import { Container } from 'pixi.js'
 import type { Application } from 'pixi.js'
 
-/** Výsledek makeApp() — app + tick helper oddělené pro čistý typing */
+/**
+ * Výsledek makeApp() — app + tick helper oddělené pro čistý typing.
+ *
+ * P12b: OverlayCompositor no longer subscribes to the Pixi ticker — it
+ * subscribes to the RenderScheduler's `onAfterRender` instead. To keep
+ * the test surface stable, the mock app exposes a fake scheduler whose
+ * `fire()` call mimics what the real scheduler does after each render
+ * (invoke every `onAfterRender` subscriber). `tick()` is preserved as
+ * an alias for `scheduler.fire()` so existing tests continue to read
+ * naturally.
+ */
+interface MockScheduler {
+  markDirty: ReturnType<typeof vi.fn>
+  onAfterRender: ReturnType<typeof vi.fn>
+  fire: () => void
+  /** spy that resolves when `OverlayCompositor.destroy` removes its sub. */
+  unsubscribed: { count: number }
+}
+
 interface MockApp {
   app: Application
-  /** Spustí všechny registrované ticker funkce */
+  /** Spustí všechny registrované sync funkce — alias pro scheduler.fire(). */
   tick: () => void
-  /** Mock spies pro asserce */
+  scheduler: MockScheduler & { _wire: (compositor: OverlayCompositor) => void }
+  /** Mock spies pro asserce — kompatibilita s před-P12b testy. */
   tickerAdd: ReturnType<typeof vi.fn>
   tickerRemove: ReturnType<typeof vi.fn>
 }
 
-/** Helper: vytvoří mock Pixi Application s ticker */
+/** Helper: vytvoří mock Pixi Application + fake render scheduler. */
 function makeApp(): MockApp {
-  const tickerFns: Array<() => void> = []
-  const tickerAdd = vi.fn((fn: () => void) => {
-    tickerFns.push(fn)
-  })
-  const tickerRemove = vi.fn((fn: () => void) => {
-    const idx = tickerFns.indexOf(fn)
-    if (idx !== -1) tickerFns.splice(idx, 1)
+  const subs: Array<() => void> = []
+  const unsubscribed = { count: 0 }
+
+  const onAfterRender = vi.fn((fn: () => void) => {
+    subs.push(fn)
+    return () => {
+      const idx = subs.indexOf(fn)
+      if (idx !== -1) subs.splice(idx, 1)
+      unsubscribed.count++
+    }
   })
 
+  const markDirty = vi.fn()
+
+  const fire = (): void => {
+    for (const fn of subs.slice()) fn()
+  }
+
+  const scheduler: MockScheduler & { _wire: (compositor: OverlayCompositor) => void } = {
+    markDirty,
+    onAfterRender,
+    fire,
+    unsubscribed,
+    _wire: (compositor: OverlayCompositor) => {
+      // Cast to the real scheduler shape — we only implement the methods
+      // OverlayCompositor calls.
+      compositor.setRenderScheduler(
+        scheduler as unknown as Parameters<OverlayCompositor['setRenderScheduler']>[0],
+      )
+    },
+  }
+
+  // Ticker stub: kept around so `app.ticker` exists if any code path on
+  // the production side still touches it (none after P12b, but safe).
+  const tickerAdd = vi.fn()
+  const tickerRemove = vi.fn()
   const ticker = { add: tickerAdd, remove: tickerRemove }
-  const app = { ticker } as unknown as Application
+  const renderer = { render: vi.fn(), on: vi.fn(), off: vi.fn() }
+  const app = { ticker, renderer } as unknown as Application
 
   return {
     app,
-    tick: () => tickerFns.forEach((fn) => fn()),
+    scheduler,
+    tick: fire,
     tickerAdd,
     tickerRemove,
   }
@@ -136,6 +184,7 @@ describe('OverlayCompositor', () => {
     mockApp = makeApp()
     overlayRoot = makeOverlayRoot()
     compositor = new OverlayCompositor(mockApp.app, overlayRoot)
+    mockApp.scheduler._wire(compositor)
   })
 
   afterEach(() => {
@@ -147,8 +196,9 @@ describe('OverlayCompositor', () => {
   })
 
   describe('constructor', () => {
-    it('registruje ticker subscriber', () => {
-      expect(mockApp.tickerAdd).toHaveBeenCalledTimes(1)
+    it('subscribes to scheduler.onAfterRender once setRenderScheduler is called', () => {
+      // P12b: ticker subscription replaced by scheduler hook.
+      expect(mockApp.scheduler.onAfterRender).toHaveBeenCalledTimes(1)
     })
 
     it('registruje window resize listener', () => {
@@ -389,11 +439,12 @@ describe('OverlayCompositor', () => {
   })
 
   describe('compositor.destroy()', () => {
-    it('odebere ticker subscriber', () => {
+    it('unsubscribes from scheduler', () => {
       compositor.destroy()
-      expect(mockApp.tickerRemove).toHaveBeenCalledTimes(1)
+      expect(mockApp.scheduler.unsubscribed.count).toBe(1)
       // Prevent double destroy v afterEach
       compositor = new OverlayCompositor(mockApp.app, overlayRoot)
+      mockApp.scheduler._wire(compositor)
     })
 
     it('odstraní všechny overlay elementy z DOM', () => {

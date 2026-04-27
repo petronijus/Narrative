@@ -121,4 +121,21 @@ export interface AnimationContext {
    * Pokud null → onClick se chová jako afterPrevious.
    */
   inputBridge?: InputBridge | undefined
+  /**
+   * P12b — render wake-up hook.
+   *
+   * Pixi v8 with `autoStart: false` does not paint by itself. GSAP writes
+   * proxy values inside its own rAF loop, but the resulting Pixi state
+   * never reaches the screen unless someone calls `app.renderer.render()`.
+   *
+   * The runtime invokes `onTick` once per timeline `onUpdate` callback so
+   * the scheduler can mark dirty and render a frame. Consumers wire this
+   * to `RenderScheduler.markDirty`.
+   *
+   * Optional — when omitted (tests, headless contexts), playback works but
+   * no render happens. The presence of this hook is also how the runtime
+   * decides whether to manage `app.ticker.start()/stop()` for high-FPS
+   * playback (handled by consumers, not the runtime itself).
+   */
+  onTick?: (() => void) | undefined
 }
