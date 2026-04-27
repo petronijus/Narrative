@@ -28,6 +28,7 @@ import { Application } from 'pixi.js'
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
+import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
 
 // Install the BindGroup crash workaround once at module load. See the
@@ -100,6 +101,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     sceneGraph: SceneGraph
     resourceManager: ResourceManager
     compositor: OverlayCompositor
+    scheduler: RenderScheduler
   } | null>(null)
 
   /**
@@ -140,6 +142,12 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
         backgroundAlpha: 0,
+        // P12b: don't run Pixi's built-in 60 Hz auto-render loop. The
+        // RenderScheduler below schedules a single rAF render whenever
+        // the scene mutates, so an idle editor uses ~0% GPU instead of
+        // ~30%. Animation playback re-enables the ticker through
+        // `app.ticker.start()` for the duration of the timeline.
+        autoStart: false,
         // Pixi v8 WebGPU BindGroupSystem intermittently null-derefs on the
         // first render tick when a Graphics instance has a texture-based
         // fill (image fill, canvas-built gradient fill) — see console
@@ -171,6 +179,11 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       }
 
       const sceneGraph = new SceneGraph(app)
+      // P12b: install the render scheduler before any mutations land so
+      // the very first applyChanges flush queues a frame.
+      const scheduler = new RenderScheduler(app)
+      setDefaultRenderScheduler(scheduler)
+      sceneGraph.setRenderScheduler(scheduler)
       if (bleedPx !== 0) {
         sceneGraph.setSlideOrigin(bleedPx, bleedPx)
       }
@@ -188,8 +201,9 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       // Compositor přidá registrované overlay elementy do tohoto divu a synchuje pozice
       // přes Pixi ticker každý frame (DPR-aware, žádný GC churn).
       const compositor = new OverlayCompositor(app, overlayRootEl)
+      compositor.setRenderScheduler(scheduler)
 
-      instanceRef.current = { app, sceneGraph, resourceManager, compositor }
+      instanceRef.current = { app, sceneGraph, resourceManager, compositor, scheduler }
       setPixiReady(true)
 
       // E2E hook (P6): expose the live SceneGraph so Playwright specs can
@@ -217,6 +231,12 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       }
       pendingChangesRef.current = []
 
+      // P12b: with autoStart:false the renderer never paints by itself.
+      // Force a single synchronous frame so the editor isn't blank until
+      // the first user interaction. SceneGraph's markDirty() calls take
+      // over from here.
+      scheduler.renderNow()
+
       // Informuj konzumenty (DeckShell → CanvasInstanceContext) o dostupné instanci
       onReady?.({ sceneGraph, compositor })
 
@@ -234,6 +254,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
           sceneGraph: liveGraph,
           resourceManager: liveRM,
           compositor: liveCompositor,
+          scheduler: liveScheduler,
         } = instanceRef.current
 
         // Notify parent first so downstream consumers drop stale references
@@ -251,6 +272,10 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         } catch {
           // App was already destroyed by a concurrent cleanup — safe to ignore.
         }
+
+        // Cancel any pending rAF so it can't fire against torn-down GL state.
+        liveScheduler.destroy()
+        setDefaultRenderScheduler(null)
 
         liveGraph.destroy()
         liveRM.destroyAll()
@@ -313,6 +338,11 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       acquireTexture: (url) => rm.acquireTexture(url),
       releaseTexture: (url) => rm.releaseTexture(url),
     })
+    // P12b: applyBackground mutates Pixi children synchronously and may
+    // also resolve a texture asynchronously. Mark dirty now for the sync
+    // path; the async branch posts back through ResourceManager which
+    // ends up retriggering this effect on completion.
+    instance.scheduler.markDirty()
   }, [background, artboardSize?.width, artboardSize?.height, pixiReady])
 
   // P2: propagate artboard size to SceneGraph so it can fade out-of-

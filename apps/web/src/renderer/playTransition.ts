@@ -34,6 +34,7 @@ import {
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
+import { getDefaultRenderScheduler } from './RenderScheduler.js'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -121,6 +122,16 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
     }
 
     const { timeline, dispose } = compiled
+
+    // P12b: with autoStart:false, GSAP-driven property changes don't
+    // reach the screen unless someone calls renderer.render(). Hook the
+    // timeline's per-frame onUpdate to the render scheduler.
+    {
+      const scheduler = getDefaultRenderScheduler()
+      if (scheduler !== null) {
+        timeline.eventCallback('onUpdate', () => scheduler.markDirty())
+      }
+    }
 
     timeline.eventCallback('onComplete', () => {
       dispose()

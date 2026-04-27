@@ -46,6 +46,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useMediaPreload } from '../state/useMediaPreload.js'
 import { createAnimationRuntime } from '@narrative/animation'
+import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
 import { createClickInputBridge } from '@narrative/animation'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview.js'
@@ -245,9 +246,13 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
     const inputBridge = createClickInputBridge(document.body)
 
+    // P12b: onTick wakes the render scheduler so GSAP-driven Pixi state
+    // actually paints under autoStart:false.
+    const scheduler = getDefaultRenderScheduler()
     const runtime = createAnimationRuntime(animations, {
       targetResolver: resolver,
       inputBridge,
+      ...(scheduler !== null ? { onTick: () => scheduler.markDirty() } : {}),
     })
     runtimeRef.current = runtime
     runtime.play()

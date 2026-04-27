@@ -22,6 +22,7 @@ import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
+import { markRenderDirty } from '../RenderScheduler.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state stored on Container instances
@@ -487,6 +488,11 @@ function startLoad(container: Container, data: ImageObject): void {
     if (ph !== undefined && !ph.destroyed) {
       ph.visible = false
     }
+
+    // P12b: this async branch landed a sprite without going through any
+    // SceneGraph mutation, so the auto-render-off scheduler doesn't know
+    // a redraw is needed. Poke it so the new image actually shows up.
+    markRenderDirty()
   })()
 }
 

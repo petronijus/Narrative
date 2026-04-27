@@ -45,6 +45,7 @@ import {
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
+import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
@@ -883,7 +884,13 @@ export function AnimationTimeline() {
     // No inputBridge — the preview treats onClick like afterPrevious by
     // auto-advancing. That's simpler than wiring a "click the canvas to
     // advance" hint; authors can still test onClick by using Present mode.
-    const runtime = createAnimationRuntime(animations, { targetResolver: resolver })
+    // P12b: onTick wakes the render scheduler so GSAP-driven Pixi state
+    // actually reaches the screen under autoStart:false.
+    const scheduler = getDefaultRenderScheduler()
+    const runtime = createAnimationRuntime(animations, {
+      targetResolver: resolver,
+      ...(scheduler !== null ? { onTick: () => scheduler.markDirty() } : {}),
+    })
     runtimeRef.current = runtime
     return runtime
   }, [animations, canvasInstance])

@@ -70,6 +70,16 @@ export function createAnimationRuntime(
   const compiled = compileSteps(steps, ctx)
   const tl = compiled.gsapTimeline
 
+  // P12b: install a global onUpdate so the consumer's render scheduler
+  // gets poked once per GSAP tick. We do NOT chain onto a possible
+  // pre-existing onUpdate set inside compileSteps — checked at write
+  // time, the compiler builds per-step tweens with their own onUpdate
+  // handlers and never touches the root timeline's onUpdate.
+  const onTick = ctx.onTick
+  if (onTick !== undefined) {
+    tl.eventCallback('onUpdate', onTick)
+  }
+
   // M14: force tween initialization so seek() renders on a paused timeline
   // that has never played. GSAP fromTo tweens capture their "from" values
   // lazily on the first onUpdate tick — before that, tl.seek(t) doesn't
