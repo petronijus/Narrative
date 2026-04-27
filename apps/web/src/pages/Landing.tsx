@@ -264,7 +264,7 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename }: DeckCardProps
             >
               {deck.title}
             </p>
-            <div className="hidden shrink-0 gap-0.5 group-hover:flex">
+            <div className="flex shrink-0 gap-0.5 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
               <button
                 onClick={startEdit}
                 aria-label="Rename deck"
