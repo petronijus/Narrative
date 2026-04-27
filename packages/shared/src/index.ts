@@ -32,6 +32,8 @@ export type {
   ImageFillStyle,
   FillStyle,
   ObjectHyperlink,
+  ImageMask,
+  NormalizedPathAnchor,
 } from './slide.js'
 
 export type {

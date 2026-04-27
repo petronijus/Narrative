@@ -300,6 +300,35 @@ export interface TextObject extends BaseSlideObject {
   strokeWidth?: number
 }
 
+/**
+ * Shape-as-mask (P11r+1). Applied to an ImageObject so the visible image is
+ * clipped to a non-rectangular silhouette. The mask shape's bounding box
+ * coincides with the image's frame (object.x/y/width/height) — when the
+ * frame is resized the mask scales with it, just like the standalone shape
+ * would. Stored as the discriminated geometry of the originating shape so
+ * the renderer can replay the same path.
+ *
+ * Path-kind anchors are normalized to 0..1 (relative to the source path's
+ * bounding box) so they stretch with the frame without storing absolute px.
+ */
+export interface NormalizedPathAnchor {
+  /** 0..1 relative to mask width. */
+  x: number
+  /** 0..1 relative to mask height. */
+  y: number
+  /** Incoming control handle, normalized like x/y. */
+  cpIn?: { x: number; y: number }
+  /** Outgoing control handle, normalized like x/y. */
+  cpOut?: { x: number; y: number }
+}
+
+export type ImageMask =
+  | { kind: 'rectangle'; cornerRadius?: CornerRadius }
+  | { kind: 'ellipse' }
+  | { kind: 'triangle' }
+  | { kind: 'polygon'; sides: number }
+  | { kind: 'path'; anchors: NormalizedPathAnchor[]; closed: boolean }
+
 export interface ImageObject extends BaseSlideObject {
   type: 'image'
   /**
@@ -341,6 +370,13 @@ export interface ImageObject extends BaseSlideObject {
    * to the frame.
    */
   imageRotation?: number
+  /**
+   * Shape-as-mask (P11r+1). When set, the renderer clips the visible
+   * image to this shape's silhouette instead of the default rectangle.
+   * The mask's bounding box matches the image's frame, so resizing the
+   * frame scales the mask. Missing ⇒ classic rectangular crop.
+   */
+  mask?: ImageMask
 }
 
 export interface VideoObject extends BaseSlideObject {

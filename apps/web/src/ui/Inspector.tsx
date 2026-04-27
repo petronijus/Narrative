@@ -30,6 +30,7 @@ import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
+import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import {
   updateObject,
   addAnimation,
@@ -439,6 +440,35 @@ export function Inspector() {
 // Multi-select inspector — P6 object operations
 // ---------------------------------------------------------------------------
 
+/**
+ * Detect a 1-image + 1-maskable-shape selection where the shape is
+ * z-above the image (i.e. ordered after it in the slide's objects array).
+ * Returns the matched pair or null if the selection doesn't qualify.
+ */
+function detectMaskCandidates(
+  selectedIds: string[],
+  objects: SlideObject[],
+): { image: ImageObject; shape: SlideObject } | null {
+  if (selectedIds.length !== 2) return null
+  const a = objects.find((o) => o.id === selectedIds[0])
+  const b = objects.find((o) => o.id === selectedIds[1])
+  if (a === undefined || b === undefined) return null
+  const aIdx = objects.indexOf(a)
+  const bIdx = objects.indexOf(b)
+  // The image is at the lower z-index (earlier in array), the shape at the higher.
+  let image: ImageObject | null = null
+  let shape: SlideObject | null = null
+  if (a.type === 'image' && isMaskableShape(b) && bIdx > aIdx) {
+    image = a
+    shape = b
+  } else if (b.type === 'image' && isMaskableShape(a) && aIdx > bIdx) {
+    image = b
+    shape = a
+  }
+  if (image === null || shape === null) return null
+  return { image, shape }
+}
+
 function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { role } = useDeckRole()
@@ -481,6 +511,15 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
   }
   const runUngroup = (): void => {
     if (!isViewer) ungroupObjects(mutationCtx, selectedIds)
+  }
+
+  // Mask-with-shape: only when exactly 1 image + 1 maskable shape with
+  // shape z-above image. The action consumes the shape and writes a
+  // mask field on the image.
+  const maskPair = detectMaskCandidates(selectedIds, objects)
+  const runMaskWithShape = (): void => {
+    if (isViewer || maskPair === null) return
+    applyShapeMask(mutationCtx, maskPair.image.id, maskPair.shape.id)
   }
 
   return (
@@ -547,6 +586,22 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
         </div>
       </Section>
       <LayerOrderSection ids={selectedIds} mutationCtx={mutationCtx} disabled={isViewer} />
+      {maskPair !== null && (
+        <Section title="Mask" storageKey="multi-mask">
+          <button
+            type="button"
+            onClick={runMaskWithShape}
+            disabled={isViewer}
+            className="w-full rounded border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Mask with shape
+          </button>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Use the {maskPair.shape.type} on top as a clipping mask for the image. The shape is
+            consumed; the masked image keeps the same orange handles for resizing.
+          </p>
+        </Section>
+      )}
       <Section title="Group" storageKey="multi-group">
         <div className="grid grid-cols-2 gap-1">
           <MultiButton
@@ -2851,6 +2906,7 @@ interface ImageCropSectionProps {
 function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
   const { enterCrop } = useCropMode()
   const cropped = obj.imageRect !== undefined
+  const masked = obj.mask !== undefined
   return (
     <Section title="Crop" storageKey="imageCrop">
       <div className="flex flex-col gap-2">
@@ -2871,6 +2927,15 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
         >
           Reset crop
         </button>
+        {masked && (
+          <button
+            type="button"
+            onClick={() => patch({ mask: undefined } as unknown as SlideObjectPatch<ImageObject>)}
+            className="rounded border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            Remove shape mask
+          </button>
+        )}
         <p className="text-[11px] text-muted-foreground">
           Double-click the image on the canvas to enter crop mode. Drag the picture to reposition,
           drag a frame edge to resize the visible window.

@@ -16,7 +16,7 @@
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js'
-import type { ImageObject } from '@narrative/shared'
+import type { ImageObject, ImageMask, CornerRadius, NormalizedPathAnchor } from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit } from '../mediaFit.js'
@@ -37,6 +37,8 @@ const ACQUIRED_URL_TAG = Symbol('imgAcquiredUrl')
 const IMAGE_RECT_TAG = Symbol('imgImageRect')
 /** Last imageRotation applied. Same role as IMAGE_RECT_TAG. */
 const IMAGE_ROTATION_TAG = Symbol('imgImageRotation')
+/** Last mask snapshot applied — used to skip mask redraws when geometry is unchanged. */
+const MASK_SHAPE_TAG = Symbol('imgMaskShape')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -107,12 +109,27 @@ function isImageRectEqual(a: ImageObject['imageRect'], b: ImageObject['imageRect
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
+function isMaskEqual(a: ImageMask | undefined, b: ImageMask | undefined): boolean {
+  if (a === undefined && b === undefined) return true
+  if (a === undefined || b === undefined) return false
+  // Cheap deep equal — masks are tiny and only diffed on rare patches.
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 function getStoredImageRotation(node: Container): number | undefined {
   return asAny(node)[IMAGE_ROTATION_TAG] as number | undefined
 }
 
 function setStoredImageRotation(node: Container, r: number | undefined): void {
   asAny(node)[IMAGE_ROTATION_TAG] = r
+}
+
+function getStoredMask(node: Container): ImageMask | undefined {
+  return asAny(node)[MASK_SHAPE_TAG] as ImageMask | undefined
+}
+
+function setStoredMask(node: Container, m: ImageMask | undefined): void {
+  asAny(node)[MASK_SHAPE_TAG] = m
 }
 
 /**
@@ -131,10 +148,137 @@ function effectiveImageRect(data: ImageObject): {
 }
 
 // ---------------------------------------------------------------------------
-// Mask helper — clips visible pixels to the object's frame.
+// Mask helper — clips visible pixels to the object's frame OR to a custom
+// shape silhouette (shape-as-mask). The mask shape's bounding box always
+// equals the image's frame (0..w × 0..h in object-local coords), so resizing
+// the frame stretches the mask just like the original shape would have
+// stretched if its width/height were resized.
 // ---------------------------------------------------------------------------
 
-function applyFrameMask(node: Container, w: number, h: number): Graphics {
+function tracePolygonPath(g: Graphics, sides: number, w: number, h: number): void {
+  // Same parameterisation as polygonRenderer: regular n-gon inscribed in
+  // the AABB, top-pointing for triangles. Centre at (w/2, h/2), radius
+  // computed from the half-extents per axis so the polygon snaps to the
+  // bounding box.
+  const cx = w / 2
+  const cy = h / 2
+  const rx = w / 2
+  const ry = h / 2
+  const n = Math.max(3, Math.min(12, Math.round(sides)))
+  const points: number[] = []
+  // Start at -90deg so the first vertex points up — matches polygonRenderer.
+  for (let i = 0; i < n; i++) {
+    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n
+    points.push(cx + Math.cos(angle) * rx)
+    points.push(cy + Math.sin(angle) * ry)
+  }
+  g.poly(points)
+}
+
+function traceRoundedRect(
+  g: Graphics,
+  w: number,
+  h: number,
+  cornerRadius: CornerRadius | undefined,
+): void {
+  if (cornerRadius === undefined || cornerRadius === 0) {
+    g.rect(0, 0, w, h)
+    return
+  }
+  if (typeof cornerRadius === 'number') {
+    const r = Math.min(cornerRadius, w / 2, h / 2)
+    g.roundRect(0, 0, w, h, r)
+    return
+  }
+  // Per-corner radii — trace explicitly via arcTo segments.
+  const tl = Math.max(0, Math.min(cornerRadius.tl, w / 2, h / 2))
+  const tr = Math.max(0, Math.min(cornerRadius.tr, w / 2, h / 2))
+  const br = Math.max(0, Math.min(cornerRadius.br, w / 2, h / 2))
+  const bl = Math.max(0, Math.min(cornerRadius.bl, w / 2, h / 2))
+  g.moveTo(tl, 0)
+  g.lineTo(w - tr, 0)
+  if (tr > 0) g.arcTo(w, 0, w, tr, tr)
+  g.lineTo(w, h - br)
+  if (br > 0) g.arcTo(w, h, w - br, h, br)
+  g.lineTo(bl, h)
+  if (bl > 0) g.arcTo(0, h, 0, h - bl, bl)
+  g.lineTo(0, tl)
+  if (tl > 0) g.arcTo(0, 0, tl, 0, tl)
+}
+
+function tracePathMask(
+  g: Graphics,
+  anchors: NormalizedPathAnchor[],
+  w: number,
+  h: number,
+  closed: boolean,
+): void {
+  if (anchors.length === 0) return
+  const toLocal = (n: { x: number; y: number }): { x: number; y: number } => ({
+    x: n.x * w,
+    y: n.y * h,
+  })
+  const first = anchors[0]
+  if (first === undefined) return
+  const f = toLocal(first)
+  g.moveTo(f.x, f.y)
+  for (let i = 1; i < anchors.length; i++) {
+    const prev = anchors[i - 1]!
+    const curr = anchors[i]!
+    const cpOut = prev.cpOut
+    const cpIn = curr.cpIn
+    const p = toLocal(curr)
+    if (cpOut !== undefined && cpIn !== undefined) {
+      const c1 = toLocal({ x: prev.x + cpOut.x, y: prev.y + cpOut.y })
+      const c2 = toLocal({ x: curr.x + cpIn.x, y: curr.y + cpIn.y })
+      g.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+    } else {
+      g.lineTo(p.x, p.y)
+    }
+  }
+  if (closed) {
+    const prev = anchors[anchors.length - 1]!
+    const curr = anchors[0]!
+    const cpOut = prev.cpOut
+    const cpIn = curr.cpIn
+    const p = toLocal(curr)
+    if (cpOut !== undefined && cpIn !== undefined) {
+      const c1 = toLocal({ x: prev.x + cpOut.x, y: prev.y + cpOut.y })
+      const c2 = toLocal({ x: curr.x + cpIn.x, y: curr.y + cpIn.y })
+      g.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, p.x, p.y)
+    } else {
+      g.lineTo(p.x, p.y)
+    }
+    g.closePath()
+  }
+}
+
+function traceMaskPath(g: Graphics, mask: ImageMask, w: number, h: number): void {
+  switch (mask.kind) {
+    case 'rectangle':
+      traceRoundedRect(g, w, h, mask.cornerRadius)
+      return
+    case 'ellipse':
+      g.ellipse(w / 2, h / 2, w / 2, h / 2)
+      return
+    case 'triangle':
+      tracePolygonPath(g, 3, w, h)
+      return
+    case 'polygon':
+      tracePolygonPath(g, mask.sides, w, h)
+      return
+    case 'path':
+      tracePathMask(g, mask.anchors, w, h, mask.closed)
+      return
+  }
+}
+
+function applyFrameMask(
+  node: Container,
+  w: number,
+  h: number,
+  shape: ImageMask | undefined,
+): Graphics {
   let mask = getMask(node)
   if (mask === undefined || mask.destroyed) {
     mask = new Graphics()
@@ -142,13 +286,18 @@ function applyFrameMask(node: Container, w: number, h: number): Graphics {
     setMask(node, mask)
   }
   mask.clear()
-  mask.rect(0, 0, w, h)
+  if (shape === undefined) {
+    mask.rect(0, 0, w, h)
+  } else {
+    traceMaskPath(mask, shape, w, h)
+  }
   mask.fill({ color: 0xffffff, alpha: 1 })
   // Apply the mask to the sprite-wrap (so the placeholder is unmasked).
   const wrap = getSpriteWrap(node)
   if (wrap !== undefined) {
     wrap.mask = mask
   }
+  setStoredMask(node, shape)
   return mask
 }
 
@@ -331,7 +480,8 @@ function startLoad(container: Container, data: ImageObject): void {
     // Frame mask — always clip to the object's frame so a larger /
     // offset imageRect doesn't bleed past it. For 'cover' fit with
     // imageRect undefined this matches the old applyCoverMask behaviour.
-    applyFrameMask(container, data.width, data.height)
+    // When data.mask is set, the rect is replaced by the shape silhouette.
+    applyFrameMask(container, data.width, data.height, data.mask)
 
     const ph = getPlaceholder(container)
     if (ph !== undefined && !ph.destroyed) {
@@ -349,7 +499,7 @@ function relayoutExistingSprite(node: Container, data: ImageObject): void {
   const wrap = getSpriteWrap(node)
   if (sprite === undefined || wrap === undefined || sprite.texture === undefined) return
   layoutSprite(sprite, sprite.texture, data, wrap)
-  applyFrameMask(node, data.width, data.height)
+  applyFrameMask(node, data.width, data.height, data.mask)
   setStoredImageRect(node, data.imageRect)
   setStoredImageRotation(node, data.imageRotation)
 }
@@ -401,8 +551,16 @@ export const imageRenderer = {
     const posChanged = prev.x !== next.x || prev.y !== next.y
     const imageRectChanged = !isImageRectEqual(prev.imageRect, next.imageRect)
     const imageRotationChanged = (prev.imageRotation ?? 0) !== (next.imageRotation ?? 0)
+    const maskChanged = !isMaskEqual(prev.mask, next.mask)
 
-    if (fitChanged || sizeChanged || posChanged || imageRectChanged || imageRotationChanged) {
+    if (
+      fitChanged ||
+      sizeChanged ||
+      posChanged ||
+      imageRectChanged ||
+      imageRotationChanged ||
+      maskChanged
+    ) {
       relayoutExistingSprite(node, next)
     }
 
@@ -427,6 +585,7 @@ export const imageRenderer = {
     const fitChanged = patch.fit !== undefined
     const imageRectChanged = 'imageRect' in patch
     const imageRotationChanged = 'imageRotation' in patch
+    const maskChanged = 'mask' in patch
     const posChanged = patch.x !== undefined || patch.y !== undefined
 
     if (sizeChanged) {
@@ -450,18 +609,26 @@ export const imageRenderer = {
       }
     }
 
-    if (sizeChanged || fitChanged || imageRectChanged || imageRotationChanged || posChanged) {
+    if (
+      sizeChanged ||
+      fitChanged ||
+      imageRectChanged ||
+      imageRotationChanged ||
+      maskChanged ||
+      posChanged
+    ) {
       // Reconstruct effective ImageObject state from node + patch.
       const currentW = node.pivot.x * 2
       const currentH = node.pivot.y * 2
       const dataX = node.x - node.pivot.x
       const dataY = node.y - node.pivot.y
 
-      // Resolve current imageRect / imageRotation: patch wins, otherwise stored.
+      // Resolve current imageRect / imageRotation / mask: patch wins, otherwise stored.
       const currentImageRect = imageRectChanged ? patch.imageRect : getStoredImageRect(node)
       const currentImageRotation = imageRotationChanged
         ? patch.imageRotation
         : getStoredImageRotation(node)
+      const currentMask = maskChanged ? patch.mask : getStoredMask(node)
 
       // Infer current fit. We can't read fit from the node directly
       // (no symbol stored) — use patch.fit if given, otherwise infer
@@ -482,6 +649,7 @@ export const imageRenderer = {
         fit,
         ...(currentImageRect !== undefined ? { imageRect: currentImageRect } : {}),
         ...(currentImageRotation !== undefined ? { imageRotation: currentImageRotation } : {}),
+        ...(currentMask !== undefined ? { mask: currentMask } : {}),
       }
 
       relayoutExistingSprite(node, synthetic)
@@ -497,11 +665,12 @@ export const imageRenderer = {
       const newAssetId = patch.assetId
       if (newAssetId === undefined) return
 
-      // Preserve the imageRect + imageRotation across an asset re-load
-      // unless the patch explicitly clears them.
+      // Preserve the imageRect + imageRotation + mask across an asset
+      // re-load unless the patch explicitly clears them.
       const imageRectForReload = 'imageRect' in patch ? patch.imageRect : getStoredImageRect(node)
       const imageRotationForReload =
         'imageRotation' in patch ? patch.imageRotation : getStoredImageRotation(node)
+      const maskForReload = 'mask' in patch ? patch.mask : getStoredMask(node)
       const synthetic: ImageObject = {
         id: '',
         type: 'image',
@@ -516,6 +685,7 @@ export const imageRenderer = {
         fit: patch.fit ?? 'cover',
         ...(imageRectForReload !== undefined ? { imageRect: imageRectForReload } : {}),
         ...(imageRotationForReload !== undefined ? { imageRotation: imageRotationForReload } : {}),
+        ...(maskForReload !== undefined ? { mask: maskForReload } : {}),
       }
 
       const ph = getPlaceholder(node)
@@ -599,8 +769,8 @@ export const imageRenderer = {
       setSpriteWrap(container, spriteWrap)
       setSprite(container, sprite)
 
-      // Frame mask — clip sprite to the object's frame.
-      applyFrameMask(container, data.width, data.height)
+      // Frame mask — clip sprite to the object's frame (or shape mask).
+      applyFrameMask(container, data.width, data.height, data.mask)
 
       // applyCoverMask is no longer needed — applyFrameMask handles it
       // generically. The fit-related behaviour for the un-cropped case
