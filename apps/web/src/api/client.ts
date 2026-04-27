@@ -26,6 +26,7 @@ const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
 export interface ApiClient {
   listDecks(): Promise<DeckSummary[]>
   createDeck(title?: string): Promise<DeckSummary>
+  renameDeck(id: string, title: string): Promise<DeckSummary>
   deleteDeck(id: string): Promise<void>
   listPermissions(deckId: string): Promise<DeckPermission[]>
   grantPermission(deckId: string, body: GrantPermissionBody): Promise<void>
@@ -125,6 +126,13 @@ export function createApiClient(getToken: () => string | null): ApiClient {
     createDeck: (title = 'Untitled Deck') =>
       requestJson<DeckSummary>('/decks', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }),
+
+    renameDeck: (id, title) =>
+      requestJson<DeckSummary>(`/decks/${id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       }),

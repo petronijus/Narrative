@@ -9,13 +9,14 @@
  * gradient + rim as the editor's sidebars / toolbar.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Plus, Trash2 } from 'lucide-react'
+import { LogOut, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
 import type { DeckSummary } from '../api/client.js'
+import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
 
 export function Landing() {
   const navigate = useNavigate()
@@ -25,6 +26,10 @@ export function Landing() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
+  // P13: cached deck thumbnails written by the editor on per-slide
+  // render. Read once on mount; re-reads happen if the user navigates
+  // back from the editor (Landing remounts via React Router).
+  const [thumbnails] = useState<Record<string, string>>(() => getAllDeckThumbnails())
 
   const fetchDecks = useCallback(async () => {
     try {
@@ -58,12 +63,29 @@ export function Landing() {
       e.stopPropagation()
       try {
         await api.deleteDeck(id)
+        deleteDeckThumbnail(id)
         setDecks((prev) => prev.filter((d) => d.id !== id))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to delete deck')
       }
     },
     [api],
+  )
+
+  const handleRenameDeck = useCallback(
+    async (id: string, title: string) => {
+      // Optimistic — update local state first, roll back on error.
+      const trimmed = title.trim()
+      if (trimmed === '') return
+      setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, title: trimmed } : d)))
+      try {
+        await api.renameDeck(id, trimmed)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to rename deck')
+        void fetchDecks()
+      }
+    },
+    [api, fetchDecks],
   )
 
   return (
@@ -125,8 +147,10 @@ export function Landing() {
               <DeckCard
                 key={deck.id}
                 deck={deck}
+                thumbnail={thumbnails[deck.id]}
                 onOpen={() => void navigate(`/deck/${deck.id}`)}
                 onDelete={(e) => void handleDeleteDeck(deck.id, e)}
+                onRename={(title) => void handleRenameDeck(deck.id, title)}
               />
             ))}
           </div>
@@ -142,38 +166,121 @@ export function Landing() {
 
 interface DeckCardProps {
   deck: DeckSummary
+  thumbnail?: string | undefined
   onOpen: () => void
   onDelete: (e: React.MouseEvent) => void
+  onRename: (title: string) => void
 }
 
-function DeckCard({ deck, onOpen, onDelete }: DeckCardProps) {
+function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename }: DeckCardProps) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(deck.title)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Keep draft in sync if the deck title changes from elsewhere (e.g.
+  // the editor renamed it via the Y.Doc → server → list refresh path).
+  useEffect(() => {
+    if (!editing) setDraft(deck.title)
+  }, [deck.title, editing])
+
+  // Auto-focus + select on edit-mode entry.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
   const date = new Date(deck.updatedAt).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   })
 
+  const startEdit = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    setEditing(true)
+  }
+
+  const commit = (): void => {
+    setEditing(false)
+    const trimmed = draft.trim()
+    if (trimmed !== '' && trimmed !== deck.title) {
+      onRename(trimmed)
+    } else {
+      setDraft(deck.title)
+    }
+  }
+
+  const cancel = (): void => {
+    setEditing(false)
+    setDraft(deck.title)
+  }
+
   return (
     <div
-      onClick={onOpen}
+      onClick={editing ? undefined : onOpen}
       className="panel group relative cursor-pointer rounded-lg border border-border p-4 hover:border-border-strong hover:shadow-glow transition-all"
     >
-      {/* Thumbnail placeholder */}
-      <div className="mb-3 h-28 rounded-md bg-surface-2 flex items-center justify-center">
-        <span className="text-xs text-muted-foreground/60">No preview</span>
+      {/* Thumbnail */}
+      <div className="mb-3 h-28 overflow-hidden rounded-md bg-surface-2 flex items-center justify-center">
+        {thumbnail !== undefined ? (
+          <img src={thumbnail} alt="" className="h-full w-full object-contain" draggable={false} />
+        ) : (
+          <span className="text-xs text-muted-foreground/60">No preview</span>
+        )}
       </div>
 
-      <p className="truncate text-sm font-medium text-foreground">{deck.title}</p>
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commit()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              cancel()
+            }
+          }}
+          onBlur={commit}
+          maxLength={200}
+          className="w-full rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+          aria-label="Deck title"
+        />
+      ) : (
+        <p
+          className="truncate text-sm font-medium text-foreground"
+          onDoubleClick={startEdit}
+          title="Double-click to rename"
+        >
+          {deck.title}
+        </p>
+      )}
       <p className="mt-0.5 text-xs text-muted-foreground/80">{date}</p>
 
-      {/* Delete button */}
-      <button
-        onClick={onDelete}
-        aria-label="Delete deck"
-        className="absolute right-2 top-2 hidden rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive group-hover:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-      >
-        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
+      {/* Hover actions */}
+      {!editing && (
+        <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
+          <button
+            onClick={startEdit}
+            aria-label="Rename deck"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+          <button
+            onClick={onDelete}
+            aria-label="Delete deck"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

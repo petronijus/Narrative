@@ -19,6 +19,8 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
+import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
+import { useParams } from 'react-router-dom'
 import { useShortcuts } from '../state/useShortcuts.js'
 import {
   addSlide,
@@ -436,6 +438,18 @@ export function SlidesPanel(): JSX.Element {
 
   const allSlideIds = slides.map((s) => s.id)
   const thumbnailMap = useSlideThumbnails(allSlideIds)
+
+  // P13: persist the first-slide thumbnail to localStorage so the home
+  // page can show a deck preview without re-opening every deck. The
+  // deckId comes from the route — `/deck/:id` mounts this panel.
+  const { id: deckId } = useParams<{ id: string }>()
+  const firstSlideId = allSlideIds[0]
+  const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
+  useEffect(() => {
+    if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
+      setDeckThumbnail(deckId, firstSlideThumb)
+    }
+  }, [deckId, firstSlideThumb])
 
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)
