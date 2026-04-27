@@ -123,23 +123,45 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
         }
       },
       onSynced() {
-        // M9: After Hocuspocus syncs the Y.Doc, run backward-compat migration.
-        // hydrateSlideDoc is idempotent — safe to call multiple times.
-        const handles = hydrateSlideDoc(doc)
-        const deckCtx: SlideMutationContext = {
-          doc: handles.doc,
-          slides: handles.slides,
-        }
-        const undoManager = createUndoManager(deckCtx)
-        setValue({ deckCtx, undoManager, awareness: provider.awareness!, localUser })
+        // P12d: hydrate AFTER sync so we don't race the server with an
+        // empty default slide. Children have already mounted with the
+        // pre-sync deckCtx (the doc reference is stable); Yjs observers
+        // pick up the server's slides as they arrive. The mutation
+        // context's `slides` Y.Array reference is the same one we
+        // installed below, since hydrateSlideDoc is idempotent and only
+        // touches the doc when the deck is genuinely empty.
+        hydrateSlideDoc(doc)
         // E2E: expose a dev-only hook on window for Playwright to seed
         // reproducible Y.Doc fixtures (bypassing flaky editor-UI locators).
         // Stripped from prod bundles via import.meta.env.DEV in testApi.ts.
-        void import('./testApi.js').then(({ installTestApi }) => installTestApi(deckCtx))
+        void import('./testApi.js').then(({ installTestApi }) => {
+          // Use the doc's current slides handle, not a stale closure.
+          const slides = doc.getArray('slides')
+          installTestApi({ doc, slides } as SlideMutationContext)
+        })
       },
     })
 
     providerRef.current = provider
+
+    // P12d cold-start fix: don't gate `value` on `onSynced`. The
+    // children (Canvas, Pixi init, reconciler) need to mount as early
+    // as possible so the WS handshake, Postgres hydration, WebGL init
+    // and first reconcile run in parallel instead of sequentially.
+    //
+    // Yjs observers handle live updates — when the server's slides
+    // arrive, the Y.Array.observeDeep callbacks fire and the reconciler
+    // applies them as ObjectChangeSets. The deckCtx wraps stable Y.Doc
+    // references, so we don't need to re-set it on sync.
+    //
+    // We deliberately skip `hydrateSlideDoc` here: it would seed a
+    // default empty slide on a fresh-load doc, then the server's
+    // slides would merge on top via CRDT, leaving an extra empty
+    // slide on every reload. Hydration runs in onSynced.
+    const slides = doc.getArray('slides') as SlideMutationContext['slides']
+    const earlyDeckCtx: SlideMutationContext = { doc, slides }
+    const undoManager = createUndoManager(earlyDeckCtx)
+    setValue({ deckCtx: earlyDeckCtx, undoManager, awareness: provider.awareness!, localUser })
 
     // M8: Set initial awareness state immediately (even before WS connect —
     // awareness.setLocalState works locally, broadcast happens after connect).

@@ -79,39 +79,47 @@ export function useMediaPreload(): {
           kind: MediaCacheKind
         }
 
-        const items: PreloadItem[] = []
-
-        // Walk all objects on all slides
+        // P12d: resolve all media URLs in parallel. The previous serial
+        // `await` per object meant a deck with N media assets paid N×
+        // round-trip latency before the preload could start fetching
+        // bytes. With Promise.all the wait collapses to ~max-RTT.
+        const resolvers: Array<Promise<PreloadItem[]>> = []
         for (const slide of slides) {
           for (const obj of slide.objects) {
             if (obj.type === 'image') {
               const imgObj = obj as ImageObject
               if (imgObj.assetId !== '') {
-                try {
-                  const url = await api.getMediaUrl(imgObj.assetId, 'display')
-                  items.push({ url, kind: 'image' })
-                } catch {
-                  // Failed to get URL — skip (will render broken on screen)
-                }
+                resolvers.push(
+                  api
+                    .getMediaUrl(imgObj.assetId, 'display')
+                    .then((url): PreloadItem[] => [{ url, kind: 'image' }])
+                    .catch((): PreloadItem[] => []),
+                )
               }
             } else if (obj.type === 'video') {
               const vidObj = obj as VideoObject
               if (vidObj.assetId !== '') {
-                try {
-                  const info = await api.getVideoInfo(vidObj.assetId)
-                  if (info.posterUrl !== null) {
-                    items.push({ url: info.posterUrl, kind: 'video-poster' })
-                  }
-                  if (info.hlsManifestUrl !== null && info.transcodeStatus === 'done') {
-                    items.push({ url: info.hlsManifestUrl, kind: 'hls-manifest' })
-                  }
-                } catch {
-                  // Failed to get video info — skip
-                }
+                resolvers.push(
+                  api
+                    .getVideoInfo(vidObj.assetId)
+                    .then((info): PreloadItem[] => {
+                      const out: PreloadItem[] = []
+                      if (info.posterUrl !== null) {
+                        out.push({ url: info.posterUrl, kind: 'video-poster' })
+                      }
+                      if (info.hlsManifestUrl !== null && info.transcodeStatus === 'done') {
+                        out.push({ url: info.hlsManifestUrl, kind: 'hls-manifest' })
+                      }
+                      return out
+                    })
+                    .catch((): PreloadItem[] => []),
+                )
               }
             }
           }
         }
+
+        const items: PreloadItem[] = (await Promise.all(resolvers)).flat()
 
         setProgress({ total: items.length, completed: 0, errored: 0, isDone: items.length === 0 })
 

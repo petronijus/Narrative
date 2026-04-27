@@ -251,26 +251,51 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
   useEffect(() => {
     let cancelled = false
+    // P12d: the thumbnail Pixi instance contends with the main editor
+    // canvas for the GPU driver during cold start — when both initialise
+    // in parallel, first-paint latency suffers. Defer this Application
+    // until after the editor has had a chance to paint its first frame.
+    // requestIdleCallback gives us the window's idle gap; the timeout
+    // fallback keeps non-Chromium browsers responsive.
+    type IdleCallback = (cb: () => void, opts?: { timeout: number }) => number
+    const win = window as unknown as {
+      requestIdleCallback?: IdleCallback
+      cancelIdleCallback?: (id: number) => void
+    }
+    const useIdle = typeof win.requestIdleCallback === 'function'
+    let idleId = 0
+    let timeoutId = 0
+    const start = (): void => {
+      if (cancelled) return
+      createThumbnailRenderer({ width: 200, resolution: 1 })
+        .then((renderer) => {
+          if (cancelled) {
+            renderer.destroy()
+            return
+          }
+          rendererRef.current = renderer
 
-    createThumbnailRenderer({ width: 200, resolution: 1 })
-      .then((renderer) => {
-        if (cancelled) {
-          renderer.destroy()
-          return
-        }
-        rendererRef.current = renderer
-
-        // Trigger initial renders for all currently tracked slides.
-        for (const slideId of latestObjectsRef.current.keys()) {
-          scheduleRender(slideId)
-        }
-      })
-      .catch((err: unknown) => {
-        console.error('[useSlideThumbnails] createThumbnailRenderer failed:', err)
-      })
+          // Trigger initial renders for all currently tracked slides.
+          for (const slideId of latestObjectsRef.current.keys()) {
+            scheduleRender(slideId)
+          }
+        })
+        .catch((err: unknown) => {
+          console.error('[useSlideThumbnails] createThumbnailRenderer failed:', err)
+        })
+    }
+    if (useIdle && win.requestIdleCallback !== undefined) {
+      idleId = win.requestIdleCallback(start, { timeout: 1500 })
+    } else {
+      timeoutId = window.setTimeout(start, 250)
+    }
 
     return () => {
       cancelled = true
+      if (idleId !== 0 && win.cancelIdleCallback !== undefined) {
+        win.cancelIdleCallback(idleId)
+      }
+      if (timeoutId !== 0) window.clearTimeout(timeoutId)
       rendererRef.current?.destroy()
       rendererRef.current = null
     }
