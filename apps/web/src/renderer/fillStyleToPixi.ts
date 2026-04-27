@@ -20,12 +20,73 @@
  * onto the path's local bounds.
  */
 
-import { Matrix, Texture } from 'pixi.js'
+import { Matrix, Texture, type Container } from 'pixi.js'
 import type { FillStyle, ImageFillStyle } from '@narrative/shared'
+import { getDefaultResourceManager } from './ResourceManager.js'
 
 export interface ResolvedFillInput {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi fill accepts color number, Texture, or object
   input: any
+}
+
+/**
+ * P12c: per-container memo of the procedural-texture key currently in
+ * use. Lets the renderer release the previous key when the fill changes
+ * and on container destroy. Kept on the Container itself via Symbol tag
+ * so we don't need a side-table keyed by Container.
+ */
+const PROC_KEY_TAG = Symbol('proceduralFillKey')
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol metadata on Pixi Container is untyped
+const asAny = (n: Container): any => n as any
+
+function getHeldProceduralKey(node: Container): string | undefined {
+  return asAny(node)[PROC_KEY_TAG] as string | undefined
+}
+
+function setHeldProceduralKey(node: Container, key: string | undefined): void {
+  if (key === undefined) {
+    delete asAny(node)[PROC_KEY_TAG]
+  } else {
+    asAny(node)[PROC_KEY_TAG] = key
+  }
+}
+
+/**
+ * Build a structural key for a gradient fill so the ResourceManager can
+ * cache the painted texture. Includes every input that affects the
+ * pixels: kind, dimensions, stops, angle / center.
+ */
+function gradientKey(
+  fillStyle: FillStyle & { kind: 'linearGradient' | 'radialGradient' },
+  widthPx: number,
+  heightPx: number,
+): string {
+  const w = Math.max(1, Math.round(widthPx))
+  const h = Math.max(1, Math.round(heightPx))
+  const stops = fillStyle.stops
+    .map((s) => `${s.offset.toFixed(3)}@${s.color.toString(16)}`)
+    .join(',')
+  if (fillStyle.kind === 'linearGradient') {
+    return `lin:${w}x${h}:${fillStyle.angleDeg.toFixed(2)}:${stops}`
+  }
+  return `rad:${w}x${h}:${(fillStyle.centerX ?? 0.5).toFixed(3)},${(fillStyle.centerY ?? 0.5).toFixed(3)}:${stops}`
+}
+
+/**
+ * P12c: release any procedural texture currently held by `container`.
+ * Renderers call this from their `destroy()` hook so the ResourceManager
+ * can drop the ref count.
+ */
+export function releaseProceduralFill(container: Container): void {
+  const key = getHeldProceduralKey(container)
+  if (key === undefined) return
+  try {
+    getDefaultResourceManager().releaseProcedural(key)
+  } catch {
+    // ResourceManager not installed (tests) — safe to drop.
+  }
+  setHeldProceduralKey(container, undefined)
 }
 
 function clampStops(
@@ -118,34 +179,74 @@ function paintRadialGradientTexture(
  * Shape-aware entry point. Renderers that know their AABB call this so
  * the gradient texture is sized to match the painted path and the four
  * corners always land inside the gradient range.
+ *
+ * P12c: when a `container` is passed, gradient textures are acquired
+ * through ResourceManager's procedural cache (ref-counted, LRU-bounded).
+ * The container holds the most recent procedural key so a subsequent
+ * call automatically releases the previous key when the fill changes.
+ *
+ * Backward-compatible: if `container` is omitted (or the ResourceManager
+ * default isn't installed yet — tests), falls back to one-shot
+ * `Texture.from(canvas)` allocation matching the pre-P12c behaviour.
  */
 export function fillStyleToPixi(
   fillStyle: FillStyle | undefined,
   solidFallback: number,
   widthPx: number,
   heightPx: number,
+  container?: Container,
 ): ResolvedFillInput {
   if (fillStyle === undefined) return { input: { color: solidFallback } }
-  if (fillStyle.kind === 'linearGradient') {
-    const texture = paintLinearGradientTexture(
-      clampStops(fillStyle.stops),
-      fillStyle.angleDeg,
-      widthPx,
-      heightPx,
-    )
-    return { input: { texture } }
-  }
-  if (fillStyle.kind === 'radialGradient') {
-    const texture = paintRadialGradientTexture(
-      clampStops(fillStyle.stops),
-      fillStyle.centerX ?? 0.5,
-      fillStyle.centerY ?? 0.5,
-      widthPx,
-      heightPx,
-    )
+
+  if (fillStyle.kind === 'linearGradient' || fillStyle.kind === 'radialGradient') {
+    const stops = clampStops(fillStyle.stops)
+    const key = gradientKey({ ...fillStyle, stops }, widthPx, heightPx)
+    const texture = acquireOrPaint(container, key, () => {
+      if (fillStyle.kind === 'linearGradient') {
+        return paintLinearGradientTexture(stops, fillStyle.angleDeg, widthPx, heightPx)
+      }
+      return paintRadialGradientTexture(
+        stops,
+        fillStyle.centerX ?? 0.5,
+        fillStyle.centerY ?? 0.5,
+        widthPx,
+        heightPx,
+      )
+    })
     return { input: { texture } }
   }
   return { input: { color: solidFallback } }
+}
+
+/**
+ * Internal: acquire `key` from the procedural cache, releasing whatever
+ * key the container previously held. When no container is supplied or
+ * the ResourceManager isn't installed, falls back to a fresh paint.
+ *
+ * Net ref-count change is always +0 across the lifetime of the
+ * container: every successful `acquireOrPaint` is balanced by either
+ * the next `acquireOrPaint` (which releases the old key) or by
+ * `releaseProceduralFill` on destroy.
+ */
+function acquireOrPaint(
+  container: Container | undefined,
+  key: string,
+  factory: () => Texture,
+): Texture {
+  if (container === undefined) return factory()
+  let rm: ReturnType<typeof getDefaultResourceManager>
+  try {
+    rm = getDefaultResourceManager()
+  } catch {
+    return factory()
+  }
+  const prev = getHeldProceduralKey(container)
+  if (prev !== undefined) {
+    rm.releaseProcedural(prev)
+  }
+  const tex = rm.acquireProcedural(key, factory)
+  setHeldProceduralKey(container, key)
+  return tex
 }
 
 /**

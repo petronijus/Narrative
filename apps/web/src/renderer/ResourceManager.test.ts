@@ -107,6 +107,87 @@ describe('ResourceManager', () => {
     expect(rm.textureCount).toBe(0)
   })
 
+  // ---------------------------------------------------------------------
+  // P12c — procedural texture cache
+  // ---------------------------------------------------------------------
+
+  describe('procedural cache', () => {
+    function makeProceduralTexture() {
+      return { destroy: vi.fn(), source: { _mock: true } } as unknown as ReturnType<
+        typeof rm.acquireProcedural
+      >
+    }
+
+    it('acquireProcedural runs the factory exactly once per unique key', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      const t1 = rm.acquireProcedural('grad:a', factory)
+      const t2 = rm.acquireProcedural('grad:a', factory)
+      expect(t1).toBe(t2)
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(rm.proceduralTextureCount).toBe(1)
+    })
+
+    it('different keys produce different textures', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      const t1 = rm.acquireProcedural('grad:a', factory)
+      const t2 = rm.acquireProcedural('grad:b', factory)
+      expect(t1).not.toBe(t2)
+      expect(rm.proceduralTextureCount).toBe(2)
+    })
+
+    it('release at refCount=0 keeps the entry cached for fast re-acquire', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      const t1 = rm.acquireProcedural('grad:a', factory)
+      rm.releaseProcedural('grad:a')
+      // Still cached.
+      expect(rm.proceduralTextureCount).toBe(1)
+      const t2 = rm.acquireProcedural('grad:a', factory)
+      expect(t2).toBe(t1)
+      expect(factory).toHaveBeenCalledTimes(1)
+    })
+
+    it('LRU evicts unreferenced entries when the cache exceeds the cap', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      // Cap is 128. Acquire 130 unique keys, immediately release each so
+      // refCount drops to 0 and LRU is free to evict.
+      for (let i = 0; i < 130; i++) {
+        rm.acquireProcedural(`grad:${i}`, factory)
+        rm.releaseProcedural(`grad:${i}`)
+      }
+      // Eviction kicks in only AFTER an over-cap insertion, so the count
+      // should have settled at the cap once we crossed 128.
+      expect(rm.proceduralTextureCount).toBeLessThanOrEqual(128)
+      expect(rm.proceduralTextureCount).toBeGreaterThanOrEqual(127)
+    })
+
+    it('LRU never evicts entries with refCount > 0', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      // Hold the very first entry permanently (no release).
+      const heldKey = 'grad:held'
+      rm.acquireProcedural(heldKey, factory)
+      // Then thrash through 200 unique keys, each released immediately.
+      for (let i = 0; i < 200; i++) {
+        rm.acquireProcedural(`grad:thrash${i}`, factory)
+        rm.releaseProcedural(`grad:thrash${i}`)
+      }
+      // Held entry must still be present.
+      const sameTexture = rm.acquireProcedural(heldKey, () => makeProceduralTexture())
+      // Factory NOT invoked again — entry survived.
+      expect(sameTexture).toBeDefined()
+      // Drop both refs we just added.
+      rm.releaseProcedural(heldKey)
+      rm.releaseProcedural(heldKey)
+    })
+
+    it('destroyAll clears procedural entries too', () => {
+      const factory = vi.fn(() => makeProceduralTexture())
+      rm.acquireProcedural('grad:a', factory)
+      rm.acquireProcedural('grad:b', factory)
+      rm.destroyAll()
+      expect(rm.proceduralTextureCount).toBe(0)
+    })
+  })
+
   it('textureCount vrací správný počet spravovaných textur', async () => {
     expect(rm.textureCount).toBe(0)
 

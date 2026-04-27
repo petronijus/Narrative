@@ -30,12 +30,17 @@ interface PerfSnapshot {
   frameMs: number
   containers: number
   textures: number
+  procedural: number
   heapMb: number | null
 }
 
 interface PerfHandle {
   app: Application
-  resourceManager: { textureCount: number }
+  resourceManager: {
+    textureCount: number
+    /** P12c: optional — older builds don't expose this. */
+    proceduralTextureCount?: number
+  }
 }
 
 function readHandle(): PerfHandle | null {
@@ -66,6 +71,7 @@ export function PerfHud() {
     frameMs: 0,
     containers: 0,
     textures: 0,
+    procedural: 0,
     heapMb: null,
   })
 
@@ -97,6 +103,7 @@ export function PerfHud() {
         frameMs: Math.round(frameMs * 10) / 10,
         containers: countContainers(app.stage),
         textures: resourceManager.textureCount,
+        procedural: resourceManager.proceduralTextureCount ?? 0,
         heapMb: readHeapMb(),
       })
     }, 250)
@@ -128,6 +135,8 @@ export function PerfHud() {
           <span>{snap.containers}</span>
           <span className="text-white/60">textures</span>
           <span>{snap.textures}</span>
+          <span className="text-white/60">procedural</span>
+          <span>{snap.procedural}</span>
           {snap.heapMb !== null && (
             <>
               <span className="text-white/60">heap</span>
