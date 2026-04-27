@@ -1519,6 +1519,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                               orientation: g.orientation,
                               position: g.position,
                             }))}
+                            objects={objects}
                           />
                         )
                       })()}

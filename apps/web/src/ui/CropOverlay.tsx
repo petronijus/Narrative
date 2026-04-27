@@ -115,6 +115,27 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     setFrame({ x: obj.x, y: obj.y, width: obj.width, height: obj.height })
   }, [obj])
 
+  // Materialise imageRect on entry into crop mode if it's still implicit.
+  // Otherwise frame-handle resize (which only mutates x/y/width/height)
+  // would visually drag the image with it, because the renderer's
+  // effectiveImageRect falls back to the frame when imageRect is
+  // undefined. By committing imageRect = current frame on entry, frame
+  // resize cleanly trims the visible window without scaling the image.
+  useEffect(() => {
+    if (mutationCtx === null) return
+    if (obj.imageRect !== undefined) return
+    bulkUpdateObjects(mutationCtx, [
+      {
+        id: obj.id,
+        patch: {
+          imageRect: { x: obj.x, y: obj.y, width: obj.width, height: obj.height },
+        } as Partial<ImageObject>,
+      },
+    ])
+    // Run once per crop-mode entry — depends only on object id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.id])
+
   // Resolve image URL via the same resolver the renderer uses.
   useEffect(() => {
     let cancelled = false
