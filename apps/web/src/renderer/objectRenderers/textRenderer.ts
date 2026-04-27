@@ -27,12 +27,16 @@
  * - Změna fontSize/fontWeight/color/align/width → TextStyle rebuild (nevyhnutelné).
  */
 
-import { Container, Text, TextStyle } from 'pixi.js'
+import { Container, Graphics, Text, TextStyle } from 'pixi.js'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
 /** Interní tag klíče pro identifikaci Text node uvnitř Containeru. */
 const TEXT_TAG = Symbol('textNode')
+/** P15: Graphics rect used as a clip mask on the container so glyphs
+ *  that wrap past the box's bottom edge get cut off, matching the
+ *  bounding rect the user defined when drawing the text area. */
+const MASK_TAG = Symbol('textMask')
 
 /** Převede hex number na CSS color string pro TextStyle. */
 function hexToColorString(hex: number): string {
@@ -72,9 +76,17 @@ function buildStyle(data: TextObject): TextStyle {
     wordWrapWidth: data.width,
     letterSpacing: data.letterSpacing ?? 0,
   }
-  if (data.lineHeight !== undefined && data.lineHeight > 0) {
-    opts.lineHeight = data.lineHeight * data.fontSize
-  }
+  // P15: lock Pixi's line height to a fixed 1.2× multiplier when our
+  // schema doesn't set one. Pixi's auto-from-font-metrics fallback
+  // produced ~1.16×, while the DOM textarea overlay uses 1.2× during
+  // inline edit — that 0.04 mismatch was visible as text drifting
+  // slightly down + getting taller while editing. Pinning both ends
+  // to the same multiplier keeps live edit perfectly aligned with
+  // the rendered text.
+  opts.lineHeight =
+    data.lineHeight !== undefined && data.lineHeight > 0
+      ? data.lineHeight * data.fontSize
+      : data.fontSize * 1.2
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = { color: hexToColorString(data.stroke), width: data.strokeWidth ?? 1 }
   }
@@ -118,6 +130,28 @@ function getTextNode(node: Container): Text | undefined {
   return asAny(node)[TEXT_TAG] as Text | undefined
 }
 
+function getMask(node: Container): Graphics | undefined {
+  return asAny(node)[MASK_TAG] as Graphics | undefined
+}
+
+/**
+ * P15: rebuild the clip mask to cover the current bounding box. Glyphs
+ * that wrap below `data.height` get clipped — matches the area the
+ * user drew with the Text tool.
+ */
+function applyClipMask(container: Container, data: TextObject): void {
+  let mask = getMask(container)
+  if (mask === undefined) {
+    mask = new Graphics()
+    asAny(container)[MASK_TAG] = mask
+    container.addChild(mask)
+    container.mask = mask
+  }
+  mask.clear()
+  mask.rect(0, 0, data.width, data.height)
+  mask.fill({ color: 0xffffff })
+}
+
 export const textRenderer = {
   type: 'text' as const,
 
@@ -136,6 +170,7 @@ export const textRenderer = {
 
     applyObjectTransform(container, data)
     applyVerticalAlign(textNode, data)
+    applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
 
     return container
@@ -178,6 +213,9 @@ export const textRenderer = {
     // the container (container pivot + transform is applied to the box,
     // the text node positions itself inside).
     applyVerticalAlign(textNode, next)
+
+    // P15: keep the clip mask in sync with the (possibly resized) box.
+    applyClipMask(node, next)
 
     applyFilterEffects(node, next.shadow, next.blur)
   },
@@ -316,6 +354,13 @@ export const textRenderer = {
         'blur' in patch ? patch.blur : undefined,
       )
     }
+
+    // P15: rebuild the clip mask whenever the bounding box changes.
+    if (patch.width !== undefined || patch.height !== undefined) {
+      const w = patch.width ?? node.pivot.x * 2
+      const h = patch.height ?? node.pivot.y * 2
+      applyClipMask(node, { width: w, height: h } as TextObject)
+    }
   },
 
   /**
@@ -324,6 +369,11 @@ export const textRenderer = {
   destroy(node: Container): void {
     const textNode = getTextNode(node)
     textNode?.destroy()
+    const mask = getMask(node)
+    if (mask !== undefined) {
+      node.mask = null
+      mask.destroy()
+    }
     destroyFilterEffects(node)
     node.destroy()
   },

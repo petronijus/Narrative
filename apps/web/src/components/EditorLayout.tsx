@@ -69,6 +69,7 @@ import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
+import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -378,6 +379,28 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const deckGuidesRef = useRef(deckGuides)
   deckGuidesRef.current = deckGuides
 
+  // P15: hide the underlying Pixi text container while the inline
+  // text-edit overlay is on top. The overlay's textarea has a
+  // transparent background, so without this the user saw a "ghost"
+  // of the rendered Pixi text peeking through behind the editable
+  // characters — Pixi's text metrics never line up perfectly with
+  // the DOM textarea, so the double-render was always visible. On
+  // edit-end the container becomes visible again and a markDirty()
+  // forces a single Pixi repaint.
+  useEffect(() => {
+    if (canvasInstance === null || editingTextId === null) return
+    const container = canvasInstance.sceneGraph.getContainer(editingTextId)
+    if (container === undefined) return
+    container.visible = false
+    getDefaultRenderScheduler()?.markDirty()
+    return (): void => {
+      if (!container.destroyed) {
+        container.visible = true
+        getDefaultRenderScheduler()?.markDirty()
+      }
+    }
+  }, [editingTextId, canvasInstance])
+
   // Expose the latest zoom to the pointer callbacks without having to
   // include it in their dependency arrays (which would churn the
   // callbacks on every zoom change).
@@ -564,14 +587,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
           return
         }
-        // Text + image stay click-to-create; every other creation tool
-        // uses drag-to-draw so the user can size the new object in one
-        // gesture (Keynote / Figma / Sketch convention).
-        if (activeTool === 'text') {
-          createObjectOfType(mutationCtx, 'text', { x, y })
-          setActiveTool('select')
-          return
-        }
+        // P15: Text supports BOTH gestures — click to drop a default-
+        // sized point-text box, or drag to define a sized text area.
+        // The draft / commit path below handles both: a tiny drag
+        // (< minSize threshold in pointerUp) falls back to defaults,
+        // a real drag uses the bounding box. Same as Keynote / Figma.
         draftRef.current = {
           tool: activeTool,
           startX: x,
@@ -996,10 +1016,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           const h = Math.abs(cy - dr.startY)
           // Tiny-drag fallback — treat as click-to-create with default size.
           const minSize = 6
+          let created: { id: string } | null = null
           if (w < minSize && h < minSize) {
-            createObjectOfType(mutationCtx, dr.tool, { x: dr.startX, y: dr.startY })
+            created = createObjectOfType(mutationCtx, dr.tool, {
+              x: dr.startX,
+              y: dr.startY,
+            })
           } else if (dr.tool === 'line' || dr.tool === 'arrow') {
-            createObjectOfType(mutationCtx, dr.tool, {
+            created = createObjectOfType(mutationCtx, dr.tool, {
               x,
               y,
               width: w,
@@ -1008,8 +1032,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               p2: { x: cx - x, y: cy - y },
             })
           } else {
-            createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
+            created = createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
           }
+          // P15: select the freshly created object so the user can
+          // immediately drag / resize / edit without re-clicking. Mirrors
+          // Figma / Keynote behaviour after a tool-driven create.
+          if (created !== null) selectOne(created.id)
         }
         setActiveTool('select')
         return

@@ -66,11 +66,18 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   const textareaStyle = useMemo<React.CSSProperties>(
     () => ({
       width: '100%',
+      height: '100%',
       minHeight: 0,
       boxSizing: 'border-box',
       background: 'transparent',
-      border: '2px dashed rgba(59, 130, 246, 0.8)',
-      outline: 'none',
+      // P15: \`outline\` instead of a solid \`border\` so the dashed
+      // edit-mode indicator paints OUTSIDE the box without shifting
+      // the textarea's content — a 2 px border was pushing every
+      // character 2 px right + down compared to the Pixi render
+      // underneath, which is what made the live edit "drift".
+      border: 'none',
+      outline: '2px dashed rgba(59, 130, 246, 0.8)',
+      outlineOffset: '0px',
       resize: 'none',
       padding: 0,
       margin: 0,
@@ -80,12 +87,23 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
       textDecoration: obj.underline === true ? 'underline' : 'none',
+      // Pixi Text in v8 derives its default line height from font
+      // metrics (≈ ascent + descent, typically ~1.2× fontSize for
+      // system fonts). Browser textarea \`line-height: normal\` lands
+      // in the same range but isn't pixel-identical. Lock both ends
+      // to the same explicit multiplier so the rendered Pixi text
+      // and the live textarea sit on the same baselines.
       lineHeight:
-        obj.lineHeight !== undefined && obj.lineHeight > 0 ? String(obj.lineHeight) : 'normal',
+        obj.lineHeight !== undefined && obj.lineHeight > 0 ? String(obj.lineHeight) : '1.2',
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word',
+      verticalAlign: 'top',
+      // Match the rendered Pixi text — overflow at the bottom of the
+      // box is clipped, not scrolled, so editing previews exactly
+      // what will be rendered.
+      overflow: 'hidden',
     }),
     [
       obj.color,

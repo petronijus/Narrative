@@ -1950,30 +1950,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
 
   return (
     <>
-      <Section title="Text" storageKey="text">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={`inspector-text-${obj.id}`} className="text-xs text-muted-foreground">
-            Content
-          </label>
-          <textarea
-            id={`inspector-text-${obj.id}`}
-            value={obj.text}
-            rows={3}
-            onChange={(e) => patch({ text: e.target.value })}
-            onKeyDown={(e) => {
-              // Escape blurs (drops focus). Ctrl+Enter same — ergonomic.
-              if ((e.ctrlKey && e.key === 'Enter') || e.key === 'Escape') {
-                e.currentTarget.blur()
-              }
-            }}
-            className={[
-              'w-full resize-none rounded border border-input field-surface px-2 py-1',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          />
-        </div>
-      </Section>
+      {/* P15: removed "Text content" textarea — double-click on the
+          text on canvas to edit inline; the side-panel textarea was
+          redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
         <NumberField
