@@ -28,12 +28,18 @@ import type { ObjectsMutationContext } from '@narrative/slide-model'
 import { bulkUpdateObjects } from '@narrative/slide-model'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { getDefaultImageUrlResolver } from '../renderer/imageUrl.js'
+import {
+  Handle,
+  HANDLE_SIZE as SHARED_HANDLE_SIZE,
+  ROTATION_OFFSET as SHARED_ROT_OFFSET,
+} from './handleVisuals.js'
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const HANDLE_SIZE = 10
+const HANDLE_SIZE = SHARED_HANDLE_SIZE
+const ROTATION_OFFSET = SHARED_ROT_OFFSET
 
 type HandleKind = 'TL' | 'TC' | 'TR' | 'ML' | 'MR' | 'BL' | 'BC' | 'BR'
 
@@ -666,71 +672,36 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
               }}
             />
 
-            {/* Blue handles. */}
+            {/* Image resize handles — visuals shared with default
+                TransformHandles via <Handle>. */}
             {imageHandles.map((h) => (
-              <div
+              <Handle
                 key={`img-${h.kind}`}
-                role="button"
-                aria-label={`Image ${h.kind}`}
-                tabIndex={-1}
-                className="absolute box-border border-2 bg-white"
-                style={{
-                  left: h.x,
-                  top: h.y,
-                  width: HANDLE_SIZE,
-                  height: HANDLE_SIZE,
-                  cursor: h.cursor,
-                  borderColor: '#3b82f6',
-                  transform: `translate(-50%, -50%) scale(${inv})`,
-                  transformOrigin: 'center',
-                  touchAction: 'none',
-                  pointerEvents: 'auto',
-                }}
-                data-crop-overlay-handle="true"
+                left={h.x}
+                top={h.y}
+                cursor={h.cursor}
+                inv={inv}
+                ariaLabel={`Image ${h.kind}`}
                 onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
                 onPointerMove={onImageHandlePointerMove}
                 onPointerUp={onImageHandlePointerUp}
-                onPointerCancel={onImageHandlePointerUp}
+                dataAttr={{ name: 'crop-overlay-handle', value: 'true' }}
               />
             ))}
 
-            {/* Rotation handle — circle ~24 viewport-px above the top
-                centre. Hold Shift while dragging to snap to 15°. */}
-            <div
-              role="button"
-              aria-label="Rotate image"
-              tabIndex={-1}
-              className="absolute rounded-full border-2 bg-white"
-              style={{
-                left: imageRect.width / 2,
-                top: -24 * inv,
-                width: HANDLE_SIZE,
-                height: HANDLE_SIZE,
-                cursor: 'grab',
-                borderColor: '#3b82f6',
-                transform: `translate(-50%, -50%) scale(${inv})`,
-                transformOrigin: 'center',
-                touchAction: 'none',
-                pointerEvents: 'auto',
-              }}
-              data-crop-overlay-handle="true"
+            {/* Rotation handle — circle, same offset + styling as the
+                default TransformHandles' rotate. Hold Shift to snap. */}
+            <Handle
+              left={imageRect.width / 2}
+              top={-ROTATION_OFFSET * inv}
+              cursor="grab"
+              shape="circle"
+              inv={inv}
+              ariaLabel="Rotate image"
               onPointerDown={onRotationPointerDown}
               onPointerMove={onRotationPointerMove}
               onPointerUp={onRotationPointerUp}
-              onPointerCancel={onRotationPointerUp}
-            />
-            {/* Tether line from top center to rotation handle. */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute"
-              style={{
-                left: imageRect.width / 2,
-                top: -24 * inv,
-                width: 1 * inv,
-                height: 24 * inv,
-                background: '#3b82f6',
-                transform: 'translateX(-50%)',
-              }}
+              dataAttr={{ name: 'crop-overlay-handle', value: 'true' }}
             />
           </>
         )}
