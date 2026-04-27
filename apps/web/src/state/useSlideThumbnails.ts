@@ -24,7 +24,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { subscribeToSlideObjects } from '@narrative/slide-model'
+import { subscribeToSlideObjects, listSlides } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
@@ -145,6 +145,21 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       }, DEBOUNCE_MS)
 
       debouncersRef.current.set(slideId, { debounced, cancel })
+
+      // Seed latestObjectsRef + latestBackgroundRef from the current Y.Doc
+      // snapshot. subscribeToSlideObjects ONLY fires on changes — without
+      // this seed the render path reads an empty objects array and the
+      // thumbnail goes blank for any slide that's re-subscribed (which
+      // happens whenever slideIds changes, e.g. user adds a new slide).
+      const slides = listSlides(ctx)
+      const initial = slides.find((s) => s.id === slideId)
+      if (initial !== undefined) {
+        latestObjectsRef.current.set(slideId, initial.objects)
+        latestBackgroundRef.current.set(slideId, initial.background)
+        // Trigger an immediate render so the thumbnail appears without
+        // waiting for the user to edit the slide.
+        scheduleRender(slideId)
+      }
 
       const unsubscribe = subscribeToSlideObjects(ctx, slideId, (changes) => {
         // Always track latest objects snapshot.
