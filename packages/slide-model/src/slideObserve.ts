@@ -302,7 +302,24 @@ export function subscribeToSlideObjectsWithFlush(
 
   const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
     if (unsubscribed) return
+    // P14-DIAG: temporary instrumentation. Remove once the user's
+    // multi-window slide-2 drag bug is pinned. Logs every observer
+    // fire on the slide-objects Y.Array so we can see whether peer
+    // events even reach the subscriber.
 
+    console.debug(
+      '[slideObserve] fire',
+      JSON.stringify({
+        slideId,
+        events: events.length,
+        origin:
+          events[0]?.transaction.origin === LOCAL_ORIGIN
+            ? 'local'
+            : String(
+                events[0]?.transaction.origin?.constructor?.name ?? events[0]?.transaction.origin,
+              ),
+      }),
+    )
     for (const event of events) {
       const isRemote = event.transaction.origin !== LOCAL_ORIGIN
       if (event.target === objectsArr) {

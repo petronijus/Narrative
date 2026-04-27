@@ -838,6 +838,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               },
             }
           })
+          // P14-DIAG
+
+          console.debug(
+            '[drag.write]',
+            JSON.stringify({
+              activeSlideId: activeSlideIdRef.current,
+              ctxObjectsLen: mutationCtx.objects.length,
+              updateIds: updates.map((u) => u.id),
+            }),
+          )
           bulkUpdateObjects(mutationCtx, updates)
           return
         }

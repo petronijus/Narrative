@@ -364,6 +364,20 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
   // Batching per rAF v subscribeToObjectChanges — tento callback se volá 1× per tick.
   useSlideObjectChanges((changes) => {
     const instance = instanceRef.current
+    // P14-DIAG: temporary — log every reconciler tick so the user can
+    // see in DevTools whether peer drags even reach this point.
+
+    console.debug(
+      '[Canvas.applyChanges]',
+      JSON.stringify({
+        added: changes.added.length,
+        updated: changes.updated.length,
+        removed: changes.removed.length,
+        snapshot: changes.snapshot.length,
+        remoteOriginIds: changes.remoteOriginIds ? [...changes.remoteOriginIds] : [],
+        firstUpdate: changes.updated[0],
+      }),
+    )
     if (instance === null) {
       // Pixi ještě neinicializován — buffer a flush v init
       pendingChangesRef.current.push(changes)
