@@ -21,7 +21,6 @@ import type { ObjectChangeSet } from './observe.js'
 import { yMapToPlainObject } from './bindings.js'
 import { yMapToAnimationStep } from './animationBindings.js'
 import type { SlideMutationContext } from './slides.js'
-import { LOCAL_ORIGIN } from './mutations.js'
 
 // Re-export ObjectChangeSet for consumers who only import from slideObserve
 export type { ObjectChangeSet }
@@ -110,8 +109,6 @@ interface PendingBatch {
   addedObjects: Map<string, SlideObject>
   removedIds: Set<string>
   updatedPatches: Map<string, Partial<SlideObject>>
-  /** P14: ids touched by a non-local-origin Yjs transaction in this batch. */
-  remoteOriginIds: Set<string>
 }
 
 function createPendingBatch(): PendingBatch {
@@ -119,7 +116,6 @@ function createPendingBatch(): PendingBatch {
     addedObjects: new Map(),
     removedIds: new Set(),
     updatedPatches: new Map(),
-    remoteOriginIds: new Set(),
   }
 }
 
@@ -303,7 +299,6 @@ export function subscribeToSlideObjectsWithFlush(
         removed: netRemoved,
         updated: netUpdated,
         snapshot,
-        remoteOriginIds: batchToProcess.remoteOriginIds,
       })
       lastEmittedOrder = currentOrder
     }
@@ -313,43 +308,11 @@ export function subscribeToSlideObjectsWithFlush(
 
   const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
     if (unsubscribed) return
-    // P14-DIAG: temporary instrumentation. Remove once the user's
-    // multi-window slide-2 drag bug is pinned. Logs every observer
-    // fire on the slide-objects Y.Array so we can see whether peer
-    // events even reach the subscriber.
-
-    console.debug(
-      '[slideObserve] fire',
-      JSON.stringify({
-        slideId,
-        events: events.length,
-        origin:
-          events[0]?.transaction.origin === LOCAL_ORIGIN
-            ? 'local'
-            : String(
-                events[0]?.transaction.origin?.constructor?.name ?? events[0]?.transaction.origin,
-              ),
-      }),
-    )
     for (const event of events) {
-      const isRemote = event.transaction.origin !== LOCAL_ORIGIN
       if (event.target === objectsArr) {
         processArrayEvent(event as Y.YArrayEvent<Y.Map<unknown>>, pending, currentSnapshot)
-        if (isRemote) {
-          // Tag every id this array-event touched. Yjs YArrayEvent
-          // doesn't expose per-id keys directly, but the change set
-          // we just appended to `pending` does.
-          for (const id of pending.addedObjects.keys()) pending.remoteOriginIds.add(id)
-          for (const id of pending.removedIds) pending.remoteOriginIds.add(id)
-        }
       } else if (event.target instanceof Y.Map) {
         processMapEvent(event as Y.YMapEvent<unknown>, pending)
-        if (isRemote) {
-          // Map events fire on the per-object Y.Map. The id lives on
-          // the map itself.
-          const id = (event.target as Y.Map<unknown>).get('id') as string | undefined
-          if (id !== undefined) pending.remoteOriginIds.add(id)
-        }
       }
     }
 

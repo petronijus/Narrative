@@ -27,8 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
-import { bulkUpdateObjects, yMapToPlainObject } from '@narrative/slide-model'
-import { lockLocalDrag, unlockLocalDrag } from '../state/dragLock.js'
+import { bulkUpdateObjects } from '@narrative/slide-model'
 import type { SlideObject, ImageObject } from '@narrative/shared'
 import { computeSnap, type SnapGuideTarget } from '../editor/snap.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -384,10 +383,6 @@ export function TransformHandles({
         artboardTop: rect?.top ?? 0,
       }
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
-      // P14: claim local-drag authority over these ids until pointer-up
-      // so concurrent peer writes don't snap them around mid-resize/
-      // rotate.
-      lockLocalDrag(objectIds)
     },
     [objectIds, sceneGraph],
   )
@@ -508,30 +503,9 @@ export function TransformHandles({
   )
 
   const handlePointerUp = useCallback(() => {
-    // P14: release the drag lock and force a one-shot resync so any
-    // peer writes that arrived while we owned the ids take effect now.
-    // We read each released id straight from the Y.Doc snapshot
-    // (mutationCtx.objects) since the React-state `objects` prop is
-    // captured at the start of this drag and may be stale.
-    const releasing = dragRef.current?.objectIds ?? []
-    if (releasing.length > 0) {
-      unlockLocalDrag(releasing)
-      if (sceneGraph !== null && mutationCtx !== null) {
-        const releasingSet = new Set(releasing)
-        const yArr = mutationCtx.objects
-        for (let i = 0; i < yArr.length; i++) {
-          const yMap = yArr.get(i)
-          const id = yMap.get('id') as string | undefined
-          if (id !== undefined && releasingSet.has(id)) {
-            const fresh = yMapToPlainObject<SlideObject>(yMap)
-            sceneGraph.updateObject(id, fresh)
-          }
-        }
-      }
-    }
     dragRef.current = null
     onSnapGuides?.([])
-  }, [mutationCtx, onSnapGuides, sceneGraph])
+  }, [onSnapGuides])
 
   // Global pointermove/pointerup pro drag (capture na handle elementu)
   useEffect(() => {

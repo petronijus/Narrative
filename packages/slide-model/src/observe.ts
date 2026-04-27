@@ -85,16 +85,6 @@ export interface ObjectChangeSet {
    * pro nové subscribery a initial state.
    */
   snapshot: SlideObject[]
-  /**
-   * P14: ids whose update / add in this batch came from a non-local
-   * Y.Doc transaction (i.e. another peer wrote it). Local mutations
-   * use `LOCAL_ORIGIN`; everything else (Hocuspocus sync, undo) is
-   * treated as remote. Optional — observers that pre-date P14 simply
-   * leave it absent. Consumers that care about peer vs self origin
-   * (drag lock, presence overlays) read this set; consumers that
-   * just want the diff ignore it.
-   */
-  remoteOriginIds?: ReadonlySet<string>
 }
 
 /**

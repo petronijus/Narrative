@@ -1,31 +1,26 @@
 /**
- * e2e/p14c-real-pointer-drag.spec.ts
+ * e2e/multi-window-slide-sync.spec.ts
  *
- * Reproduces the "sync breaks after slide-switch dance" bug using REAL
- * pointer events — page.mouse.down/move/up — instead of the test API.
+ * Regression guard for P14: a peer client's drag must propagate to all
+ * other clients viewing the same slide, even after the slide-switch
+ * dance that previously stranded the observer on a stale Y.Map
+ * reference.
  *
- * This exercises the full pointer-handler chain:
- *   handlePointerDown → handlePointerMove (with mutationCtx from useSlideObjects)
- *   → bulkUpdateObjects → Y.Doc → WebSocket → B's observer → B's SceneGraph.
+ * Repro:
+ *   1. A creates deck. B opens the same URL.
+ *   2. A draws a rect on slide 1 via real pointer events. B sees it.
+ *   3. A drags it. B sees the move (baseline sync).
+ *   4. Both clients add a slide concurrently, navigate to their new
+ *      slide, then back to slide 1. This is what triggered the
+ *      pre-fix bug — the local Y.Map for slide 1 was replaced under
+ *      both clients via Hocuspocus sync, but cached references in
+ *      useSlideObjects + the observer pipeline kept the stale
+ *      Y.Array.
+ *   5. A drags the rect on slide 1 again. B must see the move.
  *
- * Previous API-level repro used applyObjectPatch which skips that chain entirely.
- *
- * Repro sequence (per user report):
- *   1. A creates deck via API.
- *   2. B opens same deck URL.
- *   3. A: select rectangle tool (Shapes dropdown → Rectangle (R)), drag-draw on canvas.
- *      B: wait for rect to appear via Y.Doc sync.
- *   4. Baseline: A drags the rect with real pointer events, verify B sees the move.
- *   5. A clicks "+ Add Slide". B clicks "+ Add Slide".
- *   6. A navigates to their new slide 2, B to theirs.
- *   7. Both navigate back to slide 1.
- *   8. A drags the rect on slide 1 with real pointer events.
- *   9. Expected bug: B does NOT see the move.
- *
- * Diagnostic console.debug lines (added to slideObserve.ts + EditorLayout.tsx):
- *   [slideObserve.observer] — fires when Y.Doc changes reach B's observer
- *   [slideObserve.flush]   — fires when the rAF batch dispatches
- *   [drag.bulk]            — fires in A's handlePointerMove before bulkUpdateObjects
+ * Uses real \`page.mouse.down/move/up\` events so the entire pointer
+ * → handlePointerMove → mutationCtx.objects → bulkUpdateObjects chain
+ * is exercised. API-level mutation bypasses the bug.
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
@@ -35,7 +30,7 @@ import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-const RESULTS_DIR = path.resolve(__dirname, '../test-results/p14c-real-pointer')
+const RESULTS_DIR = path.resolve(__dirname, '../test-results/multi-window-slide-sync')
 
 // ---------------------------------------------------------------------------
 // Helpers
