@@ -69,12 +69,12 @@ describe('duplicateSlide — preserves source object ids (Magic Move fixture)', 
     const sourceId = slides[0]!.id
 
     const objectsCtx = getSlideObjectsCtx(ctx, sourceId)!
-    addObject(objectsCtx, makeRect('r1', { x: 50, y: 60, width: 100, fill: '#00ff00' }))
+    addObject(objectsCtx, makeRect('r1', { x: 50, y: 60, width: 100, fill: 0x00ff00 }))
 
     const dup = duplicateSlide(ctx, sourceId)!
     const copy = dup.objects.find((o) => o.id === 'r1')!
     expect(copy).toMatchObject({ x: 50, y: 60, width: 100, type: 'rectangle' })
-    expect((copy as { fill: string }).fill).toBe('#00ff00')
+    expect((copy as unknown as { fill: number }).fill).toBe(0x00ff00)
   })
 
   it('animations are copied and their objectId references still resolve', () => {

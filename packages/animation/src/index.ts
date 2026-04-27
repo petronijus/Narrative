@@ -41,4 +41,5 @@ export type {
   SlideTransitionTargets,
   CompiledTransition,
   TransitionFactory,
+  MagicMoveObjectPair,
 } from './transitions/index.js'
