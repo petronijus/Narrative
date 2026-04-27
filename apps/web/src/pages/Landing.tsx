@@ -89,7 +89,7 @@ export function Landing() {
   )
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex h-screen flex-col bg-background text-foreground">
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-between">
@@ -124,8 +124,9 @@ export function Landing() {
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 px-8 py-6">
+      {/* Main content — fills remaining viewport height and scrolls when
+          the grid overflows (many decks or small window). */}
+      <main className="flex-1 overflow-y-auto px-8 py-6">
         {error !== null && (
           <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
             {error}
@@ -222,10 +223,11 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename }: DeckCardProps
       onClick={editing ? undefined : onOpen}
       className="panel group relative cursor-pointer rounded-lg border border-border p-4 hover:border-border-strong hover:shadow-glow transition-all"
     >
-      {/* Thumbnail */}
-      <div className="mb-3 h-28 overflow-hidden rounded-md bg-surface-2 flex items-center justify-center">
+      {/* Thumbnail — locked to the artboard's 16:9 aspect so the
+          preview matches what the user sees in the editor / present. */}
+      <div className="mb-3 aspect-video overflow-hidden rounded-md bg-surface-2 flex items-center justify-center">
         {thumbnail !== undefined ? (
-          <img src={thumbnail} alt="" className="h-full w-full object-contain" draggable={false} />
+          <img src={thumbnail} alt="" className="h-full w-full object-cover" draggable={false} />
         ) : (
           <span className="text-xs text-muted-foreground/60">No preview</span>
         )}
