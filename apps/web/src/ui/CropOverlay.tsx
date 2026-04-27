@@ -106,6 +106,17 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     height: obj.height,
   })
 
+  /**
+   * Two crop sub-modes (Keynote-style):
+   *  - 'frame' (default after dbl-click): orange handles, drag = move
+   *    crop window, image stays put.
+   *  - 'image': blue handles, drag = move/scale image, frame stays.
+   * The user toggles by clicking either the frame body (returns to
+   * frame mode) or the image area outside the frame (= the faded
+   * outside-frame region — switches to image mode).
+   */
+  const [mode, setMode] = useState<'frame' | 'image'>('frame')
+
   // Sync local state when the underlying object changes from outside
   // (undo / collaborator). We only re-seed when not actively dragging.
   const draggingRef = useRef(false)
@@ -171,6 +182,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return
       e.stopPropagation()
+      // Click on the image (anywhere outside the frame body) → image
+      // sub-mode: blue handles + image-only drag/scale.
+      setMode('image')
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       draggingRef.current = true
       imageDragRef.current = {
@@ -243,6 +257,69 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     },
     [imageRect, zoom, mutationCtx, obj.id],
   )
+
+  // -------------------------------------------------------------------------
+  // Frame body drag — pointer-down inside the frame moves the crop
+  // window (object.x/y) without touching imageRect.
+  // -------------------------------------------------------------------------
+
+  const frameDragRef = useRef<{
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    initialX: number
+    initialY: number
+  } | null>(null)
+
+  const onFrameBodyPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      // Always switch to frame mode on click so the orange handles
+      // appear and the user can resize.
+      setMode('frame')
+      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      draggingRef.current = true
+      frameDragRef.current = {
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        initialX: frame.x,
+        initialY: frame.y,
+      }
+    },
+    [frame.x, frame.y],
+  )
+
+  const onFrameBodyPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = frameDragRef.current
+      if (drag === null) return
+      const z = zoom === 0 ? 1 : zoom
+      const dx = (e.clientX - drag.startClientX) / z
+      const dy = (e.clientY - drag.startClientY) / z
+      const next: FrameRect = {
+        x: drag.initialX + dx,
+        y: drag.initialY + dy,
+        width: frame.width,
+        height: frame.height,
+      }
+      setFrame(next)
+      bulkUpdateObjects(mutationCtx, [{ id: obj.id, patch: { x: next.x, y: next.y } }])
+    },
+    [zoom, frame.width, frame.height, mutationCtx, obj.id],
+  )
+
+  const onFrameBodyPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (frameDragRef.current === null) return
+    try {
+      ;(e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId)
+    } catch {
+      // already released
+    }
+    frameDragRef.current = null
+    draggingRef.current = false
+  }, [])
 
   // -------------------------------------------------------------------------
   // Frame resize — pointer-down on a handle resizes the object frame
@@ -443,7 +520,10 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
 
       {/* 2. Invisible image-drag overlay covering imageRect. Catches
           pointer events anywhere on the source image (inside or
-          outside the frame). */}
+          outside the frame). Lower DOM order than the frame-body
+          overlay below, so clicks INSIDE the frame go to the frame
+          (frame mode); clicks on the faded outside-frame area land
+          here and switch to image mode. */}
       <div
         className="absolute"
         style={{
@@ -462,8 +542,28 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         data-crop-overlay-image="true"
       />
 
-      {/* 3a. Frame outline — yellow-ish accent so it reads as "this is
-          the visible window", distinct from the regular blue selection. */}
+      {/* 2b. Frame-body overlay — covers the frame rectangle on top of
+          the image-drag layer. Click → frame mode + drag = move
+          object x/y. Image stays at its slide-space imageRect. */}
+      <div
+        className="absolute"
+        style={{
+          left: frame.x,
+          top: frame.y,
+          width: frame.width,
+          height: frame.height,
+          cursor: 'move',
+          touchAction: 'none',
+        }}
+        onPointerDown={onFrameBodyPointerDown}
+        onPointerMove={onFrameBodyPointerMove}
+        onPointerUp={onFrameBodyPointerUp}
+        onPointerCancel={onFrameBodyPointerUp}
+        data-crop-overlay-frame="true"
+      />
+
+      {/* 3a. Frame outline — orange always (so user knows where the
+          crop window is even in image sub-mode). */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute box-border"
@@ -476,63 +576,76 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         }}
       />
 
-      {/* 3b. 8 frame resize handles. Positioned relative to the artboard
-          (frame.x + handle-local). Inverse-scaled to stay constant on
-          screen. */}
-      {handles.map((h) => (
+      {/* 3a'. ImageRect outline — only visible in image sub-mode, blue. */}
+      {mode === 'image' && (
         <div
-          key={h.kind}
-          role="button"
-          aria-label={`Crop frame ${h.kind}`}
-          tabIndex={-1}
-          className="absolute box-border border-2 bg-white"
+          aria-hidden="true"
+          className="pointer-events-none absolute box-border"
           style={{
-            left: frame.x + h.x,
-            top: frame.y + h.y,
-            width: HANDLE_SIZE,
-            height: HANDLE_SIZE,
-            cursor: h.cursor,
-            borderColor: '#f59e0b',
-            transform: `translate(-50%, -50%) scale(${inv})`,
-            transformOrigin: 'center',
-            touchAction: 'none',
+            left: imageRect.x,
+            top: imageRect.y,
+            width: imageRect.width,
+            height: imageRect.height,
+            border: `${2 * inv}px solid #3b82f6`,
           }}
-          data-crop-overlay-handle="true"
-          onPointerDown={(e) => onHandlePointerDown(e, h.kind)}
-          onPointerMove={onHandlePointerMove}
-          onPointerUp={onHandlePointerUp}
-          onPointerCancel={onHandlePointerUp}
         />
-      ))}
+      )}
 
-      {/* 4. Image resize handles — blue, on imageRect bounds. Drag
-          scales the image content while the (orange) frame stays put,
-          so the user can zoom into a region of the source image. */}
-      {imageHandles.map((h) => (
-        <div
-          key={`img-${h.kind}`}
-          role="button"
-          aria-label={`Image ${h.kind}`}
-          tabIndex={-1}
-          className="absolute box-border border-2 bg-white"
-          style={{
-            left: imageRect.x + h.x,
-            top: imageRect.y + h.y,
-            width: HANDLE_SIZE,
-            height: HANDLE_SIZE,
-            cursor: h.cursor,
-            borderColor: '#3b82f6',
-            transform: `translate(-50%, -50%) scale(${inv})`,
-            transformOrigin: 'center',
-            touchAction: 'none',
-          }}
-          data-crop-overlay-handle="true"
-          onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
-          onPointerMove={onImageHandlePointerMove}
-          onPointerUp={onImageHandlePointerUp}
-          onPointerCancel={onImageHandlePointerUp}
-        />
-      ))}
+      {/* 3b. 8 frame resize handles — only shown in 'frame' sub-mode. */}
+      {mode === 'frame' &&
+        handles.map((h) => (
+          <div
+            key={h.kind}
+            role="button"
+            aria-label={`Crop frame ${h.kind}`}
+            tabIndex={-1}
+            className="absolute box-border border-2 bg-white"
+            style={{
+              left: frame.x + h.x,
+              top: frame.y + h.y,
+              width: HANDLE_SIZE,
+              height: HANDLE_SIZE,
+              cursor: h.cursor,
+              borderColor: '#f59e0b',
+              transform: `translate(-50%, -50%) scale(${inv})`,
+              transformOrigin: 'center',
+              touchAction: 'none',
+            }}
+            data-crop-overlay-handle="true"
+            onPointerDown={(e) => onHandlePointerDown(e, h.kind)}
+            onPointerMove={onHandlePointerMove}
+            onPointerUp={onHandlePointerUp}
+            onPointerCancel={onHandlePointerUp}
+          />
+        ))}
+
+      {/* 4. Image resize handles — only shown in 'image' sub-mode. */}
+      {mode === 'image' &&
+        imageHandles.map((h) => (
+          <div
+            key={`img-${h.kind}`}
+            role="button"
+            aria-label={`Image ${h.kind}`}
+            tabIndex={-1}
+            className="absolute box-border border-2 bg-white"
+            style={{
+              left: imageRect.x + h.x,
+              top: imageRect.y + h.y,
+              width: HANDLE_SIZE,
+              height: HANDLE_SIZE,
+              cursor: h.cursor,
+              borderColor: '#3b82f6',
+              transform: `translate(-50%, -50%) scale(${inv})`,
+              transformOrigin: 'center',
+              touchAction: 'none',
+            }}
+            data-crop-overlay-handle="true"
+            onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
+            onPointerMove={onImageHandlePointerMove}
+            onPointerUp={onImageHandlePointerUp}
+            onPointerCancel={onImageHandlePointerUp}
+          />
+        ))}
     </>
   )
 }
