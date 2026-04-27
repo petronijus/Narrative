@@ -68,11 +68,17 @@ const DRAG_LOCKED_FIELDS = new Set<keyof SlideObject>([
 ])
 
 function filterDragLockedFields(changes: ObjectChangeSet): ObjectChangeSet {
-  // Hot path — bail without allocating when nothing is locked.
-  if (changes.updated.length === 0) return changes
+  // Hot path — bail without allocating when nothing is locked or no
+  // updates carry remote-origin transforms. Local-origin patches
+  // (your own drag handler's writes) ALWAYS flow through so the
+  // dragging client sees their own movement.
+  const remoteIds = changes.remoteOriginIds
+  if (changes.updated.length === 0 || remoteIds === undefined || remoteIds.size === 0) {
+    return changes
+  }
   let needsCopy = false
   for (const u of changes.updated) {
-    if (isLocallyDragging(u.id)) {
+    if (isLocallyDragging(u.id) && remoteIds.has(u.id)) {
       needsCopy = true
       break
     }
@@ -80,7 +86,7 @@ function filterDragLockedFields(changes: ObjectChangeSet): ObjectChangeSet {
   if (!needsCopy) return changes
 
   const filtered = changes.updated.map((u) => {
-    if (!isLocallyDragging(u.id)) return u
+    if (!isLocallyDragging(u.id) || !remoteIds.has(u.id)) return u
     const next: Partial<SlideObject> = {}
     let kept = 0
     for (const key in u.patch) {
@@ -95,6 +101,7 @@ function filterDragLockedFields(changes: ObjectChangeSet): ObjectChangeSet {
     removed: changes.removed,
     updated: filtered.filter((u): u is { id: string; patch: Partial<SlideObject> } => u !== null),
     snapshot: changes.snapshot,
+    ...(changes.remoteOriginIds !== undefined ? { remoteOriginIds: changes.remoteOriginIds } : {}),
   }
 }
 
