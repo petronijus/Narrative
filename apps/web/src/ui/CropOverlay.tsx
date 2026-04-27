@@ -58,6 +58,62 @@ function buildHandles(w: number, h: number): HandleSpec[] {
   ]
 }
 
+/**
+ * Resize math shared by frame and image handles. With shift held on a
+ * corner handle, locks aspect ratio (initial w/h) and the dominant
+ * delta drives both axes. Edge handles ignore shift (single-axis
+ * resize is unambiguous).
+ */
+function resizeRect(
+  initial: { x: number; y: number; width: number; height: number },
+  kind: HandleKind,
+  dx: number,
+  dy: number,
+  shiftHeld: boolean,
+): { x: number; y: number; width: number; height: number } {
+  let { x, y, width, height } = initial
+  const right = x + width
+  const bottom = y + height
+  const aspect = initial.height === 0 ? 1 : initial.width / initial.height
+  const isCorner = kind === 'TL' || kind === 'TR' || kind === 'BL' || kind === 'BR'
+
+  if (kind === 'TL' || kind === 'ML' || kind === 'BL') {
+    const newX = Math.min(right - 10, x + dx)
+    width = right - newX
+    x = newX
+  }
+  if (kind === 'TR' || kind === 'MR' || kind === 'BR') {
+    width = Math.max(10, width + dx)
+  }
+  if (kind === 'TL' || kind === 'TC' || kind === 'TR') {
+    const newY = Math.min(bottom - 10, y + dy)
+    height = bottom - newY
+    y = newY
+  }
+  if (kind === 'BL' || kind === 'BC' || kind === 'BR') {
+    height = Math.max(10, height + dy)
+  }
+
+  if (shiftHeld && isCorner) {
+    // Lock to initial aspect — pick whichever proposed dimension
+    // moved further from its initial value; recompute the other.
+    const dW = Math.abs(width - initial.width)
+    const dH = Math.abs(height - initial.height)
+    if (dW >= dH) {
+      const newH = Math.max(10, width / aspect)
+      // Keep the anchor corner (opposite to the dragged one) fixed.
+      if (kind === 'TL' || kind === 'TR') y = bottom - newH
+      height = newH
+    } else {
+      const newW = Math.max(10, height * aspect)
+      if (kind === 'TL' || kind === 'BL') x = right - newW
+      width = newW
+    }
+  }
+
+  return { x, y, width, height }
+}
+
 interface ImageRect {
   x: number
   y: number
@@ -99,6 +155,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
   // overlay tracks the pointer at 60Hz without waiting for the Y.Doc
   // round-trip. Committed to the doc on every move via bulkUpdateObjects.
   const [imageRect, setImageRect] = useState<ImageRect>(defaultImageRect(obj))
+  const [imageRotation, setImageRotation] = useState<number>(obj.imageRotation ?? 0)
   const [frame, setFrame] = useState<FrameRect>({
     x: obj.x,
     y: obj.y,
@@ -123,6 +180,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
   useEffect(() => {
     if (draggingRef.current) return
     setImageRect(defaultImageRect(obj))
+    setImageRotation(obj.imageRotation ?? 0)
     setFrame({ x: obj.x, y: obj.y, width: obj.width, height: obj.height })
   }, [obj])
 
@@ -365,29 +423,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
       const z = zoom === 0 ? 1 : zoom
       const dx = (e.clientX - drag.startClientX) / z
       const dy = (e.clientY - drag.startClientY) / z
-      let { x, y, width, height } = drag.initialFrame
-      const right = x + width
-      const bottom = y + height
-
-      const k = drag.kind
-      if (k === 'TL' || k === 'ML' || k === 'BL') {
-        const newX = Math.min(right - 10, x + dx)
-        width = right - newX
-        x = newX
-      }
-      if (k === 'TR' || k === 'MR' || k === 'BR') {
-        width = Math.max(10, width + dx)
-      }
-      if (k === 'TL' || k === 'TC' || k === 'TR') {
-        const newY = Math.min(bottom - 10, y + dy)
-        height = bottom - newY
-        y = newY
-      }
-      if (k === 'BL' || k === 'BC' || k === 'BR') {
-        height = Math.max(10, height + dy)
-      }
-
-      const next: FrameRect = { x, y, width, height }
+      const next = resizeRect(drag.initialFrame, drag.kind, dx, dy, e.shiftKey)
       setFrame(next)
       bulkUpdateObjects(mutationCtx, [
         {
@@ -448,29 +484,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
       const z = zoom === 0 ? 1 : zoom
       const dx = (e.clientX - drag.startClientX) / z
       const dy = (e.clientY - drag.startClientY) / z
-      let { x, y, width, height } = drag.initialImage
-      const right = x + width
-      const bottom = y + height
-
-      const k = drag.kind
-      if (k === 'TL' || k === 'ML' || k === 'BL') {
-        const newX = Math.min(right - 10, x + dx)
-        width = right - newX
-        x = newX
-      }
-      if (k === 'TR' || k === 'MR' || k === 'BR') {
-        width = Math.max(10, width + dx)
-      }
-      if (k === 'TL' || k === 'TC' || k === 'TR') {
-        const newY = Math.min(bottom - 10, y + dy)
-        height = bottom - newY
-        y = newY
-      }
-      if (k === 'BL' || k === 'BC' || k === 'BR') {
-        height = Math.max(10, height + dy)
-      }
-
-      const next: ImageRect = { x, y, width, height }
+      const next: ImageRect = resizeRect(drag.initialImage, drag.kind, dx, dy, e.shiftKey)
       setImageRect(next)
       bulkUpdateObjects(mutationCtx, [
         { id: obj.id, patch: { imageRect: next } as Partial<ImageObject> },
@@ -487,6 +501,76 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
       // already released
     }
     imageHandleDragRef.current = null
+    draggingRef.current = false
+  }, [])
+
+  // -------------------------------------------------------------------------
+  // Image rotation — drag handle above the imageRect rotates the image
+  // around the imageRect centre via obj.imageRotation. Independent of
+  // the object's frame rotation.
+  // -------------------------------------------------------------------------
+
+  const rotationDragRef = useRef<{
+    pointerId: number
+    centerClientX: number
+    centerClientY: number
+    initialAngle: number
+    initialRotation: number
+  } | null>(null)
+
+  const onRotationPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      // Find the imageRect centre in viewport coords using the artboard
+      // bounding rect + zoom.
+      const artboardEl = (e.currentTarget as HTMLElement).closest<HTMLElement>('.artboard')
+      if (artboardEl === null) return
+      const ar = artboardEl.getBoundingClientRect()
+      const z = zoom === 0 ? 1 : zoom
+      const cx = ar.left + (imageRect.x + imageRect.width / 2) * z
+      const cy = ar.top + (imageRect.y + imageRect.height / 2) * z
+      const initialAngle = Math.atan2(e.clientY - cy, e.clientX - cx)
+      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      draggingRef.current = true
+      rotationDragRef.current = {
+        pointerId: e.pointerId,
+        centerClientX: cx,
+        centerClientY: cy,
+        initialAngle,
+        initialRotation: imageRotation,
+      }
+    },
+    [imageRect.x, imageRect.y, imageRect.width, imageRect.height, imageRotation, zoom],
+  )
+
+  const onRotationPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = rotationDragRef.current
+      if (drag === null) return
+      const angle = Math.atan2(e.clientY - drag.centerClientY, e.clientX - drag.centerClientX)
+      let next = drag.initialRotation + (angle - drag.initialAngle)
+      if (e.shiftKey) {
+        // Snap to 15° increments.
+        const step = Math.PI / 12
+        next = Math.round(next / step) * step
+      }
+      setImageRotation(next)
+      bulkUpdateObjects(mutationCtx, [
+        { id: obj.id, patch: { imageRotation: next } as Partial<ImageObject> },
+      ])
+    },
+    [mutationCtx, obj.id],
+  )
+
+  const onRotationPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (rotationDragRef.current === null) return
+    try {
+      ;(e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId)
+    } catch {
+      // already released
+    }
+    rotationDragRef.current = null
     draggingRef.current = false
   }, [])
 
@@ -508,29 +592,13 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
           the frame too — that's fine, opacity 30% on top of the same
           pixels just dims them slightly which is acceptable; at the
           edges it visually cross-fades to the trimmed area. */}
-      {imageUrl !== null && (
-        <img
-          src={imageUrl}
-          alt=""
-          aria-hidden="true"
-          className="pointer-events-none absolute select-none"
-          style={{
-            left: imageRect.x,
-            top: imageRect.y,
-            width: imageRect.width,
-            height: imageRect.height,
-            opacity: 0.3,
-            objectFit: 'fill',
-          }}
-        />
-      )}
-
-      {/* 2. Invisible image-drag overlay covering imageRect. Catches
-          pointer events anywhere on the source image (inside or
-          outside the frame). Lower DOM order than the frame-body
-          overlay below, so clicks INSIDE the frame go to the frame
-          (frame mode); clicks on the faded outside-frame area land
-          here and switch to image mode. */}
+      {/* Image-side overlays — wrapped in a CSS-rotated container so
+          the ghost <img>, drag overlay, blue outline + handles all
+          rotate together as a single unit (matching the Pixi sprite's
+          imageRotation). Resize-while-rotated produces axis-aligned
+          slide-space deltas — the visual resize follows slide-x/y,
+          not the rotated frame's axes; that's a known v1 limitation
+          tracked as a P12 follow-up. */}
       <div
         className="absolute"
         style={{
@@ -538,16 +606,135 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
           top: imageRect.y,
           width: imageRect.width,
           height: imageRect.height,
-          cursor: mode === 'image' ? 'move' : 'pointer',
-          touchAction: 'none',
+          transform: `rotate(${imageRotation}rad)`,
+          transformOrigin: 'center',
+          pointerEvents: 'none',
         }}
-        onPointerDown={onImagePointerDown}
-        onPointerMove={onImagePointerMove}
-        onPointerUp={onImagePointerUp}
-        onPointerCancel={onImagePointerUp}
-        onWheel={onImageWheel}
-        data-crop-overlay-image="true"
-      />
+      >
+        {imageUrl !== null && (
+          <img
+            src={imageUrl}
+            alt=""
+            aria-hidden="true"
+            className="absolute select-none"
+            style={{
+              left: 0,
+              top: 0,
+              width: '100%',
+              height: '100%',
+              opacity: 0.3,
+              objectFit: obj.fit ?? 'cover',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+
+        {/* Image-drag overlay — full bounds, pointer-events auto so
+            the user can switch to image mode + drag from anywhere on
+            the picture. */}
+        <div
+          className="absolute"
+          style={{
+            left: 0,
+            top: 0,
+            width: '100%',
+            height: '100%',
+            cursor: mode === 'image' ? 'move' : 'pointer',
+            touchAction: 'none',
+            pointerEvents: 'auto',
+          }}
+          onPointerDown={onImagePointerDown}
+          onPointerMove={onImagePointerMove}
+          onPointerUp={onImagePointerUp}
+          onPointerCancel={onImagePointerUp}
+          onWheel={onImageWheel}
+          data-crop-overlay-image="true"
+        />
+
+        {mode === 'image' && (
+          <>
+            {/* Blue outline — relative to wrapper. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute box-border"
+              style={{
+                left: 0,
+                top: 0,
+                width: '100%',
+                height: '100%',
+                border: `${2 * inv}px solid #3b82f6`,
+              }}
+            />
+
+            {/* Blue handles. */}
+            {imageHandles.map((h) => (
+              <div
+                key={`img-${h.kind}`}
+                role="button"
+                aria-label={`Image ${h.kind}`}
+                tabIndex={-1}
+                className="absolute box-border border-2 bg-white"
+                style={{
+                  left: h.x,
+                  top: h.y,
+                  width: HANDLE_SIZE,
+                  height: HANDLE_SIZE,
+                  cursor: h.cursor,
+                  borderColor: '#3b82f6',
+                  transform: `translate(-50%, -50%) scale(${inv})`,
+                  transformOrigin: 'center',
+                  touchAction: 'none',
+                  pointerEvents: 'auto',
+                }}
+                data-crop-overlay-handle="true"
+                onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
+                onPointerMove={onImageHandlePointerMove}
+                onPointerUp={onImageHandlePointerUp}
+                onPointerCancel={onImageHandlePointerUp}
+              />
+            ))}
+
+            {/* Rotation handle — circle ~24 viewport-px above the top
+                centre. Hold Shift while dragging to snap to 15°. */}
+            <div
+              role="button"
+              aria-label="Rotate image"
+              tabIndex={-1}
+              className="absolute rounded-full border-2 bg-white"
+              style={{
+                left: imageRect.width / 2,
+                top: -24 * inv,
+                width: HANDLE_SIZE,
+                height: HANDLE_SIZE,
+                cursor: 'grab',
+                borderColor: '#3b82f6',
+                transform: `translate(-50%, -50%) scale(${inv})`,
+                transformOrigin: 'center',
+                touchAction: 'none',
+                pointerEvents: 'auto',
+              }}
+              data-crop-overlay-handle="true"
+              onPointerDown={onRotationPointerDown}
+              onPointerMove={onRotationPointerMove}
+              onPointerUp={onRotationPointerUp}
+              onPointerCancel={onRotationPointerUp}
+            />
+            {/* Tether line from top center to rotation handle. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute"
+              style={{
+                left: imageRect.width / 2,
+                top: -24 * inv,
+                width: 1 * inv,
+                height: 24 * inv,
+                background: '#3b82f6',
+                transform: 'translateX(-50%)',
+              }}
+            />
+          </>
+        )}
+      </div>
 
       {/* 2b. Frame ring — 4 thin strips around the frame border (top,
           right, bottom, left). Hit area only — interior of the frame
@@ -612,21 +799,6 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         }}
       />
 
-      {/* 3a'. ImageRect outline — only visible in image sub-mode, blue. */}
-      {mode === 'image' && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute box-border"
-          style={{
-            left: imageRect.x,
-            top: imageRect.y,
-            width: imageRect.width,
-            height: imageRect.height,
-            border: `${2 * inv}px solid #3b82f6`,
-          }}
-        />
-      )}
-
       {/* 3b. 8 frame resize handles — only shown in 'frame' sub-mode. */}
       {mode === 'frame' &&
         handles.map((h) => (
@@ -652,34 +824,6 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
             onPointerMove={onHandlePointerMove}
             onPointerUp={onHandlePointerUp}
             onPointerCancel={onHandlePointerUp}
-          />
-        ))}
-
-      {/* 4. Image resize handles — only shown in 'image' sub-mode. */}
-      {mode === 'image' &&
-        imageHandles.map((h) => (
-          <div
-            key={`img-${h.kind}`}
-            role="button"
-            aria-label={`Image ${h.kind}`}
-            tabIndex={-1}
-            className="absolute box-border border-2 bg-white"
-            style={{
-              left: imageRect.x + h.x,
-              top: imageRect.y + h.y,
-              width: HANDLE_SIZE,
-              height: HANDLE_SIZE,
-              cursor: h.cursor,
-              borderColor: '#3b82f6',
-              transform: `translate(-50%, -50%) scale(${inv})`,
-              transformOrigin: 'center',
-              touchAction: 'none',
-            }}
-            data-crop-overlay-handle="true"
-            onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
-            onPointerMove={onImageHandlePointerMove}
-            onPointerUp={onImageHandlePointerUp}
-            onPointerCancel={onImageHandlePointerUp}
           />
         ))}
     </>
