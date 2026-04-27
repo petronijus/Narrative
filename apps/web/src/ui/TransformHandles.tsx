@@ -28,6 +28,7 @@ import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
 import { bulkUpdateObjects } from '@narrative/slide-model'
+import type { SlideObject, ImageObject } from '@narrative/shared'
 import { computeSnap, type SnapGuideTarget } from '../editor/snap.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
@@ -83,6 +84,15 @@ export interface TransformHandlesProps {
    * extra snap targets so resizing also snaps to user-dropped guides.
    */
   extraGuides?: ReadonlyArray<SnapGuideTarget>
+  /**
+   * P11 (Keynote crop): live snapshot of slide objects so resize can
+   * detect ImageObject + scale its imageRect proportionally with the
+   * frame. Without this, resizing a cropped image only moves the frame
+   * — the image content stays put → looks like the crop changes
+   * instead of the cropped output scaling. Matches Keynote: select
+   * cropped photo, drag corner → cropped output scales as one.
+   */
+  objects?: ReadonlyArray<SlideObject>
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +304,7 @@ export function TransformHandles({
   otherBounds,
   extraGuides = [],
   forceAspectLock = false,
+  objects = [],
 }: TransformHandlesProps) {
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
@@ -415,6 +426,27 @@ export function TransformHandles({
 
         const id = drag.objectIds[0]
         if (id !== undefined) {
+          // Image with imageRect → scale imageRect proportionally so
+          // the cropped output behaves as one unit (Keynote parity).
+          const obj = objects.find((o) => o.id === id)
+          let imagePatch: Partial<ImageObject> | null = null
+          if (obj !== undefined && obj.type === 'image' && obj.imageRect !== undefined) {
+            const sx = initial.w === 0 ? 1 : newRect.width / initial.w
+            const sy = initial.h === 0 ? 1 : newRect.height / initial.h
+            // Position imageRect's top-left relative to the OLD frame
+            // origin, then re-anchor to the new (snapped) frame origin
+            // and scale offset + dimensions.
+            const relX = obj.imageRect.x - initial.x
+            const relY = obj.imageRect.y - initial.y
+            imagePatch = {
+              imageRect: {
+                x: snappedX + relX * sx,
+                y: snappedY + relY * sy,
+                width: obj.imageRect.width * sx,
+                height: obj.imageRect.height * sy,
+              },
+            }
+          }
           bulkUpdateObjects(mutationCtx, [
             {
               id,
@@ -423,6 +455,7 @@ export function TransformHandles({
                 y: snappedY,
                 width: newRect.width,
                 height: newRect.height,
+                ...(imagePatch ?? {}),
               },
             },
           ])
