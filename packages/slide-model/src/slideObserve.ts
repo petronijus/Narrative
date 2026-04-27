@@ -329,6 +329,125 @@ export function subscribeToSlideObjectsWithFlush(
 }
 
 // ---------------------------------------------------------------------------
+// 2b. subscribeToDeckSlideEvents — single deck-level observer
+// ---------------------------------------------------------------------------
+
+/**
+ * Subscribe to ALL object/slide changes at the deck level with a single
+ * `ctx.slides.observeDeep` observer.
+ *
+ * Instead of one per-slide observer (which captures a stale Y.Array reference
+ * after a slide rebuild), this attaches a single observer to the root slides
+ * array and derives which slide ids were affected by walking each event's
+ * target up to the immediate child of `ctx.slides`.
+ *
+ * Callback fires once per rAF tick with the Set of affected slide ids.
+ * When the slides array itself changes (add/remove/reorder), the callback
+ * receives ALL current slide ids so thumbnails can reseed.
+ *
+ * @returns unsubscribe function
+ */
+export function subscribeToDeckSlideEvents(
+  ctx: SlideMutationContext,
+  callback: (affectedSlideIds: Set<string>) => void,
+): () => void {
+  let rafHandle = -1
+  let unsubscribed = false
+  let pendingIds: Set<string> = new Set()
+
+  const flush = (): void => {
+    rafHandle = -1
+    if (unsubscribed || pendingIds.size === 0) {
+      pendingIds = new Set()
+      return
+    }
+    const ids = pendingIds
+    pendingIds = new Set()
+    callback(ids)
+  }
+
+  const scheduleFlush = (): void => {
+    if (rafHandle !== -1) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raf = (globalThis as any).requestAnimationFrame as
+      | ((cb: () => void) => number)
+      | undefined
+    if (raf !== undefined) {
+      rafHandle = raf(flush)
+    } else {
+      rafHandle = 0
+      Promise.resolve().then(flush)
+    }
+  }
+
+  const getAllCurrentIds = (): string[] => {
+    const ids: string[] = []
+    for (let i = 0; i < ctx.slides.length; i++) {
+      const id = ctx.slides.get(i).get('id') as string | undefined
+      if (typeof id === 'string') ids.push(id)
+    }
+    return ids
+  }
+
+  /**
+   * Walk `node` up the Yjs parent chain until we find the Y.Map that is a
+   * direct child of `ctx.slides`. Returns that map's 'id', or null if the
+   * target is outside the slides array or is the array itself.
+   */
+  const resolveSlideId = (target: Y.AbstractType<unknown>): string | null => {
+    if (target === ctx.slides) return null // the array itself — handled separately
+
+    let node: Y.AbstractType<unknown> | null = target
+    while (node !== null) {
+      if ((node as unknown as { parent: unknown }).parent === ctx.slides) {
+        // node is a direct child of ctx.slides — it's the slide Y.Map
+        const slideMap = node as Y.Map<unknown>
+        const id = slideMap.get('id')
+        return typeof id === 'string' ? id : null
+      }
+
+      node = (node as unknown as { parent: Y.AbstractType<unknown> | null }).parent ?? null
+    }
+    return null
+  }
+
+  const observer = (events: Y.YEvent<Y.AbstractType<unknown>>[]): void => {
+    if (unsubscribed) return
+
+    let arrayChanged = false
+    for (const event of events) {
+      if (event.target === ctx.slides) {
+        arrayChanged = true
+      } else {
+        const id = resolveSlideId(event.target)
+        if (id !== null) pendingIds.add(id)
+      }
+    }
+
+    if (arrayChanged) {
+      // Slides added/removed/reordered — emit all current ids
+      for (const id of getAllCurrentIds()) pendingIds.add(id)
+    }
+
+    if (pendingIds.size > 0) {
+      scheduleFlush()
+    }
+  }
+
+  ctx.slides.observeDeep(observer)
+
+  return (): void => {
+    unsubscribed = true
+    ctx.slides.unobserveDeep(observer)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const caf = (globalThis as any).cancelAnimationFrame as ((id: number) => void) | undefined
+    if (rafHandle !== -1 && caf !== undefined) caf(rafHandle)
+    rafHandle = -1
+    pendingIds = new Set()
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 3. subscribeToSlideAnimations
 // ---------------------------------------------------------------------------
 

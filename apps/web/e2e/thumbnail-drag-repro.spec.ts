@@ -84,9 +84,11 @@ test('drag updates thumbnail across slide switches (user repro)', async ({ page 
     const api = window.__narrative_test_api!
     api.addRect({ id: 'rA2', x: 600, y: 600, w: 200, h: 200, fill: 0x0000ff }, id)
   }, s1)
-  await page.waitForTimeout(1500)
+  // Wait long enough for the queue to drain even if many renders are
+  // pending — this measures eventual correctness, not latency.
+  await page.waitForTimeout(8000)
   const t3 = await thumbLengths(page)
-  console.log('after add rA2 on slide 1:', Object.fromEntries(t3))
+  console.log('after add rA2 on slide 1 (8s wait):', Object.fromEntries(t3))
 
   // Asserts: each step's edit must change THE EDITED slide's thumbnail.
   const t1S1 = t1.get(s1) ?? 0

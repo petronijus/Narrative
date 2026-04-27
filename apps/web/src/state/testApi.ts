@@ -17,12 +17,14 @@ import {
   LOCAL_ORIGIN,
   addObject,
   addSlide,
+  bulkUpdateObjects,
   getSlideObjectsCtx,
   listSlides,
   removeSlide,
   updateSlideTransition,
   type SlideMutationContext,
 } from '@narrative/slide-model'
+import type { SlideObject, SlideObjectPatch } from '@narrative/shared'
 
 /**
  * Snapshot of the Selection context written by SelectionContext in DEV
@@ -71,6 +73,10 @@ export interface TestApi {
   addSlide(): string
   /** Ordered list of slide ids in the deck. */
   listSlideIds(): string[]
+  /** Patch an object's geometry (used by tests to simulate drags). */
+  updateObject(objectId: string, patch: Record<string, unknown>, slideId?: string): void
+  /** Inspect object types on a slide. */
+  debugObjectTypes(slideId?: string): { id: string; type: string }[]
   /** Ids of all objects on the given slide (default = first slide). */
   objectIds(slideId?: string): string[]
   /** Number of objects on the given slide. */
@@ -189,6 +195,28 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
     },
     listSlideIds() {
       return listSlides(deckCtx).map((s) => s.id)
+    },
+    debugObjectTypes(slideId) {
+      const sid = slideId ?? listSlides(deckCtx)[0]?.id
+      if (sid === undefined) return []
+      const ctx = getSlideObjectsCtx(deckCtx, sid)
+      if (ctx === null) return []
+      const out: { id: string; type: string }[] = []
+      for (let i = 0; i < ctx.objects.length; i++) {
+        const m = ctx.objects.get(i)
+        out.push({
+          id: m.get('id') as string,
+          type: m.get('type') as string,
+        })
+      }
+      return out
+    },
+    updateObject(objectId, patch, slideId) {
+      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      if (targetSlideId === undefined) throw new Error('updateObject: no slide')
+      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      if (ctx === null) throw new Error('updateObject: slide ctx not found')
+      bulkUpdateObjects(ctx, [{ id: objectId, patch: patch as SlideObjectPatch<SlideObject> }])
     },
     addRect(opts, slideId) {
       const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id

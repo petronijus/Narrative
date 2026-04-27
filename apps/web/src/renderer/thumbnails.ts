@@ -261,17 +261,26 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         rejectRender = reject
       })
 
-      renderQueue = renderQueue.then(() => {
-        if (destroyed) {
-          rejectRender(new Error('[ThumbnailRenderer] renderer has been destroyed'))
-          return
-        }
-        try {
-          return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
-        } catch (err) {
-          rejectRender(err)
-        }
-      })
+      renderQueue = renderQueue
+        .then(() => {
+          if (destroyed) {
+            rejectRender(new Error('[ThumbnailRenderer] renderer has been destroyed'))
+            return
+          }
+          try {
+            return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
+          } catch (err) {
+            rejectRender(err)
+          }
+        })
+        // Tail catch — guarantees the queue Promise stays in a fulfilled
+        // state regardless of upstream errors, so the next render's
+        // .then() chains correctly. Without this, an uncaught rejection
+        // would freeze the whole queue and every subsequent renderSlide
+        // would never resolve.
+        .catch((err: unknown) => {
+          console.error('[ThumbnailRenderer] queue tail caught:', err)
+        })
 
       return resultPromise
     },

@@ -70,7 +70,6 @@ export function ActiveSlideProvider({ children }: ActiveSlideProviderProps) {
 
   const setActiveSlideId = useCallback(
     (id: string) => {
-      // Only set if the slide actually exists in current list
       if (slides.some((s) => s.id === id)) {
         setActiveSlideIdState(id)
       }

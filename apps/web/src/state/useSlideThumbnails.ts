@@ -6,31 +6,32 @@
  *
  * Behaviour:
  * - Creates one ThumbnailRenderer on mount; destroys it on unmount.
- * - Subscribes to each slide's object changes via subscribeToSlideObjects().
+ * - Subscribes to deck-level object changes via a SINGLE subscribeToDeckSlideEvents()
+ *   observer on ctx.slides. This avoids the stale-reference bug where per-slide
+ *   observers captured a Y.Array that got orphaned after a slide rebuild (e.g.
+ *   Hocuspocus initial sync, moveSlide delete+recreate).
  * - Re-renders are debounced 500 ms so rapid edits do not thrash the GPU.
  * - Concurrent renderSlide() calls are automatically serialised by ThumbnailRenderer.
- * - When slideIds grows, new subscriptions are added without re-creating existing ones.
- * - When slideIds shrinks, removed subscriptions are cleaned up and their entries
+ * - When slideIds grows, new per-slide debouncers are added without re-creating existing ones.
+ * - When slideIds shrinks, removed debouncers are cleaned up and their entries
  *   are removed from the returned Map.
  * - Slide deletion (slideId disappears from slideIds): entry removed from Map.
  *
  * Usage:
  *   const thumbnails = useSlideThumbnails(slideIds)
  *   // thumbnails.get(slideId) === 'data:image/png;base64,...' | undefined
- *
- * Limitation:
- * - createThumbnailRenderer() is async. Thumbnails start generating after the
- *   renderer is ready (usually < 1 rAF after mount). Until then the Map is empty.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { subscribeToSlideObjects } from '@narrative/slide-model'
+import { subscribeToDeckSlideEvents } from '@narrative/slide-model'
+import { yMapToPlainObject } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type { SlideObject, SlideBackground } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
 import { useSlides } from './useSlides.js'
+import type * as Y from 'yjs'
 
 // ---------------------------------------------------------------------------
 // Debounce helper
@@ -62,6 +63,30 @@ function debounce<T extends unknown[]>(
   }
 
   return { debounced, cancel }
+}
+
+// ---------------------------------------------------------------------------
+// Helper — read objects for a slide id from ctx by fresh traversal
+// ---------------------------------------------------------------------------
+
+function readSlideObjects(ctx: SlideMutationContext, slideId: string): SlideObject[] {
+  for (let i = 0; i < ctx.slides.length; i++) {
+    const slideMap = ctx.slides.get(i)
+    if (slideMap.get('id') === slideId) {
+      const objectsArr = slideMap.get('objects') as Y.Array<Y.Map<unknown>> | undefined
+      if (objectsArr === undefined) return []
+      const result: SlideObject[] = []
+      for (let j = 0; j < objectsArr.length; j++) {
+        try {
+          result.push(yMapToPlainObject(objectsArr.get(j)))
+        } catch {
+          // skip malformed
+        }
+      }
+      return result
+    }
+  }
+  return []
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +124,8 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     Map<string, { debounced: (id: string) => void; cancel: () => void }>
   >(new Map())
 
-  // Per-slide Yjs unsubscribe functions.
-  const unsubscribesRef = useRef<Map<string, () => void>>(new Map())
+  // Single deck-level unsubscribe (replaces per-slide unsubscribesRef).
+  const deckUnsubRef = useRef<(() => void) | null>(null)
 
   // ---------------------------------------------------------------------------
   // Render helper — schedules a thumbnail update for one slide
@@ -117,11 +142,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
   const scheduleRender = useCallback((slideId: string): void => {
     const renderer = rendererRef.current
-    if (renderer === null) return
+    if (renderer === null) {
+      return
+    }
 
     if (inFlightRef.current.has(slideId)) {
-      // Already rendering this slide — flag for re-render after current
-      // resolves so we always pick up the latest snapshot.
       pendingDirtyRef.current.add(slideId)
       return
     }
@@ -147,58 +172,77 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       })
       .finally(() => {
         inFlightRef.current.delete(slideId)
-        if (pendingDirtyRef.current.delete(slideId)) {
-          // Re-render with the latest data captured during the in-flight
-          // render. Recurse — the in-flight check above will let it
-          // through immediately since we just deleted the flag.
+        const wasDirty = pendingDirtyRef.current.delete(slideId)
+        if (wasDirty) {
           scheduleRender(slideId)
         }
       })
   }, [])
 
   // ---------------------------------------------------------------------------
-  // Subscribe / unsubscribe helpers
+  // Ensure per-slide debouncer exists (idempotent)
   // ---------------------------------------------------------------------------
 
-  const subscribeSlide = useCallback(
-    (slideId: string, ctx: SlideMutationContext): void => {
-      if (unsubscribesRef.current.has(slideId)) return // already subscribed
-
-      // Create a debouncer for this slide.
+  const ensureDebouncer = useCallback(
+    (slideId: string): void => {
+      if (debouncersRef.current.has(slideId)) return
       const { debounced, cancel } = debounce((id: string) => {
         scheduleRender(id)
       }, DEBOUNCE_MS)
-
       debouncersRef.current.set(slideId, { debounced, cancel })
-
-      // Note: subscribeToSlideObjects fires an initial synchronous
-      // emission with the full snapshot (see slideObserve.ts). That
-      // populates latestObjectsRef on subscribe — no extra seed call
-      // needed, and adding one was queueing redundant renders that
-      // backed up the serialised render queue.
-      const unsubscribe = subscribeToSlideObjects(ctx, slideId, (changes) => {
-        // Always track latest objects snapshot.
-        latestObjectsRef.current.set(slideId, changes.snapshot)
-        // Debounce the actual GPU render.
-        debounced(slideId)
-      })
-
-      unsubscribesRef.current.set(slideId, unsubscribe)
     },
     [scheduleRender],
   )
 
-  const unsubscribeSlide = useCallback((slideId: string): void => {
-    const unsub = unsubscribesRef.current.get(slideId)
-    unsub?.()
-    unsubscribesRef.current.delete(slideId)
-
+  const removeDebouncer = useCallback((slideId: string): void => {
     const db = debouncersRef.current.get(slideId)
     db?.cancel()
     debouncersRef.current.delete(slideId)
-
     latestObjectsRef.current.delete(slideId)
     latestBackgroundRef.current.delete(slideId)
+  }, [])
+
+  // ---------------------------------------------------------------------------
+  // Deck-level subscription — mounted once, never torn down until unmount.
+  // When a deck event fires, we fresh-traverse ctx.slides for each affected id.
+  // ---------------------------------------------------------------------------
+
+  // Keep a stable ref to the current tracked slide ids so the deck callback
+  // (which is created once) can always read the latest set.
+  const trackedSlideIdsRef = useRef<Set<string>>(new Set())
+
+  // Keep a stable ref to deckCtx (changes are rare but possible).
+  const deckCtxRef = useRef<SlideMutationContext>(deckCtx)
+  useEffect(() => {
+    deckCtxRef.current = deckCtx
+  }, [deckCtx])
+
+  // Mount the deck-level subscription once. We capture everything via refs.
+  useEffect(() => {
+    const ctx = deckCtxRef.current
+
+    const unsub = subscribeToDeckSlideEvents(ctx, (affectedIds: Set<string>) => {
+      const tracked = trackedSlideIdsRef.current
+      for (const slideId of affectedIds) {
+        if (!tracked.has(slideId)) continue
+
+        // Fresh traversal — avoids stale Y.Array reference
+        const objects = readSlideObjects(deckCtxRef.current, slideId)
+        latestObjectsRef.current.set(slideId, objects)
+
+        ensureDebouncer(slideId)
+        const db = debouncersRef.current.get(slideId)
+        db?.debounced(slideId)
+      }
+    })
+
+    deckUnsubRef.current = unsub
+
+    return () => {
+      unsub()
+      deckUnsubRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs once on mount
   }, [])
 
   // ---------------------------------------------------------------------------
@@ -234,15 +278,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   }, [])
 
   // ---------------------------------------------------------------------------
-  // Lifecycle — subscribe/unsubscribe when slideIds list changes
+  // Lifecycle — track which slide ids are active; seed initial objects.
   //
-  // moveSlide() in slide-model deletes+recreates the slide's Y.Map (Yjs has no
-  // in-place reorder for Y.Array<Y.Map>), which orphans any observer attached
-  // to the old objects Y.Array. We MUST re-subscribe whenever slide order or
-  // membership changes — otherwise thumbnails of reordered slides stop updating.
-  //
-  // We detect reorder/membership changes by comparing the ordered slideIds
-  // array against the previous value. Unchanged order → skip (no-op).
+  // We do NOT re-create the Yjs subscription here (that's deck-level, above).
+  // Instead we just maintain debouncers + latestObjectsRef for the current
+  // slideIds set, and seed initial object reads for newly appeared slides.
   // ---------------------------------------------------------------------------
 
   const lastSlideIdsRef = useRef<string[]>([])
@@ -256,19 +296,6 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     const incomingSet = new Set(slideIds)
     const prevSet = new Set(prev)
 
-    // Surgical diff: only unsubscribe slides that disappeared and only
-    // subscribe slides that newly appeared. The previous behaviour
-    // (tear-down ALL + re-subscribe ALL) was queueing redundant renders
-    // for every still-present slide on every list change → slow render
-    // queue → thumbnails stayed stale for several seconds.
-    //
-    // moveSlide() recreates a slide's Y.Map under the same id which
-    // would orphan the observer; that path now goes through
-    // unsubscribe(id) + subscribe(id) by reordering this list to put
-    // the moved id in `disappeared` first. Detected by
-    // `subscribeToSlideObjects` returning a no-op when the id can't be
-    // found, but in practice moveSlide also fires the slides observer
-    // which triggers slide-list re-emission upstream.
     const disappeared: string[] = []
     for (const id of prev) {
       if (!incomingSet.has(id)) disappeared.push(id)
@@ -278,16 +305,30 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       if (!prevSet.has(id)) appeared.push(id)
     }
 
-    for (const id of disappeared) unsubscribeSlide(id)
-    for (const id of appeared) subscribeSlide(id, deckCtx)
+    // Update the tracked set ref (used by deck callback).
+    trackedSlideIdsRef.current = incomingSet
+
+    // Clean up debouncers for slides that disappeared.
+    for (const id of disappeared) {
+      removeDebouncer(id)
+    }
+
+    // Seed newly appeared slides with a fresh object read + initial render.
+    for (const id of appeared) {
+      ensureDebouncer(id)
+      const objects = readSlideObjects(deckCtx, id)
+      latestObjectsRef.current.set(id, objects)
+      // Schedule initial render immediately (not debounced) so thumbnails
+      // appear as soon as the renderer is ready.
+      scheduleRender(id)
+    }
 
     // Prune thumbnails of slides that no longer exist.
-    const incoming = new Set(slideIds)
     setThumbnails((prev) => {
       let changed = false
       const next = new Map<string, string>()
       for (const [id, url] of prev) {
-        if (incoming.has(id)) {
+        if (incomingSet.has(id)) {
           next.set(id, url)
         } else {
           changed = true
@@ -297,7 +338,7 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
     })
 
     lastSlideIdsRef.current = slideIds.slice()
-  }, [slideIds, deckCtx, subscribeSlide, unsubscribeSlide])
+  }, [slideIds, deckCtx, ensureDebouncer, removeDebouncer, scheduleRender])
 
   // ---------------------------------------------------------------------------
   // P3: watch slide backgrounds — re-render thumbnails when they change.
@@ -328,18 +369,17 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   }, [allSlides, slideIds, scheduleRender])
 
   // ---------------------------------------------------------------------------
-  // Cleanup all subscriptions on unmount
+  // Cleanup all per-slide state on unmount
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
     return () => {
-      for (const slideId of [...unsubscribesRef.current.keys()]) {
-        unsubscribeSlide(slideId)
+      for (const slideId of [...debouncersRef.current.keys()]) {
+        removeDebouncer(slideId)
       }
+      trackedSlideIdsRef.current = new Set()
       // React 18 StrictMode persists refs across the mount→unmount→remount cycle.
-      // If we don't reset lastSlideIdsRef here, the remount's slideIds effect
-      // sees sameOrder=true and skips resubscribing — leaving latestObjectsRef
-      // empty forever. Clear it so remount sees a fresh baseline.
+      // Reset lastSlideIdsRef so remount re-seeds all slides.
       lastSlideIdsRef.current = []
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only on unmount
