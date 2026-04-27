@@ -20,8 +20,30 @@ interface TextureEntry {
   refCount: number
 }
 
+/**
+ * P12c: cap on the procedural texture cache. Even with correct
+ * acquire/release ref-counting, the LRU is a backstop so a missed
+ * release (or a runaway slider scrub building thousands of unique keys)
+ * can't grow GPU memory unbounded. Entries are only evicted when their
+ * refCount has dropped to zero — no in-use texture is ever reclaimed.
+ */
+const PROCEDURAL_LRU_CAP = 128
+
 export class ResourceManager {
   private readonly textures = new Map<string, TextureEntry>()
+
+  /**
+   * P12c: ref-counted cache for procedurally generated textures
+   * (gradient fills, image fills painted into a canvas, future pattern
+   * fills). Keys are caller-defined structural hashes — see
+   * `acquireProcedural` for the contract.
+   *
+   * Insertion order is preserved by Map iteration, which the LRU sweep
+   * relies on: the oldest entry sits at the front, the most recently
+   * used at the back. Cache hits re-insert the entry to bump it to the
+   * back so frequent-access keys survive eviction.
+   */
+  private readonly procedural = new Map<string, TextureEntry>()
 
   /**
    * Načte texturu z URL (nebo vrátí cachouvanou). Inkrementuje ref count.
@@ -81,6 +103,10 @@ export class ResourceManager {
       entry.texture.destroy(true)
     }
     this.textures.clear()
+    for (const [, entry] of this.procedural) {
+      entry.texture.destroy(true)
+    }
+    this.procedural.clear()
   }
 
   /** Počet aktuálně spravovaných textur (pro debugging a testy). */
@@ -100,6 +126,88 @@ export class ResourceManager {
    */
   peekTexture(url: string): Texture | null {
     return this.textures.get(url)?.texture ?? null
+  }
+
+  // -------------------------------------------------------------------------
+  // P12c: procedural texture cache
+  // -------------------------------------------------------------------------
+
+  /**
+   * Acquires a procedurally generated texture by structural key. The
+   * factory is invoked exactly once per unique key — subsequent
+   * `acquire` calls with the same key simply bump the ref-count and
+   * return the cached Texture.
+   *
+   * Contract for callers:
+   *   - The `key` MUST capture every input that affects the painted
+   *     pixels (kind, stops, dimensions, etc). Two distinct visual
+   *     outputs sharing a key would alias each other on screen.
+   *   - Every successful `acquireProcedural` MUST be paired with exactly
+   *     one `releaseProcedural` (typically when the renderer either
+   *     transitions to a new key or destroys its container).
+   *
+   * The factory's returned Texture is owned by the ResourceManager
+   * once handed over — caller MUST NOT call `texture.destroy()`.
+   */
+  acquireProcedural(key: string, factory: () => Texture): Texture {
+    const existing = this.procedural.get(key)
+    if (existing !== undefined) {
+      existing.refCount += 1
+      // LRU bump: re-insert at the end of iteration order.
+      this.procedural.delete(key)
+      this.procedural.set(key, existing)
+      return existing.texture
+    }
+
+    const texture = factory()
+    this.procedural.set(key, { texture, refCount: 1 })
+    this.evictProceduralIfNeeded()
+    return texture
+  }
+
+  /**
+   * Decrement the ref-count for a procedural texture. When the count
+   * hits zero the entry stays in the cache (so a quick re-acquire of
+   * the same key is free) but is eligible for LRU eviction.
+   */
+  releaseProcedural(key: string): void {
+    const entry = this.procedural.get(key)
+    if (entry === undefined) return
+    entry.refCount -= 1
+    if (entry.refCount < 0) entry.refCount = 0
+    // Don't destroy on refCount=0 — keep the entry so a fast
+    // round-trip (slider that lands back on a previous key) reuses it.
+    // The LRU sweep below reclaims when memory pressure builds.
+  }
+
+  /**
+   * Number of cached procedural textures (regardless of ref count).
+   * Surfaced through the perf HUD so we can watch the cache breathe.
+   */
+  get proceduralTextureCount(): number {
+    return this.procedural.size
+  }
+
+  /**
+   * Sum of (textures + procedural) so the perf HUD can show one
+   * aggregate "managed textures" number.
+   */
+  get totalManagedTextureCount(): number {
+    return this.textures.size + this.procedural.size
+  }
+
+  private evictProceduralIfNeeded(): void {
+    if (this.procedural.size <= PROCEDURAL_LRU_CAP) return
+    // Evict from the front (oldest) until we're back under the cap, but
+    // only entries with refCount === 0. Skip entries that are still
+    // held by a live container — those would crash on next render if
+    // we destroyed their texture.
+    for (const [key, entry] of this.procedural) {
+      if (this.procedural.size <= PROCEDURAL_LRU_CAP) break
+      if (entry.refCount > 0) continue
+      entry.texture.destroy(true)
+      this.procedural.delete(key)
+    }
   }
 }
 

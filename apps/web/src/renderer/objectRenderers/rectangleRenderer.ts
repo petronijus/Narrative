@@ -13,7 +13,7 @@
 import { Container, Graphics } from 'pixi.js'
 import type { RectangleObject } from '../types'
 import type { CornerRadius } from '@narrative/shared'
-import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
+import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleRoundedRect } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
@@ -98,7 +98,7 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
     graphics.fill(resolved.input)
   }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
@@ -312,6 +312,7 @@ export const rectangleRenderer = {
    */
   destroy(node: Container): void {
     releaseImageFill(node)
+    releaseProceduralFill(node)
     const graphics = getGraphics(node)
     graphics?.destroy()
     destroyFilterEffects(node)

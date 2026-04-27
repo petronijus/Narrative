@@ -16,7 +16,7 @@
 
 import { Container, Graphics } from 'pixi.js'
 import type { EllipseObject } from '../types'
-import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
+import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleEllipse } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
@@ -72,7 +72,7 @@ function drawEllipse(graphics: Graphics, container: Container, data: EllipseObje
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
     graphics.fill(resolved.input)
   }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
@@ -242,6 +242,7 @@ export const ellipseRenderer = {
    */
   destroy(node: Container): void {
     releaseImageFill(node)
+    releaseProceduralFill(node)
     const graphics = getGraphics(node)
     graphics?.destroy()
     destroyFilterEffects(node)

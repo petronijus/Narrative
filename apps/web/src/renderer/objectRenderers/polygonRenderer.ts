@@ -13,7 +13,7 @@
 import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { TriangleObject, PolygonObject } from '@narrative/shared'
-import { fillStyleToPixi, imageFillToPixiFill } from '../fillStyleToPixi.js'
+import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
@@ -68,7 +68,7 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height)
+    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
     g.fill(resolved.input)
   }
   // Save latest data for async redraw in image-fill onReady.
@@ -130,6 +130,7 @@ function makeRenderer<T extends PolygonLike>(type: T['type']) {
     },
     destroy(node: PixiContainer): void {
       releaseImageFill(node)
+      releaseProceduralFill(node)
       const g = getGraphics(node)
       g?.destroy()
       destroyFilterEffects(node)

@@ -34,6 +34,7 @@ import type {
   ImageBackground,
 } from '@narrative/shared'
 import { markRenderDirty } from './RenderScheduler'
+import { getDefaultResourceManager } from './ResourceManager.js'
 
 // ---------------------------------------------------------------------------
 // Internal metadata keys (Symbol-tagged on the Container)
@@ -41,6 +42,13 @@ import { markRenderDirty } from './RenderScheduler'
 
 const SIG_TAG = Symbol('bgSignature')
 const TEX_URL_TAG = Symbol('bgTextureUrl')
+/**
+ * P12c: when the background renders a procedurally-painted gradient
+ * texture (linear / radial), we acquire it from ResourceManager's
+ * procedural cache. The key is stored on the container so the next
+ * paint can release it before acquiring the new one.
+ */
+const PROC_KEY_TAG = Symbol('bgProceduralKey')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol metadata on Pixi Container is untyped
 const asAny = (c: Container): any => c
@@ -56,6 +64,16 @@ function getAcquiredUrl(c: Container): string | undefined {
 }
 function setAcquiredUrl(c: Container, url: string | undefined): void {
   asAny(c)[TEX_URL_TAG] = url
+}
+function getProceduralKey(c: Container): string | undefined {
+  return asAny(c)[PROC_KEY_TAG] as string | undefined
+}
+function setProceduralKey(c: Container, key: string | undefined): void {
+  if (key === undefined) {
+    delete asAny(c)[PROC_KEY_TAG]
+  } else {
+    asAny(c)[PROC_KEY_TAG] = key
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -190,14 +208,36 @@ export function applyBackground(args: ApplyBackgroundArgs): void {
   }
 
   if (background.kind === 'linearGradient' || background.kind === 'radialGradient') {
-    const canvas = canvasForGradient(width, height)
-    if (background.kind === 'linearGradient') {
-      paintLinear(canvas, background, width, height)
-    } else {
-      paintRadial(canvas, background)
+    // P12c: route the painted gradient through ResourceManager's
+    // procedural cache (ref-counted, LRU-bounded). Without this,
+    // clearContainer() would destroy the Sprite but leak the texture
+    // every time the user nudged the gradient slider.
+    const key = `bg:${sig}`
+    let texture: Texture
+    try {
+      const rm = getDefaultResourceManager()
+      texture = rm.acquireProcedural(key, () => {
+        const canvas = canvasForGradient(width, height)
+        if (background.kind === 'linearGradient') {
+          paintLinear(canvas, background, width, height)
+        } else {
+          paintRadial(canvas, background)
+        }
+        return Texture.from(canvas)
+      })
+      setProceduralKey(container, key)
+    } catch {
+      // ResourceManager not installed (tests, headless thumb) — fall
+      // back to a fresh paint with no caching. Matches pre-P12c
+      // behaviour for those callers.
+      const canvas = canvasForGradient(width, height)
+      if (background.kind === 'linearGradient') {
+        paintLinear(canvas, background, width, height)
+      } else {
+        paintRadial(canvas, background)
+      }
+      texture = Texture.from(canvas)
     }
-    // Texture from the offscreen canvas — Pixi v8 uploads on demand.
-    const texture = Texture.from(canvas)
     const sprite = new Sprite(texture)
     sprite.width = width
     sprite.height = height
@@ -286,6 +326,18 @@ function clearContainer(container: Container, release?: (url: string) => void): 
   if (acquired !== undefined) {
     release?.(acquired)
     setAcquiredUrl(container, undefined)
+  }
+  // P12c: release the procedural-cache ref before destroying child
+  // sprites — the ResourceManager owns the texture, the Sprite was just
+  // a renderer for it.
+  const procKey = getProceduralKey(container)
+  if (procKey !== undefined) {
+    try {
+      getDefaultResourceManager().releaseProcedural(procKey)
+    } catch {
+      // ResourceManager not installed — safe to drop.
+    }
+    setProceduralKey(container, undefined)
   }
   for (const child of [...container.children]) {
     if (!child.destroyed) child.destroy({ children: true })
