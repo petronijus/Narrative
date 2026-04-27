@@ -58,15 +58,17 @@ export function useSlideObjects(): UseSlideObjectsResult {
     }
   }, [deckCtx, activeSlideId, slideOrderKey])
 
-  // Recompute objectsCtx whenever activeSlideId or the slide order
-  // changes — getSlideObjectsCtx looks up the live Y.Array each call,
-  // and we need a fresh reference after any structural change so
-  // bulkUpdateObjects writes to the current in-doc Y.Array.
-  const objectsCtx = useMemo(
-    () => (activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- slideOrderKey covers slide structure, deckCtx is stable
-    [deckCtx, activeSlideId, slideOrderKey],
-  )
+  // P14: do NOT memoize this. The objectsCtx wraps a Y.Array reference
+  // that can be SILENTLY swapped when a remote moveSlide / sync replaces
+  // a slide's Y.Map without changing its id or position. memoising on
+  // [deckCtx, activeSlideId, slideOrderKey] would keep the stale Y.Array
+  // reference alive — the drag handler then writes to a Y.Array no
+  // longer in the doc tree, peers never receive the update, and the
+  // local UI shows up-to-date data because useSlideObjectChanges
+  // re-subscribes on slideOrderKey but useSlideObjects does not. Fresh
+  // lookup per render is cheap (O(slides) array scan, no Y.Doc
+  // mutation) and bulletproof.
+  const objectsCtx = activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null
 
   return { objects, objectsCtx, mutationCtx: objectsCtx }
 }
