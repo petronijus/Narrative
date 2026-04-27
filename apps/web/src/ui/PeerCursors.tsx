@@ -65,25 +65,27 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
   // will-change pro GPU compositing — kurzory se mění každý frame
   wrapper.style.willChange = 'transform'
 
-  // SVG arrow
+  // SVG arrow (Figma-style mouse pointer at the cursor tip)
   const svgContainer = document.createElement('div')
+  svgContainer.dataset['role'] = 'pointer'
   svgContainer.style.display = 'inline-block'
   svgContainer.style.lineHeight = '0'
   svgContainer.innerHTML = createCursorSvg(peer.state.user.color)
 
-  // Name label
+  // Name badge — sits just below + right of the pointer tip.
   const label = document.createElement('div')
+  label.dataset['role'] = 'label'
   label.style.position = 'absolute'
-  label.style.top = '14px'
-  label.style.left = '14px'
+  label.style.top = '16px'
+  label.style.left = '12px'
   label.style.backgroundColor = peer.state.user.color
   label.style.color = '#fff'
   label.style.fontSize = '11px'
   label.style.fontFamily = 'system-ui, sans-serif'
   label.style.fontWeight = '600'
   label.style.lineHeight = '1'
-  label.style.padding = '2px 5px'
-  label.style.borderRadius = '3px'
+  label.style.padding = '3px 6px'
+  label.style.borderRadius = '4px'
   label.style.whiteSpace = 'nowrap'
   label.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)'
   label.textContent = peer.state.user.name
@@ -149,8 +151,12 @@ export function PeerCursors(): null {
           pixiContainer: rootContainer,
           worldOffset: { x: peer.state.cursor.x, y: peer.state.cursor.y },
         })
-        // Update jméno pokud se změnilo
-        const label = existing.element.querySelector('div') as HTMLDivElement | null
+        // Update jméno pokud se změnilo. POZOR: dříve se používalo
+        // querySelector('div'), které vracelo PRVNÍ div (= pointer s SVG)
+        // a přepisovalo jeho textContent — tím se SVG šipka nahradila
+        // textovým jménem a uživatel viděl jméno místo pointeru
+        // ("Dev user" + badge "Dev user"). Cílíme na badge přes data-role.
+        const label = existing.element.querySelector('[data-role="label"]') as HTMLDivElement | null
         if (label !== null && label.textContent !== peer.state.user.name) {
           label.textContent = peer.state.user.name
         }
