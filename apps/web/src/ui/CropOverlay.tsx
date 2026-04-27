@@ -327,10 +327,91 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
   }, [])
 
   // -------------------------------------------------------------------------
+  // Image resize — blue handles on the imageRect bounds. Drag scales
+  // the image content within the (un-changed) frame so the user can
+  // zoom into a specific region while the crop window stays put.
+  // -------------------------------------------------------------------------
+
+  const imageHandleDragRef = useRef<{
+    kind: HandleKind
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    initialImage: ImageRect
+  } | null>(null)
+
+  const onImageHandlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, kind: HandleKind) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+      draggingRef.current = true
+      imageHandleDragRef.current = {
+        kind,
+        pointerId: e.pointerId,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        initialImage: { ...imageRect },
+      }
+    },
+    [imageRect],
+  )
+
+  const onImageHandlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = imageHandleDragRef.current
+      if (drag === null) return
+      const z = zoom === 0 ? 1 : zoom
+      const dx = (e.clientX - drag.startClientX) / z
+      const dy = (e.clientY - drag.startClientY) / z
+      let { x, y, width, height } = drag.initialImage
+      const right = x + width
+      const bottom = y + height
+
+      const k = drag.kind
+      if (k === 'TL' || k === 'ML' || k === 'BL') {
+        const newX = Math.min(right - 10, x + dx)
+        width = right - newX
+        x = newX
+      }
+      if (k === 'TR' || k === 'MR' || k === 'BR') {
+        width = Math.max(10, width + dx)
+      }
+      if (k === 'TL' || k === 'TC' || k === 'TR') {
+        const newY = Math.min(bottom - 10, y + dy)
+        height = bottom - newY
+        y = newY
+      }
+      if (k === 'BL' || k === 'BC' || k === 'BR') {
+        height = Math.max(10, height + dy)
+      }
+
+      const next: ImageRect = { x, y, width, height }
+      setImageRect(next)
+      bulkUpdateObjects(mutationCtx, [
+        { id: obj.id, patch: { imageRect: next } as Partial<ImageObject> },
+      ])
+    },
+    [zoom, mutationCtx, obj.id],
+  )
+
+  const onImageHandlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (imageHandleDragRef.current === null) return
+    try {
+      ;(e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId)
+    } catch {
+      // already released
+    }
+    imageHandleDragRef.current = null
+    draggingRef.current = false
+  }, [])
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
 
   const handles = buildHandles(frame.width, frame.height)
+  const imageHandles = buildHandles(imageRect.width, imageRect.height)
   // Inverse-zoom factor so handles stay constant SCREEN size despite
   // the artboard's CSS scale(zoom).
   const inv = zoom === 0 ? 1 : 1 / zoom
@@ -395,7 +476,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         }}
       />
 
-      {/* 3b. 8 resize handles. Positioned relative to the artboard
+      {/* 3b. 8 frame resize handles. Positioned relative to the artboard
           (frame.x + handle-local). Inverse-scaled to stay constant on
           screen. */}
       {handles.map((h) => (
@@ -421,6 +502,35 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
           onPointerMove={onHandlePointerMove}
           onPointerUp={onHandlePointerUp}
           onPointerCancel={onHandlePointerUp}
+        />
+      ))}
+
+      {/* 4. Image resize handles — blue, on imageRect bounds. Drag
+          scales the image content while the (orange) frame stays put,
+          so the user can zoom into a region of the source image. */}
+      {imageHandles.map((h) => (
+        <div
+          key={`img-${h.kind}`}
+          role="button"
+          aria-label={`Image ${h.kind}`}
+          tabIndex={-1}
+          className="absolute box-border border-2 bg-white"
+          style={{
+            left: imageRect.x + h.x,
+            top: imageRect.y + h.y,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+            cursor: h.cursor,
+            borderColor: '#3b82f6',
+            transform: `translate(-50%, -50%) scale(${inv})`,
+            transformOrigin: 'center',
+            touchAction: 'none',
+          }}
+          data-crop-overlay-handle="true"
+          onPointerDown={(e) => onImageHandlePointerDown(e, h.kind)}
+          onPointerMove={onImageHandlePointerMove}
+          onPointerUp={onImageHandlePointerUp}
+          onPointerCancel={onImageHandlePointerUp}
         />
       ))}
     </>
