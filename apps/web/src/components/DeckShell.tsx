@@ -27,7 +27,8 @@
  *      child routes for simplicity — upload state is simply unused in present mode).
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useLayoutEffect } from 'react'
+import { markDeckLoadStart } from '../state/loadTimings.js'
 import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
@@ -49,6 +50,16 @@ export interface DeckShellContextValue {
 export function DeckShell() {
   const { id } = useParams<{ id: string }>()
   const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
+
+  // P12d: stamp t0 for the perf HUD's load-time breakdown. Re-stamps
+  // whenever the deckId changes so each navigation gets a fresh
+  // ws → sync → pixi → paint timeline. Layout effect so we beat the
+  // SlideDocProvider's own effect that creates the WS.
+  useLayoutEffect(() => {
+    if (id !== undefined && id !== '') {
+      markDeckLoadStart()
+    }
+  }, [id])
 
   const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)

@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Application, Container } from 'pixi.js'
 import { usePerfHud } from '../state/PerfHudContext.js'
+import { readLoadTimings, type LoadTimings } from '../state/loadTimings.js'
 
 interface PerfSnapshot {
   ready: boolean
@@ -32,6 +33,7 @@ interface PerfSnapshot {
   textures: number
   procedural: number
   heapMb: number | null
+  load: LoadTimings | null
 }
 
 interface PerfHandle {
@@ -73,6 +75,7 @@ export function PerfHud() {
     textures: 0,
     procedural: 0,
     heapMb: null,
+    load: null,
   })
 
   // Rolling FPS — average over the last ~1s of samples so the number
@@ -105,6 +108,7 @@ export function PerfHud() {
         textures: resourceManager.textureCount,
         procedural: resourceManager.proceduralTextureCount ?? 0,
         heapMb: readHeapMb(),
+        load: readLoadTimings(),
       })
     }, 250)
 
@@ -143,10 +147,31 @@ export function PerfHud() {
               <span>{snap.heapMb} MB</span>
             </>
           )}
+          {snap.load !== null && snap.load.firstPaintMs !== null && (
+            <>
+              <span className="col-span-2 mt-1 border-t border-white/10 pt-1 text-white/40 text-[10px] uppercase tracking-wider">
+                load
+              </span>
+              <span className="text-white/60">ws connect</span>
+              <span>{fmtMs(snap.load.wsConnectedMs)}</span>
+              <span className="text-white/60">ws sync</span>
+              <span>{fmtMs(snap.load.wsSyncedMs)}</span>
+              <span className="text-white/60">pixi ready</span>
+              <span>{fmtMs(snap.load.pixiReadyMs)}</span>
+              <span className="text-white/60">first paint</span>
+              <span className="text-emerald-300">{fmtMs(snap.load.firstPaintMs)}</span>
+            </>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function fmtMs(v: number | null): string {
+  if (v === null) return '—'
+  if (v < 1000) return `${v} ms`
+  return `${(v / 1000).toFixed(2)} s`
 }
 
 function fpsClass(fps: number): string {
