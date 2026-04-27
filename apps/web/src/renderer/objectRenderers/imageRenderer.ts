@@ -195,17 +195,22 @@ function layoutSprite(
   // (ir.x - data.x, ir.y - data.y) inside the object container.
   applyFit(sprite, texture, { w: ir.width, h: ir.height }, fit)
 
-  // Rotate the spriteWrap around the imageRect centre when the image
-  // has its own rotation (independent of the object's frame rotation).
-  // Pixi's pivot/position semantics: the wrap is drawn at
-  // (position - pivot) BEFORE its own transform, then rotation around
-  // pivot. Setting pivot=(w/2, h/2) and position=(top-left + w/2, h/2)
-  // visually places the wrap at the same top-left while rotating
-  // around its centre.
+  // Only enable centre-pivot positioning when rotation is non-zero —
+  // setting a non-zero pivot on a Pixi Container with a mask appears to
+  // break thumbnail render-to-texture in some cases (mask not applied or
+  // sprite drops out of the rasterised frame). For the un-rotated case
+  // (vast majority) keep the old simple top-left positioning so
+  // thumbnails behave exactly like before P11r.
   const rot = data.imageRotation ?? 0
-  spriteWrap.pivot.set(ir.width / 2, ir.height / 2)
-  spriteWrap.x = ir.x - data.x + ir.width / 2
-  spriteWrap.y = ir.y - data.y + ir.height / 2
+  if (rot !== 0) {
+    spriteWrap.pivot.set(ir.width / 2, ir.height / 2)
+    spriteWrap.x = ir.x - data.x + ir.width / 2
+    spriteWrap.y = ir.y - data.y + ir.height / 2
+  } else {
+    spriteWrap.pivot.set(0, 0)
+    spriteWrap.x = ir.x - data.x
+    spriteWrap.y = ir.y - data.y
+  }
   spriteWrap.rotation = rot
 }
 

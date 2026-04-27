@@ -689,11 +689,12 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
               />
             ))}
 
-            {/* Rotation handle — circle, same offset + styling as the
-                default TransformHandles' rotate. Hold Shift to snap. */}
+            {/* Rotation handle — circle, sits ROTATION_OFFSET viewport-px
+                BELOW the top edge (i.e. INSIDE the bounds), matching
+                the default TransformHandles. Hold Shift to snap to 15°. */}
             <Handle
               left={imageRect.width / 2}
-              top={-ROTATION_OFFSET * inv}
+              top={ROTATION_OFFSET * inv}
               cursor="grab"
               shape="circle"
               inv={inv}
