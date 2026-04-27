@@ -109,6 +109,7 @@ export {
   subscribeToSlideObjects,
   subscribeToSlideObjectsWithFlush,
   subscribeToSlideAnimations,
+  subscribeToDeckSlideEvents,
 } from './slideObserve.js'
 export type { SlideSummary, ObjectChangeSet } from './slideObserve.js'
 

@@ -48,9 +48,15 @@ describe('toPeerInfo', () => {
   })
 
   it('parses cursor when present', () => {
-    const state = makeState({ cursor: { x: 120.5, y: 300.1 } })
+    const state = makeState({ cursor: { x: 120.5, y: 300.1, slideId: 'slide-a' } })
     const result = toPeerInfo(1, state, 99)
-    expect(result!.state.cursor).toEqual({ x: 120.5, y: 300.1 })
+    expect(result!.state.cursor).toEqual({ x: 120.5, y: 300.1, slideId: 'slide-a' })
+  })
+
+  it('drops cursor without slideId (legacy payload guard)', () => {
+    const state = makeState({ cursor: { x: 1, y: 2 } })
+    const result = toPeerInfo(1, state, 99)
+    expect(result!.state.cursor).toBeNull()
   })
 
   it('passes selectedObjectIds through', () => {

@@ -40,12 +40,12 @@ export function useSlideObjects(): UseSlideObjectsResult {
       setObjects([])
       return
     }
-
-    // subscribeToSlideObjects emits initial state synchronously, then on every change
     const unsubscribe = subscribeToSlideObjects(deckCtx, activeSlideId, (changes) => {
       setObjects(changes.snapshot)
     })
-    return unsubscribe
+    return () => {
+      unsubscribe()
+    }
   }, [deckCtx, activeSlideId])
 
   const objectsCtx = activeSlideId !== null ? getSlideObjectsCtx(deckCtx, activeSlideId) : null

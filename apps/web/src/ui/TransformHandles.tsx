@@ -108,8 +108,7 @@ export interface TransformHandlesProps {
 // Handle geometry helpers
 // ---------------------------------------------------------------------------
 
-const HANDLE_SIZE = 8
-const ROTATION_OFFSET = 24
+import { ROTATION_OFFSET, Handle } from './handleVisuals.js'
 
 /**
  * Interpoluje bod mezi dvěma body (pro edge midpoints).
@@ -559,26 +558,17 @@ export function TransformHandles({
         />
       </svg>
 
-      {/* Transform handles — positioned at slide-space bounds, but the
-          artboard wrapper applies CSS scale(zoom) so we invert-scale each
-          handle so it stays at a constant SCREEN size. */}
+      {/* Transform handles — visuals shared with CropOverlay's
+          image-mode handles via <Handle>. */}
       {visibleHandles.map((h) => (
-        <div
+        <Handle
           key={h.kind}
-          role="button"
-          aria-label={h.ariaLabel}
-          tabIndex={-1}
-          className="absolute box-border border-2 border-blue-400 bg-white"
-          style={{
-            left: h.x,
-            top: h.y,
-            width: HANDLE_SIZE,
-            height: HANDLE_SIZE,
-            cursor: h.cursor,
-            borderRadius: h.kind === 'rotate' ? '50%' : 0,
-            transform: `translate(-50%, -50%) scale(${inv})`,
-            transformOrigin: 'center',
-          }}
+          left={h.x}
+          top={h.y}
+          cursor={h.cursor}
+          shape={h.kind === 'rotate' ? 'circle' : 'square'}
+          inv={inv}
+          ariaLabel={h.ariaLabel}
           onPointerDown={(e) => handlePointerDown(e, h.kind)}
         />
       ))}

@@ -14,14 +14,19 @@
  *   3. (volitelně) diagnostika
  * Pixi ticker garantuje toto pořadí automaticky. Ticker priority NORMAL = po scene update.
  *
- * DPR handling (Spike C nález):
- * container.toGlobal() vrací fyzické pixely (Pixi render space).
- * CSS translate() pracuje v logical pixelech.
- * Formula: cssX = global.x / DPR
+ * DPR handling:
+ * Pixi v8 s autoDensity:true používá logické pixely (CSS px) ve všech Container
+ * souřadnicích. container.toGlobal() vrací logické pixely — NIKOLI fyzické.
+ * Projekční matice rendereru skaluje fyzické rozlišení interně; z pohledu
+ * container.toGlobal() / toLocal() je DPR transparentní.
+ * CSS translate() také pracuje v logických pixelech → žádná DPR kompenzace není nutná.
+ *
+ * (Spike C byl psán bez autoDensity a předpokládal fyzické px; od P2 s autoDensity:true
+ *  je dělení DPR nesprávné a způsobovalo špatné pozicování na HiDPI displejích.)
  *
  * DPR changes (přesun okna na jiný monitor):
- * Compositor poslouchá window 'resize' event jako proxy pro DPR change detection.
- * Alternativa matchMedia(`(resolution: ${DPR}dppx)`) je přesnější ale složitější.
+ * Compositor stále sleduje window 'resize' jako proxy — pro případ budoucího použití
+ * a pro okamžitý resync pozic po resize.
  *
  * Performance (Spike C C3):
  * 50 overlays × style.transform update = 0.093 ms avg per frame (0.56% frame budget).
@@ -48,7 +53,8 @@ export class OverlayCompositor {
   /** Scratch Point pro toGlobal() — reuse per-frame, žádný GC churn. */
   private readonly _scratch = new Point(0, 0)
 
-  /** Cached DPR — updatujeme při window resize (monitor přesun). */
+  /** Cached DPR — sledujeme pro resize detection; pozicování DPR nekompenzuje
+   *  protože toGlobal() s autoDensity:true vrací logické px (viz komentář výše). */
   private _dpr: number
 
   /** Ticker sync funkce — potřebujeme referenci pro remove. */
@@ -170,7 +176,7 @@ export class OverlayCompositor {
 
   /**
    * Synchronizuje pozici jednoho overlay entry.
-   * Čte toGlobal() pro worldOffset bod a aplikuje DPR kompenzaci.
+   * Čte toGlobal() pro worldOffset bod — výsledek je rovnou v CSS (logických) px.
    *
    * Reuse _scratch Point — žádný per-frame heap allokace.
    */
@@ -179,15 +185,16 @@ export class OverlayCompositor {
 
     const { pixiContainer, domElement, worldOffset, applyContainerTransform } = entry.opts
 
-    // Scratch point s world offset — toGlobal transformuje do Pixi render space (fyzické px)
+    // toGlobal() s worldOffset jako container-local bod → vrátí pozici v logických (CSS) px.
+    // Pixi v8 s autoDensity:true má souřadnicový systém v logických pixelech; žádné
+    // dělení DPR není nutné. CSS translate() pracuje ve stejných logických px.
     this._scratch.x = worldOffset.x
     this._scratch.y = worldOffset.y
 
     const global = pixiContainer.toGlobal(this._scratch)
 
-    // DPR kompenzace: fyzické px → logical (CSS) px
-    const cssX = global.x / this._dpr
-    const cssY = global.y / this._dpr
+    const cssX = global.x
+    const cssY = global.y
 
     // Přímý CSS transform — no GC, no layout thrash (transform je compositor-only)
     if (applyContainerTransform) {

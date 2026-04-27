@@ -38,6 +38,7 @@ import { useSlideDoc } from '../state/useSlideDoc'
 import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
 import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import {
   createObjectOfType,
   removeObject,
@@ -341,6 +342,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection } = useAwarenessUpdater()
+  const { activeSlideId } = useActiveSlide()
+  const activeSlideIdRef = useRef(activeSlideId)
+  activeSlideIdRef.current = activeSlideId
 
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
@@ -690,8 +694,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             )
           : null
 
-      if (canvasCoords !== null) {
-        setCursor({ x: canvasCoords.x, y: canvasCoords.y })
+      if (canvasCoords !== null && activeSlideIdRef.current !== null) {
+        setCursor({
+          x: canvasCoords.x,
+          y: canvasCoords.y,
+          slideId: activeSlideIdRef.current,
+        })
       }
 
       // Pen session — shape the outgoing control of the anchor the
@@ -984,6 +992,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const handlePointerLeave = useCallback(() => {
     setCursor(null)
   }, [setCursor])
+
+  // Clear remote cursor when the user switches slides — without this, the
+  // last broadcast cursor (tagged with the previous slideId) lingers in
+  // peers' awareness state until the next pointermove on the new slide.
+  useEffect(() => {
+    setCursor(null)
+  }, [activeSlideId, setCursor])
 
   // P7: double-click a text object → enter inline edit mode. Hit-test
   // via the scene graph (same path as single-click select) and begin

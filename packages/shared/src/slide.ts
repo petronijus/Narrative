@@ -333,6 +333,14 @@ export interface ImageObject extends BaseSlideObject {
    * object's x/y/width/height while leaving imageRect alone.
    */
   imageRect?: { x: number; y: number; width: number; height: number }
+  /**
+   * P11 (crop, round 2): rotation of the source image inside the
+   * frame, in radians, around the imageRect centre. Independent of
+   * the object's own rotation (which rotates the FRAME and the image
+   * together as a single unit). Default 0 ⇒ image is upright relative
+   * to the frame.
+   */
+  imageRotation?: number
 }
 
 export interface VideoObject extends BaseSlideObject {

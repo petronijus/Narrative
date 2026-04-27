@@ -214,10 +214,14 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Render one frame synchronously — the offscreen app is not running a ticker.
     app.renderer.render(app.stage)
 
-    // Extract PNG from the rendered frame.
-    // extract.base64() returns a data URL string synchronously in PixiJS v8.
+    // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
+    // earlier code path treated it as sync and destroyed the source
+    // container before the extract finished — first render usually
+    // succeeded thanks to the framebuffer still holding pixels, but
+    // subsequent renders intermittently produced blank thumbnails or
+    // dropped silently when the GPU resources had been freed mid-extract.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PixiJS v8 extract API type varies by version
-    const dataUrl: string = (app.renderer as any).extract.base64(slideContainer, 'image/png')
+    const dataUrl: string = await (app.renderer as any).extract.base64(slideContainer, 'image/png')
 
     // Cleanup: remove from stage, destroy temp container and all mounted children.
     app.stage.removeChild(slideContainer)
@@ -257,17 +261,26 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         rejectRender = reject
       })
 
-      renderQueue = renderQueue.then(() => {
-        if (destroyed) {
-          rejectRender(new Error('[ThumbnailRenderer] renderer has been destroyed'))
-          return
-        }
-        try {
-          return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
-        } catch (err) {
-          rejectRender(err)
-        }
-      })
+      renderQueue = renderQueue
+        .then(() => {
+          if (destroyed) {
+            rejectRender(new Error('[ThumbnailRenderer] renderer has been destroyed'))
+            return
+          }
+          try {
+            return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
+          } catch (err) {
+            rejectRender(err)
+          }
+        })
+        // Tail catch — guarantees the queue Promise stays in a fulfilled
+        // state regardless of upstream errors, so the next render's
+        // .then() chains correctly. Without this, an uncaught rejection
+        // would freeze the whole queue and every subsequent renderSlide
+        // would never resolve.
+        .catch((err: unknown) => {
+          console.error('[ThumbnailRenderer] queue tail caught:', err)
+        })
 
       return resultPromise
     },

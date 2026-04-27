@@ -11,17 +11,19 @@
  *
  * Omezení M8:
  * - OverlayCompositor vyžaduje Pixi Container jako anchor pro toGlobal().
- *   Cursor pozice jsou world coords — potřebujeme fake Pixi Container na dané
- *   world position. OverlayCompositor pozicuje přes worldOffset na root container.
- *   Implementace: používáme SceneGraph.root container + worldOffset = cursor position.
- *   Tím obcházíme nutnost vytvářet Container per cursor. Root je na (0,0), worldOffset
- *   je pak přímo cursor.x / cursor.y.
+ *   Cursor pozice jsou v artboard-local souřadnicích (0–1920, 0–1080).
+ *   Implementace: používáme SceneGraph.rootContainer + worldOffset = cursor position.
+ *   rootContainer.toGlobal({cx, cy}) převede artboard-local bod na globální CSS px —
+ *   root má x = y = bleedPx (viz setSlideOrigin), tedy výsledek = bleedPx + cursor.
+ *   overlayRoot má inset: -bleedPx, takže výsledný vizuální offset = cursor. ✓
+ *   Tím obcházíme nutnost vytvářet Container per cursor.
  *
  * Pointer-events: none — overlay nesmí blokovat canvas input.
  */
 
 import { useEffect, useRef } from 'react'
 import { useAwareness } from '../state/useAwareness.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { OverlayHandle } from '../renderer/overlay/types.js'
 import type { PeerInfo } from '@narrative/shared'
@@ -35,12 +37,14 @@ import type { PeerInfo } from '@narrative/shared'
  * Viewbox: 14×18, origin v tip pointeru (top-left).
  */
 function createCursorSvg(color: string): string {
-  // Encode color pro použití v SVG inline (HSL string je safe)
-  const fill = encodeURIComponent(color)
-  const stroke = 'rgba(0,0,0,0.5)'
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="18" viewBox="0 0 14 18" fill="none">
+  // SVG injected as innerHTML — fill/stroke go inside double-quoted attributes,
+  // so `hsl(142, 70%, 55%)` and `rgba(...)` work as-is. Earlier code wrapped
+  // these in encodeURIComponent which produced `hsl(142%2C%2070%25...)` —
+  // an invalid CSS color, so the path painted with no fill/stroke and
+  // the cursor was effectively invisible.
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="22" viewBox="0 0 14 18" fill="none">
     <path d="M2 2L2 14L5.5 10.5L8 16L10 15L7.5 9.5L12 9.5L2 2Z"
-      fill="${fill}" stroke="${encodeURIComponent(stroke)}" stroke-width="1" stroke-linejoin="round"/>
+      fill="${color}" stroke-linejoin="round"/>
   </svg>`
 }
 
@@ -63,25 +67,29 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
   // will-change pro GPU compositing — kurzory se mění každý frame
   wrapper.style.willChange = 'transform'
 
-  // SVG arrow
+  // SVG arrow (Figma-style mouse pointer at the cursor tip).
+  // Black outline replaced with a soft drop-shadow that matches the badge.
   const svgContainer = document.createElement('div')
+  svgContainer.dataset['role'] = 'pointer'
   svgContainer.style.display = 'inline-block'
   svgContainer.style.lineHeight = '0'
+  svgContainer.style.filter = 'drop-shadow(0 1px 3px rgba(0,0,0,0.4))'
   svgContainer.innerHTML = createCursorSvg(peer.state.user.color)
 
-  // Name label
+  // Name badge — sits just below + right of the pointer tip.
   const label = document.createElement('div')
+  label.dataset['role'] = 'label'
   label.style.position = 'absolute'
-  label.style.top = '14px'
-  label.style.left = '14px'
+  label.style.top = '16px'
+  label.style.left = '12px'
   label.style.backgroundColor = peer.state.user.color
   label.style.color = '#fff'
   label.style.fontSize = '11px'
   label.style.fontFamily = 'system-ui, sans-serif'
   label.style.fontWeight = '600'
   label.style.lineHeight = '1'
-  label.style.padding = '2px 5px'
-  label.style.borderRadius = '3px'
+  label.style.padding = '3px 6px'
+  label.style.borderRadius = '4px'
   label.style.whiteSpace = 'nowrap'
   label.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)'
   label.textContent = peer.state.user.name
@@ -105,6 +113,7 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
 export function PeerCursors(): null {
   const { remotePeers } = useAwareness()
   const canvasInstance = useCanvasInstance()
+  const { activeSlideId } = useActiveSlide()
 
   // Map<clientId, entry> — lifecycle management
   const overlaysRef = useRef<Map<number, PeerOverlayEntry>>(new Map())
@@ -120,8 +129,8 @@ export function PeerCursors(): null {
       return
     }
 
-    // SceneGraph root container je na world (0,0). Worldoffset = cursor world coords.
-    // Tím obcházíme nutnost per-cursor Pixi Container.
+    // rootContainer je v Pixi world na (bleedPx, bleedPx); toGlobal(cursor) vrátí
+    // (bleedPx+cx, bleedPx+cy), overlayRoot je inset:-bleedPx → vizuálně (cx, cy). ✓
     const rootContainer = sceneGraph.rootContainer
 
     const currentOverlays = overlaysRef.current
@@ -131,17 +140,27 @@ export function PeerCursors(): null {
 
     for (const peer of remotePeers) {
       if (peer.state.cursor === null) continue
+      // Only render cursors of peers viewing the same slide as us — otherwise
+      // a peer editing slide 2 would have their cursor coords (in slide-2's
+      // artboard space) painted on top of our slide-1 artboard.
+      if (peer.state.cursor.slideId !== activeSlideId) continue
       activePeerIds.add(peer.clientId)
 
       const existing = currentOverlays.get(peer.clientId)
 
       if (existing !== undefined) {
-        // Update: posun kurzoru
+        // Update: posun kurzoru. pixiContainer se také aktualizuje — po přechodu
+        // na jiný slide mohl adoptSlideRoot() změnit aktivní root container.
         existing.handle.update({
+          pixiContainer: rootContainer,
           worldOffset: { x: peer.state.cursor.x, y: peer.state.cursor.y },
         })
-        // Update jméno pokud se změnilo
-        const label = existing.element.querySelector('div') as HTMLDivElement | null
+        // Update jméno pokud se změnilo. POZOR: dříve se používalo
+        // querySelector('div'), které vracelo PRVNÍ div (= pointer s SVG)
+        // a přepisovalo jeho textContent — tím se SVG šipka nahradila
+        // textovým jménem a uživatel viděl jméno místo pointeru
+        // ("Dev user" + badge "Dev user"). Cílíme na badge přes data-role.
+        const label = existing.element.querySelector('[data-role="label"]') as HTMLDivElement | null
         if (label !== null && label.textContent !== peer.state.user.name) {
           label.textContent = peer.state.user.name
         }
@@ -165,7 +184,7 @@ export function PeerCursors(): null {
         currentOverlays.delete(clientId)
       }
     }
-  }, [remotePeers, canvasInstance])
+  }, [remotePeers, canvasInstance, activeSlideId])
 
   // Cleanup při unmount
   useEffect(() => {

@@ -35,6 +35,8 @@ const ABORTED_TAG = Symbol('imgAborted')
 const ACQUIRED_URL_TAG = Symbol('imgAcquiredUrl')
 /** Last imageRect applied (for surgical patch diffs / preserve-across-asset-swap). */
 const IMAGE_RECT_TAG = Symbol('imgImageRect')
+/** Last imageRotation applied. Same role as IMAGE_RECT_TAG. */
+const IMAGE_ROTATION_TAG = Symbol('imgImageRotation')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -103,6 +105,14 @@ function isImageRectEqual(a: ImageObject['imageRect'], b: ImageObject['imageRect
   if (a === undefined && b === undefined) return true
   if (a === undefined || b === undefined) return false
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+function getStoredImageRotation(node: Container): number | undefined {
+  return asAny(node)[IMAGE_ROTATION_TAG] as number | undefined
+}
+
+function setStoredImageRotation(node: Container, r: number | undefined): void {
+  asAny(node)[IMAGE_ROTATION_TAG] = r
 }
 
 /**
@@ -184,8 +194,24 @@ function layoutSprite(
   // spriteWrap which we translate so applyFit's local (0,0) lands at
   // (ir.x - data.x, ir.y - data.y) inside the object container.
   applyFit(sprite, texture, { w: ir.width, h: ir.height }, fit)
-  spriteWrap.x = ir.x - data.x
-  spriteWrap.y = ir.y - data.y
+
+  // Only enable centre-pivot positioning when rotation is non-zero —
+  // setting a non-zero pivot on a Pixi Container with a mask appears to
+  // break thumbnail render-to-texture in some cases (mask not applied or
+  // sprite drops out of the rasterised frame). For the un-rotated case
+  // (vast majority) keep the old simple top-left positioning so
+  // thumbnails behave exactly like before P11r.
+  const rot = data.imageRotation ?? 0
+  if (rot !== 0) {
+    spriteWrap.pivot.set(ir.width / 2, ir.height / 2)
+    spriteWrap.x = ir.x - data.x + ir.width / 2
+    spriteWrap.y = ir.y - data.y + ir.height / 2
+  } else {
+    spriteWrap.pivot.set(0, 0)
+    spriteWrap.x = ir.x - data.x
+    spriteWrap.y = ir.y - data.y
+  }
+  spriteWrap.rotation = rot
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +319,7 @@ function startLoad(container: Container, data: ImageObject): void {
     const spriteWrap = new Container()
     const sprite = new Sprite(texture)
     setStoredImageRect(container, data.imageRect)
+    setStoredImageRotation(container, data.imageRotation)
 
     layoutSprite(sprite, texture, data, spriteWrap)
     spriteWrap.addChild(sprite)
@@ -324,6 +351,7 @@ function relayoutExistingSprite(node: Container, data: ImageObject): void {
   layoutSprite(sprite, sprite.texture, data, wrap)
   applyFrameMask(node, data.width, data.height)
   setStoredImageRect(node, data.imageRect)
+  setStoredImageRotation(node, data.imageRotation)
 }
 
 // ---------------------------------------------------------------------------
@@ -372,8 +400,9 @@ export const imageRenderer = {
     const sizeChanged = prev.width !== next.width || prev.height !== next.height
     const posChanged = prev.x !== next.x || prev.y !== next.y
     const imageRectChanged = !isImageRectEqual(prev.imageRect, next.imageRect)
+    const imageRotationChanged = (prev.imageRotation ?? 0) !== (next.imageRotation ?? 0)
 
-    if (fitChanged || sizeChanged || posChanged || imageRectChanged) {
+    if (fitChanged || sizeChanged || posChanged || imageRectChanged || imageRotationChanged) {
       relayoutExistingSprite(node, next)
     }
 
@@ -397,6 +426,7 @@ export const imageRenderer = {
     const sizeChanged = patch.width !== undefined || patch.height !== undefined
     const fitChanged = patch.fit !== undefined
     const imageRectChanged = 'imageRect' in patch
+    const imageRotationChanged = 'imageRotation' in patch
     const posChanged = patch.x !== undefined || patch.y !== undefined
 
     if (sizeChanged) {
@@ -420,15 +450,18 @@ export const imageRenderer = {
       }
     }
 
-    if (sizeChanged || fitChanged || imageRectChanged || posChanged) {
+    if (sizeChanged || fitChanged || imageRectChanged || imageRotationChanged || posChanged) {
       // Reconstruct effective ImageObject state from node + patch.
       const currentW = node.pivot.x * 2
       const currentH = node.pivot.y * 2
       const dataX = node.x - node.pivot.x
       const dataY = node.y - node.pivot.y
 
-      // Resolve current imageRect: patch wins, otherwise stored.
+      // Resolve current imageRect / imageRotation: patch wins, otherwise stored.
       const currentImageRect = imageRectChanged ? patch.imageRect : getStoredImageRect(node)
+      const currentImageRotation = imageRotationChanged
+        ? patch.imageRotation
+        : getStoredImageRotation(node)
 
       // Infer current fit. We can't read fit from the node directly
       // (no symbol stored) — use patch.fit if given, otherwise infer
@@ -448,6 +481,7 @@ export const imageRenderer = {
         assetId: '',
         fit,
         ...(currentImageRect !== undefined ? { imageRect: currentImageRect } : {}),
+        ...(currentImageRotation !== undefined ? { imageRotation: currentImageRotation } : {}),
       }
 
       relayoutExistingSprite(node, synthetic)
@@ -463,9 +497,11 @@ export const imageRenderer = {
       const newAssetId = patch.assetId
       if (newAssetId === undefined) return
 
-      // Preserve the imageRect across an asset re-load unless the patch
-      // explicitly clears it.
+      // Preserve the imageRect + imageRotation across an asset re-load
+      // unless the patch explicitly clears them.
       const imageRectForReload = 'imageRect' in patch ? patch.imageRect : getStoredImageRect(node)
+      const imageRotationForReload =
+        'imageRotation' in patch ? patch.imageRotation : getStoredImageRotation(node)
       const synthetic: ImageObject = {
         id: '',
         type: 'image',
@@ -479,6 +515,7 @@ export const imageRenderer = {
         ...(patch.variant !== undefined ? { variant: patch.variant } : {}),
         fit: patch.fit ?? 'cover',
         ...(imageRectForReload !== undefined ? { imageRect: imageRectForReload } : {}),
+        ...(imageRotationForReload !== undefined ? { imageRotation: imageRotationForReload } : {}),
       }
 
       const ph = getPlaceholder(node)

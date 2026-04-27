@@ -29,6 +29,9 @@ export interface PeerCursor {
   /** World coords — slide space (ne screen/canvas pixels). */
   x: number
   y: number
+  /** Slide the cursor belongs to. Receivers filter by their own activeSlideId
+   *  so a peer's cursor never leaks onto another slide's artboard. */
+  slideId: string
 }
 
 export interface PeerAwarenessState {

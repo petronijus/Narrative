@@ -110,12 +110,12 @@ describe('useAwarenessUpdater', () => {
     advanceTime(100) // více než 33ms
 
     act(() => {
-      result.current.setCursor({ x: 10, y: 20 })
+      result.current.setCursor({ x: 10, y: 20, slideId: 'slide-test' })
     })
 
     expect(fakeAwareness.setLocalState).toHaveBeenCalledTimes(1)
     const call = fakeAwareness.setLocalState.mock.calls[0]![0] as PeerAwarenessState
-    expect(call.cursor).toEqual({ x: 10, y: 20 })
+    expect(call.cursor).toEqual({ x: 10, y: 20, slideId: 'slide-test' })
   })
 
   it('rapid setCursor calls are batched via rAF throttle', () => {
@@ -126,20 +126,20 @@ describe('useAwarenessUpdater', () => {
     // První volání — čas 0, žádný předchozí emit → immediate
     advanceTime(0)
     act(() => {
-      result.current.setCursor({ x: 1, y: 1 })
+      result.current.setCursor({ x: 1, y: 1, slideId: 'slide-test' })
     })
     const callsAfterFirst = fakeAwareness.setLocalState.mock.calls.length
 
     // Druhé volání — čas 10ms (< 33ms) → pending + rAF
     advanceTime(10)
     act(() => {
-      result.current.setCursor({ x: 50, y: 60 })
+      result.current.setCursor({ x: 50, y: 60, slideId: 'slide-test' })
     })
 
     // Třetí volání — čas 15ms → aktualizuje pending, neplánuje druhý rAF
     advanceTime(15)
     act(() => {
-      result.current.setCursor({ x: 99, y: 88 })
+      result.current.setCursor({ x: 99, y: 88, slideId: 'slide-test' })
     })
 
     // Zatím by měl být emit jen z prvního volání
@@ -151,7 +151,7 @@ describe('useAwarenessUpdater', () => {
     })
 
     const lastCall = fakeAwareness.setLocalState.mock.lastCall![0] as PeerAwarenessState
-    expect(lastCall.cursor).toEqual({ x: 99, y: 88 })
+    expect(lastCall.cursor).toEqual({ x: 99, y: 88, slideId: 'slide-test' })
   })
 
   it('setCursor(null) bypasses throttle and emits immediately', () => {
@@ -162,11 +162,11 @@ describe('useAwarenessUpdater', () => {
     // Set a pending cursor update
     advanceTime(0)
     act(() => {
-      result.current.setCursor({ x: 1, y: 1 }) // immediate (first)
+      result.current.setCursor({ x: 1, y: 1, slideId: 'slide-test' }) // immediate (first)
     })
     advanceTime(5) // < 33ms
     act(() => {
-      result.current.setCursor({ x: 50, y: 60 }) // pending
+      result.current.setCursor({ x: 50, y: 60, slideId: 'slide-test' }) // pending
     })
 
     const callsBefore = fakeAwareness.setLocalState.mock.calls.length
@@ -199,7 +199,7 @@ describe('useAwarenessUpdater', () => {
     fakeAwareness.getLocalState.mockReturnValue({
       user: { id: 'x', name: 'User x', color: 'hsl(0, 70%, 55%)' },
       selectedObjectIds: [],
-      cursor: { x: 100, y: 200 },
+      cursor: { x: 100, y: 200, slideId: 'slide-test' },
     })
 
     const { result } = renderHook(() => useAwarenessUpdater(), {
@@ -212,7 +212,7 @@ describe('useAwarenessUpdater', () => {
 
     const call = fakeAwareness.setLocalState.mock.calls[0]![0] as PeerAwarenessState
     // Cursor musí být zachován
-    expect(call.cursor).toEqual({ x: 100, y: 200 })
+    expect(call.cursor).toEqual({ x: 100, y: 200, slideId: 'slide-test' })
     expect(call.selectedObjectIds).toEqual(['obj-3'])
   })
 
