@@ -25,6 +25,7 @@ import { useEffect, useRef } from 'react'
 import { useAwareness } from '../state/useAwareness.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useZoomLevel } from '../state/useZoomLevel.js'
 import type { OverlayHandle } from '../renderer/overlay/types.js'
 import type { PeerInfo } from '@narrative/shared'
 
@@ -67,6 +68,19 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
   // will-change pro GPU compositing — kurzory se mění každý frame
   wrapper.style.willChange = 'transform'
 
+  // Inner counter-scale layer. The artboard renders under
+  // `transform: scale(zoom)` so this wrapper would otherwise grow /
+  // shrink with the editor zoom; we apply `scale(1/zoom)` here so the
+  // cursor stays at a constant viewport size. transform-origin top-
+  // left keeps the pointer tip pinned to the (0,0) of the wrapper —
+  // which is what OverlayCompositor's translate() targets.
+  const scaler = document.createElement('div')
+  scaler.dataset['role'] = 'scale'
+  scaler.style.position = 'absolute'
+  scaler.style.top = '0'
+  scaler.style.left = '0'
+  scaler.style.transformOrigin = 'top left'
+
   // SVG arrow (Figma-style mouse pointer at the cursor tip).
   // Black outline replaced with a soft drop-shadow that matches the badge.
   const svgContainer = document.createElement('div')
@@ -94,8 +108,9 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
   label.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)'
   label.textContent = peer.state.user.name
 
-  wrapper.appendChild(svgContainer)
-  wrapper.appendChild(label)
+  scaler.appendChild(svgContainer)
+  scaler.appendChild(label)
+  wrapper.appendChild(scaler)
 
   return wrapper
 }
@@ -114,6 +129,7 @@ export function PeerCursors(): null {
   const { remotePeers } = useAwareness()
   const canvasInstance = useCanvasInstance()
   const { activeSlideId } = useActiveSlide()
+  const { zoom } = useZoomLevel()
 
   // Map<clientId, entry> — lifecycle management
   const overlaysRef = useRef<Map<number, PeerOverlayEntry>>(new Map())
@@ -193,6 +209,23 @@ export function PeerCursors(): null {
       overlaysRef.current.clear()
     }
   }, [])
+
+  // Counter-scale every cursor's inner layer so the pointer + name
+  // badge stay a constant viewport size regardless of editor zoom.
+  // The artboard wraps everything in `transform: scale(zoom)`, which
+  // would otherwise shrink the cursor at zoom-out and inflate it at
+  // zoom-in. Applied via the dedicated `[data-role="scale"]` div
+  // because OverlayCompositor controls the wrapper's `transform`
+  // (translate) every frame and would clobber a transform set here.
+  // This effect must run AFTER the lifecycle effect above so newly
+  // registered cursors are already in `overlaysRef` when we scan it.
+  useEffect(() => {
+    const inv = zoom > 0 ? 1 / zoom : 1
+    overlaysRef.current.forEach((entry) => {
+      const scaler = entry.element.querySelector('[data-role="scale"]') as HTMLDivElement | null
+      if (scaler !== null) scaler.style.transform = `scale(${inv})`
+    })
+  }, [zoom, remotePeers, activeSlideId])
 
   return null
 }
