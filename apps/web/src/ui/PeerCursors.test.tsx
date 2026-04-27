@@ -63,6 +63,10 @@ vi.mock('../renderer/CanvasInstanceContext.js', () => ({
   useCanvasInstance: () => mockCanvasInstance,
 }))
 
+vi.mock('../state/ActiveSlideContext.js', () => ({
+  useActiveSlide: () => ({ activeSlideId: 'slide-test', setActiveSlideId: () => {} }),
+}))
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -71,6 +75,7 @@ function makePeer(
   clientId: number,
   name: string,
   cursor: { x: number; y: number } | null,
+  slideId = 'slide-test',
 ): PeerInfo {
   return {
     clientId,
@@ -78,7 +83,7 @@ function makePeer(
     state: {
       user: { id: `user-${clientId}`, name, color: 'hsl(142, 70%, 55%)' },
       selectedObjectIds: [],
-      cursor,
+      cursor: cursor === null ? null : { ...cursor, slideId },
     },
   }
 }

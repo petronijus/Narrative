@@ -22,6 +22,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useAwareness } from '../state/useAwareness.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { OverlayHandle } from '../renderer/overlay/types.js'
 import type { PeerInfo } from '@narrative/shared'
@@ -105,6 +106,7 @@ function createCursorElement(peer: PeerInfo): HTMLElement {
 export function PeerCursors(): null {
   const { remotePeers } = useAwareness()
   const canvasInstance = useCanvasInstance()
+  const { activeSlideId } = useActiveSlide()
 
   // Map<clientId, entry> — lifecycle management
   const overlaysRef = useRef<Map<number, PeerOverlayEntry>>(new Map())
@@ -131,6 +133,10 @@ export function PeerCursors(): null {
 
     for (const peer of remotePeers) {
       if (peer.state.cursor === null) continue
+      // Only render cursors of peers viewing the same slide as us — otherwise
+      // a peer editing slide 2 would have their cursor coords (in slide-2's
+      // artboard space) painted on top of our slide-1 artboard.
+      if (peer.state.cursor.slideId !== activeSlideId) continue
       activePeerIds.add(peer.clientId)
 
       const existing = currentOverlays.get(peer.clientId)
@@ -165,7 +171,7 @@ export function PeerCursors(): null {
         currentOverlays.delete(clientId)
       }
     }
-  }, [remotePeers, canvasInstance])
+  }, [remotePeers, canvasInstance, activeSlideId])
 
   // Cleanup při unmount
   useEffect(() => {

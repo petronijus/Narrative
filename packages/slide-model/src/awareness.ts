@@ -64,12 +64,18 @@ export function toPeerInfo(
   if (!Array.isArray(rawIds)) return null
   const selectedObjectIds = rawIds.filter((x): x is string => typeof x === 'string')
 
-  // Validace cursor (nullable)
+  // Validace cursor (nullable). slideId is required so we can filter
+  // remote cursors by the receiver's active slide; drop legacy payloads
+  // without it so they don't render on the wrong artboard.
   let cursor: PeerAwarenessState['cursor'] = null
   if (s['cursor'] !== null && s['cursor'] !== undefined) {
     const c = s['cursor'] as Record<string, unknown>
-    if (typeof c['x'] === 'number' && typeof c['y'] === 'number') {
-      cursor = { x: c['x'], y: c['y'] }
+    if (
+      typeof c['x'] === 'number' &&
+      typeof c['y'] === 'number' &&
+      typeof c['slideId'] === 'string'
+    ) {
+      cursor = { x: c['x'], y: c['y'], slideId: c['slideId'] }
     }
   }
 
