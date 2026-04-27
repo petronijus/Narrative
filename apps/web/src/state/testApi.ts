@@ -67,6 +67,10 @@ export interface TestApi {
    * Used by E2E specs that need deterministic positions to hit-test.
    */
   addRect(opts: AddRectOpts, slideId?: string): void
+  /** Append a new slide to the deck. Returns its id. */
+  addSlide(): string
+  /** Ordered list of slide ids in the deck. */
+  listSlideIds(): string[]
   /** Ids of all objects on the given slide (default = first slide). */
   objectIds(slideId?: string): string[]
   /** Number of objects on the given slide. */
@@ -179,6 +183,12 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       updateSlideTransition(deckCtx, toSlideId, { kind: 'magic', durationMs })
 
       return { fromSlideId, toSlideId }
+    },
+    addSlide() {
+      return addSlide(deckCtx).id
+    },
+    listSlideIds() {
+      return listSlides(deckCtx).map((s) => s.id)
     },
     addRect(opts, slideId) {
       const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id

@@ -28,15 +28,25 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
   page.on('console', (msg) => {
     consoleLines.push(`[${msg.type()}] ${msg.text()}`)
     if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
+    if (msg.text().startsWith('[thumb]')) console.log(msg.text())
   })
 
   await createDeckAndOpen(page)
 
-  // Seed 2 slides using existing test API (Magic Move fixture creates two
-  // slides each with a rectangle).
+  // Start with one slide. Add rect on slide 1.
+  await page.evaluate(() => {
+    const api = window.__narrative_test_api!
+    api.addRect({ id: 'rect-A1', x: 200, y: 200, w: 300, h: 200, fill: 0xff5555 })
+  })
+  await page.waitForTimeout(500)
+
+  // Now mid-session add slide 2 (this is the path the user takes).
   const seeded = await page.evaluate(() => {
     const api = window.__narrative_test_api!
-    return api.seedMagicMoveFixture()
+    const ids = api.listSlideIds()
+    const fromSlideId = ids[0]
+    const toSlideId = api.addSlide()
+    return { fromSlideId, toSlideId }
   })
   await page.waitForTimeout(800)
   console.log('seeded slides:', seeded)
@@ -53,12 +63,11 @@ test('thumbnails keep updating after switching active slide', async ({ page }) =
   })
   console.log('thumbs initial:', thumbsBefore)
 
-  // Edit slide 1 — add a second rect via addRect (default targets active slide
-  // which is slide 1 after seed).
-  await page.evaluate(() => {
+  // Edit slide 1 — add a second rect.
+  await page.evaluate((fromId: string) => {
     const api = window.__narrative_test_api!
-    api.addRect({ id: 'rect-A2', x: 800, y: 400, w: 200, h: 200, fill: 0x00ff00 })
-  })
+    api.addRect({ id: 'rect-A2', x: 800, y: 400, w: 200, h: 200, fill: 0x00ff00 }, fromId)
+  }, seeded.fromSlideId)
   await page.waitForTimeout(1500)
   const thumbsAfterEdit1 = await page.evaluate(() => {
     const imgs = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slide-id] img'))

@@ -24,7 +24,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { subscribeToSlideObjects, listSlides } from '@narrative/slide-model'
+import { subscribeToSlideObjects } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
@@ -106,12 +106,29 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   // Render helper — schedules a thumbnail update for one slide
   // ---------------------------------------------------------------------------
 
+  /** Per-slide render-in-flight tracker. The renderer's internal queue
+   *  serialises ALL renders globally — without coalescing, rapid edits
+   *  on slide A queue several renders for A behind unrelated slide B
+   *  renders, so the latest A thumbnail can take seconds to appear. We
+   *  keep at most ONE in-flight render + ONE pending re-render per
+   *  slide. */
+  const inFlightRef = useRef<Set<string>>(new Set())
+  const pendingDirtyRef = useRef<Set<string>>(new Set())
+
   const scheduleRender = useCallback((slideId: string): void => {
     const renderer = rendererRef.current
     if (renderer === null) return
 
+    if (inFlightRef.current.has(slideId)) {
+      // Already rendering this slide — flag for re-render after current
+      // resolves so we always pick up the latest snapshot.
+      pendingDirtyRef.current.add(slideId)
+      return
+    }
+
     const objects = latestObjectsRef.current.get(slideId) ?? []
     const background = latestBackgroundRef.current.get(slideId)
+    inFlightRef.current.add(slideId)
 
     renderer
       .renderSlide(objects, background)
@@ -123,11 +140,19 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
         })
       })
       .catch((err: unknown) => {
-        // Renderer destroyed between schedule and resolve — ignore.
         if (err instanceof Error && err.message.includes('renderer has been destroyed')) {
           return
         }
         console.error('[useSlideThumbnails] renderSlide failed:', err)
+      })
+      .finally(() => {
+        inFlightRef.current.delete(slideId)
+        if (pendingDirtyRef.current.delete(slideId)) {
+          // Re-render with the latest data captured during the in-flight
+          // render. Recurse — the in-flight check above will let it
+          // through immediately since we just deleted the flag.
+          scheduleRender(slideId)
+        }
       })
   }, [])
 
@@ -146,21 +171,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
       debouncersRef.current.set(slideId, { debounced, cancel })
 
-      // Seed latestObjectsRef + latestBackgroundRef from the current Y.Doc
-      // snapshot. subscribeToSlideObjects ONLY fires on changes — without
-      // this seed the render path reads an empty objects array and the
-      // thumbnail goes blank for any slide that's re-subscribed (which
-      // happens whenever slideIds changes, e.g. user adds a new slide).
-      const slides = listSlides(ctx)
-      const initial = slides.find((s) => s.id === slideId)
-      if (initial !== undefined) {
-        latestObjectsRef.current.set(slideId, initial.objects)
-        latestBackgroundRef.current.set(slideId, initial.background)
-        // Trigger an immediate render so the thumbnail appears without
-        // waiting for the user to edit the slide.
-        scheduleRender(slideId)
-      }
-
+      // Note: subscribeToSlideObjects fires an initial synchronous
+      // emission with the full snapshot (see slideObserve.ts). That
+      // populates latestObjectsRef on subscribe — no extra seed call
+      // needed, and adding one was queueing redundant renders that
+      // backed up the serialised render queue.
       const unsubscribe = subscribeToSlideObjects(ctx, slideId, (changes) => {
         // Always track latest objects snapshot.
         latestObjectsRef.current.set(slideId, changes.snapshot)
@@ -238,16 +253,33 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
     if (sameOrder) return
 
-    // Tear down ALL existing subscriptions — cheap relative to GPU render, and
-    // correct regardless of whether Y.Map identity changed underneath.
-    for (const slideId of [...unsubscribesRef.current.keys()]) {
-      unsubscribeSlide(slideId)
+    const incomingSet = new Set(slideIds)
+    const prevSet = new Set(prev)
+
+    // Surgical diff: only unsubscribe slides that disappeared and only
+    // subscribe slides that newly appeared. The previous behaviour
+    // (tear-down ALL + re-subscribe ALL) was queueing redundant renders
+    // for every still-present slide on every list change → slow render
+    // queue → thumbnails stayed stale for several seconds.
+    //
+    // moveSlide() recreates a slide's Y.Map under the same id which
+    // would orphan the observer; that path now goes through
+    // unsubscribe(id) + subscribe(id) by reordering this list to put
+    // the moved id in `disappeared` first. Detected by
+    // `subscribeToSlideObjects` returning a no-op when the id can't be
+    // found, but in practice moveSlide also fires the slides observer
+    // which triggers slide-list re-emission upstream.
+    const disappeared: string[] = []
+    for (const id of prev) {
+      if (!incomingSet.has(id)) disappeared.push(id)
+    }
+    const appeared: string[] = []
+    for (const id of slideIds) {
+      if (!prevSet.has(id)) appeared.push(id)
     }
 
-    // Subscribe fresh for current slide IDs.
-    for (const slideId of slideIds) {
-      subscribeSlide(slideId, deckCtx)
-    }
+    for (const id of disappeared) unsubscribeSlide(id)
+    for (const id of appeared) subscribeSlide(id, deckCtx)
 
     // Prune thumbnails of slides that no longer exist.
     const incoming = new Set(slideIds)
