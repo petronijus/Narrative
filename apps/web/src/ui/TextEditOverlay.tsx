@@ -21,8 +21,21 @@
  */
 
 import { useEffect, useMemo, useRef } from 'react'
+import * as Y from 'yjs'
 import { updateObject, type ObjectsMutationContext } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
+
+/**
+ * Project the body content to a plain string regardless of whether
+ * the schema slot is a Y.Text (rich-text) or a legacy plain string.
+ * Phase A: the textarea content stays string-shaped; partial-range
+ * formatting arrives in Phase D.
+ */
+function readPlainText(t: TextObject['text']): string {
+  if (t instanceof Y.Text) return t.toString()
+  if (typeof t === 'string') return t
+  return ''
+}
 
 export interface TextEditOverlayProps {
   obj: TextObject
@@ -98,7 +111,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   }, [obj.vAlign, obj.height, obj.fontSize, obj.lineHeight])
 
   const commit = (value: string): void => {
-    if (value === obj.text) return
+    if (value === readPlainText(obj.text)) return
     updateObject(mutationCtx, obj.id, { text: value } as Partial<TextObject>)
   }
 
@@ -177,7 +190,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       <textarea
         ref={textareaRef}
         className="narrative-text-edit"
-        defaultValue={obj.text}
+        defaultValue={readPlainText(obj.text)}
         style={textareaStyle}
         onChange={(e) => {
           commit(e.target.value)
