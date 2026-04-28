@@ -22,9 +22,6 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
-  AlignStartVertical,
-  AlignCenterVertical,
-  AlignEndVertical,
   AlignHorizontalJustifyCenter,
   AlignHorizontalJustifyStart,
   AlignHorizontalJustifyEnd,
@@ -2186,9 +2183,9 @@ function TextSection({ obj, patch }: TextSectionProps) {
             onChange={(v) => patch({ vAlign: v } as SlideObjectPatch<TextObject>)}
             ariaLabel="Vertical alignment"
             options={[
-              { value: 'top', label: 'Top', Icon: AlignStartVertical },
-              { value: 'middle', label: 'Middle', Icon: AlignCenterVertical },
-              { value: 'bottom', label: 'Bottom', Icon: AlignEndVertical },
+              { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
+              { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
+              { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
             ]}
           />
         </div>
