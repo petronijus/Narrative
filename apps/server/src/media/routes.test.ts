@@ -101,6 +101,10 @@ const FIXTURE_ASSET: MediaAsset = {
   thumbnailKey: null,
   transcodeStatus: null,
   transcodeError: null,
+  fontFamily: null,
+  fontWeight: null,
+  fontStyle: null,
+  fontPostscriptName: null,
 }
 
 // ---------------------------------------------------------------------------

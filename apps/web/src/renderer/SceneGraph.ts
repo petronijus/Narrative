@@ -384,6 +384,42 @@ export class SceneGraph {
   }
 
   /**
+   * P15: re-rasterise every Text node whose `fontFamily` references the
+   * given family. Pixi v8 caches glyph atlases keyed by the resolved
+   * font; when a FontFace finishes loading AFTER a text node mounted,
+   * the atlas still holds fallback glyphs. Calling textRenderer's
+   * applyPatch with the same fontFamily forces TextStyle to rebuild,
+   * which invalidates the atlas and Pixi re-rasterises with the
+   * now-installed font.
+   *
+   * @param family — canonical family name passed to FontFace; matches
+   *   either an exact `fontFamily` value or appears as a comma-separated
+   *   token inside one (e.g. `"Inter, sans-serif"`).
+   */
+  refreshTextNodesUsingFamily(family: string): void {
+    if (family === '') return
+    const tokens = (raw: string): string[] =>
+      raw.split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''))
+
+    let touched = 0
+    for (const [, node] of this.nodes) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = node.data as any
+      if (data?.type !== 'text') continue
+      const fam: unknown = data.fontFamily
+      if (typeof fam !== 'string' || fam === '') continue
+      if (!tokens(fam).includes(family)) continue
+
+      const renderer = getRenderer('text')
+      if (renderer === undefined || renderer.applyPatch === undefined) continue
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      renderer.applyPatch(node.container, { fontFamily: fam } as any)
+      touched++
+    }
+    if (touched > 0) this.markDirty()
+  }
+
+  /**
    * P2: returns (and lazily creates) the artboard-background Container —
    * kept as the FIRST child of the active root so every slide object
    * stacks above it. Consumers call this from the background observer +

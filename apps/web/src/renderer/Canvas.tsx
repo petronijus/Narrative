@@ -40,6 +40,7 @@ import {
   getDefaultImageUrlResolver,
 } from './imageUrl.js'
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
+import { createFontUrlResolver, setDefaultFontUrlResolver } from './fontUrl.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
 import { useSlideBackground } from '../state/useSlideBackground.js'
 import { applyBackground } from './ArtboardBackground.js'
@@ -127,6 +128,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
     setDefaultImageUrlResolver(createImageUrlResolver(apiBase, () => tokenRef.current))
     setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase, () => tokenRef.current))
+    setDefaultFontUrlResolver(createFontUrlResolver(apiBase, () => tokenRef.current))
 
     let cancelled = false
     let app: Application | null = null

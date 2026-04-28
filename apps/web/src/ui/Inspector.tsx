@@ -39,6 +39,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
+import { FontFamilySelect } from './FontFamilySelect.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -2072,6 +2073,8 @@ interface TextSectionProps {
 
 function TextSection({ obj, patch }: TextSectionProps) {
   const colorHex = numberToHex(obj.color)
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
 
   return (
     <>
@@ -2096,28 +2099,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
           >
             Family
           </label>
-          <select
-            id={`inspector-fontfamily-${obj.id}`}
-            value={obj.fontFamily ?? ''}
-            onChange={(e) =>
-              patch({
-                fontFamily: e.target.value === '' ? undefined : e.target.value,
-              } as unknown as SlideObjectPatch<TextObject>)
-            }
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="">System default</option>
-            <option value="Inter, system-ui, sans-serif">Inter</option>
-            <option value="'Helvetica Neue', Helvetica, Arial, sans-serif">Helvetica</option>
-            <option value="Georgia, 'Times New Roman', serif">Georgia</option>
-            <option value="'Times New Roman', Times, serif">Times</option>
-            <option value="'Courier New', Courier, monospace">Courier</option>
-            <option value="'SF Mono', Menlo, monospace">SF Mono</option>
-          </select>
+          <FontFamilySelect obj={obj} patch={patch} disabled={isViewer} />
         </div>
 
         <div className="flex items-center gap-2">

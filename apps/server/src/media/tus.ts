@@ -44,6 +44,7 @@ import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s
 import type { Database } from '../db/client.js'
 import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
+import { parseFontMetadata } from './fontMetadata.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import type { createJwtVerifier } from '../auth/jwt.js'
 
@@ -64,11 +65,46 @@ interface ProbeResult {
 // ---------------------------------------------------------------------------
 
 /** Max size for image uploads. */
+const MAX_FONT_UPLOAD_SIZE = Number(process.env['MAX_FONT_UPLOAD_SIZE'] ?? 8_000_000)
 const MAX_IMAGE_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_000)
 /** Max size for video uploads. */
 const MAX_VIDEO_UPLOAD_SIZE = Number(process.env['MAX_VIDEO_UPLOAD_SIZE'] ?? 500_000_000)
 /** tus server-level maxSize — set to the larger of the two; per-MIME enforcement is in onUploadCreate. */
-const MAX_UPLOAD_SIZE = Math.max(MAX_IMAGE_UPLOAD_SIZE, MAX_VIDEO_UPLOAD_SIZE)
+const MAX_UPLOAD_SIZE = Math.max(MAX_IMAGE_UPLOAD_SIZE, MAX_VIDEO_UPLOAD_SIZE, MAX_FONT_UPLOAD_SIZE)
+
+/**
+ * P15: classifies an upload as a font from its MIME or filename
+ * extension. Browsers send wildly inconsistent MIME for fonts —
+ * `font/ttf`, `font/otf`, `font/sfnt` (modern, RFC 8081), the legacy
+ * `application/x-font-*` family, and `application/octet-stream` when
+ * they don't know better. We accept all of them, but require a
+ * .ttf / .otf filename extension as a sanity gate when the MIME is
+ * generic.
+ */
+const FONT_MIME_TYPES = new Set([
+  'font/ttf',
+  'font/otf',
+  'font/sfnt',
+  'font/collection',
+  'application/font-ttf',
+  'application/font-otf',
+  'application/font-sfnt',
+  'application/x-font-ttf',
+  'application/x-font-otf',
+  'application/x-font-opentype',
+  'application/x-font-truetype',
+  'application/vnd.ms-opentype',
+])
+
+function isFontUpload(mime: string, filename?: string): boolean {
+  const m = mime.toLowerCase()
+  if (FONT_MIME_TYPES.has(m)) return true
+  if (m === 'application/octet-stream' && filename) {
+    const lower = filename.toLowerCase()
+    return lower.endsWith('.ttf') || lower.endsWith('.otf')
+  }
+  return false
+}
 const BUCKET = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
 
 // ---------------------------------------------------------------------------
@@ -148,6 +184,18 @@ function extensionFromMimeOrFilename(mime: string, filename?: string): string {
     'video/mpeg': 'mpg',
     'video/3gpp': '3gp',
     'video/ogg': 'ogv',
+    // P15 fonts — preserve the filename extension when possible so
+    // browsers don't choke on a generic .bin extension via @font-face.
+    'font/ttf': 'ttf',
+    'font/otf': 'otf',
+    'font/sfnt': 'ttf',
+    'application/font-ttf': 'ttf',
+    'application/font-otf': 'otf',
+    'application/x-font-ttf': 'ttf',
+    'application/x-font-otf': 'otf',
+    'application/x-font-opentype': 'otf',
+    'application/x-font-truetype': 'ttf',
+    'application/vnd.ms-opentype': 'otf',
   }
 
   const fromMime = mimeMap[mime.toLowerCase()]
@@ -280,7 +328,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       const mime =
         metadata?.['content-type'] ?? metadata?.['mimeType'] ?? 'application/octet-stream'
       const ext = extensionFromMimeOrFilename(mime, filename)
-      const storageKey = `decks/${deckId}/uploads/${assetId}/original.${ext}`
+      // P15: fonts get their own folder so the deck listing logic can
+      // tell them apart at a glance and a future cleanup job can wipe
+      // them in bulk on deck delete.
+      const folder = isFontUpload(mime, filename) ? 'fonts' : 'uploads'
+      const storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
 
       const encoded = `${assetId}:${deckId}:${Buffer.from(storageKey).toString('base64url')}`
       return encoded
@@ -330,18 +382,20 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         )
       }
 
+      const filenameForMime = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
       const isImage = mime.startsWith('image/')
       const isVideo = mime.startsWith('video/')
+      const isFont = isFontUpload(mime, filenameForMime)
 
-      if (!isImage && !isVideo) {
+      if (!isImage && !isVideo && !isFont) {
         throw {
           status_code: 415,
-          body: `Unsupported media type: ${mime}. Only image/* and video/* are accepted.`,
+          body: `Unsupported media type: ${mime}. Only image/*, video/* and font/* are accepted.`,
         }
       }
 
       // Per-MIME upload size enforcement.
-      // The tus maxSize is set to the larger of the two limits; we enforce the
+      // The tus maxSize is set to the largest limit; we enforce the
       // tighter limit here so an image upload cannot claim video allowance.
       const uploadSize = upload.size ?? 0
       if (isImage && uploadSize > MAX_IMAGE_UPLOAD_SIZE) {
@@ -354,6 +408,12 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         throw {
           status_code: 413,
           body: `Video upload exceeds maximum size of ${MAX_VIDEO_UPLOAD_SIZE} bytes.`,
+        }
+      }
+      if (isFont && uploadSize > MAX_FONT_UPLOAD_SIZE) {
+        throw {
+          status_code: 413,
+          body: `Font upload exceeds maximum size of ${MAX_FONT_UPLOAD_SIZE} bytes.`,
         }
       }
 
@@ -433,6 +493,78 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       }
 
       const isVideo = mimeRaw.startsWith('video/')
+      const isFont = isFontUpload(mimeRaw, filename)
+
+      if (isFont) {
+        // -----------------------------------------------------------------------
+        // Font branch: fetch the bytes, parse OpenType metadata, insert row.
+        // We READ the full file (TTF/OTF are typically <2 MB; the size cap
+        // is 8 MB) so opentype.js can walk the tables. If parsing fails the
+        // upload is rejected and the partial S3 object stays orphaned for
+        // the M29 GC sweep.
+        // -----------------------------------------------------------------------
+        let metadata
+        try {
+          const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: storageKey }))
+          if (!obj.Body) throw new Error('S3 returned empty body for font asset')
+          // The Body is a Readable stream — collect into a Buffer for opentype.
+          const chunks: Buffer[] = []
+          for await (const chunk of obj.Body as Readable) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
+          }
+          const buf = Buffer.concat(chunks)
+          // Pass an ArrayBuffer slice so opentype gets exactly the byte range
+          // it expects (Buffer's underlying ArrayBuffer may be larger).
+          const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+          metadata = parseFontMetadata(ab as ArrayBuffer)
+        } catch (err) {
+          console.error('[tus] parseFontMetadata failed:', err)
+          throw {
+            status_code: 400,
+            body: `Failed to parse font file. Make sure it's a valid TTF or OTF.`,
+          }
+        }
+
+        try {
+          await createMediaAsset(db, {
+            id: assetId,
+            deckId,
+            uploaderUserId: userId,
+            mimeType: mimeRaw,
+            sizeBytes,
+            storageKey,
+            ...(filename !== undefined ? { originalFilename: filename } : {}),
+            kind: 'font',
+            fontFamily: metadata.family,
+            fontWeight: metadata.weight,
+            fontStyle: metadata.style,
+            fontPostscriptName: metadata.postscriptName,
+          })
+        } catch (err) {
+          console.error('[tus] createMediaAsset (font) failed:', err)
+          throw { status_code: 500, body: 'Failed to persist font asset metadata' }
+        }
+
+        return {
+          res,
+          status_code: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Narrative-Asset-Id': assetId,
+          },
+          body: JSON.stringify({
+            assetId,
+            storageKey,
+            mimeType: mimeRaw,
+            sizeBytes,
+            kind: 'font',
+            fontFamily: metadata.family,
+            fontWeight: metadata.weight,
+            fontStyle: metadata.style,
+            fontPostscriptName: metadata.postscriptName,
+          }),
+        }
+      }
 
       if (isVideo) {
         // -----------------------------------------------------------------------

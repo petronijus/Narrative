@@ -28,6 +28,7 @@
  */
 
 import { Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { isFontReady, onFontReady } from '../fontRegistry.js'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
@@ -37,6 +38,81 @@ const TEXT_TAG = Symbol('textNode')
  *  that wrap past the box's bottom edge get cut off, matching the
  *  bounding rect the user defined when drawing the text area. */
 const MASK_TAG = Symbol('textMask')
+/** P15: tag for the FontReady unsubscribe handle — used so destroy()
+ *  can drop the listener if the container is torn down before its
+ *  font loads. */
+const FONT_UNSUB_TAG = Symbol('textFontUnsub')
+
+/**
+ * P15: register a one-shot refresh that fires when a deck font this
+ * Text node depends on finishes loading. The listener stays active
+ * until either (a) the family becomes ready and we re-rasterise, or
+ * (b) the container is destroyed (destroy() drops it via FONT_UNSUB_TAG).
+ *
+ * No-op when the font is already ready, or when the family is one of
+ * the system fallbacks (those are always present so there's no race).
+ */
+function armFontReadyRefresh(
+  container: Container,
+  textNode: Text,
+  fontFamily: string | undefined,
+): void {
+  if (fontFamily === undefined || fontFamily === '') return
+  // CSS font-family is comma-separated; the FIRST token is the one
+  // Pixi will try to render with, so that's what we're racing on.
+  const primary =
+    fontFamily
+      .split(',')[0]
+      ?.trim()
+      .replace(/^["']|["']$/g, '') ?? ''
+  if (primary === '' || isSystemFontStack(primary)) return
+  if (isFontReady(primary)) return
+
+  const unsub = onFontReady((fam) => {
+    if (fam !== primary) return
+    if (container.destroyed) return
+    // Reassigning fontFamily forces TextStyle to re-resolve and Pixi
+    // to invalidate the cached glyph atlas, picking up the now-
+    // installed face.
+    try {
+      const style = textNode.style as TextStyle
+      style.fontFamily = fontFamily
+    } catch (err) {
+      console.warn('[textRenderer] font-ready refresh failed', err)
+    }
+    // One-shot — drop the listener.
+    const stored = (container as unknown as Record<symbol, () => void>)[FONT_UNSUB_TAG]
+    if (typeof stored === 'function') stored()
+  })
+
+  ;(container as unknown as Record<symbol, () => void>)[FONT_UNSUB_TAG] = unsub
+}
+
+const SYSTEM_FONT_TOKENS = new Set([
+  'system-ui',
+  '-apple-system',
+  'sans-serif',
+  'serif',
+  'monospace',
+  'cursive',
+  'fantasy',
+  'BlinkMacSystemFont',
+  'Helvetica',
+  'Helvetica Neue',
+  'Arial',
+  'Georgia',
+  'Times',
+  'Times New Roman',
+  'Courier',
+  'Courier New',
+  'SF Mono',
+  'Menlo',
+  'Inter',
+])
+
+function isSystemFontStack(token: string): boolean {
+  return SYSTEM_FONT_TOKENS.has(token)
+}
 
 /** Převede hex number na CSS color string pro TextStyle. */
 function hexToColorString(hex: number): string {
@@ -176,6 +252,14 @@ export const textRenderer = {
     applyVerticalAlign(textNode, data)
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
+
+    // P15: race protection — if this TextObject references a custom
+    // deck font that hasn't finished loading yet, Pixi caches a
+    // fallback glyph atlas at first paint. Register a one-shot
+    // listener so the moment FontLoader finishes installing the
+    // family we re-rasterise this node by reassigning `style.fontFamily`,
+    // which Pixi v8 treats as an invalidation of the atlas.
+    armFontReadyRefresh(container, textNode, data.fontFamily)
 
     return container
   },
@@ -383,6 +467,17 @@ export const textRenderer = {
    * Uvolní Text node a Container. Volá se při removeObject.
    */
   destroy(node: Container): void {
+    // P15: drop any pending font-ready listener so we don't try to
+    // poke a destroyed Text node when a delayed FontFace.load resolves.
+    const unsub = (node as unknown as Record<symbol, (() => void) | undefined>)[FONT_UNSUB_TAG]
+    if (typeof unsub === 'function') {
+      try {
+        unsub()
+      } catch {
+        /* ignore */
+      }
+    }
+
     const textNode = getTextNode(node)
     textNode?.destroy()
     const mask = getMask(node)

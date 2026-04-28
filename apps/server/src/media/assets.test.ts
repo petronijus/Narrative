@@ -48,6 +48,10 @@ const sampleAsset: MediaAsset = {
   thumbnailKey: null,
   transcodeStatus: null,
   transcodeError: null,
+  fontFamily: null,
+  fontWeight: null,
+  fontStyle: null,
+  fontPostscriptName: null,
 }
 
 const sampleVideoAsset: MediaAsset = {
@@ -68,6 +72,10 @@ const sampleVideoAsset: MediaAsset = {
   thumbnailKey: null,
   transcodeStatus: 'pending',
   transcodeError: null,
+  fontFamily: null,
+  fontWeight: null,
+  fontStyle: null,
+  fontPostscriptName: null,
 }
 
 const sampleArgs: CreateMediaAssetArgs = {
