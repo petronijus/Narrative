@@ -139,6 +139,12 @@ export interface TestApi {
    * Returns null if the slide or object is not found.
    */
   getObjectPositionFromYDoc(objectId: string, slideId: string): { x: number; y: number } | null
+  /**
+   * Read the full object Y.Map as a plain JS snapshot. Used by specs
+   * that need to introspect properties beyond x/y (e.g. text vAlign,
+   * fontSize, height) to compare rendered vs editing layouts.
+   */
+  getObject(objectId: string, slideId?: string): Record<string, unknown> | null
 }
 
 declare global {
@@ -424,6 +430,29 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         return null // slide found, object not found
       }
       return null // slide not found
+    },
+    getObject(objectId, slideId) {
+      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      if (targetSlideId === undefined) return null
+      for (let i = 0; i < deckCtx.slides.length; i++) {
+        const slideMap = deckCtx.slides.get(i)
+        if ((slideMap.get('id') as string) !== targetSlideId) continue
+        const objectsArr = slideMap.get('objects') as {
+          length: number
+          get: (i: number) => {
+            get: (k: string) => unknown
+            toJSON: () => Record<string, unknown>
+          }
+        }
+        for (let j = 0; j < objectsArr.length; j++) {
+          const objMap = objectsArr.get(j)
+          if ((objMap.get('id') as string) === objectId) {
+            return objMap.toJSON()
+          }
+        }
+        return null
+      }
+      return null
     },
   }
 
