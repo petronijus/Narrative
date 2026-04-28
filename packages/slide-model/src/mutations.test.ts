@@ -521,7 +521,10 @@ describe('duplicateObject', () => {
     const dup = duplicateObject(ctx, 't1') as typeof textObj
 
     expect(dup.type).toBe('text')
-    expect(dup.text).toBe('Hello')
+    // text is a Y.Text after the rich-text migration; assert its
+    // string contents and that it's a fresh instance.
+    expect(dup.text).toBeInstanceOf(Y.Text)
+    expect((dup.text as unknown as Y.Text).toString()).toBe('Hello')
     expect(dup.fontSize).toBe(24)
     expect(dup.color).toBe(0x000000)
     expect(dup.id).not.toBe('t1')
