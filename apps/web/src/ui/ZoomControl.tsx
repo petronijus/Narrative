@@ -12,19 +12,82 @@ import { MAX_ZOOM, MIN_ZOOM, useZoomLevel } from '../state/useZoomLevel.js'
 interface ZoomControlProps {
   /** Scroll container used to compute fit-to-screen. */
   stageScrollRef: React.RefObject<HTMLDivElement>
+  /**
+   * P15: ref to the artboard element (the inner div that the
+   * canvas mounts into). Required so Fit can re-center the artboard
+   * inside the visible channel after the zoom change reflows the
+   * stage padding wrapper.
+   */
+  artboardRef?: React.RefObject<HTMLDivElement | null>
+  /**
+   * P15: live insets of the floating chrome (side panels, toolbar,
+   * bottom panels). The stage scroll surface is full-bleed under
+   * those panels so the frosted glass has artboard content to blur,
+   * but "fit to screen" must size the artboard against the visible
+   * channel — otherwise the artboard ends up partially hidden under
+   * the panels. Each value is the pixel inset on that edge of the
+   * scroller; collapsing a panel lowers its inset live.
+   */
+  viewportInsets?: { top: number; right: number; bottom: number; left: number }
 }
 
-export function ZoomControl({ stageScrollRef }: ZoomControlProps) {
+export function ZoomControl({
+  stageScrollRef,
+  artboardRef: _artboardRef,
+  viewportInsets,
+}: ZoomControlProps) {
   const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
 
   const handleFit = () => {
     const el = stageScrollRef.current
     const vw = el?.clientWidth ?? window.innerWidth
     const vh = el?.clientHeight ?? window.innerHeight
-    const fit = Math.min((vw - 64) / 1920, (vh - 64) / 1080)
-    if (Number.isFinite(fit) && fit > 0) {
-      setZoom(Math.round(fit * 100) / 100)
-    }
+    const insetLeft = viewportInsets?.left ?? 0
+    const insetRight = viewportInsets?.right ?? 0
+    const insetTop = viewportInsets?.top ?? 0
+    const insetBottom = viewportInsets?.bottom ?? 0
+    const channelW = vw - insetLeft - insetRight
+    const channelH = vh - insetTop - insetBottom
+    // 32 px breathing room on each axis inside the channel so the
+    // artboard doesn't kiss the panels.
+    const fit = Math.min((channelW - 64) / 1920, (channelH - 64) / 1080)
+    if (!Number.isFinite(fit) || fit <= 0) return
+
+    const clamped = Math.round(fit * 100) / 100
+    setZoom(clamped)
+
+    // Compute the scroll position mathematically — no DOM reads needed
+    // after the zoom change, which avoids timing races with React commit.
+    //
+    // The inner stage padding wrapper is:
+    //   padding: 200px on all sides, display:grid, place-items:center
+    //   min-width:  max(400 + 1920*fit, channelW)
+    //   min-height: max(400 + 1080*fit, channelH)
+    //
+    // The artboard is centered in the wrapper. To center the artboard
+    // in the visible channel we need:
+    //   scrollLeft = (wrapperW - channelW) / 2
+    //   scrollTop  = (wrapperH - channelH) / 2
+    // clamped to ≥ 0 (no scroll needed when artboard fits the channel).
+    const artW = 1920 * clamped
+    const artH = 1080 * clamped
+    // wrapper width = max(padding + artboard + padding, channelW)
+    const wrapperW = Math.max(200 + artW + 200, channelW)
+    const wrapperH = Math.max(200 + artH + 200, channelH)
+    const targetScrollLeft = Math.max(0, (wrapperW - channelW) / 2)
+    const targetScrollTop = Math.max(0, (wrapperH - channelH) / 2)
+
+    // Apply after React has committed the new zoom and the layout has
+    // reflowed. A double-rAF is the idiomatic way to ensure we're past
+    // both the React commit pass and the browser's layout pass.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const scroller = stageScrollRef.current
+        if (scroller === null) return
+        scroller.scrollLeft = targetScrollLeft
+        scroller.scrollTop = targetScrollTop
+      })
+    })
   }
 
   return (

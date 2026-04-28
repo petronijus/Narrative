@@ -20,6 +20,7 @@ import { AnimationTimeline } from '../ui/AnimationTimeline'
 import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { ResizableSidebar } from '../ui/ResizableSidebar'
+import { OverlayScrollbarV, OverlayScrollbarH } from '../ui/OverlayScrollbars'
 import { TransformHandles } from '../ui/TransformHandles'
 import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
@@ -370,6 +371,35 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const [slidesWidth, setSlidesWidth] = useState(240)
   const slidesInset = slidesCollapsed ? 36 : slidesWidth
   const inspectorInset = inspectorCollapsed ? 36 : 256
+
+  // P15: live heights of the floating toolbar (top) and the bottom
+  // chrome stack (AnimationTimeline + SlideNotesPanel) so the custom
+  // overlay scrollbars can clear them as the user collapses /
+  // expands either group. Two refs + ResizeObserver per box; the
+  // result drives `start` / `end` / `perpendicular` on the
+  // OverlayScrollbarV / H below.
+  const topBarRef = useRef<HTMLDivElement>(null)
+  const bottomPanelsRef = useRef<HTMLDivElement>(null)
+  const [topBarH, setTopBarH] = useState(40)
+  const [bottomPanelsH, setBottomPanelsH] = useState(56)
+  useEffect(() => {
+    const tEl = topBarRef.current
+    const bEl = bottomPanelsRef.current
+    if (tEl === null && bEl === null) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = Math.round(entry.contentRect.height)
+        if (entry.target === tEl) {
+          setTopBarH((prev) => (prev === h ? prev : h))
+        } else if (entry.target === bEl) {
+          setBottomPanelsH((prev) => (prev === h ? prev : h))
+        }
+      }
+    })
+    if (tEl !== null) ro.observe(tEl)
+    if (bEl !== null) ro.observe(bEl)
+    return () => ro.disconnect()
+  }, [])
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
@@ -1605,6 +1635,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           same frosted-glass `.panel` effect, so the artboard is
           visible behind it just like the side panels. */}
       <div
+        ref={topBarRef}
         className="pointer-events-none absolute inset-x-0 top-0 z-10 flex"
         style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
       >
@@ -1632,25 +1663,29 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           >
             {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller.
-              P15: insets match the side-panel widths so scrollbars
-              and artboard content sit in the visible channel
-              between the side panels. The stage colour painted on
-              the canvas-backdrop still extends behind the panels for
-              the frosted-glass blur. */}
+              P15: insets are PADDING (not margin) so the scroll
+              surface itself stays full-bleed under the panels —
+              that's what gives `.panel` something real to blur with
+              backdrop-filter. Padding keeps the artboard's initial
+              resting position in the visible channel between the
+              side panels and below the toolbar; the user can still
+              scroll the artboard across the full surface and it
+              will travel behind the frosted-glass chrome.
+              Top: clears the floating Toolbar. Bottom: clears the
+              AnimationTimeline + SlideNotesPanel. Both driven by live
+              ResizeObserver values so the stage content-box matches the
+              visible channel exactly — this is what makes grid
+              place-items:center land the artboard in the channel center
+              rather than offset toward bottom-right. */}
             <div
               ref={stageScrollRef}
-              className="flex flex-1 overflow-auto"
+              className="scrollbar-hidden flex-1 overflow-auto"
               data-stage-scroll
               style={{
-                marginLeft: slidesInset,
-                marginRight: inspectorInset,
-                // Top: clears the floating Toolbar (~40 px). Bottom:
-                // approximate clearance for the AnimationTimeline +
-                // SlideNotesPanel headers when both are collapsed; if
-                // either is expanded the user can scroll naturally
-                // and the panels remain on top.
-                marginTop: 40,
-                marginBottom: 56,
+                paddingLeft: slidesInset,
+                paddingRight: inspectorInset,
+                paddingTop: topBarH,
+                paddingBottom: bottomPanelsH,
               }}
             >
               {/* Stage padding wrapper — 400 px of space around the
@@ -1863,6 +1898,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           channel between the side panels. Same frosted-glass effect,
           same compositing pattern as the toolbar above. */}
       <div
+        ref={bottomPanelsRef}
         className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col"
         style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
       >
@@ -1880,8 +1916,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           panels (z-10). Right inset clears the Inspector. Bottom inset
           clears the SlideNotesPanel toolbar. */}
       <div
-        className="pointer-events-none absolute top-3 z-30"
-        style={{ right: inspectorInset + 12 }}
+        className="pointer-events-none absolute z-30"
+        style={{ right: inspectorInset + 12, top: topBarH + 12 }}
       >
         <div className="pointer-events-auto">
           <StageBgPicker />
@@ -1889,12 +1925,48 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       </div>
       <div
         className="pointer-events-none absolute z-30"
-        style={{ right: inspectorInset + 12, bottom: 12 }}
+        style={{ right: inspectorInset + 12, bottom: bottomPanelsH + 12 }}
       >
         <div className="pointer-events-auto">
-          <ZoomControl stageScrollRef={stageScrollRef} />
+          <ZoomControl
+            stageScrollRef={stageScrollRef}
+            artboardRef={canvasContainerRef}
+            viewportInsets={{
+              top: topBarH,
+              right: inspectorInset,
+              bottom: bottomPanelsH,
+              left: slidesInset,
+            }}
+          />
         </div>
       </div>
+
+      {/* P15: custom overlay scrollbars — the stage scroll surface is
+          full-bleed under the panels (so frosted-glass blur picks up
+          artboard content), but the native scrollbars are hidden via
+          .scrollbar-hidden. These overlays render thin tracks inside
+          the visible channel:
+            - Vertical sits flush against the inspector's left edge,
+              from just below the toolbar to just above the bottom
+              panels.
+            - Horizontal sits just above the bottom panels, spanning
+              the same x-range as the bottom panels (between the side
+              panels).
+          All three insets are live: collapsing the toolbar / bottom
+          panels / either side panel reflows the scrollbars in the
+          next frame via the ResizeObserver above. */}
+      <OverlayScrollbarV
+        scrollRef={stageScrollRef}
+        start={topBarH}
+        end={bottomPanelsH}
+        perpendicular={inspectorInset}
+      />
+      <OverlayScrollbarH
+        scrollRef={stageScrollRef}
+        start={slidesInset}
+        end={inspectorInset}
+        perpendicular={bottomPanelsH}
+      />
 
       {/* Right sidebar: inspector — collapsible (P15) with width
           animation. Reuses ResizableSidebar even though the user
