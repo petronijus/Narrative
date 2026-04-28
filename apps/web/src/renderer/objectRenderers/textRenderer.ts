@@ -275,12 +275,30 @@ function applyUnderline(container: Container, textNode: Text, data: TextObject):
   const colour = hexToColorString(data.color)
   const alpha = data.colorAlpha ?? 1
   const align = data.align ?? 'left'
-
-  // First line's text top inside the textNode is at y = 0; baseline is
-  // at ~0.85 × fontSize from the top for typical fonts. Place the
-  // underline a hair below the baseline.
-  const baselineFromLineTop = fontSize * 0.85
   const measureStyle = buildStyle(data)
+
+  // Pixi draws each line with textBaseline='alphabetic' at (lineTop +
+  // halfLeading + ascent). Use the actual font metrics so the underline
+  // lands at the visible baseline regardless of font / weight / italic.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const measureFont = (CanvasTextMetrics as any)?.measureFont as
+    | ((s: TextStyle) => { ascent: number; descent: number })
+    | undefined
+  let ascent = fontSize * 0.78
+  let descent = fontSize * 0.22
+  if (typeof measureFont === 'function') {
+    try {
+      const m = measureFont(measureStyle)
+      if (typeof m?.ascent === 'number' && m.ascent > 0) ascent = m.ascent
+      if (typeof m?.descent === 'number' && m.descent > 0) descent = m.descent
+    } catch {
+      /* fall through to defaults */
+    }
+  }
+  const halfLeading = Math.max(0, (lineHeightPx - ascent - descent) / 2)
+  // Sit the underline a hair below the baseline so it doesn't cut
+  // through the bottom of glyphs.
+  const baselineFromLineTop = halfLeading + ascent + Math.max(1, Math.round(fontSize * 0.04))
 
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i] ?? ''
