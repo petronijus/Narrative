@@ -78,6 +78,14 @@ export interface BaseSlideObject {
    * surfaces the field via a "Link" section.
    */
   hyperlink?: ObjectHyperlink
+  /**
+   * P15: per-object aspect-ratio lock for transform-handle resizing.
+   * When `true`, corner drags preserve the original W:H ratio; holding
+   * Shift inverts (releases) it. When unset / `false`, resize is free
+   * and Shift inverts (locks) it. Toggled from the chain icon between
+   * the Width and Height fields in the Inspector's Size section.
+   */
+  aspectLocked?: boolean
 }
 
 /**
@@ -415,12 +423,6 @@ export interface VideoObject extends BaseSlideObject {
    * preview, not chrome. Toggled per-object from the Inspector.
    */
   showControls?: boolean
-  /**
-   * P8: aspect-ratio lock. When true, transform handles preserve the
-   * native video aspect ratio derived from media_assets.
-   * Inspector reads asset width/height to compute the locked ratio.
-   */
-  aspectLocked?: boolean
   /**
    * P8: poster frame override — seconds into the clip to use as the
    * still image displayed in the editor before play. The transcode

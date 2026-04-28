@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { ChevronDown, Lock, Unlock } from 'lucide-react'
+import { ChevronDown, Link2, Link2Off, Lock, Unlock } from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -321,20 +321,73 @@ export function Inspector() {
         />
       </Section>
 
-      {/* Size */}
+      {/* Size — width / height plus an aspect-lock toggle. When ON,
+          corner-handle resizes preserve the W:H ratio and Shift
+          temporarily releases it; when OFF, Shift temporarily locks
+          it. The chain icon mirrors Figma / Sketch / Keynote. */}
       <Section title="Size" storageKey="size">
-        <NumberField
-          id={`inspector-w-${obj.id}`}
-          label="Width"
-          value={obj.width}
-          onChange={(v) => patch({ width: v })}
-        />
-        <NumberField
-          id={`inspector-h-${obj.id}`}
-          label="Height"
-          value={obj.height}
-          onChange={(v) => patch({ height: v })}
-        />
+        <div className="relative">
+          <NumberField
+            id={`inspector-w-${obj.id}`}
+            label="Width"
+            value={obj.width}
+            onChange={(v) => {
+              if (obj.aspectLocked === true && obj.width > 0) {
+                const ratio = obj.height / obj.width
+                patch({ width: v, height: Math.max(1, Math.round(v * ratio)) })
+              } else {
+                patch({ width: v })
+              }
+            }}
+          />
+          <NumberField
+            id={`inspector-h-${obj.id}`}
+            label="Height"
+            value={obj.height}
+            onChange={(v) => {
+              if (obj.aspectLocked === true && obj.height > 0) {
+                const ratio = obj.width / obj.height
+                patch({ height: v, width: Math.max(1, Math.round(v * ratio)) })
+              } else {
+                patch({ height: v })
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                aspectLocked: obj.aspectLocked === true ? undefined : true,
+              } as SlideObjectPatch<SlideObject>)
+            }
+            disabled={isViewer}
+            aria-pressed={obj.aspectLocked === true}
+            aria-label={
+              obj.aspectLocked === true
+                ? 'Unlock aspect ratio (Shift while dragging temporarily unlocks)'
+                : 'Lock aspect ratio (Shift while dragging temporarily locks)'
+            }
+            title={
+              obj.aspectLocked === true
+                ? 'Aspect ratio: locked — Shift while dragging unlocks'
+                : 'Aspect ratio: free — Shift while dragging locks'
+            }
+            className={[
+              'absolute right-0 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded',
+              'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+              obj.aspectLocked === true
+                ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
+              isViewer ? 'pointer-events-none opacity-40' : '',
+            ].join(' ')}
+          >
+            {obj.aspectLocked === true ? (
+              <Link2 className="h-3 w-3" aria-hidden="true" />
+            ) : (
+              <Link2Off className="h-3 w-3" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </Section>
 
       {/* Transform */}
@@ -1119,7 +1172,13 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
   }
 
   function setSolidColor(color: number): void {
-    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: 1 })
+    const prevAlpha = current.kind === 'color' ? (current.alpha ?? 1) : 1
+    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: prevAlpha })
+  }
+
+  function setSolidAlpha(alpha: number): void {
+    if (current.kind !== 'color') return
+    updateSlideBackground(deckCtx, slideId, { ...current, alpha })
   }
 
   function patchGradientStop(idx: 0 | 1, color: number): void {
@@ -1128,6 +1187,15 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
     const stop = stops[idx]
     if (stop === undefined) return
     stops[idx] = { ...stop, color }
+    updateSlideBackground(deckCtx, slideId, { ...current, stops })
+  }
+
+  function patchGradientStopAlpha(idx: 0 | 1, alpha: number): void {
+    if (current.kind !== 'linearGradient' && current.kind !== 'radialGradient') return
+    const stops = current.stops.slice()
+    const stop = stops[idx]
+    if (stop === undefined) return
+    stops[idx] = { ...stop, alpha }
     updateSlideBackground(deckCtx, slideId, { ...current, stops })
   }
 
@@ -1173,6 +1241,8 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
             onChange={(hex) => setSolidColor(hexToNumber(hex))}
             ariaLabel="Background color"
             showHex
+            alpha={current.alpha ?? 1}
+            onAlphaChange={setSolidAlpha}
           />
         </div>
       )}
@@ -1186,6 +1256,8 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
               onChange={(hex) => patchGradientStop(0, hexToNumber(hex))}
               ariaLabel="Gradient start color"
               showHex={false}
+              alpha={current.stops[0]?.alpha ?? 1}
+              onAlphaChange={(a) => patchGradientStopAlpha(0, a)}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -1195,6 +1267,8 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
               onChange={(hex) => patchGradientStop(1, hexToNumber(hex))}
               ariaLabel="Gradient end color"
               showHex={false}
+              alpha={current.stops[1]?.alpha ?? 1}
+              onAlphaChange={(a) => patchGradientStopAlpha(1, a)}
             />
           </div>
           {current.kind === 'linearGradient' && (
@@ -1877,25 +1951,9 @@ function ShadowControls({
           onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
           ariaLabel="Shadow color"
           showHex={false}
+          alpha={shadow.opacity}
+          onAlphaChange={(a) => onChange({ ...shadow, opacity: a })}
         />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
-          Opacity
-        </span>
-        <input
-          type="range"
-          aria-label="Shadow opacity"
-          min={0}
-          max={1}
-          step={0.05}
-          value={shadow.opacity}
-          onChange={(e) => onChange({ ...shadow, opacity: Number.parseFloat(e.target.value) })}
-          className="flex-1 accent-primary"
-        />
-        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
-          {Math.round(shadow.opacity * 100)}%
-        </span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Blur</span>
@@ -2438,21 +2496,9 @@ function VideoSection({
         </select>
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Aspect</span>
-        <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={obj.aspectLocked === true}
-            onChange={(e) =>
-              patch({
-                aspectLocked: e.target.checked ? true : undefined,
-              } as unknown as SlideObjectPatch<VideoObject>)
-            }
-          />
-          Lock to native ratio
-        </label>
-      </div>
+      {/* P15: aspect-lock moved to the Size section as a chain icon
+          shared by every object type. The previous video-only "Lock
+          to native ratio" checkbox lived here; it's now redundant. */}
 
       <PosterFrameRow obj={obj} patch={patch} />
       <NumberField

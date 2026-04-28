@@ -1831,13 +1831,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                             return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                           }
                         }
-                        // P8: lock aspect ratio when any selected object is a
-                        // VideoObject with aspectLocked=true. Resizing then
-                        // behaves as if Shift were held (corner handles
-                        // preserve native ratio).
+                        // P15: aspect-ratio lock now lives on every object
+                        // (BaseSlideObject.aspectLocked) and is toggled from
+                        // a chain icon in the Inspector's Size section. If
+                        // ANY selected object has it on, the resize is
+                        // locked; Shift inverts the state mid-drag (XOR
+                        // applied in TransformHandles).
                         const aspectLock = editableIds.some((sid) => {
                           const o = objects.find((x) => x.id === sid)
-                          return o !== undefined && o.type === 'video' && o.aspectLocked === true
+                          return o?.aspectLocked === true
                         })
                         return (
                           <TransformHandles

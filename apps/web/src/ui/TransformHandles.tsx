@@ -430,7 +430,12 @@ export function TransformHandles({
         const initial = drag.allInitialBounds[0]
         if (initial === undefined) return
 
-        const newRect = computeResize(drag.kind, initial, dx, dy, shiftHeld || forceAspectLock)
+        // P15: aspect-lock semantics — XOR of the per-object lock and
+        // the live Shift state. With lock OFF (default), Shift toggles
+        // it ON for the drag; with lock ON, Shift toggles it OFF.
+        // Matches Figma / Sketch / Keynote.
+        const lockAspect = shiftHeld !== forceAspectLock
+        const newRect = computeResize(drag.kind, initial, dx, dy, lockAspect)
 
         // Snap
         const snapResult = computeSnap(

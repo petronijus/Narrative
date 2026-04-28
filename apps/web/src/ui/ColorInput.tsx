@@ -68,6 +68,29 @@ export interface ColorInputProps {
   inputClassName?: string
   /** Extra className for the hex text input. */
   hexClassName?: string
+  /**
+   * Optional alpha 0..1. When provided alongside `onAlphaChange`, the
+   * popover renders an opacity slider and the trigger swatch shows a
+   * checkered backdrop so partial transparency is visible.
+   */
+  alpha?: number
+  /** Live alpha updates while dragging the slider. */
+  onAlphaChange?: (alpha: number) => void
+  /** Definitive alpha commit on slider release. Defaults to `onAlphaChange`. */
+  onAlphaCommit?: (alpha: number) => void
+}
+
+const CHECKER_BG =
+  'linear-gradient(45deg, #bbb 25%, transparent 25%), ' +
+  'linear-gradient(-45deg, #bbb 25%, transparent 25%), ' +
+  'linear-gradient(45deg, transparent 75%, #bbb 75%), ' +
+  'linear-gradient(-45deg, transparent 75%, #bbb 75%)'
+const CHECKER_SIZE = '8px 8px'
+const CHECKER_POS = '0 0, 0 4px, 4px -4px, -4px 0'
+
+function clampAlpha(a: number): number {
+  if (Number.isNaN(a)) return 1
+  return Math.min(1, Math.max(0, a))
 }
 
 function isValidHex(s: string): boolean {
@@ -88,7 +111,13 @@ export function ColorInput({
   ariaLabel = 'Color',
   inputClassName = '',
   hexClassName = '',
+  alpha,
+  onAlphaChange,
+  onAlphaCommit,
 }: ColorInputProps) {
+  const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
+  const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
+  const commitAlpha = onAlphaCommit ?? onAlphaChange
   const { colors: recentColors, push } = useRecentColors()
   const [open, setOpen] = useState(false)
 
@@ -155,11 +184,29 @@ export function ColorInput({
               inputClassName,
             ].join(' ')}
           >
-            <span
-              aria-hidden="true"
-              className="block h-full w-full rounded-sm"
-              style={{ background: value }}
-            />
+            {alphaEnabled ? (
+              <span
+                aria-hidden="true"
+                className="block h-full w-full rounded-sm"
+                style={{
+                  backgroundImage: CHECKER_BG,
+                  backgroundSize: CHECKER_SIZE,
+                  backgroundPosition: CHECKER_POS,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  className="block h-full w-full rounded-sm"
+                  style={{ background: value, opacity: alphaVal }}
+                />
+              </span>
+            ) : (
+              <span
+                aria-hidden="true"
+                className="block h-full w-full rounded-sm"
+                style={{ background: value }}
+              />
+            )}
           </button>
         </PopoverTrigger>
         <PopoverContent
@@ -213,6 +260,32 @@ export function ColorInput({
                 <Pipette className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </div>
+
+            {/* Alpha slider — only when caller wires alpha through. */}
+            {alphaEnabled && (
+              <div className="flex items-center gap-1.5">
+                <span className="w-10 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
+                  Alpha
+                </span>
+                <input
+                  type="range"
+                  aria-label={`${ariaLabel} opacity`}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={alphaVal}
+                  onChange={(e) => onAlphaChange?.(clampAlpha(Number.parseFloat(e.target.value)))}
+                  onPointerUp={(e) => {
+                    const v = clampAlpha(Number.parseFloat((e.target as HTMLInputElement).value))
+                    commitAlpha?.(v)
+                  }}
+                  className="flex-1 accent-primary"
+                />
+                <span className="w-9 text-right text-[10px] tabular-nums text-muted-foreground">
+                  {Math.round(alphaVal * 100)}%
+                </span>
+              </div>
+            )}
 
             {/* Recent colors swatch row inside the popover. */}
             {recentColors.length > 0 && (
