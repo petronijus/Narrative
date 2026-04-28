@@ -81,52 +81,69 @@ export function ZoomControl({ stageScrollRef, viewportInsets }: ZoomControlProps
 
   return (
     <div
-      className="pointer-events-auto flex flex-col items-center gap-1 rounded-md border border-border bg-surface-1/80 p-1.5 shadow-sm backdrop-blur"
+      className="group pointer-events-auto flex flex-col items-center rounded-md border border-border bg-surface-1/80 p-1.5 shadow-sm backdrop-blur"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <button
-        type="button"
-        onClick={handleFit}
-        aria-label="Fit to screen"
-        title="Fit to screen"
-        className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
+      {/* Expanded controls — collapsed to zero-height by default,
+          smoothly expand on hover or when any child has focus. We
+          animate max-height + opacity + transform together; using
+          `display: none` would block the transition entirely. */}
+      <div
+        className={[
+          'flex flex-col items-center gap-1 overflow-hidden',
+          'pointer-events-none max-h-0 -translate-y-1 opacity-0',
+          'transition-[max-height,opacity,transform,margin] duration-200 ease-out',
+          'group-hover:pointer-events-auto group-hover:max-h-48 group-hover:translate-y-0 group-hover:opacity-100 group-hover:mb-1',
+          'group-focus-within:pointer-events-auto group-focus-within:max-h-48 group-focus-within:translate-y-0 group-focus-within:opacity-100 group-focus-within:mb-1',
+        ].join(' ')}
       >
-        <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        onClick={zoomIn}
-        disabled={zoom >= MAX_ZOOM - 0.001}
-        aria-label="Zoom in"
-        title="Zoom in"
-        className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-      >
-        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-      <input
-        type="range"
-        min={MIN_ZOOM}
-        max={MAX_ZOOM}
-        step={0.05}
-        value={zoom}
-        onChange={(e) => setZoom(Number(e.target.value))}
-        aria-label="Zoom level"
-        className="zoom-slider h-20 w-6 accent-foreground"
-        style={{
-          writingMode: 'vertical-lr',
-          direction: 'rtl',
-        }}
-      />
-      <button
-        type="button"
-        onClick={zoomOut}
-        disabled={zoom <= MIN_ZOOM + 0.001}
-        aria-label="Zoom out"
-        title="Zoom out"
-        className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-      >
-        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
+        <button
+          type="button"
+          onClick={handleFit}
+          aria-label="Fit to screen"
+          title="Fit to screen"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground"
+        >
+          <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={zoomIn}
+          disabled={zoom >= MAX_ZOOM - 0.001}
+          aria-label="Zoom in"
+          title="Zoom in"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+        <input
+          type="range"
+          min={MIN_ZOOM}
+          max={MAX_ZOOM}
+          step={0.05}
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          aria-label="Zoom level"
+          className="zoom-slider h-20 w-6 accent-foreground"
+          style={{
+            writingMode: 'vertical-lr',
+            direction: 'rtl',
+          }}
+        />
+        <button
+          type="button"
+          onClick={zoomOut}
+          disabled={zoom <= MIN_ZOOM + 0.001}
+          aria-label="Zoom out"
+          title="Zoom out"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+        >
+          <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      </div>
+      {/* Always-visible percentage — anchors the collapsed pill at the
+          bottom. Click resets to 100%; the rest of the chrome appears
+          on hover above this label. */}
       <button
         type="button"
         onClick={resetZoom}
