@@ -2109,6 +2109,12 @@ function TextSection({ obj, patch }: TextSectionProps) {
           <div className="flex items-center gap-1">
             <button
               type="button"
+              // preventDefault on mouseDown keeps the editing textarea
+              // focused (and its selection alive) while the user clicks
+              // a style toggle in the inspector. Without this, the
+              // textarea blurs on mousedown, which exits edit mode and
+              // wipes the selection before the click even fires.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() =>
                 patch({
                   italic: obj.italic === true ? undefined : true,
@@ -2127,6 +2133,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             </button>
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() =>
                 patch({
                   underline: obj.underline === true ? undefined : true,
