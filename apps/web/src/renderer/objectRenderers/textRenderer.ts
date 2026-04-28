@@ -36,6 +36,10 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 const TEXT_TAG = Symbol('textNode')
 /** Tag for the clip-mask Graphics that crops glyphs to the box. */
 const MASK_TAG = Symbol('textMask')
+/** Tag for the underline Graphics painted under the rendered text.
+ *  Pixi v8's TextStyle has no native underline, so we draw a flat line
+ *  at each rendered line's baseline + descent ourselves. */
+const UNDERLINE_TAG = Symbol('textUnderline')
 /** Last applied data snapshot — applyPatch merges against this so
  *  fields Pixi doesn't track natively (vAlign, listStyle, fontFamily)
  *  survive patches that only touch a sibling field. Without it,
@@ -195,6 +199,10 @@ function getMask(node: Container): Graphics | undefined {
   return asAny(node)[MASK_TAG] as Graphics | undefined
 }
 
+function getUnderline(node: Container): Graphics | undefined {
+  return asAny(node)[UNDERLINE_TAG] as Graphics | undefined
+}
+
 function getStoredData(node: Container): TextObject | undefined {
   return asAny(node)[DATA_TAG] as TextObject | undefined
 }
@@ -234,6 +242,62 @@ function fontDescentFor(data: TextObject): number {
 }
 
 /**
+ * Draw / update / remove the underline Graphics to match
+ * `data.underline`. One horizontal line per rendered text line, sitting
+ * just below the baseline. Pixi v8 doesn't render underlines via
+ * TextStyle, so we reproduce the effect ourselves.
+ */
+function applyUnderline(container: Container, textNode: Text, data: TextObject): void {
+  const existing = getUnderline(container)
+  if (data.underline !== true) {
+    if (existing !== undefined) {
+      existing.destroy()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (container as any)[UNDERLINE_TAG]
+    }
+    return
+  }
+
+  let g = existing
+  if (g === undefined) {
+    g = new Graphics()
+    asAny(container)[UNDERLINE_TAG] = g
+    container.addChild(g)
+  }
+  g.clear()
+
+  const fontSize = data.fontSize
+  const lineHeightMul = data.lineHeight !== undefined && data.lineHeight > 0 ? data.lineHeight : 1.2
+  const lineHeightPx = fontSize * lineHeightMul
+  const text = (textNode.text as string) ?? ''
+  const lines = text.split('\n')
+  const thickness = Math.max(1, Math.round(fontSize / 16))
+  const colour = hexToColorString(data.color)
+  const alpha = data.colorAlpha ?? 1
+  const align = data.align ?? 'left'
+
+  // First line's text top inside the textNode is at y = 0; baseline is
+  // at ~0.85 × fontSize from the top for typical fonts. Place the
+  // underline a hair below the baseline.
+  const baselineFromLineTop = fontSize * 0.85
+  const measureStyle = buildStyle(data)
+
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i] ?? ''
+    if (lineText.length === 0) continue
+    const lineWidth = CanvasTextMetrics.measureText(lineText, measureStyle).width
+
+    let lineX = 0
+    if (align === 'center') lineX = (data.width - lineWidth) / 2
+    else if (align === 'right') lineX = data.width - lineWidth
+
+    const yTop = textNode.y + i * lineHeightPx + baselineFromLineTop
+    g.rect(lineX, yTop, lineWidth, thickness)
+  }
+  g.fill({ color: colour, alpha })
+}
+
+/**
  * Rebuild the clip mask to cover the bounding box plus descender
  * room. Glyphs that wrap below the box still get clipped by the mask;
  * only the last line's descender survives.
@@ -270,6 +334,7 @@ export const textRenderer = {
     applyObjectTransform(container, data)
     applyHorizontalAlign(textNode, data)
     applyVerticalAlign(textNode, data)
+    applyUnderline(container, textNode, data)
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     setStoredData(container, data)
@@ -322,6 +387,7 @@ export const textRenderer = {
       applyHorizontalAlign(textNode, next)
     }
 
+    applyUnderline(node, textNode, next)
     applyClipMask(node, next)
 
     applyFilterEffects(node, next.shadow, next.blur)
@@ -369,29 +435,30 @@ export const textRenderer = {
     // Text content — if listStyle is also in patch, marker prefix must
     // be regenerated. Otherwise write raw text directly (list markers
     // already in node.text stay intact because we ignore them in Y.Doc).
-    const textChanged = patch.text !== undefined
+    const textChanged = 'text' in patch
     const listChanged = 'listStyle' in patch
 
-    // P7: any typography-affecting field forces a style rebuild. Rather
-    // than hand-patch every combination, we read the last known snapshot
-    // merged with the patch and call buildStyle() — cost is one
-    // TextStyle allocation per change, which is negligible compared to
-    // Pixi's glyph layout work that follows.
+    // Any typography-affecting field forces a style rebuild. We use
+    // `'X' in patch` rather than `patch.X !== undefined` because the
+    // Inspector and Y.Map reconciler both express "delete this field"
+    // as `{ X: undefined }` — checking `!== undefined` would silently
+    // miss the delete and leave the previous style applied (e.g.
+    // toggling italic off would keep glyphs italicised).
     const needsStyleRebuild =
-      patch.fontSize !== undefined ||
-      patch.fontWeight !== undefined ||
-      patch.color !== undefined ||
+      'fontSize' in patch ||
+      'fontWeight' in patch ||
+      'color' in patch ||
       'colorAlpha' in patch ||
-      patch.align !== undefined ||
-      patch.width !== undefined ||
-      patch.fontFamily !== undefined ||
-      patch.italic !== undefined ||
-      patch.underline !== undefined ||
-      patch.letterSpacing !== undefined ||
-      patch.lineHeight !== undefined ||
+      'align' in patch ||
+      'width' in patch ||
+      'fontFamily' in patch ||
+      'italic' in patch ||
+      'underline' in patch ||
+      'letterSpacing' in patch ||
+      'lineHeight' in patch ||
       'stroke' in patch ||
       'strokeAlpha' in patch ||
-      patch.strokeWidth !== undefined
+      'strokeWidth' in patch
 
     // Use the stored last-applied data as the merge base so non-Pixi
     // fields (vAlign, listStyle, font metadata) are preserved across
@@ -459,14 +526,15 @@ export const textRenderer = {
 
     // vAlign depends on the current text content + height — re-apply
     // whenever any of those changed, regardless of the rebuild branch.
-    if (
-      textChanged ||
-      listChanged ||
-      needsStyleRebuild ||
-      patch.vAlign !== undefined ||
-      patch.height !== undefined
-    ) {
+    if (textChanged || listChanged || needsStyleRebuild || 'vAlign' in patch || 'height' in patch) {
       applyVerticalAlign(textNode, merged)
+    }
+
+    // Underline geometry tracks every typographic field + the text
+    // itself, so refresh whenever anything that affects line layout
+    // or the toggle changes.
+    if (textChanged || listChanged || needsStyleRebuild || 'height' in patch) {
+      applyUnderline(node, textNode, merged)
     }
 
     setStoredData(node, merged)
@@ -498,6 +566,7 @@ export const textRenderer = {
       node.mask = null
       mask.destroy()
     }
+    getUnderline(node)?.destroy()
     destroyFilterEffects(node)
     node.destroy()
   },
