@@ -99,7 +99,11 @@ const FONT_MIME_TYPES = new Set([
 function isFontUpload(mime: string, filename?: string): boolean {
   const m = mime.toLowerCase()
   if (FONT_MIME_TYPES.has(m)) return true
-  if (m === 'application/octet-stream' && filename) {
+  // Browsers on Windows commonly report file.type as '' for .ttf/.otf
+  // because the OS lacks a MIME registry entry. Accept empty / generic
+  // MIME when the filename has a font extension.
+  const isGenericMime = m === '' || m === 'application/octet-stream'
+  if (isGenericMime && filename) {
     const lower = filename.toLowerCase()
     return lower.endsWith('.ttf') || lower.endsWith('.otf')
   }
