@@ -70,7 +70,6 @@ import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
-import { getDefaultRenderScheduler } from '../renderer/RenderScheduler.js'
 import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -415,28 +414,6 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   // dependency-array churn on the heavy drag handler.
   const deckGuidesRef = useRef(deckGuides)
   deckGuidesRef.current = deckGuides
-
-  // P15: hide the underlying Pixi text container while the inline
-  // text-edit overlay is on top. The overlay's textarea has a
-  // transparent background, so without this the user saw a "ghost"
-  // of the rendered Pixi text peeking through behind the editable
-  // characters — Pixi's text metrics never line up perfectly with
-  // the DOM textarea, so the double-render was always visible. On
-  // edit-end the container becomes visible again and a markDirty()
-  // forces a single Pixi repaint.
-  useEffect(() => {
-    if (canvasInstance === null || editingTextId === null) return
-    const container = canvasInstance.sceneGraph.getContainer(editingTextId)
-    if (container === undefined) return
-    container.visible = false
-    getDefaultRenderScheduler()?.markDirty()
-    return (): void => {
-      if (!container.destroyed) {
-        container.visible = true
-        getDefaultRenderScheduler()?.markDirty()
-      }
-    }
-  }, [editingTextId, canvasInstance])
 
   // Expose the latest zoom to the pointer callbacks without having to
   // include it in their dependency arrays (which would churn the
