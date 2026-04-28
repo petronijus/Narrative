@@ -18,7 +18,26 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { ChevronDown, Link2, Link2Off, Lock, Unlock } from 'lucide-react'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  ChevronDown,
+  Link2,
+  Link2Off,
+  Lock,
+  Unlock,
+  type LucideIcon,
+} from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -114,6 +133,55 @@ interface NumberFieldProps {
   step?: number
   disabled?: boolean
   onChange: (value: number) => void
+}
+
+interface AlignButtonGroupProps<V extends string> {
+  value: V
+  onChange: (value: V) => void
+  ariaLabel: string
+  options: ReadonlyArray<{
+    value: V
+    label: string
+    Icon: LucideIcon
+  }>
+}
+
+function AlignButtonGroup<V extends string>({
+  value,
+  onChange,
+  ariaLabel,
+  options,
+}: AlignButtonGroupProps<V>) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+    >
+      {options.map(({ value: v, label, Icon }, idx) => {
+        const active = v === value
+        return (
+          <button
+            key={v}
+            type="button"
+            aria-label={label}
+            aria-pressed={active}
+            title={label}
+            onClick={() => onChange(v)}
+            className={[
+              'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+              idx > 0 ? 'border-l border-input' : '',
+              active
+                ? 'bg-accent text-accent-foreground'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+            ].join(' ')}
+          >
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 function NumberField({ id, label, value, step = 1, disabled = false, onChange }: NumberFieldProps) {
@@ -585,37 +653,37 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
       <Section title="Align" storageKey="multi-align">
         <div className="grid grid-cols-6 gap-1">
           <MultiButton
-            label="L"
+            Icon={AlignHorizontalJustifyStart}
             title="Align left"
             onClick={() => runAlign('left')}
             disabled={isViewer}
           />
           <MultiButton
-            label="C"
+            Icon={AlignHorizontalJustifyCenter}
             title="Align horizontal center"
             onClick={() => runAlign('center-x')}
             disabled={isViewer}
           />
           <MultiButton
-            label="R"
+            Icon={AlignHorizontalJustifyEnd}
             title="Align right"
             onClick={() => runAlign('right')}
             disabled={isViewer}
           />
           <MultiButton
-            label="T"
+            Icon={AlignVerticalJustifyStart}
             title="Align top"
             onClick={() => runAlign('top')}
             disabled={isViewer}
           />
           <MultiButton
-            label="M"
+            Icon={AlignVerticalJustifyCenter}
             title="Align vertical middle"
             onClick={() => runAlign('center-y')}
             disabled={isViewer}
           />
           <MultiButton
-            label="B"
+            Icon={AlignVerticalJustifyEnd}
             title="Align bottom"
             onClick={() => runAlign('bottom')}
             disabled={isViewer}
@@ -683,11 +751,13 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
 
 function MultiButton({
   label,
+  Icon,
   title,
   onClick,
   disabled,
 }: {
-  label: string
+  label?: string
+  Icon?: LucideIcon
   title: string
   onClick: () => void
   disabled?: boolean
@@ -698,9 +768,10 @@ function MultiButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      aria-label={title}
+      className="flex items-center justify-center rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
-      {label}
+      {Icon !== undefined ? <Icon className="h-3.5 w-3.5" aria-hidden /> : label}
     </button>
   )
 }
@@ -2147,50 +2218,32 @@ function TextSection({ obj, patch }: TextSectionProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-align-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Align
-          </label>
-          <select
-            id={`inspector-align-${obj.id}`}
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Align</span>
+          <AlignButtonGroup
             value={obj.align}
-            onChange={(e) => patch({ align: e.target.value as 'left' | 'center' | 'right' })}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="left">Left</option>
-            <option value="center">Center</option>
-            <option value="right">Right</option>
-          </select>
+            onChange={(v) => patch({ align: v })}
+            ariaLabel="Horizontal alignment"
+            options={[
+              { value: 'left', label: 'Left', Icon: AlignLeft },
+              { value: 'center', label: 'Center', Icon: AlignCenter },
+              { value: 'right', label: 'Right', Icon: AlignRight },
+            ]}
+          />
         </div>
 
         {/* Vertical alignment (new in P7). Default top. */}
         <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-valign-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            V-align
-          </label>
-          <select
-            id={`inspector-valign-${obj.id}`}
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">V-align</span>
+          <AlignButtonGroup
             value={obj.vAlign ?? 'top'}
-            onChange={(e) =>
-              patch({
-                vAlign: e.target.value as 'top' | 'middle' | 'bottom',
-              } as SlideObjectPatch<TextObject>)
-            }
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-          >
-            <option value="top">Top</option>
-            <option value="middle">Middle</option>
-            <option value="bottom">Bottom</option>
-          </select>
+            onChange={(v) => patch({ vAlign: v } as SlideObjectPatch<TextObject>)}
+            ariaLabel="Vertical alignment"
+            options={[
+              { value: 'top', label: 'Top', Icon: AlignStartVertical },
+              { value: 'middle', label: 'Middle', Icon: AlignCenterVertical },
+              { value: 'bottom', label: 'Bottom', Icon: AlignEndVertical },
+            ]}
+          />
         </div>
 
         <NumberField
