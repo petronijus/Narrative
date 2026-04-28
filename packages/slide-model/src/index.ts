@@ -100,6 +100,17 @@ export type { DeckFontsContext } from './deckFonts.js'
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 
+// Rich-text helpers (P15+) — Y.Text ↔ delta ↔ HTML
+export {
+  createTextValue,
+  getPlainString,
+  applyFormat,
+  clearFormat,
+  toDelta,
+  toHtml,
+} from './richText.js'
+export type { RichAttrs, RichDeltaOp, HtmlDefaults } from './richText.js'
+
 // Bindings — animations (M6)
 export {
   yMapToAnimationStep,
