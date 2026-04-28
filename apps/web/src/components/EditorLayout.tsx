@@ -1930,7 +1930,6 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         <div className="pointer-events-auto">
           <ZoomControl
             stageScrollRef={stageScrollRef}
-            artboardRef={canvasContainerRef}
             viewportInsets={{
               top: topBarH,
               right: inspectorInset,

@@ -13,13 +13,6 @@ interface ZoomControlProps {
   /** Scroll container used to compute fit-to-screen. */
   stageScrollRef: React.RefObject<HTMLDivElement>
   /**
-   * P15: ref to the artboard element (the inner div that the
-   * canvas mounts into). Required so Fit can re-center the artboard
-   * inside the visible channel after the zoom change reflows the
-   * stage padding wrapper.
-   */
-  artboardRef?: React.RefObject<HTMLDivElement | null>
-  /**
    * P15: live insets of the floating chrome (side panels, toolbar,
    * bottom panels). The stage scroll surface is full-bleed under
    * those panels so the frosted glass has artboard content to blur,
@@ -31,11 +24,7 @@ interface ZoomControlProps {
   viewportInsets?: { top: number; right: number; bottom: number; left: number }
 }
 
-export function ZoomControl({
-  stageScrollRef,
-  artboardRef: _artboardRef,
-  viewportInsets,
-}: ZoomControlProps) {
+export function ZoomControl({ stageScrollRef, viewportInsets }: ZoomControlProps) {
   const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
 
   const handleFit = () => {
