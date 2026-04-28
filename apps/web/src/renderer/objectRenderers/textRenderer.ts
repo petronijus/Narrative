@@ -28,8 +28,9 @@
  * patches that only touch a sibling field.
  */
 
-import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle, TextStyle } from 'pixi.js'
 import * as Y from 'yjs'
+import { toDelta, toHtml, type HtmlDefaults } from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
@@ -40,21 +41,80 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
  * of the rich-text rollout still renders plain Pixi.Text from the
  * resulting string; Phase B will replace this with HTML rendering.
  */
-function readPlainText(t: TextObject['text']): string {
+function _readPlainText(t: TextObject['text']): string {
+  // Kept for potential future use (e.g. plain-text export); HTMLText
+  // path uses buildHtml directly.
   if (t instanceof Y.Text) return t.toString()
   if (typeof t === 'string') return t
   return ''
+}
+void _readPlainText
+
+/**
+ * Render the text body to an HTML string suitable for `Pixi.HTMLText`.
+ *
+ * Per-run formatting (italic / underline / fontWeight / color) is
+ * encoded as `<i>`, `<u>`, and `<span style="…">` wrappers via the
+ * `toHtml` helper. Box-wide defaults from the TextObject layout
+ * (italic / underline / fontWeight / color) are passed through so a
+ * run with no override inherits them. List markers (bullet / numbered)
+ * are prepended as plain text — they live in the rendered HTML, not
+ * in Y.Text.
+ *
+ * Legacy plain-string text (decks predating Phase A) is HTML-escaped
+ * and rendered as a single run.
+ */
+function buildHtml(data: TextObject): string {
+  // Defaults handed to toHtml only carry the field types that need
+  // structural HTML (i.e. <i> / <u>). Pixi's TextStyle applies the
+  // default fontWeight + color directly on the SVG root, and per-run
+  // overrides from Y.Text format attributes are emitted as inline
+  // styles inside <span>.
+  const defaults: HtmlDefaults = {}
+  if (data.italic === true) defaults.italic = true
+  if (data.underline === true) defaults.underline = true
+  const t = data.text
+  if (t instanceof Y.Text) {
+    const delta = toDelta(t)
+    const html = toHtml(delta, defaults)
+    return prependListMarkersHtml(html, data.listStyle)
+  }
+  // Legacy string — escape and pass through the same toHtml renderer
+  // so the inherited defaults still apply.
+  const escaped = (typeof t === 'string' ? t : '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  const html = toHtml([{ insert: escaped }], defaults)
+  return prependListMarkersHtml(html, data.listStyle)
+}
+
+/**
+ * Prepend list markers (• / 1. / 2. …) to each line break in an HTML
+ * string. Markers are inserted as plain text — they aren't part of
+ * Y.Text content so editing doesn't have to strip them.
+ */
+function prependListMarkersHtml(html: string, style: TextObject['listStyle']): string {
+  if (style === undefined) return html
+  const lines = html.split(/<br\s*\/?>(?![^<]*>)/i)
+  if (style === 'bullet') {
+    return lines.map((l) => (l.length > 0 ? `•&nbsp;&nbsp;${l}` : l)).join('<br>')
+  }
+  let n = 1
+  return lines
+    .map((l) => {
+      if (l.length === 0) return l
+      const out = `${n}.&nbsp;&nbsp;${l}`
+      n += 1
+      return out
+    })
+    .join('<br>')
 }
 
 /** Tag for the Pixi Text node stored on its parent Container. */
 const TEXT_TAG = Symbol('textNode')
 /** Tag for the clip-mask Graphics that crops glyphs to the box. */
 const MASK_TAG = Symbol('textMask')
-/** Tag for the underline Graphics painted under the rendered text.
- *  Pixi v8's TextStyle has no native underline, so we draw a thin
- *  horizontal rectangle below each rendered line's baseline ourselves
- *  (see applyUnderline for the typographic ratios used). */
-const UNDERLINE_TAG = Symbol('textUnderline')
 /** Last applied data snapshot — applyPatch merges against this so
  *  fields Pixi doesn't track natively (vAlign, listStyle, fontFamily)
  *  survive patches that only touch a sibling field. Without it,
@@ -66,27 +126,14 @@ function hexToColorString(hex: number): string {
 }
 
 /**
- * P7: prefix each line with a list marker. Bullet uses `•`, numbered
- * uses `1. 2. 3.` Applied to the rendered string only (Y.Doc stores
- * plain text) so editing doesn't have to strip markers.
+ * Plain-object style options used both by the canonical `TextStyle`
+ * (for measurement / underline maths historically, and the fallback
+ * synthesis path in applyPatch) and by the live HTMLText node. We
+ * keep the field set in one place to guarantee the two stay in sync.
  */
-function applyListMarkers(raw: string, style: TextObject['listStyle']): string {
-  if (style === undefined) return raw
-  const lines = raw.split('\n')
-  if (style === 'bullet') return lines.map((l) => (l.length > 0 ? `•  ${l}` : l)).join('\n')
-  let n = 1
-  return lines
-    .map((l) => {
-      if (l.length === 0) return l
-      const out = `${n}.  ${l}`
-      n += 1
-      return out
-    })
-    .join('\n')
-}
-
-function buildStyle(data: TextObject): TextStyle {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
+function buildStyleOpts(data: TextObject): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
     // Pixi v8's `fontStringFromTextStyle` auto-quotes unquoted multi-
     // word family names (anything not in the CSS generic set), so we
@@ -97,12 +144,12 @@ function buildStyle(data: TextObject): TextStyle {
     fontStyle: data.italic === true ? 'italic' : 'normal',
     fill: { color: hexToColorString(data.color), alpha: data.colorAlpha ?? 1 },
     align: data.align,
-    // Grow the rasterized text texture past the natural line box so
-    // glyphs whose descender extends below the line box (cursive g, h,
-    // f, p…) don't get sliced inside Pixi's text rasterizer — without
-    // this, lineHeight < ~1.1 visibly clipped descenders BEFORE our
-    // container mask ever ran.
-    padding: Math.ceil(data.fontSize * 0.4),
+    // Pixi.HTMLText renders via an SVG foreignObject, so descenders
+    // are never clipped by a texture boundary — TextStyle.padding (used
+    // by canvas-rasterised Pixi.Text) is unnecessary here AND actively
+    // harmful: HTMLText shifts its render origin by `padding` on both
+    // axes, which would push the text outside the slide-coord box
+    // we draw at (0,0).
     wordWrap: true,
     wordWrapWidth: data.width,
     // Match the DOM textarea's `word-break: break-word`: also break
@@ -132,7 +179,12 @@ function buildStyle(data: TextObject): TextStyle {
       width: data.strokeWidth ?? 1,
     }
   }
-  return new TextStyle(opts)
+  return opts
+}
+
+/** Convenience wrapper used where a real TextStyle instance is needed. */
+function buildStyle(data: TextObject): TextStyle {
+  return new TextStyle(buildStyleOpts(data))
 }
 
 /**
@@ -148,7 +200,7 @@ function buildStyle(data: TextObject): TextStyle {
  * via the SceneGraph so the editing caret aligns with this exact
  * offset.
  */
-function applyVerticalAlign(textNode: Text, data: TextObject): void {
+function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   const vAlign = data.vAlign ?? 'top'
   if (vAlign === 'top') {
     textNode.y = 0
@@ -177,7 +229,7 @@ function applyVerticalAlign(textNode: Text, data: TextObject): void {
  * multi-line text the style.align field still drives the per-line
  * justification — this only handles the block's offset.
  */
-function applyHorizontalAlign(textNode: Text, data: TextObject): void {
+function applyHorizontalAlign(textNode: HTMLText, data: TextObject): void {
   const align = data.align ?? 'left'
   if (align === 'right') {
     textNode.anchor.x = 1
@@ -206,16 +258,12 @@ function applyObjectTransform(container: Container, data: TextObject): void {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asAny = (node: Container): any => node as any
 
-function getTextNode(node: Container): Text | undefined {
-  return asAny(node)[TEXT_TAG] as Text | undefined
+function getTextNode(node: Container): HTMLText | undefined {
+  return asAny(node)[TEXT_TAG] as HTMLText | undefined
 }
 
 function getMask(node: Container): Graphics | undefined {
   return asAny(node)[MASK_TAG] as Graphics | undefined
-}
-
-function getUnderline(node: Container): Graphics | undefined {
-  return asAny(node)[UNDERLINE_TAG] as Graphics | undefined
 }
 
 function getStoredData(node: Container): TextObject | undefined {
@@ -257,76 +305,6 @@ function fontDescentFor(data: TextObject): number {
 }
 
 /**
- * Draw / update / remove the underline Graphics to match
- * `data.underline`. One horizontal line per rendered text line, sitting
- * just below the baseline. Pixi v8 doesn't render underlines via
- * TextStyle, so we reproduce the effect ourselves.
- */
-function applyUnderline(container: Container, textNode: Text, data: TextObject): void {
-  const existing = getUnderline(container)
-  if (data.underline !== true) {
-    if (existing !== undefined) {
-      existing.destroy()
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      delete (container as any)[UNDERLINE_TAG]
-    }
-    return
-  }
-
-  let g = existing
-  if (g === undefined) {
-    g = new Graphics()
-    asAny(container)[UNDERLINE_TAG] = g
-    container.addChild(g)
-  }
-  g.clear()
-
-  const fontSize = data.fontSize
-  const lineHeightMul = data.lineHeight !== undefined && data.lineHeight > 0 ? data.lineHeight : 1.2
-  const lineHeightPx = fontSize * lineHeightMul
-  const text = (textNode.text as string) ?? ''
-  const lines = text.split('\n')
-  const colour = hexToColorString(data.color)
-  const alpha = data.colorAlpha ?? 1
-  const align = data.align ?? 'left'
-  const measureStyle = buildStyle(data)
-
-  // Underline geometry uses fontSize-proportional typographic ratios
-  // that match browser fallback behaviour when the font's own
-  // post.underlinePosition / post.underlineThickness aren't available:
-  //   - alphabetic baseline ≈ 0.78 × fontSize below the glyph cap top
-  //   - underline sits ≈ 0.10 × fontSize below the baseline
-  //   - thickness ≈ fontSize / 14 (matches CSS UA defaults)
-  // Floats throughout so the line stays aligned even at very small
-  // font sizes where Pixi's pixel-rasterized metrics would round.
-  const ASCENT_RATIO = 0.78
-  const DESCENT_RATIO = 0.22
-  const UNDERLINE_OFFSET_RATIO = 0.1
-  const UNDERLINE_THICKNESS_RATIO = 1 / 14
-
-  const ascentPx = fontSize * ASCENT_RATIO
-  const descentPx = fontSize * DESCENT_RATIO
-  const halfLeading = Math.max(0, (lineHeightPx - ascentPx - descentPx) / 2)
-  const baselineFromLineTop = halfLeading + ascentPx
-  const underlineOffset = fontSize * UNDERLINE_OFFSET_RATIO
-  const thickness = Math.max(1, fontSize * UNDERLINE_THICKNESS_RATIO)
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i] ?? ''
-    if (lineText.length === 0) continue
-    const lineWidth = CanvasTextMetrics.measureText(lineText, measureStyle).width
-
-    let lineX = 0
-    if (align === 'center') lineX = (data.width - lineWidth) / 2
-    else if (align === 'right') lineX = data.width - lineWidth
-
-    const yTop = textNode.y + i * lineHeightPx + baselineFromLineTop + underlineOffset
-    g.rect(lineX, yTop, lineWidth, thickness)
-  }
-  g.fill({ color: colour, alpha })
-}
-
-/**
  * Rebuild the clip mask to cover the bounding box plus descender
  * room. Glyphs that wrap below the box still get clipped by the mask;
  * only the last line's descender survives.
@@ -353,10 +331,9 @@ export const textRenderer = {
    */
   mount(data: TextObject): Container {
     const container = new Container()
-    const style = buildStyle(data)
-    const textNode = new Text({
-      text: applyListMarkers(readPlainText(data.text), data.listStyle),
-      style,
+    const textNode = new HTMLText({
+      text: buildHtml(data),
+      style: new HTMLTextStyle(buildStyleOpts(data)),
     })
 
     container.addChild(textNode)
@@ -366,7 +343,6 @@ export const textRenderer = {
     applyObjectTransform(container, data)
     applyHorizontalAlign(textNode, data)
     applyVerticalAlign(textNode, data)
-    applyUnderline(container, textNode, data)
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     setStoredData(container, data)
@@ -389,11 +365,12 @@ export const textRenderer = {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
 
-    const prevText = readPlainText(prev.text)
-    const nextText = readPlainText(next.text)
-    if (prevText !== nextText || prev.listStyle !== next.listStyle) {
-      textNode.text = applyListMarkers(nextText, next.listStyle)
-    }
+    // Always rebuild the HTML — Y.Text format changes don't surface as
+    // a `prev` / `next` field diff (they live inside the same Y.Text
+    // instance). The cost is one HTML string concatenation per update;
+    // Pixi's HTMLText only re-rasterises when the string actually
+    // differs.
+    textNode.text = buildHtml(next)
 
     const styleChanged =
       prev.fontSize !== next.fontSize ||
@@ -412,16 +389,14 @@ export const textRenderer = {
       prev.strokeWidth !== next.strokeWidth
 
     if (styleChanged) {
-      textNode.style = buildStyle(next)
+      textNode.style = new HTMLTextStyle(buildStyleOpts(next))
     }
 
-    // Vertical alignment shifts the text node's Y inside the container.
     applyVerticalAlign(textNode, next)
     if (prev.align !== next.align || prev.width !== next.width) {
       applyHorizontalAlign(textNode, next)
     }
 
-    applyUnderline(node, textNode, next)
     applyClipMask(node, next)
 
     applyFilterEffects(node, next.shadow, next.blur)
@@ -546,10 +521,11 @@ export const textRenderer = {
           })()
 
     if (textChanged || listChanged || needsStyleRebuild) {
-      textNode.style = buildStyle(merged)
-      if (textChanged || listChanged) {
-        textNode.text = applyListMarkers(readPlainText(merged.text), merged.listStyle)
-      }
+      textNode.style = new HTMLTextStyle(buildStyleOpts(merged))
+      // The HTML always tracks the merged data — text changes,
+      // listStyle, italic / underline / weight defaults all affect
+      // the emitted markup.
+      textNode.text = buildHtml(merged)
       if (patch.width !== undefined) {
         const dataX = node.x - node.pivot.x
         const newPivotX = patch.width / 2
@@ -561,16 +537,13 @@ export const textRenderer = {
       }
     }
 
-    // vAlign and the underline both depend on textNode.y / measured
-    // glyph metrics, so re-run them whenever the text content, the
-    // box, or any typographic field changed. Without this an
-    // align-only or vAlign-only patch would leave either the text or
-    // the underline at its previous position.
+    // vAlign depends on textNode.y / measured glyph metrics — re-run
+    // whenever the text content, the box, or any typographic field
+    // changed (anything that can shift the rendered block).
     const layoutAffected =
       textChanged || listChanged || needsStyleRebuild || 'vAlign' in patch || 'height' in patch
     if (layoutAffected) {
       applyVerticalAlign(textNode, merged)
-      applyUnderline(node, textNode, merged)
     }
 
     setStoredData(node, merged)
@@ -592,8 +565,8 @@ export const textRenderer = {
   },
 
   /**
-   * Release the Text node, mask, underline and container. Called when
-   * the object is removed from the slide.
+   * Release the Text node, mask, and container. Called when the object
+   * is removed from the slide.
    */
   destroy(node: Container): void {
     const textNode = getTextNode(node)
@@ -603,7 +576,6 @@ export const textRenderer = {
       node.mask = null
       mask.destroy()
     }
-    getUnderline(node)?.destroy()
     destroyFilterEffects(node)
     node.destroy()
   },
