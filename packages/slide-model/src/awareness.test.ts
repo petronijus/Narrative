@@ -54,7 +54,7 @@ describe('toPeerInfo', () => {
   })
 
   it('drops cursor without slideId (legacy payload guard)', () => {
-    const state = makeState({ cursor: { x: 1, y: 2 } })
+    const state = makeState({ cursor: { x: 1, y: 2 } as never })
     const result = toPeerInfo(1, state, 99)
     expect(result!.state.cursor).toBeNull()
   })
