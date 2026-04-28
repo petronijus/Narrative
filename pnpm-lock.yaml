@@ -85,6 +85,9 @@ importers:
       nanoid:
         specifier: ^5.0.9
         version: 5.1.9
+      opentype.js:
+        specifier: ^1.3.4
+        version: 1.3.4
       pg:
         specifier: ^8.14.1
         version: 8.20.0
@@ -101,6 +104,9 @@ importers:
       '@types/node':
         specifier: ^22.14.1
         version: 22.19.17
+      '@types/opentype.js':
+        specifier: ^1.3.9
+        version: 1.3.9
       '@types/pg':
         specifier: ^8.11.11
         version: 8.20.0
@@ -4017,6 +4023,12 @@ packages:
         integrity: sha512-wGdMcf+vPYM6jikpS/qhg6WiqSV/OhG+jeeHT/KlVqxYfD40iYJf9/AE1uQxVWFvU7MipKRkRv8NSHiCGgPr8Q==,
       }
 
+  '@types/opentype.js@1.3.9':
+    resolution:
+      {
+        integrity: sha512-KOGywvDPncA4/tTWV5xKNhjpsoSSAHIx3mHOhL5l3XX+c6Xu2dQnHvGs7mRNQsQRte1EqmQ0cPQQ8Z14lkv+yw==,
+      }
+
   '@types/pg-pool@2.0.6':
     resolution:
       {
@@ -6279,6 +6291,14 @@ packages:
       }
     engines: { node: '>=18' }
 
+  opentype.js@1.3.4:
+    resolution:
+      {
+        integrity: sha512-d2JE9RP/6uagpQAVtJoF0pJJA/fgai89Cc50Yp0EJHk+eLp6QQ7gBoblsnubRULNY132I0J1QKMJ+JTbMqz4sw==,
+      }
+    engines: { node: '>= 8.0.0' }
+    hasBin: true
+
   optionator@0.9.4:
     resolution:
       {
@@ -7270,6 +7290,12 @@ packages:
       }
     engines: { node: '>=18' }
 
+  string.prototype.codepointat@0.2.1:
+    resolution:
+      {
+        integrity: sha512-2cBVCj6I4IOvEnjgO/hWqXjqBGsY+zwPmHl12Srk9IXSZ56Jwwmy+66XO5Iut/oQVR7t5ihYdLB0GMa4alEUcg==,
+      }
+
   string_decoder@1.3.0:
     resolution:
       {
@@ -7404,6 +7430,12 @@ packages:
     resolution:
       {
         integrity: sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A==,
+      }
+
+  tiny-inflate@1.0.3:
+    resolution:
+      {
+        integrity: sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw==,
       }
 
   tiny-lru@11.4.7:
@@ -10596,6 +10628,8 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
+  '@types/opentype.js@1.3.9': {}
+
   '@types/pg-pool@2.0.6':
     dependencies:
       '@types/pg': 8.20.0
@@ -11930,6 +11964,11 @@ snapshots:
     dependencies:
       mimic-function: 5.0.1
 
+  opentype.js@1.3.4:
+    dependencies:
+      string.prototype.codepointat: 0.2.1
+      tiny-inflate: 1.0.3
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -12514,6 +12553,8 @@ snapshots:
       get-east-asian-width: 1.5.0
       strip-ansi: 7.2.0
 
+  string.prototype.codepointat@0.2.1: {}
+
   string_decoder@1.3.0:
     dependencies:
       safe-buffer: 5.2.1
@@ -12609,6 +12650,8 @@ snapshots:
   thread-stream@3.1.0:
     dependencies:
       real-require: 0.2.0
+
+  tiny-inflate@1.0.3: {}
 
   tiny-lru@11.4.7: {}
 

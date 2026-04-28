@@ -65,41 +65,63 @@ export function StageBgPicker() {
             : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground')
         }
       >
-        <Paintbrush className="h-3.5 w-3.5" />
+        <Paintbrush
+          className={
+            'h-3.5 w-3.5 transition-transform duration-300 ease-out ' +
+            (open ? '-rotate-12 scale-110' : 'rotate-0 scale-100')
+          }
+        />
       </button>
-      {open && (
-        <>
-          {SWATCHES.map((s) => {
-            const active = color !== null && color.toLowerCase() === s
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => pick(s)}
-                aria-label={`Stage color ${s}`}
-                title={s}
-                className={
-                  'h-5 w-5 rounded-full border transition ' +
-                  (active
-                    ? 'border-foreground shadow-[0_0_0_2px_hsl(var(--background))_inset]'
-                    : 'border-border hover:border-border-strong')
-                }
-                style={{ background: s }}
-              />
-            )
-          })}
-          <button
-            type="button"
-            onClick={() => setColor(null)}
-            disabled={color === null}
-            aria-label="Reset to theme default"
-            title="Reset to theme default"
-            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </>
-      )}
+      <div
+        aria-hidden={!open}
+        className={
+          'flex items-center gap-1 overflow-hidden transition-all duration-300 ease-out ' +
+          (open ? 'ml-1 max-w-[280px] opacity-100' : 'pointer-events-none ml-0 max-w-0 opacity-0')
+        }
+      >
+        {SWATCHES.map((s, i) => {
+          const active = color !== null && color.toLowerCase() === s
+          return (
+            <button
+              key={s}
+              type="button"
+              tabIndex={open ? 0 : -1}
+              onClick={() => pick(s)}
+              aria-label={`Stage color ${s}`}
+              title={s}
+              style={{
+                background: s,
+                transitionDelay: open ? `${i * 30}ms` : '0ms',
+              }}
+              className={
+                'h-5 w-5 flex-shrink-0 rounded-full border transition duration-300 ease-out ' +
+                (open
+                  ? 'translate-y-0 scale-100 opacity-100'
+                  : 'translate-y-1 scale-75 opacity-0') +
+                ' ' +
+                (active
+                  ? 'border-foreground shadow-[0_0_0_2px_hsl(var(--background))_inset]'
+                  : 'border-border hover:border-border-strong')
+              }
+            />
+          )
+        })}
+        <button
+          type="button"
+          tabIndex={open ? 0 : -1}
+          onClick={() => setColor(null)}
+          disabled={color === null}
+          aria-label="Reset to theme default"
+          title="Reset to theme default"
+          style={{ transitionDelay: open ? `${SWATCHES.length * 30}ms` : '0ms' }}
+          className={
+            'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground transition duration-300 ease-out hover:bg-surface-2 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ' +
+            (open ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-1 scale-75 opacity-0')
+          }
+        >
+          <X className="h-3 w-3" />
+        </button>
+      </div>
     </div>
   )
 }

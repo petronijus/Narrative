@@ -64,6 +64,13 @@ export interface UploadEntry {
   assetId?: string // set on status='done' (or during finalizing for video)
   width?: number
   height?: number
+  // P15: populated only for font uploads — comes back from the server's
+  // opentype.js parse and is forwarded to the deck Y.Doc registry by
+  // the consumer (FontUploadSheet).
+  fontFamily?: string
+  fontWeight?: number
+  fontStyle?: 'normal' | 'italic'
+  fontPostscriptName?: string
 }
 
 export interface MediaUploadContextValue {
@@ -250,6 +257,12 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     let capturedAssetId: string | undefined
     let capturedWidth: number | undefined
     let capturedHeight: number | undefined
+    // P15: surface font metadata from the server response so callers
+    // can write the deck-fonts Y.Array entry without a follow-up GET.
+    let capturedFontFamily: string | undefined
+    let capturedFontWeight: number | undefined
+    let capturedFontStyle: 'normal' | 'italic' | undefined
+    let capturedFontPostscriptName: string | undefined
 
     const upload = new tus.Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
@@ -273,6 +286,10 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
           assetId?: string
           width?: number
           height?: number
+          fontFamily?: string
+          fontWeight?: number
+          fontStyle?: string
+          fontPostscriptName?: string
         } | null = null
         try {
           parsed = JSON.parse(bodyText)
@@ -285,10 +302,24 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
         capturedAssetId = assetId
         if (typeof parsed?.width === 'number') capturedWidth = parsed.width
         if (typeof parsed?.height === 'number') capturedHeight = parsed.height
+        if (typeof parsed?.fontFamily === 'string') capturedFontFamily = parsed.fontFamily
+        if (typeof parsed?.fontWeight === 'number') capturedFontWeight = parsed.fontWeight
+        if (parsed?.fontStyle === 'normal' || parsed?.fontStyle === 'italic') {
+          capturedFontStyle = parsed.fontStyle
+        }
+        if (typeof parsed?.fontPostscriptName === 'string') {
+          capturedFontPostscriptName = parsed.fontPostscriptName
+        }
 
         const patch: Partial<UploadEntry> = { status: 'finalizing', assetId }
         if (capturedWidth !== undefined) patch.width = capturedWidth
         if (capturedHeight !== undefined) patch.height = capturedHeight
+        if (capturedFontFamily !== undefined) patch.fontFamily = capturedFontFamily
+        if (capturedFontWeight !== undefined) patch.fontWeight = capturedFontWeight
+        if (capturedFontStyle !== undefined) patch.fontStyle = capturedFontStyle
+        if (capturedFontPostscriptName !== undefined) {
+          patch.fontPostscriptName = capturedFontPostscriptName
+        }
         upsertEntry(id, patch)
       },
       onSuccess() {
@@ -319,6 +350,12 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
                   ...(capturedAssetId !== undefined ? { assetId: capturedAssetId } : {}),
                   ...(capturedWidth !== undefined ? { width: capturedWidth } : {}),
                   ...(capturedHeight !== undefined ? { height: capturedHeight } : {}),
+                  ...(capturedFontFamily !== undefined ? { fontFamily: capturedFontFamily } : {}),
+                  ...(capturedFontWeight !== undefined ? { fontWeight: capturedFontWeight } : {}),
+                  ...(capturedFontStyle !== undefined ? { fontStyle: capturedFontStyle } : {}),
+                  ...(capturedFontPostscriptName !== undefined
+                    ? { fontPostscriptName: capturedFontPostscriptName }
+                    : {}),
                 }
               : e,
           ),
@@ -335,6 +372,12 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
             ...(capturedAssetId !== undefined ? { assetId: capturedAssetId } : {}),
             ...(capturedWidth !== undefined ? { width: capturedWidth } : {}),
             ...(capturedHeight !== undefined ? { height: capturedHeight } : {}),
+            ...(capturedFontFamily !== undefined ? { fontFamily: capturedFontFamily } : {}),
+            ...(capturedFontWeight !== undefined ? { fontWeight: capturedFontWeight } : {}),
+            ...(capturedFontStyle !== undefined ? { fontStyle: capturedFontStyle } : {}),
+            ...(capturedFontPostscriptName !== undefined
+              ? { fontPostscriptName: capturedFontPostscriptName }
+              : {}),
           }
           Promise.resolve()
             .then(() => cb(finalEntry))
@@ -365,9 +408,24 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
       const id = nanoid()
       const isImage = file.type.startsWith('image/')
       const isVideo = file.type.startsWith('video/')
+      // P15: fonts come in with wildly inconsistent MIME values (browser-
+      // dependent). Recognise both the spec MIMEs and the .ttf / .otf
+      // extension fallback so the dialog accepts files that arrive as
+      // application/octet-stream.
+      const isFont =
+        file.type.startsWith('font/') ||
+        file.type === 'application/font-ttf' ||
+        file.type === 'application/font-otf' ||
+        file.type === 'application/x-font-ttf' ||
+        file.type === 'application/x-font-otf' ||
+        file.type === 'application/x-font-opentype' ||
+        file.type === 'application/x-font-truetype' ||
+        file.type === 'application/vnd.ms-opentype' ||
+        ((file.type === '' || file.type === 'application/octet-stream') &&
+          /\.(ttf|otf)$/i.test(file.name))
 
       // Client-side MIME validation
-      if (!isImage && !isVideo) {
+      if (!isImage && !isVideo && !isFont) {
         const errorEntry: UploadEntry = {
           id,
           filename: file.name,
@@ -375,7 +433,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
           mimeType: file.type,
           status: 'error',
           progress: 0,
-          error: 'Unsupported file type — only images and videos are accepted',
+          error: 'Unsupported file type — only images, videos and fonts are accepted',
         }
         setUploads((prev) => [...prev, errorEntry])
         if (opts?.onDone !== undefined) {

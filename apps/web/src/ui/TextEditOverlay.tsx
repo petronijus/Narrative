@@ -1,13 +1,23 @@
 /**
  * ui/TextEditOverlay.tsx
  *
- * P7: inline text edit overlay. Renders a <textarea> at the text
- * object's slide-local position with matching typography so the user
- * sees WYSIWYG editing. On every keystroke we write back to Y.Doc via
- * updateObject — the Pixi renderer then updates the text beneath (but
- * we keep the textarea on top so the user sees their live input).
+ * Inline text-edit overlay. Renders a <textarea> sized exactly to the
+ * underlying text object's box so the editing surface is identical to
+ * the rendered Pixi text — same width, height, and (via padding-top)
+ * the same vertical-alignment offset. text-align on the textarea
+ * mirrors `obj.align` for horizontal positioning.
  *
- * Escape / blur / click outside the overlay ends editing.
+ * Why padding-top instead of auto-sizing the textarea:
+ *   - The box and the textarea must visibly cover the same area so
+ *     "what you click is what you edit."
+ *   - Pixi's vertical alignment is implemented by shifting the text
+ *     node's local Y; we match that by pushing the textarea's content
+ *     down with `padding-top` instead.
+ *   - Keeping textarea height === obj.height means a very tall text box
+ *     stays a very tall edit surface, instead of collapsing to a
+ *     single-line slit.
+ *
+ * Escape / blur ends editing.
  */
 
 import { useEffect, useMemo, useRef } from 'react'
@@ -29,26 +39,71 @@ function hexToCss(n: number): string {
   return '#' + n.toString(16).padStart(6, '0')
 }
 
+/**
+ * Read the live Pixi text node's Y offset so the textarea's caret /
+ * selection sit at the same vertical position as the rendered glyphs.
+ * Using Pixi's measured value (instead of recomputing it DOM-side)
+ * guarantees the editor and the renderer can never disagree on
+ * descender-aware bottom alignment.
+ */
+function pixiTextNodeY(objectId: string): number {
+  const sg = (
+    window as unknown as {
+      __narrative_scene_graph?: {
+        getContainer: (id: string) =>
+          | {
+              children: Array<{ y?: number; anchor?: unknown }>
+            }
+          | undefined
+      }
+    }
+  ).__narrative_scene_graph
+  if (sg === undefined) return 0
+  const c = sg.getContainer(objectId)
+  if (c === undefined) return 0
+  const text = c.children.find((ch) => ch.anchor !== undefined)
+  return text?.y ?? 0
+}
+
 export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Mirror Pixi's textNode.y onto the textarea's padding-top so the
+  // caret / selection align with the rendered glyphs. Re-read on every
+  // keystroke since adding/removing lines shifts Pixi's offset for
+  // vAlign=middle/bottom.
+  const refreshPadding = (): void => {
+    const ta = textareaRef.current
+    if (ta === null) return
+    ta.style.paddingTop = `${pixiTextNodeY(obj.id)}px`
+  }
+
   useEffect(() => {
-    textareaRef.current?.focus()
-    textareaRef.current?.select()
+    const ta = textareaRef.current
+    if (ta === null) return
+    ta.focus()
+    // Place caret at end instead of select-all — selecting everything
+    // would obscure the Pixi-rendered text underneath with the
+    // selection background, defeating the "transparent overlay" goal.
+    const len = ta.value.length
+    ta.setSelectionRange(len, len)
+    refreshPadding()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
   }, [])
 
-  // Stable commit helper — writes Y.Doc without React re-creating on every tick.
+  // Re-run when vAlign / box size / font size changes from the inspector.
+  useEffect(() => {
+    refreshPadding()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [obj.vAlign, obj.height, obj.fontSize, obj.lineHeight])
+
   const commit = (value: string): void => {
     if (value === obj.text) return
     updateObject(mutationCtx, obj.id, { text: value } as Partial<TextObject>)
   }
 
-  // Match Pixi rendering as closely as possible so the overlay isn't
-  // visually jumpy against the text that's still rendered underneath.
-  const style = useMemo<React.CSSProperties>(() => {
-    const justifyContent =
-      obj.vAlign === 'middle' ? 'center' : obj.vAlign === 'bottom' ? 'flex-end' : 'flex-start'
-    return {
+  const wrapperStyle = useMemo<React.CSSProperties>(
+    () => ({
       position: 'absolute',
       left: obj.x,
       top: obj.y,
@@ -56,36 +111,46 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       height: obj.height,
       transform: `rotate(${obj.rotation}rad)`,
       transformOrigin: 'top left',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent,
-      // The textarea itself is the edit surface; this wrapper handles vAlign.
-    }
-  }, [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign])
+      outline: '2px dashed rgba(59, 130, 246, 0.8)',
+      outlineOffset: '0px',
+      // Wrapper hosts the dashed indicator so the editable area is the
+      // full box even when the text is short. Pointer events fall
+      // through to the textarea below.
+    }),
+    [obj.x, obj.y, obj.width, obj.height, obj.rotation],
+  )
 
   const textareaStyle = useMemo<React.CSSProperties>(
     () => ({
+      position: 'absolute',
+      inset: 0,
       width: '100%',
-      minHeight: 0,
+      height: '100%',
       boxSizing: 'border-box',
       background: 'transparent',
-      border: '2px dashed rgba(59, 130, 246, 0.8)',
+      border: 'none',
       outline: 'none',
       resize: 'none',
+      // padding-top is set imperatively in refreshPadding(); other sides 0.
       padding: 0,
       margin: 0,
-      color: hexToCss(obj.color),
+      // Glyph fill is transparent so the textarea acts as a pure caret /
+      // selection surface laid over the authoritative Pixi-rendered
+      // text. caret-color keeps the cursor visible.
+      color: 'transparent',
+      caretColor: hexToCss(obj.color),
       fontFamily: obj.fontFamily ?? 'system-ui, -apple-system, sans-serif',
       fontSize: `${obj.fontSize}px`,
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
       textDecoration: obj.underline === true ? 'underline' : 'none',
       lineHeight:
-        obj.lineHeight !== undefined && obj.lineHeight > 0 ? String(obj.lineHeight) : 'normal',
+        obj.lineHeight !== undefined && obj.lineHeight > 0 ? String(obj.lineHeight) : '1.2',
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word',
+      overflow: 'hidden',
     }),
     [
       obj.color,
@@ -101,12 +166,23 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   )
 
   return (
-    <div style={style}>
+    <div style={wrapperStyle}>
+      {/* Inline ::selection rules so the Pixi-rendered text stays
+          visible inside highlighted ranges — default selection paints
+          opaque white-on-blue which would hide the underlying glyphs. */}
+      <style>{`
+        .narrative-text-edit::selection { background: rgba(59, 130, 246, 0.3); color: transparent; }
+        .narrative-text-edit::-moz-selection { background: rgba(59, 130, 246, 0.3); color: transparent; }
+      `}</style>
       <textarea
         ref={textareaRef}
+        className="narrative-text-edit"
         defaultValue={obj.text}
         style={textareaStyle}
-        onChange={(e) => commit(e.target.value)}
+        onChange={(e) => {
+          commit(e.target.value)
+          refreshPadding()
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
             e.preventDefault()

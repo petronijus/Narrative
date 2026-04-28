@@ -40,6 +40,7 @@ function drawArrowhead(
   fromY: number,
   strokeWidth: number,
   color: number,
+  alpha: number,
 ): void {
   const dx = tipX - fromX
   const dy = tipY - fromY
@@ -61,20 +62,22 @@ function drawArrowhead(
     baseX - perpX * arrowHalfWidth,
     baseY - perpY * arrowHalfWidth,
   ])
-  g.fill({ color })
+  g.fill({ color, alpha })
 }
 
 function drawLine(g: Graphics, data: LineLike): void {
   g.clear()
   const { p1, p2, stroke, strokeWidth } = data
+  const sa = data.strokeAlpha ?? 1
   const dash = data.dash === true
   if (dash) {
-    strokeDashedPolyline(g, [p1, p2], false, { color: stroke, width: strokeWidth })
+    strokeDashedPolyline(g, [p1, p2], false, { color: stroke, width: strokeWidth, alpha: sa })
   } else {
     g.moveTo(p1.x, p1.y)
     g.lineTo(p2.x, p2.y)
     g.stroke({
       color: stroke,
+      alpha: sa,
       width: strokeWidth,
       cap:
         data.startCap === 'round' || data.endCap === 'round'
@@ -87,10 +90,10 @@ function drawLine(g: Graphics, data: LineLike): void {
   // Arrow cap — filled triangle at the pointed endpoint.
   const endCap = effectiveEndCap(data)
   if (endCap === 'arrow') {
-    drawArrowhead(g, p2.x, p2.y, p1.x, p1.y, strokeWidth, stroke)
+    drawArrowhead(g, p2.x, p2.y, p1.x, p1.y, strokeWidth, stroke, sa)
   }
   if (data.startCap === 'arrow') {
-    drawArrowhead(g, p1.x, p1.y, p2.x, p2.y, strokeWidth, stroke)
+    drawArrowhead(g, p1.x, p1.y, p2.x, p2.y, strokeWidth, stroke, sa)
   }
 }
 
@@ -121,6 +124,7 @@ function makeRenderer<T extends LineLike>(type: T['type']) {
       applyTransform(node, next)
       const redraw =
         prev.stroke !== next.stroke ||
+        prev.strokeAlpha !== next.strokeAlpha ||
         prev.strokeWidth !== next.strokeWidth ||
         prev.p1.x !== next.p1.x ||
         prev.p1.y !== next.p1.y ||

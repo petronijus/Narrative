@@ -384,6 +384,83 @@ export class SceneGraph {
   }
 
   /**
+   * P15: re-rasterise every Text node whose `fontFamily` references the
+   * given family. Pixi v8 caches glyph atlases keyed by the resolved
+   * font; when a FontFace finishes loading AFTER a text node mounted,
+   * the atlas still holds fallback glyphs. Calling textRenderer's
+   * applyPatch with the same fontFamily forces TextStyle to rebuild,
+   * which invalidates the atlas and Pixi re-rasterises with the
+   * now-installed font.
+   *
+   * @param family — canonical family name passed to FontFace; matches
+   *   either an exact `fontFamily` value or appears as a comma-separated
+   *   token inside one (e.g. `"Inter, sans-serif"`).
+   */
+  refreshTextNodesUsingFamily(family: string): void {
+    if (family === '') return
+    const tokens = (raw: string): string[] =>
+      raw.split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''))
+
+    // P15: nuke Pixi v8's CanvasTextSystem texture cache. The system
+    // caches rasterised glyph atlases keyed by `text.styleKey` and
+    // serves the cached texture for any future Text instance whose
+    // styleKey matches. When text mounted before the FontFace loaded,
+    // the cache holds a fallback-glyph texture under that key — and
+    // every subsequent Text with the same style+text gets that stale
+    // texture, even after destroy + remount, because the Pipe's
+    // decreaseReferenceCount runs at the NEXT render (not at destroy
+    // time).
+    //
+    // Workaround: before re-rendering, walk `_activeTextures` and
+    // drop every entry. The next getManagedTexture call rebuilds
+    // each entry from scratch — and canvas2D is now drawing with the
+    // installed FontFace.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const textSystem = (this.app.renderer as any).canvasText as
+      | {
+          _activeTextures: Record<string, { texture: { destroy(): void } } | null>
+          returnTexture: (t: unknown) => void
+        }
+      | undefined
+    if (textSystem?._activeTextures !== undefined) {
+      for (const key of Object.keys(textSystem._activeTextures)) {
+        const entry = textSystem._activeTextures[key]
+        if (entry !== null && entry !== undefined) {
+          try {
+            textSystem.returnTexture(entry.texture)
+          } catch {
+            /* ignore */
+          }
+          textSystem._activeTextures[key] = null
+        }
+      }
+    }
+
+    let touched = 0
+    for (const [, node] of this.nodes) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = node.data as any
+      if (data?.type !== 'text') continue
+      const fam: unknown = data.fontFamily
+      if (typeof fam !== 'string' || fam === '') continue
+      if (!tokens(fam).includes(family)) continue
+
+      const renderer = getRenderer('text')
+      if (renderer === undefined || renderer.applyPatch === undefined) continue
+      // applyPatch with the same fontFamily forces a TextStyle rebuild
+      // (different instance reference triggers Pixi's onUpdate). Pixi
+      // then calls getManagedTexture; with the cache cleared above,
+      // it falls through to a fresh rasterisation that picks up the
+      // now-installed FontFace via canvas2D.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      renderer.applyPatch(node.container, { fontFamily: fam } as any)
+
+      touched++
+    }
+    if (touched > 0) this.markDirty()
+  }
+
+  /**
    * P2: returns (and lazily creates) the artboard-background Container —
    * kept as the FIRST child of the active root so every slide object
    * stacks above it. Consumers call this from the background observer +

@@ -32,7 +32,13 @@
 
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
-import { getMediaAsset, getVideoAsset, deleteMediaAsset } from './assets.js'
+import {
+  getMediaAsset,
+  getVideoAsset,
+  getFontAsset,
+  listFontAssets,
+  deleteMediaAsset,
+} from './assets.js'
 import { signImgproxyUrl, type ImgproxyVariant } from './imgproxyUrl.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
@@ -172,6 +178,85 @@ export async function registerMediaRoutes(
       thumbnailUrl,
       hlsManifestUrl,
       transcodeError: asset.transcodeError ?? null,
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // P15 — font assets
+  //
+  // GET /api/decks/:deckId/fonts
+  //   Returns the list of font assets attached to this deck. Used by the
+  //   FontLoader to seed @font-face declarations on first paint when
+  //   the Y.Doc hasn't synced yet.
+  //
+  // GET /api/media/:assetId/font-url
+  //   Returns the raw MinIO URL for the font's TTF/OTF bytes plus the
+  //   parsed metadata. The browser fetches the font file directly via
+  //   the FontFace API; we don't pipe it through imgproxy because
+  //   imgproxy only knows images.
+  // -------------------------------------------------------------------------
+  app.get<{
+    Params: { deckId: string }
+    Querystring: { share_token?: string }
+  }>('/api/decks/:deckId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
+    const { deckId } = request.params
+
+    const userId = request.user?.sub ?? null
+    const shareToken = request.query.share_token ?? null
+    const access = await resolveDeckAccess(db, { deckId, userId, shareToken })
+    if (!access || !roleAtLeast(access.role, 'viewer')) {
+      return reply.status(403).send({ error: 'Forbidden' })
+    }
+
+    const fonts = await listFontAssets(db, deckId)
+    return reply.header('Cache-Control', 'private, max-age=10').send({
+      fonts: fonts.map((f) => ({
+        assetId: f.id,
+        family: f.fontFamily,
+        weight: f.fontWeight,
+        style: f.fontStyle,
+        postscriptName: f.fontPostscriptName,
+        originalFilename: f.originalFilename,
+        addedBy: f.uploaderUserId,
+        addedAt: f.createdAt.getTime(),
+      })),
+    })
+  })
+
+  app.get<{
+    Params: { assetId: string }
+    Querystring: { share_token?: string }
+  }>('/api/media/:assetId/font-url', { preHandler: authPreHandler }, async (request, reply) => {
+    const { assetId } = request.params
+
+    const asset = await getFontAsset(db, assetId)
+    if (!asset) {
+      return reply.status(404).send({ error: 'Font asset not found' })
+    }
+
+    const userId = request.user?.sub ?? null
+    const shareToken = request.query.share_token ?? null
+    const access = await resolveDeckAccess(db, {
+      deckId: asset.deckId,
+      userId,
+      shareToken,
+    })
+    if (!access || !roleAtLeast(access.role, 'viewer')) {
+      return reply.status(403).send({ error: 'Forbidden' })
+    }
+
+    // Raw MinIO URL — bucket is public for M12 dev; M29 will swap to
+    // a presigned URL the same way HLS will.
+    const url = `${publicMinioBaseUrl()}/${asset.storageKey}`
+
+    return reply.header('Cache-Control', 'public, max-age=31536000, immutable').send({
+      assetId: asset.id,
+      url,
+      family: asset.fontFamily,
+      weight: asset.fontWeight,
+      style: asset.fontStyle,
+      postscriptName: asset.fontPostscriptName,
+      mimeType: asset.mimeType,
     })
   })
 

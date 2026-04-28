@@ -20,6 +20,7 @@ import { AnimationTimeline } from '../ui/AnimationTimeline'
 import { SlideNotesPanel } from '../ui/SlideNotesPanel'
 import { SlidesPanel } from '../ui/SlidesPanel'
 import { ResizableSidebar } from '../ui/ResizableSidebar'
+import { OverlayScrollbarV, OverlayScrollbarH } from '../ui/OverlayScrollbars'
 import { TransformHandles } from '../ui/TransformHandles'
 import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
@@ -62,13 +63,15 @@ import { StageBgPicker } from '../ui/StageBgPicker.js'
 import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
 import { useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
+import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -313,18 +316,96 @@ export interface EditorLayoutProps {
   onCanvasReady?: ((instance: CanvasInstance | null) => void) | undefined
 }
 
+/**
+ * P15: localStorage-backed boolean state for sidebar collapse.
+ * Identical contract to the panel-collapse pattern in
+ * AnimationTimeline / SlideNotesPanel — read once on mount, persist
+ * on every change.
+ */
+function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [value, setValueRaw] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(key)
+      if (stored === '1' || stored === 'true') return true
+      if (stored === '0' || stored === 'false') return false
+      return fallback
+    } catch {
+      return fallback
+    }
+  })
+  const setValue = useCallback(
+    (v: boolean): void => {
+      setValueRaw(v)
+      try {
+        localStorage.setItem(key, v ? '1' : '0')
+      } catch {
+        // storage unavailable — drop silently
+      }
+    },
+    [key],
+  )
+  return [value, setValue]
+}
+
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { activeTool, setActiveTool } = useTool()
+  // P15: collapse state for the left (Slides) and right (Inspector)
+  // sidebars. Persisted per-device via localStorage. Mirrors the
+  // existing collapse pattern on AnimationTimeline + SlideNotesPanel.
+  const [slidesCollapsed, setSlidesCollapsed] = usePersistedBool(
+    'narrative:slidesPanel:collapsed',
+    false,
+  )
+  const [inspectorCollapsed, setInspectorCollapsed] = usePersistedBool(
+    'narrative:inspector:collapsed',
+    false,
+  )
+  // P15: mirror the slides panel's live width so the toolbar and
+  // bottom panels can inset themselves between the side panels and
+  // not extend behind them. The Inspector is fixed-width so its
+  // inset is just `inspectorCollapsed ? 36 : 256`.
+  const [slidesWidth, setSlidesWidth] = useState(240)
+  const slidesInset = slidesCollapsed ? 36 : slidesWidth
+  const inspectorInset = inspectorCollapsed ? 36 : 256
+
+  // P15: live heights of the floating toolbar (top) and the bottom
+  // chrome stack (AnimationTimeline + SlideNotesPanel) so the custom
+  // overlay scrollbars can clear them as the user collapses /
+  // expands either group. Two refs + ResizeObserver per box; the
+  // result drives `start` / `end` / `perpendicular` on the
+  // OverlayScrollbarV / H below.
+  const topBarRef = useRef<HTMLDivElement>(null)
+  const bottomPanelsRef = useRef<HTMLDivElement>(null)
+  const [topBarH, setTopBarH] = useState(40)
+  const [bottomPanelsH, setBottomPanelsH] = useState(56)
+  useEffect(() => {
+    const tEl = topBarRef.current
+    const bEl = bottomPanelsRef.current
+    if (tEl === null && bEl === null) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const h = Math.round(entry.contentRect.height)
+        if (entry.target === tEl) {
+          setTopBarH((prev) => (prev === h ? prev : h))
+        } else if (entry.target === bEl) {
+          setBottomPanelsH((prev) => (prev === h ? prev : h))
+        }
+      }
+    })
+    if (tEl !== null) ro.observe(tEl)
+    if (bEl !== null) ro.observe(bEl)
+    return () => ro.disconnect()
+  }, [])
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { undo, redo } = useUndoManager()
   const canvasInstance = useCanvasInstance()
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   const { color: stageBgColor } = useStageBgColor()
-  const { zoom } = useZoomLevel()
+  const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
   // P11: rulers + deck-level guides.
   const { visible: rulersVisible } = useRulers()
   const { guides: deckGuides, guidesCtx } = useDeckGuides()
@@ -520,14 +601,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
           return
         }
-        // Text + image stay click-to-create; every other creation tool
-        // uses drag-to-draw so the user can size the new object in one
-        // gesture (Keynote / Figma / Sketch convention).
-        if (activeTool === 'text') {
-          createObjectOfType(mutationCtx, 'text', { x, y })
-          setActiveTool('select')
-          return
-        }
+        // P15: Text supports BOTH gestures — click to drop a default-
+        // sized point-text box, or drag to define a sized text area.
+        // The draft / commit path below handles both: a tiny drag
+        // (< minSize threshold in pointerUp) falls back to defaults,
+        // a real drag uses the bounding box. Same as Keynote / Figma.
         draftRef.current = {
           tool: activeTool,
           startX: x,
@@ -643,14 +721,51 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         }
       }
 
+      // P15: Alt+drag duplicates instead of moving. Mirrors the Figma /
+      // Keynote / Illustrator standard — pressing Alt at pointer-down
+      // clones each dragged id in place; the new ids become the drag
+      // set and follow the cursor while the originals stay put. The
+      // whole clone batch shares a single transaction so undo
+      // collapses into one step.
+      let activeDragIds = dragIds
+      let activeInitialPositions = initialPositions
+      let activeInitialImageRects = initialImageRects
+      if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
+        const newIds: string[] = []
+        const newPositions: typeof initialPositions = []
+        const newImageRects = new Map<
+          string,
+          { x: number; y: number; width: number; height: number }
+        >()
+        // Yjs collapses nested doc.transact calls — duplicateObject
+        // wraps its own transact internally, but our outer wrapper
+        // here makes the whole batch one undo step.
+        mutationCtx.doc.transact(() => {
+          for (const id of dragIds) {
+            const dup = duplicateObject(mutationCtx, id, { x: 0, y: 0 })
+            if (dup === null) continue
+            newIds.push(dup.id)
+            newPositions.push({ id: dup.id, x: dup.x, y: dup.y })
+            const rect = initialImageRects.get(id)
+            if (rect !== undefined) newImageRects.set(dup.id, rect)
+          }
+        })
+        if (newIds.length > 0) {
+          activeDragIds = newIds
+          activeInitialPositions = newPositions
+          activeInitialImageRects = newImageRects
+          selectMany(newIds)
+        }
+      }
+
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
       dragRef.current = {
         active: true,
-        objectIds: dragIds,
+        objectIds: activeDragIds,
         startX: e.clientX,
         startY: e.clientY,
-        initialPositions,
-        initialImageRects,
+        initialPositions: activeInitialPositions,
+        initialImageRects: activeInitialImageRects,
       }
     },
     [
@@ -665,6 +780,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       canvasInstance,
       cropImageId,
       exitCrop,
+      selectMany,
     ],
   )
 
@@ -914,10 +1030,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           const h = Math.abs(cy - dr.startY)
           // Tiny-drag fallback — treat as click-to-create with default size.
           const minSize = 6
+          let created: { id: string } | null = null
           if (w < minSize && h < minSize) {
-            createObjectOfType(mutationCtx, dr.tool, { x: dr.startX, y: dr.startY })
+            created = createObjectOfType(mutationCtx, dr.tool, {
+              x: dr.startX,
+              y: dr.startY,
+            })
           } else if (dr.tool === 'line' || dr.tool === 'arrow') {
-            createObjectOfType(mutationCtx, dr.tool, {
+            created = createObjectOfType(mutationCtx, dr.tool, {
               x,
               y,
               width: w,
@@ -926,8 +1046,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               p2: { x: cx - x, y: cy - y },
             })
           } else {
-            createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
+            created = createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
           }
+          // P15: select the freshly created object so the user can
+          // immediately drag / resize / edit without re-clicking. Mirrors
+          // Figma / Keynote behaviour after a tool-driven create.
+          if (created !== null) selectOne(created.id)
         }
         setActiveTool('select')
         return
@@ -1127,7 +1251,57 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     },
   ])
 
+  // P15: Ctrl/Cmd + mousewheel zooms the artboard. React attaches
+  // wheel listeners as passive, so `preventDefault` inside an
+  // `onWheel` handler is silently ignored — the page scrolls under us
+  // and the zoom feels broken. Native addEventListener with
+  // `{ passive: false }` is the only way to block the page-zoom.
+  // Attach to the scrollable stage so the wheel catches anywhere
+  // inside the canvas area (backdrop padding included).
+  useEffect(() => {
+    const el = stageScrollRef.current
+    if (el === null) return
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      // deltaY is positive on wheel-down (typical zoom-out gesture).
+      // Per-tick step roughly matches the zoomIn/Out 1.25× factor but
+      // scales smoothly with the wheel delta so trackpad pinch feels
+      // natural too. clamp to MIN_ZOOM..MAX_ZOOM.
+      const factor = Math.exp(-e.deltaY / 200)
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * factor))
+      setZoom(next)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [setZoom])
+
   useShortcuts([
+    // Zoom — works in any focused area except inputs (blocked by the
+    // global-scope input check). Plain `+` covers `=` on most layouts;
+    // include both so US keyboards (Shift+= → `+`) and direct numpad
+    // `+` both fire. Mod+0 resets to 100%.
+    {
+      keys: ['+', '='],
+      scope: 'global',
+      preventDefault: true,
+      description: 'Zoom in',
+      handler: () => zoomIn(),
+    },
+    {
+      keys: '-',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Zoom out',
+      handler: () => zoomOut(),
+    },
+    {
+      keys: 'Mod+0',
+      scope: 'global',
+      preventDefault: true,
+      description: 'Reset zoom (100%)',
+      handler: () => resetZoom(),
+    },
     // Undo
     {
       keys: 'Mod+z',
@@ -1394,27 +1568,62 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         : 'crosshair'
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-background">
-      {/* Left sidebar — slides panel, user-resizable (P3) */}
-      {/* Left sidebar — slides panel. data-shortcut-scope marks it for
-          scope-aware shortcut dispatch (P9). */}
-      <div data-shortcut-scope="slidePanel" className="contents">
+    <div className="relative flex h-full w-full overflow-hidden bg-background">
+      {/* Canvas main column extends edge-to-edge underneath the
+          panels (stacked first, z-0). Side panels are positioned
+          absolutely on top with z-10 so their frosted-glass
+          backdrop-filter actually has artboard / stage content
+          behind to blur. The flex parent keeps Toolbar / Canvas /
+          AnimationTimeline / SlideNotesPanel laid out vertically
+          inside main exactly as before. */}
+
+      {/* Left sidebar — slides panel, user-resizable (P3) +
+          collapsible (P15). Width animates between collapsed (36 px)
+          and the user's stored expanded width. */}
+      <div data-shortcut-scope="slidePanel" className="absolute inset-y-0 left-0 z-10 flex">
         <ResizableSidebar
           storageKey="narrative:sidebarWidth"
           minWidth={180}
           maxWidth={420}
           defaultWidth={240}
           side="left"
-          className="panel border-r border-border overflow-hidden"
+          className="panel border-r border-border"
+          collapsed={slidesCollapsed}
+          onWidthChange={setSlidesWidth}
+          collapsedContent={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSlidesCollapsed(false)}
+              aria-label="Show slides panel"
+              title="Show slides panel"
+              className="mx-auto mt-2 h-7 w-7"
+            >
+              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          }
         >
-          <SlidesPanel />
+          <SlidesPanel onCollapse={(): void => setSlidesCollapsed(true)} />
         </ResizableSidebar>
       </div>
 
-      {/* Center: canvas area */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <Toolbar />
+      {/* Toolbar — absolute layer at the top of the inner channel
+          between the side panels. Sits above the canvas with the
+          same frosted-glass `.panel` effect, so the artboard is
+          visible behind it just like the side panels. */}
+      <div
+        ref={topBarRef}
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex"
+        style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
+      >
+        <div className="pointer-events-auto w-full">
+          <Toolbar />
+        </div>
+      </div>
 
+      {/* Center: canvas area — fills the entire editor; the toolbar
+          and bottom panels float above. */}
+      <main className="relative z-0 flex flex-1 flex-col overflow-hidden">
         <EditorContextMenu canvasContainerRef={canvasContainerRef}>
           <div
             className="canvas-backdrop relative flex flex-1 overflow-hidden"
@@ -1430,8 +1639,32 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             onDoubleClick={handleDoubleClick}
           >
             {/* Scrollable stage: artboard has a fixed size, so the
-              backdrop provides scrollbars when the window is smaller. */}
-            <div ref={stageScrollRef} className="flex flex-1 overflow-auto" data-stage-scroll>
+              backdrop provides scrollbars when the window is smaller.
+              P15: insets are PADDING (not margin) so the scroll
+              surface itself stays full-bleed under the panels —
+              that's what gives `.panel` something real to blur with
+              backdrop-filter. Padding keeps the artboard's initial
+              resting position in the visible channel between the
+              side panels and below the toolbar; the user can still
+              scroll the artboard across the full surface and it
+              will travel behind the frosted-glass chrome.
+              Top: clears the floating Toolbar. Bottom: clears the
+              AnimationTimeline + SlideNotesPanel. Both driven by live
+              ResizeObserver values so the stage content-box matches the
+              visible channel exactly — this is what makes grid
+              place-items:center land the artboard in the channel center
+              rather than offset toward bottom-right. */}
+            <div
+              ref={stageScrollRef}
+              className="scrollbar-hidden flex-1 overflow-auto"
+              data-stage-scroll
+              style={{
+                paddingLeft: slidesInset,
+                paddingRight: inspectorInset,
+                paddingTop: topBarH,
+                paddingBottom: bottomPanelsH,
+              }}
+            >
               {/* Stage padding wrapper — 400 px of space around the
                 artboard on every side. width:fit-content makes it hug
                 the artboard + padding so scrollbars reveal the full
@@ -1575,13 +1808,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                             return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                           }
                         }
-                        // P8: lock aspect ratio when any selected object is a
-                        // VideoObject with aspectLocked=true. Resizing then
-                        // behaves as if Shift were held (corner handles
-                        // preserve native ratio).
+                        // P15: aspect-ratio lock now lives on every object
+                        // (BaseSlideObject.aspectLocked) and is toggled from
+                        // a chain icon in the Inspector's Size section. If
+                        // ANY selected object has it on, the resize is
+                        // locked; Shift inverts the state mid-drag (XOR
+                        // applied in TransformHandles).
                         const aspectLock = editableIds.some((sid) => {
                           const o = objects.find((x) => x.id === sid)
-                          return o !== undefined && o.type === 'video' && o.aspectLocked === true
+                          return o?.aspectLocked === true
                         })
                         return (
                           <TransformHandles
@@ -1631,42 +1866,132 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               </div>
             </div>
 
-            {/* Stage color picker — absolute to the non-scrolling backdrop
-              so it stays pinned to the editor corner while the user
-              scrolls the stage. */}
-            <div className="pointer-events-none absolute right-3 top-3 z-10">
-              <StageBgPicker />
-            </div>
-
-            {/* Zoom pill — bottom-right of the stage. Sits above the
-              scrollbar so it doesn't collide with it at any zoom. */}
-            <div className="pointer-events-none absolute right-3 bottom-6 z-10">
-              <ZoomControl stageScrollRef={stageScrollRef} />
-            </div>
+            {/* StageBgPicker + ZoomControl moved to editor-root level
+              (see below) so they can sit in a higher stacking context
+              than the toolbar / bottom panels. */}
           </div>
         </EditorContextMenu>
-
-        {/* M14 phase 1: bottom animations timeline panel. Read-only visual
-            layout with click-to-select and × to remove. Drag/play in a later
-            phase. Collapsible. */}
-        <div data-shortcut-scope="timeline">
-          <AnimationTimeline />
-        </div>
-
-        {/* M19 phase 1: per-slide speaker notes. Plain text for now,
-            Tiptap rich text in phase 2. Collapsible. */}
-        <SlideNotesPanel />
       </main>
 
-      {/* Right sidebar: inspector */}
-      <aside className="panel flex w-64 flex-shrink-0 flex-col border-l border-border">
-        <div className="border-b border-border px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Inspector
-          </span>
+      {/* Bottom panels — absolute layer at the bottom of the inner
+          channel between the side panels. Same frosted-glass effect,
+          same compositing pattern as the toolbar above. */}
+      <div
+        ref={bottomPanelsRef}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col"
+        style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
+      >
+        <div className="pointer-events-auto w-full" data-shortcut-scope="timeline">
+          <AnimationTimeline />
         </div>
-        <Inspector />
-      </aside>
+        <div className="pointer-events-auto w-full">
+          <SlideNotesPanel />
+        </div>
+      </div>
+
+      {/* Floating canvas controls — StageBgPicker top-right, ZoomControl
+          bottom-right. Rendered at editor-root level with z-30 so they
+          sit above BOTH the canvas (z-0) and the toolbar / bottom
+          panels (z-10). Right inset clears the Inspector. Bottom inset
+          clears the SlideNotesPanel toolbar. */}
+      <div
+        className="pointer-events-none absolute z-30"
+        style={{ right: inspectorInset + 12, top: topBarH + 12 }}
+      >
+        <div className="pointer-events-auto">
+          <StageBgPicker />
+        </div>
+      </div>
+      <div
+        className="pointer-events-none absolute z-30"
+        style={{ right: inspectorInset + 12, bottom: bottomPanelsH + 12 }}
+      >
+        <div className="pointer-events-auto">
+          <ZoomControl
+            stageScrollRef={stageScrollRef}
+            viewportInsets={{
+              top: topBarH,
+              right: inspectorInset,
+              bottom: bottomPanelsH,
+              left: slidesInset,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* P15: custom overlay scrollbars — the stage scroll surface is
+          full-bleed under the panels (so frosted-glass blur picks up
+          artboard content), but the native scrollbars are hidden via
+          .scrollbar-hidden. These overlays render thin tracks inside
+          the visible channel:
+            - Vertical sits flush against the inspector's left edge,
+              from just below the toolbar to just above the bottom
+              panels.
+            - Horizontal sits just above the bottom panels, spanning
+              the same x-range as the bottom panels (between the side
+              panels).
+          All three insets are live: collapsing the toolbar / bottom
+          panels / either side panel reflows the scrollbars in the
+          next frame via the ResizeObserver above. */}
+      <OverlayScrollbarV
+        scrollRef={stageScrollRef}
+        start={topBarH}
+        end={bottomPanelsH}
+        perpendicular={inspectorInset}
+      />
+      <OverlayScrollbarH
+        scrollRef={stageScrollRef}
+        start={slidesInset}
+        end={inspectorInset}
+        perpendicular={bottomPanelsH}
+      />
+
+      {/* Right sidebar: inspector — collapsible (P15) with width
+          animation. Reuses ResizableSidebar even though the user
+          can't drag-resize it (min == max == defaultWidth) so the
+          collapse animation comes for free. Sits over the canvas
+          main column for the frosted-glass backdrop to read the
+          artboard behind it. */}
+      <div className="absolute inset-y-0 right-0 z-10 flex">
+        <ResizableSidebar
+          storageKey="narrative:inspectorWidth"
+          minWidth={256}
+          maxWidth={256}
+          defaultWidth={256}
+          side="right"
+          className="panel border-l border-border"
+          collapsed={inspectorCollapsed}
+          collapsedContent={
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInspectorCollapsed(false)}
+              aria-label="Show inspector"
+              title="Show inspector"
+              className="mx-auto mt-2 h-7 w-7"
+            >
+              <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          }
+        >
+          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Inspector
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setInspectorCollapsed(true)}
+              aria-label="Hide inspector"
+              title="Hide inspector"
+              className="h-6 w-6"
+            >
+              <PanelRightClose className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </div>
+          <Inspector />
+        </ResizableSidebar>
+      </div>
 
       {import.meta.env.DEV && <DevMetricsOverlay />}
 

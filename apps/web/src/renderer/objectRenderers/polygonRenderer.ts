@@ -64,26 +64,31 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
     if (texture !== null) {
       g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      g.fill({ color: data.fill })
+      g.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
     }
   } else {
     releaseImageFill(container)
     const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
-    g.fill(resolved.input)
+    const fillInput =
+      data.fillStyle === undefined
+        ? { color: data.fill, alpha: data.fillAlpha ?? 1 }
+        : resolved.input
+    g.fill(fillInput)
   }
   // Save latest data for async redraw in image-fill onReady.
   asAny(container)[LATEST_DATA_TAG] = data
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
     const w = data.strokeWidth ?? 1
+    const sa = data.strokeAlpha ?? 1
     if (data.strokeDash === true) {
       const pts: Array<{ x: number; y: number }> = []
       for (let i = 0; i < points.length; i += 2) {
         pts.push({ x: points[i]!, y: points[i + 1]! })
       }
-      strokeDashedPolyline(g, pts, true, { color: data.stroke, width: w })
+      strokeDashedPolyline(g, pts, true, { color: data.stroke, width: w, alpha: sa })
     } else {
       g.poly(points)
-      g.stroke({ color: data.stroke, width: w, alignment: 0.5 })
+      g.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: sa })
     }
   }
 }
@@ -115,10 +120,12 @@ function makeRenderer<T extends PolygonLike>(type: T['type']) {
       const nextSides = sidesFor(next)
       const redraw =
         prev.fill !== next.fill ||
+        prev.fillAlpha !== next.fillAlpha ||
         prev.width !== next.width ||
         prev.height !== next.height ||
         prevSides !== nextSides ||
         prev.stroke !== next.stroke ||
+        prev.strokeAlpha !== next.strokeAlpha ||
         prev.strokeWidth !== next.strokeWidth ||
         prev.strokeDash !== next.strokeDash ||
         prev.fillStyle !== next.fillStyle

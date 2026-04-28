@@ -24,7 +24,7 @@ export type { MediaAsset }
 // Domain types
 // ---------------------------------------------------------------------------
 
-export type MediaAssetKind = 'image' | 'video'
+export type MediaAssetKind = 'image' | 'video' | 'font'
 export type TranscodeStatus = 'pending' | 'processing' | 'done' | 'failed'
 
 /**
@@ -76,6 +76,14 @@ export interface CreateMediaAssetArgs {
    * Media agent phase 2 passes transcodeStatus: 'pending' on video upload finalize.
    */
   transcodeStatus?: TranscodeStatus
+  /** P15: parsed font family name. Set only when kind='font'. */
+  fontFamily?: string
+  /** P15: OS/2 usWeightClass — 100..900. Set only when kind='font'. */
+  fontWeight?: number
+  /** P15: 'normal' | 'italic'. Set only when kind='font'. */
+  fontStyle?: string
+  /** P15: parsed postscript name. Set only when kind='font'. */
+  fontPostscriptName?: string
 }
 
 /**
@@ -95,6 +103,10 @@ export async function createMediaAsset(db: Database, args: CreateMediaAssetArgs)
     height: args.height ?? null,
     kind: args.kind ?? 'image',
     transcodeStatus: args.transcodeStatus ?? null,
+    fontFamily: args.fontFamily ?? null,
+    fontWeight: args.fontWeight ?? null,
+    fontStyle: args.fontStyle ?? null,
+    fontPostscriptName: args.fontPostscriptName ?? null,
   })
 }
 
@@ -184,6 +196,69 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
     transcodeError: row.transcodeError,
     createdAt: row.createdAt,
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Read — font-specific (P15)
+// ---------------------------------------------------------------------------
+
+export interface FontAssetRow {
+  id: string
+  deckId: string
+  mimeType: string
+  storageKey: string
+  fontFamily: string
+  fontWeight: number
+  fontStyle: 'normal' | 'italic'
+  fontPostscriptName: string
+  uploaderUserId: string
+  originalFilename: string | null
+  createdAt: Date
+}
+
+/**
+ * Returns a font asset by id, or null when missing / not a font row.
+ */
+export async function getFontAsset(db: Database, id: string): Promise<FontAssetRow | null> {
+  const rows = await db
+    .select()
+    .from(mediaAssets)
+    .where(and(eq(mediaAssets.id, id), eq(mediaAssets.kind, 'font')))
+    .limit(1)
+  const row = rows[0]
+  if (!row) return null
+  return toFontRow(row)
+}
+
+/**
+ * Returns every font asset belonging to a deck. Used by the
+ * GET /api/decks/:id/fonts route to seed FontLoader on first paint
+ * (cheaper than walking the Y.Doc on the server).
+ */
+export async function listFontAssets(db: Database, deckId: string): Promise<FontAssetRow[]> {
+  const rows = await db
+    .select()
+    .from(mediaAssets)
+    .where(and(eq(mediaAssets.deckId, deckId), eq(mediaAssets.kind, 'font')))
+
+  return rows.map(toFontRow)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toFontRow(row: any): FontAssetRow {
+  return {
+    id: row.id,
+    deckId: row.deckId,
+    mimeType: row.mimeType,
+    storageKey: row.storageKey,
+    fontFamily: row.fontFamily ?? '',
+    fontWeight: row.fontWeight ?? 400,
+    fontStyle: (row.fontStyle as 'normal' | 'italic' | null) ?? 'normal',
+    fontPostscriptName: row.fontPostscriptName ?? row.fontFamily ?? '',
+    uploaderUserId: row.uploaderUserId,
+    originalFilename: row.originalFilename,
+    createdAt: row.createdAt,
+  }
 }
 
 // ---------------------------------------------------------------------------

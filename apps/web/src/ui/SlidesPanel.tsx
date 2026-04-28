@@ -41,7 +41,7 @@ import {
 import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { Plus, EyeOff, ChevronRight } from 'lucide-react'
+import { Plus, EyeOff, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 // ---------------------------------------------------------------------------
@@ -426,7 +426,13 @@ function SlideItem({
 // SlidesPanel
 // ---------------------------------------------------------------------------
 
-export function SlidesPanel(): JSX.Element {
+interface SlidesPanelProps {
+  /** P15: triggered by the collapse button in the header. Optional —
+   *  callers that don't manage collapse state can omit it. */
+  onCollapse?: () => void
+}
+
+export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element {
   const slides = useSlides()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { deckCtx } = useSlideDoc()
@@ -934,11 +940,24 @@ export function SlidesPanel(): JSX.Element {
       onPointerMove={handlePointerMove as unknown as React.PointerEventHandler<HTMLDivElement>}
       onPointerUp={handlePointerUp as unknown as React.PointerEventHandler<HTMLDivElement>}
     >
-      {/* Header */}
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-3 py-2">
+      {/* Header — P15: collapse icon at the LEFT, then label, count,
+          then the add button on the right. */}
+      <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-border px-2 py-2">
+        {onCollapse !== undefined && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onCollapse}
+            aria-label="Hide slides panel"
+            title="Hide slides panel"
+            className="h-6 w-6 flex-shrink-0"
+          >
+            <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+        )}
         <h2
           id={headerId}
-          className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+          className="flex-1 truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground"
         >
           Slides
           <span className="ml-1.5 font-normal opacity-60">({slides.length})</span>
@@ -949,7 +968,7 @@ export function SlidesPanel(): JSX.Element {
             size="icon"
             onClick={handleAdd}
             aria-label="Add slide"
-            className="h-6 w-6"
+            className="h-6 w-6 flex-shrink-0"
             title="Add slide"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />

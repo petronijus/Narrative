@@ -18,8 +18,26 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { ChevronDown, Lock, Unlock } from 'lucide-react'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  ChevronDown,
+  Link2,
+  Link2Off,
+  Lock,
+  Unlock,
+  type LucideIcon,
+} from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
+import { FontFamilySelect } from './FontFamilySelect.js'
+import { FontWeightSelect } from './FontWeightSelect.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -114,6 +132,55 @@ interface NumberFieldProps {
   step?: number
   disabled?: boolean
   onChange: (value: number) => void
+}
+
+interface AlignButtonGroupProps<V extends string> {
+  value: V
+  onChange: (value: V) => void
+  ariaLabel: string
+  options: ReadonlyArray<{
+    value: V
+    label: string
+    Icon: LucideIcon
+  }>
+}
+
+function AlignButtonGroup<V extends string>({
+  value,
+  onChange,
+  ariaLabel,
+  options,
+}: AlignButtonGroupProps<V>) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+    >
+      {options.map(({ value: v, label, Icon }, idx) => {
+        const active = v === value
+        return (
+          <button
+            key={v}
+            type="button"
+            aria-label={label}
+            aria-pressed={active}
+            title={label}
+            onClick={() => onChange(v)}
+            className={[
+              'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+              idx > 0 ? 'border-l border-input' : '',
+              active
+                ? 'bg-accent text-accent-foreground'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+            ].join(' ')}
+          >
+            <Icon className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 function NumberField({ id, label, value, step = 1, disabled = false, onChange }: NumberFieldProps) {
@@ -321,20 +388,73 @@ export function Inspector() {
         />
       </Section>
 
-      {/* Size */}
+      {/* Size — width / height plus an aspect-lock toggle. When ON,
+          corner-handle resizes preserve the W:H ratio and Shift
+          temporarily releases it; when OFF, Shift temporarily locks
+          it. The chain icon mirrors Figma / Sketch / Keynote. */}
       <Section title="Size" storageKey="size">
-        <NumberField
-          id={`inspector-w-${obj.id}`}
-          label="Width"
-          value={obj.width}
-          onChange={(v) => patch({ width: v })}
-        />
-        <NumberField
-          id={`inspector-h-${obj.id}`}
-          label="Height"
-          value={obj.height}
-          onChange={(v) => patch({ height: v })}
-        />
+        <div className="relative">
+          <NumberField
+            id={`inspector-w-${obj.id}`}
+            label="Width"
+            value={obj.width}
+            onChange={(v) => {
+              if (obj.aspectLocked === true && obj.width > 0) {
+                const ratio = obj.height / obj.width
+                patch({ width: v, height: Math.max(1, Math.round(v * ratio)) })
+              } else {
+                patch({ width: v })
+              }
+            }}
+          />
+          <NumberField
+            id={`inspector-h-${obj.id}`}
+            label="Height"
+            value={obj.height}
+            onChange={(v) => {
+              if (obj.aspectLocked === true && obj.height > 0) {
+                const ratio = obj.width / obj.height
+                patch({ height: v, width: Math.max(1, Math.round(v * ratio)) })
+              } else {
+                patch({ height: v })
+              }
+            }}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                aspectLocked: obj.aspectLocked === true ? undefined : true,
+              } as SlideObjectPatch<SlideObject>)
+            }
+            disabled={isViewer}
+            aria-pressed={obj.aspectLocked === true}
+            aria-label={
+              obj.aspectLocked === true
+                ? 'Unlock aspect ratio (Shift while dragging temporarily unlocks)'
+                : 'Lock aspect ratio (Shift while dragging temporarily locks)'
+            }
+            title={
+              obj.aspectLocked === true
+                ? 'Aspect ratio: locked — Shift while dragging unlocks'
+                : 'Aspect ratio: free — Shift while dragging locks'
+            }
+            className={[
+              'absolute right-0 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded',
+              'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+              obj.aspectLocked === true
+                ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
+              isViewer ? 'pointer-events-none opacity-40' : '',
+            ].join(' ')}
+          >
+            {obj.aspectLocked === true ? (
+              <Link2 className="h-3 w-3" aria-hidden="true" />
+            ) : (
+              <Link2Off className="h-3 w-3" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </Section>
 
       {/* Transform */}
@@ -532,37 +652,37 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
       <Section title="Align" storageKey="multi-align">
         <div className="grid grid-cols-6 gap-1">
           <MultiButton
-            label="L"
+            Icon={AlignHorizontalJustifyStart}
             title="Align left"
             onClick={() => runAlign('left')}
             disabled={isViewer}
           />
           <MultiButton
-            label="C"
+            Icon={AlignHorizontalJustifyCenter}
             title="Align horizontal center"
             onClick={() => runAlign('center-x')}
             disabled={isViewer}
           />
           <MultiButton
-            label="R"
+            Icon={AlignHorizontalJustifyEnd}
             title="Align right"
             onClick={() => runAlign('right')}
             disabled={isViewer}
           />
           <MultiButton
-            label="T"
+            Icon={AlignVerticalJustifyStart}
             title="Align top"
             onClick={() => runAlign('top')}
             disabled={isViewer}
           />
           <MultiButton
-            label="M"
+            Icon={AlignVerticalJustifyCenter}
             title="Align vertical middle"
             onClick={() => runAlign('center-y')}
             disabled={isViewer}
           />
           <MultiButton
-            label="B"
+            Icon={AlignVerticalJustifyEnd}
             title="Align bottom"
             onClick={() => runAlign('bottom')}
             disabled={isViewer}
@@ -630,11 +750,13 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
 
 function MultiButton({
   label,
+  Icon,
   title,
   onClick,
   disabled,
 }: {
-  label: string
+  label?: string
+  Icon?: LucideIcon
   title: string
   onClick: () => void
   disabled?: boolean
@@ -645,9 +767,10 @@ function MultiButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      aria-label={title}
+      className="flex items-center justify-center rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
-      {label}
+      {Icon !== undefined ? <Icon className="h-3.5 w-3.5" aria-hidden /> : label}
     </button>
   )
 }
@@ -1280,6 +1403,8 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
                 }
                 ariaLabel="Stroke color"
                 showHex={false}
+                alpha={obj.strokeAlpha ?? 1}
+                onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
               />
               <input
                 type="number"
@@ -1540,6 +1665,8 @@ function FillPicker({
             onChange={(hex) => patch({ fill: hexToNumber(hex) })}
             ariaLabel="Fill color"
             showHex
+            alpha={obj.fillAlpha ?? 1}
+            onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
           />
         </div>
       )}
@@ -1580,6 +1707,13 @@ function GradientEditor({
     onChange({ ...fillStyle, stops: nextStops } as FillStyle)
   }
 
+  const setStopAlpha = (idx: 0 | 1, alpha: number): void => {
+    const nextStops = [...stops]
+    if (idx === 0) nextStops[0] = { ...stop0, alpha }
+    else nextStops[nextStops.length - 1] = { ...stop1, alpha }
+    onChange({ ...fillStyle, stops: nextStops } as FillStyle)
+  }
+
   return (
     <div className="ml-[4.5rem] flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
@@ -1589,6 +1723,8 @@ function GradientEditor({
           onChange={(hex) => setStop(0, hexToNumber(hex))}
           ariaLabel="Gradient start color"
           showHex={false}
+          alpha={stop0.alpha ?? 1}
+          onAlphaChange={(a) => setStopAlpha(0, a)}
         />
         <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
         <ColorInput
@@ -1596,6 +1732,8 @@ function GradientEditor({
           onChange={(hex) => setStop(1, hexToNumber(hex))}
           ariaLabel="Gradient end color"
           showHex={false}
+          alpha={stop1.alpha ?? 1}
+          onAlphaChange={(a) => setStopAlpha(1, a)}
         />
       </div>
       {fillStyle.kind === 'linearGradient' && (
@@ -1709,6 +1847,8 @@ function LineStrokeSection({
             onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
             ariaLabel="Stroke color"
             showHex
+            alpha={obj.strokeAlpha ?? 1}
+            onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<typeof obj>)}
           />
         </div>
       </div>
@@ -1877,25 +2017,9 @@ function ShadowControls({
           onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
           ariaLabel="Shadow color"
           showHex={false}
+          alpha={shadow.opacity}
+          onAlphaChange={(a) => onChange({ ...shadow, opacity: a })}
         />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
-          Opacity
-        </span>
-        <input
-          type="range"
-          aria-label="Shadow opacity"
-          min={0}
-          max={1}
-          step={0.05}
-          value={shadow.opacity}
-          onChange={(e) => onChange({ ...shadow, opacity: Number.parseFloat(e.target.value) })}
-          className="flex-1 accent-primary"
-        />
-        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
-          {Math.round(shadow.opacity * 100)}%
-        </span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Blur</span>
@@ -1947,33 +2071,14 @@ interface TextSectionProps {
 
 function TextSection({ obj, patch }: TextSectionProps) {
   const colorHex = numberToHex(obj.color)
+  const { role } = useDeckRole()
+  const isViewer = role === 'viewer'
 
   return (
     <>
-      <Section title="Text" storageKey="text">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={`inspector-text-${obj.id}`} className="text-xs text-muted-foreground">
-            Content
-          </label>
-          <textarea
-            id={`inspector-text-${obj.id}`}
-            value={obj.text}
-            rows={3}
-            onChange={(e) => patch({ text: e.target.value })}
-            onKeyDown={(e) => {
-              // Escape blurs (drops focus). Ctrl+Enter same — ergonomic.
-              if ((e.ctrlKey && e.key === 'Enter') || e.key === 'Escape') {
-                e.currentTarget.blur()
-              }
-            }}
-            className={[
-              'w-full resize-none rounded border border-input field-surface px-2 py-1',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          />
-        </div>
-      </Section>
+      {/* P15: removed "Text content" textarea — double-click on the
+          text on canvas to edit inline; the side-panel textarea was
+          redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
         <NumberField
@@ -1992,67 +2097,10 @@ function TextSection({ obj, patch }: TextSectionProps) {
           >
             Family
           </label>
-          <select
-            id={`inspector-fontfamily-${obj.id}`}
-            value={obj.fontFamily ?? ''}
-            onChange={(e) =>
-              patch({
-                fontFamily: e.target.value === '' ? undefined : e.target.value,
-              } as unknown as SlideObjectPatch<TextObject>)
-            }
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="">System default</option>
-            <option value="Inter, system-ui, sans-serif">Inter</option>
-            <option value="'Helvetica Neue', Helvetica, Arial, sans-serif">Helvetica</option>
-            <option value="Georgia, 'Times New Roman', serif">Georgia</option>
-            <option value="'Times New Roman', Times, serif">Times</option>
-            <option value="'Courier New', Courier, monospace">Courier</option>
-            <option value="'SF Mono', Menlo, monospace">SF Mono</option>
-          </select>
+          <FontFamilySelect obj={obj} patch={patch} disabled={isViewer} />
         </div>
 
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-fontweight-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Weight
-          </label>
-          <select
-            id={`inspector-fontweight-${obj.id}`}
-            value={String(obj.fontWeight)}
-            onChange={(e) => {
-              const v = e.target.value
-              const parsed =
-                v === 'normal' || v === 'bold'
-                  ? (v as 'normal' | 'bold')
-                  : (Number.parseInt(v, 10) as 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900)
-              patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
-            }}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="100">Thin 100</option>
-            <option value="200">Extra light 200</option>
-            <option value="300">Light 300</option>
-            <option value="400">Regular 400</option>
-            <option value="normal">Normal</option>
-            <option value="500">Medium 500</option>
-            <option value="600">Semibold 600</option>
-            <option value="700">Bold 700</option>
-            <option value="bold">Bold (css)</option>
-            <option value="800">Extra bold 800</option>
-            <option value="900">Black 900</option>
-          </select>
-        </div>
+        <FontWeightSelect obj={obj} patch={patch} />
 
         {/* Italic + Underline toggles + List style row — three toggle
             buttons share a row for compactness. */}
@@ -2114,50 +2162,32 @@ function TextSection({ obj, patch }: TextSectionProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-align-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Align
-          </label>
-          <select
-            id={`inspector-align-${obj.id}`}
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Align</span>
+          <AlignButtonGroup
             value={obj.align}
-            onChange={(e) => patch({ align: e.target.value as 'left' | 'center' | 'right' })}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="left">Left</option>
-            <option value="center">Center</option>
-            <option value="right">Right</option>
-          </select>
+            onChange={(v) => patch({ align: v })}
+            ariaLabel="Horizontal alignment"
+            options={[
+              { value: 'left', label: 'Left', Icon: AlignLeft },
+              { value: 'center', label: 'Center', Icon: AlignCenter },
+              { value: 'right', label: 'Right', Icon: AlignRight },
+            ]}
+          />
         </div>
 
         {/* Vertical alignment (new in P7). Default top. */}
         <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-valign-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            V-align
-          </label>
-          <select
-            id={`inspector-valign-${obj.id}`}
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">V-align</span>
+          <AlignButtonGroup
             value={obj.vAlign ?? 'top'}
-            onChange={(e) =>
-              patch({
-                vAlign: e.target.value as 'top' | 'middle' | 'bottom',
-              } as SlideObjectPatch<TextObject>)
-            }
-            className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-          >
-            <option value="top">Top</option>
-            <option value="middle">Middle</option>
-            <option value="bottom">Bottom</option>
-          </select>
+            onChange={(v) => patch({ vAlign: v } as SlideObjectPatch<TextObject>)}
+            ariaLabel="Vertical alignment"
+            options={[
+              { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
+              { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
+              { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
+            ]}
+          />
         </div>
 
         <NumberField
@@ -2188,6 +2218,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
               onChange={(hex) => patch({ color: hexToNumber(hex) })}
               ariaLabel="Text color"
               showHex
+              alpha={obj.colorAlpha ?? 1}
+              onAlphaChange={(a) => patch({ colorAlpha: a } as SlideObjectPatch<TextObject>)}
             />
           </div>
         </div>
@@ -2221,6 +2253,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   }
                   ariaLabel="Text stroke color"
                   showHex={false}
+                  alpha={obj.strokeAlpha ?? 1}
+                  onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
                 />
                 <input
                   type="number"
@@ -2459,21 +2493,9 @@ function VideoSection({
         </select>
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Aspect</span>
-        <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={obj.aspectLocked === true}
-            onChange={(e) =>
-              patch({
-                aspectLocked: e.target.checked ? true : undefined,
-              } as unknown as SlideObjectPatch<VideoObject>)
-            }
-          />
-          Lock to native ratio
-        </label>
-      </div>
+      {/* P15: aspect-lock moved to the Size section as a chain icon
+          shared by every object type. The previous video-only "Lock
+          to native ratio" checkbox lived here; it's now redundant. */}
 
       <PosterFrameRow obj={obj} patch={patch} />
       <NumberField

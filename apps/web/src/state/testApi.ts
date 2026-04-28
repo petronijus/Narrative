@@ -69,6 +69,29 @@ export interface TestApi {
    * Used by E2E specs that need deterministic positions to hit-test.
    */
   addRect(opts: AddRectOpts, slideId?: string): void
+  /**
+   * P15: stamp a TextObject for font tests. Default font / weight /
+   * color so the test only has to specify position + content.
+   */
+  addText(
+    opts: { id: string; x: number; y: number; w: number; h: number; text: string },
+    slideId?: string,
+  ): void
+  /**
+   * P15: read the deck-level fonts Y.Array as a plain JS snapshot.
+   * Used by font-upload e2e specs to assert sync without poking
+   * Y.Doc internals.
+   */
+  deckFonts(): Array<{
+    id: string
+    family: string
+    weight: number
+    style: 'normal' | 'italic'
+    postscriptName: string
+    addedBy: string
+    addedAt: number
+    originalFilename?: string
+  }>
   /** Append a new slide to the deck. Returns its id. */
   addSlide(): string
   /** Ordered list of slide ids in the deck. */
@@ -116,6 +139,12 @@ export interface TestApi {
    * Returns null if the slide or object is not found.
    */
   getObjectPositionFromYDoc(objectId: string, slideId: string): { x: number; y: number } | null
+  /**
+   * Read the full object Y.Map as a plain JS snapshot. Used by specs
+   * that need to introspect properties beyond x/y (e.g. text vAlign,
+   * fontSize, height) to compare rendered vs editing layouts.
+   */
+  getObject(objectId: string, slideId?: string): Record<string, unknown> | null
 }
 
 declare global {
@@ -242,6 +271,72 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         rotation: 0,
       })
     },
+    addText(opts, slideId) {
+      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      if (targetSlideId === undefined) throw new Error('addText: no slide')
+      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      if (ctx === null) throw new Error('addText: slide ctx not found')
+      addObject(ctx, {
+        id: opts.id,
+        type: 'text',
+        x: opts.x,
+        y: opts.y,
+        width: opts.w,
+        height: opts.h,
+        text: opts.text,
+        fontSize: 32,
+        fontWeight: 400,
+        color: 0x000000,
+        align: 'left',
+        rotation: 0,
+        opacity: 1,
+      })
+    },
+    deckFonts() {
+      // listDeckFonts is the canonical reader; importing here would
+      // create a circular ts dep through the index, so we walk the
+      // raw Y.Array. Same shape as DeckFontEntry.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const arr = deckCtx.doc.getArray<any>('fonts')
+      const out: ReturnType<TestApi['deckFonts']> = []
+      for (let i = 0; i < arr.length; i++) {
+        const m = arr.get(i)
+        if (m === undefined) continue
+        const id = m.get('id')
+        const family = m.get('family')
+        const weight = m.get('weight')
+        const style = m.get('style')
+        const postscriptName = m.get('postscriptName')
+        const addedBy = m.get('addedBy')
+        const addedAt = m.get('addedAt')
+        const originalFilename = m.get('originalFilename')
+        if (
+          typeof id !== 'string' ||
+          typeof family !== 'string' ||
+          typeof weight !== 'number' ||
+          (style !== 'normal' && style !== 'italic') ||
+          typeof postscriptName !== 'string' ||
+          typeof addedBy !== 'string' ||
+          typeof addedAt !== 'number'
+        ) {
+          continue
+        }
+        const entry: ReturnType<TestApi['deckFonts']>[number] = {
+          id,
+          family,
+          weight,
+          style,
+          postscriptName,
+          addedBy,
+          addedAt,
+        }
+        if (typeof originalFilename === 'string' && originalFilename !== '') {
+          entry.originalFilename = originalFilename
+        }
+        out.push(entry)
+      }
+      return out
+    },
     objectIds(slideId) {
       const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
       if (targetSlideId === undefined) return []
@@ -335,6 +430,29 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         return null // slide found, object not found
       }
       return null // slide not found
+    },
+    getObject(objectId, slideId) {
+      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      if (targetSlideId === undefined) return null
+      for (let i = 0; i < deckCtx.slides.length; i++) {
+        const slideMap = deckCtx.slides.get(i)
+        if ((slideMap.get('id') as string) !== targetSlideId) continue
+        const objectsArr = slideMap.get('objects') as {
+          length: number
+          get: (i: number) => {
+            get: (k: string) => unknown
+            toJSON: () => Record<string, unknown>
+          }
+        }
+        for (let j = 0; j < objectsArr.length; j++) {
+          const objMap = objectsArr.get(j)
+          if ((objMap.get('id') as string) === objectId) {
+            return objMap.toJSON()
+          }
+        }
+        return null
+      }
+      return null
     },
   }
 

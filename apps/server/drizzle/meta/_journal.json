@@ -29,6 +29,13 @@
       "when": 1745308800000,
       "tag": "0003_m12_video_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1761177600000,
+      "tag": "0004_p15_font_assets",
+      "breakpoints": true
     }
   ]
 }

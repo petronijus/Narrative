@@ -58,7 +58,7 @@ export const deckRoleEnum = pgEnum('deck_role', ['owner', 'editor', 'viewer'])
  * media_asset_kind — discriminator between image and video assets.
  * Defaults to 'image' for backward compatibility with M11 rows.
  */
-export const mediaAssetKindEnum = pgEnum('media_asset_kind', ['image', 'video'])
+export const mediaAssetKindEnum = pgEnum('media_asset_kind', ['image', 'video', 'font'])
 
 /**
  * media_transcode_status — lifecycle of ffmpeg transcode jobs (video only).
@@ -208,6 +208,17 @@ export const mediaAssets = pgTable(
     transcodeStatus: transcodeStatusEnum('transcode_status'),
     /** Error message from ffmpeg when transcodeStatus = 'failed'. */
     transcodeError: text('transcode_error'),
+
+    // P15 additions — custom font support. NULL for image / video rows;
+    // populated from opentype.js parse on upload finalize when kind='font'.
+    /** Canonical CSS family name (OpenType `name` table id 1 / 16). */
+    fontFamily: text('font_family'),
+    /** OS/2 usWeightClass — 100..900. Default 400 if the font omits it. */
+    fontWeight: integer('font_weight'),
+    /** 'normal' | 'italic' — derived from fsSelection ITALIC bit. */
+    fontStyle: text('font_style'),
+    /** Postscript name — uniquely identifies one face within a family. */
+    fontPostscriptName: text('font_postscript_name'),
   },
   (t) => [index('media_assets_deck_idx').on(t.deckId)],
 )

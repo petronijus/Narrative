@@ -17,6 +17,8 @@ import type { Graphics } from 'pixi.js'
 export interface DashedStrokeOptions {
   color: number
   width: number
+  /** Stroke alpha 0..1. Default 1. */
+  alpha?: number
   /** Dash length (on) in slide-px. */
   dashLen?: number
   /** Gap length (off) in slide-px. */
@@ -87,7 +89,7 @@ export function strokeDashedPolyline(
     walkSegment(last.x, last.y, first.x, first.y)
   }
 
-  g.stroke({ color: opts.color, width: opts.width, alignment: 0.5 })
+  g.stroke({ color: opts.color, alpha: opts.alpha ?? 1, width: opts.width, alignment: 0.5 })
 }
 
 // ---------------------------------------------------------------------------

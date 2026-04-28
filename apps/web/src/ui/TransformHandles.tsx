@@ -53,8 +53,22 @@ interface DragState {
   startMouseY: number
   bounds: ObjectBounds
   objectIds: string[]
-  /** Počáteční bounds všech vybraných objektů (pro group drag) */
-  allInitialBounds: Array<{ id: string; x: number; y: number; w: number; h: number }>
+  /**
+   * Počáteční bounds všech vybraných objektů (pro group drag).
+   * P15: x/y/w/h are the object's UNROTATED slide-space bounds (data
+   * model layout box) and `rotation` is the angle in radians around
+   * its center. Resize math projects pointer deltas into the local
+   * frame so rotated objects scale along their own axes instead of
+   * world axes.
+   */
+  allInitialBounds: Array<{
+    id: string
+    x: number
+    y: number
+    w: number
+    h: number
+    rotation: number
+  }>
   /**
    * Snapshot of the initial imageRect for any selected ImageObject
    * that has one. Required for the cropped-image-resize math: each
@@ -186,7 +200,119 @@ interface ResizeResult {
  * Opposite corner/edge zůstane fixní.
  * shiftAspect = true → aspect lock (pouze pro corner handles).
  */
+/**
+ * Map each handle to its position in the object's LOCAL frame, expressed
+ * as a unit sign on each axis. Handle position in local coords =
+ * (sx * w/2, sy * h/2). The OPPOSITE handle (the anchor that stays put
+ * during resize) is at (-sx * w/2, -sy * h/2). Edge handles have one
+ * axis of 0, meaning that axis isn't moved by the drag and the anchor
+ * is the midpoint of the opposite edge.
+ */
+type ResizeHandle = Exclude<HandleKind, 'rotate'>
+
+const HANDLE_LOCAL_SIGN: Record<ResizeHandle, { sx: number; sy: number }> = {
+  TL: { sx: -1, sy: -1 },
+  TR: { sx: 1, sy: -1 },
+  BR: { sx: 1, sy: 1 },
+  BL: { sx: -1, sy: 1 },
+  TC: { sx: 0, sy: -1 },
+  BC: { sx: 0, sy: 1 },
+  ML: { sx: -1, sy: 0 },
+  MR: { sx: 1, sy: 0 },
+}
+
 function computeResize(
+  handle: HandleKind,
+  initial: { x: number; y: number; w: number; h: number; rotation: number },
+  dx: number,
+  dy: number,
+  shiftAspect: boolean,
+): ResizeResult {
+  // Rotate handle is dispatched elsewhere — guard so the math below
+  // never receives it.
+  if (handle === 'rotate') {
+    return { x: initial.x, y: initial.y, width: initial.w, height: initial.h }
+  }
+
+  // Fast path for axis-aligned objects — keeps the legacy behaviour
+  // bit-identical (and dodges the rotation matrix work entirely).
+  if (initial.rotation === 0) {
+    return computeResizeAligned(handle, initial, dx, dy, shiftAspect)
+  }
+
+  const sign = HANDLE_LOCAL_SIGN[handle]
+  const θ = initial.rotation
+  const cos = Math.cos(θ)
+  const sin = Math.sin(θ)
+  const cx = initial.x + initial.w / 2
+  const cy = initial.y + initial.h / 2
+
+  // Anchor = opposite handle's world position. With center-pivot
+  // rotation, anchor_local = (-sign * w/2, -sign * h/2); rotate to
+  // world and translate by center.
+  const ax_local = -sign.sx * (initial.w / 2)
+  const ay_local = -sign.sy * (initial.h / 2)
+  const anchorWorldX = cx + cos * ax_local - sin * ay_local
+  const anchorWorldY = cy + sin * ax_local + cos * ay_local
+
+  // Initial dragged-handle world position.
+  const dx_local = sign.sx * (initial.w / 2)
+  const dy_local = sign.sy * (initial.h / 2)
+  const dragInitWorldX = cx + cos * dx_local - sin * dy_local
+  const dragInitWorldY = cy + sin * dx_local + cos * dy_local
+
+  // After the user's screen-space drag, the dragged handle moved by
+  // (dx, dy) in world coords. New dragged-handle world position:
+  const dragNewWorldX = dragInitWorldX + dx
+  const dragNewWorldY = dragInitWorldY + dy
+
+  // Project (dragNew - anchor) into the OBJECT'S LOCAL frame. The
+  // x-component of that vector is the new local width along sign.sx,
+  // the y-component is the new local height along sign.sy.
+  const wx = dragNewWorldX - anchorWorldX
+  const wy = dragNewWorldY - anchorWorldY
+  // R(-θ) · (wx, wy)
+  const localX = cos * wx + sin * wy
+  const localY = -sin * wx + cos * wy
+
+  let newW = initial.w
+  let newH = initial.h
+  if (sign.sx !== 0) newW = Math.max(1, sign.sx > 0 ? localX : -localX)
+  if (sign.sy !== 0) newH = Math.max(1, sign.sy > 0 ? localY : -localY)
+
+  // Aspect lock — corner handles only (both axes active).
+  if (shiftAspect && sign.sx !== 0 && sign.sy !== 0) {
+    const ratio = initial.w / initial.h
+    // Compare scaled magnitudes so the dominant axis wins regardless
+    // of the original aspect ratio.
+    if (Math.abs(localX) * initial.h > Math.abs(localY) * initial.w) {
+      newH = newW / ratio
+    } else {
+      newW = newH * ratio
+    }
+  }
+
+  // New center = anchorWorld − R(θ) · anchorLocal_new, where
+  // anchorLocal_new uses the new w/h.
+  const ax_local_new = -sign.sx * (newW / 2)
+  const ay_local_new = -sign.sy * (newH / 2)
+  const newCenterX = anchorWorldX - (cos * ax_local_new - sin * ay_local_new)
+  const newCenterY = anchorWorldY - (sin * ax_local_new + cos * ay_local_new)
+
+  return {
+    x: newCenterX - newW / 2,
+    y: newCenterY - newH / 2,
+    width: newW,
+    height: newH,
+  }
+}
+
+/**
+ * Original axis-aligned resize math. Kept as the fast path for
+ * rotation=0 so existing snap / image-rect / edge-case behaviour is
+ * preserved bit-for-bit.
+ */
+function computeResizeAligned(
   handle: HandleKind,
   initial: { x: number; y: number; w: number; h: number },
   dx: number,
@@ -347,11 +473,38 @@ export function TransformHandles({
 
       if (currentBounds === null) return
 
-      // Sberi initial bounds všech vybraných objektů
+      // P15: snapshot the OBJECT'S unrotated layout box (data x/y/w/h)
+      // plus its rotation. b.world is the AABB of the rotated rect —
+      // not the local layout — so using it for resize math under
+      // non-zero rotation produces wrong-sized objects. Falling back
+      // to b.world only when the object isn't in `objects` (preserves
+      // the legacy axis-aligned behaviour).
       const allInitialBounds = objectIds.flatMap((id) => {
+        const o = objects?.find((x) => x.id === id)
+        if (o !== undefined) {
+          return [
+            {
+              id,
+              x: o.x,
+              y: o.y,
+              w: o.width,
+              h: o.height,
+              rotation: o.rotation ?? 0,
+            },
+          ]
+        }
         const b = sceneGraph.getBounds(id)
         if (b === null) return []
-        return [{ id, x: b.world.x, y: b.world.y, w: b.world.width, h: b.world.height }]
+        return [
+          {
+            id,
+            x: b.world.x,
+            y: b.world.y,
+            w: b.world.width,
+            h: b.world.height,
+            rotation: 0,
+          },
+        ]
       })
 
       // Snapshot imageRect for any selected ImageObject — needed by the
@@ -384,7 +537,7 @@ export function TransformHandles({
       }
       ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
     },
-    [objectIds, sceneGraph],
+    [objectIds, sceneGraph, objects],
   )
 
   const handlePointerMove = useCallback(
@@ -430,7 +583,12 @@ export function TransformHandles({
         const initial = drag.allInitialBounds[0]
         if (initial === undefined) return
 
-        const newRect = computeResize(drag.kind, initial, dx, dy, shiftHeld || forceAspectLock)
+        // P15: aspect-lock semantics — XOR of the per-object lock and
+        // the live Shift state. With lock OFF (default), Shift toggles
+        // it ON for the drag; with lock ON, Shift toggles it OFF.
+        // Matches Figma / Sketch / Keynote.
+        const lockAspect = shiftHeld !== forceAspectLock
+        const newRect = computeResize(drag.kind, initial, dx, dy, lockAspect)
 
         // Snap
         const snapResult = computeSnap(
