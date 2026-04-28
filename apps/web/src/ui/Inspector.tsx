@@ -1172,13 +1172,7 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
   }
 
   function setSolidColor(color: number): void {
-    const prevAlpha = current.kind === 'color' ? (current.alpha ?? 1) : 1
-    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: prevAlpha })
-  }
-
-  function setSolidAlpha(alpha: number): void {
-    if (current.kind !== 'color') return
-    updateSlideBackground(deckCtx, slideId, { ...current, alpha })
+    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: 1 })
   }
 
   function patchGradientStop(idx: 0 | 1, color: number): void {
@@ -1187,15 +1181,6 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
     const stop = stops[idx]
     if (stop === undefined) return
     stops[idx] = { ...stop, color }
-    updateSlideBackground(deckCtx, slideId, { ...current, stops })
-  }
-
-  function patchGradientStopAlpha(idx: 0 | 1, alpha: number): void {
-    if (current.kind !== 'linearGradient' && current.kind !== 'radialGradient') return
-    const stops = current.stops.slice()
-    const stop = stops[idx]
-    if (stop === undefined) return
-    stops[idx] = { ...stop, alpha }
     updateSlideBackground(deckCtx, slideId, { ...current, stops })
   }
 
@@ -1241,8 +1226,6 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
             onChange={(hex) => setSolidColor(hexToNumber(hex))}
             ariaLabel="Background color"
             showHex
-            alpha={current.alpha ?? 1}
-            onAlphaChange={setSolidAlpha}
           />
         </div>
       )}
@@ -1256,8 +1239,6 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
               onChange={(hex) => patchGradientStop(0, hexToNumber(hex))}
               ariaLabel="Gradient start color"
               showHex={false}
-              alpha={current.stops[0]?.alpha ?? 1}
-              onAlphaChange={(a) => patchGradientStopAlpha(0, a)}
             />
           </div>
           <div className="flex items-center gap-2">
@@ -1267,8 +1248,6 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
               onChange={(hex) => patchGradientStop(1, hexToNumber(hex))}
               ariaLabel="Gradient end color"
               showHex={false}
-              alpha={current.stops[1]?.alpha ?? 1}
-              onAlphaChange={(a) => patchGradientStopAlpha(1, a)}
             />
           </div>
           {current.kind === 'linearGradient' && (
@@ -1354,6 +1333,8 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
                 }
                 ariaLabel="Stroke color"
                 showHex={false}
+                alpha={obj.strokeAlpha ?? 1}
+                onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
               />
               <input
                 type="number"
@@ -1614,6 +1595,8 @@ function FillPicker({
             onChange={(hex) => patch({ fill: hexToNumber(hex) })}
             ariaLabel="Fill color"
             showHex
+            alpha={obj.fillAlpha ?? 1}
+            onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
           />
         </div>
       )}
@@ -1654,6 +1637,13 @@ function GradientEditor({
     onChange({ ...fillStyle, stops: nextStops } as FillStyle)
   }
 
+  const setStopAlpha = (idx: 0 | 1, alpha: number): void => {
+    const nextStops = [...stops]
+    if (idx === 0) nextStops[0] = { ...stop0, alpha }
+    else nextStops[nextStops.length - 1] = { ...stop1, alpha }
+    onChange({ ...fillStyle, stops: nextStops } as FillStyle)
+  }
+
   return (
     <div className="ml-[4.5rem] flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
@@ -1663,6 +1653,8 @@ function GradientEditor({
           onChange={(hex) => setStop(0, hexToNumber(hex))}
           ariaLabel="Gradient start color"
           showHex={false}
+          alpha={stop0.alpha ?? 1}
+          onAlphaChange={(a) => setStopAlpha(0, a)}
         />
         <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
         <ColorInput
@@ -1670,6 +1662,8 @@ function GradientEditor({
           onChange={(hex) => setStop(1, hexToNumber(hex))}
           ariaLabel="Gradient end color"
           showHex={false}
+          alpha={stop1.alpha ?? 1}
+          onAlphaChange={(a) => setStopAlpha(1, a)}
         />
       </div>
       {fillStyle.kind === 'linearGradient' && (
@@ -1783,6 +1777,8 @@ function LineStrokeSection({
             onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
             ariaLabel="Stroke color"
             showHex
+            alpha={obj.strokeAlpha ?? 1}
+            onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<typeof obj>)}
           />
         </div>
       </div>
@@ -2225,6 +2221,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
               onChange={(hex) => patch({ color: hexToNumber(hex) })}
               ariaLabel="Text color"
               showHex
+              alpha={obj.colorAlpha ?? 1}
+              onAlphaChange={(a) => patch({ colorAlpha: a } as SlideObjectPatch<TextObject>)}
             />
           </div>
         </div>
@@ -2258,6 +2256,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   }
                   ariaLabel="Text stroke color"
                   showHex={false}
+                  alpha={obj.strokeAlpha ?? 1}
+                  onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
                 />
                 <input
                   type="number"

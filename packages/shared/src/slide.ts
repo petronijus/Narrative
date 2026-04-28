@@ -102,6 +102,8 @@ export interface StrokeStyleFields {
   strokeWidth?: number
   /** Dashed stroke pattern — true = dashed, false/undefined = solid. */
   strokeDash?: boolean
+  /** Stroke alpha 0..1. Missing ⇒ 1 (fully opaque). */
+  strokeAlpha?: number
 }
 
 /**
@@ -115,6 +117,8 @@ export interface FillGradientStop {
   color: number
   /** Offset 0..1. */
   offset: number
+  /** Alpha 0..1. Missing ⇒ 1 (fully opaque). */
+  alpha?: number
 }
 export interface LinearGradientFill {
   kind: 'linearGradient'
@@ -158,6 +162,8 @@ export interface RectangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'rectangle'
   /** Solid fallback colour hex. Rendered only when fillStyle is not set. */
   fill: number
+  /** Fill alpha 0..1. Missing ⇒ 1. */
+  fillAlpha?: number
   /** Optional gradient / image fill. Takes precedence over `fill`. */
   fillStyle?: FillStyle
   /** Uniform or per-corner radius. Missing ⇒ 0 (sharp corners). */
@@ -168,6 +174,8 @@ export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
   type: 'ellipse'
   /** Solid fallback colour hex. */
   fill: number
+  /** Fill alpha 0..1. Missing ⇒ 1. */
+  fillAlpha?: number
   /** Optional gradient / image fill. Takes precedence over `fill`. */
   fillStyle?: FillStyle
 }
@@ -180,12 +188,14 @@ export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
 export interface TriangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'triangle'
   fill: number
+  fillAlpha?: number
   fillStyle?: FillStyle
 }
 
 export interface PolygonObject extends BaseSlideObject, StrokeStyleFields {
   type: 'polygon'
   fill: number
+  fillAlpha?: number
   fillStyle?: FillStyle
   /** Number of sides. Clamped to [3, 12] in the renderer. */
   sides: number
@@ -210,6 +220,8 @@ export interface LineObject extends BaseSlideObject, LineEndpoints {
   type: 'line'
   /** Stroke colour. */
   stroke: number
+  /** Stroke alpha 0..1. Missing ⇒ 1. */
+  strokeAlpha?: number
   /** Stroke width in slide-px. */
   strokeWidth: number
   startCap?: LineCap
@@ -221,6 +233,7 @@ export interface LineObject extends BaseSlideObject, LineEndpoints {
 export interface ArrowObject extends BaseSlideObject, LineEndpoints {
   type: 'arrow'
   stroke: number
+  strokeAlpha?: number
   strokeWidth: number
   startCap?: LineCap
   endCap?: LineCap
@@ -247,9 +260,11 @@ export interface PathObject extends BaseSlideObject {
   type: 'path'
   anchors: PathAnchor[]
   stroke: number
+  strokeAlpha?: number
   strokeWidth: number
   /** Optional fill for a closed path. */
   fill?: number
+  fillAlpha?: number
   /** When true, last anchor connects back to the first. */
   closed?: boolean
   dash?: boolean
@@ -273,6 +288,8 @@ export interface TextObject extends BaseSlideObject {
   fontWeight: FontWeight
   /** Pixi/CSS color hex číslo, např. 0x000000 */
   color: number
+  /** Text fill alpha 0..1. Missing ⇒ 1. */
+  colorAlpha?: number
   align: 'left' | 'center' | 'right'
   /**
    * P7: font family. Missing ⇒ renderer default
@@ -304,6 +321,8 @@ export interface TextObject extends BaseSlideObject {
   listStyle?: TextListStyle
   /** Optional stroke on glyphs. */
   stroke?: number
+  /** Stroke alpha 0..1. Missing ⇒ 1. */
+  strokeAlpha?: number
   /** Stroke width in px. Rendered only when stroke is set. Default 1. */
   strokeWidth?: number
 }

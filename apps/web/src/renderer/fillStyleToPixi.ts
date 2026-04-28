@@ -65,7 +65,7 @@ function gradientKey(
   const w = Math.max(1, Math.round(widthPx))
   const h = Math.max(1, Math.round(heightPx))
   const stops = fillStyle.stops
-    .map((s) => `${s.offset.toFixed(3)}@${s.color.toString(16)}`)
+    .map((s) => `${s.offset.toFixed(3)}@${s.color.toString(16)}x${(s.alpha ?? 1).toFixed(3)}`)
     .join(',')
   if (fillStyle.kind === 'linearGradient') {
     return `lin:${w}x${h}:${fillStyle.angleDeg.toFixed(2)}:${stops}`
@@ -90,24 +90,29 @@ export function releaseProceduralFill(container: Container): void {
 }
 
 function clampStops(
-  stops: ReadonlyArray<{ color: number; offset: number }>,
-): Array<{ color: number; offset: number }> {
-  if (stops.length === 0) return [{ color: 0xffffff, offset: 0 }]
+  stops: ReadonlyArray<{ color: number; offset: number; alpha?: number }>,
+): Array<{ color: number; offset: number; alpha: number }> {
+  if (stops.length === 0) return [{ color: 0xffffff, offset: 0, alpha: 1 }]
   if (stops.length === 1) {
-    const c = stops[0]!.color
+    const s = stops[0]!
+    const a = s.alpha ?? 1
     return [
-      { color: c, offset: 0 },
-      { color: c, offset: 1 },
+      { color: s.color, offset: 0, alpha: a },
+      { color: s.color, offset: 1, alpha: a },
     ]
   }
-  return stops.map((s) => ({ color: s.color, offset: Math.max(0, Math.min(1, s.offset)) }))
+  return stops.map((s) => ({
+    color: s.color,
+    offset: Math.max(0, Math.min(1, s.offset)),
+    alpha: Math.max(0, Math.min(1, s.alpha ?? 1)),
+  }))
 }
 
-function numberToRgba(hex: number): string {
+function numberToRgba(hex: number, alpha = 1): string {
   const r = (hex >> 16) & 0xff
   const g = (hex >> 8) & 0xff
   const b = hex & 0xff
-  return `rgb(${r}, ${g}, ${b})`
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 /**
@@ -117,7 +122,7 @@ function numberToRgba(hex: number): string {
  * pass absurd dimensions to Canvas2D.
  */
 function paintLinearGradientTexture(
-  stops: Array<{ color: number; offset: number }>,
+  stops: Array<{ color: number; offset: number; alpha: number }>,
   angleDeg: number,
   widthPx: number,
   heightPx: number,
@@ -145,7 +150,7 @@ function paintLinearGradientTexture(
   const y1 = cy + dy * halfExt
 
   const linear = ctx.createLinearGradient(x0, y0, x1, y1)
-  for (const s of stops) linear.addColorStop(s.offset, numberToRgba(s.color))
+  for (const s of stops) linear.addColorStop(s.offset, numberToRgba(s.color, s.alpha))
   ctx.fillStyle = linear
   ctx.fillRect(0, 0, w, h)
 
@@ -153,7 +158,7 @@ function paintLinearGradientTexture(
 }
 
 function paintRadialGradientTexture(
-  stops: Array<{ color: number; offset: number }>,
+  stops: Array<{ color: number; offset: number; alpha: number }>,
   centerXNorm: number,
   centerYNorm: number,
   widthPx: number,
@@ -169,7 +174,7 @@ function paintRadialGradientTexture(
   const cy = centerYNorm * h
   const outerRadius = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy))
   const radial = ctx.createRadialGradient(cx, cy, 0, cx, cy, outerRadius)
-  for (const s of stops) radial.addColorStop(s.offset, numberToRgba(s.color))
+  for (const s of stops) radial.addColorStop(s.offset, numberToRgba(s.color, s.alpha))
   ctx.fillStyle = radial
   ctx.fillRect(0, 0, w, h)
   return Texture.from({ resource: canvas })

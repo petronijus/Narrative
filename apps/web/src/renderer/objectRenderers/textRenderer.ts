@@ -70,7 +70,7 @@ function buildStyle(data: TextObject): TextStyle {
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
-    fill: hexToColorString(data.color),
+    fill: { color: hexToColorString(data.color), alpha: data.colorAlpha ?? 1 },
     align: data.align,
     wordWrap: true,
     wordWrapWidth: data.width,
@@ -88,7 +88,11 @@ function buildStyle(data: TextObject): TextStyle {
       ? data.lineHeight * data.fontSize
       : data.fontSize * 1.2
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
-    opts.stroke = { color: hexToColorString(data.stroke), width: data.strokeWidth ?? 1 }
+    opts.stroke = {
+      color: hexToColorString(data.stroke),
+      alpha: data.strokeAlpha ?? 1,
+      width: data.strokeWidth ?? 1,
+    }
   }
   return new TextStyle(opts)
 }
@@ -195,6 +199,7 @@ export const textRenderer = {
       prev.fontSize !== next.fontSize ||
       prev.fontWeight !== next.fontWeight ||
       prev.color !== next.color ||
+      prev.colorAlpha !== next.colorAlpha ||
       prev.align !== next.align ||
       prev.width !== next.width ||
       prev.fontFamily !== next.fontFamily ||
@@ -203,6 +208,7 @@ export const textRenderer = {
       prev.letterSpacing !== next.letterSpacing ||
       prev.lineHeight !== next.lineHeight ||
       prev.stroke !== next.stroke ||
+      prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth
 
     if (styleChanged) {
@@ -276,6 +282,7 @@ export const textRenderer = {
       patch.fontSize !== undefined ||
       patch.fontWeight !== undefined ||
       patch.color !== undefined ||
+      'colorAlpha' in patch ||
       patch.align !== undefined ||
       patch.width !== undefined ||
       patch.fontFamily !== undefined ||
@@ -284,6 +291,7 @@ export const textRenderer = {
       patch.letterSpacing !== undefined ||
       patch.lineHeight !== undefined ||
       'stroke' in patch ||
+      'strokeAlpha' in patch ||
       patch.strokeWidth !== undefined
 
     // Reconstruct the merged next-state by reading Pixi + style fields.
@@ -294,6 +302,14 @@ export const textRenderer = {
       // patch. SceneGraph's node.data copy is authoritative but unreachable
       // from here, so we approximate with Pixi's current style values.
       const style = textNode.style as TextStyle
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fillRaw = style.fill as any
+      const fillStr =
+        typeof fillRaw === 'string'
+          ? fillRaw
+          : typeof fillRaw === 'object' && fillRaw !== null && typeof fillRaw.color === 'string'
+            ? fillRaw.color
+            : '#000000'
       const current: TextObject = {
         id: '',
         type: 'text',
@@ -306,7 +322,7 @@ export const textRenderer = {
         text: textNode.text,
         fontSize: style.fontSize as number,
         fontWeight: style.fontWeight as TextObject['fontWeight'],
-        color: parseInt(((style.fill as string) ?? '#000000').slice(1), 16),
+        color: parseInt(fillStr.slice(1), 16),
         align: style.align as TextObject['align'],
       }
       const merged: TextObject = { ...current, ...patch } as TextObject

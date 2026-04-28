@@ -94,15 +94,20 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
     if (texture !== null) {
       graphics.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      graphics.fill({ color: data.fill })
+      graphics.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
     }
   } else {
     releaseImageFill(container)
     const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
-    graphics.fill(resolved.input)
+    const fillInput =
+      data.fillStyle === undefined
+        ? { color: data.fill, alpha: data.fillAlpha ?? 1 }
+        : resolved.input
+    graphics.fill(fillInput)
   }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
     const w = data.strokeWidth ?? 1
+    const strokeAlpha = data.strokeAlpha ?? 1
     if (data.strokeDash === true) {
       const r =
         typeof data.cornerRadius === 'number'
@@ -114,10 +119,14 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
             }
           : (data.cornerRadius ?? { tl: 0, tr: 0, br: 0, bl: 0 })
       const pts = sampleRoundedRect(data.width, data.height, r)
-      strokeDashedPolyline(graphics, pts, true, { color: data.stroke, width: w })
+      strokeDashedPolyline(graphics, pts, true, {
+        color: data.stroke,
+        width: w,
+        alpha: strokeAlpha,
+      })
     } else {
       tracePath(graphics, data.width, data.height, data.cornerRadius)
-      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5 })
+      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: strokeAlpha })
     }
   }
 }
@@ -176,9 +185,11 @@ export const rectangleRenderer = {
 
     const needsRedraw =
       prev.fill !== next.fill ||
+      prev.fillAlpha !== next.fillAlpha ||
       prev.width !== next.width ||
       prev.height !== next.height ||
       prev.stroke !== next.stroke ||
+      prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth ||
       prev.strokeDash !== next.strokeDash ||
       !cornerRadiusEqual(prev.cornerRadius, next.cornerRadius) ||
@@ -230,8 +241,10 @@ export const rectangleRenderer = {
     const geometryChanged = patch.width !== undefined || patch.height !== undefined
     const visualChanged =
       patch.fill !== undefined ||
+      'fillAlpha' in patch ||
       'fillStyle' in patch ||
       'stroke' in patch ||
+      'strokeAlpha' in patch ||
       patch.strokeWidth !== undefined ||
       'strokeDash' in patch ||
       'cornerRadius' in patch
@@ -247,10 +260,12 @@ export const rectangleRenderer = {
       const newHeight = patch.height ?? cached.height
 
       const nextStroke = 'stroke' in patch ? patch.stroke : cached.stroke
+      const nextStrokeAlpha = 'strokeAlpha' in patch ? patch.strokeAlpha : cached.strokeAlpha
       const nextStrokeWidth = 'strokeWidth' in patch ? patch.strokeWidth : cached.strokeWidth
       const nextStrokeDash = 'strokeDash' in patch ? patch.strokeDash : cached.strokeDash
       const nextCornerRadius = 'cornerRadius' in patch ? patch.cornerRadius : cached.cornerRadius
       const nextFillStyle = 'fillStyle' in patch ? patch.fillStyle : cached.fillStyle
+      const nextFillAlpha = 'fillAlpha' in patch ? patch.fillAlpha : cached.fillAlpha
 
       // exactOptionalPropertyTypes: omit keys whose value is undefined.
       const next: RectangleObject = {
@@ -258,13 +273,17 @@ export const rectangleRenderer = {
         width: newWidth,
         height: newHeight,
         fill: patch.fill ?? cached.fill,
+        ...(nextFillAlpha !== undefined ? { fillAlpha: nextFillAlpha } : {}),
         ...(nextStroke !== undefined ? { stroke: nextStroke } : {}),
+        ...(nextStrokeAlpha !== undefined ? { strokeAlpha: nextStrokeAlpha } : {}),
         ...(nextStrokeWidth !== undefined ? { strokeWidth: nextStrokeWidth } : {}),
         ...(nextStrokeDash !== undefined ? { strokeDash: nextStrokeDash } : {}),
         ...(nextCornerRadius !== undefined ? { cornerRadius: nextCornerRadius } : {}),
         ...(nextFillStyle !== undefined ? { fillStyle: nextFillStyle } : {}),
       }
+      if (nextFillAlpha === undefined) delete (next as { fillAlpha?: number }).fillAlpha
       if (nextStroke === undefined) delete (next as { stroke?: number }).stroke
+      if (nextStrokeAlpha === undefined) delete (next as { strokeAlpha?: number }).strokeAlpha
       if (nextStrokeWidth === undefined) delete (next as { strokeWidth?: number }).strokeWidth
       if (nextStrokeDash === undefined) delete (next as { strokeDash?: boolean }).strokeDash
       if (nextCornerRadius === undefined)

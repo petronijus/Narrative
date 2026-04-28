@@ -61,12 +61,13 @@ function drawPath(g: Graphics, data: PathObject): void {
     }
     g.closePath()
     if (data.fill !== undefined) {
-      g.fill({ color: data.fill })
+      g.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
     }
   }
 
   g.stroke({
     color: data.stroke,
+    alpha: data.strokeAlpha ?? 1,
     width: data.strokeWidth,
     cap: 'round',
     join: 'round',
@@ -109,8 +110,10 @@ export const pathRenderer = {
     applyTransform(node, next)
     const redraw =
       prev.stroke !== next.stroke ||
+      prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth ||
       prev.fill !== next.fill ||
+      prev.fillAlpha !== next.fillAlpha ||
       prev.closed !== next.closed ||
       prev.width !== next.width ||
       prev.height !== next.height ||
