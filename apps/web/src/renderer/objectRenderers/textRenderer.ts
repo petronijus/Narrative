@@ -29,8 +29,22 @@
  */
 
 import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from 'pixi.js'
+import * as Y from 'yjs'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+
+/**
+ * Read the body content as a plain string regardless of whether the
+ * underlying schema slot is a `Y.Text` (rich-text path) or a legacy
+ * plain `string` (decks saved before the rich-text migration). Phase A
+ * of the rich-text rollout still renders plain Pixi.Text from the
+ * resulting string; Phase B will replace this with HTML rendering.
+ */
+function readPlainText(t: TextObject['text']): string {
+  if (t instanceof Y.Text) return t.toString()
+  if (typeof t === 'string') return t
+  return ''
+}
 
 /** Tag for the Pixi Text node stored on its parent Container. */
 const TEXT_TAG = Symbol('textNode')
@@ -340,7 +354,10 @@ export const textRenderer = {
   mount(data: TextObject): Container {
     const container = new Container()
     const style = buildStyle(data)
-    const textNode = new Text({ text: applyListMarkers(data.text, data.listStyle), style })
+    const textNode = new Text({
+      text: applyListMarkers(readPlainText(data.text), data.listStyle),
+      style,
+    })
 
     container.addChild(textNode)
 
@@ -372,8 +389,10 @@ export const textRenderer = {
     const textNode = getTextNode(node)
     if (textNode === undefined) return
 
-    if (prev.text !== next.text || prev.listStyle !== next.listStyle) {
-      textNode.text = applyListMarkers(next.text, next.listStyle)
+    const prevText = readPlainText(prev.text)
+    const nextText = readPlainText(next.text)
+    if (prevText !== nextText || prev.listStyle !== next.listStyle) {
+      textNode.text = applyListMarkers(nextText, next.listStyle)
     }
 
     const styleChanged =
@@ -513,6 +532,9 @@ export const textRenderer = {
               height: node.pivot.y * 2,
               rotation: node.rotation,
               opacity: node.alpha,
+              // textNode.text is already a plain string (Pixi flattens it
+              // on assignment). The fallback path only runs if mount/update
+              // never wrote DATA_TAG, so a string is the safe shape here.
               text: textNode.text,
               fontSize: style.fontSize as number,
               fontWeight: style.fontWeight as TextObject['fontWeight'],
@@ -526,7 +548,7 @@ export const textRenderer = {
     if (textChanged || listChanged || needsStyleRebuild) {
       textNode.style = buildStyle(merged)
       if (textChanged || listChanged) {
-        textNode.text = applyListMarkers(merged.text, merged.listStyle)
+        textNode.text = applyListMarkers(readPlainText(merged.text), merged.listStyle)
       }
       if (patch.width !== undefined) {
         const dataX = node.x - node.pivot.x
