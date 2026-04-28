@@ -37,8 +37,9 @@ const TEXT_TAG = Symbol('textNode')
 /** Tag for the clip-mask Graphics that crops glyphs to the box. */
 const MASK_TAG = Symbol('textMask')
 /** Tag for the underline Graphics painted under the rendered text.
- *  Pixi v8's TextStyle has no native underline, so we draw a flat line
- *  at each rendered line's baseline + descent ourselves. */
+ *  Pixi v8's TextStyle has no native underline, so we draw a thin
+ *  horizontal rectangle below each rendered line's baseline ourselves
+ *  (see applyUnderline for the typographic ratios used). */
 const UNDERLINE_TAG = Symbol('textUnderline')
 /** Last applied data snapshot — applyPatch merges against this so
  *  fields Pixi doesn't track natively (vAlign, listStyle, fontFamily)
@@ -271,34 +272,30 @@ function applyUnderline(container: Container, textNode: Text, data: TextObject):
   const lineHeightPx = fontSize * lineHeightMul
   const text = (textNode.text as string) ?? ''
   const lines = text.split('\n')
-  const thickness = Math.max(1, Math.round(fontSize / 16))
   const colour = hexToColorString(data.color)
   const alpha = data.colorAlpha ?? 1
   const align = data.align ?? 'left'
   const measureStyle = buildStyle(data)
 
-  // Pixi draws each line with textBaseline='alphabetic' at (lineTop +
-  // halfLeading + ascent). Use the actual font metrics so the underline
-  // lands at the visible baseline regardless of font / weight / italic.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const measureFont = (CanvasTextMetrics as any)?.measureFont as
-    | ((s: TextStyle) => { ascent: number; descent: number })
-    | undefined
-  let ascent = fontSize * 0.78
-  let descent = fontSize * 0.22
-  if (typeof measureFont === 'function') {
-    try {
-      const m = measureFont(measureStyle)
-      if (typeof m?.ascent === 'number' && m.ascent > 0) ascent = m.ascent
-      if (typeof m?.descent === 'number' && m.descent > 0) descent = m.descent
-    } catch {
-      /* fall through to defaults */
-    }
-  }
-  const halfLeading = Math.max(0, (lineHeightPx - ascent - descent) / 2)
-  // Sit the underline a hair below the baseline so it doesn't cut
-  // through the bottom of glyphs.
-  const baselineFromLineTop = halfLeading + ascent + Math.max(1, Math.round(fontSize * 0.04))
+  // Underline geometry uses fontSize-proportional typographic ratios
+  // that match browser fallback behaviour when the font's own
+  // post.underlinePosition / post.underlineThickness aren't available:
+  //   - alphabetic baseline ≈ 0.78 × fontSize below the glyph cap top
+  //   - underline sits ≈ 0.10 × fontSize below the baseline
+  //   - thickness ≈ fontSize / 14 (matches CSS UA defaults)
+  // Floats throughout so the line stays aligned even at very small
+  // font sizes where Pixi's pixel-rasterized metrics would round.
+  const ASCENT_RATIO = 0.78
+  const DESCENT_RATIO = 0.22
+  const UNDERLINE_OFFSET_RATIO = 0.1
+  const UNDERLINE_THICKNESS_RATIO = 1 / 14
+
+  const ascentPx = fontSize * ASCENT_RATIO
+  const descentPx = fontSize * DESCENT_RATIO
+  const halfLeading = Math.max(0, (lineHeightPx - ascentPx - descentPx) / 2)
+  const baselineFromLineTop = halfLeading + ascentPx
+  const underlineOffset = fontSize * UNDERLINE_OFFSET_RATIO
+  const thickness = Math.max(1, fontSize * UNDERLINE_THICKNESS_RATIO)
 
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i] ?? ''
@@ -309,7 +306,7 @@ function applyUnderline(container: Container, textNode: Text, data: TextObject):
     if (align === 'center') lineX = (data.width - lineWidth) / 2
     else if (align === 'right') lineX = data.width - lineWidth
 
-    const yTop = textNode.y + i * lineHeightPx + baselineFromLineTop
+    const yTop = textNode.y + i * lineHeightPx + baselineFromLineTop + underlineOffset
     g.rect(lineX, yTop, lineWidth, thickness)
   }
   g.fill({ color: colour, alpha })
@@ -542,16 +539,15 @@ export const textRenderer = {
       }
     }
 
-    // vAlign depends on the current text content + height — re-apply
-    // whenever any of those changed, regardless of the rebuild branch.
-    if (textChanged || listChanged || needsStyleRebuild || 'vAlign' in patch || 'height' in patch) {
+    // vAlign and the underline both depend on textNode.y / measured
+    // glyph metrics, so re-run them whenever the text content, the
+    // box, or any typographic field changed. Without this an
+    // align-only or vAlign-only patch would leave either the text or
+    // the underline at its previous position.
+    const layoutAffected =
+      textChanged || listChanged || needsStyleRebuild || 'vAlign' in patch || 'height' in patch
+    if (layoutAffected) {
       applyVerticalAlign(textNode, merged)
-    }
-
-    // Underline geometry tracks every typographic field + the text
-    // itself, so refresh whenever anything that affects line layout
-    // or the toggle changes.
-    if (textChanged || listChanged || needsStyleRebuild || 'height' in patch) {
       applyUnderline(node, textNode, merged)
     }
 
@@ -574,7 +570,8 @@ export const textRenderer = {
   },
 
   /**
-   * Uvolní Text node a Container. Volá se při removeObject.
+   * Release the Text node, mask, underline and container. Called when
+   * the object is removed from the slide.
    */
   destroy(node: Container): void {
     const textNode = getTextNode(node)
