@@ -30,7 +30,6 @@ import { useLocation } from 'react-router-dom'
 import { useAuth } from './AuthContext.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import { FontLoader } from './FontLoader.js'
 import {
   createUndoManager,
   generatePeerId,
@@ -205,14 +204,7 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
   }
 
   const fullValue: SlideDocContextValue = { ...value, wsStatus }
-  return (
-    <SlideDocContext.Provider value={fullValue}>
-      {/* P15: bridge deck-level fonts → document.fonts + Pixi text
-          re-rasterisation. Side-effect-only component, renders nothing,
-          mounted INSIDE the provider so it can call useDeckFonts() /
-          useCanvasInstance() without prop-drilling. */}
-      <FontLoader />
-      {children}
-    </SlideDocContext.Provider>
-  )
+  // FontLoader is mounted in DeckShell (inside CanvasInstanceContext.Provider)
+  // because it needs both Y.Doc context AND the live Pixi canvas.
+  return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
 }

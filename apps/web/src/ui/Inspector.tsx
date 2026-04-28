@@ -40,6 +40,7 @@ import {
 } from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
+import { FontWeightSelect } from './FontWeightSelect.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -2102,43 +2103,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
           <FontFamilySelect obj={obj} patch={patch} disabled={isViewer} />
         </div>
 
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-fontweight-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Weight
-          </label>
-          <select
-            id={`inspector-fontweight-${obj.id}`}
-            value={String(obj.fontWeight)}
-            onChange={(e) => {
-              const v = e.target.value
-              const parsed =
-                v === 'normal' || v === 'bold'
-                  ? (v as 'normal' | 'bold')
-                  : (Number.parseInt(v, 10) as 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900)
-              patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
-            }}
-            className={[
-              'flex-1 rounded border border-input field-surface px-2 py-0.5',
-              'text-xs text-foreground',
-              'focus:border-ring focus:outline-none',
-            ].join(' ')}
-          >
-            <option value="100">Thin 100</option>
-            <option value="200">Extra light 200</option>
-            <option value="300">Light 300</option>
-            <option value="400">Regular 400</option>
-            <option value="normal">Normal</option>
-            <option value="500">Medium 500</option>
-            <option value="600">Semibold 600</option>
-            <option value="700">Bold 700</option>
-            <option value="bold">Bold (css)</option>
-            <option value="800">Extra bold 800</option>
-            <option value="900">Black 900</option>
-          </select>
-        </div>
+        <FontWeightSelect obj={obj} patch={patch} />
 
         {/* Italic + Underline toggles + List style row — three toggle
             buttons share a row for compactness. */}

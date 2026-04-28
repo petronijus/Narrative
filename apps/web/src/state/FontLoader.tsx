@@ -22,9 +22,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useDeckFonts } from './useDeckFonts.js'
-import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { getDefaultFontUrlResolver } from '../renderer/fontUrl.js'
-import { forgetFontReady, notifyFontReady } from '../renderer/fontRegistry.js'
 
 interface InstalledFont {
   face: FontFace
@@ -38,6 +37,14 @@ export function FontLoader(): null {
   // Per-asset state so a deck-fonts re-emit (which fires for any field
   // change, not just adds/removes) doesn't trigger a duplicate fetch.
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
+  // Live ref to the canvas so the async IIFE below always reads the
+  // CURRENT instance — without this, the closure captures whatever
+  // `canvas` was at scheduling time. On a cold-start reload that's
+  // typically null (Pixi hasn't finished `app.init()` yet), so the
+  // refresh call after FontFace.load was a silent no-op and the text
+  // stayed in the fallback face until the user nudged the renderer.
+  const canvasRef = useRef<CanvasInstance | null>(canvas)
+  canvasRef.current = canvas
 
   useEffect(() => {
     let cancelled = false
@@ -72,9 +79,10 @@ export function FontLoader(): null {
 
           document.fonts.add(face)
           installed.set(entry.id, { face, family: entry.family })
-          notifyFontReady(entry.family)
 
-          canvas?.sceneGraph.refreshTextNodesUsingFamily(entry.family)
+          // Read canvas from the ref so we get whatever is current
+          // RIGHT NOW, not the value at IIFE-schedule time.
+          canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(entry.family)
         } catch (err) {
           // Drop the placeholder so a future re-emit retries.
           installed.delete(entry.id)
@@ -93,18 +101,33 @@ export function FontLoader(): null {
         // ignore.
       }
       installed.delete(id)
-      // The family may still be served by another asset (e.g. a
-      // different weight) — only un-mark "ready" if no live entry
-      // declares it.
-      const stillUsed = fonts.some((f) => f.family === slot.family)
-      if (!stillUsed) forgetFontReady(slot.family)
-      canvas?.sceneGraph.refreshTextNodesUsingFamily(slot.family)
+      canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(slot.family)
     }
 
     return () => {
       cancelled = true
     }
-  }, [fonts, canvas])
+  }, [fonts])
+
+  // Cold-start catch-up: when the Pixi canvas appears AFTER fonts
+  // have already loaded (the typical reload sequence — FontFace.load
+  // resolves before app.init does), walk every already-installed
+  // family and force a re-rasterise so the text picks up the
+  // fallback-vs-installed swap. Without this, text stays in the
+  // fallback face until the user nudges the renderer (slide nav,
+  // selection, etc.).
+  useEffect(() => {
+    if (canvas === null) return
+    const installed = installedRef.current
+    const seen = new Set<string>()
+    for (const slot of installed.values()) {
+      // slot.face is a sentinel until load resolves — skip pending.
+      if (slot.face === undefined) continue
+      if (seen.has(slot.family)) continue
+      seen.add(slot.family)
+      canvas.sceneGraph.refreshTextNodesUsingFamily(slot.family)
+    }
+  }, [canvas])
 
   return null
 }

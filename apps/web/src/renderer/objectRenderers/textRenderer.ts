@@ -28,7 +28,6 @@
  */
 
 import { Container, Graphics, Text, TextStyle } from 'pixi.js'
-import { isFontReady, onFontReady } from '../fontRegistry.js'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 
@@ -38,81 +37,6 @@ const TEXT_TAG = Symbol('textNode')
  *  that wrap past the box's bottom edge get cut off, matching the
  *  bounding rect the user defined when drawing the text area. */
 const MASK_TAG = Symbol('textMask')
-/** P15: tag for the FontReady unsubscribe handle — used so destroy()
- *  can drop the listener if the container is torn down before its
- *  font loads. */
-const FONT_UNSUB_TAG = Symbol('textFontUnsub')
-
-/**
- * P15: register a one-shot refresh that fires when a deck font this
- * Text node depends on finishes loading. The listener stays active
- * until either (a) the family becomes ready and we re-rasterise, or
- * (b) the container is destroyed (destroy() drops it via FONT_UNSUB_TAG).
- *
- * No-op when the font is already ready, or when the family is one of
- * the system fallbacks (those are always present so there's no race).
- */
-function armFontReadyRefresh(
-  container: Container,
-  textNode: Text,
-  fontFamily: string | undefined,
-): void {
-  if (fontFamily === undefined || fontFamily === '') return
-  // CSS font-family is comma-separated; the FIRST token is the one
-  // Pixi will try to render with, so that's what we're racing on.
-  const primary =
-    fontFamily
-      .split(',')[0]
-      ?.trim()
-      .replace(/^["']|["']$/g, '') ?? ''
-  if (primary === '' || isSystemFontStack(primary)) return
-  if (isFontReady(primary)) return
-
-  const unsub = onFontReady((fam) => {
-    if (fam !== primary) return
-    if (container.destroyed) return
-    // Reassigning fontFamily forces TextStyle to re-resolve and Pixi
-    // to invalidate the cached glyph atlas, picking up the now-
-    // installed face.
-    try {
-      const style = textNode.style as TextStyle
-      style.fontFamily = fontFamily
-    } catch (err) {
-      console.warn('[textRenderer] font-ready refresh failed', err)
-    }
-    // One-shot — drop the listener.
-    const stored = (container as unknown as Record<symbol, () => void>)[FONT_UNSUB_TAG]
-    if (typeof stored === 'function') stored()
-  })
-
-  ;(container as unknown as Record<symbol, () => void>)[FONT_UNSUB_TAG] = unsub
-}
-
-const SYSTEM_FONT_TOKENS = new Set([
-  'system-ui',
-  '-apple-system',
-  'sans-serif',
-  'serif',
-  'monospace',
-  'cursive',
-  'fantasy',
-  'BlinkMacSystemFont',
-  'Helvetica',
-  'Helvetica Neue',
-  'Arial',
-  'Georgia',
-  'Times',
-  'Times New Roman',
-  'Courier',
-  'Courier New',
-  'SF Mono',
-  'Menlo',
-  'Inter',
-])
-
-function isSystemFontStack(token: string): boolean {
-  return SYSTEM_FONT_TOKENS.has(token)
-}
 
 /** Převede hex number na CSS color string pro TextStyle. */
 function hexToColorString(hex: number): string {
@@ -142,6 +66,9 @@ function applyListMarkers(raw: string, style: TextObject['listStyle']): string {
 function buildStyle(data: TextObject): TextStyle {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
   const opts: any = {
+    // Pixi v8's `fontStringFromTextStyle` auto-quotes unquoted multi-
+    // word family names (anything not in the CSS generic set), so we
+    // can pass `data.fontFamily` straight through.
     fontFamily: data.fontFamily ?? 'system-ui, -apple-system, sans-serif',
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
@@ -190,6 +117,35 @@ function applyVerticalAlign(textNode: Text, data: TextObject): void {
     textNode.y = Math.max(0, (data.height - textHeight) / 2)
   } else {
     textNode.y = Math.max(0, data.height - textHeight)
+  }
+}
+
+/**
+ * P15: explicit horizontal positioning of the Text node so left /
+ * center / right align actually shift the rendered block.
+ *
+ * Pixi v8's `style.align` only affects per-line alignment INSIDE a
+ * multi-line wrapped text — it does not move the text node within the
+ * container. For single-line text shorter than wordWrapWidth, Pixi
+ * collapses the rendered bounds to the line's natural width, so a
+ * 'right' align with style.align alone has no visible effect.
+ *
+ * We use the textNode's anchor + x to position the rendered block
+ * against the container's content rect (0..data.width). For
+ * multi-line text the style.align field still drives the per-line
+ * justification — this only handles the block's offset.
+ */
+function applyHorizontalAlign(textNode: Text, data: TextObject): void {
+  const align = data.align ?? 'left'
+  if (align === 'right') {
+    textNode.anchor.x = 1
+    textNode.x = data.width
+  } else if (align === 'center') {
+    textNode.anchor.x = 0.5
+    textNode.x = data.width / 2
+  } else {
+    textNode.anchor.x = 0
+    textNode.x = 0
   }
 }
 
@@ -249,17 +205,16 @@ export const textRenderer = {
     asAny(container)[TEXT_TAG] = textNode
 
     applyObjectTransform(container, data)
+    applyHorizontalAlign(textNode, data)
     applyVerticalAlign(textNode, data)
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
 
-    // P15: race protection — if this TextObject references a custom
-    // deck font that hasn't finished loading yet, Pixi caches a
-    // fallback glyph atlas at first paint. Register a one-shot
-    // listener so the moment FontLoader finishes installing the
-    // family we re-rasterise this node by reassigning `style.fontFamily`,
-    // which Pixi v8 treats as an invalidation of the atlas.
-    armFontReadyRefresh(container, textNode, data.fontFamily)
+    // P15 note: when a TextObject mounts before the deck's custom font
+    // finishes loading, FontLoader will eventually call
+    // SceneGraph.refreshTextNodesUsingFamily(family) which re-applies
+    // the style and clears Pixi's CanvasTextSystem cache. No per-node
+    // listener needed.
 
     return container
   },
@@ -303,6 +258,12 @@ export const textRenderer = {
     // the container (container pivot + transform is applied to the box,
     // the text node positions itself inside).
     applyVerticalAlign(textNode, next)
+    // P15: keep horizontal alignment in sync with the data — the
+    // text node's anchor + x shift the rendered block left / centre /
+    // right against the container's box.
+    if (prev.align !== next.align || prev.width !== next.width) {
+      applyHorizontalAlign(textNode, next)
+    }
 
     // P15: keep the clip mask in sync with the (possibly resized) box.
     applyClipMask(node, next)
@@ -409,7 +370,35 @@ export const textRenderer = {
         color: parseInt(fillStr.slice(1), 16),
         align: style.align as TextObject['align'],
       }
-      const merged: TextObject = { ...current, ...patch } as TextObject
+      // P15: carry forward style fields that aren't part of `current`'s
+      // required shape but DO survive on the live Pixi style. Without
+      // this, a patch like { fontWeight: 700 } would clobber fontFamily
+      // (left undefined in the synthetic snapshot) and buildStyle would
+      // fall back to `'system-ui, sans-serif'` — that's why a weight
+      // change reverted custom-font text to the system default.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const styleAny = style as any
+      const carry: Partial<TextObject> = {}
+      const rawFamily = styleAny.fontFamily
+      const family = Array.isArray(rawFamily)
+        ? rawFamily.join(', ')
+        : typeof rawFamily === 'string'
+          ? rawFamily
+          : undefined
+      if (typeof family === 'string' && family !== '') carry.fontFamily = family
+      if (styleAny.fontStyle === 'italic') carry.italic = true
+      const ls = styleAny.letterSpacing
+      if (typeof ls === 'number' && ls !== 0) carry.letterSpacing = ls
+      const lh = styleAny.lineHeight
+      const fs = styleAny.fontSize
+      if (typeof lh === 'number' && typeof fs === 'number' && fs > 0) {
+        // Pixi stores lineHeight in absolute px after our buildStyle
+        // multiplies by fontSize; convert back to multiplier so a
+        // subsequent rebuild reproduces the same visual.
+        const ratio = lh / fs
+        if (Math.abs(ratio - 1.2) > 0.001) carry.lineHeight = ratio
+      }
+      const merged: TextObject = { ...current, ...carry, ...patch } as TextObject
       textNode.style = buildStyle(merged)
       if (textChanged || listChanged) {
         textNode.text = applyListMarkers(merged.text, merged.listStyle)
@@ -421,6 +410,11 @@ export const textRenderer = {
         node.x = dataX + newPivotX
       }
       applyVerticalAlign(textNode, merged)
+      // P15: re-apply horizontal alignment whenever the box width or
+      // the align field changed, since both shift the anchor target.
+      if (patch.align !== undefined || patch.width !== undefined) {
+        applyHorizontalAlign(textNode, merged)
+      }
     } else if (textChanged) {
       // Fast path — only text changed, no list, no style.
       textNode.text = patch.text!
@@ -467,17 +461,6 @@ export const textRenderer = {
    * Uvolní Text node a Container. Volá se při removeObject.
    */
   destroy(node: Container): void {
-    // P15: drop any pending font-ready listener so we don't try to
-    // poke a destroyed Text node when a delayed FontFace.load resolves.
-    const unsub = (node as unknown as Record<symbol, (() => void) | undefined>)[FONT_UNSUB_TAG]
-    if (typeof unsub === 'function') {
-      try {
-        unsub()
-      } catch {
-        /* ignore */
-      }
-    }
-
     const textNode = getTextNode(node)
     textNode?.destroy()
     const mask = getMask(node)
