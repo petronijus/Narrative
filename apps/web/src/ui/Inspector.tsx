@@ -43,6 +43,7 @@ import {
   readActiveSelectionAttrs,
   getActiveTextSelection,
   subscribeActiveTextSelection,
+  refocusActiveTextEdit,
 } from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -2101,12 +2102,28 @@ function TextSection({ obj, patch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        <NumberField
-          id={`inspector-fontsize-${obj.id}`}
-          label="Size"
-          value={obj.fontSize}
-          onChange={(v) => patch({ fontSize: Math.max(1, v) })}
-        />
+        <div data-text-edit-keep-focus>
+          <NumberField
+            id={`inspector-fontsize-${obj.id}`}
+            label="Size"
+            value={
+              selAttrs?.fontSize !== undefined && selAttrs.fontSize > 0
+                ? selAttrs.fontSize
+                : obj.fontSize
+            }
+            onChange={(v) => {
+              const next = Math.max(1, v)
+              const sel = getActiveTextSelection()
+              if (sel !== null && sel.objectId === obj.id) {
+                const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
+                if (!applied) patch({ fontSize: next })
+                refocusActiveTextEdit(obj.id)
+                return
+              }
+              patch({ fontSize: next })
+            }}
+          />
+        </div>
 
         {/* Font family — a curated set of web-safe + system stacks. User
             can still type a custom value because we use a combo pattern. */}

@@ -26,6 +26,7 @@ export interface RichAttrs {
   fontWeight?: number
   color?: number
   fontFamily?: string
+  fontSize?: number
 }
 
 export interface RichDeltaOp {
@@ -96,6 +97,9 @@ export function toDelta(yt: Y.Text): RichDeltaOp[] {
       if (typeof op.attributes['fontFamily'] === 'string' && op.attributes['fontFamily'] !== '') {
         a.fontFamily = op.attributes['fontFamily']
       }
+      if (typeof op.attributes['fontSize'] === 'number' && op.attributes['fontSize'] > 0) {
+        a.fontSize = op.attributes['fontSize']
+      }
       if (Object.keys(a).length > 0) e.attributes = a
     }
     out.push(e)
@@ -135,6 +139,9 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
     if (typeof color === 'number') styleBits.push(`color:${colorHex(color)}`)
     if (typeof a.fontFamily === 'string' && a.fontFamily !== '') {
       styleBits.push(`font-family:${a.fontFamily}`)
+    }
+    if (typeof a.fontSize === 'number' && a.fontSize > 0) {
+      styleBits.push(`font-size:${a.fontSize}px`)
     }
     let body = escapeHtml(op.insert).replace(/\n/g, '<br>')
     if (italic) body = `<i>${body}</i>`
