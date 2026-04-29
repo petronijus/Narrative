@@ -78,6 +78,7 @@ import type {
   AlignAxis,
   DistributeAxis,
   LayerMove,
+  RichAttrs,
 } from '@narrative/slide-model'
 import type {
   SlideObject,
@@ -205,11 +206,19 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
         step={step}
         disabled={disabled}
         value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
-        // Select-all on focus so typing replaces the existing value
-        // instead of inserting digits next to the caret. Without this,
-        // clicking into a "50" field and typing "20" lands on "5020"
-        // (huge font) instead of "20".
-        onFocus={(e) => e.target.select()}
+        // Select-all when the user clicks/tabs into the field so
+        // typing replaces the existing value. onFocus alone fails for
+        // mouse clicks: the focus event fires during mousedown, but
+        // the subsequent click positions the caret and DEselects what
+        // we just selected. Deferring the select with setTimeout(0)
+        // runs it after the click sequence settles. Without this,
+        // clicking into "50" and typing "20" lands on "5020".
+        onFocus={(e) => {
+          const target = e.target
+          setTimeout(() => {
+            if (document.activeElement === target) target.select()
+          }, 0)
+        }}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const parsed = parseFloat(e.target.value)
           if (Number.isFinite(parsed)) onChange(parsed)
@@ -2084,6 +2093,149 @@ interface TextSectionProps {
   patch: (p: SlideObjectPatch<TextObject>) => void
 }
 
+interface FontSizeFieldProps {
+  obj: TextObject
+  patch: (p: SlideObjectPatch<TextObject>) => void
+  selAttrs: RichAttrs | null
+}
+
+/**
+ * Dedicated Size field for text. Uses an uncontrolled-style local
+ * draft so per-keystroke commits can't race with the inline-format
+ * Y.Text mutation: typing "20" used to land on "5020" because the
+ * controlled <input value=…> was being driven from obj.fontSize +
+ * selAttrs and the per-digit commit kept feeding the prior partial
+ * number back as the prop. Commit only on Enter, ArrowUp/ArrowDown,
+ * or blur. The arrow keys also step the value — same UX as a
+ * "real" number spinner. Refocus the textarea once focus leaves
+ * the whole wrapper so the user can keep typing on the canvas.
+ */
+function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
+  const externalValue =
+    selAttrs?.fontSize !== undefined && selAttrs.fontSize > 0 ? selAttrs.fontSize : obj.fontSize
+  const [draft, setDraft] = useState<string>(String(externalValue))
+  const lastExternalRef = useRef<number>(externalValue)
+
+  // Sync draft to external value whenever obj/selAttrs changes from
+  // outside this component (e.g. select-all + change box-wide,
+  // selection moved into a different run, peer edit). Local edits
+  // increment lastExternalRef themselves so they don't trigger a
+  // round-trip.
+  useEffect(() => {
+    if (externalValue !== lastExternalRef.current) {
+      lastExternalRef.current = externalValue
+      setDraft(String(externalValue))
+    }
+  }, [externalValue])
+
+  const commit = (raw: string): void => {
+    const parsed = Number.parseFloat(raw)
+    if (!Number.isFinite(parsed)) {
+      // Invalid input — snap back to the last known good value.
+      setDraft(String(externalValue))
+      return
+    }
+    const next = Math.max(1, parsed)
+    lastExternalRef.current = next
+    setDraft(String(next))
+    const sel = getActiveTextSelection()
+    if (sel !== null && sel.objectId === obj.id) {
+      if (isEntireContentSelected(obj.id)) {
+        clearActiveSelectionAttrs(obj.id, ['fontSize'])
+        patch({ fontSize: next })
+        return
+      }
+      const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
+      if (!applied) patch({ fontSize: next })
+      return
+    }
+    clearAllInlineRunAttrs(obj.text, ['fontSize'])
+    patch({ fontSize: next })
+  }
+
+  return (
+    <div
+      data-text-edit-keep-focus
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          refocusActiveTextEdit(obj.id)
+        }
+      }}
+      className="flex items-center gap-2"
+    >
+      <label
+        htmlFor={`inspector-fontsize-${obj.id}`}
+        className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+      >
+        Size
+      </label>
+      <input
+        id={`inspector-fontsize-${obj.id}`}
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onFocus={(e) => {
+          const t = e.target
+          setTimeout(() => {
+            if (document.activeElement === t) t.select()
+          }, 0)
+        }}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit(draft)
+            ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'Escape') {
+            setDraft(String(externalValue))
+            ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault()
+            const step = e.key === 'ArrowUp' ? 1 : -1
+            const cur = Number.parseFloat(draft)
+            const base = Number.isFinite(cur) ? cur : externalValue
+            commit(String(Math.max(1, base + step)))
+          }
+        }}
+        onBlur={() => commit(draft)}
+        className={[
+          'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
+          'text-right text-xs text-foreground',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        ].join(' ')}
+      />
+      <div className="flex flex-shrink-0 flex-col">
+        <button
+          type="button"
+          aria-label="Increase font size"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const cur = Number.parseFloat(draft)
+            const base = Number.isFinite(cur) ? cur : externalValue
+            commit(String(Math.max(1, base + 1)))
+          }}
+          className="flex h-3 w-4 items-center justify-center rounded-t border border-b-0 border-input bg-transparent text-[8px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          ▲
+        </button>
+        <button
+          type="button"
+          aria-label="Decrease font size"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            const cur = Number.parseFloat(draft)
+            const base = Number.isFinite(cur) ? cur : externalValue
+            commit(String(Math.max(1, base - 1)))
+          }}
+          className="flex h-3 w-4 items-center justify-center rounded-b border border-input bg-transparent text-[8px] text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          ▼
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function TextSection({ obj, patch }: TextSectionProps) {
   const colorHex = numberToHex(obj.color)
   const { role } = useDeckRole()
@@ -2110,46 +2262,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        {/* The Size NumberField mutates per-keystroke. Refocusing the
-            textarea inside onChange (as the <select> controls do)
-            would yank focus back after every digit, so the user
-            could never finish typing a number. Refocus instead when
-            focus leaves the whole wrapper — covers Tab and clicking
-            elsewhere. */}
-        <div
-          data-text-edit-keep-focus
-          onBlur={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-              refocusActiveTextEdit(obj.id)
-            }
-          }}
-        >
-          <NumberField
-            id={`inspector-fontsize-${obj.id}`}
-            label="Size"
-            value={
-              selAttrs?.fontSize !== undefined && selAttrs.fontSize > 0
-                ? selAttrs.fontSize
-                : obj.fontSize
-            }
-            onChange={(v) => {
-              const next = Math.max(1, v)
-              const sel = getActiveTextSelection()
-              if (sel !== null && sel.objectId === obj.id) {
-                if (isEntireContentSelected(obj.id)) {
-                  clearActiveSelectionAttrs(obj.id, ['fontSize'])
-                  patch({ fontSize: next })
-                  return
-                }
-                const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
-                if (!applied) patch({ fontSize: next })
-                return
-              }
-              clearAllInlineRunAttrs(obj.text, ['fontSize'])
-              patch({ fontSize: next })
-            }}
-          />
-        </div>
+        <FontSizeField obj={obj} patch={patch} selAttrs={selAttrs} />
 
         {/* Font family — a curated set of web-safe + system stacks. User
             can still type a custom value because we use a combo pattern. */}
