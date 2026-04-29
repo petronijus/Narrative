@@ -17,7 +17,7 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -38,7 +38,12 @@ import {
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
-import { applyInlineFormatIfSelected, readActiveSelectionAttrs } from './textEditSelection.js'
+import {
+  applyInlineFormatIfSelected,
+  readActiveSelectionAttrs,
+  getActiveTextSelection,
+  subscribeActiveTextSelection,
+} from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -2075,6 +2080,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
+  // Re-render whenever the active text-edit selection changes so the
+  // Bold / Italic / Underline buttons can highlight based on the run
+  // under the caret instead of just the box-wide field.
+  const activeSel = useSyncExternalStore(subscribeActiveTextSelection, getActiveTextSelection)
+  const selAttrs =
+    activeSel !== null && activeSel.objectId === obj.id ? readActiveSelectionAttrs(obj.id) : null
+  const boxBold =
+    obj.fontWeight === 'bold' || (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+  const boxItalic = obj.italic === true
+  const boxUnderline = obj.underline === true
+  const effectiveBold = selAttrs?.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
+  const effectiveItalic = selAttrs?.italic !== undefined ? selAttrs.italic : boxItalic
+  const effectiveUnderline = selAttrs?.underline !== undefined ? selAttrs.underline : boxUnderline
+
   return (
     <>
       {/* P15: removed "Text content" textarea — double-click on the
@@ -2115,30 +2134,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const selAttrs = readActiveSelectionAttrs(obj.id)
-                const boxBold =
-                  obj.fontWeight === 'bold' ||
-                  (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
                 if (selAttrs !== null) {
-                  const isBold =
-                    selAttrs.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
                   applyInlineFormatIfSelected(obj.id, {
-                    fontWeight: (isBold ? 400 : 700) as 400 | 700,
+                    fontWeight: (effectiveBold ? 400 : 700) as 400 | 700,
                   })
                   return
                 }
                 patch({
-                  fontWeight: boxBold ? 400 : 700,
+                  fontWeight: effectiveBold ? 400 : 700,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
-              aria-pressed={
-                obj.fontWeight === 'bold' ||
-                (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
-              }
+              aria-pressed={effectiveBold}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] font-bold',
-                obj.fontWeight === 'bold' ||
-                (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+                effectiveBold
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
               ].join(' ')}
@@ -2155,21 +2164,18 @@ function TextSection({ obj, patch }: TextSectionProps) {
               // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const selAttrs = readActiveSelectionAttrs(obj.id)
-                const boxItalic = obj.italic === true
                 if (selAttrs !== null) {
-                  const isItalic = selAttrs.italic !== undefined ? selAttrs.italic : boxItalic
-                  applyInlineFormatIfSelected(obj.id, { italic: !isItalic })
+                  applyInlineFormatIfSelected(obj.id, { italic: !effectiveItalic })
                   return
                 }
                 patch({
-                  italic: boxItalic ? undefined : true,
+                  italic: effectiveItalic ? undefined : true,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
-              aria-pressed={obj.italic === true}
+              aria-pressed={effectiveItalic}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] italic',
-                obj.italic === true
+                effectiveItalic
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
               ].join(' ')}
@@ -2181,22 +2187,18 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const selAttrs = readActiveSelectionAttrs(obj.id)
-                const boxUnderline = obj.underline === true
                 if (selAttrs !== null) {
-                  const isUnderline =
-                    selAttrs.underline !== undefined ? selAttrs.underline : boxUnderline
-                  applyInlineFormatIfSelected(obj.id, { underline: !isUnderline })
+                  applyInlineFormatIfSelected(obj.id, { underline: !effectiveUnderline })
                   return
                 }
                 patch({
-                  underline: boxUnderline ? undefined : true,
+                  underline: effectiveUnderline ? undefined : true,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
-              aria-pressed={obj.underline === true}
+              aria-pressed={effectiveUnderline}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] underline',
-                obj.underline === true
+                effectiveUnderline
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
               ].join(' ')}

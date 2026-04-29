@@ -25,13 +25,39 @@ export interface ActiveTextSelection {
 }
 
 const slot: { current: ActiveTextSelection | null } = { current: null }
+const listeners = new Set<() => void>()
 
 export function setActiveTextSelection(sel: ActiveTextSelection | null): void {
+  // Skip notify when nothing meaningful changed — TextEditOverlay
+  // re-publishes on every keystroke, but the toggle buttons only
+  // need to refresh when objectId / range changes (typing inside a
+  // formatted run keeps the same start/end).
+  const cur = slot.current
+  if (cur === null && sel === null) return
+  if (
+    cur !== null &&
+    sel !== null &&
+    cur.objectId === sel.objectId &&
+    cur.yText === sel.yText &&
+    cur.start === sel.start &&
+    cur.end === sel.end
+  ) {
+    return
+  }
   slot.current = sel
+  for (const l of listeners) l()
 }
 
 export function getActiveTextSelection(): ActiveTextSelection | null {
   return slot.current
+}
+
+/** useSyncExternalStore-compatible subscriber. */
+export function subscribeActiveTextSelection(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 /**
