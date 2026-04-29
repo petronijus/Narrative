@@ -46,6 +46,7 @@ import {
   refocusActiveTextEdit,
   isEntireContentSelected,
   clearActiveSelectionAttrs,
+  clearAllInlineRunAttrs,
 } from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -2128,6 +2129,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 refocusActiveTextEdit(obj.id)
                 return
               }
+              clearAllInlineRunAttrs(obj.text, ['fontSize'])
               patch({ fontSize: next })
             }}
           />
@@ -2169,6 +2171,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   applyInlineFormatIfSelected(obj.id, { fontWeight: next })
                   return
                 }
+                clearAllInlineRunAttrs(obj.text, ['fontWeight'])
                 patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveBold}
@@ -2203,6 +2206,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
                   return
                 }
+                clearAllInlineRunAttrs(obj.text, ['italic'])
                 patch({
                   italic: nextItalic ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
@@ -2234,6 +2238,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
                   return
                 }
+                clearAllInlineRunAttrs(obj.text, ['underline'])
                 patch({
                   underline: nextUnderline ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)

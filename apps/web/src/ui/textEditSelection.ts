@@ -13,7 +13,7 @@
  * just to communicate a transient four-field structure.
  */
 
-import type * as Y from 'yjs'
+import * as Y from 'yjs'
 import { applyFormat, clearFormat, type RichAttrs } from '@narrative/slide-model'
 
 export interface ActiveTextSelection {
@@ -80,6 +80,20 @@ export function isEntireContentSelected(objectId: string): boolean {
   if (sel === null || sel.objectId !== objectId) return false
   if (sel.end <= sel.start) return false
   return sel.start === 0 && sel.end === sel.yText.length
+}
+
+/**
+ * Strip the named keys from EVERY run of the given Y.Text. Inspector
+ * controls call this when the text object is selected without an
+ * active edit overlay and the user changes a typography field — any
+ * inline overrides set earlier on individual runs would otherwise
+ * shadow the new box-wide value, leaving stray formatting after a
+ * "select the text box and change everything to Inter" gesture.
+ */
+export function clearAllInlineRunAttrs(text: unknown, keys: ReadonlyArray<keyof RichAttrs>): void {
+  if (!(text instanceof Y.Text)) return
+  if (text.length <= 0) return
+  clearFormat(text, 0, text.length, keys)
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   getActiveTextSelection,
   isEntireContentSelected,
   clearActiveSelectionAttrs,
+  clearAllInlineRunAttrs,
 } from './textEditSelection.js'
 
 interface FontFamilySelectProps {
@@ -87,6 +88,10 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
             refocusActiveTextEdit(obj.id)
             return
           }
+          // Object is selected but not in edit mode — strip every
+          // run's fontFamily override so the new box-wide value
+          // wins everywhere on the canvas.
+          clearAllInlineRunAttrs(obj.text, ['fontFamily'])
           patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
         }}
         className={[

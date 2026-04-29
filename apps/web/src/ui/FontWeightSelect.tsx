@@ -24,6 +24,7 @@ import {
   getActiveTextSelection,
   isEntireContentSelected,
   clearActiveSelectionAttrs,
+  clearAllInlineRunAttrs,
 } from './textEditSelection.js'
 
 interface FontWeightSelectProps {
@@ -155,6 +156,7 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
             refocusActiveTextEdit(obj.id)
             return
           }
+          clearAllInlineRunAttrs(obj.text, ['fontWeight'])
           patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
         }}
         className={[
