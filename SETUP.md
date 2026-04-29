@@ -1,0 +1,174 @@
+# Local development setup
+
+Single source of truth for getting the editor running on a fresh machine. If
+the steps here don't end with a working editor on `http://localhost:5173`,
+something's broken — file an issue, don't paper over it.
+
+## Prerequisites
+
+- **Node.js ≥ 22** (`node -v`)
+- **pnpm ≥ 9** — recommended via Corepack: `corepack enable && corepack prepare pnpm@latest --activate`
+- **Docker** with the Compose plugin (`docker compose version`)
+- **Linux only**: file-watcher headroom for the dev stack
+  ```bash
+  sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+  ```
+  Without this, `tsx watch` and Vite throw `ENOSPC` on startup. To persist
+  across reboots, drop a file in `/etc/sysctl.d/`.
+
+## 1. Clone & install
+
+```bash
+git clone https://github.com/petronijus/Narrative.git
+cd Narrative
+pnpm install
+```
+
+## 2. Generate secrets
+
+```bash
+# 64 hex chars each — required by imgproxy URL signing.
+openssl rand -hex 32   # → IMGPROXY_KEY
+openssl rand -hex 32   # → IMGPROXY_SALT
+
+# Optional (only needed once you boot Authentik): another 32-byte hex value.
+openssl rand -hex 32   # → AUTHENTIK_SECRET_KEY
+```
+
+## 3. Create `.env`
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and at minimum:
+
+| Variable                           | What to do                                         |
+| ---------------------------------- | -------------------------------------------------- |
+| `POSTGRES_PASSWORD`                | Pick any; copy the same value into `POSTGRES_URL`. |
+| `MINIO_ROOT_USER` / `_PASSWORD`    | Any 8+ char value (used by Docker + the server).   |
+| `IMGPROXY_KEY`, `IMGPROXY_SALT`    | Paste the two 64-hex values from step 2.           |
+| `BYPASS_AUTH` / `VITE_BYPASS_AUTH` | Set both to `true` — skip Authentik for dev.       |
+
+Leave everything else at the defaults. In particular:
+
+- `IMGPROXY_ENDPOINT=http://localhost:5173/imgproxy` — routes signed URLs through
+  Vite's dev proxy so the browser fetches them same-origin (imgproxy v3.27
+  doesn't honour its own CORS env).
+- `MINIO_ENDPOINT=http://127.0.0.1:9100` — server reads MinIO via the host port.
+- `MEDIA_REDIS_URL=redis://127.0.0.1:6380` — only needed if you start the video pipeline (optional, see step 7).
+
+## 4. Boot the storage / image stack
+
+```bash
+cd infra
+docker compose --env-file ../.env up -d postgres minio minio-init imgproxy
+cd ..
+```
+
+What this brings up:
+
+- `postgres` — main DB.
+- `minio` — S3-compatible object store on `:9100` (API) and `:9101` (console).
+- `minio-init` — one-shot job that creates the `narrative-media` bucket. Should exit `0`. Verify: `docker compose -f infra/docker-compose.yml --env-file .env logs minio-init` — last line should say `Bucket ready: narrative-media`.
+- `imgproxy` — image transformer on `:8080`.
+
+## 5. Run DB migrations
+
+```bash
+pnpm --filter server db:migrate
+```
+
+Expected: `Migrations applied successfully`. Re-runnable; safe.
+
+## 6. Start the dev stack
+
+```bash
+pnpm dev
+```
+
+This boots two processes in parallel:
+
+- `apps/web` — Vite on `http://localhost:5173`
+- `apps/server` — Fastify (REST + Hocuspocus WebSocket) on `:3001` / `:3002`
+
+Verify:
+
+```bash
+curl http://localhost:3001/health
+# {"status":"ok"}
+```
+
+Open `http://localhost:5173`. With `BYPASS_AUTH=true` you land on the deck list as `dev-user` — no login required.
+
+## 7. Optional: video pipeline
+
+Only needed if you upload videos.
+
+```bash
+cd infra
+docker compose --env-file ../.env up -d media-redis video-worker
+```
+
+`video-worker` is a stub on this branch — see `apps/video-worker/src/processors/transcode.ts`. Running it just verifies the queue connects.
+
+## 8. Optional: Authentik (real auth)
+
+Skip in dev unless you're actively testing the auth flow. With `BYPASS_AUTH=true`
+the editor synthesises a `dev-user` principal and skips JWT validation entirely.
+
+If you do want it on:
+
+```bash
+# 1. Pick AUTHENTIK_BOOTSTRAP_PASSWORD in .env
+docker compose -f infra/docker-compose.yml --env-file .env up -d authentik-server authentik-worker authentik-redis authentik-postgres
+# 2. Wait ~60 s for the blueprint to apply
+docker compose -f infra/docker-compose.yml --env-file .env logs -f authentik-server | grep -i blueprint
+# 3. Set BYPASS_AUTH=false and VITE_BYPASS_AUTH=false
+# 4. Restart `pnpm dev`
+# 5. Open http://localhost:9000 → log in as `akadmin` → add yourself to `narrative-users` group
+```
+
+## Verifying everything works
+
+| Check                                                                                                      | Pass                           |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `curl http://localhost:3001/health`                                                                        | `{"status":"ok"}`              |
+| `curl -sI http://localhost:5173`                                                                           | `HTTP/1.1 200 OK`              |
+| Open a deck → drag-drop a JPG onto the canvas                                                              | Image renders (not a gray box) |
+| Refresh editor                                                                                             | Image still there              |
+| Open home in incognito                                                                                     | Deck thumbnails visible        |
+| Inspector → Identity → set the same Name on objects across two slides → set slide transition to Magic Move | Objects animate between slides |
+
+## Common first-run failures
+
+- **`ENOSPC: System limit for number of file watchers reached`** — Linux only. See prerequisites; raise inotify limits.
+- **Server won't start, `IMGPROXY_KEY env required`** — Run `openssl rand -hex 32` twice and put the two values in `.env`. Both must be 64 hex characters.
+- **`Bucket ready` never logs** — `minio` container failed health check. `docker compose logs minio` — usually `MINIO_ROOT_PASSWORD` < 8 chars.
+- **Image upload renders gray** — `IMGPROXY_ENDPOINT` is still pointing at `127.0.0.1:8080` direct. Set it to `http://localhost:5173/imgproxy` in `.env` and restart `pnpm dev`.
+- **`/decks` returns empty in incognito** — `BYPASS_AUTH=true` returns dev-user-owned decks only; create one from the home page first.
+- **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
+- **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
+- **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
+
+## Ports used in dev
+
+| Port | Service                            |
+| ---- | ---------------------------------- |
+| 5173 | Vite (web)                         |
+| 3001 | Fastify HTTP API                   |
+| 3002 | Hocuspocus WebSocket               |
+| 5432 | Postgres                           |
+| 8080 | imgproxy (proxied via Vite in dev) |
+| 9100 | MinIO S3 API                       |
+| 9101 | MinIO console                      |
+| 6380 | media-redis (BullMQ queue)         |
+| 9000 | Authentik (only if you booted it)  |
+
+## Tearing it down
+
+```bash
+cd infra
+docker compose --env-file ../.env down            # keep data
+docker compose --env-file ../.env down -v         # nuke volumes (DB + MinIO data gone)
+```

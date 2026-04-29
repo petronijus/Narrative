@@ -10,26 +10,25 @@ Self-hosted collaborative presentation tool with Keynote-level animations, real-
 
 ## Setup
 
+See **[SETUP.md](./SETUP.md)** for the complete first-run guide — env vars, Docker
+services, MinIO bucket, migrations, optional video pipeline / Authentik, and a
+troubleshooting list for the failures that actually bite on a fresh machine.
+
+TL;DR for an experienced setup:
+
 ```bash
-# 1. Install dependencies
 pnpm install
-
-# 2. Copy env template and fill in values
-cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD
-
-# 3. Start local Postgres
-docker compose -f infra/docker-compose.yml up -d
-
-# 4. Start dev servers (web on :5173, server on :3001)
-pnpm dev
+cp .env.example .env                   # then fill secrets — see SETUP.md
+docker compose -f infra/docker-compose.yml --env-file .env up -d \
+  postgres minio minio-init imgproxy
+pnpm --filter server db:migrate
+pnpm dev                               # web :5173, server :3001
 ```
 
-Verify the server is running:
+Verify:
 
 ```bash
-curl http://localhost:3001/health
-# {"status":"ok"}
+curl http://localhost:3001/health      # {"status":"ok"}
 ```
 
 ## Structure
