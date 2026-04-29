@@ -2105,7 +2105,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        <div data-text-edit-keep-focus>
+        {/* The Size NumberField mutates per-keystroke. Refocusing the
+            textarea inside onChange (as the <select> controls do)
+            would yank focus back after every digit, so the user
+            could never finish typing a number. Refocus instead when
+            focus leaves the whole wrapper — covers Tab and clicking
+            elsewhere. */}
+        <div
+          data-text-edit-keep-focus
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              refocusActiveTextEdit(obj.id)
+            }
+          }}
+        >
           <NumberField
             id={`inspector-fontsize-${obj.id}`}
             label="Size"
@@ -2121,12 +2134,10 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 if (isEntireContentSelected(obj.id)) {
                   clearActiveSelectionAttrs(obj.id, ['fontSize'])
                   patch({ fontSize: next })
-                  refocusActiveTextEdit(obj.id)
                   return
                 }
                 const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
                 if (!applied) patch({ fontSize: next })
-                refocusActiveTextEdit(obj.id)
                 return
               }
               clearAllInlineRunAttrs(obj.text, ['fontSize'])
