@@ -2171,16 +2171,31 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
       </label>
       <input
         id={`inspector-fontsize-${obj.id}`}
-        type="text"
-        inputMode="numeric"
+        type="number"
+        step={1}
+        min={1}
         value={draft}
         onFocus={(e) => {
           const t = e.target
+          // Defer until after the click's caret-placement so the
+          // selection actually sticks (browsers reset selection on
+          // the trailing mouseup/click).
           setTimeout(() => {
             if (document.activeElement === t) t.select()
           }, 0)
         }}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          // Browser native step arrows (the up/down spinners) emit an
+          // input event with no `inputType` — typing emits one with
+          // `inputType: 'insertText'` etc. Distinguish so we can keep
+          // committing immediately on a spinner click while still
+          // deferring a typed "20" until Enter/blur.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const inputType = (e.nativeEvent as any).inputType as string | undefined
+          const v = e.target.value
+          setDraft(v)
+          if (inputType === undefined || inputType === '') commit(v)
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
@@ -2190,48 +2205,18 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
             setDraft(String(externalValue))
             ;(e.target as HTMLInputElement).blur()
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-            e.preventDefault()
-            const step = e.key === 'ArrowUp' ? 1 : -1
-            const cur = Number.parseFloat(draft)
-            const base = Number.isFinite(cur) ? cur : externalValue
-            commit(String(Math.max(1, base + step)))
+            // Let the browser step the value naturally; the resulting
+            // input event (with inputType === undefined) will commit
+            // through the onChange branch above.
           }
         }}
         onBlur={() => commit(draft)}
         className={[
-          'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
+          'w-full rounded-md border border-input field-surface px-2 py-0.5',
           'text-right text-xs text-foreground',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         ].join(' ')}
       />
-      <div className="flex flex-shrink-0 flex-col">
-        <button
-          type="button"
-          aria-label="Increase font size"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            const cur = Number.parseFloat(draft)
-            const base = Number.isFinite(cur) ? cur : externalValue
-            commit(String(Math.max(1, base + 1)))
-          }}
-          className="flex h-3 w-4 items-center justify-center rounded-t border border-b-0 border-input bg-transparent text-[8px] text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          ▲
-        </button>
-        <button
-          type="button"
-          aria-label="Decrease font size"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            const cur = Number.parseFloat(draft)
-            const base = Number.isFinite(cur) ? cur : externalValue
-            commit(String(Math.max(1, base - 1)))
-          }}
-          className="flex h-3 w-4 items-center justify-center rounded-b border border-input bg-transparent text-[8px] text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          ▼
-        </button>
-      </div>
     </div>
   )
 }
