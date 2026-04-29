@@ -39,6 +39,7 @@ import {
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
+import { markRenderDirty } from '../renderer/RenderScheduler.js'
 
 export interface TextEditOverlayProps {
   obj: TextObject
@@ -221,6 +222,15 @@ function getElementInnerText(el: HTMLElement): string {
 /**
  * Hide / restore the Pixi text node during inline edit so the
  * contenteditable above is the only visible rendering.
+ *
+ * Toggling `visible` alone is not enough: the scene-graph render
+ * scheduler runs with `autoStart:false`, so the canvas keeps showing
+ * the last-drawn frame until something marks the scene dirty. Both
+ * the hide AND the restore must poke `markRenderDirty` — otherwise
+ * the user sees the contenteditable layered over the still-visible
+ * Pixi text (duplicate while editing) or, after the overlay
+ * unmounts, an empty canvas because the visibility flip back to
+ * `true` never made it onto a frame.
  */
 function setPixiTextNodeVisible(objectId: string, visible: boolean): void {
   const sg = (
@@ -236,7 +246,9 @@ function setPixiTextNodeVisible(objectId: string, visible: boolean): void {
   const c = sg.getContainer(objectId)
   if (c === undefined) return
   const text = c.children.find((ch) => ch.anchor !== undefined)
-  if (text !== undefined) text.visible = visible
+  if (text === undefined) return
+  text.visible = visible
+  markRenderDirty()
 }
 
 export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
