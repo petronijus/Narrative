@@ -72,10 +72,6 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
       // both Pixi and the editor to top-anchor and the screenshots
       // can't visually demonstrate vAlign=middle/bottom.
       const PAYLOAD = 'Lorem ipsum dolor.\nSecond line.\nThird line.'
-      // Reset every styling field that earlier specs may have left
-      // dirty on this deck — we want each combo screenshot to start
-      // from a known box-default state so visual comparisons are
-      // meaningful.
       await page.evaluate(
         ({ id, slideId, align, vAlign, text }) => {
           window.__narrative_test_api!.updateObject(
@@ -87,15 +83,6 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
               fontSize: 48,
               width: 700,
               height: 600,
-              fontWeight: 400,
-              italic: undefined,
-              underline: undefined,
-              fontFamily: undefined,
-              color: 0x000000,
-              colorAlpha: 1,
-              letterSpacing: 0,
-              lineHeight: 1.2,
-              listStyle: undefined,
             },
             slideId,
           )
