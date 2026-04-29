@@ -22,6 +22,13 @@ export interface ActiveTextSelection {
   /** UTF-16 code-unit indices into the Y.Text content. */
   start: number
   end: number
+  /**
+   * Re-focus the underlying textarea and restore the selection range
+   * captured in `start`/`end`. Called by Inspector controls (font
+   * weight / family selects) after mutation to undo the focus loss
+   * that opening the native `<select>` causes.
+   */
+  refocus: () => void
 }
 
 const slot: { current: ActiveTextSelection | null } = { current: null }
@@ -40,7 +47,8 @@ export function setActiveTextSelection(sel: ActiveTextSelection | null): void {
     cur.objectId === sel.objectId &&
     cur.yText === sel.yText &&
     cur.start === sel.start &&
-    cur.end === sel.end
+    cur.end === sel.end &&
+    cur.refocus === sel.refocus
   ) {
     return
   }
@@ -58,6 +66,18 @@ export function subscribeActiveTextSelection(listener: () => void): () => void {
   return () => {
     listeners.delete(listener)
   }
+}
+
+/**
+ * Re-focus the active text-edit textarea (and restore its selection
+ * range) for the given object. Inspector controls call this after
+ * a `<select>` change so the textarea regains focus and the user
+ * can keep typing without an extra click.
+ */
+export function refocusActiveTextEdit(objectId: string): void {
+  const sel = slot.current
+  if (sel === null || sel.objectId !== objectId) return
+  sel.refocus()
 }
 
 /**

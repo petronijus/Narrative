@@ -2127,7 +2127,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             text-edit selection (so a highlighted word is bolded /
             italicised on its own); only when there is no selection do
             we fall back to patching the box-wide field. */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-text-edit-keep-focus>
           <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Style</span>
           <div className="flex items-center gap-1">
             <button

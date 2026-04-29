@@ -25,6 +25,7 @@ export interface RichAttrs {
   underline?: boolean
   fontWeight?: number
   color?: number
+  fontFamily?: string
 }
 
 export interface RichDeltaOp {
@@ -92,6 +93,9 @@ export function toDelta(yt: Y.Text): RichDeltaOp[] {
         a.fontWeight = op.attributes['fontWeight']
       }
       if (typeof op.attributes['color'] === 'number') a.color = op.attributes['color']
+      if (typeof op.attributes['fontFamily'] === 'string' && op.attributes['fontFamily'] !== '') {
+        a.fontFamily = op.attributes['fontFamily']
+      }
       if (Object.keys(a).length > 0) e.attributes = a
     }
     out.push(e)
@@ -129,6 +133,9 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
     const styleBits: string[] = []
     if (typeof weight === 'number' && weight !== 400) styleBits.push(`font-weight:${weight}`)
     if (typeof color === 'number') styleBits.push(`color:${colorHex(color)}`)
+    if (typeof a.fontFamily === 'string' && a.fontFamily !== '') {
+      styleBits.push(`font-family:${a.fontFamily}`)
+    }
     let body = escapeHtml(op.insert).replace(/\n/g, '<br>')
     if (italic) body = `<i>${body}</i>`
     if (underline) body = `<u>${body}</u>`

@@ -113,12 +113,21 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     if (ta === null) return
     const yText = obj.text instanceof Y.Text ? obj.text : null
     if (yText === null) return
+    const refocus = (): void => {
+      const target = textareaRef.current
+      if (target === null) return
+      const s = target.selectionStart
+      const e = target.selectionEnd
+      target.focus()
+      target.setSelectionRange(s, e)
+    }
     const publish = (): void => {
       setActiveTextSelection({
         objectId: obj.id,
         yText,
         start: ta.selectionStart,
         end: ta.selectionEnd,
+        refocus,
       })
     }
     publish()
@@ -233,7 +242,21 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
             onEnd()
           }
         }}
-        onBlur={() => onEnd()}
+        onBlur={(e) => {
+          // Native <select> elements steal focus on click without
+          // honouring preventDefault on mousedown, so an Inspector
+          // weight / family change would terminate edit mode mid-
+          // selection. Keep the overlay alive when focus moves into
+          // an element marked `data-text-edit-keep-focus` (the
+          // Inspector wraps its style controls in that hook).
+          const next = e.relatedTarget as HTMLElement | null
+          if (next !== null && next.closest('[data-text-edit-keep-focus]') !== null) {
+            // The Inspector control will call refocusActiveTextEdit()
+            // on its onChange to put focus back on the textarea.
+            return
+          }
+          onEnd()
+        }}
         onPointerDown={(e) => e.stopPropagation()}
       />
     </div>

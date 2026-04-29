@@ -15,6 +15,11 @@ import { useState, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
 import { useDeckFonts } from '../state/useDeckFonts.js'
 import { FontUploadSheet } from './FontUploadSheet.js'
+import {
+  applyInlineFormatIfSelected,
+  refocusActiveTextEdit,
+  getActiveTextSelection,
+} from './textEditSelection.js'
 
 interface FontFamilySelectProps {
   obj: TextObject
@@ -46,16 +51,33 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
   }, [fonts])
 
   return (
-    <div className="flex flex-1 items-center gap-1">
+    <div className="flex flex-1 items-center gap-1" data-text-edit-keep-focus>
       <select
         id={`inspector-fontfamily-${obj.id}`}
         value={obj.fontFamily ?? ''}
         disabled={disabled}
-        onChange={(e) =>
-          patch({
-            fontFamily: e.target.value === '' ? undefined : e.target.value,
-          } as unknown as SlideObjectPatch<TextObject>)
-        }
+        onChange={(e) => {
+          const value = e.target.value === '' ? undefined : e.target.value
+          const sel = getActiveTextSelection()
+          if (sel !== null && sel.objectId === obj.id && value !== undefined) {
+            // Pixi v8 HTMLText's font-family scraper splits on whitespace
+            // (`font-family:([^;"\s]+)`), so we have to emit the primary
+            // family token only — passing the full "Inter, system-ui,
+            // sans-serif" stack would break the @font-face embed.
+            const primary =
+              value
+                .split(',')[0]
+                ?.trim()
+                .replace(/^["']|["']$/g, '') ?? value
+            const applied = applyInlineFormatIfSelected(obj.id, { fontFamily: primary })
+            if (!applied) {
+              patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
+            }
+            refocusActiveTextEdit(obj.id)
+            return
+          }
+          patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
+        }}
         className={[
           'flex-1 min-w-0 rounded border border-input field-surface px-2 py-0.5',
           'text-xs text-foreground',

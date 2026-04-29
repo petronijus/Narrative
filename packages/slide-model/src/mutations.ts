@@ -347,8 +347,24 @@ function applyReorderMinimal(
     // Snapshot the moving Y.Map's values. delete + insert creates a new
     // Y.Map with the same data — the old identity is gone but only for
     // THIS item, not every sibling.
+    //
+    // Y.Text (and other shared types) cannot be re-attached after the
+    // parent is detached: once `arr.delete` runs, the Y.Text becomes
+    // an orphan and `freshMap.set('text', orphan)` is silently a
+    // no-op, producing an empty text slot in the reordered object.
+    // Clone any Y.Text into a brand-new Y.Text BEFORE deleting so the
+    // content survives the round-trip.
     const yMap = arr.get(sourceIdx)
-    const plain = Object.fromEntries(yMap.entries()) as Record<string, unknown>
+    const plain: Record<string, unknown> = {}
+    for (const [key, value] of yMap.entries()) {
+      if (value instanceof Y.Text) {
+        const fresh = new Y.Text()
+        fresh.applyDelta(value.toDelta())
+        plain[key] = fresh
+      } else {
+        plain[key] = value
+      }
+    }
     arr.delete(sourceIdx, 1)
 
     // Build replacement Y.Map.
