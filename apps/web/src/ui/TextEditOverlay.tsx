@@ -220,25 +220,27 @@ function getElementInnerText(el: HTMLElement): string {
 }
 
 /**
- * Hide / restore the Pixi text node during inline edit so the
- * contenteditable above is the only visible rendering.
+ * Fade the Pixi text node during inline edit so the contenteditable
+ * is the only visible rendering — but keep the node in the render
+ * tree so Pixi's HTMLText pipe still receives addRenderable calls
+ * and re-rasterises the SVG texture as Y.Text changes flow in.
  *
- * Toggling `visible` alone is not enough: the scene-graph render
- * scheduler runs with `autoStart:false`, so the canvas keeps showing
- * the last-drawn frame until something marks the scene dirty. Both
- * the hide AND the restore must poke `markRenderDirty` — otherwise
- * the user sees the contenteditable layered over the still-visible
- * Pixi text (duplicate while editing) or, after the overlay
- * unmounts, an empty canvas because the visibility flip back to
- * `true` never made it onto a frame.
+ * Setting `visible=false` removes the node from the render path
+ * entirely, which means `_updateGpuText` never runs while the user
+ * is typing; on edit end the node re-enters the tree with a stale
+ * texture and the user sees the OLD content until something else
+ * triggers a render.
+ *
+ * `alpha=0` keeps the texture pipeline alive, so on edit end alpha=1
+ * reveals the up-to-date glyphs immediately.
  */
-function setPixiTextNodeVisible(objectId: string, visible: boolean): void {
+function setPixiTextNodeFaded(objectId: string, faded: boolean): void {
   const sg = (
     window as unknown as {
       __narrative_scene_graph?: {
         getContainer: (
           id: string,
-        ) => { children: Array<{ visible?: boolean; anchor?: unknown }> } | undefined
+        ) => { children: Array<{ alpha?: number; anchor?: unknown }> } | undefined
       }
     }
   ).__narrative_scene_graph
@@ -247,7 +249,7 @@ function setPixiTextNodeVisible(objectId: string, visible: boolean): void {
   if (c === undefined) return
   const text = c.children.find((ch) => ch.anchor !== undefined)
   if (text === undefined) return
-  text.visible = visible
+  text.alpha = faded ? 0 : 1
   markRenderDirty()
 }
 
@@ -261,6 +263,10 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
    *  used to skip the rebuild we'd otherwise do for our own diff-applied
    *  insertions / deletions, which would needlessly disrupt the caret. */
   const localEditRef = useRef<boolean>(false)
+  /** Most recently published selection range. Used by `refocus()` to
+   *  restore the user's selection after an Inspector control round-
+   *  trips focus through one of its inputs. */
+  const lastRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const onEndRef = useRef(onEnd)
   onEndRef.current = onEnd
   const mutationCtxRef = useRef(mutationCtx)
@@ -300,7 +306,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     const el = editorRef.current
     if (el === null) return
     el.innerHTML = buildOverlayHtml(obj)
-    setPixiTextNodeVisible(obj.id, false)
+    setPixiTextNodeFaded(obj.id, true)
     el.focus()
     // Place caret at end so users continue from where they left off.
     const sel = window.getSelection()
@@ -312,7 +318,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       sel.addRange(r)
     }
     return () => {
-      setPixiTextNodeVisible(obj.id, true)
+      setPixiTextNodeFaded(obj.id, false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
   }, [])
@@ -369,28 +375,39 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       const sel = window.getSelection()
       target.focus()
       if (sel === null) return
-      // No-op if nothing to restore — focus alone is enough for the
-      // user to keep editing. The Inspector's beforeMount already
-      // captured start/end via publish() so they survive the focus
-      // hop on its own selects.
+      // Restore the last-published selection range so the user can
+      // see what the Inspector mutation just hit. Without this, a
+      // refocus after the Inspector clicks would collapse the caret
+      // wherever the browser placed it.
+      const { start, end } = lastRangeRef.current
+      try {
+        const a = charIndexToDomPosition(target, start)
+        const b = charIndexToDomPosition(target, end)
+        const r = document.createRange()
+        r.setStart(a.node, a.offset)
+        r.setEnd(b.node, b.offset)
+        sel.removeAllRanges()
+        sel.addRange(r)
+      } catch {
+        /* range out of date — leave caret wherever focus put it */
+      }
     }
     const publish = (): void => {
       const sel = window.getSelection()
-      if (sel === null || sel.rangeCount === 0 || !el.contains(sel.anchorNode)) {
-        setActiveTextSelection({
-          objectId: obj.id,
-          yText,
-          start: 0,
-          end: 0,
-          refocus,
-        })
-        return
-      }
+      // When the document selection is OUTSIDE the editor (the user
+      // clicked into the Inspector size input or a font picker), do
+      // NOT clobber the slot — the Inspector controls need the last
+      // valid range so an inline-format change still targets the
+      // right characters. setActiveTextSelection(null) only happens
+      // on overlay unmount.
+      if (sel === null || sel.rangeCount === 0) return
+      if (!el.contains(sel.anchorNode)) return
       const r = sel.getRangeAt(0)
       const start = domPositionToCharIndex(el, r.startContainer, r.startOffset)
       const end = domPositionToCharIndex(el, r.endContainer, r.endOffset)
       const lo = Math.min(start, end)
       const hi = Math.max(start, end)
+      lastRangeRef.current = { start: lo, end: hi }
       setActiveTextSelection({ objectId: obj.id, yText, start: lo, end: hi, refocus })
     }
     publish()
@@ -498,6 +515,15 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
           if (e.key === 'Escape') {
             e.preventDefault()
             onEnd()
+            return
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            // contenteditable's default Enter inserts a <div> in
+            // Chrome (or <p> elsewhere) which our diff doesn't see
+            // as a newline. Use insertLineBreak so a <br> lands and
+            // getElementInnerText counts it as '\n'.
+            e.preventDefault()
+            document.execCommand('insertLineBreak')
           }
         }}
         onBlur={(e) => {
