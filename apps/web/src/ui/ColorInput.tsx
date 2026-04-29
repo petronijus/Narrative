@@ -214,6 +214,13 @@ export function ColorInput({
           side="bottom"
           align="start"
           sideOffset={4}
+          // P15: tag the portalled popover so the TextEditOverlay's
+          // blur handler treats clicks/focus moves into the picker as
+          // "keep editing". Without this, clicking the saturation panel
+          // ends inline-edit mode (the overlay unmounts, the active
+          // text-selection slot is cleared) and the next picker drag
+          // can't apply per-run colour because the selection is gone.
+          data-text-edit-keep-focus
           // Keep keyboard scope inside the popover; outside-click closes
           // (Radix default).
         >

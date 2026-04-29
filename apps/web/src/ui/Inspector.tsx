@@ -33,6 +33,7 @@ import {
   Link2Off,
   Lock,
   Unlock,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { ColorInput } from './ColorInput.js'
@@ -72,6 +73,7 @@ import {
   moveObjectToIndex,
   groupObjects,
   ungroupObjects,
+  removeObject,
 } from '@narrative/slide-model'
 import type {
   AnimationsMutationContext,
@@ -870,7 +872,7 @@ function LayersPanel({
   readOnly: boolean
 }) {
   const { objects } = useSlideObjects()
-  const { selectOne, selectMany } = useSelection()
+  const { selectOne, selectMany, clear } = useSelection()
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(
     null,
@@ -974,7 +976,7 @@ function LayersPanel({
               onDrop={onDrop(o.id)}
               onClick={onRowClick(o.id)}
               className={[
-                'relative flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px]',
+                'group relative flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px]',
                 'cursor-pointer select-none',
                 active
                   ? 'border-primary bg-primary/15 text-primary'
@@ -1009,6 +1011,24 @@ function LayersPanel({
                 >
                   ∘
                 </span>
+              )}
+              {!readOnly && o.locked !== true && (
+                <button
+                  type="button"
+                  aria-label="Delete layer"
+                  title="Delete layer"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (activeSet.has(o.id)) clear()
+                    removeObject(mutationCtx, o.id)
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  draggable={false}
+                  className="ml-0.5 rounded p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
+                >
+                  <X className="h-3 w-3" />
+                </button>
               )}
             </li>
           )
@@ -2222,7 +2242,6 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
 }
 
 function TextSection({ obj, patch }: TextSectionProps) {
-  const colorHex = numberToHex(obj.color)
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
@@ -2430,7 +2449,16 @@ function TextSection({ obj, patch }: TextSectionProps) {
           onChange={(v) => patch({ letterSpacing: v } as SlideObjectPatch<TextObject>)}
         />
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" data-text-edit-keep-focus>
+          {/* No onBlur refocus here — ColorInput uses a Radix Popover
+              whose content is portalled outside this wrapper, so focus
+              moving INTO the popover would otherwise look like "focus
+              left the wrapper" and force-refocus would yank focus back
+              to the canvas, closing the popover immediately. The CE
+              overlay only fires its blur once (when first losing focus
+              to the trigger button, which IS inside this wrapper and
+              carries the keep-focus attribute), so edit mode survives
+              the popover lifetime without manual refocus. */}
           <label
             htmlFor={`inspector-color-${obj.id}`}
             className="w-16 flex-shrink-0 text-xs text-muted-foreground"
@@ -2439,8 +2467,31 @@ function TextSection({ obj, patch }: TextSectionProps) {
           </label>
           <div className="flex flex-1 items-center gap-1.5">
             <ColorInput
-              value={colorHex}
-              onChange={(hex) => patch({ color: hexToNumber(hex) })}
+              value={numberToHex(selAttrs?.color ?? obj.color)}
+              onChange={(hex) => {
+                // The picker fires onChange continuously while the user
+                // drags. Do NOT call refocusActiveTextEdit here — pulling
+                // focus back to the canvas mid-drag releases the
+                // popover's pointer capture and the rest of the gesture
+                // is dropped. The CE overlay's selection slot survives
+                // the popover lifetime via [data-text-edit-keep-focus],
+                // so applyInlineFormatIfSelected still hits the right
+                // range without needing focus on the editor.
+                const next = hexToNumber(hex)
+                const sel = getActiveTextSelection()
+                if (sel !== null && sel.objectId === obj.id) {
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['color'])
+                    patch({ color: next })
+                    return
+                  }
+                  const applied = applyInlineFormatIfSelected(obj.id, { color: next })
+                  if (!applied) patch({ color: next })
+                  return
+                }
+                clearAllInlineRunAttrs(obj.text, ['color'])
+                patch({ color: next })
+              }}
               ariaLabel="Text color"
               showHex
               alpha={obj.colorAlpha ?? 1}

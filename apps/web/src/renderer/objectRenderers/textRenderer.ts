@@ -191,6 +191,26 @@ function colorWithAlpha(hex: number, alpha: number): string {
 }
 
 /**
+ * Walk Y.Text deltas and collect every distinct `fontFamily` attribute
+ * present on any run. Used to feed Pixi's `extractFontFamilies` via the
+ * box-level style array so per-run inline `<span style="font-family:X">`
+ * markers reliably get an embedded `@font-face` rule in the rasterised
+ * SVG — without depending on Pixi's text-scraping regex, which breaks
+ * on family names containing whitespace.
+ */
+function collectRunFontFamilies(data: TextObject): string[] {
+  const t = data.text
+  if (!(t instanceof Y.Text)) return []
+  const delta = toDelta(t)
+  const set = new Set<string>()
+  for (const op of delta) {
+    const fam = op.attributes?.['fontFamily']
+    if (typeof fam === 'string' && fam !== '') set.add(fam)
+  }
+  return [...set]
+}
+
+/**
  * Plain-object style options used both by the canonical `TextStyle`
  * (for measurement / underline maths historically, and the fallback
  * synthesis path in applyPatch) and by the live HTMLText node. We
@@ -198,12 +218,25 @@ function colorWithAlpha(hex: number, alpha: number): string {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
 function buildStyleOpts(data: TextObject): any {
+  // Pixi v8 HTMLText's `extractFontFamilies` reads `style.fontFamily`
+  // and adds every entry of an Array directly to the @font-face embed
+  // list. Per-run families inserted via inline `<span>` only get picked
+  // up via a fragile regex (`font-family:([^;"\s]+)`) that drops
+  // anything past whitespace, so a family name like "Roboto Condensed"
+  // would never embed and the SVG would silently fall back to system.
+  // Compose an explicit array of [box, ...runs] so each run-level
+  // family produces a real @font-face inside the SVG.
+  const boxFamily = data.fontFamily ?? 'system-ui, -apple-system, sans-serif'
+  const runFamilies = collectRunFontFamilies(data)
+  const familyArray =
+    runFamilies.length > 0 ? Array.from(new Set([boxFamily, ...runFamilies])) : undefined
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
     // Pixi v8's `fontStringFromTextStyle` auto-quotes unquoted multi-
     // word family names (anything not in the CSS generic set), so we
-    // can pass `data.fontFamily` straight through.
-    fontFamily: data.fontFamily ?? 'system-ui, -apple-system, sans-serif',
+    // can pass `data.fontFamily` straight through. When run-level
+    // families exist we pass an array so all of them get embedded.
+    fontFamily: familyArray ?? boxFamily,
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
@@ -405,6 +438,14 @@ export const textRenderer = {
 
     asAny(container)[TEXT_TAG] = textNode
     wireRedrawOnAsyncTextureUpdate(textNode)
+    // The HTMLText constructor fires onViewUpdate synchronously BEFORE
+    // we patch it above, so the very first SVG→texture rasterise is
+    // not covered by the wired catchup. On slide switch the single
+    // applyChanges-driven render frame can fire before that texture
+    // lands → blank text until the next unrelated invalidation. Force
+    // one catchup cascade on mount so the new node always gets a few
+    // follow-up frames to pick up its first texture.
+    scheduleAsyncTextureCatchup(textNode as unknown as { __narrativeCatchupActive?: boolean })
 
     applyObjectTransform(container, data)
     applyHorizontalAlign(textNode, data)

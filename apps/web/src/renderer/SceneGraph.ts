@@ -420,8 +420,31 @@ export class SceneGraph {
       const data = node.data as any
       if (data?.type !== 'text') continue
       const fam: unknown = data.fontFamily
-      if (typeof fam !== 'string' || fam === '') continue
-      if (!tokens(fam).includes(family)) continue
+      const matchesBox = typeof fam === 'string' && fam !== '' && tokens(fam).includes(family)
+      // P15: per-run fontFamily — when a deck font finishes loading
+      // AFTER the user already applied it via inline format on a
+      // sub-range, the box-level fontFamily may not contain it. Walk
+      // the Y.Text deltas so those runs also get re-rasterised once
+      // the FontFace lands. Without this, run-level custom fonts stay
+      // in the fallback face indefinitely after a fresh upload.
+      let matchesRun = false
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const t = data.text as any
+      if (!matchesBox && t !== undefined && t !== null && typeof t.toDelta === 'function') {
+        try {
+          const delta = t.toDelta() as Array<{ attributes?: Record<string, unknown> }>
+          for (const op of delta) {
+            const runFam = op.attributes?.['fontFamily']
+            if (typeof runFam === 'string' && runFam === family) {
+              matchesRun = true
+              break
+            }
+          }
+        } catch {
+          /* defensive — Y.Text may not be initialised yet */
+        }
+      }
+      if (!matchesBox && !matchesRun) continue
 
       // Find the HTMLText child (only child with `.anchor` on a text
       // container in our renderer) and reset its gpu-data cache key.

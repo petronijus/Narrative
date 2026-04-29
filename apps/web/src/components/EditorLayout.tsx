@@ -440,6 +440,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     scrollLeft: number
     scrollTop: number
   } | null>(null)
+  /** Middle-mouse pan flag — drives the grabbing cursor while held. */
+  const [middlePanning, setMiddlePanning] = useState(false)
 
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
@@ -542,7 +544,36 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      // Middle mouse button — pan the artboard regardless of active tool.
+      // Mirrors the hand-tool drag below; pointermove + pointerup already
+      // act on panRef without checking the tool, so this just needs to
+      // seed the same state.
+      if (e.button === 1) {
+        const scroller = stageScrollRef.current
+        if (scroller === null) return
+        e.preventDefault()
+        ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+        panRef.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          scrollLeft: scroller.scrollLeft,
+          scrollTop: scroller.scrollTop,
+        }
+        setMiddlePanning(true)
+        return
+      }
+
       if (e.button !== 0) return
+
+      // P15: if a text overlay is in inline-edit mode, any pointerdown
+      // that reaches the canvas (overlay stops propagation for clicks
+      // on the editable itself) ends edit mode. Without this, after
+      // focus has been parked in an Inspector keep-focus input, the
+      // contenteditable's onBlur no longer fires on subsequent canvas
+      // clicks, so edit mode would persist silently.
+      if (editingTextId !== null) {
+        endEdit()
+      }
 
       // P11 (Keynote crop): if we're in crop mode and the pointer hit
       // anything other than the crop UI (image-drag overlay or
@@ -781,6 +812,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       cropImageId,
       exitCrop,
       selectMany,
+      editingTextId,
+      endEdit,
     ],
   )
 
@@ -987,6 +1020,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (panRef.current !== null) {
         panRef.current = null
+        setMiddlePanning(false)
         return
       }
 
@@ -1558,8 +1592,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
 
   // Cursor style
-  const canvasCursor =
-    activeTool === 'hand'
+  const canvasCursor = middlePanning
+    ? 'grabbing'
+    : activeTool === 'hand'
       ? panRef.current !== null
         ? 'grabbing'
         : 'grab'
@@ -1637,6 +1672,14 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerLeave}
             onDoubleClick={handleDoubleClick}
+            onMouseDown={(e) => {
+              // Suppress the browser's middle-click autoscroll cursor.
+              // Pointer events alone don't always cancel it.
+              if (e.button === 1) e.preventDefault()
+            }}
+            onAuxClick={(e) => {
+              if (e.button === 1) e.preventDefault()
+            }}
           >
             {/* Scrollable stage: artboard has a fixed size, so the
               backdrop provides scrollbars when the window is smaller.

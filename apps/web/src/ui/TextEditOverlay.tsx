@@ -281,8 +281,13 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
       textDecoration: obj.underline === true ? 'underline' : 'none',
-      lineHeight:
-        obj.lineHeight !== undefined && obj.lineHeight > 0 ? String(obj.lineHeight) : '1.2',
+      // Match Pixi: fixed pixel line height = multiplier × box fontSize.
+      // A unitless multiplier would let each child element compute its
+      // own line box from its own font-size, so a 100px run on a line
+      // with otherwise small text balloons the line height — visible
+      // as the line spacing growing while in edit mode and snapping
+      // back smaller on exit.
+      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.2) * obj.fontSize}px`,
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),
@@ -331,11 +336,22 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       if (localEditRef.current) return
       const el = editorRef.current
       if (el === null) return
-      // Save caret position by char index, rebuild HTML, restore.
+      // Save caret position by char index, rebuild HTML, restore — but
+      // ONLY when the editor itself is the document's active element.
+      // If focus has moved into a satellite control (Inspector input,
+      // colour picker popover, etc.) the document selection can still
+      // technically be anchored in the editor; calling
+      // `selection.addRange` on that range re-focuses the editor and
+      // Radix's DismissableLayer treats the focus move as "focus left
+      // the popover" → it dismisses immediately, killing the in-flight
+      // drag (e.g. you can't drag the colour picker beyond the first
+      // few values). When the editor isn't focused, just rebuild the
+      // HTML and leave the selection alone.
       const sel = window.getSelection()
+      const editorIsFocused = document.activeElement === el
       let savedStart: number | null = null
       let savedEnd: number | null = null
-      if (sel !== null && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+      if (editorIsFocused && sel !== null && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
         const r = sel.getRangeAt(0)
         savedStart = domPositionToCharIndex(el, r.startContainer, r.startOffset)
         savedEnd = domPositionToCharIndex(el, r.endContainer, r.endOffset)
