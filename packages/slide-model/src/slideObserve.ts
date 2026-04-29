@@ -313,6 +313,12 @@ export function subscribeToSlideObjectsWithFlush(
         processArrayEvent(event as Y.YArrayEvent<Y.Map<unknown>>, pending, currentSnapshot)
       } else if (event.target instanceof Y.Map) {
         processMapEvent(event as Y.YMapEvent<unknown>, pending)
+      } else if (event.target instanceof Y.Text) {
+        // Rich-text bodies live as Y.Text inside the slide-object Y.Map.
+        // A format / insert / delete on the Y.Text fires a Y.YTextEvent
+        // whose path is [arrayIndex, 'text']; we surface it as a patch
+        // on the parent object so the reconciler re-renders.
+        processTextEvent(event as Y.YTextEvent, objectsArr, pending)
       }
     }
 
@@ -634,6 +640,29 @@ function readIdFromDeletedYMap(yMap: Y.Map<unknown>): string | undefined {
     }
   }
   return undefined
+}
+
+function processTextEvent(
+  event: Y.YTextEvent,
+  objectsArr: Y.Array<Y.Map<unknown>>,
+  pending: PendingBatch,
+): void {
+  // event.path is the path from objectsArr to the Y.Text, so [index, key].
+  const path = event.path
+  if (path.length < 1) return
+  const idx = path[0]
+  if (typeof idx !== 'number' || idx < 0 || idx >= objectsArr.length) return
+  const yMap = objectsArr.get(idx)
+  const id = yMap.get('id')
+  if (typeof id !== 'string') return
+  const key = path.length >= 2 && typeof path[1] === 'string' ? path[1] : 'text'
+  const patch: Record<string, unknown> = { [key]: yMap.get(key) }
+  const existing = pending.updatedPatches.get(id)
+  if (existing !== undefined) {
+    pending.updatedPatches.set(id, { ...existing, ...patch } as Partial<SlideObject>)
+  } else {
+    pending.updatedPatches.set(id, patch as Partial<SlideObject>)
+  }
 }
 
 function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): void {
