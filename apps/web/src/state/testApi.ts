@@ -17,7 +17,8 @@ import {
   LOCAL_ORIGIN,
   addObject,
   addSlide,
-  bulkUpdateObjects,
+  updateObject as updateObjectMutation,
+  removeObject as removeObjectMutation,
   getSlideObjectsCtx,
   listSlides,
   removeSlide,
@@ -98,6 +99,8 @@ export interface TestApi {
   listSlideIds(): string[]
   /** Patch an object's geometry (used by tests to simulate drags). */
   updateObject(objectId: string, patch: Record<string, unknown>, slideId?: string): void
+  /** Remove an object from the slide by id. */
+  removeObject(objectId: string, slideId?: string): void
   /** Inspect object types on a slide. */
   debugObjectTypes(slideId?: string): { id: string; type: string }[]
   /** Ids of all objects on the given slide (default = first slide). */
@@ -252,7 +255,18 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       if (targetSlideId === undefined) throw new Error('updateObject: no slide')
       const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
       if (ctx === null) throw new Error('updateObject: slide ctx not found')
-      bulkUpdateObjects(ctx, [{ id: objectId, patch: patch as SlideObjectPatch<SlideObject> }])
+      // Use updateObject (not bulkUpdateObjects) so that Y.Text fields are
+      // mutated in place rather than replaced with a plain string. A plain-
+      // string replacement destroys the CRDT identity and causes Hocuspocus
+      // to echo the old server state back, overriding the client's change.
+      updateObjectMutation(ctx, objectId, patch as SlideObjectPatch<SlideObject>)
+    },
+    removeObject(objectId, slideId) {
+      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      if (targetSlideId === undefined) throw new Error('removeObject: no slide')
+      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      if (ctx === null) throw new Error('removeObject: slide ctx not found')
+      removeObjectMutation(ctx, objectId)
     },
     addRect(opts, slideId) {
       const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id

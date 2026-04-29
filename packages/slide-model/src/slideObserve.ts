@@ -315,9 +315,8 @@ export function subscribeToSlideObjectsWithFlush(
         processMapEvent(event as Y.YMapEvent<unknown>, pending)
       } else if (event.target instanceof Y.Text) {
         // Rich-text bodies live as Y.Text inside the slide-object Y.Map.
-        // A format / insert / delete on the Y.Text fires a Y.YTextEvent
-        // whose path is [arrayIndex, 'text']; we surface it as a patch
-        // on the parent object so the reconciler re-renders.
+        // A format / insert / delete on the Y.Text fires a Y.YTextEvent.
+        // We surface it as a patch on the parent object so the reconciler re-renders.
         processTextEvent(event as Y.YTextEvent, objectsArr, pending)
       }
     }
@@ -647,16 +646,33 @@ function processTextEvent(
   objectsArr: Y.Array<Y.Map<unknown>>,
   pending: PendingBatch,
 ): void {
-  // event.path is the path from objectsArr to the Y.Text, so [index, key].
-  const path = event.path
-  if (path.length < 1) return
-  const idx = path[0]
-  if (typeof idx !== 'number' || idx < 0 || idx >= objectsArr.length) return
-  const yMap = objectsArr.get(idx)
-  const id = yMap.get('id')
+  // event.path is the ABSOLUTE path from the doc root to the Y.Text — it is NOT
+  // relative to objectsArr. Do NOT use path indices to locate the parent Y.Map or
+  // derive the field name: path[0] is the slide index and path[1] is "objects" (the
+  // key in the slide Y.Map), which is wrong for both purposes.
+  //
+  // Instead, walk up from the event target:
+  //   - event.target          = the Y.Text that was mutated
+  //   - event.target.parent   = the text-object Y.Map that owns the field
+  //   - _item.parentSub       = the key name of the Y.Text within its parent Y.Map
+  //
+  // We then confirm the parent Y.Map is actually a direct item of objectsArr
+  // (guards against accidentally processing events from unrelated subtrees that
+  // Yjs might route through this observer).
+
+  const yText = event.target as Y.Text
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parentMap = (yText as any).parent as Y.Map<unknown> | null | undefined
+  if (!(parentMap instanceof Y.Map)) return
+
+  const id = parentMap.get('id')
   if (typeof id !== 'string') return
-  const key = path.length >= 2 && typeof path[1] === 'string' ? path[1] : 'text'
-  const patch: Record<string, unknown> = { [key]: yMap.get(key) }
+
+  // Retrieve the key name from Yjs internals (_item.parentSub is the map key).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const key: string = ((yText as any)._item?.parentSub as string | undefined) ?? 'text'
+
+  const patch: Record<string, unknown> = { [key]: parentMap.get(key) }
   const existing = pending.updatedPatches.get(id)
   if (existing !== undefined) {
     pending.updatedPatches.set(id, { ...existing, ...patch } as Partial<SlideObject>)

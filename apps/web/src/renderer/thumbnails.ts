@@ -222,6 +222,32 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // Render one frame synchronously — the offscreen app is not running a ticker.
     app.renderer.render(app.stage)
 
+    // Pixi v8's HTMLText rasterizes its SVG asynchronously. The first
+    // render() above kicks off that work but the Texture is still EMPTY
+    // when render returns, so the extracted PNG is missing every text
+    // glyph. Walk the subtree, await each HTMLText's texturePromise (set
+    // on `_gpuData[renderer.uid]` after the first render dispatch), then
+    // render a second frame so the now-loaded glyph textures actually
+    // appear in the bitmap we extract.
+    const textPromises: Promise<unknown>[] = []
+    const rendererUid = app.renderer.uid
+    const collectHtmlTextPromises = (c: Container): void => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const gpu = (c as any)._gpuData?.[rendererUid]
+      const p = gpu?.texturePromise
+      if (p && typeof p.then === 'function') textPromises.push(p)
+      for (const child of c.children) collectHtmlTextPromises(child as Container)
+    }
+    collectHtmlTextPromises(slideContainer)
+    if (textPromises.length > 0) {
+      await Promise.allSettled(textPromises)
+      if (destroyed || app.renderer === null) {
+        slideContainer.destroy({ children: true })
+        throw new Error('[ThumbnailRenderer] renderer has been destroyed')
+      }
+      app.renderer.render(app.stage)
+    }
+
     // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
     // earlier code path treated it as sync and destroyed the source
     // container before the extract finished — first render usually

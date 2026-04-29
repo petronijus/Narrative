@@ -33,6 +33,59 @@ import * as Y from 'yjs'
 import { toDelta, toHtml, type HtmlDefaults } from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { markRenderDirty } from '../RenderScheduler.js'
+
+/**
+ * Pixi v8 `HTMLText` rasterizes its SVG asynchronously
+ * (`HTMLTextPipe._updateGpuText` awaits an image-load Promise). The
+ * scene-graph render scheduler runs with `autoStart: false` and fires
+ * exactly one frame per `applyChanges()` call — by the time the SVG
+ * texture finishes loading, that frame has already been drawn and no
+ * follow-up render is queued. The text never appears.
+ *
+ * Mirror what image/video renderers do: poke the scheduler whenever the
+ * HTMLText node invalidates itself, including when its texture lands.
+ * `onViewUpdate` is Pixi's per-instance hook that fires for any
+ * structural change (text, style, transform, texture-ready). One
+ * follow-up `markRenderDirty()` per invalidation is enough.
+ */
+function scheduleAsyncTextureCatchup(): void {
+  // SVG → image → GPU upload typically completes within 1–3 frames after
+  // the user-side invalidation. Pixi exposes no "texture ready" callback
+  // we can hook from outside the pipe, so we ping the scheduler across a
+  // short window of macrotasks + animation frames. Each ping is cheap
+  // when the scheduler already has nothing to do; once the texture lands,
+  // the next queued render picks up the new content. Without this, a
+  // style change paints one black frame and only re-renders on the next
+  // unrelated mutation, which manifests as "click again to see it."
+  let raf = 0
+  const tick = () => {
+    markRenderDirty()
+    if (raf < 6) {
+      raf += 1
+      requestAnimationFrame(tick)
+    }
+  }
+  requestAnimationFrame(tick)
+  // Thumbnail + offscreen render paths don't drive rAF — fall back to
+  // setTimeout so the offscreen scheduler also gets re-poked.
+  setTimeout(() => markRenderDirty(), 0)
+  setTimeout(() => markRenderDirty(), 32)
+  setTimeout(() => markRenderDirty(), 96)
+}
+
+function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const node = textNode as any
+  if (typeof node.onViewUpdate !== 'function') return
+  if (node.__narrativeRedrawWired === true) return
+  const original = node.onViewUpdate.bind(node)
+  node.onViewUpdate = function patched(this: unknown, ...args: unknown[]) {
+    original(...args)
+    scheduleAsyncTextureCatchup()
+  }
+  node.__narrativeRedrawWired = true
+}
 
 /**
  * Read the body content as a plain string regardless of whether the
@@ -126,6 +179,20 @@ function hexToColorString(hex: number): string {
 }
 
 /**
+ * Return a CSS color string accepted by `HTMLTextStyle.fill`.
+ * When alpha is 1 (fully opaque) a 6-digit hex string is returned.
+ * When alpha < 1 an 8-digit CSS `#RRGGBBAA` hex is returned so that
+ * the transparency is encoded without relying on the `{color, alpha}`
+ * object form that `HTMLTextStyle` does not support.
+ */
+function colorWithAlpha(hex: number, alpha: number): string {
+  const base = hexToColorString(hex)
+  if (alpha >= 1) return base
+  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+  return base + a.toString(16).padStart(2, '0')
+}
+
+/**
  * Plain-object style options used both by the canonical `TextStyle`
  * (for measurement / underline maths historically, and the fallback
  * synthesis path in applyPatch) and by the live HTMLText node. We
@@ -142,7 +209,7 @@ function buildStyleOpts(data: TextObject): any {
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
-    fill: { color: hexToColorString(data.color), alpha: data.colorAlpha ?? 1 },
+    fill: colorWithAlpha(data.color, data.colorAlpha ?? 1),
     align: data.align,
     // Pixi.HTMLText renders via an SVG foreignObject, so descenders
     // are never clipped by a texture boundary — TextStyle.padding (used
@@ -339,6 +406,7 @@ export const textRenderer = {
     container.addChild(textNode)
 
     asAny(container)[TEXT_TAG] = textNode
+    wireRedrawOnAsyncTextureUpdate(textNode)
 
     applyObjectTransform(container, data)
     applyHorizontalAlign(textNode, data)
@@ -346,6 +414,11 @@ export const textRenderer = {
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     setStoredData(container, data)
+
+    // Belt-and-braces: schedule a redraw on the next macrotask so the
+    // very first SVG-to-texture upload has a frame to land into. The
+    // onViewUpdate hook above covers subsequent invalidations.
+    setTimeout(() => markRenderDirty(), 0)
 
     // When a TextObject mounts before the deck's custom font loads,
     // FontLoader eventually calls SceneGraph.refreshTextNodesUsingFamily()
