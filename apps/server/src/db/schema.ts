@@ -81,6 +81,14 @@ export const decks = pgTable('decks', {
   title: text('title').notNull().default('Untitled Deck'),
   /** Denormalized primary owner for quick lookups. Mirrors deck_permissions owner row. */
   ownerUserId: text('owner_user_id').notNull(), // M4: always 'demo-user'; M10 phase 2: real JWT sub
+  /**
+   * MinIO object key for the home-page deck preview thumbnail.
+   * The editor uploads a JPEG snapshot of the first slide here so the
+   * Landing grid can render previews on a fresh device / incognito.
+   * NULL until the first thumbnail upload completes.
+   */
+  thumbnailKey: text('thumbnail_key'),
+  thumbnailUpdatedAt: timestamp('thumbnail_updated_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })

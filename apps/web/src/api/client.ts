@@ -28,6 +28,12 @@ export interface ApiClient {
   createDeck(title?: string): Promise<DeckSummary>
   renameDeck(id: string, title: string): Promise<DeckSummary>
   deleteDeck(id: string): Promise<void>
+  /**
+   * P15: upload (or replace) the home-page preview thumbnail for a deck.
+   * `dataUrl` must be a base64 data: URL of an image/jpeg or image/png.
+   * Server caps the decoded payload at ~1 MB.
+   */
+  uploadDeckThumbnail(id: string, dataUrl: string): Promise<DeckSummary>
   listPermissions(deckId: string): Promise<DeckPermission[]>
   grantPermission(deckId: string, body: GrantPermissionBody): Promise<void>
   revokePermission(deckId: string, userId: string): Promise<void>
@@ -46,6 +52,13 @@ export interface DeckSummary {
   ownerUserId: string
   createdAt: string
   updatedAt: string
+  /**
+   * P15 server-side preview. Signed imgproxy URL of `decks/<id>/thumb.jpg`,
+   * or null when the deck hasn't had a thumbnail uploaded yet.
+   */
+  thumbnailUrl?: string | null
+  /** ISO timestamp of the last thumbnail upload — used for cache busts. */
+  thumbnailUpdatedAt?: string | null
   /** Server includes the authenticated user's effective role when known. M10. */
   viewerRole?: 'owner' | 'editor' | 'viewer'
 }
@@ -141,6 +154,13 @@ export function createApiClient(getToken: () => string | null): ApiClient {
       const res = await request(`/decks/${id}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
     },
+
+    uploadDeckThumbnail: (id, dataUrl) =>
+      requestJson<DeckSummary>(`/decks/${id}/thumbnail`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl }),
+      }),
 
     listPermissions: (deckId) => requestJson<DeckPermission[]>(`/decks/${deckId}/permissions`),
 

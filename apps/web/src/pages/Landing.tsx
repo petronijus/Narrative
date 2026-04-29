@@ -148,7 +148,11 @@ export function Landing() {
               <DeckCard
                 key={deck.id}
                 deck={deck}
-                thumbnail={thumbnails[deck.id]}
+                // Server-side preview is the source of truth; the
+                // localStorage cache is the fallback for old deployments
+                // that haven't uploaded a thumbnail yet AND for instant
+                // first paint on the device that authored it.
+                thumbnail={deck.thumbnailUrl ?? thumbnails[deck.id]}
                 onOpen={() => void navigate(`/deck/${deck.id}`)}
                 onDelete={(e) => void handleDeleteDeck(deck.id, e)}
                 onRename={(title) => void handleRenameDeck(deck.id, title)}

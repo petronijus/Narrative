@@ -20,6 +20,7 @@ import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
 import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
+import { useApi } from '../api/client.js'
 import { useParams } from 'react-router-dom'
 import { useShortcuts } from '../state/useShortcuts.js'
 import {
@@ -451,11 +452,38 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
   const { id: deckId } = useParams<{ id: string }>()
   const firstSlideId = allSlideIds[0]
   const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
+  const api = useApi()
+  // Debounced server-side upload — the localStorage cache is fast and
+  // local, the server upload makes the preview visible to other devices
+  // / incognito sessions. Debounce trails the last thumbnail change by
+  // ~3 s so rapid edits coalesce into a single PUT.
+  const lastUploadedRef = useRef<string | null>(null)
   useEffect(() => {
     if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
       setDeckThumbnail(deckId, firstSlideThumb)
     }
-  }, [deckId, firstSlideThumb])
+    if (
+      deckId === undefined ||
+      deckId === '' ||
+      firstSlideThumb === undefined ||
+      isViewer ||
+      lastUploadedRef.current === firstSlideThumb
+    ) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      lastUploadedRef.current = firstSlideThumb
+      api.uploadDeckThumbnail(deckId, firstSlideThumb).catch((err: unknown) => {
+        // Non-fatal — the localStorage cache still has the preview for
+        // this device. Drop the marker so a future render can retry.
+        lastUploadedRef.current = null
+        console.warn('[deck-thumbnail] server upload failed', err)
+      })
+    }, 3000)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [deckId, firstSlideThumb, isViewer, api])
 
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)
