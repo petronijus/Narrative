@@ -401,42 +401,7 @@ export class SceneGraph {
     const tokens = (raw: string): string[] =>
       raw.split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''))
 
-    // P15: nuke Pixi v8's CanvasTextSystem texture cache. The system
-    // caches rasterised glyph atlases keyed by `text.styleKey` and
-    // serves the cached texture for any future Text instance whose
-    // styleKey matches. When text mounted before the FontFace loaded,
-    // the cache holds a fallback-glyph texture under that key — and
-    // every subsequent Text with the same style+text gets that stale
-    // texture, even after destroy + remount, because the Pipe's
-    // decreaseReferenceCount runs at the NEXT render (not at destroy
-    // time).
-    //
-    // Workaround: before re-rendering, walk `_activeTextures` and
-    // drop every entry. The next getManagedTexture call rebuilds
-    // each entry from scratch — and canvas2D is now drawing with the
-    // installed FontFace.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const textSystem = (this.app.renderer as any).canvasText as
-      | {
-          _activeTextures: Record<string, { texture: { destroy(): void } } | null>
-          returnTexture: (t: unknown) => void
-        }
-      | undefined
-    if (textSystem?._activeTextures !== undefined) {
-      for (const key of Object.keys(textSystem._activeTextures)) {
-        const entry = textSystem._activeTextures[key]
-        if (entry !== null && entry !== undefined) {
-          try {
-            textSystem.returnTexture(entry.texture)
-          } catch {
-            /* ignore */
-          }
-          textSystem._activeTextures[key] = null
-        }
-      }
-    }
-
-    // P15: HTMLText uses a SEPARATE pipeline (`htmlText` system,
+    // P15: HTMLText uses its own pipeline (`htmlText` system,
     // SVG-foreignObject rasterisation) that is NOT served by the
     // `_activeTextures` cache nuked above. Its HTMLTextPipe only
     // re-rasterises when `batchableHTMLText.currentKey !== styleKey`

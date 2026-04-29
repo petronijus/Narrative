@@ -38,7 +38,7 @@ import {
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
-import { applyInlineFormatIfSelected } from './textEditSelection.js'
+import { applyInlineFormatIfSelected, readActiveSelectionAttrs } from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -2115,12 +2115,21 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const isBold =
+                const selAttrs = readActiveSelectionAttrs(obj.id)
+                const boxBold =
                   obj.fontWeight === 'bold' ||
                   (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
-                const next = isBold ? 400 : 700
-                if (applyInlineFormatIfSelected(obj.id, { fontWeight: next as 400 | 700 })) return
-                patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                if (selAttrs !== null) {
+                  const isBold =
+                    selAttrs.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
+                  applyInlineFormatIfSelected(obj.id, {
+                    fontWeight: (isBold ? 400 : 700) as 400 | 700,
+                  })
+                  return
+                }
+                patch({
+                  fontWeight: boxBold ? 400 : 700,
+                } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={
                 obj.fontWeight === 'bold' ||
@@ -2146,10 +2155,15 @@ function TextSection({ obj, patch }: TextSectionProps) {
               // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const next = obj.italic !== true
-                if (applyInlineFormatIfSelected(obj.id, { italic: next })) return
+                const selAttrs = readActiveSelectionAttrs(obj.id)
+                const boxItalic = obj.italic === true
+                if (selAttrs !== null) {
+                  const isItalic = selAttrs.italic !== undefined ? selAttrs.italic : boxItalic
+                  applyInlineFormatIfSelected(obj.id, { italic: !isItalic })
+                  return
+                }
                 patch({
-                  italic: next ? true : undefined,
+                  italic: boxItalic ? undefined : true,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={obj.italic === true}
@@ -2167,10 +2181,16 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                const next = obj.underline !== true
-                if (applyInlineFormatIfSelected(obj.id, { underline: next })) return
+                const selAttrs = readActiveSelectionAttrs(obj.id)
+                const boxUnderline = obj.underline === true
+                if (selAttrs !== null) {
+                  const isUnderline =
+                    selAttrs.underline !== undefined ? selAttrs.underline : boxUnderline
+                  applyInlineFormatIfSelected(obj.id, { underline: !isUnderline })
+                  return
+                }
                 patch({
-                  underline: next ? true : undefined,
+                  underline: boxUnderline ? undefined : true,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={obj.underline === true}

@@ -55,3 +55,38 @@ export function applyInlineFormatIfSelected(objectId: string, attrs: RichAttrs):
   applyFormat(sel.yText, sel.start, length, attrs)
   return true
 }
+
+/**
+ * Read the format attributes at the start of the active selection so a
+ * toggle button can decide whether to add or remove a format. Returns
+ * `null` when there is no selection (caller should toggle the
+ * box-wide field instead). Returns `{}` when the selection sits in an
+ * unformatted run.
+ */
+export function readActiveSelectionAttrs(objectId: string): RichAttrs | null {
+  const sel = slot.current
+  if (sel === null || sel.objectId !== objectId) return null
+  if (sel.end <= sel.start) return null
+  const raw = sel.yText.toDelta() as Array<{
+    insert: unknown
+    attributes?: Record<string, unknown>
+  }>
+  let pos = 0
+  for (const op of raw) {
+    const insert = typeof op.insert === 'string' ? op.insert : ''
+    const next = pos + insert.length
+    if (sel.start < next) {
+      const src = op.attributes ?? {}
+      const a: RichAttrs = {}
+      if (src['italic'] === true) a.italic = true
+      else if (src['italic'] === false) a.italic = false
+      if (src['underline'] === true) a.underline = true
+      else if (src['underline'] === false) a.underline = false
+      if (typeof src['fontWeight'] === 'number') a.fontWeight = src['fontWeight']
+      if (typeof src['color'] === 'number') a.color = src['color']
+      return a
+    }
+    pos = next
+  }
+  return {}
+}

@@ -49,31 +49,37 @@ import { markRenderDirty } from '../RenderScheduler.js'
  * structural change (text, style, transform, texture-ready). One
  * follow-up `markRenderDirty()` per invalidation is enough.
  */
-function scheduleAsyncTextureCatchup(): void {
-  // SVG → image → GPU upload typically completes within 1–3 frames after
-  // the user-side invalidation. Pixi exposes no "texture ready" callback
-  // we can hook from outside the pipe, so we ping the scheduler across a
-  // short window of macrotasks + animation frames. Each ping is cheap
-  // when the scheduler already has nothing to do; once the texture lands,
-  // the next queued render picks up the new content. Without this, a
-  // style change paints one black frame and only re-renders on the next
-  // unrelated mutation, which manifests as "click again to see it."
-  let raf = 0
-  const tick = () => {
+/**
+ * Schedule a small follow-up render on a per-node basis so the async
+ * SVG→texture upload has a frame to land into. Deduped — if a cascade
+ * is already in flight for this node, do nothing. Capped to 3 rAFs
+ * which empirically covers Pixi's worst-case rasterise window without
+ * burning CPU during steady-state animation/typing.
+ */
+function scheduleAsyncTextureCatchup(node: { __narrativeCatchupActive?: boolean }): void {
+  if (node.__narrativeCatchupActive === true) return
+  node.__narrativeCatchupActive = true
+  let n = 0
+  const tick = (): void => {
     markRenderDirty()
-    if (raf < 6) {
-      raf += 1
+    if (n < 2) {
+      n += 1
       requestAnimationFrame(tick)
+    } else {
+      node.__narrativeCatchupActive = false
     }
   }
   requestAnimationFrame(tick)
-  // Thumbnail + offscreen render paths don't drive rAF — fall back to
-  // setTimeout so the offscreen scheduler also gets re-poked.
-  setTimeout(() => markRenderDirty(), 0)
-  setTimeout(() => markRenderDirty(), 32)
-  setTimeout(() => markRenderDirty(), 96)
 }
 
+/**
+ * Patch `onViewUpdate` so a real text/style invalidation triggers a
+ * single deduped render cascade. We compare `styleKey` + `text`
+ * before/after and only schedule when something actually changed —
+ * this skips the per-frame onViewUpdate calls Pixi makes during a
+ * GSAP transform animation, which previously had us scheduling
+ * dozens of rAF wake-ups every second.
+ */
 function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const node = textNode as any
@@ -81,27 +87,19 @@ function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
   if (node.__narrativeRedrawWired === true) return
   const original = node.onViewUpdate.bind(node)
   node.onViewUpdate = function patched(this: unknown, ...args: unknown[]) {
+    const prevKey = node.__narrativeLastKey
+    const prevText = node.__narrativeLastText
     original(...args)
-    scheduleAsyncTextureCatchup()
+    const nextKey = node.styleKey
+    const nextText = node.text
+    if (prevKey !== nextKey || prevText !== nextText) {
+      node.__narrativeLastKey = nextKey
+      node.__narrativeLastText = nextText
+      scheduleAsyncTextureCatchup(node)
+    }
   }
   node.__narrativeRedrawWired = true
 }
-
-/**
- * Read the body content as a plain string regardless of whether the
- * underlying schema slot is a `Y.Text` (rich-text path) or a legacy
- * plain `string` (decks saved before the rich-text migration). Phase A
- * of the rich-text rollout still renders plain Pixi.Text from the
- * resulting string; Phase B will replace this with HTML rendering.
- */
-function _readPlainText(t: TextObject['text']): string {
-  // Kept for potential future use (e.g. plain-text export); HTMLText
-  // path uses buildHtml directly.
-  if (t instanceof Y.Text) return t.toString()
-  if (typeof t === 'string') return t
-  return ''
-}
-void _readPlainText
 
 /**
  * Render the text body to an HTML string suitable for `Pixi.HTMLText`.
@@ -414,11 +412,6 @@ export const textRenderer = {
     applyClipMask(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     setStoredData(container, data)
-
-    // Belt-and-braces: schedule a redraw on the next macrotask so the
-    // very first SVG-to-texture upload has a frame to land into. The
-    // onViewUpdate hook above covers subsequent invalidations.
-    setTimeout(() => markRenderDirty(), 0)
 
     // When a TextObject mounts before the deck's custom font loads,
     // FontLoader eventually calls SceneGraph.refreshTextNodesUsingFamily()
