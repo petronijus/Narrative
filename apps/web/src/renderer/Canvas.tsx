@@ -251,7 +251,9 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       // Informuj konzumenty (DeckShell → CanvasInstanceContext) o dostupné instanci
       onReady?.({ sceneGraph, compositor })
 
-      console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
+      if (import.meta.env.DEV) {
+        console.debug('[Canvas] Pixi initialized, Y.Doc observer active, OverlayCompositor ready')
+      }
     }
 
     void initPixi()

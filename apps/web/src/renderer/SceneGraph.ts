@@ -384,6 +384,31 @@ export class SceneGraph {
   }
 
   /**
+   * P15: hide / restore a text object's Pixi text node during inline
+   * edit. The contenteditable overlay is the visible rendering while
+   * the user types; we keep the Pixi node in the render tree (so the
+   * HTMLText pipe still rasterises Y.Text changes asynchronously) and
+   * only toggle alpha. Centralised here so the overlay no longer has
+   * to reach into Pixi via a window global.
+   *
+   * No-op when the id is unknown or its container has no text child.
+   */
+  setTextNodeFaded(id: string, faded: boolean): void {
+    const container = this.nodes.get(id)?.container
+    if (container === undefined) return
+    // Match the same heuristic textRenderer uses internally: the
+    // HTMLText child is the only one that exposes `.anchor`. Graphics
+    // (mask) and filter sprites do not.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const textChild = container.children.find((c) => (c as any).anchor !== undefined) as
+      | { alpha: number }
+      | undefined
+    if (textChild === undefined) return
+    textChild.alpha = faded ? 0 : 1
+    this.markDirty()
+  }
+
+  /**
    * P15: re-rasterise every Text node whose `fontFamily` references the
    * given family. Pixi v8 caches glyph atlases keyed by the resolved
    * font; when a FontFace finishes loading AFTER a text node mounted,

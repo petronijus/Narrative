@@ -382,24 +382,37 @@ function setStoredData(node: Container, data: TextObject): void {
  * 0.4 × fontSize for cursive fonts whose descent often exceeds the
  * usual 0.25 of the em.
  */
+/**
+ * Memoise font descent measurement keyed on the visually-relevant style
+ * fields. `CanvasTextMetrics.measureFont` rasterises a probe canvas and
+ * is genuinely expensive — without a cache we paid for it on every
+ * `applyClipMask` call (which runs from `update()` / `applyPatch()` for
+ * every reconciler tick, including transient transform-only patches).
+ */
+const fontDescentCache = new Map<string, number>()
 function fontDescentFor(data: TextObject): number {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return 0
+  const key = `${data.fontFamily ?? ''}|${fontSize}|${data.fontWeight}|${data.italic === true ? 1 : 0}`
+  const cached = fontDescentCache.get(key)
+  if (cached !== undefined) return cached
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const measure = (CanvasTextMetrics as any)?.measureFont as
     | ((style: TextStyle) => { descent: number })
     | undefined
+  let descent = Math.ceil(fontSize * 0.4)
   if (typeof measure === 'function') {
     try {
       const metrics = measure(buildStyle(data))
       if (typeof metrics?.descent === 'number' && metrics.descent > 0) {
-        return Math.ceil(metrics.descent)
+        descent = Math.ceil(metrics.descent)
       }
     } catch {
-      /* fall through to estimate */
+      /* keep estimate */
     }
   }
-  return Math.ceil(fontSize * 0.4)
+  fontDescentCache.set(key, descent)
+  return descent
 }
 
 /**

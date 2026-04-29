@@ -39,7 +39,7 @@ import {
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
-import { markRenderDirty } from '../renderer/RenderScheduler.js'
+import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
 export interface TextEditOverlayProps {
   obj: TextObject
@@ -219,42 +219,19 @@ function getElementInnerText(el: HTMLElement): string {
   return out
 }
 
-/**
- * Fade the Pixi text node during inline edit so the contenteditable
- * is the only visible rendering — but keep the node in the render
- * tree so Pixi's HTMLText pipe still receives addRenderable calls
- * and re-rasterises the SVG texture as Y.Text changes flow in.
- *
- * Setting `visible=false` removes the node from the render path
- * entirely, which means `_updateGpuText` never runs while the user
- * is typing; on edit end the node re-enters the tree with a stale
- * texture and the user sees the OLD content until something else
- * triggers a render.
- *
- * `alpha=0` keeps the texture pipeline alive, so on edit end alpha=1
- * reveals the up-to-date glyphs immediately.
- */
-function setPixiTextNodeFaded(objectId: string, faded: boolean): void {
-  const sg = (
-    window as unknown as {
-      __narrative_scene_graph?: {
-        getContainer: (
-          id: string,
-        ) => { children: Array<{ alpha?: number; anchor?: unknown }> } | undefined
-      }
-    }
-  ).__narrative_scene_graph
-  if (sg === undefined) return
-  const c = sg.getContainer(objectId)
-  if (c === undefined) return
-  const text = c.children.find((ch) => ch.anchor !== undefined)
-  if (text === undefined) return
-  text.alpha = faded ? 0 : 1
-  markRenderDirty()
-}
-
 export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
   const editorRef = useRef<HTMLDivElement>(null)
+  const canvas = useCanvasInstance()
+  /**
+   * Fade the Pixi text node during inline edit so the contenteditable
+   * is the only visible rendering. Keep the node in the render tree
+   * (alpha=0, not visible=false) so Pixi's HTMLText pipe still
+   * receives addRenderable calls and re-rasterises the SVG texture
+   * as Y.Text changes flow in.
+   */
+  const setFaded = (faded: boolean): void => {
+    canvas?.sceneGraph.setTextNodeFaded(obj.id, faded)
+  }
   /** Plain-text snapshot of Y.Text content. Updated on every successful
    *  diff-apply so the next input event diffs against the just-committed
    *  state, not the stale pre-input snapshot. */
@@ -311,7 +288,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     const el = editorRef.current
     if (el === null) return
     el.innerHTML = buildOverlayHtml(obj)
-    setPixiTextNodeFaded(obj.id, true)
+    setFaded(true)
     el.focus()
     // Place caret at end so users continue from where they left off.
     const sel = window.getSelection()
@@ -323,10 +300,21 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       sel.addRange(r)
     }
     return () => {
-      setPixiTextNodeFaded(obj.id, false)
+      setFaded(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only
   }, [])
+
+  // Resync the plain-text baseline whenever the obj prop changes so the
+  // diff path in handleInput compares against the live Y.Text content.
+  // Without this, a parent re-render that hands us a fresh `obj`
+  // reference (peer edits a sibling field while we're editing) would
+  // leave lastPlainRef pointing at the mount-time snapshot, and the
+  // next user keystroke would diff against stale text and produce
+  // spurious insert/delete ops.
+  useEffect(() => {
+    lastPlainRef.current = readPlainText(obj.text)
+  }, [obj.text])
 
   // ── Y.Text → DOM observer (peer edits + Inspector inline format) ─────
   useEffect(() => {

@@ -17,7 +17,15 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ChangeEvent,
+} from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -309,6 +317,16 @@ export function Inspector() {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
 
+  // useSlideObjects emits a fresh array reference on every Y.Doc edit
+  // (including each Y.Text keystroke during inline edit). Memoise the
+  // id lookup so the linear scan only runs when objects or selectedId
+  // actually change. Hoisted above the selection-mode early returns so
+  // hook order stays stable.
+  const obj = useMemo(
+    () => (selectedId === null ? undefined : objects.find((o) => o.id === selectedId)),
+    [objects, selectedId],
+  )
+
   // Multi-select inspector — align / distribute / layer order.
   if (selectedIds.size > 1) {
     return <MultiSelectInspector selectedIds={[...selectedIds]} />
@@ -317,8 +335,6 @@ export function Inspector() {
   if (selectedId === null) {
     return <SlideInspector />
   }
-
-  const obj = objects.find((o) => o.id === selectedId)
 
   if (obj === undefined) {
     return (
@@ -880,8 +896,11 @@ function LayersPanel({
 
   // Layer panel convention matches Figma / Illustrator: front of the
   // canvas (last in Y.Array) is rendered at the TOP of the list.
-  const rows = [...objects].reverse()
-  const activeSet = new Set(activeIds)
+  // Memoise — `objects` is a fresh array on every Y.Doc edit, so without
+  // this we paid for a copy + reverse on every keystroke during inline
+  // text edit.
+  const rows = useMemo(() => [...objects].reverse(), [objects])
+  const activeSet = useMemo(() => new Set(activeIds), [activeIds])
 
   const onDragStart = (id: string) => (e: React.DragEvent) => {
     if (readOnly) return
@@ -1816,7 +1835,11 @@ function ImageFillEditor({
   onChange: (next: ImageFillStyle) => void
 }) {
   const { startUpload } = useMediaUpload()
-  const fileInputId = `inspector-fill-image-${fillStyle.assetId || 'empty'}`
+  // Stable per-instance id — keying on fillStyle.assetId would detach
+  // the <label htmlFor> from the <input> the moment an upload finished
+  // (assetId changes from '' → resolved id) and re-attach to a fresh
+  // mount, breaking the click-to-pick affordance for the next upload.
+  const fileInputId = useId()
 
   const onFile = (file: File): void => {
     startUpload(file, {
