@@ -14,6 +14,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
+import { registerBundledFonts } from './state/bundledFonts.js'
+
+// Self-hosted webfonts the picker advertises (Inter). Fire-and-forget
+// — the FontLoader for deck-uploaded fonts uses the same Pixi Cache
+// shape so any Inter-using text in the deck picks up the metrics
+// once registration resolves. We do NOT await here because blocking
+// on woff2 fetch would visibly delay the editor mount.
+void registerBundledFonts()
 
 // Declare global injected by Vite define
 declare const __BUILD_VERSION__: string

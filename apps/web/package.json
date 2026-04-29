@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
     "@hocuspocus/provider": "^2.15.0",
     "@narrative/animation": "workspace:*",
     "@narrative/shared": "workspace:*",
