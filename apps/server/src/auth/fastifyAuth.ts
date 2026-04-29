@@ -142,7 +142,26 @@ export function requireDeckRole(
     const query = req.query as Record<string, string>
     const shareToken = query['share_token'] ?? null
 
-    const access = await resolveDeckAccess(opts.db, { deckId, userId, shareToken })
+    let access = await resolveDeckAccess(opts.db, { deckId, userId, shareToken })
+
+    // BYPASS_AUTH=true dev fallback: legacy decks created with
+    // ownerUserId='demo-user' (M4-era) lack a permissions row for the
+    // synthesised 'dev-user' principal, so resolveDeckAccess returns
+    // null and every role-gated mutation 404/403s. Mirror the list
+    // endpoint's "treat dev-user and demo-user as the same identity"
+    // workaround so PUT /decks/:id/thumbnail and friends work on
+    // those legacy decks.
+    // TODO(post-M10): remove once production migration script runs.
+    if (!access && opts.bypass === true && userId === 'dev-user') {
+      const legacyAccess = await resolveDeckAccess(opts.db, {
+        deckId,
+        userId: 'demo-user',
+        shareToken,
+      })
+      if (legacyAccess) {
+        access = legacyAccess
+      }
+    }
 
     if (!access) {
       await reply.status(403).send({ error: 'Forbidden' })

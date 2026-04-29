@@ -458,7 +458,21 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
   // / incognito sessions. Debounce trails the last thumbnail change by
   // ~3 s so rapid edits coalesce into a single PUT.
   const lastUploadedRef = useRef<string | null>(null)
+  const lastUploadAtRef = useRef<{ deckId: string; at: number } | null>(null)
+  // Hold api / isViewer as refs so a re-rendered closure doesn't churn
+  // the dep array on this effect.
+  const apiRef = useRef(api)
+  apiRef.current = api
+  const isViewerRef = useRef(isViewer)
+  isViewerRef.current = isViewer
   useEffect(() => {
+    console.log('[deck-thumb] effect', {
+      deckId,
+      hasThumb: firstSlideThumb !== undefined,
+      thumbLen: firstSlideThumb?.length ?? 0,
+      isViewer: isViewerRef.current,
+      alreadyUploaded: lastUploadedRef.current === firstSlideThumb,
+    })
     if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
       setDeckThumbnail(deckId, firstSlideThumb)
     }
@@ -466,24 +480,43 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
       deckId === undefined ||
       deckId === '' ||
       firstSlideThumb === undefined ||
-      isViewer ||
+      isViewerRef.current ||
       lastUploadedRef.current === firstSlideThumb
     ) {
+      console.log('[deck-thumb] skip upload', {
+        deckId,
+        hasThumb: firstSlideThumb !== undefined,
+        isViewer: isViewerRef.current,
+        sameAsLast: lastUploadedRef.current === firstSlideThumb,
+      })
       return
     }
-    const timer = window.setTimeout(() => {
-      lastUploadedRef.current = firstSlideThumb
-      api.uploadDeckThumbnail(deckId, firstSlideThumb).catch((err: unknown) => {
+
+    // Rate limit — upload at most once per 30 s per deck so rapid
+    // typing-driven re-renders don't spam the server. Implemented with
+    // a ref instead of setTimeout so it survives effect cleanup races.
+    const last = lastUploadAtRef.current
+    if (last !== null && last.deckId === deckId && Date.now() - last.at < 30_000) {
+      console.log('[deck-thumb] rate-limited, skipping', deckId)
+      return
+    }
+
+    console.log('[deck-thumb] firing PUT for', deckId, 'bytes=', firstSlideThumb.length)
+    lastUploadedRef.current = firstSlideThumb
+    lastUploadAtRef.current = { deckId, at: Date.now() }
+    apiRef.current
+      .uploadDeckThumbnail(deckId, firstSlideThumb)
+      .then((row) => {
+        console.log('[deck-thumb] PUT ok', row)
+      })
+      .catch((err: unknown) => {
         // Non-fatal — the localStorage cache still has the preview for
         // this device. Drop the marker so a future render can retry.
         lastUploadedRef.current = null
-        console.warn('[deck-thumbnail] server upload failed', err)
+
+        console.warn('[deck-thumb] PUT failed', err)
       })
-    }, 3000)
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [deckId, firstSlideThumb, isViewer, api])
+  }, [deckId, firstSlideThumb])
 
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)
