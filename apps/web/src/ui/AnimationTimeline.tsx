@@ -1183,13 +1183,13 @@ export function AnimationTimeline() {
                         <div
                           className="sticky left-0 z-10 flex h-full items-center border-r border-border bg-surface-1/90"
                           style={{ width: TRACK_LABEL_WIDTH }}
-                          title={objectId}
+                          title={slideObjects.find((o) => o.id === objectId)?.name ?? objectId}
                         >
                           {!isViewer && (
                             <div
                               role="button"
                               tabIndex={0}
-                              aria-label={`Reorder row ${objectId}`}
+                              aria-label={`Reorder row ${slideObjects.find((o) => o.id === objectId)?.name ?? objectId}`}
                               onPointerDown={(e) => beginRowReorder(e, objectId, rowIdx)}
                               onPointerMove={handleRowReorderMove}
                               onPointerUp={endRowReorder}
@@ -1215,10 +1215,13 @@ export function AnimationTimeline() {
                             </div>
                           )}
                           <span
-                            className="truncate px-1 font-mono text-[10px] text-gray-400"
+                            className="truncate px-1 text-[11px] text-gray-300"
                             style={{ maxWidth: TRACK_LABEL_WIDTH - 24 }}
                           >
-                            {objectId}
+                            {(() => {
+                              const o = slideObjects.find((x) => x.id === objectId)
+                              return o?.name ?? o?.type ?? objectId
+                            })()}
                           </span>
                         </div>
 

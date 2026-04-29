@@ -82,11 +82,39 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
     incomingNodes.push({ id: obj.id, container, data: obj })
   }
 
-  // Magic Move pairing: match by id across outgoing + incoming.
+  // Magic Move pairing — first match by author-supplied `name` (so users
+  // can deliberately bridge two objects across slides without sharing a
+  // nanoid), then fall back to obj.id (so pasted / duplicated objects
+  // still pair when no explicit name was set).
   let magicPairs: MagicMoveObjectPair[] | undefined
   if (transition.kind === 'magic') {
     magicPairs = []
+    // Build a name-keyed lookup of outgoing objects so each incoming can
+    // resolve its pair in O(1).
+    const outgoingByName = new Map<string, { id: string; container: Container }>()
+    const outgoingIds = sceneGraph.getMountedIds()
+    for (const id of outgoingIds) {
+      const node = sceneGraph.getNode(id)
+      if (node === undefined) continue
+      const name =
+        typeof node.data.name === 'string' && node.data.name !== '' ? node.data.name : null
+      if (name === null) continue
+      outgoingByName.set(name, { id, container: node.container })
+    }
     for (const node of incomingNodes) {
+      const incomingName =
+        typeof node.data.name === 'string' && node.data.name !== '' ? node.data.name : null
+      if (incomingName !== null) {
+        const byName = outgoingByName.get(incomingName)
+        if (byName !== undefined) {
+          magicPairs.push({
+            id: incomingName,
+            outgoing: byName.container as unknown as MagicMoveObjectPair['outgoing'],
+            incoming: node.container as unknown as MagicMoveObjectPair['incoming'],
+          })
+          continue
+        }
+      }
       const outgoing = sceneGraph.getContainer(node.id)
       if (outgoing !== undefined) {
         magicPairs.push({

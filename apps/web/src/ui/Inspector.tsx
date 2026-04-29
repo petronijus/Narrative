@@ -253,6 +253,99 @@ interface SectionProps {
   defaultCollapsed?: boolean
 }
 
+/**
+ * Identity-name input. The name doubles as the Magic Move pair key, so
+ * we enforce per-slide uniqueness — two objects on the SAME slide can't
+ * share a name (that would be ambiguous), but the same name on TWO
+ * slides is intentional and triggers the Magic Move pairing in
+ * playTransition.ts. Validation is local-only on commit (Enter / blur):
+ * during typing the input shows what the user is typing, on commit we
+ * either save (unique) or revert + flash a red border.
+ */
+function NameField({
+  obj,
+  objects,
+  disabled,
+  onCommit,
+}: {
+  obj: SlideObject
+  objects: SlideObject[]
+  disabled: boolean
+  onCommit: (next: string | undefined) => void
+}) {
+  const [draft, setDraft] = useState<string>(obj.name ?? '')
+  const [conflict, setConflict] = useState<boolean>(false)
+  const externalNameRef = useRef<string>(obj.name ?? '')
+  // Sync from obj when the source-of-truth changes from outside (peer
+  // edit, undo, etc) — but don't clobber active typing.
+  useEffect(() => {
+    const next = obj.name ?? ''
+    if (next === externalNameRef.current) return
+    externalNameRef.current = next
+    setDraft(next)
+    setConflict(false)
+  }, [obj.name])
+
+  const commit = (raw: string): void => {
+    const trimmed = raw.trim()
+    if (trimmed === (obj.name ?? '')) {
+      setConflict(false)
+      return
+    }
+    if (trimmed === '') {
+      externalNameRef.current = ''
+      setConflict(false)
+      onCommit(undefined)
+      return
+    }
+    const collides = objects.some((o) => o.id !== obj.id && o.name === trimmed)
+    if (collides) {
+      setConflict(true)
+      // Revert to last good value after a brief flash so the user sees
+      // why the change didn't stick.
+      window.setTimeout(() => {
+        setDraft(obj.name ?? '')
+        setConflict(false)
+      }, 1200)
+      return
+    }
+    setConflict(false)
+    externalNameRef.current = trimmed
+    onCommit(trimmed)
+  }
+
+  return (
+    <input
+      id={`inspector-name-${obj.id}`}
+      type="text"
+      value={draft}
+      placeholder={obj.type}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => commit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          commit(draft)
+          ;(e.target as HTMLInputElement).blur()
+        } else if (e.key === 'Escape') {
+          setDraft(obj.name ?? '')
+          setConflict(false)
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+      title={conflict ? 'Another object on this slide already uses that name' : undefined}
+      aria-invalid={conflict || undefined}
+      className={[
+        'w-full rounded border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none',
+        conflict
+          ? 'border-destructive focus:border-destructive'
+          : 'border-border focus:border-primary',
+      ].join(' ')}
+    />
+  )
+}
+
 function Section({ title, children, storageKey, defaultCollapsed = false }: SectionProps) {
   const fullKey = storageKey === undefined ? null : `narrative:inspector:collapsed:${storageKey}`
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -374,17 +467,11 @@ export function Inspector() {
           >
             Name
           </label>
-          <input
-            id={`inspector-name-${obj.id}`}
-            type="text"
-            value={obj.name ?? ''}
-            placeholder={obj.type}
+          <NameField
+            obj={obj}
+            objects={objects}
             disabled={isViewer}
-            onChange={(e) => {
-              const v = e.target.value.trim()
-              patch({ name: v.length === 0 ? undefined : v } as SlideObjectPatch<SlideObject>)
-            }}
-            className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+            onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
           />
           <button
             type="button"
