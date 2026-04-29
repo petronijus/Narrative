@@ -205,6 +205,11 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
         step={step}
         disabled={disabled}
         value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
+        // Select-all on focus so typing replaces the existing value
+        // instead of inserting digits next to the caret. Without this,
+        // clicking into a "50" field and typing "20" lands on "5020"
+        // (huge font) instead of "20".
+        onFocus={(e) => e.target.select()}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const parsed = parseFloat(e.target.value)
           if (Number.isFinite(parsed)) onChange(parsed)
