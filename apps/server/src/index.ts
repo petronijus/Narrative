@@ -84,13 +84,20 @@ const app = Fastify({
     : {
         level: process.env['LOG_LEVEL'] ?? 'info',
       },
+  // Default is 1 MB. Deck-thumbnail uploads (JSON-wrapped base64 of the
+  // first-slide preview) can land in the 800 KB – 2 MB range for slides
+  // with image/video content; widening the global limit keeps the
+  // request from being rejected before our route's per-payload check
+  // (MAX_THUMBNAIL_BYTES on decoded bytes) can run.
+  bodyLimit: 4 * 1024 * 1024,
 })
 
 await app.register(cors, {
   origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
   // PATCH is required by the tus protocol for upload resumption.
   // HEAD is required by tus for upload status checks.
-  methods: ['GET', 'POST', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'],
+  // PUT is used by deck-thumbnail uploads (idempotent replace).
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'],
   // Browser silently strips non-safelisted response headers from cross-origin
   // reads unless they are listed here. tus and our upload finalize flow need them.
   exposedHeaders: [
