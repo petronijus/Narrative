@@ -1530,9 +1530,11 @@ function CornerRadiusRow({
   obj: RectangleObject
   patch: (p: SlideObjectPatch<RectangleObject>) => void
 }) {
-  const [perCorner, setPerCorner] = useState(
-    typeof obj.cornerRadius === 'object' && obj.cornerRadius !== null,
-  )
+  // Derive the picker mode directly from the Y.Doc value so a peer
+  // flipping the shape (uniform number ↔ per-corner object) is reflected
+  // locally without remount. Toggling locally also writes to Y.Doc so
+  // the mode is shared, not just the values.
+  const perCorner = typeof obj.cornerRadius === 'object' && obj.cornerRadius !== null
 
   const maxR = Math.min(obj.width, obj.height) / 2
   const current: { tl: number; tr: number; br: number; bl: number } =
@@ -1608,8 +1610,16 @@ function CornerRadiusRow({
               if (perCorner) {
                 // Collapse to uniform — use the tl value.
                 setUniform(current.tl)
+              } else {
+                // Promote to per-corner — seed all four with the
+                // current uniform value so peers replicate the mode
+                // change immediately, not only after the first per-
+                // corner edit.
+                const seed = uniformVal
+                patch({
+                  cornerRadius: { tl: seed, tr: seed, br: seed, bl: seed },
+                } as unknown as SlideObjectPatch<RectangleObject>)
               }
-              setPerCorner((v) => !v)
             }}
             aria-pressed={perCorner}
             title={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}

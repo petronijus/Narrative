@@ -482,16 +482,26 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       transformOrigin: 'top left',
       outline: '2px dashed rgba(59, 130, 246, 0.8)',
       outlineOffset: '0px',
+      // Mirror Pixi's applyVerticalAlign — without this, edit mode
+      // always rendered text from the top while the rendered Pixi
+      // glyphs sat at middle/bottom, producing a vertical jump on
+      // edit-enter and a snap-back on edit-exit.
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent:
+        obj.vAlign === 'middle' ? 'center' : obj.vAlign === 'bottom' ? 'flex-end' : 'flex-start',
+      overflow: 'hidden',
     }),
-    [obj.x, obj.y, obj.width, obj.height, obj.rotation],
+    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign],
   )
 
   const editorStyle = useMemo<React.CSSProperties>(
     () => ({
-      position: 'absolute',
-      inset: 0,
+      // Flex child — the wrapper handles vertical positioning, so we
+      // size to content (auto height) and only cap at the box height
+      // so very tall text still clips inside the box edge.
       width: '100%',
-      height: '100%',
+      maxHeight: '100%',
       boxSizing: 'border-box',
       background: 'transparent',
       border: 'none',
@@ -500,7 +510,6 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       margin: 0,
       whiteSpace: 'pre-wrap',
       wordBreak: 'break-word',
-      overflow: 'hidden',
       ...baseStyle,
     }),
     [baseStyle],
