@@ -258,6 +258,35 @@ describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
     expect(result.muted).toBe(true)
   })
 
+  it('plainObjectToYMap stores a Y.Text reference under "text" without flattening it', () => {
+    const doc = new Y.Doc()
+    const yt = new Y.Text()
+    yt.insert(0, 'hello')
+    const text: TextObject = {
+      id: 'text-yt',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      text: yt,
+      fontSize: 24,
+      fontWeight: 'normal',
+      color: 0,
+      align: 'left',
+    }
+    const yMap = plainObjectToYMapInDoc(doc, text)
+    const stored = yMap.get('text')
+    // The Y.Text instance must be preserved by reference, not stringified
+    // or cloned — collaborators rely on the same CRDT instance to apply
+    // formatting.
+    expect(stored).toBeInstanceOf(Y.Text)
+    expect(stored).toBe(yt)
+    expect((stored as Y.Text).toString()).toBe('hello')
+  })
+
   it('yMapToPlainObject vyhodí na chybějícím type field', () => {
     // Prázdný Y.Map bez doc — entries() vrátí prázdno, type bude undefined
     // Alternativně: Y.Map v doc bez type field

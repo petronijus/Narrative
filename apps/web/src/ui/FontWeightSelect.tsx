@@ -18,6 +18,14 @@
 import { useEffect, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
 import { useDeckFonts } from '../state/useDeckFonts.js'
+import {
+  applyInlineFormatIfSelected,
+  refocusActiveTextEdit,
+  getActiveTextSelection,
+  isEntireContentSelected,
+  clearActiveSelectionAttrs,
+  clearAllInlineRunAttrs,
+} from './textEditSelection.js'
 
 interface FontWeightSelectProps {
   obj: TextObject
@@ -110,7 +118,7 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
   }, [primary, currentNumeric, customWeights?.join(',')])
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" data-text-edit-keep-focus>
       <label
         htmlFor={`inspector-fontweight-${obj.id}`}
         className="w-16 flex-shrink-0 text-xs text-muted-foreground"
@@ -131,6 +139,24 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
             | 700
             | 800
             | 900
+          // Per-run weight when the textarea has a non-empty selection
+          // SHORTER than the full text; whole-content selection (Cmd+A)
+          // becomes a box-wide patch so the picker stays consistent
+          // and inline overrides on individual runs are cleared.
+          const sel = getActiveTextSelection()
+          if (sel !== null && sel.objectId === obj.id) {
+            if (isEntireContentSelected(obj.id)) {
+              clearActiveSelectionAttrs(obj.id, ['fontWeight'])
+              patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
+              refocusActiveTextEdit(obj.id)
+              return
+            }
+            const applied = applyInlineFormatIfSelected(obj.id, { fontWeight: parsed })
+            if (!applied) patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
+            refocusActiveTextEdit(obj.id)
+            return
+          }
+          clearAllInlineRunAttrs(obj.text, ['fontWeight'])
           patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
         }}
         className={[

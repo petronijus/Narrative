@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid'
 import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/shared'
 import { plainObjectToYMap } from './bindings.js'
 import { getObjectTypeDef } from './registry.js'
+import { createTextValue } from './richText.js'
 
 /**
  * Symbol pro identifikaci lokálních user mutací.
@@ -41,7 +42,17 @@ export type MutationContext = ObjectsMutationContext
  * Objekt musí mít platné id a type.
  */
 export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
-  const yMap = plainObjectToYMap(obj)
+  // Text bodies are CRDT Y.Text values so collaborators can apply
+  // inline formatting (italic / underline / fontWeight / color) on
+  // ranges concurrently. Promote a plain string to Y.Text on insert.
+  let prepared = obj
+  if (obj.type === 'text') {
+    const t = (obj as { text: unknown }).text
+    if (typeof t === 'string') {
+      prepared = { ...obj, text: createTextValue(t) } as SlideObject
+    }
+  }
+  const yMap = plainObjectToYMap(prepared)
   ctx.doc.transact(() => {
     ctx.objects.push([yMap])
   }, LOCAL_ORIGIN)
@@ -77,6 +88,21 @@ export function updateObject<T extends SlideObject>(
 
     const yMap = ctx.objects.get(idx)
     for (const [key, value] of Object.entries(patch)) {
+      // Rich-text bodies need special handling: a `text` patch with a
+      // plain string must REPLACE the existing Y.Text's contents in
+      // place (preserving CRDT identity) rather than overwrite the
+      // map slot. If the slot still holds a legacy plain string, this
+      // is the lazy migration point — promote it to Y.Text.
+      if (key === 'text' && typeof value === 'string') {
+        const existing = yMap.get('text')
+        if (existing instanceof Y.Text) {
+          if (existing.length > 0) existing.delete(0, existing.length)
+          if (value.length > 0) existing.insert(0, value)
+          continue
+        }
+        yMap.set('text', createTextValue(value))
+        continue
+      }
       // P5b: explicit undefined ⇒ delete the key so optional schema fields
       // (stroke, strokeWidth, cornerRadius, …) don't persist as `undefined`
       // which would defeat `exactOptionalPropertyTypes` downstream.
@@ -158,10 +184,16 @@ export function duplicateObject(
     y: (sourcePlain['y'] as number) + offset.y,
   }
 
-  // Sestavíme Y.Map pro nový objekt
+  // Build a fresh Y.Map for the duplicate. Any Y.Text values must be
+  // CLONED (not referenced) — Yjs forbids the same CRDT instance from
+  // living in two parents at once.
   const newYMap = new Y.Map<unknown>()
   for (const [key, value] of Object.entries(clonedPlain)) {
-    newYMap.set(key, value)
+    if (value instanceof Y.Text) {
+      newYMap.set(key, createTextValue(value.toString()))
+    } else {
+      newYMap.set(key, value)
+    }
   }
 
   ctx.doc.transact(() => {
@@ -315,8 +347,24 @@ function applyReorderMinimal(
     // Snapshot the moving Y.Map's values. delete + insert creates a new
     // Y.Map with the same data — the old identity is gone but only for
     // THIS item, not every sibling.
+    //
+    // Y.Text (and other shared types) cannot be re-attached after the
+    // parent is detached: once `arr.delete` runs, the Y.Text becomes
+    // an orphan and `freshMap.set('text', orphan)` is silently a
+    // no-op, producing an empty text slot in the reordered object.
+    // Clone any Y.Text into a brand-new Y.Text BEFORE deleting so the
+    // content survives the round-trip.
     const yMap = arr.get(sourceIdx)
-    const plain = Object.fromEntries(yMap.entries()) as Record<string, unknown>
+    const plain: Record<string, unknown> = {}
+    for (const [key, value] of yMap.entries()) {
+      if (value instanceof Y.Text) {
+        const fresh = new Y.Text()
+        fresh.applyDelta(value.toDelta())
+        plain[key] = fresh
+      } else {
+        plain[key] = value
+      }
+    }
     arr.delete(sourceIdx, 1)
 
     // Build replacement Y.Map.

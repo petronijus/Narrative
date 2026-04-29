@@ -1,11 +1,14 @@
 /**
  * shared/src/slide.ts
  *
- * Discriminated union typů slide objektů + slide/deck interfaces.
+ * Discriminated union of slide-object types + slide/deck interfaces.
  *
- * Pravidlo: tento soubor NESMÍ importovat nic runtime-specifického.
- * Žádný Yjs, žádný Pixi, žádný React. Pure TypeScript types only.
+ * Rule: this file MUST NOT import any runtime code. Yjs type-only
+ * imports are allowed (they are erased at compile time and don't
+ * pull the runtime in). No Pixi, no React.
  */
+
+import type * as Y from 'yjs'
 
 /**
  * P5c: optional drop shadow. Applied as a DropShadowFilter on the
@@ -283,10 +286,18 @@ export type TextListStyle = 'bullet' | 'numbered'
 
 export interface TextObject extends BaseSlideObject {
   type: 'text'
-  text: string
+  /**
+   * Text body. New objects use a `Y.Text` so collaborators can carry
+   * inline formatting (italic / underline / fontWeight / color) as
+   * Quill-style attributes on character ranges. Existing decks loaded
+   * from disk may still have `text: string` until the next mutation
+   * promotes it to `Y.Text` (see slide-model `addObject` /
+   * `updateObject`).
+   */
+  text: string | Y.Text
   fontSize: number
   fontWeight: FontWeight
-  /** Pixi/CSS color hex číslo, např. 0x000000 */
+  /** Default color for runs whose own attribute does not override it. */
   color: number
   /** Text fill alpha 0..1. Missing ⇒ 1. */
   colorAlpha?: number
@@ -309,10 +320,14 @@ export interface TextObject extends BaseSlideObject {
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /**
-   * Italic toggle. Pixi maps to fontStyle. Missing ⇒ regular.
+   * Default italic for runs whose own attribute does not override it.
+   * Pixi maps to `font-style: italic`. Missing ⇒ upright.
    */
   italic?: boolean
-  /** Underline. Missing ⇒ false. Renderer composes with CanvasKit's decoration. */
+  /**
+   * Default underline for runs whose own attribute does not override it.
+   * Rendered via the HTMLText `<u>` element.
+   */
   underline?: boolean
   /**
    * List marker — 'bullet' for •, 'numbered' for 1. 2. 3. Missing ⇒

@@ -401,40 +401,18 @@ export class SceneGraph {
     const tokens = (raw: string): string[] =>
       raw.split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''))
 
-    // P15: nuke Pixi v8's CanvasTextSystem texture cache. The system
-    // caches rasterised glyph atlases keyed by `text.styleKey` and
-    // serves the cached texture for any future Text instance whose
-    // styleKey matches. When text mounted before the FontFace loaded,
-    // the cache holds a fallback-glyph texture under that key — and
-    // every subsequent Text with the same style+text gets that stale
-    // texture, even after destroy + remount, because the Pipe's
-    // decreaseReferenceCount runs at the NEXT render (not at destroy
-    // time).
-    //
-    // Workaround: before re-rendering, walk `_activeTextures` and
-    // drop every entry. The next getManagedTexture call rebuilds
-    // each entry from scratch — and canvas2D is now drawing with the
-    // installed FontFace.
+    // P15: HTMLText uses its own pipeline (`htmlText` system,
+    // SVG-foreignObject rasterisation) that is NOT served by the
+    // `_activeTextures` cache nuked above. Its HTMLTextPipe only
+    // re-rasterises when `batchableHTMLText.currentKey !== styleKey`
+    // — and styleKey is computed from the style fields, so re-applying
+    // the SAME fontFamily produces the SAME styleKey and the pipe
+    // returns the cached fallback-glyph texture. We must invalidate
+    // each HTMLText's gpu-data currentKey directly so the pipe is
+    // forced to dispatch a fresh _updateGpuText, which re-runs
+    // `getFontCss` and embeds the now-loaded FontFace into the SVG.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const textSystem = (this.app.renderer as any).canvasText as
-      | {
-          _activeTextures: Record<string, { texture: { destroy(): void } } | null>
-          returnTexture: (t: unknown) => void
-        }
-      | undefined
-    if (textSystem?._activeTextures !== undefined) {
-      for (const key of Object.keys(textSystem._activeTextures)) {
-        const entry = textSystem._activeTextures[key]
-        if (entry !== null && entry !== undefined) {
-          try {
-            textSystem.returnTexture(entry.texture)
-          } catch {
-            /* ignore */
-          }
-          textSystem._activeTextures[key] = null
-        }
-      }
-    }
+    const rendererUid = (this.app.renderer as any).uid as number | undefined
 
     let touched = 0
     for (const [, node] of this.nodes) {
@@ -445,15 +423,37 @@ export class SceneGraph {
       if (typeof fam !== 'string' || fam === '') continue
       if (!tokens(fam).includes(family)) continue
 
+      // Find the HTMLText child (only child with `.anchor` on a text
+      // container in our renderer) and reset its gpu-data cache key.
+      const textChild = node.container.children.find(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c) => (c as any).anchor !== undefined,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ) as any
+      if (textChild !== undefined && rendererUid !== undefined) {
+        const gpu = textChild._gpuData?.[rendererUid]
+        if (gpu !== undefined) {
+          gpu.currentKey = ''
+        }
+        textChild._didTextUpdate = true
+        if (typeof textChild.onViewUpdate === 'function') {
+          try {
+            textChild.onViewUpdate()
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+
       const renderer = getRenderer('text')
-      if (renderer === undefined || renderer.applyPatch === undefined) continue
-      // applyPatch with the same fontFamily forces a TextStyle rebuild
-      // (different instance reference triggers Pixi's onUpdate). Pixi
-      // then calls getManagedTexture; with the cache cleared above,
-      // it falls through to a fresh rasterisation that picks up the
-      // now-installed FontFace via canvas2D.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      renderer.applyPatch(node.container, { fontFamily: fam } as any)
+      if (renderer !== undefined && renderer.applyPatch !== undefined) {
+        // applyPatch with the same fontFamily rebuilds the HTMLTextStyle
+        // (new instance reference); combined with the gpu-data cache
+        // reset above, the pipe now dispatches a fresh _updateGpuText
+        // that re-extracts font CSS and embeds the installed FontFace.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        renderer.applyPatch(node.container, { fontFamily: fam } as any)
+      }
 
       touched++
     }

@@ -17,7 +17,7 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -38,6 +38,16 @@ import {
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
+import {
+  applyInlineFormatIfSelected,
+  readActiveSelectionAttrs,
+  getActiveTextSelection,
+  subscribeActiveTextSelection,
+  refocusActiveTextEdit,
+  isEntireContentSelected,
+  clearActiveSelectionAttrs,
+  clearAllInlineRunAttrs,
+} from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -68,6 +78,7 @@ import type {
   AlignAxis,
   DistributeAxis,
   LayerMove,
+  RichAttrs,
 } from '@narrative/slide-model'
 import type {
   SlideObject,
@@ -195,6 +206,19 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
         step={step}
         disabled={disabled}
         value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
+        // Select-all when the user clicks/tabs into the field so
+        // typing replaces the existing value. onFocus alone fails for
+        // mouse clicks: the focus event fires during mousedown, but
+        // the subsequent click positions the caret and DEselects what
+        // we just selected. Deferring the select with setTimeout(0)
+        // runs it after the click sequence settles. Without this,
+        // clicking into "50" and typing "20" lands on "5020".
+        onFocus={(e) => {
+          const target = e.target
+          setTimeout(() => {
+            if (document.activeElement === target) target.select()
+          }, 0)
+        }}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const parsed = parseFloat(e.target.value)
           if (Number.isFinite(parsed)) onChange(parsed)
@@ -2069,10 +2093,152 @@ interface TextSectionProps {
   patch: (p: SlideObjectPatch<TextObject>) => void
 }
 
+interface FontSizeFieldProps {
+  obj: TextObject
+  patch: (p: SlideObjectPatch<TextObject>) => void
+  selAttrs: RichAttrs | null
+}
+
+/**
+ * Dedicated Size field for text. Uses an uncontrolled-style local
+ * draft so per-keystroke commits can't race with the inline-format
+ * Y.Text mutation: typing "20" used to land on "5020" because the
+ * controlled <input value=…> was being driven from obj.fontSize +
+ * selAttrs and the per-digit commit kept feeding the prior partial
+ * number back as the prop. Commit only on Enter, ArrowUp/ArrowDown,
+ * or blur. The arrow keys also step the value — same UX as a
+ * "real" number spinner. Refocus the textarea once focus leaves
+ * the whole wrapper so the user can keep typing on the canvas.
+ */
+function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
+  const externalValue =
+    selAttrs?.fontSize !== undefined && selAttrs.fontSize > 0 ? selAttrs.fontSize : obj.fontSize
+  const [draft, setDraft] = useState<string>(String(externalValue))
+  const lastExternalRef = useRef<number>(externalValue)
+
+  // Sync draft to external value whenever obj/selAttrs changes from
+  // outside this component (e.g. select-all + change box-wide,
+  // selection moved into a different run, peer edit). Local edits
+  // increment lastExternalRef themselves so they don't trigger a
+  // round-trip.
+  useEffect(() => {
+    if (externalValue !== lastExternalRef.current) {
+      lastExternalRef.current = externalValue
+      setDraft(String(externalValue))
+    }
+  }, [externalValue])
+
+  const commit = (raw: string): void => {
+    const parsed = Number.parseFloat(raw)
+    if (!Number.isFinite(parsed)) {
+      // Invalid input — snap back to the last known good value.
+      setDraft(String(externalValue))
+      return
+    }
+    const next = Math.max(1, parsed)
+    lastExternalRef.current = next
+    setDraft(String(next))
+    const sel = getActiveTextSelection()
+    if (sel !== null && sel.objectId === obj.id) {
+      if (isEntireContentSelected(obj.id)) {
+        clearActiveSelectionAttrs(obj.id, ['fontSize'])
+        patch({ fontSize: next })
+        return
+      }
+      const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
+      if (!applied) patch({ fontSize: next })
+      return
+    }
+    clearAllInlineRunAttrs(obj.text, ['fontSize'])
+    patch({ fontSize: next })
+  }
+
+  return (
+    <div
+      data-text-edit-keep-focus
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          refocusActiveTextEdit(obj.id)
+        }
+      }}
+      className="flex items-center gap-2"
+    >
+      <label
+        htmlFor={`inspector-fontsize-${obj.id}`}
+        className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+      >
+        Size
+      </label>
+      <input
+        id={`inspector-fontsize-${obj.id}`}
+        type="number"
+        step={1}
+        min={1}
+        value={draft}
+        onFocus={(e) => {
+          const t = e.target
+          // Defer until after the click's caret-placement so the
+          // selection actually sticks (browsers reset selection on
+          // the trailing mouseup/click).
+          setTimeout(() => {
+            if (document.activeElement === t) t.select()
+          }, 0)
+        }}
+        onChange={(e) => {
+          // Browser native step arrows (the up/down spinners) emit an
+          // input event with no `inputType` — typing emits one with
+          // `inputType: 'insertText'` etc. Distinguish so we can keep
+          // committing immediately on a spinner click while still
+          // deferring a typed "20" until Enter/blur.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const inputType = (e.nativeEvent as any).inputType as string | undefined
+          const v = e.target.value
+          setDraft(v)
+          if (inputType === undefined || inputType === '') commit(v)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit(draft)
+            ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'Escape') {
+            setDraft(String(externalValue))
+            ;(e.target as HTMLInputElement).blur()
+          } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            // Let the browser step the value naturally; the resulting
+            // input event (with inputType === undefined) will commit
+            // through the onChange branch above.
+          }
+        }}
+        onBlur={() => commit(draft)}
+        className={[
+          'w-full rounded-md border border-input field-surface px-2 py-0.5',
+          'text-right text-xs text-foreground',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        ].join(' ')}
+      />
+    </div>
+  )
+}
+
 function TextSection({ obj, patch }: TextSectionProps) {
   const colorHex = numberToHex(obj.color)
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
+
+  // Re-render whenever the active text-edit selection changes so the
+  // Bold / Italic / Underline buttons can highlight based on the run
+  // under the caret instead of just the box-wide field.
+  const activeSel = useSyncExternalStore(subscribeActiveTextSelection, getActiveTextSelection)
+  const selAttrs =
+    activeSel !== null && activeSel.objectId === obj.id ? readActiveSelectionAttrs(obj.id) : null
+  const boxBold =
+    obj.fontWeight === 'bold' || (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+  const boxItalic = obj.italic === true
+  const boxUnderline = obj.underline === true
+  const effectiveBold = selAttrs?.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
+  const effectiveItalic = selAttrs?.italic !== undefined ? selAttrs.italic : boxItalic
+  const effectiveUnderline = selAttrs?.underline !== undefined ? selAttrs.underline : boxUnderline
 
   return (
     <>
@@ -2081,12 +2247,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        <NumberField
-          id={`inspector-fontsize-${obj.id}`}
-          label="Size"
-          value={obj.fontSize}
-          onChange={(v) => patch({ fontSize: Math.max(1, v) })}
-        />
+        <FontSizeField obj={obj} patch={patch} selAttrs={selAttrs} />
 
         {/* Font family — a curated set of web-safe + system stacks. User
             can still type a custom value because we use a combo pattern. */}
@@ -2102,11 +2263,42 @@ function TextSection({ obj, patch }: TextSectionProps) {
 
         <FontWeightSelect obj={obj} patch={patch} />
 
-        {/* Italic + Underline toggles + List style row — three toggle
-            buttons share a row for compactness. */}
-        <div className="flex items-center gap-2">
+        {/* Bold + Italic + Underline toggles + List style row.
+            Each toggle first attempts an inline format on the active
+            text-edit selection (so a highlighted word is bolded /
+            italicised on its own); only when there is no selection do
+            we fall back to patching the box-wide field. */}
+        <div className="flex items-center gap-2" data-text-edit-keep-focus>
           <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Style</span>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const next = (effectiveBold ? 400 : 700) as 400 | 700
+                if (selAttrs !== null) {
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['fontWeight'])
+                    patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { fontWeight: next })
+                  return
+                }
+                clearAllInlineRunAttrs(obj.text, ['fontWeight'])
+                patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+              }}
+              aria-pressed={effectiveBold}
+              className={[
+                'rounded border px-2 py-0.5 text-[11px] font-bold',
+                effectiveBold
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+              title="Bold"
+            >
+              B
+            </button>
             <button
               type="button"
               // preventDefault on mouseDown keeps the editing textarea
@@ -2115,15 +2307,28 @@ function TextSection({ obj, patch }: TextSectionProps) {
               // textarea blurs on mousedown, which exits edit mode and
               // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() =>
+              onClick={() => {
+                const nextItalic = !effectiveItalic
+                if (selAttrs !== null) {
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['italic'])
+                    patch({
+                      italic: nextItalic ? true : undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
+                  return
+                }
+                clearAllInlineRunAttrs(obj.text, ['italic'])
                 patch({
-                  italic: obj.italic === true ? undefined : true,
+                  italic: nextItalic ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
-              }
-              aria-pressed={obj.italic === true}
+              }}
+              aria-pressed={effectiveItalic}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] italic',
-                obj.italic === true
+                effectiveItalic
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
               ].join(' ')}
@@ -2134,15 +2339,28 @@ function TextSection({ obj, patch }: TextSectionProps) {
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() =>
+              onClick={() => {
+                const nextUnderline = !effectiveUnderline
+                if (selAttrs !== null) {
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['underline'])
+                    patch({
+                      underline: nextUnderline ? true : undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
+                  return
+                }
+                clearAllInlineRunAttrs(obj.text, ['underline'])
                 patch({
-                  underline: obj.underline === true ? undefined : true,
+                  underline: nextUnderline ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
-              }
-              aria-pressed={obj.underline === true}
+              }}
+              aria-pressed={effectiveUnderline}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] underline',
-                obj.underline === true
+                effectiveUnderline
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
               ].join(' ')}

@@ -21,13 +21,62 @@
  */
 
 import { useEffect, useRef } from 'react'
+import { Cache } from 'pixi.js'
 import { useDeckFonts } from './useDeckFonts.js'
 import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { getDefaultFontUrlResolver } from '../renderer/fontUrl.js'
 
+/**
+ * Pixi v8's HTMLText pipeline does NOT consult `document.fonts` when
+ * embedding @font-face declarations into the SVG it rasterises — it
+ * only looks at its own asset Cache under the key `${family}-and-url`
+ * (see pixi.js/scene/text-html/utils/getFontCss). Without an entry
+ * there, getFontCss returns "" and the SVG falls back to the system
+ * font. Register every loaded face in that exact shape so HTMLText
+ * picks them up.
+ *
+ * Each Cache entry is `{ entries: [{ url, faces: [{ weight, style }] }] }`.
+ * Multiple weight/style faces for the same family must accumulate into
+ * the same entry's `faces` array.
+ */
+interface PixiFontCacheEntry {
+  url: string
+  faces: { weight: string; style: string }[]
+}
+function pixiFontCacheKey(family: string): string {
+  return `${family}-and-url`
+}
+function addToPixiFontCache(family: string, url: string, weight: string, style: string): void {
+  const key = pixiFontCacheKey(family)
+  const existing = Cache.has(key)
+    ? (Cache.get(key) as { entries: PixiFontCacheEntry[] })
+    : { entries: [] as PixiFontCacheEntry[] }
+  let entry = existing.entries.find((e) => e.url === url)
+  if (entry === undefined) {
+    entry = { url, faces: [] }
+    existing.entries.push(entry)
+  }
+  if (!entry.faces.some((f) => f.weight === weight && f.style === style)) {
+    entry.faces.push({ weight, style })
+  }
+  if (!Cache.has(key)) Cache.set(key, existing)
+}
+function removeFromPixiFontCache(family: string, weight: string, style: string): void {
+  const key = pixiFontCacheKey(family)
+  if (!Cache.has(key)) return
+  const value = Cache.get(key) as { entries: PixiFontCacheEntry[] }
+  for (const entry of value.entries) {
+    entry.faces = entry.faces.filter((f) => !(f.weight === weight && f.style === style))
+  }
+  value.entries = value.entries.filter((e) => e.faces.length > 0)
+  if (value.entries.length === 0) Cache.remove(key)
+}
+
 interface InstalledFont {
   face: FontFace
   family: string
+  weight: string
+  style: string
 }
 
 export function FontLoader(): null {
@@ -61,6 +110,8 @@ export function FontLoader(): null {
         // Sentinel — replaced once load resolves.
         face: undefined as unknown as FontFace,
         family: entry.family,
+        weight: String(entry.weight),
+        style: entry.style,
       })
 
       void (async () => {
@@ -78,7 +129,16 @@ export function FontLoader(): null {
           if (cancelled) return
 
           document.fonts.add(face)
-          installed.set(entry.id, { face, family: entry.family })
+          // Register with Pixi's Cache so HTMLText's getFontCss picks
+          // it up. document.fonts alone is invisible to HTMLText —
+          // its SVG-foreignObject pipeline only consults Pixi's Cache.
+          addToPixiFontCache(entry.family, info.url, String(entry.weight), entry.style)
+          installed.set(entry.id, {
+            face,
+            family: entry.family,
+            weight: String(entry.weight),
+            style: entry.style,
+          })
 
           // Read canvas from the ref so we get whatever is current
           // RIGHT NOW, not the value at IIFE-schedule time.
@@ -100,6 +160,7 @@ export function FontLoader(): null {
         // FontFaceSet.delete throws if the face wasn't actually added —
         // ignore.
       }
+      removeFromPixiFontCache(slot.family, slot.weight, slot.style)
       installed.delete(id)
       canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(slot.family)
     }
