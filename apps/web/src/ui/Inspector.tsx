@@ -38,6 +38,7 @@ import {
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
+import { applyInlineFormatIfSelected } from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -2102,11 +2103,40 @@ function TextSection({ obj, patch }: TextSectionProps) {
 
         <FontWeightSelect obj={obj} patch={patch} />
 
-        {/* Italic + Underline toggles + List style row — three toggle
-            buttons share a row for compactness. */}
+        {/* Bold + Italic + Underline toggles + List style row.
+            Each toggle first attempts an inline format on the active
+            text-edit selection (so a highlighted word is bolded /
+            italicised on its own); only when there is no selection do
+            we fall back to patching the box-wide field. */}
         <div className="flex items-center gap-2">
           <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Style</span>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const isBold =
+                  obj.fontWeight === 'bold' ||
+                  (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+                const next = isBold ? 400 : 700
+                if (applyInlineFormatIfSelected(obj.id, { fontWeight: next as 400 | 700 })) return
+                patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+              }}
+              aria-pressed={
+                obj.fontWeight === 'bold' ||
+                (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+              }
+              className={[
+                'rounded border px-2 py-0.5 text-[11px] font-bold',
+                obj.fontWeight === 'bold' ||
+                (typeof obj.fontWeight === 'number' && obj.fontWeight >= 600)
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-border text-muted-foreground hover:text-foreground',
+              ].join(' ')}
+              title="Bold"
+            >
+              B
+            </button>
             <button
               type="button"
               // preventDefault on mouseDown keeps the editing textarea
@@ -2115,11 +2145,13 @@ function TextSection({ obj, patch }: TextSectionProps) {
               // textarea blurs on mousedown, which exits edit mode and
               // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() =>
+              onClick={() => {
+                const next = obj.italic !== true
+                if (applyInlineFormatIfSelected(obj.id, { italic: next })) return
                 patch({
-                  italic: obj.italic === true ? undefined : true,
+                  italic: next ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
-              }
+              }}
               aria-pressed={obj.italic === true}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] italic',
@@ -2134,11 +2166,13 @@ function TextSection({ obj, patch }: TextSectionProps) {
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() =>
+              onClick={() => {
+                const next = obj.underline !== true
+                if (applyInlineFormatIfSelected(obj.id, { underline: next })) return
                 patch({
-                  underline: obj.underline === true ? undefined : true,
+                  underline: next ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
-              }
+              }}
               aria-pressed={obj.underline === true}
               className={[
                 'rounded border px-2 py-0.5 text-[11px] underline',

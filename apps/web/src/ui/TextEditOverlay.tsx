@@ -24,6 +24,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as Y from 'yjs'
 import { updateObject, type ObjectsMutationContext } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
+import { setActiveTextSelection } from './textEditSelection.js'
 
 /**
  * Project the body content to a plain string regardless of whether
@@ -103,6 +104,36 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     refreshPadding()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
   }, [])
+
+  // Publish the active textarea selection so the Inspector's inline
+  // style toggles (B / I / U) format only the highlighted Y.Text range
+  // instead of patching the whole object's field.
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (ta === null) return
+    const yText = obj.text instanceof Y.Text ? obj.text : null
+    if (yText === null) return
+    const publish = (): void => {
+      setActiveTextSelection({
+        objectId: obj.id,
+        yText,
+        start: ta.selectionStart,
+        end: ta.selectionEnd,
+      })
+    }
+    publish()
+    ta.addEventListener('select', publish)
+    ta.addEventListener('keyup', publish)
+    ta.addEventListener('mouseup', publish)
+    ta.addEventListener('input', publish)
+    return () => {
+      ta.removeEventListener('select', publish)
+      ta.removeEventListener('keyup', publish)
+      ta.removeEventListener('mouseup', publish)
+      ta.removeEventListener('input', publish)
+      setActiveTextSelection(null)
+    }
+  }, [obj.id, obj.text])
 
   // Re-run when vAlign / box size / font size changes from the inspector.
   useEffect(() => {
