@@ -19,6 +19,8 @@ import {
   applyInlineFormatIfSelected,
   refocusActiveTextEdit,
   getActiveTextSelection,
+  isEntireContentSelected,
+  clearActiveSelectionAttrs,
 } from './textEditSelection.js'
 
 interface FontFamilySelectProps {
@@ -60,9 +62,18 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
           const value = e.target.value === '' ? undefined : e.target.value
           const sel = getActiveTextSelection()
           if (sel !== null && sel.objectId === obj.id && value !== undefined) {
+            // Cmd+A or whole-text selection: treat as a box-wide
+            // change so the picker UI reflects the new value AND any
+            // earlier inline overrides on individual runs are cleared.
+            if (isEntireContentSelected(obj.id)) {
+              clearActiveSelectionAttrs(obj.id, ['fontFamily'])
+              patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
+              refocusActiveTextEdit(obj.id)
+              return
+            }
             // Pixi v8 HTMLText's font-family scraper splits on whitespace
-            // (`font-family:([^;"\s]+)`), so we have to emit the primary
-            // family token only — passing the full "Inter, system-ui,
+            // (`font-family:([^;"\s]+)`), so we emit the primary family
+            // token only — passing the full "Inter, system-ui,
             // sans-serif" stack would break the @font-face embed.
             const primary =
               value

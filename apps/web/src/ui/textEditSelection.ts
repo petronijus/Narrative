@@ -14,7 +14,7 @@
  */
 
 import type * as Y from 'yjs'
-import { applyFormat, type RichAttrs } from '@narrative/slide-model'
+import { applyFormat, clearFormat, type RichAttrs } from '@narrative/slide-model'
 
 export interface ActiveTextSelection {
   objectId: string
@@ -66,6 +66,36 @@ export function subscribeActiveTextSelection(listener: () => void): () => void {
   return () => {
     listeners.delete(listener)
   }
+}
+
+/**
+ * Returns `true` when the active selection covers the entire Y.Text
+ * content for the given object (effectively a Cmd+A). Inspector
+ * controls use this to decide whether to patch the box-wide field
+ * (so the picker UI reflects the change) instead of treating the
+ * change as an inline-only run override.
+ */
+export function isEntireContentSelected(objectId: string): boolean {
+  const sel = slot.current
+  if (sel === null || sel.objectId !== objectId) return false
+  if (sel.end <= sel.start) return false
+  return sel.start === 0 && sel.end === sel.yText.length
+}
+
+/**
+ * Strip the named keys from the active selection range — used after
+ * a whole-content "Cmd+A → change font" so any inline overrides set
+ * earlier on individual runs don't shadow the new box-wide value.
+ */
+export function clearActiveSelectionAttrs(
+  objectId: string,
+  keys: ReadonlyArray<keyof RichAttrs>,
+): void {
+  const sel = slot.current
+  if (sel === null || sel.objectId !== objectId) return
+  const length = sel.end - sel.start
+  if (length <= 0) return
+  clearFormat(sel.yText, sel.start, length, keys)
 }
 
 /**

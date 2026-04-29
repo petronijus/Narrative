@@ -22,6 +22,8 @@ import {
   applyInlineFormatIfSelected,
   refocusActiveTextEdit,
   getActiveTextSelection,
+  isEntireContentSelected,
+  clearActiveSelectionAttrs,
 } from './textEditSelection.js'
 
 interface FontWeightSelectProps {
@@ -136,10 +138,18 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
             | 700
             | 800
             | 900
-          // Per-run weight when the textarea has a non-empty selection;
-          // otherwise patch the box-wide field.
+          // Per-run weight when the textarea has a non-empty selection
+          // SHORTER than the full text; whole-content selection (Cmd+A)
+          // becomes a box-wide patch so the picker stays consistent
+          // and inline overrides on individual runs are cleared.
           const sel = getActiveTextSelection()
           if (sel !== null && sel.objectId === obj.id) {
+            if (isEntireContentSelected(obj.id)) {
+              clearActiveSelectionAttrs(obj.id, ['fontWeight'])
+              patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
+              refocusActiveTextEdit(obj.id)
+              return
+            }
             const applied = applyInlineFormatIfSelected(obj.id, { fontWeight: parsed })
             if (!applied) patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
             refocusActiveTextEdit(obj.id)

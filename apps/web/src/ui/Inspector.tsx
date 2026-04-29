@@ -44,6 +44,8 @@ import {
   getActiveTextSelection,
   subscribeActiveTextSelection,
   refocusActiveTextEdit,
+  isEntireContentSelected,
+  clearActiveSelectionAttrs,
 } from './textEditSelection.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -2115,6 +2117,12 @@ function TextSection({ obj, patch }: TextSectionProps) {
               const next = Math.max(1, v)
               const sel = getActiveTextSelection()
               if (sel !== null && sel.objectId === obj.id) {
+                if (isEntireContentSelected(obj.id)) {
+                  clearActiveSelectionAttrs(obj.id, ['fontSize'])
+                  patch({ fontSize: next })
+                  refocusActiveTextEdit(obj.id)
+                  return
+                }
                 const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
                 if (!applied) patch({ fontSize: next })
                 refocusActiveTextEdit(obj.id)
@@ -2151,15 +2159,17 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                const next = (effectiveBold ? 400 : 700) as 400 | 700
                 if (selAttrs !== null) {
-                  applyInlineFormatIfSelected(obj.id, {
-                    fontWeight: (effectiveBold ? 400 : 700) as 400 | 700,
-                  })
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['fontWeight'])
+                    patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { fontWeight: next })
                   return
                 }
-                patch({
-                  fontWeight: effectiveBold ? 400 : 700,
-                } as unknown as SlideObjectPatch<TextObject>)
+                patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveBold}
               className={[
@@ -2181,12 +2191,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
               // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                const nextItalic = !effectiveItalic
                 if (selAttrs !== null) {
-                  applyInlineFormatIfSelected(obj.id, { italic: !effectiveItalic })
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['italic'])
+                    patch({
+                      italic: nextItalic ? true : undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
                   return
                 }
                 patch({
-                  italic: effectiveItalic ? undefined : true,
+                  italic: nextItalic ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveItalic}
@@ -2204,12 +2222,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                const nextUnderline = !effectiveUnderline
                 if (selAttrs !== null) {
-                  applyInlineFormatIfSelected(obj.id, { underline: !effectiveUnderline })
+                  if (isEntireContentSelected(obj.id)) {
+                    clearActiveSelectionAttrs(obj.id, ['underline'])
+                    patch({
+                      underline: nextUnderline ? true : undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                    return
+                  }
+                  applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
                   return
                 }
                 patch({
-                  underline: effectiveUnderline ? undefined : true,
+                  underline: nextUnderline ? true : undefined,
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveUnderline}
