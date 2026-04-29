@@ -453,26 +453,22 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
   const firstSlideId = allSlideIds[0]
   const firstSlideThumb = firstSlideId !== undefined ? thumbnailMap.get(firstSlideId) : undefined
   const api = useApi()
-  // Debounced server-side upload — the localStorage cache is fast and
-  // local, the server upload makes the preview visible to other devices
-  // / incognito sessions. Debounce trails the last thumbnail change by
-  // ~3 s so rapid edits coalesce into a single PUT.
+  // Trailing-edge debounce of the server-side upload:
+  //   - Each new firstSlideThumb stashes itself into pendingRef.
+  //   - A single setTimeout (kept in a ref so it survives React effect
+  //     cleanups, which would otherwise kill the timer mid-flight) reads
+  //     pendingRef when it fires and PUTs whatever is the latest thumbnail.
+  // Net effect: rapid edits coalesce into one upload ~1.5 s after typing
+  // stops, AND the latest content is always what gets uploaded — fixes
+  // the "second visit needed" symptom from the leading-edge variant.
   const lastUploadedRef = useRef<string | null>(null)
-  const lastUploadAtRef = useRef<{ deckId: string; at: number } | null>(null)
-  // Hold api / isViewer as refs so a re-rendered closure doesn't churn
-  // the dep array on this effect.
+  const pendingRef = useRef<{ deckId: string; thumb: string } | null>(null)
+  const flushTimerRef = useRef<number | null>(null)
   const apiRef = useRef(api)
   apiRef.current = api
   const isViewerRef = useRef(isViewer)
   isViewerRef.current = isViewer
   useEffect(() => {
-    console.log('[deck-thumb] effect', {
-      deckId,
-      hasThumb: firstSlideThumb !== undefined,
-      thumbLen: firstSlideThumb?.length ?? 0,
-      isViewer: isViewerRef.current,
-      alreadyUploaded: lastUploadedRef.current === firstSlideThumb,
-    })
     if (deckId !== undefined && deckId !== '' && firstSlideThumb !== undefined) {
       setDeckThumbnail(deckId, firstSlideThumb)
     }
@@ -483,39 +479,23 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
       isViewerRef.current ||
       lastUploadedRef.current === firstSlideThumb
     ) {
-      console.log('[deck-thumb] skip upload', {
-        deckId,
-        hasThumb: firstSlideThumb !== undefined,
-        isViewer: isViewerRef.current,
-        sameAsLast: lastUploadedRef.current === firstSlideThumb,
-      })
       return
     }
-
-    // Rate limit — upload at most once per 30 s per deck so rapid
-    // typing-driven re-renders don't spam the server. Implemented with
-    // a ref instead of setTimeout so it survives effect cleanup races.
-    const last = lastUploadAtRef.current
-    if (last !== null && last.deckId === deckId && Date.now() - last.at < 30_000) {
-      console.log('[deck-thumb] rate-limited, skipping', deckId)
-      return
-    }
-
-    console.log('[deck-thumb] firing PUT for', deckId, 'bytes=', firstSlideThumb.length)
-    lastUploadedRef.current = firstSlideThumb
-    lastUploadAtRef.current = { deckId, at: Date.now() }
-    apiRef.current
-      .uploadDeckThumbnail(deckId, firstSlideThumb)
-      .then((row) => {
-        console.log('[deck-thumb] PUT ok', row)
-      })
-      .catch((err: unknown) => {
-        // Non-fatal — the localStorage cache still has the preview for
-        // this device. Drop the marker so a future render can retry.
+    pendingRef.current = { deckId, thumb: firstSlideThumb }
+    if (flushTimerRef.current !== null) return
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null
+      const p = pendingRef.current
+      if (p === null) return
+      if (lastUploadedRef.current === p.thumb) return
+      lastUploadedRef.current = p.thumb
+      pendingRef.current = null
+      apiRef.current.uploadDeckThumbnail(p.deckId, p.thumb).catch((err: unknown) => {
+        // Non-fatal — drop the marker so a future render can retry.
         lastUploadedRef.current = null
-
         console.warn('[deck-thumb] PUT failed', err)
       })
+    }, 1500)
   }, [deckId, firstSlideThumb])
 
   const [dragState, setDragState] = useState<DragState | null>(null)
