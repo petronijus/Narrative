@@ -210,7 +210,7 @@ export function AnimationTimeline() {
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
   const { objects: slideObjects } = useSlideObjects()
-  const { selectOne } = useSelection()
+  const { selectOne, selectedAnimationId, setSelectedAnimationId } = useSelection()
   const isViewer = role === 'viewer'
 
   /**
@@ -272,7 +272,11 @@ export function AnimationTimeline() {
   const zoomReset = useCallback(() => {
     setPxPerSec(DEFAULT_PX_PER_SEC)
   }, [])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Selection of the highlighted animation step is shared via SelectionContext
+  // so the Inspector's per-object animations list highlights the same step
+  // (and vice versa). Local aliases keep this file's existing call sites.
+  const selectedId = selectedAnimationId
+  const setSelectedId = setSelectedAnimationId
 
   // Preview playback state. The runtime is created on demand from the current
   // animations snapshot and lives only for the preview session — destroyed on
@@ -311,12 +315,28 @@ export function AnimationTimeline() {
      *  re-layout so the dragged bar doesn't hop lanes while it crosses
      *  neighbours — only the neighbours move out of its way. */
     originalLane: number
+    /** Frozen absolute starts + durations of every step at drag-start.
+     *  Body drag uses these as the reference frame so each frame's write
+     *  is idempotent — without it, a non-dragged neighbour's delay would
+     *  drift because we'd be mixing stale laidOut.startSec values with
+     *  the dragged step's hypothetical newAbsStart. */
+    originalStarts: Record<string, number>
+    originalDurations: Record<string, number>
   } | null>(null)
 
   /** Lane assignment seen on the previous render, keyed by step id. Used to
    *  reconstruct the dragged bar's lane on drag-start (since at that point
    *  the drag hasn't produced a new layout yet). */
   const lastLanesRef = useRef<Record<string, number>>({})
+  /** Last computed row (per-objectId) order, captured every render. Lets us
+   *  freeze the row layout during a body drag — even though dragging may
+   *  reorder Y.Array, the visual swimlanes must NOT shuffle on their own.
+   *  Manual reorder via the row grip is the only way to change row order. */
+  const lastRowOrderRef = useRef<string[]>([])
+  /** Frozen row order while a body drag is active. Set in beginDrag, cleared
+   *  in endDrag. When set, the rows memo uses it instead of the natural
+   *  Y.Array-derived order. */
+  const frozenRowOrderRef = useRef<string[] | null>(null)
   /** Triggers a re-render whenever drag state toggles, so memoised `rows`
    *  recomputes with / without the pinned-lane logic. */
   const [dragStamp, setDragStamp] = useState(0)
@@ -417,6 +437,18 @@ export function AnimationTimeline() {
       finalOrder = [...ordered, ...appended]
     }
 
+    // While a body drag is active, freeze row order to the snapshot taken at
+    // drag-start. The Y.Array may reorder mid-drag (so trigger relationships
+    // can update), but per-object swimlanes must stay put — only the row
+    // grip can move them.
+    const frozen = frozenRowOrderRef.current
+    if (frozen !== null) {
+      const present = new Set(naturalOrder)
+      const ordered = frozen.filter((id) => present.has(id))
+      const appended = naturalOrder.filter((id) => !frozen.includes(id))
+      finalOrder = [...ordered, ...appended]
+    }
+
     const drag = dragStateRef.current
     const pinnedId = drag?.mode === 'body' && drag.hasMoved ? drag.stepId : null
     const pinnedLane = drag?.originalLane ?? 0
@@ -492,6 +524,7 @@ export function AnimationTimeline() {
     // safe across strict-mode double-invocation — the value is deterministic
     // per inputs.
     lastLanesRef.current = nextLaneMap
+    lastRowOrderRef.current = finalOrder
     return result
     // dragStamp is included so toggling the drag state forces a re-layout
     // without the pinned-lane pass, letting bumped bars drop back down.
@@ -589,6 +622,12 @@ export function AnimationTimeline() {
       if (isViewer || animationsCtx === null) return
       e.currentTarget.setPointerCapture(e.pointerId)
       e.stopPropagation()
+      const originalStarts: Record<string, number> = {}
+      const originalDurations: Record<string, number> = {}
+      for (const l of laidOut) {
+        originalStarts[l.step.id] = l.startSec
+        originalDurations[l.step.id] = l.step.duration ?? 0
+      }
       dragStateRef.current = {
         stepId: step.id,
         mode,
@@ -598,9 +637,17 @@ export function AnimationTimeline() {
         hasMoved: false,
         converted: false,
         originalLane: lastLanesRef.current[step.id] ?? 0,
+        originalStarts,
+        originalDurations,
+      }
+      // Freeze visible row order for the duration of a body drag — the
+      // Y.Array may reshuffle as the dragged bar passes neighbours, but
+      // we don't want that to bubble up into row reordering.
+      if (mode === 'body') {
+        frozenRowOrderRef.current = [...lastRowOrderRef.current]
       }
     },
-    [isViewer, animationsCtx],
+    [isViewer, animationsCtx, laidOut],
   )
 
   const handleDragMove = useCallback(
@@ -669,43 +716,67 @@ export function AnimationTimeline() {
         }
       }
 
-      // Translate the new absolute start into a delay that is relative to
-      // the step's existing trigger anchor. This keeps the dragged bar's
-      // trigger (withPrevious / afterPrevious / onClick) intact rather
-      // than silently rewriting it to onEnter — which used to leave the
-      // dropdown showing a stale value because onEnter is no longer in
-      // the option list.
-      //   i === 0          → anchor is 0
-      //   withPrevious     → anchor is prev.startSec
-      //   afterPrevious /
-      //   onClick / onEnter → anchor is prev.endSec
-      // Negative deltas would put the bar before its anchor; clamp to 0
-      // so the bar can't escape its trigger semantics.
-      const draggedStep = animations.find((a) => a.id === drag.stepId)
-      const draggedIdx = laidOut.findIndex((l) => l.step.id === drag.stepId)
-      let anchor = 0
-      if (draggedStep !== undefined && draggedIdx > 0) {
-        const prev = laidOut[draggedIdx - 1]
-        if (prev !== undefined) {
-          if (draggedStep.trigger === 'withPrevious') anchor = prev.startSec
-          else anchor = prev.startSec + (prev.step.duration ?? 0)
+      // Sequence model: the SOURCE OF TRUTH while dragging is the absolute
+      // time of every bar (dragged bar uses newAbsStart, others use their
+      // current laidOut.startSec). We sort by absolute time to derive the
+      // new Y.Array sequence, then derive each step's trigger + delay from
+      // its temporal relationship to the new previous step:
+      //   • i === 0                         → first in sequence; delay = startSec.
+      //   • cur.start ≥ prev.end            → 'afterPrevious'; delay = cur.start - prev.end.
+      //   • cur.start <  prev.end (overlap) → 'withPrevious';  delay = cur.start - prev.start.
+      //   • onClick is sticky               → keep 'onClick'; delay relative to prev.end (matches layoutSteps).
+      // This makes drag truly free: dragging past a neighbour reorders the
+      // sequence, and the displaced step's own trigger gets recomputed
+      // against ITS new previous — so dragging a bar before another flips
+      // the other one to 'afterPrevious' automatically.
+      // Use the frozen drag-start reference frame for non-dragged steps so
+      // each frame's write is idempotent. Reading laidOut.startSec here would
+      // be stale-after-write: as we mutate delays, layoutSteps shifts non-
+      // dragged starts, and the next frame's delta would compound.
+      const decorated = laidOut.map((l, i) => ({
+        id: l.step.id,
+        step: l.step,
+        start:
+          l.step.id === drag.stepId ? newAbsStart : (drag.originalStarts[l.step.id] ?? l.startSec),
+        duration: drag.originalDurations[l.step.id] ?? l.step.duration ?? 0,
+        i,
+      }))
+      // Stable sort by start time; ties keep current Y.Array order.
+      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
+
+      const EPS = 1e-6
+      for (let i = 0; i < decorated.length; i++) {
+        const cur = decorated[i]
+        if (cur === undefined) continue
+        const prev = i > 0 ? decorated[i - 1] : undefined
+        const isOnClick = cur.step.trigger === 'onClick'
+        let nextTrigger: AnimationTrigger
+        let nextDelay: number
+        if (prev === undefined) {
+          // First in sequence — anchor is 0.
+          nextTrigger = isOnClick ? 'onClick' : 'afterPrevious'
+          nextDelay = Math.max(0, cur.start)
+        } else if (isOnClick) {
+          // Sticky: never auto-switch onClick to time-driven triggers.
+          nextTrigger = 'onClick'
+          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
+        } else if (cur.start + EPS >= prev.start + prev.duration) {
+          nextTrigger = 'afterPrevious'
+          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
+        } else {
+          nextTrigger = 'withPrevious'
+          nextDelay = Math.max(0, cur.start - prev.start)
+        }
+        const orig = cur.step
+        const patch: { trigger?: AnimationTrigger; delay?: number } = {}
+        if (orig.trigger !== nextTrigger) patch.trigger = nextTrigger
+        if (Math.abs((orig.delay ?? 0) - nextDelay) > EPS) patch.delay = nextDelay
+        if (patch.trigger !== undefined || patch.delay !== undefined) {
+          updateAnimation(animationsCtx, cur.id, patch)
         }
       }
-      const newDelay = Math.max(0, newAbsStart - anchor)
-      updateAnimation(animationsCtx, drag.stepId, { delay: newDelay })
 
-      // Sort Y.Array by effective absolute start to keep array order in
-      // sync with visual order. Use current laidOut but replace the dragged
-      // step's startSec with its new position.
-      const currentIdx = animations.findIndex((a) => a.id === drag.stepId)
-      if (currentIdx === -1) return
-      const effective = laidOut.map((l, i) => ({
-        id: l.step.id,
-        start: i === currentIdx ? newAbsStart : l.startSec,
-      }))
-      // Stable sort by start time, preserving current array order for ties.
-      const decorated = effective.map((e, i) => ({ ...e, i }))
-      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
+      // Sync Y.Array order to the new temporal order.
       const newOrder = decorated.map((e) => e.id)
       const currentOrder = animations.map((a) => a.id)
       if (!newOrder.every((id, i) => id === currentOrder[i])) {
@@ -724,6 +795,7 @@ export function AnimationTimeline() {
       }
       const wasDrag = drag.hasMoved
       dragStateRef.current = null
+      frozenRowOrderRef.current = null
       // If the pointer never moved past the threshold, treat as click → select.
       if (!wasDrag) {
         const step = animations.find((a) => a.id === drag.stepId)

@@ -272,7 +272,7 @@ function TransparencySlider({
         onChange={(e) => commit(Number.parseFloat(e.target.value))}
         className="flex-1 accent-primary"
       />
-      <div className="w-14 flex-shrink-0">
+      <div className="w-20 flex-shrink-0">
         <CompactNumberField
           id={`${id}-num`}
           ariaLabel="Transparency value"
@@ -824,12 +824,8 @@ export function Inspector() {
         <ImageCropSection obj={obj} patch={patch as (p: SlideObjectPatch<ImageObject>) => void} />
       )}
 
-      {/* P11: Link — hyperlink target on any object. Only visible for
-          single selection (multi-select inspector skips it). */}
-      <LinkSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
-
-      {/* P5c: Shadow + Blur — every object type gets them through the
-          BaseSlideObject mixin + filterEffects helper on the renderer side. */}
+      {/* P5c: Shadow + Blur + Link — every object type. Link was its
+          own section pre-redesign; merged into Effects for compactness. */}
       <EffectsSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
       {/* P6: Layer order is now embedded at the top of PositionSection
@@ -2087,104 +2083,126 @@ function CornerRadiusRow({
 
   return (
     <>
-      <div className="flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-1.5">
-          {!perCorner && (
-            <>
-              <input
-                type="range"
-                aria-label="Corner radius"
-                min={0}
-                max={Math.max(1, Math.round(maxR))}
-                step={1}
-                value={uniformVal}
-                onChange={(e) => setUniform(Number.parseFloat(e.target.value))}
-                className="flex-1 accent-primary"
-              />
-              <input
-                type="number"
-                aria-label="Corner radius value"
-                min={0}
-                max={Math.round(maxR)}
-                value={Math.round(uniformVal)}
-                onChange={(e) => {
-                  const v = Number.parseFloat(e.target.value)
-                  if (Number.isFinite(v)) setUniform(v)
-                }}
-                onKeyDown={(e) =>
-                  handleShiftArrowStep(e, uniformVal, 1, setUniform, {
-                    min: 0,
-                    max: Math.round(maxR),
-                  })
-                }
-                className={[
-                  'w-14 rounded-md border border-input field-surface px-2 py-0.5',
-                  'text-xs text-foreground focus:border-ring focus:outline-none',
-                ].join(' ')}
-              />
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              if (perCorner) {
-                // Collapse to uniform — use the tl value.
-                setUniform(current.tl)
-              } else {
-                // Promote to per-corner — seed all four with the
-                // current uniform value so peers replicate the mode
-                // change immediately, not only after the first per-
-                // corner edit.
-                const seed = uniformVal
-                patch({
-                  cornerRadius: { tl: seed, tr: seed, br: seed, bl: seed },
-                } as unknown as SlideObjectPatch<RectangleObject>)
-              }
-            }}
-            aria-pressed={perCorner}
-            title={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}
-            className={[
-              'rounded-md border px-1.5 py-0.5 text-[10px]',
-              perCorner
-                ? 'border-primary bg-primary/15 text-primary'
-                : 'border-border text-muted-foreground hover:text-foreground',
-            ].join(' ')}
+      <div className="flex items-center gap-1">
+        <input
+          type="range"
+          aria-label="Corner radius"
+          min={0}
+          max={Math.max(1, Math.round(maxR))}
+          step={1}
+          value={uniformVal}
+          disabled={perCorner}
+          onChange={(e) => setUniform(Number.parseFloat(e.target.value))}
+          className={[
+            'flex-1 accent-primary transition-opacity',
+            perCorner ? 'pointer-events-none opacity-40' : '',
+          ].join(' ')}
+        />
+        <input
+          type="number"
+          aria-label="Corner radius value"
+          min={0}
+          max={Math.round(maxR)}
+          value={Math.round(uniformVal)}
+          disabled={perCorner}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.target.value)
+            if (Number.isFinite(v)) setUniform(v)
+          }}
+          onKeyDown={(e) =>
+            handleShiftArrowStep(e, uniformVal, 1, setUniform, {
+              min: 0,
+              max: Math.round(maxR),
+            })
+          }
+          className={[
+            'w-16 flex-shrink-0 rounded-md border border-input field-surface px-2 py-0.5',
+            'text-xs text-foreground focus:border-ring focus:outline-none',
+            'transition-opacity',
+            perCorner ? 'pointer-events-none opacity-40' : '',
+          ].join(' ')}
+        />
+        <button
+          type="button"
+          aria-label={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}
+          aria-pressed={perCorner}
+          title={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}
+          onClick={() => {
+            if (perCorner) {
+              setUniform(current.tl)
+            } else {
+              const seed = uniformVal
+              patch({
+                cornerRadius: { tl: seed, tr: seed, br: seed, bl: seed },
+              } as unknown as SlideObjectPatch<RectangleObject>)
+            }
+          }}
+          className={[
+            'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-input',
+            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            perCorner
+              ? 'bg-primary/15 text-primary'
+              : 'field-surface text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+          ].join(' ')}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
           >
-            {perCorner ? '4x' : '1x'}
-          </button>
-        </div>
+            <path d="M1.5 5 V1.5 H5" />
+            <path d="M9 1.5 H12.5 V5" />
+            <path d="M12.5 9 V12.5 H9" />
+            <path d="M5 12.5 H1.5 V9" />
+          </svg>
+        </button>
       </div>
 
-      {perCorner && (
-        <div className="grid grid-cols-2 gap-1.5">
-          {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
-            <div key={c} className="flex items-center gap-1">
-              <span className="w-5 text-[10px] uppercase text-muted-foreground">{c}</span>
-              <input
-                type="number"
-                aria-label={`${c} corner radius`}
-                min={0}
-                max={Math.round(maxR)}
-                value={Math.round(current[c])}
-                onChange={(e) => {
-                  const v = Number.parseFloat(e.target.value)
-                  if (Number.isFinite(v)) setCorner(c, v)
-                }}
-                onKeyDown={(e) =>
-                  handleShiftArrowStep(e, current[c], 1, (v) => setCorner(c, v), {
-                    min: 0,
-                    max: Math.round(maxR),
-                  })
-                }
-                className={[
-                  'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
-                  'text-xs text-foreground focus:border-ring focus:outline-none',
-                ].join(' ')}
-              />
-            </div>
-          ))}
+      <div
+        className={[
+          'grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out',
+          perCorner ? 'mt-1.5 grid-rows-[1fr] opacity-100' : 'mt-0 grid-rows-[0fr] opacity-0',
+        ].join(' ')}
+        aria-hidden={!perCorner}
+      >
+        <div className="overflow-hidden">
+          <div className="grid grid-cols-2 gap-1.5">
+            {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
+              <div key={c} className="flex items-center gap-1">
+                <span className="w-5 text-[10px] uppercase text-muted-foreground">{c}</span>
+                <input
+                  type="number"
+                  aria-label={`${c} corner radius`}
+                  min={0}
+                  max={Math.round(maxR)}
+                  value={Math.round(current[c])}
+                  tabIndex={perCorner ? 0 : -1}
+                  onChange={(e) => {
+                    const v = Number.parseFloat(e.target.value)
+                    if (Number.isFinite(v)) setCorner(c, v)
+                  }}
+                  onKeyDown={(e) =>
+                    handleShiftArrowStep(e, current[c], 1, (v) => setCorner(c, v), {
+                      min: 0,
+                      max: Math.round(maxR),
+                    })
+                  }
+                  className={[
+                    'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
+                    'text-xs text-foreground focus:border-ring focus:outline-none',
+                  ].join(' ')}
+                />
+              </div>
+            ))}
+          </div>
         </div>
-      )}
+      </div>
     </>
   )
 }
@@ -2677,6 +2695,9 @@ function EffectsSection({
 
   return (
     <Section title="Effects" storageKey="effects">
+      {/* Link — hyperlink target on any object. Single-selection only. */}
+      <LinkControls obj={obj} patch={patch} />
+
       {/* Shadow */}
       <div className="flex items-center gap-2">
         <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Shadow</span>
@@ -3561,16 +3582,26 @@ function AnimationItem({
   step,
   onRemove,
   mutationCtx,
+  selected,
+  onSelect,
 }: {
   step: AnimationStep
   onRemove: (stepId: string) => void
   mutationCtx: AnimationsMutationContext
+  selected: boolean
+  onSelect: () => void
 }) {
   function patch(p: Partial<AnimationStep>): void {
     updateAnimation(mutationCtx, step.id, p)
   }
   return (
-    <li className="flex flex-col gap-1 rounded-md field-surface px-2 py-1.5">
+    <li
+      onClick={onSelect}
+      className={[
+        'flex flex-col gap-1 rounded-md field-surface px-2 py-1.5 cursor-pointer',
+        selected ? 'ring-2 ring-primary/70 bg-primary/10' : '',
+      ].join(' ')}
+    >
       <div className="flex items-center justify-between">
         <span className="text-xs text-foreground">{animationLabel(step)}</span>
         <button
@@ -3690,6 +3721,7 @@ function AnimationsSection({
 }: AnimationsSectionProps) {
   // Animace patřící tomuto objektu
   const objectAnimations = animations.filter((a) => a.objectId === objectId)
+  const { selectedAnimationId, setSelectedAnimationId, selectOne } = useSelection()
 
   function handleAddAnimation(preset: AnimationStep['preset'], params?: Record<string, unknown>) {
     addAnimation(mutationCtx, {
@@ -3779,6 +3811,11 @@ function AnimationsSection({
               step={step}
               onRemove={handleRemove}
               mutationCtx={mutationCtx}
+              selected={selectedAnimationId === step.id}
+              onSelect={() => {
+                setSelectedAnimationId(step.id)
+                selectOne(step.objectId)
+              }}
             />
           ))}
         </ul>
@@ -3798,7 +3835,7 @@ interface LinkSectionProps {
   patch: (p: SlideObjectPatch<SlideObject>) => void
 }
 
-function LinkSection({ obj, patch }: LinkSectionProps) {
+function LinkControls({ obj, patch }: LinkSectionProps) {
   const slides = useSlides()
   const containerRef = useRef<HTMLDivElement>(null)
   const typeSelectRef = useRef<HTMLSelectElement>(null)
@@ -3807,11 +3844,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
     function focusHandler() {
       const root = containerRef.current
       if (root === null) return
-      // Scroll the panel into view first; the type picker autofocus
-      // afterwards positions the cursor on the right control.
       root.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      // Focus the picker on the next frame so the scroll animation
-      // doesn't fight the focus ring placement.
       window.setTimeout(() => {
         typeSelectRef.current?.focus()
       }, 0)
@@ -3841,110 +3874,109 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
   }
 
   return (
-    <div ref={containerRef}>
-      <Section title="Link" storageKey="link">
+    <div ref={containerRef} className="flex flex-col gap-1.5">
+      <SubLabel>Link</SubLabel>
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-link-type-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Type
+        </label>
+        <select
+          ref={typeSelectRef}
+          id={`inspector-link-type-${obj.id}`}
+          value={kind}
+          onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
+          className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+        >
+          <option value="none">None</option>
+          <option value="slide">Slide</option>
+          <option value="url">URL</option>
+        </select>
+      </div>
+
+      {link?.kind === 'slide' && (
         <div className="flex items-center gap-2">
           <label
-            htmlFor={`inspector-link-type-${obj.id}`}
+            htmlFor={`inspector-link-slide-${obj.id}`}
             className="w-16 flex-shrink-0 text-xs text-muted-foreground"
           >
-            Type
+            Target
           </label>
           <select
-            ref={typeSelectRef}
-            id={`inspector-link-type-${obj.id}`}
-            value={kind}
-            onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
+            id={`inspector-link-slide-${obj.id}`}
+            value={link.slideId}
+            onChange={(e) => {
+              patch({
+                hyperlink: { kind: 'slide', slideId: e.target.value },
+              } as SlideObjectPatch<SlideObject>)
+            }}
             className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
           >
-            <option value="none">None</option>
-            <option value="slide">Slide</option>
-            <option value="url">URL</option>
+            {slides.map((s, i) => (
+              <option key={s.id} value={s.id}>
+                {s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`}
+              </option>
+            ))}
           </select>
         </div>
+      )}
 
-        {link?.kind === 'slide' && (
+      {link?.kind === 'url' && (
+        <>
           <div className="flex items-center gap-2">
             <label
-              htmlFor={`inspector-link-slide-${obj.id}`}
+              htmlFor={`inspector-link-href-${obj.id}`}
               className="w-16 flex-shrink-0 text-xs text-muted-foreground"
             >
-              Target
+              URL
+            </label>
+            <input
+              id={`inspector-link-href-${obj.id}`}
+              type="url"
+              value={link.href}
+              placeholder="https://example.com"
+              onChange={(e) => {
+                const target = link.target
+                patch({
+                  hyperlink: {
+                    kind: 'url',
+                    href: e.target.value,
+                    ...(target !== undefined ? { target } : {}),
+                  },
+                } as SlideObjectPatch<SlideObject>)
+              }}
+              className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor={`inspector-link-target-${obj.id}`}
+              className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+            >
+              Open in
             </label>
             <select
-              id={`inspector-link-slide-${obj.id}`}
-              value={link.slideId}
+              id={`inspector-link-target-${obj.id}`}
+              value={link.target ?? '_blank'}
               onChange={(e) => {
                 patch({
-                  hyperlink: { kind: 'slide', slideId: e.target.value },
+                  hyperlink: {
+                    kind: 'url',
+                    href: link.href,
+                    target: e.target.value as '_self' | '_blank',
+                  },
                 } as SlideObjectPatch<SlideObject>)
               }}
               className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
             >
-              {slides.map((s, i) => (
-                <option key={s.id} value={s.id}>
-                  {s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`}
-                </option>
-              ))}
+              <option value="_blank">New tab</option>
+              <option value="_self">Same tab</option>
             </select>
           </div>
-        )}
-
-        {link?.kind === 'url' && (
-          <>
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor={`inspector-link-href-${obj.id}`}
-                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-              >
-                URL
-              </label>
-              <input
-                id={`inspector-link-href-${obj.id}`}
-                type="url"
-                value={link.href}
-                placeholder="https://example.com"
-                onChange={(e) => {
-                  const target = link.target
-                  patch({
-                    hyperlink: {
-                      kind: 'url',
-                      href: e.target.value,
-                      ...(target !== undefined ? { target } : {}),
-                    },
-                  } as SlideObjectPatch<SlideObject>)
-                }}
-                className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor={`inspector-link-target-${obj.id}`}
-                className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-              >
-                Open in
-              </label>
-              <select
-                id={`inspector-link-target-${obj.id}`}
-                value={link.target ?? '_blank'}
-                onChange={(e) => {
-                  patch({
-                    hyperlink: {
-                      kind: 'url',
-                      href: link.href,
-                      target: e.target.value as '_self' | '_blank',
-                    },
-                  } as SlideObjectPatch<SlideObject>)
-                }}
-                className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
-              >
-                <option value="_blank">New tab</option>
-                <option value="_self">Same tab</option>
-              </select>
-            </div>
-          </>
-        )}
-      </Section>
+        </>
+      )}
     </div>
   )
 }
