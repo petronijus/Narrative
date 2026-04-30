@@ -55,6 +55,7 @@ import {
   VolumeX,
   X,
   CirclePlay,
+  Rows3,
   type LucideIcon,
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -253,10 +254,14 @@ function TransparencySlider({
   id,
   value,
   onChange,
+  ariaLabel = 'Transparency',
+  disabled = false,
 }: {
   id: string
   value: number
   onChange: (next: number) => void
+  ariaLabel?: string
+  disabled?: boolean
 }) {
   const pct = Math.round(value * 100)
   const commit = (raw: number): void => {
@@ -269,21 +274,23 @@ function TransparencySlider({
       <input
         type="range"
         id={id}
-        aria-label="Transparency"
+        aria-label={ariaLabel}
         min={0}
         max={100}
         step={1}
         value={pct}
+        disabled={disabled}
         onChange={(e) => commit(Number.parseFloat(e.target.value))}
-        className="flex-1 accent-primary"
+        className="flex-1 accent-primary disabled:opacity-50"
       />
       <div className="w-20 flex-shrink-0">
         <CompactNumberField
           id={`${id}-num`}
-          ariaLabel="Transparency value"
+          ariaLabel={`${ariaLabel} value`}
           value={pct}
           step={1}
           suffix="%"
+          disabled={disabled}
           onChange={commit}
         />
       </div>
@@ -3680,11 +3687,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
         <div className="flex items-center gap-1">
           <CompactNumberField
             id={`inspector-lineheight-${obj.id}`}
-            glyph={
-              <span className="font-serif tracking-tighter" aria-hidden>
-                A
-              </span>
-            }
+            glyph={<Rows3 className="h-3 w-3" aria-hidden />}
             ariaLabel="Line height"
             value={obj.lineHeight ?? 1.2}
             step={0.1}
@@ -3998,30 +4001,14 @@ function VideoSection({
         ]}
       />
 
-      <div className="flex items-center gap-2">
-        <label
-          htmlFor={`inspector-video-vol-${obj.id}`}
-          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-        >
-          Volume
-        </label>
-        <input
-          id={`inspector-video-vol-${obj.id}`}
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={volume}
-          onChange={(e) =>
-            patch({ volume: Number.parseFloat(e.target.value) } as SlideObjectPatch<VideoObject>)
-          }
-          disabled={muted}
-          className="flex-1 accent-primary disabled:opacity-40"
-        />
-        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
-          {Math.round(volume * 100)}%
-        </span>
-      </div>
+      <SubLabel>Volume</SubLabel>
+      <TransparencySlider
+        id={`inspector-video-vol-${obj.id}`}
+        value={volume}
+        ariaLabel="Volume"
+        disabled={muted}
+        onChange={(v) => patch({ volume: v } as SlideObjectPatch<VideoObject>)}
+      />
 
       <div className="flex items-center gap-2">
         <label

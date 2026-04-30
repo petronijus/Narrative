@@ -37,6 +37,7 @@ import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
+import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state on Container instances
@@ -547,6 +548,7 @@ export const videoRenderer = {
     setPlaceholder(container, placeholder)
 
     applyObjectTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
     startLoad(container, data)
 
     return container
@@ -554,6 +556,7 @@ export const videoRenderer = {
 
   update(node: Container, prev: VideoObject, next: VideoObject): void {
     applyObjectTransform(node, next)
+    applyFilterEffects(node, next.shadow, next.blur)
 
     const box = { w: next.width, h: next.height }
 
@@ -714,6 +717,10 @@ export const videoRenderer = {
 
       startLoad(node, synthetic)
     }
+
+    if ('shadow' in patch || 'blur' in patch) {
+      patchFilterEffects(node, 'shadow' in patch, patch.shadow, 'blur' in patch, patch.blur)
+    }
   },
 
   destroy(node: Container): void {
@@ -721,6 +728,7 @@ export const videoRenderer = {
     stopPolling(node)
 
     releasePosterTexture(node)
+    destroyFilterEffects(node)
 
     node.destroy({ children: true })
   },
