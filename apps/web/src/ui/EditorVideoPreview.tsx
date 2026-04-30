@@ -154,7 +154,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
     else videoEl.addEventListener('canplay', onCanPlay, { once: true })
 
-    if (isPresent && videoObject.autoplay === true) {
+    if (isPresent && videoObject.autoplay === true && videoObject.playOnClick !== true) {
       const onCanPlay = (): void => {
         void videoEl.play().catch(() => undefined)
       }

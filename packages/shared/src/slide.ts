@@ -458,6 +458,15 @@ export interface VideoObject extends BaseSlideObject {
    */
   autoplay?: boolean
   /**
+   * Wait for a user click before playing. Mutually exclusive with
+   * `autoplay`: when both are set, `playOnClick` wins. In present
+   * mode, click-to-toggle still works for any video (it's the
+   * existing fallback), but this flag is the explicit author
+   * intent — it's surfaced in the Inspector and on the animation
+   * timeline so other steps can be timed off it.
+   */
+  playOnClick?: boolean
+  /**
    * Loop playback in present mode. Default: false.
    */
   loop?: boolean

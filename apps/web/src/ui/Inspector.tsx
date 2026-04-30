@@ -55,6 +55,7 @@ import {
   VolumeX,
   X,
   CirclePlay,
+  MousePointerClick,
   Rows3,
   type LucideIcon,
 } from 'lucide-react'
@@ -4103,6 +4104,23 @@ function VideoSection({
             onClick: () =>
               patch({
                 autoplay: obj.autoplay === true ? undefined : true,
+                // Autoplay and playOnClick are mutually exclusive — pressing
+                // one clears the other so the trigger reads unambiguously.
+                ...(obj.autoplay !== true && obj.playOnClick === true
+                  ? { playOnClick: undefined }
+                  : {}),
+              } as unknown as SlideObjectPatch<VideoObject>),
+          },
+          {
+            Icon: MousePointerClick,
+            label: 'Click to play',
+            pressed: obj.playOnClick === true,
+            onClick: () =>
+              patch({
+                playOnClick: obj.playOnClick === true ? undefined : true,
+                ...(obj.playOnClick !== true && obj.autoplay === true
+                  ? { autoplay: undefined }
+                  : {}),
               } as unknown as SlideObjectPatch<VideoObject>),
           },
           {
