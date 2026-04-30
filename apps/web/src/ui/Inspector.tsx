@@ -1558,7 +1558,11 @@ interface BackgroundSectionProps {
   selectClass: string
 }
 
-function BackgroundSection({ slideId, background, selectClass }: BackgroundSectionProps) {
+function BackgroundSection({
+  slideId,
+  background,
+  selectClass: _selectClass,
+}: BackgroundSectionProps) {
   const { deckCtx } = useSlideDoc()
   const current = background ?? DEFAULT_BACKGROUND
   const kind = current.kind
@@ -1597,96 +1601,111 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
     updateSlideBackground(deckCtx, slideId, next)
   }
 
-  function setSolidColor(color: number): void {
+  function _setSolidColor(color: number): void {
     updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: 1 })
   }
 
-  function patchGradientStop(idx: 0 | 1, color: number): void {
-    if (current.kind !== 'linearGradient' && current.kind !== 'radialGradient') return
-    const stops = current.stops.slice()
-    const stop = stops[idx]
-    if (stop === undefined) return
-    stops[idx] = { ...stop, color }
-    updateSlideBackground(deckCtx, slideId, { ...current, stops })
+  // Keep the last-seen gradient around so the closing transition has
+  // content to collapse — same trick as FillBody. Without this the
+  // gradient panel jump-cuts on switch to solid/image.
+  const lastGradientRef = useRef<SlideBackground | null>(null)
+  if (current.kind === 'linearGradient' || current.kind === 'radialGradient') {
+    lastGradientRef.current = current
   }
-
-  function setAngle(angleDeg: number): void {
-    if (current.kind !== 'linearGradient') return
-    updateSlideBackground(deckCtx, slideId, { ...current, angleDeg })
-  }
+  const gradientForRender =
+    current.kind === 'linearGradient' || current.kind === 'radialGradient'
+      ? current
+      : lastGradientRef.current
+  const isGradient = current.kind === 'linearGradient' || current.kind === 'radialGradient'
 
   return (
     <Section title="Background" storageKey="background">
-      {/* Type */}
-      <div className="flex items-center gap-2">
-        <label
-          htmlFor={`bg-kind-${slideId}`}
-          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-        >
-          Type
-        </label>
+      {/* Single-row type picker + (when solid) inline swatch/hex/alpha,
+          mirroring the Fill picker. */}
+      <div className="flex items-center gap-1">
         <select
           id={`bg-kind-${slideId}`}
+          aria-label="Background type"
           value={kind}
           onChange={(e) => setKind(e.target.value as SlideBackground['kind'])}
-          className={selectClass}
+          className={[
+            'h-7 w-20 flex-shrink-0 rounded-md border border-input field-surface px-1.5 text-[11px] text-foreground',
+            'focus:border-ring focus:outline-none',
+          ].join(' ')}
         >
-          <option value="color">Solid color</option>
-          <option value="linearGradient">Linear gradient</option>
-          <option value="radialGradient">Radial gradient</option>
+          <option value="color">Solid</option>
+          <option value="linearGradient">Linear</option>
+          <option value="radialGradient">Radial</option>
           <option value="image">Image</option>
         </select>
+
+        {current.kind === 'color' && (
+          <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
+            <ColorInput
+              value={numberToHex(current.color)}
+              onChange={(hex) =>
+                updateSlideBackground(deckCtx, slideId, {
+                  kind: 'color',
+                  color: hexToNumber(hex),
+                  alpha: current.alpha ?? 1,
+                })
+              }
+              ariaLabel="Background color"
+              showHex
+              alpha={current.alpha ?? 1}
+              onAlphaChange={(a) =>
+                updateSlideBackground(deckCtx, slideId, {
+                  kind: 'color',
+                  color: current.color,
+                  alpha: a,
+                })
+              }
+              inputClassName="!h-5 !w-7"
+              hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+            />
+          </div>
+        )}
       </div>
 
-      {/* Per-kind controls */}
-      {current.kind === 'color' && (
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`bg-color-${slideId}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Color
-          </label>
-          <ColorInput
-            value={numberToHex(current.color)}
-            onChange={(hex) => setSolidColor(hexToNumber(hex))}
-            ariaLabel="Background color"
-            showHex
-          />
+      {/* Gradient sub-editor — animated reveal mirrors the object-fill
+          flow. minmax(0,1fr) on the column keeps the preview bar
+          confined to the inspector width. */}
+      <div
+        className={[
+          'grid overflow-hidden transition-[grid-template-rows,margin] duration-200 ease-out',
+          '[grid-template-columns:minmax(0,1fr)]',
+          isGradient ? 'mt-1.5 grid-rows-[1fr]' : 'mt-0 grid-rows-[0fr]',
+        ].join(' ')}
+        aria-hidden={!isGradient}
+      >
+        <div className="min-h-0 min-w-0">
+          {gradientForRender !== null &&
+            (gradientForRender.kind === 'linearGradient' ||
+              gradientForRender.kind === 'radialGradient') && (
+              <GradientStopsEditor
+                kind={gradientForRender.kind}
+                stops={gradientForRender.stops}
+                angleDeg={
+                  gradientForRender.kind === 'linearGradient'
+                    ? gradientForRender.angleDeg
+                    : undefined
+                }
+                onStopsChange={(stops) =>
+                  updateSlideBackground(deckCtx, slideId, { ...gradientForRender, stops })
+                }
+                onAngleChange={
+                  gradientForRender.kind === 'linearGradient'
+                    ? (angleDeg) =>
+                        updateSlideBackground(deckCtx, slideId, {
+                          ...gradientForRender,
+                          angleDeg,
+                        })
+                    : undefined
+                }
+              />
+            )}
         </div>
-      )}
-
-      {(current.kind === 'linearGradient' || current.kind === 'radialGradient') && (
-        <>
-          <div className="flex items-center gap-2">
-            <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">Start</label>
-            <ColorInput
-              value={numberToHex(current.stops[0]?.color ?? 0xffffff)}
-              onChange={(hex) => patchGradientStop(0, hexToNumber(hex))}
-              ariaLabel="Gradient start color"
-              showHex={false}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="w-16 flex-shrink-0 text-xs text-muted-foreground">End</label>
-            <ColorInput
-              value={numberToHex(current.stops[1]?.color ?? 0x111111)}
-              onChange={(hex) => patchGradientStop(1, hexToNumber(hex))}
-              ariaLabel="Gradient end color"
-              showHex={false}
-            />
-          </div>
-          {current.kind === 'linearGradient' && (
-            <NumberField
-              id={`bg-angle-${slideId}`}
-              label="Angle"
-              value={current.angleDeg}
-              step={1}
-              onChange={(v) => setAngle(((v % 360) + 360) % 360)}
-            />
-          )}
-        </>
-      )}
+      </div>
 
       {current.kind === 'image' && (
         <p className="text-[11px] italic text-muted-foreground/60">
@@ -2342,6 +2361,24 @@ function FillBody({
   const solidHex = numberToHex(obj.fill)
   const fillAlpha = obj.fillAlpha ?? 1
 
+  // Keep the last-seen gradient / image fillStyle around so the closing
+  // transition has content to collapse. Without this, switching mode →
+  // solid clears fillStyle synchronously and the sub-editor unmounts
+  // before the height transition runs, producing a jump-cut close.
+  const lastGradientRef = useRef<FillStyle | null>(null)
+  const lastImageRef = useRef<ImageFillStyle | null>(null)
+  if (obj.fillStyle !== undefined && obj.fillStyle.kind !== 'image') {
+    lastGradientRef.current = obj.fillStyle
+  }
+  if (obj.fillStyle?.kind === 'image') {
+    lastImageRef.current = obj.fillStyle
+  }
+  const gradientForRender =
+    obj.fillStyle !== undefined && obj.fillStyle.kind !== 'image'
+      ? obj.fillStyle
+      : lastGradientRef.current
+  const imageForRender = obj.fillStyle?.kind === 'image' ? obj.fillStyle : lastImageRef.current
+
   const setMode = (next: FillMode): void => {
     if (next === mode) return
     if (next === 'solid') {
@@ -2355,10 +2392,15 @@ function FillBody({
       } as SlideObjectPatch<FilledShape>)
       return
     }
-    // Seed a two-stop gradient from the current solid colour + its darker
-    // counterpart so the object doesn't visually flash to white/black.
+    // Seed a two-stop gradient from the current solid colour + a darker
+    // tint of itself (multiply RGB by 0.55) so the object reads as a
+    // gradient without slamming to pure black on the second stop.
     const startColor = obj.fill
-    const endColor = 0x000000
+    const r = (startColor >> 16) & 0xff
+    const g = (startColor >> 8) & 0xff
+    const b = startColor & 0xff
+    const tint = (c: number): number => Math.max(0, Math.min(255, Math.round(c * 0.55)))
+    const endColor = (tint(r) << 16) | (tint(g) << 8) | tint(b)
     const stops: FillGradientStop[] = [
       { color: startColor, offset: 0 },
       { color: endColor, offset: 1 },
@@ -2410,22 +2452,54 @@ function FillBody({
         )}
       </div>
 
-      {(mode === 'linearGradient' || mode === 'radialGradient') && obj.fillStyle !== undefined && (
-        <GradientEditor
-          fillStyle={obj.fillStyle}
-          onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
-        />
-      )}
+      {/* Gradient sub-editor — keeps the previous fillStyle mounted while
+          collapsing so the closing animation has content to slide. The
+          grid-rows trick animates intrinsic height without measuring.
+          grid-cols-[minmax(0,1fr)] forces the column to respect the
+          parent width so children with w-full don't push the cell past
+          the inspector's right edge. */}
+      <div
+        className={[
+          'grid overflow-hidden transition-[grid-template-rows,margin] duration-200 ease-out',
+          '[grid-template-columns:minmax(0,1fr)]',
+          mode === 'linearGradient' || mode === 'radialGradient'
+            ? 'mt-1.5 grid-rows-[1fr]'
+            : 'mt-0 grid-rows-[0fr]',
+        ].join(' ')}
+        aria-hidden={!(mode === 'linearGradient' || mode === 'radialGradient')}
+      >
+        <div className="min-h-0 min-w-0">
+          {gradientForRender !== null && gradientForRender.kind !== 'image' && (
+            <GradientEditor
+              fillStyle={gradientForRender}
+              onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+            />
+          )}
+        </div>
+      </div>
 
-      {mode === 'image' && obj.fillStyle?.kind === 'image' && (
-        <ImageFillEditor
-          fillStyle={obj.fillStyle}
-          onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
-        />
-      )}
+      <div
+        className={[
+          'grid overflow-hidden transition-[grid-template-rows,margin] duration-200 ease-out',
+          '[grid-template-columns:minmax(0,1fr)]',
+          mode === 'image' ? 'mt-1.5 grid-rows-[1fr]' : 'mt-0 grid-rows-[0fr]',
+        ].join(' ')}
+        aria-hidden={mode !== 'image'}
+      >
+        <div className="min-h-0 min-w-0">
+          {imageForRender !== null && (
+            <ImageFillEditor
+              fillStyle={imageForRender}
+              onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }
+
+const MAX_GRADIENT_STOPS = 10
 
 function GradientEditor({
   fillStyle,
@@ -2435,67 +2509,355 @@ function GradientEditor({
   onChange: (next: FillStyle) => void
 }) {
   if (fillStyle.kind === 'image') return null
-  const stops = fillStyle.stops
-  const stop0 = stops[0] ?? { color: 0xffffff, offset: 0 }
-  const stop1 = stops[stops.length - 1] ?? { color: 0x000000, offset: 1 }
+  return (
+    <GradientStopsEditor
+      kind={fillStyle.kind}
+      stops={fillStyle.stops}
+      angleDeg={fillStyle.kind === 'linearGradient' ? fillStyle.angleDeg : undefined}
+      onStopsChange={(stops) => onChange({ ...fillStyle, stops } as FillStyle)}
+      onAngleChange={
+        fillStyle.kind === 'linearGradient'
+          ? (angleDeg) => onChange({ ...fillStyle, angleDeg } as FillStyle)
+          : undefined
+      }
+    />
+  )
+}
 
-  const setStop = (idx: 0 | 1, color: number): void => {
-    const nextStops = [...stops]
-    if (idx === 0) nextStops[0] = { ...stop0, color }
-    else nextStops[nextStops.length - 1] = { ...stop1, color }
-    onChange({ ...fillStyle, stops: nextStops } as FillStyle)
+/**
+ * Figma-style stops editor. Pure on its inputs — works equally well
+ * against object FillStyle gradients and slide backgrounds. The
+ * angle row only renders for linear gradients (caller passes
+ * `angleDeg` + `onAngleChange`); it slides in / out via the
+ * grid-rows trick so flipping kinds doesn't jump-cut.
+ */
+function GradientStopsEditor({
+  kind,
+  stops,
+  angleDeg,
+  onStopsChange,
+  onAngleChange,
+}: {
+  kind: 'linearGradient' | 'radialGradient'
+  stops: FillGradientStop[]
+  angleDeg: number | undefined
+  onStopsChange: (next: FillGradientStop[]) => void
+  onAngleChange: ((next: number) => void) | undefined
+}) {
+  const canAdd = stops.length < MAX_GRADIENT_STOPS
+  const canRemove = stops.length > 2
+
+  const sorted = [...stops].sort((a, b) => a.offset - b.offset)
+  const previewCss = `linear-gradient(90deg, ${sorted
+    .map((s) => `${numberToRgba(s.color, s.alpha ?? 1)} ${(s.offset * 100).toFixed(2)}%`)
+    .join(', ')})`
+
+  const updateStop = (idx: number, patchStop: Partial<FillGradientStop>): void => {
+    onStopsChange(stops.map((s, i) => (i === idx ? { ...s, ...patchStop } : s)))
   }
 
-  const setStopAlpha = (idx: 0 | 1, alpha: number): void => {
-    const nextStops = [...stops]
-    if (idx === 0) nextStops[0] = { ...stop0, alpha }
-    else nextStops[nextStops.length - 1] = { ...stop1, alpha }
-    onChange({ ...fillStyle, stops: nextStops } as FillStyle)
+  const removeStop = (idx: number): void => {
+    if (!canRemove) return
+    onStopsChange(stops.filter((_, i) => i !== idx))
+  }
+
+  const addStop = (): void => {
+    if (!canAdd) return
+    const sortedIdx = sorted.map((s, i) => ({ s, i }))
+    let bestGap = -1
+    let insertAfterSortedIdx = 0
+    for (let i = 0; i < sortedIdx.length - 1; i++) {
+      const gap = sortedIdx[i + 1]!.s.offset - sortedIdx[i]!.s.offset
+      if (gap > bestGap) {
+        bestGap = gap
+        insertAfterSortedIdx = i
+      }
+    }
+    const a = sortedIdx[insertAfterSortedIdx]!.s
+    const b = sortedIdx[insertAfterSortedIdx + 1]!.s
+    const midOffset = (a.offset + b.offset) / 2
+    const midColor = mixColors(a.color, b.color, 0.5)
+    const midAlpha = ((a.alpha ?? 1) + (b.alpha ?? 1)) / 2
+    const newStop: FillGradientStop = {
+      color: midColor,
+      offset: midOffset,
+      ...(midAlpha < 1 ? { alpha: midAlpha } : {}),
+    }
+    onStopsChange([...stops, newStop])
+  }
+
+  const setAngle = (deg: number): void => {
+    if (onAngleChange === undefined) return
+    onAngleChange(((deg % 360) + 360) % 360)
+  }
+
+  const isLinear =
+    kind === 'linearGradient' && angleDeg !== undefined && onAngleChange !== undefined
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-2">
+      <GradientPreviewBar
+        stops={stops}
+        previewCss={previewCss}
+        onUpdate={(idx, patchStop) => updateStop(idx, patchStop)}
+      />
+
+      <div
+        className={[
+          'grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-out',
+          '[grid-template-columns:minmax(0,1fr)]',
+          isLinear ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+        ].join(' ')}
+        aria-hidden={!isLinear}
+      >
+        <div className="min-h-0 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="w-12 text-[10px] uppercase text-muted-foreground">Angle</span>
+            <input
+              type="range"
+              aria-label="Gradient angle"
+              min={0}
+              max={360}
+              value={angleDeg ?? 0}
+              disabled={!isLinear}
+              onChange={(e) => setAngle(Number.parseFloat(e.target.value))}
+              className="flex-1 accent-primary"
+            />
+            <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
+              {Math.round(angleDeg ?? 0)}°
+            </span>
+            <button
+              type="button"
+              aria-label="Rotate 90°"
+              title="Rotate 90°"
+              disabled={!isLinear}
+              onClick={() => isLinear && setAngle((angleDeg ?? 0) + 90)}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-input field-surface text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCw className="h-3 w-3" aria-hidden />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase text-muted-foreground">Stops</span>
+        <button
+          type="button"
+          aria-label="Add gradient stop"
+          title={canAdd ? 'Add stop' : `Max ${MAX_GRADIENT_STOPS} stops`}
+          onClick={addStop}
+          disabled={!canAdd}
+          className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <span className="text-sm leading-none">+</span>
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {stops.map((stop, idx) => (
+          <GradientStopRow
+            key={idx}
+            stop={stop}
+            canRemove={canRemove}
+            onChange={(patchStop) => updateStop(idx, patchStop)}
+            onRemove={() => removeStop(idx)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function GradientPreviewBar({
+  stops,
+  previewCss,
+  onUpdate,
+}: {
+  stops: FillGradientStop[]
+  previewCss: string
+  onUpdate: (idx: number, patch: Partial<FillGradientStop>) => void
+}) {
+  const barRef = useRef<HTMLDivElement>(null)
+  const handleSlotRefs = useRef<(HTMLDivElement | null)[]>([])
+  // Track whether the pointer actually moved during a press so a
+  // click-without-drag can fall through to the dblclick handler.
+  const draggedRef = useRef(false)
+
+  const beginDrag = (idx: number, e: React.PointerEvent<HTMLButtonElement>): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    const bar = barRef.current
+    if (bar === null) return
+    const rect = bar.getBoundingClientRect()
+    const target = e.currentTarget
+    target.setPointerCapture(e.pointerId)
+    draggedRef.current = false
+    const startX = e.clientX
+
+    const move = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - startX) > 2) draggedRef.current = true
+      if (!draggedRef.current) return
+      const x = ev.clientX - rect.left
+      const t = Math.max(0, Math.min(1, x / Math.max(1, rect.width)))
+      onUpdate(idx, { offset: t })
+    }
+    const up = (ev: PointerEvent) => {
+      target.releasePointerCapture(ev.pointerId)
+      target.removeEventListener('pointermove', move)
+      target.removeEventListener('pointerup', up)
+      target.removeEventListener('pointercancel', up)
+    }
+    target.addEventListener('pointermove', move)
+    target.addEventListener('pointerup', up)
+    target.addEventListener('pointercancel', up)
+  }
+
+  const openPicker = (idx: number): void => {
+    const trigger = handleSlotRefs.current[idx]?.querySelector(
+      'button[aria-label="Stop color picker"]',
+    ) as HTMLButtonElement | null
+    trigger?.click()
   }
 
   return (
-    <div className="ml-[4.5rem] flex flex-col gap-1">
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 text-[10px] uppercase text-muted-foreground">Start</span>
-        <ColorInput
-          value={numberToHex(stop0.color)}
-          onChange={(hex) => setStop(0, hexToNumber(hex))}
-          ariaLabel="Gradient start color"
-          showHex={false}
-          alpha={stop0.alpha ?? 1}
-          onAlphaChange={(a) => setStopAlpha(0, a)}
-        />
-        <span className="w-12 text-[10px] uppercase text-muted-foreground">End</span>
-        <ColorInput
-          value={numberToHex(stop1.color)}
-          onChange={(hex) => setStop(1, hexToNumber(hex))}
-          ariaLabel="Gradient end color"
-          showHex={false}
-          alpha={stop1.alpha ?? 1}
-          onAlphaChange={(a) => setStopAlpha(1, a)}
-        />
-      </div>
-      {fillStyle.kind === 'linearGradient' && (
-        <div className="flex items-center gap-1.5">
-          <span className="w-12 text-[10px] uppercase text-muted-foreground">Angle</span>
-          <input
-            type="range"
-            aria-label="Gradient angle"
-            min={0}
-            max={360}
-            value={fillStyle.angleDeg}
-            onChange={(e) =>
-              onChange({ ...fillStyle, angleDeg: Number.parseFloat(e.target.value) })
-            }
-            className="flex-1 accent-primary"
-          />
-          <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
-            {Math.round(fillStyle.angleDeg)}°
-          </span>
-        </div>
-      )}
+    <div
+      ref={barRef}
+      aria-label="Gradient preview"
+      className="relative mx-1.5 h-7 rounded-md border border-input"
+      style={{ backgroundImage: previewCss }}
+    >
+      {stops.map((stop, idx) => {
+        const left = `${Math.max(0, Math.min(1, stop.offset)) * 100}%`
+        return (
+          <div
+            key={idx}
+            ref={(el) => {
+              handleSlotRefs.current[idx] = el
+            }}
+            className="absolute top-1/2 h-5 w-3 -translate-x-1/2 -translate-y-1/2"
+            style={{ left }}
+          >
+            {/* Hidden ColorInput — popover anchors to its (invisible)
+                swatch trigger, which sits exactly under the handle. */}
+            <div className="pointer-events-none absolute inset-0 opacity-0">
+              <ColorInput
+                value={numberToHex(stop.color)}
+                onChange={(hex) => onUpdate(idx, { color: hexToNumber(hex) })}
+                alpha={stop.alpha ?? 1}
+                onAlphaChange={(a) => onUpdate(idx, { alpha: a })}
+                ariaLabel="Stop color picker"
+                showHex={false}
+                inputClassName="!h-5 !w-3 !p-0"
+              />
+            </div>
+            <button
+              type="button"
+              aria-label={`Drag stop ${idx + 1}`}
+              title={`Stop ${idx + 1} — drag to move, double-click to edit`}
+              onPointerDown={(e) => beginDrag(idx, e)}
+              onDoubleClick={() => openPicker(idx)}
+              className={[
+                'absolute inset-0 cursor-ew-resize rounded-sm border-2 border-white shadow ring-1 ring-black/40',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              ].join(' ')}
+              style={{
+                backgroundColor: numberToRgba(stop.color, stop.alpha ?? 1),
+              }}
+            />
+          </div>
+        )
+      })}
     </div>
   )
+}
+
+function GradientStopRow({
+  stop,
+  canRemove,
+  onChange,
+  onRemove,
+}: {
+  stop: FillGradientStop
+  canRemove: boolean
+  onChange: (patch: Partial<FillGradientStop>) => void
+  onRemove: () => void
+}) {
+  const offsetPct = Math.round(stop.offset * 100)
+  const alphaPct = Math.round((stop.alpha ?? 1) * 100)
+
+  return (
+    <div className="flex w-full min-w-0 items-center gap-1">
+      <input
+        type="number"
+        aria-label="Stop position"
+        min={0}
+        max={100}
+        value={offsetPct}
+        onChange={(e) => {
+          const v = Number.parseFloat(e.target.value)
+          if (!Number.isFinite(v)) return
+          onChange({ offset: Math.max(0, Math.min(100, v)) / 100 })
+        }}
+        className="w-10 flex-shrink-0 rounded-md border border-input field-surface px-1 py-0.5 text-[11px] text-foreground focus:border-ring focus:outline-none"
+      />
+      <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-input field-surface px-1">
+        <ColorInput
+          value={numberToHex(stop.color)}
+          onChange={(hex) => onChange({ color: hexToNumber(hex) })}
+          ariaLabel="Stop color"
+          showHex
+          alpha={stop.alpha ?? 1}
+          onAlphaChange={(a) => onChange({ alpha: a })}
+          inputClassName="!h-5 !w-5"
+          hexClassName="!h-5 !min-w-0 !flex-1 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+        />
+      </div>
+      <input
+        type="number"
+        aria-label="Stop alpha"
+        min={0}
+        max={100}
+        value={alphaPct}
+        onChange={(e) => {
+          const v = Number.parseFloat(e.target.value)
+          if (!Number.isFinite(v)) return
+          onChange({ alpha: Math.max(0, Math.min(100, v)) / 100 })
+        }}
+        className="w-10 flex-shrink-0 rounded-md border border-input field-surface px-1 py-0.5 text-[11px] text-foreground focus:border-ring focus:outline-none"
+      />
+      <button
+        type="button"
+        aria-label="Remove stop"
+        title={canRemove ? 'Remove stop' : 'Need at least 2 stops'}
+        onClick={onRemove}
+        disabled={!canRemove}
+        className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <span className="text-sm leading-none">−</span>
+      </button>
+    </div>
+  )
+}
+
+function numberToRgba(color: number, alpha: number): string {
+  const r = (color >> 16) & 0xff
+  const g = (color >> 8) & 0xff
+  const b = color & 0xff
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function mixColors(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff
+  const ag = (a >> 8) & 0xff
+  const ab = a & 0xff
+  const br = (b >> 16) & 0xff
+  const bg = (b >> 8) & 0xff
+  const bb = b & 0xff
+  const r = Math.round(ar + (br - ar) * t)
+  const g = Math.round(ag + (bg - ag) * t)
+  const bl = Math.round(ab + (bb - ab) * t)
+  return (r << 16) | (g << 8) | bl
 }
 
 // ---------------------------------------------------------------------------
@@ -2692,56 +3054,139 @@ function EffectsSection({
 }) {
   const hasShadow = obj.shadow !== undefined
   const blur = obj.blur ?? 0
+  const hasBlur = blur > 0
 
   return (
     <Section title="Effects" storageKey="effects">
-      {/* Link — hyperlink target on any object. Single-selection only. */}
-      <LinkControls obj={obj} patch={patch} />
+      <SubLabel>Effects</SubLabel>
 
       {/* Shadow */}
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Shadow</span>
-        <input
-          type="checkbox"
-          aria-label="Enable shadow"
-          checked={hasShadow}
-          onChange={(e) =>
-            patch({
-              shadow: e.target.checked ? DEFAULT_SHADOW : undefined,
-            } as unknown as SlideObjectPatch<SlideObject>)
-          }
-          className="h-3.5 w-3.5"
-        />
-      </div>
-
-      {hasShadow && obj.shadow !== undefined && (
-        <ShadowControls
-          shadow={obj.shadow}
-          onChange={(next) => patch({ shadow: next } as SlideObjectPatch<SlideObject>)}
-        />
-      )}
+      <EffectToggleRow
+        label="Shadow"
+        enabled={hasShadow}
+        onToggle={(on) =>
+          patch({
+            shadow: on ? DEFAULT_SHADOW : undefined,
+          } as unknown as SlideObjectPatch<SlideObject>)
+        }
+      >
+        {hasShadow && obj.shadow !== undefined && (
+          <ShadowControls
+            shadow={obj.shadow}
+            onChange={(next) => patch({ shadow: next } as SlideObjectPatch<SlideObject>)}
+          />
+        )}
+      </EffectToggleRow>
 
       {/* Blur */}
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Blur</span>
-        <input
-          type="range"
-          aria-label="Blur radius"
-          min={0}
-          max={40}
-          step={1}
-          value={blur}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.target.value)
-            patch({ blur: v === 0 ? undefined : v } as unknown as SlideObjectPatch<SlideObject>)
-          }}
-          className="flex-1 accent-primary"
-        />
-        <span className="w-10 text-right text-[10px] tabular-nums text-muted-foreground">
-          {Math.round(blur)}
-        </span>
-      </div>
+      <EffectToggleRow
+        label="Blur"
+        enabled={hasBlur}
+        onToggle={(on) =>
+          patch({
+            blur: on ? (blur > 0 ? blur : 8) : undefined,
+          } as unknown as SlideObjectPatch<SlideObject>)
+        }
+      >
+        {hasBlur && (
+          <BlurSlider
+            label="Radius"
+            value={blur}
+            ariaLabel="Blur radius"
+            onChange={(v) =>
+              patch({
+                blur: v === 0 ? undefined : v,
+              } as unknown as SlideObjectPatch<SlideObject>)
+            }
+          />
+        )}
+      </EffectToggleRow>
+
+      {/* Link — hyperlink target on any object. */}
+      <LinkControls obj={obj} patch={patch} />
     </Section>
+  )
+}
+
+function EffectToggleRow({
+  label,
+  enabled,
+  onToggle,
+  children,
+}: {
+  label: string
+  enabled: boolean
+  onToggle: (next: boolean) => void
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="flex-1 text-xs text-foreground">{label}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          aria-label={`Enable ${label.toLowerCase()}`}
+          onClick={() => onToggle(!enabled)}
+          className={[
+            'relative inline-flex h-4 w-7 flex-shrink-0 items-center rounded-full',
+            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            enabled ? 'bg-primary' : 'bg-input',
+          ].join(' ')}
+        >
+          <span
+            className={[
+              'pointer-events-none inline-block h-3 w-3 transform rounded-full bg-background shadow',
+              'transition-transform',
+              enabled ? 'translate-x-3.5' : 'translate-x-0.5',
+            ].join(' ')}
+          />
+        </button>
+      </div>
+      <div
+        className={[
+          'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
+          enabled ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+        ].join(' ')}
+        aria-hidden={!enabled}
+      >
+        <div className="overflow-hidden">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+function BlurSlider({
+  label,
+  value,
+  ariaLabel,
+  onChange,
+}: {
+  label: string
+  value: number
+  ariaLabel: string
+  onChange: (next: number) => void
+}) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
+        {label}
+      </span>
+      <input
+        type="range"
+        aria-label={ariaLabel}
+        min={0}
+        max={40}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number.parseFloat(e.target.value))}
+        className="flex-1 accent-primary"
+      />
+      <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">
+        {Math.round(value)}
+      </span>
+    </div>
   )
 }
 

@@ -671,11 +671,7 @@ export const textRenderer = {
     setStoredData(node, merged)
 
     if ('shadow' in patch || 'blur' in patch) {
-      applyFilterEffects(
-        node,
-        'shadow' in patch ? patch.shadow : undefined,
-        'blur' in patch ? patch.blur : undefined,
-      )
+      applyFilterEffects(node, merged.shadow, merged.blur)
     }
 
     // Rebuild the clip mask whenever the bounding box or fontSize

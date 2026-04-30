@@ -82,8 +82,6 @@ export function applyFilterEffects(
 ): void {
   const slots = getSlots(container)
 
-  // Remember the most recent request. If a previous rAF is still
-  // pending, it'll pick up these values instead of firing the stale one.
   if (shadow !== undefined) {
     slots.pendingShadow = { ...shadow }
     slots.pendingShadowPresent = true
