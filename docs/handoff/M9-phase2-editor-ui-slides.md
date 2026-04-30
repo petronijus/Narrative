@@ -43,9 +43,9 @@ Client-side `duplicateSlide()` helper:
 - Reads source slide via `listSlides()`
 - Creates new slide via `addSlide()` at insertion index
 - Copies objects with fresh `nanoid()` IDs via `addObject()`
-- Copies animations via `addAnimation()` (objectId linkage NOT remapped — TODO M22)
+- Copies animations via `addAnimation()` (objectId linkage NOT remapped — TODO M18)
 
-**TODO (M22 cleanup)**: move `duplicateSlide` into `@narrative/slide-model` as a first-class mutation with full ID remapping.
+**TODO (M18 cleanup)**: move `duplicateSlide` into `@narrative/slide-model` as a first-class mutation with full ID remapping.
 
 ### 4. Inspector slide mode — `apps/web/src/ui/Inspector.tsx`
 
@@ -101,8 +101,8 @@ Left `<aside>` width bumped from `w-48` (192px) to `w-60` (240px). Now mounts `<
 | Item                                      | Location                    | Target                     |
 | ----------------------------------------- | --------------------------- | -------------------------- |
 | `runSlideTransition` playback             | `PresentLayout.tsx`         | M14 or dedicated follow-up |
-| `duplicateSlide` → slide-model            | `slideHelpers.ts` + comment | M22 cleanup                |
-| Animation objectId remapping in duplicate | `slideHelpers.ts`           | M22 cleanup                |
+| `duplicateSlide` → slide-model            | `slideHelpers.ts` + comment | M18 cleanup                |
+| Animation objectId remapping in duplicate | `slideHelpers.ts`           | M18 cleanup                |
 | Awareness `activeSlideId` broadcast       | —                           | M29                        |
 
 ---

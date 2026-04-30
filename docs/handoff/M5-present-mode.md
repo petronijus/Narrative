@@ -70,7 +70,7 @@ Present mode jako druhý mód stejného renderer pipeline. Architektonický edit
 - **M6** — GSAP animace (present mode je read-only konzument)
 - **M9** — Multi-slide navigace (Arrow/Space/Page keys dostanou reálnou implementaci)
 - **M13** — Presenter view v separátním okně
-- **M20** — Deck-level aspect ratio (nahradí hardcoded 16:9 v constants.ts)
+- **M16** — Deck-level aspect ratio (nahradí hardcoded 16:9 v constants.ts) — renumbered from M20 on 2026-05-01
 
 ## Verifikace ručně
 

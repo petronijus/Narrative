@@ -124,5 +124,5 @@ docs/handoff/polish-p12d-handover.md           NEW
    - `react-colorful` test env install.
    - `pixi-filters` ambient types.
    - `y-protocols/awareness` type re-export from `slide-model`.
-3. After P12f, declare P12 closed and move on to **M20** (templates +
-   themes / slide masters).
+3. After P12f, declare P12 closed and move on to **M16** (templates +
+   themes / slide masters — renumbered from M20 on 2026-05-01).

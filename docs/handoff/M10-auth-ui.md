@@ -54,7 +54,7 @@ Client-side OIDC PKCE auth flow, Share dialog, and role-based UI gating.
 - [x] Copy link to clipboard
 - [x] Revoke share link
 - [x] Focus trap (Tab/Shift+Tab cycling), Esc closes, backdrop click closes
-- [ ] Email lookup for invite — deferred to M21
+- [ ] Email lookup for invite — deferred to M17
 
 ## Role gating applied to
 
@@ -96,9 +96,9 @@ Client-side OIDC PKCE auth flow, Share dialog, and role-based UI gating.
 ## Known limitations
 
 - Role resolution uses `/decks` list endpoint; server currently returns `viewerRole` only when phase 2 lands. Fallback: authenticated users who can see a deck get 'editor' role until server provides the field.
-- Invite by userId (Authentik sub) only — email lookup deferred to M21.
+- Invite by userId (Authentik sub) only — email lookup deferred to M17.
 - Silent renewal requires Authentik to have `silent_redirect_uri` configured; without it, users re-auth every token TTL (default Authentik 5 min).
-- Share link QR code / custom slug — M21.
+- Share link QR code / custom slug — M17.
 - HocuspocusProvider `parameters` option: verified present in v2.15 API for passing WS URL query params.
 
 ## Blockers for next agent

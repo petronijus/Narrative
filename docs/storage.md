@@ -26,7 +26,7 @@ narrative-media/
 - `<uploadId>` — tus upload ID (UUID generated server-side on upload initiation)
 - `<ext>` — original file extension (e.g. `jpg`, `png`, `webp`, `gif`)
 
-Object versioning is NOT enabled. Deletes are hard-deletes. Per-deck object cleanup on deck deletion is not implemented in M11; tracked for M21.
+Object versioning is NOT enabled. Deletes are hard-deletes. Per-deck object cleanup on deck deletion is not implemented in M11; tracked for M17 (comments — was M21).
 
 ## Access patterns
 

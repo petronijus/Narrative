@@ -54,7 +54,7 @@ Three questions to resolve:
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | `@narrative/shared`      | Types used by both frontend and backend (e.g., API request/response shapes). Avoids duplication.                              |
 | `@narrative/slide-model` | Yjs bindings + object type registry. Will grow large (M2-M3). Kept separate so server can import it without pulling in React. |
-| `@narrative/animation`   | JSON DSL + GSAP compiler. Server will use it for AI-generated animation validation (M16). Must not depend on DOM APIs.        |
+| `@narrative/animation`   | JSON DSL + GSAP compiler. Server will use it for AI-generated animation validation (M20 — renumbered from M16 on 2026-05-01). Must not depend on DOM APIs.        |
 | `@narrative/ui`          | Reusable React components. Separate so it can be documented/tested in isolation (Storybook, if added).                        |
 
 All packages are empty shells at M0. Content arrives in milestones M2-M6.

@@ -147,7 +147,7 @@ Manual smoke test with `BYPASS_AUTH=true` + `VITE_BYPASS_AUTH=true`:
 - **`viewerRole` field on server deck responses** — client currently falls
   back to `'editor'` when listing; role gating remains correct for real
   viewers via share-token path.
-- **Email-based invite** (Authentik user lookup) — M21.
+- **Email-based invite** (Authentik user lookup) — M17 (renumbered from M21).
 
 ---
 

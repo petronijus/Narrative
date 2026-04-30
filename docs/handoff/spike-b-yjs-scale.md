@@ -103,7 +103,7 @@ Výstup: JSON metrik na stdout, debug log na stderr. Node.js v22, žádné brows
 ```
 kde payload pro Sync obsahuje sub-type byte (syncStep1/2/update) a pak varUint8Array data. Awareness payload je přímo varUint8Array.
 
-**Dopad na M4**: Pro server-side Yjs klienta (AI generování v M16) bude nutné implementovat Hocuspocus-kompatibilní Node klient. Viz `src/yjsClient.ts` v tomto spiku jako vzor. Nebo použít `@hocuspocus/server`'s `openDirectConnection()` API pro in-process access bez WebSocket.
+**Dopad na M4**: Pro server-side Yjs klienta (AI generování v M20) bude nutné implementovat Hocuspocus-kompatibilní Node klient. Viz `src/yjsClient.ts` v tomto spiku jako vzor. Nebo použít `@hocuspocus/server`'s `openDirectConnection()` API pro in-process access bez WebSocket.
 
 ### 2. CRDT konvergence je deterministická a robustní
 
@@ -135,7 +135,7 @@ Extension hook `onStoreDocument` se volá při flush, ne při každém Yjs updat
 
 3. **Document name = deck ID**: URL pattern `ws://host/hocuspocus/DECK_UUID` — Hocuspocus extrahuje document name z URL path, takže jedna instance serveru obsluhuje N decků simultánně.
 
-4. **Server-side Yjs access**: Pro AI generování (M16) nepoužívat WebSocket. Místo toho:
+4. **Server-side Yjs access**: Pro AI generování (M20) nepoužívat WebSocket. Místo toho:
    ```ts
    const doc = await server.loadDocument('deck-uuid');
    doc.transact(() => { /* AI mutations */ }, 'ai-agent');
@@ -170,7 +170,7 @@ Extension hook `onStoreDocument` se volá při flush, ne při každém Yjs updat
 
 **Žádný showstopper.** Minor issues:
 
-- **Node.js klient pro Hocuspocus**: Není k dispozici jako npm package. Implementace v `src/yjsClient.ts` tohoto spiku funguje (48 řádků core logic) a může sloužit jako základ pro `packages/shared/yjsNodeClient.ts` v M16.
+- **Node.js klient pro Hocuspocus**: Není k dispozici jako npm package. Implementace v `src/yjsClient.ts` tohoto spiku funguje (48 řádků core logic) a může sloužit jako základ pro `packages/shared/yjsNodeClient.ts` v M20.
 - **`ts-node/esm` experimental loader warning**: Nevadí pro spike, pro produkci použít esbuild nebo `tsx` runner.
 - **Awareness latency measurement**: Spike měří single-hop localhost latency. Reálná WAN latency (20–80ms round-trip) bude dominovat. Pass criterion 100ms je s rezervou splnitelný.
 

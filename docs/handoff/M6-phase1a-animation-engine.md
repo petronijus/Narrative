@@ -10,7 +10,7 @@
 
 ### packages/shared/src/animation.ts (NOVÝ)
 
-Sdílený DSL schema — kontrakt mezi animation engine, state-sync a AI agentem (M16):
+Sdílený DSL schema — kontrakt mezi animation engine, state-sync a AI agentem (M20 — renumbered z M16 dne 2026-05-01):
 
 - `AnimationPreset` union: `'fadeIn' | 'slideIn'`
 - `AnimationTrigger` union: `'onEnter' | 'onClick' | 'withPrevious' | 'afterPrevious'`

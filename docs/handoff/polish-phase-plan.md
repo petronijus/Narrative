@@ -1,18 +1,32 @@
 # Polish Phase — Plan + Handoff
 
-**Date:** 2026-04-22
-**Status:** Plan approved. P1 not yet started.
-**Context:** After M19 (speaker notes) merged, the product is a solid PoC.
-This phase closes the UX gap vs. Keynote before we continue to the next
-numbered milestones (M20 templates/themes, M21 comments, M22 version
-history, then M16–M18 AI work).
+**Date:** 2026-04-22 (planned) / **Closed:** 2026-05-01
+**Status:** ✅ Shipped. P1–P12 all merged to `main` (with P13–P15 follow-ups
+also done — rich text, inspector cleanup, video Pixi texture).
+
+**Milestones renumbered 2026-05-01** so the next user-facing feature
+(templates + themes) is the lowest open number. New order:
+
+| New | Old | Topic                                          |
+| --- | --- | ---------------------------------------------- |
+| M16 | M20 | Templates + themes (slide masters)             |
+| M17 | M21 | Comments                                       |
+| M18 | M22 | Version history                                |
+| M19 | M19 | Speaker notes (shipped — unchanged)            |
+| M20 | M16 | AI — phase 1 (server-side Yjs client + DSL)    |
+| M21 | M17 | AI — phase 2 (per-slide assist)                |
+| M22 | M18 | AI — phase 3 (layout / global)                 |
+| M23+| —   | Reserved (unchanged)                           |
+**Context:** After M19 (speaker notes) merged, the product was a solid PoC.
+This phase closed the UX gap vs. Keynote before continuing to the next
+numbered milestones.
 
 ## Where we are
 
 - M0–M15, M19 merged to `main`.
-- Deferred from original BUILD_PLAN: M16–M18 (AI), M20 (templates +
-  themes — slide masters will land there), M21 (comments), M22 (version
-  history), M23–M29.
+- Deferred from original BUILD_PLAN, post-renumbering: **M16 templates +
+  themes** (slide masters will land there), M17 comments, M18 version
+  history, M20–M22 AI work, M23–M29 reserved.
 - The polish phase below comes BEFORE all of those. Explicitly agreed
   with user.
 
@@ -36,27 +50,30 @@ Rejected alternatives:
 Each phase = its own branch (`polish/pN-<name>`) + merge gate. User is
 expected to test each branch before merge.
 
-| #   | Name                      | Scope summary                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| --- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P1  | Visual foundation         | shadcn/ui setup, Lucide icons, design tokens (CSS vars), glass/glow utilities, restyled Toolbar / SlidesPanel header / Inspector chrome. No behavioural change.                                                                                                                                                                                                                                                                 |
-| P2  | Artboard + backgrounds    | 16:9 artboard box visible in editor, outside greyed/masked. Per-slide background: color / linear gradient / radial gradient / image fill. Thumbnails render full artboard including background.                                                                                                                                                                                                                                 |
-| P3  | Slides sidebar polish     | Resizable sidebar (drag handle on right edge). Inline slide rename. Slide count in header. Context menu (duplicate, delete, skip, add section). Skip-slide flag (hidden in present). Sections — Keynote-style nesting with collapse. "Back to overview" mode — full-screen slide grid.                                                                                                                                          |
-| P4  | Toolbar — shapes + tools  | Select / Hand-pan / Zoom tools. Shape library: rect, ellipse, triangle, regular polygon, star, arrow, line, curve, speech bubble. Line tool with arrowheads. Zoom buttons + fit-to-screen. Undo / Redo buttons.                                                                                                                                                                                                                 |
-| P5  | Inspector — Appearance    | Fill: solid, linear/radial gradient (angle + stops), image fill. Stroke: width, color, dash, end caps. Shadow + blur. Corner radius per-corner. Object name (rename instance, feeds Magic Move pair key). Lock + hide toggles.                                                                                                                                                                                                  |
-| P6  | Object operations         | Group / Ungroup (Cmd+G, Shift+Cmd+G). Copy / Paste / Duplicate (Cmd+C/V/D). Align buttons (L/C/R/T/M/B). Distribute H/V. Layer order (bring front/forward/backward/back; [ / ] and Cmd-variants). Smart guides with px distance labels during drag.                                                                                                                                                                             |
-| P7  | Text overhaul             | Double-click to enter inline edit (contenteditable overlay above Pixi). Full typography: family, weight, size, line-height, letter-spacing, horizontal + vertical alignment. Bullets, numbered lists. Stroke, gradient, shadow on text.                                                                                                                                                                                         |
-| P8  | Video polish              | Apply rotation / scale / opacity transforms to the video overlay (today only position + size flow through). Volume control in Inspector. Click-to-play preview in editor (paused by default). Poster frame override (pick a second in the clip). Aspect-ratio lock toggle. Trim start/end — stretch goal, depending on ffmpeg worker.                                                                                           |
-| P9  | Keyboard shortcuts        | Cmd+D duplicate (context-sensitive: slide in sidebar focus, object on canvas focus). Delete / Backspace remove in context (slide / object / animation step). Arrow-key nudge 1 px (Shift = 10 px). Esc deselect. Cmd+A select all objects on active slide. [ / ] layer order. Cmd+]/[ and Shift variants. Cmd+Z / Shift+Cmd+Z undo/redo. Space+drag for pan. Cmd+= / Cmd+- / Cmd+0 zoom. Cmd+/ opens shortcut cheatsheet modal. |
-| P10 | Animation timeline polish | Per-bar trigger icon (clock = auto, hand = onClick, play = withPrevious, chain = afterPrevious). Delete key removes selected step. "Play only this step" button. Current-state preview during scrub (already present; verify).                                                                                                                                                                                                  |
-| P11 | Keynote extras            | Right-click context menus (canvas / slide / object). Hyperlinks — objects link to another slide or URL, clickable in present mode. Rulers (top + left). Draggable horizontal / vertical guides. Eyedropper for color. Image cropping + basic rectangular mask. In-editor video playback controls. Recent-colors swatch in color pickers. Clipboard across decks (paste objects from another deck).                              |
-| P12 | Performance pass          | Procedural-texture lifecycle (gradient / pattern / image fill / noise / mask reuse the same acquire+ref-count+release flow, extending `ResourceManager`). Filter instance reuse (shadow / blur). Frame pacing + render scheduler audit under rapid slider scrubs. Texture atlas / GC sweep for long editing sessions. Measure-first: add a perf scratchpad (FPS + texture count + DrawCall count) before tuning.                |
+All phases below shipped to `main`. Status column added 2026-05-01.
+
+| #   | Name                      | Status     | Scope summary                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --- | ------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | Visual foundation         | ✅ Shipped | shadcn/ui setup, Lucide icons, design tokens (CSS vars), glass/glow utilities, restyled Toolbar / SlidesPanel header / Inspector chrome. No behavioural change.                                                                                                                                                                                                                                                                 |
+| P2  | Artboard + backgrounds    | ✅ Shipped | 16:9 artboard box visible in editor, outside greyed/masked. Per-slide background: color / linear gradient / radial gradient / image fill. Thumbnails render full artboard including background.                                                                                                                                                                                                                                 |
+| P3  | Slides sidebar polish     | ✅ Shipped | Resizable sidebar (drag handle on right edge). Inline slide rename. Slide count in header. Context menu (duplicate, delete, skip, add section). Skip-slide flag (hidden in present). Sections — Keynote-style nesting with collapse. "Back to overview" mode — full-screen slide grid.                                                                                                                                          |
+| P4  | Toolbar — shapes + tools  | ✅ Shipped | Select / Hand-pan / Zoom tools. Shape library: rect, ellipse, triangle, regular polygon, star, arrow, line, curve, speech bubble. Line tool with arrowheads. Zoom buttons + fit-to-screen. Undo / Redo buttons.                                                                                                                                                                                                                 |
+| P5  | Inspector — Appearance    | ✅ Shipped | Fill: solid, linear/radial gradient (angle + stops, draggable handles, double-click color picker), image fill. Stroke: width, color, dash, end caps. Shadow + blur (per-effect toggle row). Corner radius per-corner with animated reveal. Object name (rename instance, feeds Magic Move pair key). Lock + hide toggles.                                                                                                       |
+| P6  | Object operations         | ✅ Shipped | Group / Ungroup (Cmd+G, Shift+Cmd+G). Copy / Paste / Duplicate (Cmd+C/V/D). Align buttons (L/C/R/T/M/B). Distribute H/V. Layer order (bring front/forward/backward/back; [ / ] and Cmd-variants). Smart guides with px distance labels during drag.                                                                                                                                                                             |
+| P7  | Text overhaul             | ✅ Shipped | Double-click to enter inline edit (contenteditable overlay above Pixi). Full typography: family, weight, size, line-height, letter-spacing, horizontal + vertical alignment. Bullets, numbered lists. Stroke, shadow on text. (Gradient on text deferred — see follow-ups.)                                                                                                                                                     |
+| P8  | Video polish              | ✅ Shipped | Rotation / scale / opacity flow through to the overlay. Volume slider. Click-to-play editor preview. Poster-frame slider with timecode. Aspect-ratio lock toggle. Trim start/end via filmstrip handles + live scrub. Playback row replaced with full-width 4-segment toggle bar (Autoplay / Loop / Mute / Controls).                                                                                                            |
+| P9  | Keyboard shortcuts        | ✅ Shipped | Cmd+D duplicate (context-sensitive: slide in sidebar focus, object on canvas focus). Delete / Backspace remove in context (slide / object / animation step). Arrow-key nudge 1 px (Shift = 10 px). Esc deselect. Cmd+A select all objects on active slide. [ / ] layer order. Cmd+]/[ and Shift variants. Cmd+Z / Shift+Cmd+Z undo/redo. Space+drag for pan. Cmd+= / Cmd+- / Cmd+0 zoom. Cmd+/ opens shortcut cheatsheet modal. |
+| P10 | Animation timeline polish | ✅ Shipped | Per-bar trigger icon (clock = auto, hand = onClick, play = withPrevious, chain = afterPrevious). Delete key removes selected step. "Play only this step" button. Live current-state preview during scrub. Free-drag triggers + cross-selection with inspector. moveTo / rotateTo presets with on-canvas drag overlay added on top of the original P10 scope.                                                                    |
+| P11 | Keynote extras            | ✅ Shipped | Right-click context menus (canvas / slide / object). Hyperlinks — objects link to another slide or URL, clickable in present mode (now lives in Effects panel). Rulers (top + left). Draggable horizontal / vertical guides. Eyedropper for color. Image cropping + basic rectangular mask. In-editor video playback controls. Recent-colors swatch in color pickers. Clipboard across decks (paste objects from another deck). |
+| P12 | Performance pass          | ✅ Shipped | Procedural-texture lifecycle unified (gradient / pattern / image fill / noise / mask through `ResourceManager` acquire+ref-count+release). Filter instance reuse (shadow / blur). Frame-pacing audit under rapid slider scrubs. Texture GC for long edit sessions. Perf scratchpad (FPS + texture count + DrawCalls) added in `PerfHud`. Filter resolution + adaptive quality landed in e190347.                                |
+| P13–P15 | Polish follow-ups     | ✅ Shipped | Rich-text Y.Text migration, inspector cleanup-position pass, video Pixi-texture pipeline. See `p15-richtext-handover.md` and feat branches `feat/inspector-cleanup-position`, `feat/video-pixi-texture`.                                                                                                                                                                                                                        |
 
 ## Explicitly rejected during planning
 
 - Onion-skin / ghost of previous slide during edit.
 - Autosave indicator in the UI — autosave is already implicit via Y.Doc.
 - Tab navigation between objects — keyboard-picker feature not wanted.
-- Slide master layouts — stay in M20 (templates + themes).
+- Slide master layouts — stay in M16 (templates + themes).
 
 ## Video polish — why its own phase
 
@@ -75,28 +92,34 @@ the overlay element every frame (same frame loop that drives position).
 - Handoff doc per phase at the end (`docs/handoff/polish-pN-<name>.md`).
 - Before touching code: re-read this file to confirm scope.
 
-## Resume instructions
+## Follow-ups parked for future phases
 
-Next session, the first action is:
+Items raised during polish work that didn't make it into P1–P15 — track
+here so they aren't lost when planning the next milestone.
 
-1. `git checkout main && git pull`.
-2. Create branch `polish/p1-visual-foundation`.
-3. Install `lucide-react`, set up shadcn/ui (their CLI creates
-   `src/components/ui/*.tsx` — directory to be decided at execution time,
-   probably `apps/web/src/components/ui/`).
-4. Extend `tailwind.config.*` with color / radius / shadow tokens.
-5. Write + apply glass/glow utility classes.
-6. Refactor Toolbar + Sidebar header + Inspector chrome to use the new
-   look, no functional change.
-7. Smoke test: E2E suite still green.
-8. Commit + push. Ask user to test.
+- **Gradient on text fill** — schema + `HTMLText` background-clip:text
+  rendering + Inspector picker. Discussed during P5/P7; deferred.
+- **Background blur on shapes** — schema field exists (`backgroundBlur`)
+  and a custom `BackgroundBlurFilter` was prototyped, but reverted from
+  the renderer pipeline pending a proper Figma-style mask + opacity
+  semantics rework.
+- **rotateTo on-canvas editor** — drag-arc handle, parallel to the
+  moveTo target overlay. Currently rotateTo is input-only.
+- **Orphan-animation cleanup mutation** — when an object is deleted,
+  drop animation steps that referenced it. Today the runtime filters
+  orphans on compile; the underlying Y.Array still accumulates them.
+- **Hocuspocus token wiring** — provider connects without auth in some
+  paths; sync-required warning in dev console.
+- **HTMLText destroy race** — Pixi v8 emits `HTMLTextSystem: Failed to
+  clean texture`; cosmetic but worth chasing once the AI pass is in.
 
-## Dependencies to add (planned)
+## Dependencies added (shipped)
 
 - `lucide-react` (icons)
 - `class-variance-authority` + `clsx` + `tailwind-merge` (shadcn util layer)
-- `@radix-ui/react-*` — only the primitives shadcn needs (dialog,
-  dropdown-menu, popover, tooltip, scroll-area, separator, label, slot)
+- `@radix-ui/react-*` (dialog, dropdown-menu, popover, tooltip,
+  scroll-area, separator, label, slot)
+- `pixi-filters` (`DropShadowFilter`, `BlurFilter`, etc.)
 
 No runtime framework changes.
 
@@ -495,7 +518,9 @@ playwright test`). Zero new spec files required unless the phase
 ## Out-of-scope reminders (do not scope creep)
 
 - Cross-tab sync for presenter view is already done (M19 phase 3).
-- AI-anything is deferred to M16–M18.
-- Templates + themes with masters is M20.
+- AI-anything is deferred to M20–M22 (renumbered from old M16–M18).
+- Templates + themes with masters is M16 (renumbered from old M20).
+- Comments is M17 (renumbered from old M21).
+- Version history is M18 (renumbered from old M22).
 - PDF / PNG / video export is parked (M28 in original plan).
 - Custom DSL editor (Monaco) is M23.

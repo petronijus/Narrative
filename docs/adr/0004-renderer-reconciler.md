@@ -87,7 +87,7 @@ Canvas přijde subscribe synchronně → `useSlideObjectChanges` callback může
 - Drag operation: 1 rAF tick = 1 `applyChanges` volání = 1 surgical patch. Benchmark: **16.3× rychlejší** než původní full-update cesta (964k vs. 59k ops/s pro drag simulaci).
 - Renderer updates vědí konkrétně co se změnilo → možná optimalizace per renderer (text: ne rebuild TextStyle na x change).
 - Jasná package hranice: `@narrative/slide-model` emituje změny, `renderer` je aplikuje. Kontrakt přes `ObjectChangeSet` typ.
-- Budoucí AI server-side client (M16) konzumuje stejný observer layer bez rendereru.
+- Budoucí AI server-side client (M20 — renumbered z M16 dne 2026-05-01) konzumuje stejný observer layer bez rendereru.
 
 **Negativní:**
 

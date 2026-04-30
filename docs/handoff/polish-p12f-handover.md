@@ -111,8 +111,9 @@ one. None are blocking P12 close.
 1. Open PR — `polish(p12f): typecheck debt + scenegraph stub`.
 2. Merge.
 3. Declare P12 closed in `docs/handoff/polish-phase-plan.md` (or a
-   new `docs/handoff/polish-phase-close.md`) and start **M20 —
-   templates + themes (slide masters)**.
+   new `docs/handoff/polish-phase-close.md`) and start **M16 —
+   templates + themes (slide masters)** (renumbered from M20 on
+   2026-05-01).
 
 P12 retrospective:
 

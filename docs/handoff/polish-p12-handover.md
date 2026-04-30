@@ -10,8 +10,10 @@
 ## Where we are in the polish phase
 
 Polish phases P1–P11 are merged. P12 (Performance pass) is the LAST
-polish phase before resuming the numbered milestones (M20 templates/
-themes, M21 comments, M22 version history, then M16–M18 AI work).
+polish phase before resuming the numbered milestones (M16 templates/
+themes, M17 comments, M18 version history, then M20–M22 AI work).
+Numbers renumbered on 2026-05-01 to put templates first; old → new
+mapping in `polish-phase-plan.md`.
 
 P12 was opened in this session. The first sub-branch
 `polish/p12-layer-reorder-fix` carries:
