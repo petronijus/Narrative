@@ -272,7 +272,6 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // inner <video> element itself is invisible because Pixi paints it.
   return (
     <div
-      aria-hidden="true"
       style={{
         position: 'absolute',
         left: videoObject.x,
@@ -297,6 +296,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         loop={videoObject.loop ?? false}
         playsInline
         controls={videoObject.showControls === true}
+        // The Pixi sprite is the visible representation; the DOM
+        // <video> is just a decoder host. Hide it from accessibility
+        // tree so screen readers don't announce it twice (alt text is
+        // already exposed by whatever the deck / present mode chooses
+        // to surface).
+        aria-hidden="true"
         aria-label={videoObject.alt ?? undefined}
         onMouseEnter={() => {
           if (isPresent) return
