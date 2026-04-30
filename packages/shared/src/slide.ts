@@ -89,6 +89,18 @@ export interface BaseSlideObject {
    * the Width and Height fields in the Inspector's Size section.
    */
   aspectLocked?: boolean
+  /**
+   * P16: horizontal flip — mirror the object across its vertical centre
+   * axis. Implemented in the renderer via `container.scale.x = -1` with
+   * the existing center pivot, so the centre stays put and rotation
+   * still rotates around the same anchor. Missing ⇒ not flipped.
+   */
+  flipH?: boolean
+  /**
+   * P16: vertical flip — mirror across the horizontal centre axis.
+   * Same mechanism as `flipH` but on `scale.y`.
+   */
+  flipV?: boolean
 }
 
 /**

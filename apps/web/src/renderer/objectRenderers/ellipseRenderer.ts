@@ -20,6 +20,7 @@ import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleEllipse } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
+import { applyFlip } from './applyFlip.js'
 
 /** Interní tag klíče pro identifikaci Graphics a cached fill uvnitř Containeru. */
 const GRAPHICS_TAG = Symbol('ellipseGraphics')
@@ -52,6 +53,7 @@ function applyObjectTransform(container: Container, data: EllipseObject): void {
   // Pivot offset: object je definován levým horním rohem, ale pivot je na středu
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
+  applyFlip(container, data)
 }
 
 function drawEllipse(graphics: Graphics, container: Container, data: EllipseObject): void {

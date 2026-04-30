@@ -334,6 +334,18 @@ export class SceneGraph {
         renderer.update(node.container, node.data, merged)
       }
 
+      // P16: flip is a uniform transform handled centrally so individual
+      // renderers don't have to thread `flipH`/`flipV` through their
+      // applyPatch implementations. Pivot is already at the object's
+      // centre (every renderer sets it that way), so scale = ±1
+      // mirrors the contents around the centre axes — bounds and hit
+      // tests stay intact.
+      if ('flipH' in patch || 'flipV' in patch) {
+        const p = patch as { flipH?: boolean; flipV?: boolean }
+        if ('flipH' in patch) node.container.scale.x = p.flipH === true ? -1 : 1
+        if ('flipV' in patch) node.container.scale.y = p.flipV === true ? -1 : 1
+      }
+
       // Aktualizuj data snapshot v node (merge patch do existujícího stavu)
       node.data = { ...node.data, ...patch } as SlideObject
       this.applyOutsideFade(node)

@@ -25,6 +25,7 @@ import {
   useState,
   useSyncExternalStore,
   type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import {
   AlignCenter,
@@ -36,14 +37,22 @@ import {
   AlignVerticalJustifyStart,
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
+  ArrowUpToLine,
+  ArrowUp,
+  ArrowDown,
+  ArrowDownToLine,
   ChevronDown,
+  FlipHorizontal,
+  FlipVertical,
   Link2,
   Link2Off,
   Lock,
+  RotateCw,
   Unlock,
   X,
   type LucideIcon,
 } from 'lucide-react'
+import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { ColorInput } from './ColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
@@ -142,6 +151,31 @@ function degToRad(deg: number): number {
   return (deg * Math.PI) / 180
 }
 
+/**
+ * Shift + ArrowUp/Down on a number field → step by 10× the configured
+ * step. Browsers vary here (Firefox does this natively, Chrome doesn't),
+ * so we always intercept the shift case for consistent behaviour. Plain
+ * arrows are left to the browser so native spinners + the existing
+ * onChange path keep working.
+ */
+function handleShiftArrowStep(
+  e: ReactKeyboardEvent<HTMLInputElement>,
+  current: number,
+  step: number,
+  onChange: (next: number) => void,
+  bounds?: { min?: number; max?: number },
+): void {
+  if (!e.shiftKey) return
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+  e.preventDefault()
+  const dir = e.key === 'ArrowUp' ? 1 : -1
+  const base = Number.isFinite(current) ? current : 0
+  let next = base + dir * step * 10
+  if (bounds?.min !== undefined) next = Math.max(bounds.min, next)
+  if (bounds?.max !== undefined) next = Math.min(bounds.max, next)
+  onChange(next)
+}
+
 // ---------------------------------------------------------------------------
 // Sdílené input komponenty
 // ---------------------------------------------------------------------------
@@ -192,7 +226,7 @@ function AlignButtonGroup<V extends string>({
               'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
               idx > 0 ? 'border-l border-input' : '',
               active
-                ? 'bg-accent text-accent-foreground'
+                ? 'bg-primary/15 text-primary'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             ].join(' ')}
           >
@@ -201,6 +235,198 @@ function AlignButtonGroup<V extends string>({
         )
       })}
     </div>
+  )
+}
+
+/**
+ * Slider + numeric % field for whole-object transparency. Wired to
+ * `obj.opacity`, which is applied at the renderer container level and
+ * therefore dims fill, stroke, image, text and any nested decoration
+ * uniformly — independent of per-fill / per-stroke alpha.
+ */
+function TransparencySlider({
+  id,
+  value,
+  onChange,
+}: {
+  id: string
+  value: number
+  onChange: (next: number) => void
+}) {
+  const pct = Math.round(value * 100)
+  const commit = (raw: number): void => {
+    if (!Number.isFinite(raw)) return
+    const clamped = Math.max(0, Math.min(100, raw)) / 100
+    onChange(clamped)
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="range"
+        id={id}
+        aria-label="Transparency"
+        min={0}
+        max={100}
+        step={1}
+        value={pct}
+        onChange={(e) => commit(Number.parseFloat(e.target.value))}
+        className="flex-1 accent-primary"
+      />
+      <div className="w-14 flex-shrink-0">
+        <CompactNumberField
+          id={`${id}-num`}
+          ariaLabel="Transparency value"
+          value={pct}
+          step={1}
+          suffix="%"
+          onChange={commit}
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Small in-section label for grouping rows ("Alignment", "Position",
+ * "Size", "Rotation"). Less pronounced than the section title — used
+ * inside the Position block to mirror the Figma inspector layout.
+ */
+function SubLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="-mb-0.5 mt-1 text-[10px] text-muted-foreground/70 first:mt-0">{children}</div>
+  )
+}
+
+interface CompactNumberFieldProps {
+  id: string
+  /**
+   * Single-glyph leading mark inside the input ("X", "Y", "↻").
+   * Omit (or pass empty) for fields whose context already labels them
+   * (e.g. the standalone opacity % field next to a colour swatch).
+   */
+  glyph?: React.ReactNode
+  /** Full a11y label (e.g. "X position"). */
+  ariaLabel: string
+  value: number
+  step?: number
+  suffix?: string
+  disabled?: boolean
+  onChange: (value: number) => void
+}
+
+/**
+ * P16: Figma-style numeric field — leading glyph inside a single
+ * field-shaped surface, no separate left-column label. Lets the
+ * Position section pack X+Y or rotation+flip controls onto one row
+ * while keeping the same focus / select-all / commit semantics as
+ * the legacy NumberField.
+ */
+function CompactNumberField({
+  id,
+  glyph,
+  ariaLabel,
+  value,
+  step = 1,
+  suffix,
+  disabled = false,
+  onChange,
+}: CompactNumberFieldProps) {
+  return (
+    <div
+      className={[
+        'group/field flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-2 py-0.5',
+        'focus-within:ring-2 focus-within:ring-ring',
+        disabled ? 'opacity-50' : '',
+      ].join(' ')}
+    >
+      {glyph !== undefined && glyph !== '' && (
+        <span
+          aria-hidden
+          className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-[11px] text-muted-foreground"
+        >
+          {glyph}
+        </span>
+      )}
+      <input
+        id={id}
+        type="number"
+        step={step}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
+        onFocus={(e) => {
+          const target = e.target
+          setTimeout(() => {
+            if (document.activeElement === target) target.select()
+          }, 0)
+        }}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => {
+          const parsed = parseFloat(e.target.value)
+          if (Number.isFinite(parsed)) onChange(parsed)
+        }}
+        onKeyDown={(e) => handleShiftArrowStep(e, value, step, onChange)}
+        className={[
+          'min-w-0 flex-1 bg-transparent text-xs text-foreground',
+          'focus:outline-none disabled:cursor-not-allowed',
+          // Native spinners: hidden at rest, revealed when the field
+          // is hovered or focused. Keep the WebKit spin button laid
+          // out at full width but invisible via opacity so the input
+          // text doesn't shift on hover. Firefox uses
+          // `appearance:textfield` to hide; on hover/focus we let it
+          // back to `auto`.
+          '[appearance:textfield] group-hover/field:[appearance:auto] focus:[appearance:auto]',
+          '[&::-webkit-inner-spin-button]:opacity-0 [&::-webkit-outer-spin-button]:opacity-0',
+          'group-hover/field:[&::-webkit-inner-spin-button]:opacity-100 focus:[&::-webkit-inner-spin-button]:opacity-100',
+          'group-hover/field:[&::-webkit-outer-spin-button]:opacity-100 focus:[&::-webkit-outer-spin-button]:opacity-100',
+          '[&::-webkit-inner-spin-button]:transition-opacity [&::-webkit-outer-spin-button]:transition-opacity',
+        ].join(' ')}
+      />
+      {suffix !== undefined && (
+        <span aria-hidden className="flex-shrink-0 text-[10px] text-muted-foreground">
+          {suffix}
+        </span>
+      )}
+    </div>
+  )
+}
+
+interface IconToggleButtonProps {
+  Icon: LucideIcon
+  label: string
+  pressed: boolean
+  disabled?: boolean
+  onClick: () => void
+}
+
+/** Square icon toggle styled to match the AlignButtonGroup buttons. */
+function IconToggleButton({
+  Icon,
+  label,
+  pressed,
+  disabled = false,
+  onClick,
+}: IconToggleButtonProps) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={pressed}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-input',
+        'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        // Same shape as AlignButtonGroup, but the active icon is
+        // tinted blue (primary) so the toggle reads at a glance.
+        pressed
+          ? 'bg-primary/15 text-primary'
+          : 'field-surface text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+        disabled ? 'cursor-not-allowed opacity-50' : '',
+      ].join(' ')}
+    >
+      <Icon className="h-3.5 w-3.5" aria-hidden />
+    </button>
   )
 }
 
@@ -233,8 +459,9 @@ function NumberField({ id, label, value, step = 1, disabled = false, onChange }:
           const parsed = parseFloat(e.target.value)
           if (Number.isFinite(parsed)) onChange(parsed)
         }}
+        onKeyDown={(e) => handleShiftArrowStep(e, value, step, onChange)}
         className={[
-          'w-full rounded-md border border-input field-surface px-2 py-0.5',
+          'h-7 w-full rounded-md border border-input field-surface px-2 py-0.5',
           'text-right text-xs text-foreground',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           'disabled:cursor-not-allowed disabled:opacity-50',
@@ -251,6 +478,13 @@ interface SectionProps {
   storageKey?: string
   /** Initial collapsed state (ignored if `storageKey` has a stored value). */
   defaultCollapsed?: boolean
+  /**
+   * Optional content rendered on the right side of the header (between
+   * the title and the chevron). Used for per-section quick actions
+   * (Fill type selector, Add fill, etc.). Stops pointer events from
+   * bubbling so clicking these doesn't toggle collapse.
+   */
+  headerRight?: React.ReactNode
 }
 
 /**
@@ -337,7 +571,7 @@ function NameField({
       title={conflict ? 'Another object on this slide already uses that name' : undefined}
       aria-invalid={conflict || undefined}
       className={[
-        'w-full rounded border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none',
+        'h-7 w-full rounded border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none',
         conflict
           ? 'border-destructive focus:border-destructive'
           : 'border-border focus:border-primary',
@@ -346,7 +580,13 @@ function NameField({
   )
 }
 
-function Section({ title, children, storageKey, defaultCollapsed = false }: SectionProps) {
+function Section({
+  title,
+  children,
+  storageKey,
+  defaultCollapsed = false,
+  headerRight,
+}: SectionProps) {
   const fullKey = storageKey === undefined ? null : `narrative:inspector:collapsed:${storageKey}`
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (fullKey === null) return false
@@ -374,22 +614,37 @@ function Section({ title, children, storageKey, defaultCollapsed = false }: Sect
 
   return (
     <div className="border-b border-border">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={!collapsed}
-        className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
-      >
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="relative flex items-center px-3 py-2 hover:bg-accent/40">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          // The toggle covers the full header so the title and the
+          // chevron are both clickable, but actions in `headerRight`
+          // sit ABOVE it (z-10 + onPointerDown stop) so a click on a
+          // pill / icon there doesn't also toggle the section.
+          className="absolute inset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-inset"
+          aria-label={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+        />
+        <span className="pointer-events-none flex-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           {title}
         </span>
+        {headerRight !== undefined && (
+          <div
+            className="relative z-10 ml-auto flex items-center gap-1"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {headerRight}
+          </div>
+        )}
         <ChevronDown
-          className={`h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-200 ${
+          className={`pointer-events-none ml-2 h-3.5 w-3.5 text-muted-foreground/60 transition-transform duration-200 ${
             collapsed ? '-rotate-90' : 'rotate-0'
           }`}
           aria-hidden="true"
         />
-      </button>
+      </div>
       <div className="collapsible" data-collapsed={collapsed ? 'true' : 'false'}>
         <div className="collapsible-body">
           <div className="flex flex-col gap-1.5 px-3 pb-2">{children}</div>
@@ -443,8 +698,6 @@ export function Inspector() {
     if (obj === undefined || mutationCtx === null) return
     updateObject(mutationCtx, obj.id, p)
   }
-
-  const rotationDeg = radToDeg(obj.rotation)
 
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
@@ -501,108 +754,31 @@ export function Inspector() {
         </div>
       </Section>
 
-      {/* Position */}
-      <Section title="Position" storageKey="position">
-        <NumberField
-          id={`inspector-x-${obj.id}`}
-          label="X"
-          value={obj.x}
-          onChange={(v) => patch({ x: v })}
-        />
-        <NumberField
-          id={`inspector-y-${obj.id}`}
-          label="Y"
-          value={obj.y}
-          onChange={(v) => patch({ y: v })}
-        />
-      </Section>
+      {/* Position — Figma-style condensed block:
+          alignment row | X+Y row | rotation + flip row.
+          Single-object alignment snaps to the slide canvas (not to the
+          selection union — that's the multi-select inspector's job). */}
+      <PositionSection obj={obj} patch={patch} disabled={isViewer} layerMutationCtx={mutationCtx} />
 
-      {/* Size — width / height plus an aspect-lock toggle. When ON,
-          corner-handle resizes preserve the W:H ratio and Shift
-          temporarily releases it; when OFF, Shift temporarily locks
-          it. The chain icon mirrors Figma / Sketch / Keynote. */}
-      <Section title="Size" storageKey="size">
-        <div className="relative">
-          <NumberField
-            id={`inspector-w-${obj.id}`}
-            label="Width"
-            value={obj.width}
-            onChange={(v) => {
-              if (obj.aspectLocked === true && obj.width > 0) {
-                const ratio = obj.height / obj.width
-                patch({ width: v, height: Math.max(1, Math.round(v * ratio)) })
-              } else {
-                patch({ width: v })
-              }
-            }}
-          />
-          <NumberField
-            id={`inspector-h-${obj.id}`}
-            label="Height"
-            value={obj.height}
-            onChange={(v) => {
-              if (obj.aspectLocked === true && obj.height > 0) {
-                const ratio = obj.width / obj.height
-                patch({ height: v, width: Math.max(1, Math.round(v * ratio)) })
-              } else {
-                patch({ height: v })
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={() =>
-              patch({
-                aspectLocked: obj.aspectLocked === true ? undefined : true,
-              } as SlideObjectPatch<SlideObject>)
-            }
-            disabled={isViewer}
-            aria-pressed={obj.aspectLocked === true}
-            aria-label={
-              obj.aspectLocked === true
-                ? 'Unlock aspect ratio (Shift while dragging temporarily unlocks)'
-                : 'Lock aspect ratio (Shift while dragging temporarily locks)'
-            }
-            title={
-              obj.aspectLocked === true
-                ? 'Aspect ratio: locked — Shift while dragging unlocks'
-                : 'Aspect ratio: free — Shift while dragging locks'
-            }
-            className={[
-              'absolute right-0 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded',
-              'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-              obj.aspectLocked === true
-                ? 'bg-primary/15 text-primary hover:bg-primary/25'
-                : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
-              isViewer ? 'pointer-events-none opacity-40' : '',
-            ].join(' ')}
-          >
-            {obj.aspectLocked === true ? (
-              <Link2 className="h-3 w-3" aria-hidden="true" />
-            ) : (
-              <Link2Off className="h-3 w-3" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-      </Section>
-
-      {/* Transform */}
-      <Section title="Transform" storageKey="transform">
-        <NumberField
-          id={`inspector-rot-${obj.id}`}
-          label="Rotation"
-          value={rotationDeg}
-          step={0.1}
-          onChange={(v) => patch({ rotation: degToRad(v) })}
-        />
-        <NumberField
-          id={`inspector-opacity-${obj.id}`}
-          label="Opacity"
-          value={obj.opacity}
-          step={0.01}
-          onChange={(v) => patch({ opacity: Math.min(1, Math.max(0, v)) })}
-        />
-      </Section>
+      {/* Transform — Opacity for object types that don't render an
+          Appearance section (text / image / video / line / arrow /
+          path). FilledShape's opacity lives inside the Appearance
+          section so the colour, border and visibility controls are
+          all in one block. */}
+      {obj.type !== 'rectangle' &&
+        obj.type !== 'ellipse' &&
+        obj.type !== 'triangle' &&
+        obj.type !== 'polygon' && (
+          <Section title="Transform" storageKey="transform">
+            <NumberField
+              id={`inspector-opacity-${obj.id}`}
+              label="Opacity"
+              value={obj.opacity}
+              step={0.01}
+              onChange={(v) => patch({ opacity: Math.min(1, Math.max(0, v)) })}
+            />
+          </Section>
+        )}
 
       {/* Appearance — every filled shape. P5b extended the schema with
           optional stroke + corner radius so the same section handles rect,
@@ -656,10 +832,9 @@ export function Inspector() {
           BaseSlideObject mixin + filterEffects helper on the renderer side. */}
       <EffectsSection obj={obj} patch={patch as (p: SlideObjectPatch<SlideObject>) => void} />
 
-      {/* P6: Layer order — always available for the selected object. */}
-      {mutationCtx !== null && (
-        <LayerOrderSection ids={[obj.id]} mutationCtx={mutationCtx} disabled={isViewer} />
-      )}
+      {/* P6: Layer order is now embedded at the top of PositionSection
+          (see above) for the single-object inspector. The standalone
+          LayerOrderSection still backs the multi-select panel. */}
 
       {/* Animations */}
       {animMutationCtx !== null && (
@@ -908,7 +1083,13 @@ function MultiButton({
 // Layer order section — shared between single-object and multi-select
 // ---------------------------------------------------------------------------
 
-function LayerOrderSection({
+/**
+ * Layer-order controls — Front / Forward / Backward / Back as a single
+ * row of icon buttons. Used both as a sub-row inside PositionSection
+ * (single-object inspector) and wrapped in its own Section by the
+ * multi-select inspector.
+ */
+function LayerOrderControls({
   ids,
   mutationCtx,
   disabled,
@@ -920,34 +1101,52 @@ function LayerOrderSection({
   const run = (move: LayerMove): void => {
     if (!disabled) moveObjectsLayer(mutationCtx, ids, move)
   }
+  const buttons: { move: LayerMove; title: string; Icon: LucideIcon }[] = [
+    { move: 'front', title: 'Bring to front (Cmd+])', Icon: ArrowUpToLine },
+    { move: 'forward', title: 'Bring forward (])', Icon: ArrowUp },
+    { move: 'backward', title: 'Send backward ([)', Icon: ArrowDown },
+    { move: 'back', title: 'Send to back (Cmd+[)', Icon: ArrowDownToLine },
+  ]
+  return (
+    <div
+      role="group"
+      aria-label="Layer order"
+      className="flex items-stretch overflow-hidden rounded border border-input field-surface"
+    >
+      {buttons.map(({ move, title, Icon }, idx) => (
+        <button
+          key={move}
+          type="button"
+          aria-label={title}
+          title={title}
+          disabled={disabled}
+          onClick={() => run(move)}
+          className={[
+            'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+            idx > 0 ? 'border-l border-input' : '',
+            'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+          ].join(' ')}
+        >
+          <Icon className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function LayerOrderSection({
+  ids,
+  mutationCtx,
+  disabled,
+}: {
+  ids: string[]
+  mutationCtx: Parameters<typeof moveObjectsLayer>[0]
+  disabled: boolean
+}) {
   return (
     <Section title="Layer order" storageKey="layer-order">
-      <div className="grid grid-cols-2 gap-1">
-        <MultiButton
-          label="⤒ Front"
-          title="Bring to front (Cmd+])"
-          onClick={() => run('front')}
-          disabled={disabled}
-        />
-        <MultiButton
-          label="↑ Forward"
-          title="Bring forward (])"
-          onClick={() => run('forward')}
-          disabled={disabled}
-        />
-        <MultiButton
-          label="↓ Backward"
-          title="Send backward ([)"
-          onClick={() => run('backward')}
-          disabled={disabled}
-        />
-        <MultiButton
-          label="⤓ Back"
-          title="Send to back (Cmd+[)"
-          onClick={() => run('back')}
-          disabled={disabled}
-        />
-      </div>
+      <LayerOrderControls ids={ids} mutationCtx={mutationCtx} disabled={disabled} />
     </Section>
   )
 }
@@ -1082,11 +1281,13 @@ function LayersPanel({
               onDrop={onDrop(o.id)}
               onClick={onRowClick(o.id)}
               className={[
-                'group relative flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px]',
+                'group relative flex items-center gap-1.5 rounded border border-transparent px-1.5 py-1 text-[11px]',
                 'cursor-pointer select-none',
-                active
-                  ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-foreground hover:bg-accent/40',
+                // Match the inspector toggle style: tinted blue fill +
+                // primary text/icon, no border accent. Keeps the row
+                // chrome identical between active and idle so only the
+                // colour change distinguishes selection.
+                active ? 'bg-primary/15 text-primary' : 'text-foreground hover:bg-accent/40',
                 isDragging ? 'opacity-40' : '',
                 readOnly ? 'cursor-default' : '',
               ].join(' ')}
@@ -1269,6 +1470,15 @@ function SlideInspector() {
                 patchTransition({ durationMs: parsed })
               }
             }}
+            onKeyDown={(e) =>
+              handleShiftArrowStep(
+                e,
+                transition.durationMs,
+                50,
+                (v) => patchTransition({ durationMs: Math.max(0, Math.round(v)) }),
+                { min: 0 },
+              )
+            }
             className={[
               'w-full rounded border border-input field-surface px-2 py-0.5',
               'text-right text-xs text-foreground',
@@ -1502,6 +1712,283 @@ function BackgroundSection({ slideId, background, selectClass }: BackgroundSecti
 }
 
 // ---------------------------------------------------------------------------
+// Position section — alignment to slide canvas, X/Y, rotation + flip
+// ---------------------------------------------------------------------------
+
+interface PositionSectionProps {
+  obj: SlideObject
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+  disabled: boolean
+  /** Optional layer-order mutation context — when present, a row of
+   *  Front/Forward/Backward/Back icon buttons is rendered at the top of
+   *  the Position section. */
+  layerMutationCtx?: Parameters<typeof moveObjectsLayer>[0] | null
+}
+
+/**
+ * P16: Figma-parity Position block.
+ *
+ * Layout:
+ *   [ align L | C | R ] [ align T | M | B ]
+ *   [ X #####         ] [ Y #####         ]
+ *   [ rot ##°         ] [ flipH ] [ flipV ]
+ *
+ * Single-object alignment snaps the object's bounding box to the slide
+ * canvas (1920×1080). Multi-object alignment lives in
+ * MultiSelectInspector and uses the selection union as the reference,
+ * matching Figma / Keynote conventions.
+ */
+function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: PositionSectionProps) {
+  const rotationDeg = radToDeg(obj.rotation)
+
+  const alignToCanvas = (axis: AlignAxis): void => {
+    if (disabled) return
+    switch (axis) {
+      case 'left':
+        patch({ x: 0 })
+        return
+      case 'right':
+        patch({ x: SLIDE_WIDTH - obj.width })
+        return
+      case 'center-x':
+        patch({ x: Math.round((SLIDE_WIDTH - obj.width) / 2) })
+        return
+      case 'top':
+        patch({ y: 0 })
+        return
+      case 'bottom':
+        patch({ y: SLIDE_HEIGHT - obj.height })
+        return
+      case 'center-y':
+        patch({ y: Math.round((SLIDE_HEIGHT - obj.height) / 2) })
+        return
+    }
+  }
+
+  return (
+    <Section title="Position" storageKey="position">
+      {/* Layer order — Front / Forward / Backward / Back. Lives at the
+          top of the Position panel so the most-used spatial controls
+          (depth, alignment, X/Y, rotation) are clustered together. */}
+      {layerMutationCtx !== null && (
+        <>
+          <SubLabel>Layer order</SubLabel>
+          <LayerOrderControls ids={[obj.id]} mutationCtx={layerMutationCtx} disabled={disabled} />
+        </>
+      )}
+
+      {/* Alignment */}
+      <SubLabel>Alignment</SubLabel>
+      <div className="flex items-center gap-1">
+        <div
+          role="group"
+          aria-label="Align horizontally to slide"
+          className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+        >
+          {[
+            {
+              axis: 'left' as const,
+              label: 'Align left edge of slide',
+              Icon: AlignHorizontalJustifyStart,
+            },
+            {
+              axis: 'center-x' as const,
+              label: 'Align horizontal centre of slide',
+              Icon: AlignHorizontalJustifyCenter,
+            },
+            {
+              axis: 'right' as const,
+              label: 'Align right edge of slide',
+              Icon: AlignHorizontalJustifyEnd,
+            },
+          ].map(({ axis, label, Icon }, idx) => (
+            <button
+              key={axis}
+              type="button"
+              aria-label={label}
+              title={label}
+              disabled={disabled}
+              onClick={() => alignToCanvas(axis)}
+              className={[
+                'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+                idx > 0 ? 'border-l border-input' : '',
+                'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          ))}
+        </div>
+        <div
+          role="group"
+          aria-label="Align vertically to slide"
+          className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+        >
+          {[
+            {
+              axis: 'top' as const,
+              label: 'Align top edge of slide',
+              Icon: AlignVerticalJustifyStart,
+            },
+            {
+              axis: 'center-y' as const,
+              label: 'Align vertical centre of slide',
+              Icon: AlignVerticalJustifyCenter,
+            },
+            {
+              axis: 'bottom' as const,
+              label: 'Align bottom edge of slide',
+              Icon: AlignVerticalJustifyEnd,
+            },
+          ].map(({ axis, label, Icon }, idx) => (
+            <button
+              key={axis}
+              type="button"
+              aria-label={label}
+              title={label}
+              disabled={disabled}
+              onClick={() => alignToCanvas(axis)}
+              className={[
+                'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+                idx > 0 ? 'border-l border-input' : '',
+                'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              <Icon className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Position */}
+      <SubLabel>Position</SubLabel>
+      <div className="flex items-center gap-1">
+        <CompactNumberField
+          id={`inspector-x-${obj.id}`}
+          glyph="X"
+          ariaLabel="X position"
+          value={obj.x}
+          disabled={disabled}
+          onChange={(v) => patch({ x: v })}
+        />
+        <CompactNumberField
+          id={`inspector-y-${obj.id}`}
+          glyph="Y"
+          ariaLabel="Y position"
+          value={obj.y}
+          disabled={disabled}
+          onChange={(v) => patch({ y: v })}
+        />
+      </div>
+
+      {/* Size — moved here from its own section. Aspect-lock chain
+          icon shows pressed/primary state when active so the toggle
+          is unmistakable. */}
+      <SubLabel>Size</SubLabel>
+      <div className="flex items-center gap-1">
+        <CompactNumberField
+          id={`inspector-w-${obj.id}`}
+          glyph="W"
+          ariaLabel="Width"
+          value={obj.width}
+          disabled={disabled}
+          onChange={(v) => {
+            if (obj.aspectLocked === true && obj.width > 0) {
+              const ratio = obj.height / obj.width
+              patch({ width: v, height: Math.max(1, Math.round(v * ratio)) })
+            } else {
+              patch({ width: v })
+            }
+          }}
+        />
+        <CompactNumberField
+          id={`inspector-h-${obj.id}`}
+          glyph="H"
+          ariaLabel="Height"
+          value={obj.height}
+          disabled={disabled}
+          onChange={(v) => {
+            if (obj.aspectLocked === true && obj.height > 0) {
+              const ratio = obj.width / obj.height
+              patch({ height: v, width: Math.max(1, Math.round(v * ratio)) })
+            } else {
+              patch({ height: v })
+            }
+          }}
+        />
+        <IconToggleButton
+          Icon={obj.aspectLocked === true ? Link2 : Link2Off}
+          label={
+            obj.aspectLocked === true
+              ? 'Aspect ratio: locked — Shift while dragging unlocks'
+              : 'Aspect ratio: free — Shift while dragging locks'
+          }
+          pressed={obj.aspectLocked === true}
+          disabled={disabled}
+          onClick={() =>
+            patch({
+              aspectLocked: obj.aspectLocked === true ? undefined : true,
+            } as SlideObjectPatch<SlideObject>)
+          }
+        />
+      </div>
+
+      {/* Rotation + flip H / flip V */}
+      <SubLabel>Rotation</SubLabel>
+      <div className="flex items-center gap-1">
+        <CompactNumberField
+          id={`inspector-rot-${obj.id}`}
+          glyph={<RotateCw className="h-3 w-3" aria-hidden />}
+          ariaLabel="Rotation"
+          value={rotationDeg}
+          step={0.1}
+          suffix="°"
+          disabled={disabled}
+          onChange={(v) => patch({ rotation: degToRad(v) })}
+        />
+        <IconToggleButton
+          Icon={FlipHorizontal}
+          label="Flip horizontal"
+          pressed={obj.flipH === true}
+          disabled={disabled}
+          onClick={() => {
+            // World-space mirror about the object's vertical centre
+            // axis. Identity M_x · R(θ) = R(-θ) · M_x lets us express
+            // it as: toggle the local scale.x flag AND negate the
+            // rotation. Symmetric shapes (solid rectangle / ellipse)
+            // see no change from the scale flip but DO see the
+            // rotation flip — which is the visible mirror the user
+            // expects. Asymmetric content (image / text / gradient
+            // fill) needs both pieces to mirror correctly.
+            patch({
+              flipH: obj.flipH === true ? undefined : true,
+              rotation: -obj.rotation,
+            } as SlideObjectPatch<SlideObject>)
+          }}
+        />
+        <IconToggleButton
+          Icon={FlipVertical}
+          label="Flip vertical"
+          pressed={obj.flipV === true}
+          disabled={disabled}
+          onClick={() => {
+            // Same identity for the horizontal axis: M_y · R(θ) =
+            // R(-θ) · M_y. Composing flipH then flipV therefore
+            // collapses to a 180° rotation, matching Figma.
+            patch({
+              flipV: obj.flipV === true ? undefined : true,
+              rotation: -obj.rotation,
+            } as SlideObjectPatch<SlideObject>)
+          }}
+        />
+      </div>
+    </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Appearance section — fill + stroke + (rectangle-only) corner radius
 // ---------------------------------------------------------------------------
 
@@ -1519,89 +2006,109 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
 
   return (
     <Section title="Appearance" storageKey="appearance">
-      <FillPicker obj={obj} patch={patch} />
+      <SubLabel>Fill</SubLabel>
+      <FillBody obj={obj} patch={patch} />
 
-      {/* Stroke — toggle + (when enabled) colour + width + dashed. Toggling
-          off sends `stroke: undefined` which the renderer treats as "no
-          stroke". */}
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
-        <div className="flex flex-1 items-center gap-1.5">
-          <input
-            type="checkbox"
-            aria-label="Enable stroke"
-            checked={hasStroke}
-            onChange={(e) => {
-              if (e.target.checked) {
-                patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<FilledShape>)
-              } else {
-                // Explicit undefined tells updateObject to clear the field.
-                patch({
-                  stroke: undefined,
-                  strokeWidth: undefined,
-                } as unknown as SlideObjectPatch<FilledShape>)
-              }
-            }}
-            className="h-3.5 w-3.5"
-          />
-          {hasStroke && (
-            <>
-              <ColorInput
-                value={strokeHex}
-                onChange={(hex) =>
-                  patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<FilledShape>)
-                }
-                ariaLabel="Stroke color"
-                showHex={false}
-                alpha={obj.strokeAlpha ?? 1}
-                onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
-              />
-              <input
-                type="number"
-                aria-label="Stroke width"
-                min={0}
-                step={0.5}
-                value={strokeWidth}
-                onChange={(e) => {
-                  const v = Number.parseFloat(e.target.value)
-                  if (Number.isFinite(v)) {
-                    patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>)
-                  }
-                }}
-                className={[
-                  'w-16 rounded border border-input field-surface px-2 py-0.5',
-                  'text-xs text-foreground focus:border-ring focus:outline-none',
-                ].join(' ')}
-              />
-            </>
-          )}
-        </div>
-      </div>
-
-      {hasStroke && (
-        <div className="flex items-center gap-2">
-          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Dashed</span>
-          <input
-            type="checkbox"
-            aria-label="Dashed stroke"
-            checked={obj.strokeDash === true}
-            onChange={(e) =>
+      <SubLabel>Stroke</SubLabel>
+      {/* Stroke — toggle + (when enabled) colour + width + dashed.
+          Toggling off sends `stroke: undefined` which the renderer
+          treats as "no stroke". */}
+      <div className="flex items-center gap-1.5">
+        <input
+          type="checkbox"
+          aria-label="Enable stroke"
+          checked={hasStroke}
+          onChange={(e) => {
+            if (e.target.checked) {
+              patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<FilledShape>)
+            } else {
+              // Explicit undefined tells updateObject to clear the field.
               patch({
-                strokeDash: e.target.checked ? true : undefined,
+                stroke: undefined,
+                strokeWidth: undefined,
               } as unknown as SlideObjectPatch<FilledShape>)
             }
-            className="h-3.5 w-3.5"
-          />
-        </div>
-      )}
+          }}
+          className="h-3.5 w-3.5"
+        />
+        {hasStroke && (
+          <>
+            <ColorInput
+              value={strokeHex}
+              onChange={(hex) =>
+                patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<FilledShape>)
+              }
+              ariaLabel="Stroke color"
+              showHex={false}
+              alpha={obj.strokeAlpha ?? 1}
+              onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
+            />
+            <input
+              type="number"
+              aria-label="Stroke width"
+              min={0}
+              step={0.5}
+              value={strokeWidth}
+              onChange={(e) => {
+                const v = Number.parseFloat(e.target.value)
+                if (Number.isFinite(v)) {
+                  patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>)
+                }
+              }}
+              onKeyDown={(e) =>
+                handleShiftArrowStep(
+                  e,
+                  strokeWidth,
+                  0.5,
+                  (v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>),
+                  { min: 0 },
+                )
+              }
+              className={[
+                'w-16 rounded border border-input field-surface px-2 py-0.5',
+                'text-xs text-foreground focus:border-ring focus:outline-none',
+              ].join(' ')}
+            />
+            <label className="ml-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+              <input
+                type="checkbox"
+                aria-label="Dashed stroke"
+                checked={obj.strokeDash === true}
+                onChange={(e) =>
+                  patch({
+                    strokeDash: e.target.checked ? true : undefined,
+                  } as unknown as SlideObjectPatch<FilledShape>)
+                }
+                className="h-3 w-3"
+              />
+              Dashed
+            </label>
+          </>
+        )}
+      </div>
 
       {/* Corner radius — rectangle only. Uniform slider + per-corner expand. */}
       {obj.type === 'rectangle' && (
-        <CornerRadiusRow
-          obj={obj}
-          patch={patch as (p: SlideObjectPatch<RectangleObject>) => void}
-        />
+        <>
+          <SubLabel>Corner radius</SubLabel>
+          <CornerRadiusRow
+            obj={obj}
+            patch={patch as (p: SlideObjectPatch<RectangleObject>) => void}
+          />
+        </>
       )}
+
+      <SubLabel>Transparency</SubLabel>
+      {/* Whole-object transparency. `obj.opacity` is applied to the
+          renderer's container, so it dims fill, stroke, image, text
+          and any nested decoration uniformly — independent of the
+          per-fill / per-stroke alpha. Slider + numeric % so coarse
+          drags and precise typing both work. */}
+      <TransparencySlider
+        id={`inspector-opacity-${obj.id}`}
+        value={obj.opacity}
+        onChange={(v) => patch({ opacity: v } as SlideObjectPatch<FilledShape>)}
+      />
     </Section>
   )
 }
@@ -1684,6 +2191,12 @@ function CornerRadiusRow({
                   const v = Number.parseFloat(e.target.value)
                   if (Number.isFinite(v)) setUniform(v)
                 }}
+                onKeyDown={(e) =>
+                  handleShiftArrowStep(e, uniformVal, 1, setUniform, {
+                    min: 0,
+                    max: Math.round(maxR),
+                  })
+                }
                 className={[
                   'w-14 rounded border border-input field-surface px-2 py-0.5',
                   'text-xs text-foreground focus:border-ring focus:outline-none',
@@ -1737,6 +2250,12 @@ function CornerRadiusRow({
                   const v = Number.parseFloat(e.target.value)
                   if (Number.isFinite(v)) setCorner(c, v)
                 }}
+                onKeyDown={(e) =>
+                  handleShiftArrowStep(e, current[c], 1, (v) => setCorner(c, v), {
+                    min: 0,
+                    max: Math.round(maxR),
+                  })
+                }
                 className={[
                   'flex-1 rounded border border-input field-surface px-2 py-0.5',
                   'text-xs text-foreground focus:border-ring focus:outline-none',
@@ -1761,7 +2280,7 @@ function fillModeOf(style: FillStyle | undefined): FillMode {
   return style.kind
 }
 
-function FillPicker({
+function FillBody({
   obj,
   patch,
 }: {
@@ -1770,6 +2289,7 @@ function FillPicker({
 }) {
   const mode = fillModeOf(obj.fillStyle)
   const solidHex = numberToHex(obj.fill)
+  const fillAlpha = obj.fillAlpha ?? 1
 
   const setMode = (next: FillMode): void => {
     if (next === mode) return
@@ -1803,33 +2323,41 @@ function FillPicker({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Fill</span>
+      {/* Single row: type dropdown + colour swatch / hex. The fill-
+          alpha popover slider stays available inside the colour
+          picker; whole-object opacity is the separate Transparency
+          slider below. */}
+      <div className="flex items-center gap-1">
         <select
           aria-label="Fill type"
           value={mode}
           onChange={(e) => setMode(e.target.value as FillMode)}
-          className="rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className={[
+            'h-7 rounded border border-input field-surface px-1.5 text-[11px] text-foreground',
+            'focus:border-ring focus:outline-none',
+          ].join(' ')}
         >
           <option value="solid">Solid</option>
-          <option value="linearGradient">Linear gradient</option>
-          <option value="radialGradient">Radial gradient</option>
+          <option value="linearGradient">Linear</option>
+          <option value="radialGradient">Radial</option>
           <option value="image">Image</option>
         </select>
-      </div>
 
-      {mode === 'solid' && (
-        <div className="ml-[4.5rem]">
-          <ColorInput
-            value={solidHex}
-            onChange={(hex) => patch({ fill: hexToNumber(hex) })}
-            ariaLabel="Fill color"
-            showHex
-            alpha={obj.fillAlpha ?? 1}
-            onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
-          />
-        </div>
-      )}
+        {mode === 'solid' && (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5 py-0.5">
+            <ColorInput
+              value={solidHex}
+              onChange={(hex) => patch({ fill: hexToNumber(hex) })}
+              ariaLabel="Fill color"
+              showHex
+              alpha={fillAlpha}
+              onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
+              inputClassName="!h-5 !w-7"
+              hexClassName="!border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+            />
+          </div>
+        )}
+      </div>
 
       {(mode === 'linearGradient' || mode === 'radialGradient') && obj.fillStyle !== undefined && (
         <GradientEditor
@@ -2207,6 +2735,9 @@ function ShadowControls({
             const v = Number.parseFloat(e.target.value)
             if (Number.isFinite(v)) onChange({ ...shadow, offsetX: v })
           }}
+          onKeyDown={(e) =>
+            handleShiftArrowStep(e, shadow.offsetX, 1, (v) => onChange({ ...shadow, offsetX: v }))
+          }
           className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         />
         <input
@@ -2217,6 +2748,9 @@ function ShadowControls({
             const v = Number.parseFloat(e.target.value)
             if (Number.isFinite(v)) onChange({ ...shadow, offsetY: v })
           }}
+          onKeyDown={(e) =>
+            handleShiftArrowStep(e, shadow.offsetY, 1, (v) => onChange({ ...shadow, offsetY: v }))
+          }
           className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         />
       </div>
@@ -2344,6 +2878,17 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
           } else if (e.key === 'Escape') {
             setDraft(String(externalValue))
             ;(e.target as HTMLInputElement).blur()
+          } else if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+            // Shift + arrow → 10× step. Browser default is inconsistent,
+            // so we drive it explicitly through commit() to keep the
+            // run-attr / box patch logic intact.
+            e.preventDefault()
+            const dir = e.key === 'ArrowUp' ? 1 : -1
+            const base = Number.parseFloat(draft)
+            const start = Number.isFinite(base) ? base : externalValue
+            const next = Math.max(1, start + dir * 10)
+            setDraft(String(next))
+            commit(String(next))
           } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
             // Let the browser step the value naturally; the resulting
             // input event (with inputType === undefined) will commit
@@ -2664,6 +3209,15 @@ function TextSection({ obj, patch }: TextSectionProps) {
                       patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
                     }
                   }}
+                  onKeyDown={(e) =>
+                    handleShiftArrowStep(
+                      e,
+                      obj.strokeWidth ?? 1,
+                      0.5,
+                      (v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>),
+                      { min: 0 },
+                    )
+                  }
                   className="w-16 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
                 />
               </>
@@ -2734,6 +3288,12 @@ function PosterFrameRow({
             const parsed = Number.parseFloat(e.target.value)
             if (Number.isFinite(parsed)) setPoster(parsed)
           }}
+          onKeyDown={(e) =>
+            handleShiftArrowStep(e, value, 0.1, setPoster, {
+              min: 0,
+              ...(hasDuration ? { max: duration } : {}),
+            })
+          }
           className={[
             'w-20 rounded-md border border-input field-surface px-2 py-0.5',
             'text-right text-xs text-foreground',
@@ -3049,6 +3609,15 @@ function AnimationItem({
               const v = parseFloat(e.target.value)
               if (!Number.isNaN(v) && v >= 0) patch({ duration: v })
             }}
+            onKeyDown={(e) =>
+              handleShiftArrowStep(
+                e,
+                step.duration ?? 0,
+                0.05,
+                (v) => patch({ duration: Math.max(0, v) }),
+                { min: 0 },
+              )
+            }
           />
         </label>
         <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
@@ -3064,6 +3633,15 @@ function AnimationItem({
               const v = parseFloat(e.target.value)
               if (!Number.isNaN(v) && v >= 0) patch({ delay: v })
             }}
+            onKeyDown={(e) =>
+              handleShiftArrowStep(
+                e,
+                step.delay ?? 0,
+                0.05,
+                (v) => patch({ delay: Math.max(0, v) }),
+                { min: 0 },
+              )
+            }
           />
         </label>
       </div>
@@ -3244,7 +3822,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
             id={`inspector-link-type-${obj.id}`}
             value={kind}
             onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
-            className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+            className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
           >
             <option value="none">None</option>
             <option value="slide">Slide</option>
@@ -3268,7 +3846,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                   hyperlink: { kind: 'slide', slideId: e.target.value },
                 } as SlideObjectPatch<SlideObject>)
               }}
-              className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
             >
               {slides.map((s, i) => (
                 <option key={s.id} value={s.id}>
@@ -3303,7 +3881,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                     },
                   } as SlideObjectPatch<SlideObject>)
                 }}
-                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -3325,7 +3903,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                     },
                   } as SlideObjectPatch<SlideObject>)
                 }}
-                className="w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
               >
                 <option value="_blank">New tab</option>
                 <option value="_self">Same tab</option>

@@ -16,6 +16,7 @@ import type { Container as PixiContainer } from 'pixi.js'
 import type { LineObject, ArrowObject, LineCap } from '@narrative/shared'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
+import { applyFlip } from './applyFlip.js'
 
 type LineLike = LineObject | ArrowObject
 
@@ -105,6 +106,7 @@ function applyTransform(node: PixiContainer, data: LineLike): void {
   node.pivot.set(data.width / 2, data.height / 2)
   node.x = data.x + data.width / 2
   node.y = data.y + data.height / 2
+  applyFlip(node, data)
 }
 
 function makeRenderer<T extends LineLike>(type: T['type']) {

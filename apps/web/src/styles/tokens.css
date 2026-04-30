@@ -346,6 +346,11 @@
      "carved into the panel" in either mode. */
   .field-surface {
     background-color: hsl(0 0% 100% / 0.04);
+    /* Match the 28px (h-7) height of icon/toggle buttons so inputs,
+       selects, and buttons line up on the same baseline in the
+       Inspector. Wrappers with `items-stretch` inherit this via their
+       children (buttons already set h-7 explicitly). */
+    min-height: 1.75rem;
   }
   .field-surface:hover:not(:disabled, :focus) {
     background-color: hsl(0 0% 100% / 0.06);

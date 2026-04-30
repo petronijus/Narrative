@@ -11,6 +11,7 @@ import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { PathObject, PathAnchor } from '@narrative/shared'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { applyFlip } from './applyFlip.js'
 
 const GRAPHICS_TAG = Symbol('pathGraphics')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,6 +81,7 @@ function applyTransform(node: PixiContainer, data: PathObject): void {
   node.pivot.set(data.width / 2, data.height / 2)
   node.x = data.x + data.width / 2
   node.y = data.y + data.height / 2
+  applyFlip(node, data)
 }
 
 function anchorsEqual(a: PathAnchor[], b: PathAnchor[]): boolean {

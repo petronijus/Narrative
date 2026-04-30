@@ -17,6 +17,7 @@ import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleRoundedRect } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
+import { applyFlip } from './applyFlip.js'
 
 function cornerRadiusEqual(a: CornerRadius | undefined, b: CornerRadius | undefined): boolean {
   if (a === b) return true
@@ -44,6 +45,7 @@ function applyObjectTransform(container: Container, data: RectangleObject): void
   container.alpha = data.opacity
   // Pivot na střed objektu pro správnou rotaci
   container.pivot.set(data.width / 2, data.height / 2)
+  applyFlip(container, data)
 }
 
 /**

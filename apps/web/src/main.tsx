@@ -23,6 +23,30 @@ import { registerBundledFonts } from './state/bundledFonts.js'
 // on woff2 fetch would visibly delay the editor mount.
 void registerBundledFonts()
 
+// Global pointer-capture for native range inputs. Without this, a
+// fast drag that strays outside the slider element loses tracking
+// (especially noticeable inside scroll containers / popovers where
+// the pointer can leave the input's hit-test area). Capturing in the
+// pointerdown bubble phase pins the pointer to the slider for the
+// rest of the gesture so dragging anywhere on screen still moves the
+// thumb. One-time setup, document-wide.
+document.addEventListener(
+  'pointerdown',
+  (e) => {
+    const target = e.target
+    if (!(target instanceof HTMLInputElement)) return
+    if (target.type !== 'range') return
+    try {
+      target.setPointerCapture(e.pointerId)
+    } catch {
+      // Older browsers / detached nodes — non-fatal.
+    }
+  },
+  // Capture phase so it runs before any React handler that might
+  // stopPropagation on the event.
+  true,
+)
+
 // Declare global injected by Vite define
 declare const __BUILD_VERSION__: string
 

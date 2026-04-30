@@ -36,6 +36,7 @@ import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { markRenderDirty } from '../RenderScheduler.js'
+import { applyFlip } from './applyFlip.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state on Container instances
@@ -131,6 +132,7 @@ function applyObjectTransform(container: Container, data: VideoObject): void {
   container.pivot.set(data.width / 2, data.height / 2)
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
+  applyFlip(container, data)
 }
 
 // ---------------------------------------------------------------------------
@@ -736,6 +738,7 @@ export const videoRenderer = {
     container.pivot.set(data.width / 2, data.height / 2)
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
+    applyFlip(container, data)
 
     // Async: fetch video info and draw the 400w thumbnail. Uses thumbnailUrl
     // in preference to posterUrl (much smaller raster → cheaper to keep many
