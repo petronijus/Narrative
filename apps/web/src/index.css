@@ -36,6 +36,17 @@
     box-shadow: none;
     border: none;
     cursor: pointer;
+    /* Enlarge the hit-test box so drags don't bail when the cursor
+       drifts a few pixels off the visible track. The visible track
+       stays 4px (drawn by the runnable-track pseudo); the input
+       element itself is 16px tall, centred around the thumb. */
+    height: 16px;
+    padding: 0;
+    /* Disable native touch gestures (scrolling / pinch) on the
+       slider so a vertical drift never pulls the gesture away into
+       the surrounding scroll container — the slider keeps the
+       pointer for the entire drag. */
+    touch-action: none;
   }
   input[type='range']:focus,
   input[type='range']:focus-visible {

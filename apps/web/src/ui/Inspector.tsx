@@ -210,7 +210,7 @@ function AlignButtonGroup<V extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+      className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
     >
       {options.map(({ value: v, label, Icon }, idx) => {
         const active = v === value
@@ -415,7 +415,7 @@ function IconToggleButton({
       onClick={onClick}
       disabled={disabled}
       className={[
-        'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-input',
+        'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-input',
         'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         // Same shape as AlignButtonGroup, but the active icon is
         // tinted blue (primary) so the toggle reads at a glance.
@@ -571,7 +571,7 @@ function NameField({
       title={conflict ? 'Another object on this slide already uses that name' : undefined}
       aria-invalid={conflict || undefined}
       className={[
-        'h-7 w-full rounded border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none',
+        'h-7 w-full rounded-md border bg-input px-2 py-0.5 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none',
         conflict
           ? 'border-destructive focus:border-destructive'
           : 'border-border focus:border-primary',
@@ -738,7 +738,7 @@ export function Inspector() {
             aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
             title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
             className={[
-              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border',
+              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
               obj.locked === true
                 ? 'border-primary bg-primary/15 text-primary'
                 : 'border-border text-muted-foreground hover:text-foreground',
@@ -1016,7 +1016,7 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
             type="button"
             onClick={runMaskWithShape}
             disabled={isViewer}
-            className="w-full rounded border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Mask with shape
           </button>
@@ -1072,7 +1072,7 @@ function MultiButton({
       disabled={disabled}
       title={title}
       aria-label={title}
-      className="flex items-center justify-center rounded border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      className="flex items-center justify-center rounded-md border border-input field-surface px-1.5 py-1 text-[10px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
     >
       {Icon !== undefined ? <Icon className="h-3.5 w-3.5" aria-hidden /> : label}
     </button>
@@ -1111,7 +1111,7 @@ function LayerOrderControls({
     <div
       role="group"
       aria-label="Layer order"
-      className="flex items-stretch overflow-hidden rounded border border-input field-surface"
+      className="flex items-stretch overflow-hidden rounded-md border border-input field-surface"
     >
       {buttons.map(({ move, title, Icon }, idx) => (
         <button
@@ -1281,7 +1281,7 @@ function LayersPanel({
               onDrop={onDrop(o.id)}
               onClick={onRowClick(o.id)}
               className={[
-                'group relative flex items-center gap-1.5 rounded border border-transparent px-1.5 py-1 text-[11px]',
+                'group relative flex items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[11px]',
                 'cursor-pointer select-none',
                 // Match the inspector toggle style: tinted blue fill +
                 // primary text/icon, no border accent. Keeps the row
@@ -1313,7 +1313,7 @@ function LayersPanel({
               )}
               {o.groupId !== undefined && o.groupId !== '' && (
                 <span
-                  className="rounded bg-muted px-1 text-[9px] text-muted-foreground"
+                  className="rounded-md bg-muted px-1 text-[9px] text-muted-foreground"
                   title={`Group ${o.groupId.slice(0, 4)}`}
                 >
                   ∘
@@ -1332,7 +1332,7 @@ function LayersPanel({
                   onMouseDown={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
                   draggable={false}
-                  className="ml-0.5 rounded p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
+                  className="ml-0.5 rounded-md p-0.5 text-muted-foreground/60 opacity-0 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100 focus:outline-none"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -1480,7 +1480,7 @@ function SlideInspector() {
               )
             }
             className={[
-              'w-full rounded border border-input field-surface px-2 py-0.5',
+              'w-full rounded-md border border-input field-surface px-2 py-0.5',
               'text-right text-xs text-foreground',
               'focus:border-ring focus:outline-none',
               'disabled:opacity-40 disabled:cursor-not-allowed',
@@ -1493,7 +1493,7 @@ function SlideInspector() {
         {transition.kind === 'magic' && (
           <div
             className={[
-              'rounded border px-2 py-1.5 text-[11px] leading-snug',
+              'rounded-md border px-2 py-1.5 text-[11px] leading-snug',
               prevSlide === undefined
                 ? 'border-amber-700/60 bg-amber-900/20 text-amber-300'
                 : magicMatchedCount === 0
@@ -1783,7 +1783,7 @@ function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: Posi
         <div
           role="group"
           aria-label="Align horizontally to slide"
-          className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+          className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
         >
           {[
             {
@@ -1823,7 +1823,7 @@ function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: Posi
         <div
           role="group"
           aria-label="Align vertically to slide"
-          className="flex flex-1 items-stretch overflow-hidden rounded border border-input field-surface"
+          className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
         >
           {[
             {
@@ -2000,92 +2000,13 @@ interface AppearanceSectionProps {
 }
 
 function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
-  const hasStroke = obj.stroke !== undefined
-  const strokeHex = numberToHex(obj.stroke ?? 0x000000)
-  const strokeWidth = obj.strokeWidth ?? 1
-
   return (
     <Section title="Appearance" storageKey="appearance">
       <SubLabel>Fill</SubLabel>
       <FillBody obj={obj} patch={patch} />
 
       <SubLabel>Stroke</SubLabel>
-      {/* Stroke — toggle + (when enabled) colour + width + dashed.
-          Toggling off sends `stroke: undefined` which the renderer
-          treats as "no stroke". */}
-      <div className="flex items-center gap-1.5">
-        <input
-          type="checkbox"
-          aria-label="Enable stroke"
-          checked={hasStroke}
-          onChange={(e) => {
-            if (e.target.checked) {
-              patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<FilledShape>)
-            } else {
-              // Explicit undefined tells updateObject to clear the field.
-              patch({
-                stroke: undefined,
-                strokeWidth: undefined,
-              } as unknown as SlideObjectPatch<FilledShape>)
-            }
-          }}
-          className="h-3.5 w-3.5"
-        />
-        {hasStroke && (
-          <>
-            <ColorInput
-              value={strokeHex}
-              onChange={(hex) =>
-                patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<FilledShape>)
-              }
-              ariaLabel="Stroke color"
-              showHex={false}
-              alpha={obj.strokeAlpha ?? 1}
-              onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
-            />
-            <input
-              type="number"
-              aria-label="Stroke width"
-              min={0}
-              step={0.5}
-              value={strokeWidth}
-              onChange={(e) => {
-                const v = Number.parseFloat(e.target.value)
-                if (Number.isFinite(v)) {
-                  patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>)
-                }
-              }}
-              onKeyDown={(e) =>
-                handleShiftArrowStep(
-                  e,
-                  strokeWidth,
-                  0.5,
-                  (v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<FilledShape>),
-                  { min: 0 },
-                )
-              }
-              className={[
-                'w-16 rounded border border-input field-surface px-2 py-0.5',
-                'text-xs text-foreground focus:border-ring focus:outline-none',
-              ].join(' ')}
-            />
-            <label className="ml-1 flex items-center gap-1 text-[10px] text-muted-foreground">
-              <input
-                type="checkbox"
-                aria-label="Dashed stroke"
-                checked={obj.strokeDash === true}
-                onChange={(e) =>
-                  patch({
-                    strokeDash: e.target.checked ? true : undefined,
-                  } as unknown as SlideObjectPatch<FilledShape>)
-                }
-                className="h-3 w-3"
-              />
-              Dashed
-            </label>
-          </>
-        )}
-      </div>
+      <StrokeBody obj={obj} patch={patch} />
 
       {/* Corner radius — rectangle only. Uniform slider + per-corner expand. */}
       {obj.type === 'rectangle' && (
@@ -2167,7 +2088,6 @@ function CornerRadiusRow({
   return (
     <>
       <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Corners</span>
         <div className="flex flex-1 items-center gap-1.5">
           {!perCorner && (
             <>
@@ -2198,7 +2118,7 @@ function CornerRadiusRow({
                   })
                 }
                 className={[
-                  'w-14 rounded border border-input field-surface px-2 py-0.5',
+                  'w-14 rounded-md border border-input field-surface px-2 py-0.5',
                   'text-xs text-foreground focus:border-ring focus:outline-none',
                 ].join(' ')}
               />
@@ -2224,7 +2144,7 @@ function CornerRadiusRow({
             aria-pressed={perCorner}
             title={perCorner ? 'Collapse to single radius' : 'Edit each corner separately'}
             className={[
-              'rounded border px-1.5 py-0.5 text-[10px]',
+              'rounded-md border px-1.5 py-0.5 text-[10px]',
               perCorner
                 ? 'border-primary bg-primary/15 text-primary'
                 : 'border-border text-muted-foreground hover:text-foreground',
@@ -2236,7 +2156,7 @@ function CornerRadiusRow({
       </div>
 
       {perCorner && (
-        <div className="ml-[4.5rem] grid grid-cols-2 gap-1.5">
+        <div className="grid grid-cols-2 gap-1.5">
           {(['tl', 'tr', 'bl', 'br'] as const).map((c) => (
             <div key={c} className="flex items-center gap-1">
               <span className="w-5 text-[10px] uppercase text-muted-foreground">{c}</span>
@@ -2257,7 +2177,7 @@ function CornerRadiusRow({
                   })
                 }
                 className={[
-                  'flex-1 rounded border border-input field-surface px-2 py-0.5',
+                  'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
                   'text-xs text-foreground focus:border-ring focus:outline-none',
                 ].join(' ')}
               />
@@ -2278,6 +2198,212 @@ type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 function fillModeOf(style: FillStyle | undefined): FillMode {
   if (style === undefined) return 'solid'
   return style.kind
+}
+
+type StrokeJoin = 'miter' | 'round' | 'bevel'
+
+/**
+ * 3-button segmented group for the stroke corner-join style. Each
+ * icon previews how the stroke renders at a 90° corner (sharp,
+ * rounded-md, or bevelled). Disabled for ellipses since they have no
+ * corners — the group still renders for layout consistency but is
+ * non-interactive.
+ */
+function StrokeJoinGroup({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: StrokeJoin
+  disabled?: boolean
+  onChange: (next: StrokeJoin) => void
+}) {
+  const OPTIONS: Array<{ value: StrokeJoin; label: string; path: string }> = [
+    {
+      value: 'miter',
+      label: 'Sharp corner',
+      // Right-angle path with no rounding / chamfer.
+      path: 'M3 11 L3 3 L11 3',
+    },
+    {
+      value: 'round',
+      label: 'Rounded corner',
+      // 90° arc through the corner.
+      path: 'M3 11 L3 5 A2 2 0 0 1 5 3 L11 3',
+    },
+    {
+      value: 'bevel',
+      label: 'Bevelled corner',
+      // 45° clip across the inside corner.
+      path: 'M3 11 L3 5 L5 3 L11 3',
+    },
+  ]
+  return (
+    <div
+      role="group"
+      aria-label="Stroke corner join"
+      className="flex items-stretch overflow-hidden rounded-md border border-input field-surface"
+    >
+      {OPTIONS.map(({ value: v, label, path }, idx) => {
+        const active = v === value
+        return (
+          <button
+            key={v}
+            type="button"
+            aria-label={label}
+            aria-pressed={active}
+            title={label}
+            disabled={disabled}
+            onClick={() => onChange(v)}
+            className={[
+              'flex h-7 w-7 items-center justify-center transition-colors',
+              idx > 0 ? 'border-l border-input' : '',
+              active
+                ? 'bg-primary/15 text-primary'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              disabled ? 'cursor-not-allowed opacity-50' : '',
+            ].join(' ')}
+          >
+            <svg
+              viewBox="0 0 14 14"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.75}
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <path d={path} />
+            </svg>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Stroke row — same layout as FillBody. Single row with a Solid /
+ * Dashed dropdown and a colour swatch + hex pill, plus a small
+ * thickness field on the next line.
+ *
+ * "Off" is implicit: thickness 0 (or missing) ⇒ no stroke renders,
+ * since the schema treats missing `stroke` as no stroke and width 0
+ * draws nothing. Any change to colour / dropdown / thickness fills
+ * in sensible defaults so the user never sees a half-applied state.
+ */
+function StrokeBody({
+  obj,
+  patch,
+}: {
+  obj: FilledShape
+  patch: (p: SlideObjectPatch<FilledShape>) => void
+}) {
+  const strokeHex = numberToHex(obj.stroke ?? 0x000000)
+  const strokeAlpha = obj.strokeAlpha ?? 1
+  const strokeWidth = obj.strokeWidth ?? 0
+  const dashed = obj.strokeDash === true
+
+  // Picking a colour or changing the dash style implies the user
+  // wants the stroke visible — bump width to 1 if it's currently 0
+  // so the choice has a visible effect. Touching `stroke` keeps it
+  // set so colour changes survive a width-to-zero excursion.
+  const ensureStrokeVisible = (
+    extra: SlideObjectPatch<FilledShape>,
+  ): SlideObjectPatch<FilledShape> => {
+    if (strokeWidth > 0 && obj.stroke !== undefined) return extra
+    return {
+      ...extra,
+      ...(obj.stroke === undefined ? { stroke: 0x000000 } : {}),
+      ...(strokeWidth === 0 ? { strokeWidth: 1 } : {}),
+    } as SlideObjectPatch<FilledShape>
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1">
+        <select
+          aria-label="Stroke style"
+          value={dashed ? 'dashed' : 'solid'}
+          onChange={(e) => {
+            const next = e.target.value === 'dashed'
+            patch(
+              ensureStrokeVisible({
+                strokeDash: next ? true : undefined,
+              } as unknown as SlideObjectPatch<FilledShape>),
+            )
+          }}
+          className={[
+            'h-7 w-20 flex-shrink-0 rounded-md border border-input field-surface px-1.5 text-[11px] text-foreground',
+            'focus:border-ring focus:outline-none',
+          ].join(' ')}
+        >
+          <option value="solid">Solid</option>
+          <option value="dashed">Dashed</option>
+        </select>
+
+        <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
+          <ColorInput
+            value={strokeHex}
+            onChange={(hex) =>
+              patch(
+                ensureStrokeVisible({
+                  stroke: hexToNumber(hex),
+                } as SlideObjectPatch<FilledShape>),
+              )
+            }
+            ariaLabel="Stroke color"
+            showHex
+            alpha={strokeAlpha}
+            onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<FilledShape>)}
+            inputClassName="!h-5 !w-7"
+            hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+          />
+        </div>
+      </div>
+
+      {/* Thickness + corner-join. Thickness controls visibility
+          (0 = off). The join group sets how stroked corners render
+          on rectangles / triangles / polygons / paths — irrelevant
+          for ellipses, which have no corners. */}
+      <div className="flex items-center gap-1">
+        <div className="w-24">
+          <CompactNumberField
+            id={`inspector-stroke-w-${obj.id}`}
+            glyph="W"
+            ariaLabel="Stroke width"
+            value={strokeWidth}
+            step={0.5}
+            onChange={(v) => {
+              const clamped = Math.max(0, v)
+              // If the user is enabling stroke for the first time
+              // and there's no colour yet, seed black so the bump
+              // is visible.
+              if (clamped > 0 && obj.stroke === undefined) {
+                patch({
+                  strokeWidth: clamped,
+                  stroke: 0x000000,
+                } as SlideObjectPatch<FilledShape>)
+              } else {
+                patch({ strokeWidth: clamped } as SlideObjectPatch<FilledShape>)
+              }
+            }}
+          />
+        </div>
+        <StrokeJoinGroup
+          value={obj.strokeJoin ?? 'miter'}
+          disabled={obj.type === 'ellipse'}
+          onChange={(next) =>
+            patch(
+              ensureStrokeVisible({
+                strokeJoin: next === 'miter' ? undefined : next,
+              } as unknown as SlideObjectPatch<FilledShape>),
+            )
+          }
+        />
+      </div>
+    </div>
+  )
 }
 
 function FillBody({
@@ -2333,7 +2459,7 @@ function FillBody({
           value={mode}
           onChange={(e) => setMode(e.target.value as FillMode)}
           className={[
-            'h-7 rounded border border-input field-surface px-1.5 text-[11px] text-foreground',
+            'h-7 w-20 flex-shrink-0 rounded-md border border-input field-surface px-1.5 text-[11px] text-foreground',
             'focus:border-ring focus:outline-none',
           ].join(' ')}
         >
@@ -2344,7 +2470,7 @@ function FillBody({
         </select>
 
         {mode === 'solid' && (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5 py-0.5">
+          <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
             <ColorInput
               value={solidHex}
               onChange={(hex) => patch({ fill: hexToNumber(hex) })}
@@ -2353,7 +2479,7 @@ function FillBody({
               alpha={fillAlpha}
               onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
               inputClassName="!h-5 !w-7"
-              hexClassName="!border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+              hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
             />
           </div>
         )}
@@ -2480,7 +2606,7 @@ function ImageFillEditor({
       <div className="flex items-center gap-1.5">
         <label
           htmlFor={fileInputId}
-          className="flex-1 cursor-pointer rounded border border-input field-surface px-2 py-1 text-center text-[10px] text-muted-foreground hover:text-foreground"
+          className="flex-1 cursor-pointer rounded-md border border-input field-surface px-2 py-1 text-center text-[10px] text-muted-foreground hover:text-foreground"
         >
           {fillStyle.assetId === '' ? 'Choose image…' : 'Replace image'}
         </label>
@@ -2502,7 +2628,7 @@ function ImageFillEditor({
           aria-label="Image fill fit"
           value={fillStyle.fit ?? 'cover'}
           onChange={(e) => onChange({ ...fillStyle, fit: e.target.value as 'cover' | 'contain' })}
-          className="flex-1 rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="flex-1 rounded-md border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         >
           <option value="cover">Cover</option>
           <option value="contain">Contain</option>
@@ -2609,7 +2735,7 @@ function CapPicker({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as 'none' | 'round' | 'square' | 'arrow')}
-        className="flex-1 rounded border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+        className="flex-1 rounded-md border border-input field-surface px-1 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
       >
         <option value="none">None</option>
         <option value="round">Round</option>
@@ -2738,7 +2864,7 @@ function ShadowControls({
           onKeyDown={(e) =>
             handleShiftArrowStep(e, shadow.offsetX, 1, (v) => onChange({ ...shadow, offsetX: v }))
           }
-          className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         />
         <input
           type="number"
@@ -2751,7 +2877,7 @@ function ShadowControls({
           onKeyDown={(e) =>
             handleShiftArrowStep(e, shadow.offsetY, 1, (v) => onChange({ ...shadow, offsetY: v }))
           }
-          className="w-14 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         />
       </div>
     </div>
@@ -2974,7 +3100,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               }}
               aria-pressed={effectiveBold}
               className={[
-                'rounded border px-2 py-0.5 text-[11px] font-bold',
+                'rounded-md border px-2 py-0.5 text-[11px] font-bold',
                 effectiveBold
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
@@ -3011,7 +3137,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               }}
               aria-pressed={effectiveItalic}
               className={[
-                'rounded border px-2 py-0.5 text-[11px] italic',
+                'rounded-md border px-2 py-0.5 text-[11px] italic',
                 effectiveItalic
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
@@ -3043,7 +3169,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
               }}
               aria-pressed={effectiveUnderline}
               className={[
-                'rounded border px-2 py-0.5 text-[11px] underline',
+                'rounded-md border px-2 py-0.5 text-[11px] underline',
                 effectiveUnderline
                   ? 'border-primary bg-primary/15 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground',
@@ -3060,7 +3186,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                     e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
                 } as unknown as SlideObjectPatch<TextObject>)
               }
-              className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
               title="List style"
             >
               <option value="">No list</option>
@@ -3218,7 +3344,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
                       { min: 0 },
                     )
                   }
-                  className="w-16 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  className="w-16 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
                 />
               </>
             )}
@@ -3323,7 +3449,7 @@ function PosterFrameRow({
           type="button"
           onClick={captureCurrent}
           title="Pause the video at the frame you want, then click to capture its time as the poster."
-          className="rounded border border-border field-surface px-2 py-0.5 text-[10px] text-foreground hover:bg-accent"
+          className="rounded-md border border-border field-surface px-2 py-0.5 text-[10px] text-foreground hover:bg-accent"
         >
           Use current frame
         </button>
@@ -3334,7 +3460,7 @@ function PosterFrameRow({
               patch({ posterTime: undefined } as unknown as SlideObjectPatch<VideoObject>)
             }
             title="Reset poster to the auto-generated thumbnail at t=0"
-            className="rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+            className="rounded-md border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
           >
             Reset
           </button>
@@ -3442,7 +3568,7 @@ function VideoSection({
           onChange={(e) =>
             patch({ fit: e.target.value as 'cover' | 'contain' } as SlideObjectPatch<VideoObject>)
           }
-          className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
         >
           <option value="contain">Contain</option>
           <option value="cover">Cover</option>
@@ -3511,7 +3637,7 @@ function defaultTrigger(totalAnimations: number): AnimationTrigger {
 }
 
 const ADD_BUTTON_CLASS = [
-  'rounded border border-input px-2 py-0.5 text-xs text-foreground/90',
+  'rounded-md border border-input px-2 py-0.5 text-xs text-foreground/90',
   'hover:border-blue-500 hover:text-blue-400 transition-colors',
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
 ].join(' ')
@@ -3537,7 +3663,7 @@ function AnimationItem({
     updateAnimation(mutationCtx, step.id, p)
   }
   return (
-    <li className="flex flex-col gap-1 rounded field-surface px-2 py-1.5">
+    <li className="flex flex-col gap-1 rounded-md field-surface px-2 py-1.5">
       <div className="flex items-center justify-between">
         <span className="text-xs text-foreground">{animationLabel(step)}</span>
         <button
@@ -3545,7 +3671,7 @@ function AnimationItem({
           onClick={() => onRemove(step.id)}
           aria-label={`Remove ${animationLabel(step)} animation`}
           className={[
-            'ml-2 rounded p-0.5 text-muted-foreground/50 transition-colors',
+            'ml-2 rounded-md p-0.5 text-muted-foreground/50 transition-colors',
             'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
           ].join(' ')}
         >
@@ -3569,7 +3695,7 @@ function AnimationItem({
           <select
             value={step.trigger}
             aria-label="Trigger"
-            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
           >
             <option value="withPrevious">withPrevious</option>
@@ -3582,7 +3708,7 @@ function AnimationItem({
           <select
             value={step.easing ?? 'power2.out'}
             aria-label="Easing"
-            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => patch({ easing: e.target.value })}
           >
             <option value="none">none</option>
@@ -3604,7 +3730,7 @@ function AnimationItem({
             step={0.05}
             value={step.duration ?? 0}
             aria-label="Duration in seconds"
-            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => {
               const v = parseFloat(e.target.value)
               if (!Number.isNaN(v) && v >= 0) patch({ duration: v })
@@ -3628,7 +3754,7 @@ function AnimationItem({
             step={0.05}
             value={step.delay ?? 0}
             aria-label="Delay in seconds"
-            className="rounded border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => {
               const v = parseFloat(e.target.value)
               if (!Number.isNaN(v) && v >= 0) patch({ delay: v })
@@ -3692,7 +3818,7 @@ function AnimationsSection({
         <select
           value=""
           aria-label="Add animation preset"
-          className="flex-1 rounded border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+          className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
           onChange={(e) => {
             const val = e.target.value
             if (val === '') return
@@ -3822,7 +3948,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
             id={`inspector-link-type-${obj.id}`}
             value={kind}
             onChange={(e) => setKind(e.target.value as 'none' | 'slide' | 'url')}
-            className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+            className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
           >
             <option value="none">None</option>
             <option value="slide">Slide</option>
@@ -3846,7 +3972,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                   hyperlink: { kind: 'slide', slideId: e.target.value },
                 } as SlideObjectPatch<SlideObject>)
               }}
-              className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+              className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
             >
               {slides.map((s, i) => (
                 <option key={s.id} value={s.id}>
@@ -3881,7 +4007,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                     },
                   } as SlideObjectPatch<SlideObject>)
                 }}
-                className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -3903,7 +4029,7 @@ function LinkSection({ obj, patch }: LinkSectionProps) {
                     },
                   } as SlideObjectPatch<SlideObject>)
                 }}
-                className="h-7 w-full rounded border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
               >
                 <option value="_blank">New tab</option>
                 <option value="_self">Same tab</option>
@@ -3937,7 +4063,7 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
         <button
           type="button"
           onClick={() => enterCrop(obj.id)}
-          className="rounded border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70"
+          className="rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70"
         >
           Crop image…
         </button>
@@ -3947,7 +4073,7 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
           onClick={() =>
             patch({ imageRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
           }
-          className="rounded border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           Reset crop
         </button>
@@ -3955,7 +4081,7 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
           <button
             type="button"
             onClick={() => patch({ mask: undefined } as unknown as SlideObjectPatch<ImageObject>)}
-            className="rounded border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            className="rounded-md border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Remove shape mask
           </button>

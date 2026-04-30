@@ -128,7 +128,13 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
       })
     } else {
       tracePath(graphics, data.width, data.height, data.cornerRadius)
-      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: strokeAlpha })
+      graphics.stroke({
+        color: data.stroke,
+        width: w,
+        alignment: 0.5,
+        alpha: strokeAlpha,
+        join: data.strokeJoin ?? 'miter',
+      })
     }
   }
 }

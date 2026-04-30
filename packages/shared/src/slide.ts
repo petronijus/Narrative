@@ -119,6 +119,12 @@ export interface StrokeStyleFields {
   strokeDash?: boolean
   /** Stroke alpha 0..1. Missing ⇒ 1 (fully opaque). */
   strokeAlpha?: number
+  /**
+   * P16: corner join style for the stroke. 'miter' = sharp (default),
+   * 'round' = rounded, 'bevel' = clipped flat. Mirrors SVG / Pixi's
+   * lineJoin. Missing ⇒ 'miter'.
+   */
+  strokeJoin?: 'miter' | 'round' | 'bevel'
 }
 
 /**
@@ -277,6 +283,8 @@ export interface PathObject extends BaseSlideObject {
   stroke: number
   strokeAlpha?: number
   strokeWidth: number
+  /** P16: corner join style — 'miter' | 'round' | 'bevel'. Missing ⇒ 'round' for path (matches the original default). */
+  strokeJoin?: 'miter' | 'round' | 'bevel'
   /** Optional fill for a closed path. */
   fill?: number
   fillAlpha?: number
