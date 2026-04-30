@@ -787,23 +787,26 @@ export function Inspector() {
       {(obj.type === 'rectangle' ||
         obj.type === 'ellipse' ||
         obj.type === 'triangle' ||
-        obj.type === 'polygon') && (
+        obj.type === 'polygon' ||
+        obj.type === 'path') && (
         <AppearanceSection
           obj={obj}
           patch={
             patch as (
-              p: SlideObjectPatch<RectangleObject | EllipseObject | TriangleObject | PolygonObject>,
+              p: SlideObjectPatch<
+                RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
+              >,
             ) => void
           }
         />
       )}
 
-      {/* P5b: Line / Arrow / Path stroke controls. Schema already carried
-          stroke + strokeWidth + dash — Inspector just surfaces them. */}
-      {(obj.type === 'line' || obj.type === 'arrow' || obj.type === 'path') && (
+      {/* P5b: Line / Arrow stroke controls. Path uses the full Appearance
+          section above (fill + stroke + transparency, no corner radius). */}
+      {(obj.type === 'line' || obj.type === 'arrow') && (
         <LineStrokeSection
           obj={obj}
-          patch={patch as (p: SlideObjectPatch<LineObject | ArrowObject | PathObject>) => void}
+          patch={patch as (p: SlideObjectPatch<LineObject | ArrowObject>) => void}
         />
       )}
 
@@ -2007,7 +2010,7 @@ function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: Posi
 // Appearance section — fill + stroke + (rectangle-only) corner radius
 // ---------------------------------------------------------------------------
 
-type FilledShape = RectangleObject | EllipseObject | TriangleObject | PolygonObject
+type FilledShape = RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
 
 interface AppearanceSectionProps {
   obj: FilledShape
@@ -2017,6 +2020,12 @@ interface AppearanceSectionProps {
 function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
   return (
     <Section title="Appearance" storageKey="appearance">
+      {/* Closed-path toggle — paths only. Closed paths can be filled;
+          open paths are stroke-only regardless of the Fill control. */}
+      {obj.type === 'path' && (
+        <PathClosedToggle obj={obj} patch={patch as (p: SlideObjectPatch<PathObject>) => void} />
+      )}
+
       <SubLabel>Fill</SubLabel>
       <FillBody obj={obj} patch={patch} />
 
@@ -2046,6 +2055,34 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
         onChange={(v) => patch({ opacity: v } as SlideObjectPatch<FilledShape>)}
       />
     </Section>
+  )
+}
+
+function PathClosedToggle({
+  obj,
+  patch,
+}: {
+  obj: PathObject
+  patch: (p: SlideObjectPatch<PathObject>) => void
+}) {
+  const closed = obj.closed === true
+  return (
+    <div className="flex items-center justify-between pb-1.5">
+      <SubLabel>Path</SubLabel>
+      <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={closed}
+          onChange={(e) =>
+            patch({
+              closed: e.target.checked ? true : undefined,
+            } as unknown as SlideObjectPatch<PathObject>)
+          }
+          className="accent-primary"
+        />
+        Closed
+      </label>
+    </div>
   )
 }
 
@@ -2257,7 +2294,10 @@ function StrokeBody({
   const strokeHex = numberToHex(obj.stroke ?? 0x000000)
   const strokeAlpha = obj.strokeAlpha ?? 1
   const strokeWidth = obj.strokeWidth ?? 0
-  const dashed = obj.strokeDash === true
+  // PathObject historically uses `dash` (boolean) where the parametric
+  // shapes use `strokeDash`. Read whichever the object carries; on
+  // write below, target the right field per type.
+  const dashed = obj.type === 'path' ? (obj as PathObject).dash === true : obj.strokeDash === true
 
   // Picking a colour or changing the dash style implies the user
   // wants the stroke visible — bump width to 1 if it's currently 0
@@ -2282,11 +2322,13 @@ function StrokeBody({
           value={dashed ? 'dashed' : 'solid'}
           onChange={(e) => {
             const next = e.target.value === 'dashed'
-            patch(
-              ensureStrokeVisible({
-                strokeDash: next ? true : undefined,
-              } as unknown as SlideObjectPatch<FilledShape>),
-            )
+            const dashPatch =
+              obj.type === 'path'
+                ? ({ dash: next ? true : undefined } as unknown as SlideObjectPatch<FilledShape>)
+                : ({
+                    strokeDash: next ? true : undefined,
+                  } as unknown as SlideObjectPatch<FilledShape>)
+            patch(ensureStrokeVisible(dashPatch))
           }}
           className={[
             'h-7 w-20 flex-shrink-0 rounded-md border border-input field-surface px-1.5 text-[11px] text-foreground',
@@ -2358,7 +2400,9 @@ function FillBody({
   patch: (p: SlideObjectPatch<FilledShape>) => void
 }) {
   const mode = fillModeOf(obj.fillStyle)
-  const solidHex = numberToHex(obj.fill)
+  // PathObject's `fill` is optional — fall back to white so the picker
+  // and gradient seed always have a starting colour.
+  const solidHex = numberToHex(obj.fill ?? 0xffffff)
   const fillAlpha = obj.fillAlpha ?? 1
 
   // Keep the last-seen gradient / image fillStyle around so the closing
@@ -2395,7 +2439,7 @@ function FillBody({
     // Seed a two-stop gradient from the current solid colour + a darker
     // tint of itself (multiply RGB by 0.55) so the object reads as a
     // gradient without slamming to pure black on the second stop.
-    const startColor = obj.fill
+    const startColor = obj.fill ?? 0xffffff
     const r = (startColor >> 16) & 0xff
     const g = (startColor >> 8) & 0xff
     const b = startColor & 0xff
@@ -3090,7 +3134,6 @@ function EffectsSection({
       >
         {hasBlur && (
           <BlurSlider
-            label="Radius"
             value={blur}
             ariaLabel="Blur radius"
             onChange={(v) =>
@@ -3158,21 +3201,16 @@ function EffectToggleRow({
 }
 
 function BlurSlider({
-  label,
   value,
   ariaLabel,
   onChange,
 }: {
-  label: string
   value: number
   ariaLabel: string
   onChange: (next: number) => void
 }) {
   return (
     <div className="flex items-center gap-2 pt-1">
-      <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
-        {label}
-      </span>
       <input
         type="range"
         aria-label={ariaLabel}
@@ -3183,9 +3221,15 @@ function BlurSlider({
         onChange={(e) => onChange(Number.parseFloat(e.target.value))}
         className="flex-1 accent-primary"
       />
-      <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">
-        {Math.round(value)}
-      </span>
+      <div className="w-16 flex-shrink-0">
+        <CompactNumberField
+          id={`${ariaLabel.replace(/\s+/g, '-').toLowerCase()}-num`}
+          ariaLabel={`${ariaLabel} value`}
+          value={value}
+          step={1}
+          onChange={(v) => onChange(Math.max(0, v))}
+        />
+      </div>
     </div>
   )
 }
@@ -4036,6 +4080,12 @@ function AnimationItem({
   function patch(p: Partial<AnimationStep>): void {
     updateAnimation(mutationCtx, step.id, p)
   }
+  function patchParams(next: Record<string, unknown>): void {
+    updateAnimation(mutationCtx, step.id, { params: { ...(step.params ?? {}), ...next } })
+  }
+  const hasDirection = step.preset === 'slideIn' || step.preset === 'slideOut'
+  const direction = (step.params?.['direction'] as string | undefined) ?? 'up'
+  const distance = (step.params?.['distance'] as number | undefined) ?? 100
   return (
     <li
       onClick={onSelect}
@@ -4151,6 +4201,50 @@ function AnimationItem({
           />
         </label>
       </div>
+      {hasDirection && (
+        <div className="grid grid-cols-2 gap-1">
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Direction
+            <select
+              value={direction}
+              aria-label="Direction"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => patchParams({ direction: e.target.value })}
+            >
+              <option value="up">up</option>
+              <option value="down">down</option>
+              <option value="left">left</option>
+              <option value="right">right</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Distance (px)
+            <input
+              type="number"
+              min={0}
+              step={10}
+              value={distance}
+              aria-label="Distance in pixels"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                if (!Number.isNaN(v) && v >= 0) patchParams({ distance: v })
+              }}
+              onKeyDown={(e) =>
+                handleShiftArrowStep(
+                  e,
+                  distance,
+                  10,
+                  (v) => patchParams({ distance: Math.max(0, v) }),
+                  {
+                    min: 0,
+                  },
+                )
+              }
+            />
+          </label>
+        </div>
+      )}
     </li>
   )
 }
@@ -4226,18 +4320,12 @@ function AnimationsSection({
             <option value="flipIn">flipIn</option>
             <option value="popIn">popIn</option>
             <option value="wipeIn">wipeIn</option>
-            <option value="slideIn:up">slideIn up</option>
-            <option value="slideIn:down">slideIn down</option>
-            <option value="slideIn:left">slideIn left</option>
-            <option value="slideIn:right">slideIn right</option>
+            <option value="slideIn">slideIn</option>
           </optgroup>
           <optgroup label="Exit">
             <option value="fadeOut">fadeOut</option>
             <option value="scaleOut">scaleOut</option>
-            <option value="slideOut:up">slideOut up</option>
-            <option value="slideOut:down">slideOut down</option>
-            <option value="slideOut:left">slideOut left</option>
-            <option value="slideOut:right">slideOut right</option>
+            <option value="slideOut">slideOut</option>
           </optgroup>
         </select>
       </div>

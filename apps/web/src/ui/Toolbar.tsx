@@ -21,6 +21,8 @@ import {
   Circle,
   Type,
   Image as ImageIcon,
+  Film,
+  ImagePlus,
   Share2,
   LogOut,
   Play,
@@ -51,6 +53,12 @@ import { createObjectOfType } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface ToolButton {
   tool: ActiveTool
@@ -104,12 +112,28 @@ export function Toolbar() {
   // M11: Upload hook + hidden file input ref
   const { startUpload } = useMediaUpload()
   const { objectsCtx } = useSlideObjects()
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageFileInputRef = useRef<HTMLInputElement>(null)
+  const videoFileInputRef = useRef<HTMLInputElement>(null)
 
-  function handleImageUploadDone(entry: UploadEntry) {
+  function handleMediaUploadDone(entry: UploadEntry) {
     if (entry.status !== 'done') return
     if (objectsCtx === null) return
     if (entry.assetId === undefined || entry.assetId === '') return
+    if (entry.mimeType.startsWith('video/')) {
+      const w = entry.width ?? 640
+      const h = entry.height ?? 360
+      createObjectOfType(objectsCtx, 'video', {
+        assetId: entry.assetId,
+        width: w,
+        height: h,
+        x: DEFAULT_IMAGE_X - w / 2,
+        y: DEFAULT_IMAGE_Y - h / 2,
+        autoplay: false,
+        loop: false,
+        muted: true,
+      })
+      return
+    }
     createObjectOfType(objectsCtx, 'image', {
       assetId: entry.assetId,
       width: entry.width ?? 400,
@@ -122,7 +146,7 @@ export function Toolbar() {
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     for (const file of files) {
-      startUpload(file, { onDone: handleImageUploadDone })
+      startUpload(file, { onDone: handleMediaUploadDone })
     }
     e.target.value = ''
   }
@@ -207,7 +231,7 @@ export function Toolbar() {
       scope: 'global',
       description: 'Insert image',
       handler: () => {
-        if (!isViewer) fileInputRef.current?.click()
+        if (!isViewer) imageFileInputRef.current?.click()
       },
     },
   ])
@@ -351,11 +375,11 @@ export function Toolbar() {
               )
             })}
 
-          {/* M11: Insert Image button — hidden for viewer role */}
+          {/* Insert Media — dropdown with Image + Video. Hidden for viewer role. */}
           {!isViewer && (
             <>
               <input
-                ref={fileInputRef}
+                ref={imageFileInputRef}
                 type="file"
                 accept="image/*"
                 multiple
@@ -364,22 +388,44 @@ export function Toolbar() {
                 tabIndex={-1}
                 onChange={handleFileInputChange}
               />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Insert image (I)"
-                    className="h-7 w-7"
-                  >
-                    <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  Insert image <span className="ml-2 opacity-60">I</span>
-                </TooltipContent>
-              </Tooltip>
+              <input
+                ref={videoFileInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
+                onChange={handleFileInputChange}
+              />
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Insert media"
+                        className="h-7 w-7"
+                      >
+                        <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Insert media</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="start" sideOffset={4} className="min-w-[8rem]">
+                  <DropdownMenuItem onSelect={() => imageFileInputRef.current?.click()}>
+                    <ImageIcon className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                    Image
+                    <span className="ml-auto text-xs opacity-60">I</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => videoFileInputRef.current?.click()}>
+                    <Film className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                    Video
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </div>

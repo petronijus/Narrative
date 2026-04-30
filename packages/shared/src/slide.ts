@@ -280,6 +280,12 @@ export interface PathObject extends BaseSlideObject {
   /** Optional fill for a closed path. */
   fill?: number
   fillAlpha?: number
+  /**
+   * Optional gradient or image fill — same schema as the parametric
+   * shapes. When set, takes precedence over `fill` (which becomes the
+   * fallback colour while an image fill is loading). Closed paths only.
+   */
+  fillStyle?: FillStyle
   /** When true, last anchor connects back to the first. */
   closed?: boolean
   dash?: boolean
