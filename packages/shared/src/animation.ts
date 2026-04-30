@@ -28,6 +28,8 @@ export type AnimationPreset =
   | 'popIn'
   | 'dissolveIn'
   | 'wipeIn'
+  | 'moveTo'
+  | 'rotateTo'
 
 /**
  * Trigger semantics:
@@ -88,6 +90,8 @@ const ANIMATION_PRESETS: ReadonlySet<string> = new Set<string>([
   'popIn',
   'dissolveIn',
   'wipeIn',
+  'moveTo',
+  'rotateTo',
 ])
 
 export function isAnimationPreset(s: string): s is AnimationPreset {

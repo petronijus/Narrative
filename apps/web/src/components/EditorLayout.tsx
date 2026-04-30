@@ -33,6 +33,8 @@ import { useTextEdit } from '../state/TextEditContext'
 import { useCropMode } from '../state/CropModeContext'
 import { CropOverlay } from '../ui/CropOverlay'
 import { PathPointsOverlay } from '../ui/PathPointsOverlay'
+import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
+import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
@@ -422,7 +424,8 @@ function convertToPathAndPlace(
 }
 
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
-  const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
+  const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
+  const { animations, animationsCtx } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { pathPointsId, enterPathPoints, exitPathPoints } = usePathPointsMode()
@@ -2051,6 +2054,20 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         const obj = objects.find((o) => o.id === pathPointsId)
                         if (obj === undefined || obj.type !== 'path') return null
                         return <PathPointsOverlay obj={obj} mutationCtx={mutationCtx} />
+                      })()}
+
+                    {/* moveTo animation target overlay — silhouette + draggable
+                        end-point handle when a moveTo step is selected. */}
+                    {selectedAnimationId !== null &&
+                      animationsCtx !== null &&
+                      (() => {
+                        const step = animations.find((a) => a.id === selectedAnimationId)
+                        if (step === undefined || step.preset !== 'moveTo') return null
+                        const obj = objects.find((o) => o.id === step.objectId)
+                        if (obj === undefined) return null
+                        return (
+                          <MoveToTargetOverlay obj={obj} step={step} mutationCtx={animationsCtx} />
+                        )
                       })()}
                   </div>
                 </div>

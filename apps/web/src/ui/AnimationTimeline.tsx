@@ -544,11 +544,14 @@ export function AnimationTimeline() {
   }, [rows])
 
   const totalSec = useMemo(() => {
-    // Minimum 3 s so the ruler always has something useful.
-    return laidOut.reduce(
+    // Visible track = last step's end + 5 s of headroom, with a 10 s
+    // floor. Headroom lets the author scrub past the last animation
+    // and drag steps further out without the ruler clipping.
+    const contentEnd = laidOut.reduce(
       (max, { step, startSec }) => Math.max(max, startSec + (step.duration ?? 0)),
-      3,
+      0,
     )
+    return Math.max(contentEnd + 5, 10)
   }, [laidOut])
 
   const trackWidthPx = GRIP_WIDTH + Math.ceil(totalSec * pxPerSec) + 32
@@ -952,6 +955,13 @@ export function AnimationTimeline() {
     if (runtimeRef.current !== null) return runtimeRef.current
     if (canvasInstance === null) return null
     if (animations.length === 0) return null
+    // Drop orphan steps (objectId no longer on the slide) before
+    // compiling so the compiler doesn't spam a warning per scrub for
+    // every dangling reference. Real cleanup of orphans happens in
+    // mutations.removeObject; this is the runtime safety net.
+    const liveIds = new Set(slideObjects.map((o) => o.id))
+    const compilable = animations.filter((s) => liveIds.has(s.objectId))
+    if (compilable.length === 0) return null
     const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
     // No inputBridge — the preview treats onClick like afterPrevious by
     // auto-advancing. That's simpler than wiring a "click the canvas to
@@ -959,13 +969,13 @@ export function AnimationTimeline() {
     // P12b: onTick wakes the render scheduler so GSAP-driven Pixi state
     // actually reaches the screen under autoStart:false.
     const scheduler = getDefaultRenderScheduler()
-    const runtime = createAnimationRuntime(animations, {
+    const runtime = createAnimationRuntime(compilable, {
       targetResolver: resolver,
       ...(scheduler !== null ? { onTick: () => scheduler.markDirty() } : {}),
     })
     runtimeRef.current = runtime
     return runtime
-  }, [animations, canvasInstance])
+  }, [animations, canvasInstance, slideObjects])
 
   const handlePlayPause = useCallback(() => {
     const rt = ensureRuntime()
@@ -994,18 +1004,25 @@ export function AnimationTimeline() {
 
   const handleScrub = useCallback(
     (timeSec: number) => {
+      // Playhead is clamped to the visible track (totalSec, includes
+      // headroom). The GSAP runtime seek itself stays clamped to
+      // rt.duration() — there's no animation past the last step, so
+      // seeking further is a no-op for playback. Keeping the visual
+      // playhead free lets authors drop new steps anywhere on the
+      // ruler without fighting the cap.
       const rt = ensureRuntime()
-      if (rt === null) return
-      const clamped = Math.max(0, Math.min(timeSec, rt.duration()))
-      if (rt.isPlaying()) {
-        rt.pause()
-        stopPlayheadLoop()
-        setIsPlaying(false)
+      const visualTime = Math.max(0, Math.min(timeSec, totalSec))
+      if (rt !== null) {
+        if (rt.isPlaying()) {
+          rt.pause()
+          stopPlayheadLoop()
+          setIsPlaying(false)
+        }
+        rt.seek(Math.min(visualTime, rt.duration()))
       }
-      rt.seek(clamped)
-      setPlayheadSec(clamped)
+      setPlayheadSec(visualTime)
     },
-    [ensureRuntime, stopPlayheadLoop],
+    [ensureRuntime, stopPlayheadLoop, totalSec],
   )
 
   return (

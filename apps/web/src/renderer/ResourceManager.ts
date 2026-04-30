@@ -58,15 +58,20 @@ export class ResourceManager {
 
     let texture: Texture | null = null
     try {
-      texture = await Assets.load<Texture>(url)
+      // Pin the loader explicitly: imgproxy URLs end in `@webp` / `@jpg`
+      // (format spec, not a file extension), so Pixi's extension-based
+      // dispatch otherwise warns "could not be loaded as we don't know
+      // how to parse it" before falling back. `loadParser: 'loadTextures'`
+      // tells Pixi to use the bitmap/texture loader regardless of the
+      // URL's tail, which silences the warning and avoids the double
+      // round-trip caused by the previous Image() fallback.
+      texture = await Assets.load<Texture>({ src: url, loadParser: 'loadTextures' })
     } catch {
       texture = null
     }
 
-    // Fallback for URLs with no/unrecognised extension (e.g. imgproxy paths
-    // ending in "@webp") where Assets can't pick a loader → returns null/errors.
-    // Texture.from bypasses extension detection by loading the URL into an
-    // HTMLImageElement directly.
+    // Fallback for URLs that even the explicit loader can't parse —
+    // load via HTMLImageElement directly so we still get a Texture.
     if (!texture || !(texture as { source?: unknown }).source) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
