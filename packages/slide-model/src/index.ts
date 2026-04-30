@@ -327,5 +327,6 @@ registerObjectType<VideoObject>({
     autoplay: false,
     loop: false,
     muted: true,
+    aspectLocked: true,
   }),
 })

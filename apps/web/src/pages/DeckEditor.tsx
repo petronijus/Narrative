@@ -18,6 +18,7 @@ import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
 import { TextEditProvider } from '../state/TextEditContext.js'
 import { CropModeProvider } from '../state/CropModeContext.js'
+import { PathPointsModeProvider } from '../state/PathPointsModeContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
 import type { DeckShellContextValue } from '../components/DeckShell.js'
 
@@ -29,7 +30,9 @@ export function DeckEditor() {
       <ToolProvider>
         <TextEditProvider>
           <CropModeProvider>
-            <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+            <PathPointsModeProvider>
+              <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+            </PathPointsModeProvider>
           </CropModeProvider>
         </TextEditProvider>
       </ToolProvider>

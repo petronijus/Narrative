@@ -47,9 +47,14 @@ import {
   Link2,
   Link2Off,
   Lock,
+  Repeat,
   RotateCw,
+  SlidersHorizontal,
   Unlock,
+  Volume2,
+  VolumeX,
   X,
+  CirclePlay,
   type LucideIcon,
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -760,21 +765,21 @@ export function Inspector() {
           selection union — that's the multi-select inspector's job). */}
       <PositionSection obj={obj} patch={patch} disabled={isViewer} layerMutationCtx={mutationCtx} />
 
-      {/* Transform — Opacity for object types that don't render an
-          Appearance section (text / image / video / line / arrow /
-          path). FilledShape's opacity lives inside the Appearance
-          section so the colour, border and visibility controls are
-          all in one block. */}
+      {/* Transparency for object types that don't render an Appearance
+          section (text / image / video / line / arrow). Same control,
+          label, and visual treatment as the slider inside Appearance
+          so the chrome reads identical across object types. Path is
+          handled by the FilledShape branch below — it's part of the
+          Appearance section and surfaces the same slider there. */}
       {obj.type !== 'rectangle' &&
         obj.type !== 'ellipse' &&
         obj.type !== 'triangle' &&
-        obj.type !== 'polygon' && (
-          <Section title="Transform" storageKey="transform">
-            <NumberField
+        obj.type !== 'polygon' &&
+        obj.type !== 'path' && (
+          <Section title="Transparency" storageKey="transparency">
+            <TransparencySlider
               id={`inspector-opacity-${obj.id}`}
-              label="Opacity"
               value={obj.opacity}
-              step={0.01}
               onChange={(v) => patch({ opacity: Math.min(1, Math.max(0, v)) })}
             />
           </Section>
@@ -1125,6 +1130,53 @@ function LayerOrderControls({
             idx > 0 ? 'border-l border-input' : '',
             'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             'disabled:cursor-not-allowed disabled:opacity-50',
+          ].join(' ')}
+        >
+          <Icon className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Full-width segmented row of icon toggles. Same outer chrome as
+ * LayerOrderControls (single bordered surface, dividers between
+ * segments), but each segment carries its own pressed/aria-pressed
+ * state so it works for boolean flags like Autoplay / Loop / Muted.
+ */
+function SegmentedToggleRow({
+  ariaLabel,
+  segments,
+}: {
+  ariaLabel: string
+  segments: {
+    Icon: LucideIcon
+    label: string
+    pressed: boolean
+    onClick: () => void
+  }[]
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className="flex items-stretch overflow-hidden rounded-md border border-input field-surface"
+    >
+      {segments.map(({ Icon, label, pressed, onClick }, idx) => (
+        <button
+          key={label}
+          type="button"
+          aria-label={label}
+          aria-pressed={pressed}
+          title={label}
+          onClick={onClick}
+          className={[
+            'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
+            idx > 0 ? 'border-l border-input' : '',
+            pressed
+              ? 'bg-primary/15 text-primary'
+              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
           ].join(' ')}
         >
           <Icon className="h-3.5 w-3.5" aria-hidden />
@@ -3487,14 +3539,18 @@ function TextSection({ obj, patch }: TextSectionProps) {
 
         <FontWeightSelect obj={obj} patch={patch} />
 
-        {/* Bold + Italic + Underline toggles + List style row.
+        {/* Bold + Italic + Underline as a single 3-segment toggle bar.
             Each toggle first attempts an inline format on the active
             text-edit selection (so a highlighted word is bolded /
             italicised on its own); only when there is no selection do
             we fall back to patching the box-wide field. */}
         <div className="flex items-center gap-2" data-text-edit-keep-focus>
           <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Style</span>
-          <div className="flex items-center gap-1">
+          <div
+            role="group"
+            aria-label="Text style"
+            className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
+          >
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
@@ -3513,23 +3569,18 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveBold}
-              className={[
-                'rounded-md border px-2 py-0.5 text-[11px] font-bold',
-                effectiveBold
-                  ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-muted-foreground hover:text-foreground',
-              ].join(' ')}
               title="Bold"
+              className={[
+                'flex flex-1 items-center justify-center px-2 py-1 text-[11px] font-bold transition-colors',
+                effectiveBold
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              ].join(' ')}
             >
               B
             </button>
             <button
               type="button"
-              // preventDefault on mouseDown keeps the editing textarea
-              // focused (and its selection alive) while the user clicks
-              // a style toggle in the inspector. Without this, the
-              // textarea blurs on mousedown, which exits edit mode and
-              // wipes the selection before the click even fires.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const nextItalic = !effectiveItalic
@@ -3550,13 +3601,13 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveItalic}
-              className={[
-                'rounded-md border px-2 py-0.5 text-[11px] italic',
-                effectiveItalic
-                  ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-muted-foreground hover:text-foreground',
-              ].join(' ')}
               title="Italic"
+              className={[
+                'flex flex-1 items-center justify-center border-l border-input px-2 py-1 text-[11px] italic transition-colors',
+                effectiveItalic
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              ].join(' ')}
             >
               I
             </button>
@@ -3582,31 +3633,16 @@ function TextSection({ obj, patch }: TextSectionProps) {
                 } as unknown as SlideObjectPatch<TextObject>)
               }}
               aria-pressed={effectiveUnderline}
-              className={[
-                'rounded-md border px-2 py-0.5 text-[11px] underline',
-                effectiveUnderline
-                  ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-border text-muted-foreground hover:text-foreground',
-              ].join(' ')}
               title="Underline"
+              className={[
+                'flex flex-1 items-center justify-center border-l border-input px-2 py-1 text-[11px] underline transition-colors',
+                effectiveUnderline
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              ].join(' ')}
             >
               U
             </button>
-            <select
-              value={obj.listStyle ?? ''}
-              onChange={(e) =>
-                patch({
-                  listStyle:
-                    e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
-                } as unknown as SlideObjectPatch<TextObject>)
-              }
-              className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              title="List style"
-            >
-              <option value="">No list</option>
-              <option value="bullet">• Bullet</option>
-              <option value="numbered">1. Numbered</option>
-            </select>
           </div>
         </div>
 
@@ -3639,38 +3675,41 @@ function TextSection({ obj, patch }: TextSectionProps) {
           />
         </div>
 
-        <NumberField
-          id={`inspector-lineheight-${obj.id}`}
-          label="Line-h"
-          value={obj.lineHeight ?? 1.2}
-          step={0.1}
-          onChange={(v) => patch({ lineHeight: Math.max(0.1, v) } as SlideObjectPatch<TextObject>)}
-        />
-        <NumberField
-          id={`inspector-letterspacing-${obj.id}`}
-          label="Letter"
-          value={obj.letterSpacing ?? 0}
-          step={0.5}
-          onChange={(v) => patch({ letterSpacing: v } as SlideObjectPatch<TextObject>)}
-        />
+        {/* Line height + Letter spacing in a single 2-column row,
+            Figma-style. Glyphs hint the field; values stay numeric. */}
+        <div className="flex items-center gap-1">
+          <CompactNumberField
+            id={`inspector-lineheight-${obj.id}`}
+            glyph={
+              <span className="font-serif tracking-tighter" aria-hidden>
+                A
+              </span>
+            }
+            ariaLabel="Line height"
+            value={obj.lineHeight ?? 1.2}
+            step={0.1}
+            onChange={(v) =>
+              patch({ lineHeight: Math.max(0.1, v) } as SlideObjectPatch<TextObject>)
+            }
+          />
+          <CompactNumberField
+            id={`inspector-letterspacing-${obj.id}`}
+            glyph={
+              <span className="tracking-widest" aria-hidden>
+                |A|
+              </span>
+            }
+            ariaLabel="Letter spacing"
+            value={obj.letterSpacing ?? 0}
+            step={0.5}
+            onChange={(v) => patch({ letterSpacing: v } as SlideObjectPatch<TextObject>)}
+          />
+        </div>
 
-        <div className="flex items-center gap-2" data-text-edit-keep-focus>
-          {/* No onBlur refocus here — ColorInput uses a Radix Popover
-              whose content is portalled outside this wrapper, so focus
-              moving INTO the popover would otherwise look like "focus
-              left the wrapper" and force-refocus would yank focus back
-              to the canvas, closing the popover immediately. The CE
-              overlay only fires its blur once (when first losing focus
-              to the trigger button, which IS inside this wrapper and
-              carries the keep-focus attribute), so edit mode survives
-              the popover lifetime without manual refocus. */}
-          <label
-            htmlFor={`inspector-color-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Color
-          </label>
-          <div className="flex flex-1 items-center gap-1.5">
+        {/* Text color — Appearance-Fill–style inline swatch + hex with
+            alpha popover. No "Color" label; context is the Text panel. */}
+        <div data-text-edit-keep-focus>
+          <div className="flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
             <ColorInput
               value={numberToHex(selAttrs?.color ?? obj.color)}
               onChange={(hex) => {
@@ -3701,8 +3740,31 @@ function TextSection({ obj, patch }: TextSectionProps) {
               showHex
               alpha={obj.colorAlpha ?? 1}
               onAlphaChange={(a) => patch({ colorAlpha: a } as SlideObjectPatch<TextObject>)}
+              inputClassName="!h-5 !w-7"
+              hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
             />
           </div>
+        </div>
+
+        {/* List style — placed at the bottom of the typographic
+            controls, just above the Stroke row. */}
+        <div className="flex items-center gap-2">
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
+          <select
+            value={obj.listStyle ?? ''}
+            onChange={(e) =>
+              patch({
+                listStyle:
+                  e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
+              } as unknown as SlideObjectPatch<TextObject>)
+            }
+            className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+            title="List style"
+          >
+            <option value="">No list</option>
+            <option value="bullet">• Bullet</option>
+            <option value="numbered">1. Numbered</option>
+          </select>
         </div>
 
         {/* Text stroke (outline on glyphs) — optional. */}
@@ -3897,52 +3959,44 @@ function VideoSection({
 
   return (
     <Section title="Video" storageKey="video">
-      <div className="flex items-center gap-2">
-        <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Playback</span>
-        <div className="flex flex-1 flex-wrap items-center gap-1.5">
-          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={obj.autoplay ?? false}
-              onChange={(e) =>
-                patch({ autoplay: e.target.checked } as SlideObjectPatch<VideoObject>)
-              }
-            />
-            Autoplay
-          </label>
-          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={obj.loop ?? false}
-              onChange={(e) => patch({ loop: e.target.checked } as SlideObjectPatch<VideoObject>)}
-            />
-            Loop
-          </label>
-          <label className="flex items-center gap-1 text-[10px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={muted}
-              onChange={(e) => patch({ muted: e.target.checked } as SlideObjectPatch<VideoObject>)}
-            />
-            Muted
-          </label>
-          <label
-            className="flex items-center gap-1 text-[10px] text-muted-foreground"
-            title="Show native play / scrub / volume controls. Off = clean preview, click-to-toggle still works."
-          >
-            <input
-              type="checkbox"
-              checked={obj.showControls === true}
-              onChange={(e) =>
-                patch({
-                  showControls: e.target.checked ? true : undefined,
-                } as unknown as SlideObjectPatch<VideoObject>)
-              }
-            />
-            Controls
-          </label>
-        </div>
-      </div>
+      <SegmentedToggleRow
+        ariaLabel="Playback"
+        segments={[
+          {
+            Icon: CirclePlay,
+            label: 'Autoplay',
+            pressed: obj.autoplay === true,
+            onClick: () =>
+              patch({
+                autoplay: obj.autoplay === true ? undefined : true,
+              } as unknown as SlideObjectPatch<VideoObject>),
+          },
+          {
+            Icon: Repeat,
+            label: 'Loop',
+            pressed: obj.loop === true,
+            onClick: () =>
+              patch({
+                loop: obj.loop === true ? undefined : true,
+              } as unknown as SlideObjectPatch<VideoObject>),
+          },
+          {
+            Icon: muted ? VolumeX : Volume2,
+            label: muted ? 'Muted' : 'Sound on',
+            pressed: muted,
+            onClick: () => patch({ muted: !muted } as SlideObjectPatch<VideoObject>),
+          },
+          {
+            Icon: SlidersHorizontal,
+            label: 'Show native controls',
+            pressed: obj.showControls === true,
+            onClick: () =>
+              patch({
+                showControls: obj.showControls === true ? undefined : true,
+              } as unknown as SlideObjectPatch<VideoObject>),
+          },
+        ]}
+      />
 
       <div className="flex items-center gap-2">
         <label
