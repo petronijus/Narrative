@@ -3198,11 +3198,9 @@ function ShadowControls({
   onChange: (next: ShadowStyle) => void
 }) {
   return (
-    <div className="ml-[4.5rem] flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 flex-shrink-0 text-[10px] uppercase text-muted-foreground">
-          Color
-        </span>
+    <div className="flex flex-col gap-1.5 pt-1">
+      {/* Color swatch + hex (Fill-style) + X / Y offsets in one row. */}
+      <div className="flex w-full min-w-0 items-center gap-1">
         <ColorInput
           value={numberToHex(shadow.color)}
           onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
@@ -3210,12 +3208,31 @@ function ShadowControls({
           showHex={false}
           alpha={shadow.opacity}
           onAlphaChange={(a) => onChange({ ...shadow, opacity: a })}
+          inputClassName="!h-7 !w-9"
+        />
+        <CompactNumberField
+          id="shadow-offset-x"
+          glyph="X"
+          ariaLabel="Shadow offset X"
+          value={shadow.offsetX}
+          step={1}
+          onChange={(v) => onChange({ ...shadow, offsetX: v })}
+        />
+        <CompactNumberField
+          id="shadow-offset-y"
+          glyph="Y"
+          ariaLabel="Shadow offset Y"
+          value={shadow.offsetY}
+          step={1}
+          onChange={(v) => onChange({ ...shadow, offsetY: v })}
         />
       </div>
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 text-[10px] uppercase text-muted-foreground">Blur</span>
+
+      {/* Blur slider + number input */}
+      <div className="flex items-center gap-2">
         <input
           type="range"
+          aria-label="Shadow blur"
           min={0}
           max={40}
           step={1}
@@ -3223,35 +3240,15 @@ function ShadowControls({
           onChange={(e) => onChange({ ...shadow, blur: Number.parseFloat(e.target.value) })}
           className="flex-1 accent-primary"
         />
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="w-12 text-[10px] uppercase text-muted-foreground">Offset</span>
-        <input
-          type="number"
-          aria-label="Shadow offset X"
-          value={shadow.offsetX}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.target.value)
-            if (Number.isFinite(v)) onChange({ ...shadow, offsetX: v })
-          }}
-          onKeyDown={(e) =>
-            handleShiftArrowStep(e, shadow.offsetX, 1, (v) => onChange({ ...shadow, offsetX: v }))
-          }
-          className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-        />
-        <input
-          type="number"
-          aria-label="Shadow offset Y"
-          value={shadow.offsetY}
-          onChange={(e) => {
-            const v = Number.parseFloat(e.target.value)
-            if (Number.isFinite(v)) onChange({ ...shadow, offsetY: v })
-          }}
-          onKeyDown={(e) =>
-            handleShiftArrowStep(e, shadow.offsetY, 1, (v) => onChange({ ...shadow, offsetY: v }))
-          }
-          className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-        />
+        <div className="w-16 flex-shrink-0">
+          <CompactNumberField
+            id="shadow-blur"
+            ariaLabel="Shadow blur value"
+            value={shadow.blur}
+            step={1}
+            onChange={(v) => onChange({ ...shadow, blur: Math.max(0, v) })}
+          />
+        </div>
       </div>
     </div>
   )
