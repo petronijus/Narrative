@@ -23,6 +23,7 @@ import { applyFit } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
+import { applyFlip } from './applyFlip.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state stored on Container instances
@@ -312,6 +313,7 @@ function applyObjectTransform(container: Container, data: ImageObject): void {
   container.pivot.set(data.width / 2, data.height / 2)
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
+  applyFlip(container, data)
 }
 
 // ---------------------------------------------------------------------------
@@ -737,6 +739,7 @@ export const imageRenderer = {
     container.pivot.set(data.width / 2, data.height / 2)
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
+    applyFlip(container, data)
 
     const { assetId } = data
     if (assetId === '') return container

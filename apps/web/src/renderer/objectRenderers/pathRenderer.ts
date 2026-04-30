@@ -11,8 +11,12 @@ import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { PathObject, PathAnchor } from '@narrative/shared'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
+import { applyFlip } from './applyFlip.js'
+import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
+import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 
 const GRAPHICS_TAG = Symbol('pathGraphics')
+const LATEST_DATA_TAG = Symbol('pathLatestData')
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asAny = (n: PixiContainer): any => n
 
@@ -20,14 +24,11 @@ function getGraphics(n: PixiContainer): Graphics | undefined {
   return asAny(n)[GRAPHICS_TAG] as Graphics | undefined
 }
 
-function drawPath(g: Graphics, data: PathObject): void {
-  g.clear()
+function tracePath(g: Graphics, data: PathObject): void {
   const anchors = data.anchors
   if (anchors.length === 0) return
-
   const first = anchors[0]!
   g.moveTo(first.x, first.y)
-
   for (let i = 1; i < anchors.length; i++) {
     const prev = anchors[i - 1]!
     const cur = anchors[i]!
@@ -44,7 +45,6 @@ function drawPath(g: Graphics, data: PathObject): void {
       g.lineTo(cur.x, cur.y)
     }
   }
-
   if (data.closed === true) {
     const last = anchors[anchors.length - 1]!
     if (last.cpOut !== undefined && first.cpIn !== undefined) {
@@ -60,18 +60,70 @@ function drawPath(g: Graphics, data: PathObject): void {
       g.lineTo(first.x, first.y)
     }
     g.closePath()
-    if (data.fill !== undefined) {
-      g.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
+  }
+}
+
+function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void {
+  g.clear()
+  const anchors = data.anchors
+  if (anchors.length === 0) return
+
+  const closed = data.closed === true
+  const hasFill = closed && (data.fill !== undefined || data.fillStyle !== undefined)
+
+  // Fill pass: trace + g.fill(...). Mirrors polygonRenderer's image /
+  // gradient handling so closed paths share the parametric shapes'
+  // appearance pipeline (solid / linear / radial / image).
+  if (hasFill) {
+    tracePath(g, data)
+    if (data.fillStyle?.kind === 'image') {
+      const texture = ensureImageFill(container, data.fillStyle, () => {
+        const cachedData = asAny(container)[LATEST_DATA_TAG] as PathObject | undefined
+        const cachedG = getGraphics(container)
+        if (cachedData !== undefined && cachedG !== undefined)
+          drawPath(cachedG, container, cachedData)
+      })
+      if (texture !== null) {
+        g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
+      } else {
+        g.fill({ color: data.fill ?? 0xffffff, alpha: data.fillAlpha ?? 1 })
+      }
+    } else {
+      releaseImageFill(container)
+      const resolved = fillStyleToPixi(
+        data.fillStyle,
+        data.fill ?? 0xffffff,
+        data.width,
+        data.height,
+        container,
+      )
+      const fillInput =
+        data.fillStyle === undefined
+          ? { color: data.fill ?? 0xffffff, alpha: data.fillAlpha ?? 1 }
+          : resolved.input
+      g.fill(fillInput)
     }
+  } else {
+    // Path is open or has no fill — drop any cached fill resources so a
+    // path that was once filled doesn't leak procedural / image textures.
+    releaseImageFill(container)
+    releaseProceduralFill(container)
   }
 
-  g.stroke({
-    color: data.stroke,
-    alpha: data.strokeAlpha ?? 1,
-    width: data.strokeWidth,
-    cap: 'round',
-    join: 'round',
-  })
+  asAny(container)[LATEST_DATA_TAG] = data
+
+  // Stroke pass: re-trace and stroke. (Pixi Graphics drops the path
+  // after fill() is committed; re-tracing is the canonical pattern.)
+  if (data.strokeWidth > 0) {
+    tracePath(g, data)
+    g.stroke({
+      color: data.stroke,
+      alpha: data.strokeAlpha ?? 1,
+      width: data.strokeWidth,
+      cap: 'round',
+      join: 'round',
+    })
+  }
 }
 
 function applyTransform(node: PixiContainer, data: PathObject): void {
@@ -80,6 +132,7 @@ function applyTransform(node: PixiContainer, data: PathObject): void {
   node.pivot.set(data.width / 2, data.height / 2)
   node.x = data.x + data.width / 2
   node.y = data.y + data.height / 2
+  applyFlip(node, data)
 }
 
 function anchorsEqual(a: PathAnchor[], b: PathAnchor[]): boolean {
@@ -99,9 +152,9 @@ export const pathRenderer = {
   mount(data: PathObject): PixiContainer {
     const container = new Container()
     const g = new Graphics()
-    drawPath(g, data)
-    container.addChild(g)
     asAny(container)[GRAPHICS_TAG] = g
+    drawPath(g, container, data)
+    container.addChild(g)
     applyTransform(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     return container
@@ -114,18 +167,21 @@ export const pathRenderer = {
       prev.strokeWidth !== next.strokeWidth ||
       prev.fill !== next.fill ||
       prev.fillAlpha !== next.fillAlpha ||
+      prev.fillStyle !== next.fillStyle ||
       prev.closed !== next.closed ||
       prev.width !== next.width ||
       prev.height !== next.height ||
       !anchorsEqual(prev.anchors, next.anchors)
     if (redraw) {
       const g = getGraphics(node)
-      if (g !== undefined) drawPath(g, next)
+      if (g !== undefined) drawPath(g, node, next)
     }
     applyFilterEffects(node, next.shadow, next.blur)
   },
   destroy(node: PixiContainer): void {
     const g = getGraphics(node)
+    releaseImageFill(node)
+    releaseProceduralFill(node)
     g?.destroy()
     destroyFilterEffects(node)
     node.destroy()

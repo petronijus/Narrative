@@ -29,13 +29,15 @@
  * - All async continuations check this flag before doing work.
  */
 
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Text, Texture, VideoSource } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import { getDefaultVideoInfoResolver } from '../videoInfo.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
 import { markRenderDirty } from '../RenderScheduler.js'
+import { applyFlip } from './applyFlip.js'
+import { applyFilterEffects, destroyFilterEffects, patchFilterEffects } from '../filterEffects.js'
 
 // ---------------------------------------------------------------------------
 // Symbol tags for internal state on Container instances
@@ -49,6 +51,245 @@ const PLAY_ICON_TAG = Symbol('vidPlayIcon')
 const ABORTED_TAG = Symbol('vidAborted')
 const ACQUIRED_URL_TAG = Symbol('vidAcquiredUrl')
 const POLL_TIMER_TAG = Symbol('vidPollTimer')
+const LATEST_DATA_TAG = Symbol('vidLatestData')
+const LIVE_VIDEO_TAG = Symbol('vidLive')
+
+/**
+ * Per-deck registry mapping object id → mounted Container so the
+ * EditorVideoPreview can hand its hidden <video> element to the renderer
+ * once HLS has loaded. The renderer then builds a Pixi VideoSource sprite
+ * that lives inside the scene graph — Y.Array layer order naturally
+ * applies (no DOM-overlay-on-top-of-canvas problem).
+ */
+const containerRegistry = new Map<string, Container>()
+
+interface LiveVideoState {
+  videoEl: HTMLVideoElement
+  source: VideoSource
+  texture: Texture
+  sprite: Sprite
+  spriteWrap: Container
+  fit: 'cover' | 'contain'
+  rvfcId: number | null
+}
+
+function setLatestData(node: Container, data: VideoObject): void {
+  asAny(node)[LATEST_DATA_TAG] = data
+}
+function getLatestData(node: Container): VideoObject | undefined {
+  return asAny(node)[LATEST_DATA_TAG] as VideoObject | undefined
+}
+function getLive(node: Container): LiveVideoState | undefined {
+  return asAny(node)[LIVE_VIDEO_TAG] as LiveVideoState | undefined
+}
+function setLive(node: Container, state: LiveVideoState | undefined): void {
+  asAny(node)[LIVE_VIDEO_TAG] = state
+}
+
+/**
+ * Buffer for video elements that arrive before the container is mounted
+ * (or while the scene graph is rebuilding). On mount, we drain any
+ * matching entry and attach.
+ */
+const pendingVideoEls = new Map<string, HTMLVideoElement>()
+
+/**
+ * Public entry point: hand the renderer a hidden <video> element to use
+ * as the live frame source for `id`. Replaces the static poster sprite
+ * with a Pixi VideoSource sprite so the video is part of the Pixi scene
+ * graph (and respects Y.Array layer order — that's the whole point).
+ *
+ * Safe to call before the renderer has mounted the container; the call
+ * is buffered and applied on next mount.
+ */
+export function attachLiveVideo(id: string, videoEl: HTMLVideoElement): void {
+  const container = containerRegistry.get(id)
+  if (container === undefined) {
+    pendingVideoEls.set(id, videoEl)
+    return
+  }
+  attachLiveVideoToContainer(container, videoEl)
+}
+
+export function detachLiveVideo(id: string): void {
+  pendingVideoEls.delete(id)
+  const container = containerRegistry.get(id)
+  if (container === undefined) return
+  teardownLiveVideo(container)
+  // Restore the poster path: re-run startLoad so the static sprite returns.
+  const data = getLatestData(container)
+  if (data !== undefined) startLoad(container, data)
+}
+
+function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElement): void {
+  if (container.destroyed) return
+  const existing = getLive(container)
+  if (existing !== undefined && existing.videoEl === videoEl) return
+  if (existing !== undefined) teardownLiveVideo(container)
+
+  const data = getLatestData(container)
+  if (data === undefined) return
+  const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+  const box = { w: data.width, h: data.height }
+
+  // Drop the placeholder + poster + play icon — the live video covers them.
+  const ph = getPlaceholder(container)
+  if (ph !== undefined && !ph.destroyed) ph.visible = false
+  releasePosterTexture(container)
+  teardownSpriteWrap(container)
+  removePlayIcon(container)
+
+  // autoLoad defaults to true → VideoSource registers its play / pause /
+  // seeked listeners, which is what drives the per-frame texture upload
+  // flag. Without that, our markRenderDirty calls would render with a
+  // stale texture. autoPlay false so VideoSource doesn't try to start
+  // playback (the editor controls that).
+  const source = new VideoSource({ resource: videoEl, autoPlay: false })
+  const texture = new Texture({ source })
+  const sprite = new Sprite(texture)
+
+  const spriteWrap = new Container()
+  spriteWrap.addChild(sprite)
+  if (fit === 'cover') {
+    const mask = applyCoverMask(spriteWrap, undefined, box)
+    setMask(container, mask)
+  }
+  container.addChild(spriteWrap)
+  setSpriteWrap(container, spriteWrap)
+  setSprite(container, sprite)
+
+  const live: LiveVideoState = {
+    videoEl,
+    source,
+    texture,
+    sprite,
+    spriteWrap,
+    fit,
+    rvfcId: null,
+  }
+  setLive(container, live)
+
+  // Apply fit now (texture may have valid dimensions if HLS already
+  // ready) and re-apply on metadata load so the sprite gets sized
+  // correctly even if we attached before the video knew its dimensions.
+  const refit = (): void => {
+    if (container.destroyed) return
+    const cached = getLatestData(container)
+    if (cached !== undefined) refitLiveVideo(container, cached)
+    markRenderDirty()
+  }
+  refit()
+  videoEl.addEventListener('loadedmetadata', refit)
+
+  // Pixi runs autoStart:false — Ticker.shared isn't pumping frames, so
+  // we have to call markRenderDirty manually. Defer via rAF so any
+  // VideoSource listener registered for the same event has a chance to
+  // run first (e.g. updateFrame on `seeked` flips the upload flag —
+  // we render AFTER that flip so the new frame actually shows).
+  const safeMark = (): void => {
+    if (container.destroyed) return
+    requestAnimationFrame(() => {
+      if (!container.destroyed) markRenderDirty()
+    })
+  }
+  videoEl.addEventListener('seeked', safeMark)
+  videoEl.addEventListener('canplay', safeMark)
+  videoEl.addEventListener('loadeddata', safeMark)
+
+  // While the video is playing, run a rAF loop that marks dirty every
+  // frame. Pixi's render path picks up VideoSource's pending upload and
+  // paints the latest frame. Loop self-stops when the video pauses.
+  let playLoopId: number | null = null
+  const playLoop = (): void => {
+    if (videoEl.paused || videoEl.ended || container.destroyed) {
+      playLoopId = null
+      return
+    }
+    markRenderDirty()
+    playLoopId = requestAnimationFrame(playLoop)
+  }
+  const startPlayLoop = (): void => {
+    if (playLoopId !== null) return
+    playLoopId = requestAnimationFrame(playLoop)
+  }
+  const stopPlayLoop = (): void => {
+    if (playLoopId !== null) {
+      cancelAnimationFrame(playLoopId)
+      playLoopId = null
+    }
+  }
+  videoEl.addEventListener('play', startPlayLoop)
+  videoEl.addEventListener('pause', stopPlayLoop)
+  videoEl.addEventListener('ended', stopPlayLoop)
+  // If the video was already playing when we attached, kick the loop off.
+  if (!videoEl.paused) startPlayLoop()
+
+  asAny(container).__vidLiveHandlers = {
+    videoEl,
+    refit,
+    safeMark,
+    startPlayLoop,
+    stopPlayLoop,
+    getPlayLoopId: () => playLoopId,
+  }
+
+  markRenderDirty()
+}
+
+function teardownLiveVideo(container: Container): void {
+  const live = getLive(container)
+  if (live === undefined) return
+  const handlers = asAny(container).__vidLiveHandlers as
+    | {
+        videoEl: HTMLVideoElement
+        refit: () => void
+        safeMark: () => void
+        startPlayLoop: () => void
+        stopPlayLoop: () => void
+        getPlayLoopId: () => number | null
+      }
+    | undefined
+  if (handlers !== undefined) {
+    const { videoEl, refit, safeMark, startPlayLoop, stopPlayLoop, getPlayLoopId } = handlers
+    videoEl.removeEventListener('loadedmetadata', refit)
+    videoEl.removeEventListener('seeked', safeMark)
+    videoEl.removeEventListener('canplay', safeMark)
+    videoEl.removeEventListener('loadeddata', safeMark)
+    videoEl.removeEventListener('play', startPlayLoop)
+    videoEl.removeEventListener('pause', stopPlayLoop)
+    videoEl.removeEventListener('ended', stopPlayLoop)
+    const id = getPlayLoopId()
+    if (id !== null) cancelAnimationFrame(id)
+    delete asAny(container).__vidLiveHandlers
+  }
+  if (!live.spriteWrap.destroyed) live.spriteWrap.destroy({ children: true })
+  if (!live.texture.destroyed) live.texture.destroy(true)
+  setLive(container, undefined)
+  setSpriteWrap(container, undefined)
+  setSprite(container, undefined)
+  setMask(container, undefined)
+}
+
+function refitLiveVideo(container: Container, data: VideoObject): void {
+  const live = getLive(container)
+  if (live === undefined) return
+  const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+  const box = { w: data.width, h: data.height }
+  applyFit(live.sprite, live.texture, box, fit)
+  if (fit === 'cover') {
+    const existingMask = getMask(container)
+    const newMask = applyCoverMask(live.spriteWrap, existingMask, box)
+    setMask(container, newMask)
+  } else {
+    const existingMask = getMask(container)
+    if (existingMask !== undefined) {
+      live.spriteWrap.mask = null
+      existingMask.destroy()
+      setMask(container, undefined)
+    }
+  }
+  live.fit = fit
+}
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -131,6 +372,7 @@ function applyObjectTransform(container: Container, data: VideoObject): void {
   container.pivot.set(data.width / 2, data.height / 2)
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
+  applyFlip(container, data)
 }
 
 // ---------------------------------------------------------------------------
@@ -545,13 +787,34 @@ export const videoRenderer = {
     setPlaceholder(container, placeholder)
 
     applyObjectTransform(container, data)
+    applyFilterEffects(container, data.shadow, data.blur)
+    setLatestData(container, data)
+    containerRegistry.set(data.id, container)
     startLoad(container, data)
+
+    // If a hidden <video> element registered itself BEFORE this mount
+    // (rare race during scene-graph rebuild), pick it up now.
+    const pending = pendingVideoEls.get(data.id)
+    if (pending !== undefined) {
+      pendingVideoEls.delete(data.id)
+      attachLiveVideoToContainer(container, pending)
+    }
 
     return container
   },
 
   update(node: Container, prev: VideoObject, next: VideoObject): void {
     applyObjectTransform(node, next)
+    applyFilterEffects(node, next.shadow, next.blur)
+    setLatestData(node, next)
+    // If size or fit changed, re-fit the live video sprite too.
+    if (
+      prev.width !== next.width ||
+      prev.height !== next.height ||
+      (prev.fit ?? 'contain') !== (next.fit ?? 'contain')
+    ) {
+      refitLiveVideo(node, next)
+    }
 
     const box = { w: next.width, h: next.height }
 
@@ -712,13 +975,29 @@ export const videoRenderer = {
 
       startLoad(node, synthetic)
     }
+
+    if ('shadow' in patch || 'blur' in patch) {
+      patchFilterEffects(node, 'shadow' in patch, patch.shadow, 'blur' in patch, patch.blur)
+    }
+    if (patch.width !== undefined || patch.height !== undefined || patch.fit !== undefined) {
+      const cached = getLatestData(node)
+      if (cached !== undefined) refitLiveVideo(node, cached)
+    }
   },
 
   destroy(node: Container): void {
     setAborted(node)
     stopPolling(node)
 
+    teardownLiveVideo(node)
     releasePosterTexture(node)
+    destroyFilterEffects(node)
+
+    const data = getLatestData(node)
+    if (data !== undefined) {
+      const reg = containerRegistry.get(data.id)
+      if (reg === node) containerRegistry.delete(data.id)
+    }
 
     node.destroy({ children: true })
   },
@@ -736,6 +1015,7 @@ export const videoRenderer = {
     container.pivot.set(data.width / 2, data.height / 2)
     container.x = data.x + data.width / 2
     container.y = data.y + data.height / 2
+    applyFlip(container, data)
 
     // Async: fetch video info and draw the 400w thumbnail. Uses thumbnailUrl
     // in preference to posterUrl (much smaller raster → cheaper to keep many

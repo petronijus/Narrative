@@ -43,7 +43,15 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
-import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
+import {
+  removeAnimation,
+  reorderAnimations,
+  updateAnimation,
+  updateObject,
+} from '@narrative/slide-model'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
+import type { SlideObjectPatch, VideoObject } from '@narrative/shared'
+import { useVideoInfo } from '../state/useVideoInfo.js'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
 import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
 import { useAnimations } from '../state/useAnimations.js'
@@ -204,13 +212,188 @@ function writeRowOrder(slideId: string | null, order: string[]): void {
   }
 }
 
+/**
+ * Resolves the playback trigger for a video. Falls back to the legacy
+ * boolean flags when the explicit `videoTrigger` field isn't set so
+ * existing decks behave unchanged.
+ */
+function getVideoTrigger(v: VideoObject): 'onEnter' | 'withPrevious' | 'afterPrevious' | 'onClick' {
+  if (v.videoTrigger !== undefined) return v.videoTrigger
+  if (v.playOnClick === true) return 'onClick'
+  if (v.autoplay === true) return 'onEnter'
+  return 'afterPrevious'
+}
+
+/**
+ * Where the video's clip block should sit on the timeline. Mirrors
+ * `layoutSteps` for animations: anchored to the last animation step's
+ * start (withPrevious) or end (afterPrevious / onClick), or to slide
+ * enter (onEnter). Returns startSec in seconds.
+ */
+function computeVideoStartSec(v: VideoObject, laidOut: LaidOutStep[]): number {
+  const trigger = getVideoTrigger(v)
+  const delay = v.videoDelay ?? 0
+  if (trigger === 'onEnter') return Math.max(0, delay)
+  if (laidOut.length === 0) return Math.max(0, delay)
+  const last = laidOut[laidOut.length - 1]!
+  if (trigger === 'withPrevious') return Math.max(0, last.startSec + delay)
+  return Math.max(0, last.startSec + (last.step.duration ?? 0) + delay)
+}
+
+interface VideoClipBarProps {
+  video: VideoObject
+  startSec: number
+  pxPerSec: number
+  laidOut: LaidOutStep[]
+  objectsCtx: ObjectsMutationContext | null
+  isViewer: boolean
+  selected: boolean
+  onSelect: () => void
+  /** Publishes the resolved clip duration so the parent can extend its
+   *  total track length to fit the video. Called whenever the loaded
+   *  durationSec changes for this video. */
+  onClipDuration: (videoId: string, clipDurationSec: number) => void
+}
+
+/**
+ * Read-only-ish clip block for a video on the animation timeline. The
+ * block's WIDTH is the clip duration (trim range or full duration);
+ * dragging the BODY rewrites `videoDelay` so the start can be timed
+ * after another animation. Drag math mirrors the animation-bar drag:
+ * pointer-down captures originalDelay + originalStartSec; pointermove
+ * computes a new delay relative to the trigger anchor.
+ */
+function VideoClipBar({
+  video,
+  startSec,
+  pxPerSec,
+  laidOut,
+  objectsCtx,
+  isViewer,
+  selected,
+  onSelect,
+  onClipDuration,
+}: VideoClipBarProps) {
+  const { info } = useVideoInfo(video.assetId !== '' ? video.assetId : null)
+  const fullDur = info?.durationSec ?? 0
+  const trimStart = video.trimStart ?? 0
+  const trimEnd = video.trimEnd !== undefined && video.trimEnd > 0 ? video.trimEnd : fullDur
+  const clipDur = trimEnd > trimStart ? trimEnd - trimStart : fullDur > 0 ? fullDur : 4
+
+  // Publish the clip duration up so the timeline's totalSec extends
+  // to cover the video. Without this the ruler / playhead can't reach
+  // the video's tail.
+  useEffect(() => {
+    onClipDuration(video.id, clipDur)
+  }, [video.id, clipDur, onClipDuration])
+
+  const dragRef = useRef<{
+    startPointerX: number
+    originalDelay: number
+    anchorSec: number
+  } | null>(null)
+
+  const trigger = getVideoTrigger(video)
+
+  // Anchor (the t at which delay=0 lands the bar's left edge) — needed
+  // to translate pointer dx → new delay during drag.
+  const anchorSec = (() => {
+    if (trigger === 'onEnter') return 0
+    if (laidOut.length === 0) return 0
+    const last = laidOut[laidOut.length - 1]!
+    if (trigger === 'withPrevious') return last.startSec
+    return last.startSec + (last.step.duration ?? 0)
+  })()
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    if (isViewer || objectsCtx === null) return
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+    dragRef.current = {
+      startPointerX: e.clientX,
+      originalDelay: video.videoDelay ?? 0,
+      anchorSec,
+    }
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (drag === null || objectsCtx === null) return
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const dxSec = (e.clientX - drag.startPointerX) / pxPerSec
+    const nextDelay = Math.max(-drag.anchorSec, drag.originalDelay + dxSec)
+    const patch: SlideObjectPatch<VideoObject> = {
+      videoDelay: nextDelay <= 0.0001 ? undefined : nextDelay,
+    } as unknown as SlideObjectPatch<VideoObject>
+    // First drag also pins the trigger so the bar's anchor stops
+    // shifting when the user re-orders the underlying animations.
+    if (video.videoTrigger === undefined) {
+      ;(patch as Record<string, unknown>).videoTrigger = trigger
+    }
+    updateObject<VideoObject>(objectsCtx, video.id, patch)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (dragRef.current === null) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    dragRef.current = null
+  }
+
+  const leftPx = GRIP_WIDTH + Math.round(startSec * pxPerSec)
+  const widthPx = Math.max(48, Math.round(clipDur * pxPerSec))
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onClick={onSelect}
+      title={
+        trigger === 'onClick'
+          ? 'Video plays on click — drag to add a delay before the click cue'
+          : `Video starts at ${startSec.toFixed(2)}s — drag to retime`
+      }
+      className={[
+        'absolute flex items-center gap-1 overflow-hidden rounded text-[11px] text-white shadow-sm',
+        'bg-blue-700/80 hover:bg-blue-700 transition-colors',
+        isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+        'select-none',
+        selected ? 'ring-2 ring-blue-300 ring-offset-1 ring-offset-gray-900' : '',
+      ].join(' ')}
+      style={{
+        left: leftPx,
+        top: BAR_TOP,
+        width: widthPx,
+        height: BAR_HEIGHT,
+        touchAction: 'none',
+      }}
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-full items-center justify-center"
+        style={{
+          width: TRIGGER_ICON_WIDTH,
+          background: triggerIconBg(trigger),
+        }}
+      >
+        <TriggerIcon trigger={trigger} />
+      </span>
+      <span className="truncate px-1">{video.name ?? 'video'}</span>
+    </div>
+  )
+}
+
 export function AnimationTimeline() {
   const { animations, animationsCtx } = useAnimations()
   const { activeSlideId } = useActiveSlide()
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
-  const { objects: slideObjects } = useSlideObjects()
-  const { selectOne } = useSelection()
+  const { objects: slideObjects, objectsCtx } = useSlideObjects()
+  const { selectOne, selectedAnimationId, setSelectedAnimationId } = useSelection()
   const isViewer = role === 'viewer'
 
   /**
@@ -272,7 +455,11 @@ export function AnimationTimeline() {
   const zoomReset = useCallback(() => {
     setPxPerSec(DEFAULT_PX_PER_SEC)
   }, [])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Selection of the highlighted animation step is shared via SelectionContext
+  // so the Inspector's per-object animations list highlights the same step
+  // (and vice versa). Local aliases keep this file's existing call sites.
+  const selectedId = selectedAnimationId
+  const setSelectedId = setSelectedAnimationId
 
   // Preview playback state. The runtime is created on demand from the current
   // animations snapshot and lives only for the preview session — destroyed on
@@ -311,12 +498,28 @@ export function AnimationTimeline() {
      *  re-layout so the dragged bar doesn't hop lanes while it crosses
      *  neighbours — only the neighbours move out of its way. */
     originalLane: number
+    /** Frozen absolute starts + durations of every step at drag-start.
+     *  Body drag uses these as the reference frame so each frame's write
+     *  is idempotent — without it, a non-dragged neighbour's delay would
+     *  drift because we'd be mixing stale laidOut.startSec values with
+     *  the dragged step's hypothetical newAbsStart. */
+    originalStarts: Record<string, number>
+    originalDurations: Record<string, number>
   } | null>(null)
 
   /** Lane assignment seen on the previous render, keyed by step id. Used to
    *  reconstruct the dragged bar's lane on drag-start (since at that point
    *  the drag hasn't produced a new layout yet). */
   const lastLanesRef = useRef<Record<string, number>>({})
+  /** Last computed row (per-objectId) order, captured every render. Lets us
+   *  freeze the row layout during a body drag — even though dragging may
+   *  reorder Y.Array, the visual swimlanes must NOT shuffle on their own.
+   *  Manual reorder via the row grip is the only way to change row order. */
+  const lastRowOrderRef = useRef<string[]>([])
+  /** Frozen row order while a body drag is active. Set in beginDrag, cleared
+   *  in endDrag. When set, the rows memo uses it instead of the natural
+   *  Y.Array-derived order. */
+  const frozenRowOrderRef = useRef<string[] | null>(null)
   /** Triggers a re-render whenever drag state toggles, so memoised `rows`
    *  recomputes with / without the pinned-lane logic. */
   const [dragStamp, setDragStamp] = useState(0)
@@ -408,12 +611,33 @@ export function AnimationTimeline() {
         existing.push(l)
       }
     }
+    // Show every video object on the timeline even when it has no
+    // animation steps — the row's trigger icon is the visual cue for
+    // timing other animations against the video's start.
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      if (buckets.has(o.id)) continue
+      buckets.set(o.id, [])
+      naturalOrder.push(o.id)
+    }
 
     let finalOrder = naturalOrder
     if (rowOrderPref !== null) {
       const present = new Set(naturalOrder)
       const ordered = rowOrderPref.filter((id) => present.has(id))
       const appended = naturalOrder.filter((id) => !rowOrderPref.includes(id))
+      finalOrder = [...ordered, ...appended]
+    }
+
+    // While a body drag is active, freeze row order to the snapshot taken at
+    // drag-start. The Y.Array may reorder mid-drag (so trigger relationships
+    // can update), but per-object swimlanes must stay put — only the row
+    // grip can move them.
+    const frozen = frozenRowOrderRef.current
+    if (frozen !== null) {
+      const present = new Set(naturalOrder)
+      const ordered = frozen.filter((id) => present.has(id))
+      const appended = naturalOrder.filter((id) => !frozen.includes(id))
       finalOrder = [...ordered, ...appended]
     }
 
@@ -492,11 +716,12 @@ export function AnimationTimeline() {
     // safe across strict-mode double-invocation — the value is deterministic
     // per inputs.
     lastLanesRef.current = nextLaneMap
+    lastRowOrderRef.current = finalOrder
     return result
     // dragStamp is included so toggling the drag state forces a re-layout
     // without the pinned-lane pass, letting bumped bars drop back down.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [laidOut, rowOrderPref, dragStamp])
+  }, [laidOut, rowOrderPref, dragStamp, slideObjects])
 
   const rowsTotalHeight = rows.reduce((acc, r) => acc + r.height, 0)
   /** Y-offsets of each row boundary — rows.length + 1 entries (0..total). */
@@ -510,13 +735,63 @@ export function AnimationTimeline() {
     return out
   }, [rows])
 
-  const totalSec = useMemo(() => {
-    // Minimum 3 s so the ruler always has something useful.
-    return laidOut.reduce(
-      (max, { step, startSec }) => Math.max(max, startSec + (step.duration ?? 0)),
-      3,
+  // Per-video clip duration cache (sec). Populated by VideoClipBar
+  // children via the onClipDuration callback so the timeline's total
+  // length can extend past the last animation step to cover the video.
+  const [videoClipDurations, setVideoClipDurations] = useState<Record<string, number>>({})
+  const onVideoClipDuration = useCallback((videoId: string, clipDurationSec: number) => {
+    setVideoClipDurations((prev) =>
+      prev[videoId] === clipDurationSec ? prev : { ...prev, [videoId]: clipDurationSec },
     )
-  }, [laidOut])
+  }, [])
+
+  // When the playhead moves (manual scrub or programmatic), seek every
+  // video on the slide to the matching frame inside its clip range.
+  // Outside the clip: snap the videoEl to the trim edge so it shows
+  // the right still. EditorVideoPreview publishes a seek() handle on
+  // window.__narrative_video_currents that owns the actual seek call.
+  useEffect(() => {
+    type Reg = Record<string, { currentTime: number; seek?: (sec: number) => void }>
+    const reg = (window as unknown as { __narrative_video_currents?: Reg })
+      .__narrative_video_currents
+    if (reg === undefined) return
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      const seek = reg[o.id]?.seek
+      if (seek === undefined) continue
+      const startSec = computeVideoStartSec(o, laidOut)
+      const dur = videoClipDurations[o.id] ?? 0
+      const trimStart = o.trimStart ?? 0
+      const trimEnd =
+        o.trimEnd !== undefined && o.trimEnd > 0 ? o.trimEnd : trimStart + (dur > 0 ? dur : 0)
+      if (playheadSec < startSec) {
+        seek(trimStart)
+      } else if (dur > 0 && playheadSec > startSec + dur) {
+        seek(trimEnd)
+      } else {
+        seek(trimStart + (playheadSec - startSec))
+      }
+    }
+  }, [playheadSec, slideObjects, laidOut, videoClipDurations])
+
+  const totalSec = useMemo(() => {
+    // Visible track = last step's end + 5 s of headroom, with a 10 s
+    // floor. Headroom lets the author scrub past the last animation
+    // and drag steps further out without the ruler clipping.
+    const animEnd = laidOut.reduce(
+      (max, { step, startSec }) => Math.max(max, startSec + (step.duration ?? 0)),
+      0,
+    )
+    // Extend to cover any video clip block — videoStart + clipDuration.
+    let videoEnd = 0
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      const dur = videoClipDurations[o.id] ?? 0
+      if (dur <= 0) continue
+      videoEnd = Math.max(videoEnd, computeVideoStartSec(o, laidOut) + dur)
+    }
+    return Math.max(animEnd + 5, videoEnd + 5, 10)
+  }, [laidOut, slideObjects, videoClipDurations])
 
   const trackWidthPx = GRIP_WIDTH + Math.ceil(totalSec * pxPerSec) + 32
   const tickCount = Math.ceil(totalSec) + 1
@@ -589,6 +864,12 @@ export function AnimationTimeline() {
       if (isViewer || animationsCtx === null) return
       e.currentTarget.setPointerCapture(e.pointerId)
       e.stopPropagation()
+      const originalStarts: Record<string, number> = {}
+      const originalDurations: Record<string, number> = {}
+      for (const l of laidOut) {
+        originalStarts[l.step.id] = l.startSec
+        originalDurations[l.step.id] = l.step.duration ?? 0
+      }
       dragStateRef.current = {
         stepId: step.id,
         mode,
@@ -598,9 +879,17 @@ export function AnimationTimeline() {
         hasMoved: false,
         converted: false,
         originalLane: lastLanesRef.current[step.id] ?? 0,
+        originalStarts,
+        originalDurations,
+      }
+      // Freeze visible row order for the duration of a body drag — the
+      // Y.Array may reshuffle as the dragged bar passes neighbours, but
+      // we don't want that to bubble up into row reordering.
+      if (mode === 'body') {
+        frozenRowOrderRef.current = [...lastRowOrderRef.current]
       }
     },
-    [isViewer, animationsCtx],
+    [isViewer, animationsCtx, laidOut],
   )
 
   const handleDragMove = useCallback(
@@ -669,43 +958,67 @@ export function AnimationTimeline() {
         }
       }
 
-      // Translate the new absolute start into a delay that is relative to
-      // the step's existing trigger anchor. This keeps the dragged bar's
-      // trigger (withPrevious / afterPrevious / onClick) intact rather
-      // than silently rewriting it to onEnter — which used to leave the
-      // dropdown showing a stale value because onEnter is no longer in
-      // the option list.
-      //   i === 0          → anchor is 0
-      //   withPrevious     → anchor is prev.startSec
-      //   afterPrevious /
-      //   onClick / onEnter → anchor is prev.endSec
-      // Negative deltas would put the bar before its anchor; clamp to 0
-      // so the bar can't escape its trigger semantics.
-      const draggedStep = animations.find((a) => a.id === drag.stepId)
-      const draggedIdx = laidOut.findIndex((l) => l.step.id === drag.stepId)
-      let anchor = 0
-      if (draggedStep !== undefined && draggedIdx > 0) {
-        const prev = laidOut[draggedIdx - 1]
-        if (prev !== undefined) {
-          if (draggedStep.trigger === 'withPrevious') anchor = prev.startSec
-          else anchor = prev.startSec + (prev.step.duration ?? 0)
+      // Sequence model: the SOURCE OF TRUTH while dragging is the absolute
+      // time of every bar (dragged bar uses newAbsStart, others use their
+      // current laidOut.startSec). We sort by absolute time to derive the
+      // new Y.Array sequence, then derive each step's trigger + delay from
+      // its temporal relationship to the new previous step:
+      //   • i === 0                         → first in sequence; delay = startSec.
+      //   • cur.start ≥ prev.end            → 'afterPrevious'; delay = cur.start - prev.end.
+      //   • cur.start <  prev.end (overlap) → 'withPrevious';  delay = cur.start - prev.start.
+      //   • onClick is sticky               → keep 'onClick'; delay relative to prev.end (matches layoutSteps).
+      // This makes drag truly free: dragging past a neighbour reorders the
+      // sequence, and the displaced step's own trigger gets recomputed
+      // against ITS new previous — so dragging a bar before another flips
+      // the other one to 'afterPrevious' automatically.
+      // Use the frozen drag-start reference frame for non-dragged steps so
+      // each frame's write is idempotent. Reading laidOut.startSec here would
+      // be stale-after-write: as we mutate delays, layoutSteps shifts non-
+      // dragged starts, and the next frame's delta would compound.
+      const decorated = laidOut.map((l, i) => ({
+        id: l.step.id,
+        step: l.step,
+        start:
+          l.step.id === drag.stepId ? newAbsStart : (drag.originalStarts[l.step.id] ?? l.startSec),
+        duration: drag.originalDurations[l.step.id] ?? l.step.duration ?? 0,
+        i,
+      }))
+      // Stable sort by start time; ties keep current Y.Array order.
+      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
+
+      const EPS = 1e-6
+      for (let i = 0; i < decorated.length; i++) {
+        const cur = decorated[i]
+        if (cur === undefined) continue
+        const prev = i > 0 ? decorated[i - 1] : undefined
+        const isOnClick = cur.step.trigger === 'onClick'
+        let nextTrigger: AnimationTrigger
+        let nextDelay: number
+        if (prev === undefined) {
+          // First in sequence — anchor is 0.
+          nextTrigger = isOnClick ? 'onClick' : 'afterPrevious'
+          nextDelay = Math.max(0, cur.start)
+        } else if (isOnClick) {
+          // Sticky: never auto-switch onClick to time-driven triggers.
+          nextTrigger = 'onClick'
+          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
+        } else if (cur.start + EPS >= prev.start + prev.duration) {
+          nextTrigger = 'afterPrevious'
+          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
+        } else {
+          nextTrigger = 'withPrevious'
+          nextDelay = Math.max(0, cur.start - prev.start)
+        }
+        const orig = cur.step
+        const patch: { trigger?: AnimationTrigger; delay?: number } = {}
+        if (orig.trigger !== nextTrigger) patch.trigger = nextTrigger
+        if (Math.abs((orig.delay ?? 0) - nextDelay) > EPS) patch.delay = nextDelay
+        if (patch.trigger !== undefined || patch.delay !== undefined) {
+          updateAnimation(animationsCtx, cur.id, patch)
         }
       }
-      const newDelay = Math.max(0, newAbsStart - anchor)
-      updateAnimation(animationsCtx, drag.stepId, { delay: newDelay })
 
-      // Sort Y.Array by effective absolute start to keep array order in
-      // sync with visual order. Use current laidOut but replace the dragged
-      // step's startSec with its new position.
-      const currentIdx = animations.findIndex((a) => a.id === drag.stepId)
-      if (currentIdx === -1) return
-      const effective = laidOut.map((l, i) => ({
-        id: l.step.id,
-        start: i === currentIdx ? newAbsStart : l.startSec,
-      }))
-      // Stable sort by start time, preserving current array order for ties.
-      const decorated = effective.map((e, i) => ({ ...e, i }))
-      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
+      // Sync Y.Array order to the new temporal order.
       const newOrder = decorated.map((e) => e.id)
       const currentOrder = animations.map((a) => a.id)
       if (!newOrder.every((id, i) => id === currentOrder[i])) {
@@ -724,6 +1037,7 @@ export function AnimationTimeline() {
       }
       const wasDrag = drag.hasMoved
       dragStateRef.current = null
+      frozenRowOrderRef.current = null
       // If the pointer never moved past the threshold, treat as click → select.
       if (!wasDrag) {
         const step = animations.find((a) => a.id === drag.stepId)
@@ -880,6 +1194,13 @@ export function AnimationTimeline() {
     if (runtimeRef.current !== null) return runtimeRef.current
     if (canvasInstance === null) return null
     if (animations.length === 0) return null
+    // Drop orphan steps (objectId no longer on the slide) before
+    // compiling so the compiler doesn't spam a warning per scrub for
+    // every dangling reference. Real cleanup of orphans happens in
+    // mutations.removeObject; this is the runtime safety net.
+    const liveIds = new Set(slideObjects.map((o) => o.id))
+    const compilable = animations.filter((s) => liveIds.has(s.objectId))
+    if (compilable.length === 0) return null
     const resolver = createPixiTargetResolver(canvasInstance.sceneGraph)
     // No inputBridge — the preview treats onClick like afterPrevious by
     // auto-advancing. That's simpler than wiring a "click the canvas to
@@ -887,13 +1208,13 @@ export function AnimationTimeline() {
     // P12b: onTick wakes the render scheduler so GSAP-driven Pixi state
     // actually reaches the screen under autoStart:false.
     const scheduler = getDefaultRenderScheduler()
-    const runtime = createAnimationRuntime(animations, {
+    const runtime = createAnimationRuntime(compilable, {
       targetResolver: resolver,
       ...(scheduler !== null ? { onTick: () => scheduler.markDirty() } : {}),
     })
     runtimeRef.current = runtime
     return runtime
-  }, [animations, canvasInstance])
+  }, [animations, canvasInstance, slideObjects])
 
   const handlePlayPause = useCallback(() => {
     const rt = ensureRuntime()
@@ -922,18 +1243,25 @@ export function AnimationTimeline() {
 
   const handleScrub = useCallback(
     (timeSec: number) => {
+      // Playhead is clamped to the visible track (totalSec, includes
+      // headroom). The GSAP runtime seek itself stays clamped to
+      // rt.duration() — there's no animation past the last step, so
+      // seeking further is a no-op for playback. Keeping the visual
+      // playhead free lets authors drop new steps anywhere on the
+      // ruler without fighting the cap.
       const rt = ensureRuntime()
-      if (rt === null) return
-      const clamped = Math.max(0, Math.min(timeSec, rt.duration()))
-      if (rt.isPlaying()) {
-        rt.pause()
-        stopPlayheadLoop()
-        setIsPlaying(false)
+      const visualTime = Math.max(0, Math.min(timeSec, totalSec))
+      if (rt !== null) {
+        if (rt.isPlaying()) {
+          rt.pause()
+          stopPlayheadLoop()
+          setIsPlaying(false)
+        }
+        rt.seek(Math.min(visualTime, rt.duration()))
       }
-      rt.seek(clamped)
-      setPlayheadSec(clamped)
+      setPlayheadSec(visualTime)
     },
-    [ensureRuntime, stopPlayheadLoop],
+    [ensureRuntime, stopPlayheadLoop, totalSec],
   )
 
   return (
@@ -1223,7 +1551,62 @@ export function AnimationTimeline() {
                               return o?.name ?? o?.type ?? objectId
                             })()}
                           </span>
+                          {/* Video trigger icon — shows the playback gate so
+                            you can time other steps against the video. */}
+                          {(() => {
+                            const o = slideObjects.find((x) => x.id === objectId)
+                            if (o?.type !== 'video') return null
+                            if (o.playOnClick === true) {
+                              return (
+                                <MousePointerClick
+                                  className="h-3 w-3 flex-shrink-0 text-amber-400"
+                                  aria-label="Video plays on click"
+                                />
+                              )
+                            }
+                            if (o.autoplay === true) {
+                              return (
+                                <Play
+                                  className="h-3 w-3 flex-shrink-0 text-emerald-400"
+                                  aria-label="Video autoplays on slide enter"
+                                />
+                              )
+                            }
+                            return (
+                              <Pause
+                                className="h-3 w-3 flex-shrink-0 text-gray-500"
+                                aria-label="Video starts paused"
+                              />
+                            )
+                          })()}
                         </div>
+
+                        {/* Video clip block — sequenced like an
+                          animation step (anchored to onEnter / with /
+                          afterPrevious / onClick + delay). Drag the
+                          body to retime; selecting it picks the video
+                          object on the canvas. */}
+                        {(() => {
+                          const o = slideObjects.find((x) => x.id === objectId)
+                          if (o?.type !== 'video') return null
+                          const startSec = computeVideoStartSec(o, laidOut)
+                          return (
+                            <VideoClipBar
+                              video={o}
+                              startSec={startSec}
+                              pxPerSec={pxPerSec}
+                              laidOut={laidOut}
+                              objectsCtx={objectsCtx}
+                              isViewer={isViewer}
+                              selected={selectedAnimationId === `video:${o.id}`}
+                              onSelect={() => {
+                                setSelectedAnimationId(`video:${o.id}`)
+                                selectOne(o.id)
+                              }}
+                              onClipDuration={onVideoClipDuration}
+                            />
+                          )
+                        })()}
 
                         {/* Bars — one per animation on this object. */}
                         {items.map(({ step, startSec, lane }) => {

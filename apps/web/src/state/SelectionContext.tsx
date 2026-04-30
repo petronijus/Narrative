@@ -23,6 +23,14 @@ export interface SelectionContextValue {
   toggle: (id: string) => void
   /** Vyprázdní selection. */
   clear: () => void
+  /**
+   * Currently selected animation step id (shared between AnimationTimeline
+   * and the Inspector's Animations list). Setting it does NOT touch the
+   * object selection — callers that want both should also call selectOne.
+   */
+  selectedAnimationId: string | null
+  setSelectedAnimationId: React.Dispatch<React.SetStateAction<string | null>>
+
   // Backward-compat aliasy (M2 callsites)
   /** @deprecated Použij selectOne(). */
   setSelectedId: (id: string) => void
@@ -34,6 +42,7 @@ const SelectionContext = createContext<SelectionContextValue | null>(null)
 
 export function SelectionProvider({ children }: { children: React.ReactNode }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
+  const [selectedAnimationId, setSelectedAnimationId] = useState<string | null>(null)
 
   // P6 E2E: write the current selection to a global snapshot so Playwright
   // specs can observe selection changes without walking React internals.
@@ -97,6 +106,8 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
     selectMany,
     toggle,
     clear,
+    selectedAnimationId,
+    setSelectedAnimationId,
     // Backward-compat aliasy
     setSelectedId: selectOne,
     clearSelection: clear,

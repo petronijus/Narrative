@@ -35,6 +35,10 @@ import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { updateObject } from '@narrative/slide-model'
+import {
+  attachLiveVideo as attachLiveVideoToRenderer,
+  detachLiveVideo as detachLiveVideoFromRenderer,
+} from '../renderer/objectRenderers/videoRenderer'
 
 export interface EditorVideoPreviewProps {
   videoObject: VideoObject
@@ -102,6 +106,19 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     }
   }, [])
 
+  // Latest trim / poster values held in refs so the HLS-attach effect's
+  // listeners always read the current value WITHOUT re-running (which
+  // would tear down HLS and rewind the video to the start — that's
+  // exactly what made trim-end-handle scrubs jump to the wrong frame).
+  const trimStartRef = useRef(videoObject.trimStart ?? 0)
+  const trimEndRef = useRef(videoObject.trimEnd ?? 0)
+  const posterTimeRef = useRef(videoObject.posterTime ?? 0)
+  useEffect(() => {
+    trimStartRef.current = Math.max(0, videoObject.trimStart ?? 0)
+    trimEndRef.current = videoObject.trimEnd ?? 0
+    posterTimeRef.current = videoObject.posterTime ?? 0
+  }, [videoObject.trimStart, videoObject.trimEnd, videoObject.posterTime])
+
   // Wire up HLS the moment we have a hlsManifestUrl.
   useEffect(() => {
     if (info?.transcodeStatus !== 'done') return
@@ -124,55 +141,90 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.src = hlsUrl
     }
 
-    if (isPresent && videoObject.autoplay === true) {
+    // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
+    // the renderer rebuilds the sprite from a live VideoSource so the
+    // video lives inside the Pixi scene graph (and therefore respects
+    // Y.Array layer order). Used in BOTH editor and present mode so the
+    // visible representation is always the Pixi sprite. The DOM <video>
+    // stays around (invisible) so hls.js / VideoSource can decode into
+    // it and audio plays normally.
+    const onCanPlay = (): void => {
+      attachLiveVideoToRenderer(videoObject.id, videoEl)
+    }
+    if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
+    else videoEl.addEventListener('canplay', onCanPlay, { once: true })
+
+    if (isPresent && videoObject.autoplay === true && videoObject.playOnClick !== true) {
       const onCanPlay = (): void => {
         void videoEl.play().catch(() => undefined)
       }
       videoEl.addEventListener('canplay', onCanPlay, { once: true })
     }
 
-    // Initial seek: poster frame wins, then trimStart, then 0.
-    const trimStart = Math.max(0, videoObject.trimStart ?? 0)
-    const posterTime = videoObject.posterTime
-    const initialSeek =
-      posterTime !== undefined && posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
-    if (initialSeek > 0) {
-      videoEl.addEventListener(
-        'loadedmetadata',
-        () => {
-          videoEl.currentTime = initialSeek
-        },
-        { once: true },
-      )
-    }
+    // Initial seek: poster frame wins, then trimStart, then 0. Computed
+    // on the first loadedmetadata so it reflects the latest values from
+    // the refs (not a stale closure capture).
+    videoEl.addEventListener(
+      'loadedmetadata',
+      () => {
+        const trimStart = trimStartRef.current
+        const posterTime = posterTimeRef.current
+        const initialSeek = posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
+        if (initialSeek > 0) videoEl.currentTime = initialSeek
+      },
+      { once: true },
+    )
     // Rewind to trimStart on Play if we're sitting on the poster preview.
     const onPlay = (): void => {
-      if (
-        posterTime !== undefined &&
-        posterTime > 0 &&
-        Math.abs(videoEl.currentTime - posterTime) < 0.05
-      ) {
+      const posterTime = posterTimeRef.current
+      const trimStart = trimStartRef.current
+      if (posterTime > 0 && Math.abs(videoEl.currentTime - posterTime) < 0.05) {
         videoEl.currentTime = trimStart
       }
     }
     videoEl.addEventListener('play', onPlay)
-    const trimEnd = videoObject.trimEnd
     const onTimeUpdate = (): void => {
-      if (trimEnd !== undefined && trimEnd > 0 && videoEl.currentTime >= trimEnd) {
-        videoEl.pause()
+      const trimEnd = trimEndRef.current
+      if (trimEnd > 0 && videoEl.currentTime >= trimEnd) {
+        // With loop enabled, jump back to trimStart and keep playing —
+        // the native videoEl.loop only loops between 0 and full
+        // duration, ignoring our trim range.
+        if (videoObject.loop === true) {
+          videoEl.currentTime = trimStartRef.current
+          if (videoEl.paused) void videoEl.play().catch(() => undefined)
+        } else {
+          videoEl.pause()
+        }
       }
     }
     videoEl.addEventListener('timeupdate', onTimeUpdate)
 
-    // Publish currentTime so Inspector's "Use current frame" can read it.
+    // Publish currentTime + a seek() handle on a window registry. The
+    // Inspector's trim filmstrip / poster-frame slider use seek() to
+    // scrub the underlying <video> while dragging so the user sees the
+    // exact frame they're trimming to.
     const reg = window as unknown as {
-      __narrative_video_currents?: Record<string, { currentTime: number }>
+      __narrative_video_currents?: Record<
+        string,
+        { currentTime: number; seek?: (sec: number) => void }
+      >
     }
     if (reg.__narrative_video_currents === undefined) reg.__narrative_video_currents = {}
     const currents = reg.__narrative_video_currents
-    currents[videoObject.id] = { currentTime: 0 }
+    currents[videoObject.id] = {
+      currentTime: 0,
+      seek: (sec: number) => {
+        if (videoEl.readyState < 1) return
+        if (!videoEl.paused) videoEl.pause()
+        const safe = Math.max(0, Math.min(videoEl.duration || sec, sec))
+        if (Math.abs(videoEl.currentTime - safe) > 0.01) {
+          videoEl.currentTime = safe
+        }
+      },
+    }
     const onTime = (): void => {
-      currents[videoObject.id] = { currentTime: videoEl.currentTime }
+      const entry = currents[videoObject.id]
+      if (entry !== undefined) entry.currentTime = videoEl.currentTime
     }
     videoEl.addEventListener('timeupdate', onTime)
     videoEl.addEventListener('seeked', onTime)
@@ -190,18 +242,19 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('timeupdate', onTimeUpdate)
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
+      delete currents[videoObject.id]
+      detachLiveVideoFromRenderer(videoObject.id)
       if (hlsRef.current !== null) {
         hlsRef.current.destroy()
         hlsRef.current = null
       }
     }
+    // Trim / poster deps intentionally omitted — we read them from refs
+    // inside the listeners so updates don't tear down HLS.
   }, [
     info?.transcodeStatus,
     info?.hlsManifestUrl,
     videoObject.id,
-    videoObject.trimStart,
-    videoObject.trimEnd,
-    videoObject.posterTime,
     videoObject.autoplay,
     videoObject.volume,
     isPresent,
@@ -211,21 +264,26 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // poster placeholder painted by videoRenderer is enough.
   if (info?.transcodeStatus !== 'done') return null
 
+  // The visible video lives inside the Pixi scene graph
+  // (videoRenderer's VideoSource sprite), in BOTH editor and present
+  // modes — that's what makes Y.Array layer order work. The DOM wrapper
+  // here still spans the video's bounds so present-mode click-to-toggle
+  // and the editor's hover-controls bar land on the right region; the
+  // inner <video> element itself is invisible because Pixi paints it.
   return (
     <div
-      aria-hidden="true"
       style={{
         position: 'absolute',
         left: videoObject.x,
         top: videoObject.y,
         width: videoObject.width,
         height: videoObject.height,
-        // Apply rotation around the centre to match the Pixi
-        // container's (pivot-at-centre) rotation. opacity directly
-        // mirrors the object's opacity.
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
-        opacity: videoObject.opacity,
+        // Pixi sprite handles opacity for the visible representation;
+        // the wrapper itself just hosts the (invisible) <video> + the
+        // hover-controls bar.
+        opacity: 1,
         // Editor: pointer-events:none passes clicks through to transform handles.
         // Present: accept clicks so the user can play/pause.
         pointerEvents: isPresent ? 'auto' : 'none',
@@ -238,6 +296,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         loop={videoObject.loop ?? false}
         playsInline
         controls={videoObject.showControls === true}
+        // The Pixi sprite is the visible representation; the DOM
+        // <video> is just a decoder host. Hide it from accessibility
+        // tree so screen readers don't announce it twice (alt text is
+        // already exposed by whatever the deck / present mode chooses
+        // to surface).
+        aria-hidden="true"
         aria-label={videoObject.alt ?? undefined}
         onMouseEnter={() => {
           if (isPresent) return
@@ -265,6 +329,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           objectFit: videoObject.fit ?? 'contain',
           pointerEvents: 'auto',
           background: 'transparent',
+          // The Pixi sprite is the visible representation in both modes,
+          // so always hide this <video> — keeping it in DOM is required
+          // for hls.js / VideoSource to decode into and for audio.
+          opacity: 0,
         }}
       />
 

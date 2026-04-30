@@ -6,7 +6,10 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 # Copy workspace manifests first to maximise Docker layer cache hits.
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+# .npmrc carries `node-linker=hoisted` + `shamefully-hoist=true` so
+# packages/shared (which type-imports yjs without declaring it as its
+# own dep) can resolve modules from the root node_modules.
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 
@@ -33,7 +36,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 # Copy workspace manifests for prod install
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 

@@ -34,6 +34,7 @@ import { toDelta, toHtml, type HtmlDefaults } from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
+import { applyFlip } from './applyFlip.js'
 
 /**
  * Pixi v8 `HTMLText` rasterizes its SVG asynchronously
@@ -350,6 +351,7 @@ function applyObjectTransform(container: Container, data: TextObject): void {
   // so shift the container by half-size to put the box back where it belongs.
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
+  applyFlip(container, data)
 }
 
 // Pixi Container doesn't type Symbol-keyed properties — cast through any.
@@ -669,11 +671,7 @@ export const textRenderer = {
     setStoredData(node, merged)
 
     if ('shadow' in patch || 'blur' in patch) {
-      applyFilterEffects(
-        node,
-        'shadow' in patch ? patch.shadow : undefined,
-        'blur' in patch ? patch.blur : undefined,
-      )
+      applyFilterEffects(node, merged.shadow, merged.blur)
     }
 
     // Rebuild the clip mask whenever the bounding box or fontSize

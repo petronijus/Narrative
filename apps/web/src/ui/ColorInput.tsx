@@ -20,7 +20,7 @@
  *     If omitted, onChange is used for commits too.
  */
 
-import { useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { HexColorPicker } from 'react-colorful'
 import { Pipette } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
@@ -123,6 +123,23 @@ export function ColorInput({
 
   const commit = onCommit ?? onChange
 
+  // Local draft for the hex input. The parent's `value` is the source
+  // of truth, but committing only valid `#RRGGBB` strings means
+  // intermediate keystrokes ("F", "F7", "F7F") are not valid hex and
+  // would otherwise be discarded on every change, making the input
+  // feel uneditable. Track the user's typing locally and commit when
+  // the value normalises (or on blur).
+  const [hexDraft, setHexDraft] = useState<string>(() => value.toUpperCase())
+  const isFocusedRef = useRef(false)
+  useEffect(() => {
+    // External value changes (popover picker, swatch click, peer
+    // edit) refresh the draft only when the user isn't actively
+    // typing, so an in-flight keystroke isn't clobbered.
+    if (!isFocusedRef.current) {
+      setHexDraft(value.toUpperCase())
+    }
+  }, [value])
+
   const handlePickerChange = (hex: string): void => {
     onChange(hex)
   }
@@ -134,15 +151,25 @@ export function ColorInput({
   }
 
   const handleHexChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    const hex = normalizeHex(e.target.value)
+    const raw = e.target.value
+    setHexDraft(raw)
+    // Live-commit only when the typed string already forms a valid
+    // hex — gives instant preview on the canvas without clobbering
+    // partial input.
+    const hex = normalizeHex(raw)
     if (hex !== null) onChange(hex)
   }
 
   const handleHexBlur = (e: ChangeEvent<HTMLInputElement>): void => {
+    isFocusedRef.current = false
     const hex = normalizeHex(e.target.value)
     if (hex !== null) {
+      setHexDraft(hex.toUpperCase())
       commit(hex)
       push(hex)
+    } else {
+      // Invalid input on blur — revert to the last committed value.
+      setHexDraft(value.toUpperCase())
     }
   }
 
@@ -179,7 +206,7 @@ export function ColorInput({
             type="button"
             aria-label={ariaLabel}
             className={[
-              'h-7 w-10 flex-shrink-0 cursor-pointer rounded border border-input p-0.5',
+              'h-7 w-10 flex-shrink-0 cursor-pointer rounded-md border border-input p-0.5',
               'focus:border-ring focus:outline-none',
               inputClassName,
             ].join(' ')}
@@ -237,11 +264,14 @@ export function ColorInput({
               <input
                 type="text"
                 aria-label={`${ariaLabel} hex`}
-                value={value.toUpperCase()}
+                value={hexDraft}
                 onChange={handleHexChange}
+                onFocus={() => {
+                  isFocusedRef.current = true
+                }}
                 onBlur={handleHexBlur}
                 className={[
-                  'flex-1 rounded border border-input field-surface px-2 py-1',
+                  'flex-1 rounded-md border border-input field-surface px-2 py-1',
                   'font-mono text-xs text-foreground',
                   'focus:border-ring focus:outline-none',
                   hexClassName,
@@ -258,7 +288,7 @@ export function ColorInput({
                     : 'Eyedropper not supported in this browser'
                 }
                 className={[
-                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-input',
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-input',
                   EYEDROPPER_SUPPORTED
                     ? 'cursor-pointer text-muted-foreground hover:border-border-strong hover:text-foreground'
                     : 'cursor-not-allowed text-muted-foreground/40',
@@ -323,11 +353,14 @@ export function ColorInput({
         <input
           type="text"
           aria-label={`${ariaLabel} hex`}
-          value={value.toUpperCase()}
+          value={hexDraft}
           onChange={handleHexChange}
+          onFocus={() => {
+            isFocusedRef.current = true
+          }}
           onBlur={handleHexBlur}
           className={[
-            'flex-1 rounded border border-input field-surface px-2 py-0.5',
+            'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
             'font-mono text-xs text-foreground',
             'focus:border-ring focus:outline-none',
             hexClassName,

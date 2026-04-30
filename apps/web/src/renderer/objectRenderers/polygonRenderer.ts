@@ -17,6 +17,7 @@ import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
+import { applyFlip } from './applyFlip.js'
 
 type PolygonLike = TriangleObject | PolygonObject
 
@@ -99,6 +100,7 @@ function applyTransform(node: PixiContainer, data: PolygonLike): void {
   node.pivot.set(data.width / 2, data.height / 2)
   node.x = data.x + data.width / 2
   node.y = data.y + data.height / 2
+  applyFlip(node, data)
 }
 
 function makeRenderer<T extends PolygonLike>(type: T['type']) {

@@ -89,6 +89,18 @@ export interface BaseSlideObject {
    * the Width and Height fields in the Inspector's Size section.
    */
   aspectLocked?: boolean
+  /**
+   * P16: horizontal flip — mirror the object across its vertical centre
+   * axis. Implemented in the renderer via `container.scale.x = -1` with
+   * the existing center pivot, so the centre stays put and rotation
+   * still rotates around the same anchor. Missing ⇒ not flipped.
+   */
+  flipH?: boolean
+  /**
+   * P16: vertical flip — mirror across the horizontal centre axis.
+   * Same mechanism as `flipH` but on `scale.y`.
+   */
+  flipV?: boolean
 }
 
 /**
@@ -268,6 +280,12 @@ export interface PathObject extends BaseSlideObject {
   /** Optional fill for a closed path. */
   fill?: number
   fillAlpha?: number
+  /**
+   * Optional gradient or image fill — same schema as the parametric
+   * shapes. When set, takes precedence over `fill` (which becomes the
+   * fallback colour while an image fill is loading). Closed paths only.
+   */
+  fillStyle?: FillStyle
   /** When true, last anchor connects back to the first. */
   closed?: boolean
   dash?: boolean
@@ -439,6 +457,28 @@ export interface VideoObject extends BaseSlideObject {
    * Most browsers block autoplay with audio — pair with muted: true.
    */
   autoplay?: boolean
+  /**
+   * Wait for a user click before playing. Mutually exclusive with
+   * `autoplay`: when both are set, `playOnClick` wins. In present
+   * mode, click-to-toggle still works for any video (it's the
+   * existing fallback), but this flag is the explicit author
+   * intent — it's surfaced in the Inspector and on the animation
+   * timeline so other steps can be timed off it.
+   */
+  playOnClick?: boolean
+  /**
+   * Animation-style trigger for video playback so the video can be
+   * sequenced relative to the slide's animation steps:
+   *   • 'onEnter'        → start at slide-enter + delay (≡ autoplay)
+   *   • 'withPrevious'   → start at prevStep.start + delay
+   *   • 'afterPrevious'  → start at prevStep.end + delay
+   *   • 'onClick'        → wait for user click (≡ playOnClick)
+   * Default behavior when missing: 'onClick' if playOnClick is set,
+   * else 'onEnter' if autoplay is set, else 'manual' (no trigger).
+   */
+  videoTrigger?: 'onEnter' | 'withPrevious' | 'afterPrevious' | 'onClick'
+  /** Delay in seconds applied to the video's trigger anchor. */
+  videoDelay?: number
   /**
    * Loop playback in present mode. Default: false.
    */

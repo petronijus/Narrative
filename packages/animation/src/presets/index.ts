@@ -32,6 +32,8 @@ import { flipIn } from './flipIn.js'
 import { popIn } from './popIn.js'
 import { dissolveIn } from './dissolveIn.js'
 import { wipeIn } from './wipeIn.js'
+import { moveTo } from './moveTo.js'
+import { rotateTo } from './rotateTo.js'
 
 export type PresetFactory = (
   step: AnimationStep,
@@ -54,6 +56,8 @@ const PRESET_REGISTRY = new Map<AnimationPreset, PresetFactory>([
   ['popIn', popIn],
   ['dissolveIn', dissolveIn],
   ['wipeIn', wipeIn],
+  ['moveTo', moveTo],
+  ['rotateTo', rotateTo],
 ])
 
 /**
@@ -77,4 +81,6 @@ export {
   popIn,
   dissolveIn,
   wipeIn,
+  moveTo,
+  rotateTo,
 }

@@ -82,8 +82,6 @@ export function applyFilterEffects(
 ): void {
   const slots = getSlots(container)
 
-  // Remember the most recent request. If a previous rAF is still
-  // pending, it'll pick up these values instead of firing the stale one.
   if (shadow !== undefined) {
     slots.pendingShadow = { ...shadow }
     slots.pendingShadowPresent = true
@@ -126,13 +124,26 @@ function installFilterEffectsNow(
       delete slots.shadowData
     }
     if (shadow !== undefined) {
-      slots.shadow = new DropShadowFilter({
+      const blurPx = Math.max(0, shadow.blur)
+      const filter = new DropShadowFilter({
         color: shadow.color,
         alpha: shadow.opacity,
-        blur: Math.max(0, shadow.blur),
+        blur: blurPx,
         offset: { x: shadow.offsetX, y: shadow.offsetY },
-        quality: 4,
+        // `quality` = number of blur passes. 4 already gives a clean
+        // gaussian for small blurs; for very wide blurs the kernel
+        // hits its sample limit and the shadow looks chunky / banded.
+        // Bumping to 6 above blur ~24 px doubles the effective kernel
+        // without exploding cost (still O(quality * width)).
+        quality: blurPx > 24 ? 6 : 4,
       })
+      // Render the filter at the device's native resolution so the
+      // shadow's blurred texture isn't 1:1-sampled then upscaled by
+      // the canvas — the upsample is what makes big shadows look
+      // pixelated. Cap at 2 so a 3x DPR display doesn't quadruple
+      // the texture cost for marginal visual gain.
+      filter.resolution = Math.min(2, window.devicePixelRatio || 1)
+      slots.shadow = filter
       slots.shadowData = { ...shadow }
     }
   }
@@ -145,7 +156,12 @@ function installFilterEffectsNow(
     }
     const blurPx = blur ?? 0
     if (blurPx > 0) {
-      slots.blur = new BlurFilter({ strength: blurPx, quality: 4 })
+      const filter = new BlurFilter({
+        strength: blurPx,
+        quality: blurPx > 24 ? 6 : 4,
+      })
+      filter.resolution = Math.min(2, window.devicePixelRatio || 1)
+      slots.blur = filter
       slots.blurPx = blurPx
     }
   }

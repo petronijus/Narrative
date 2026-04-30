@@ -17,6 +17,7 @@ import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleRoundedRect } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
+import { applyFlip } from './applyFlip.js'
 
 function cornerRadiusEqual(a: CornerRadius | undefined, b: CornerRadius | undefined): boolean {
   if (a === b) return true
@@ -44,6 +45,7 @@ function applyObjectTransform(container: Container, data: RectangleObject): void
   container.alpha = data.opacity
   // Pivot na střed objektu pro správnou rotaci
   container.pivot.set(data.width / 2, data.height / 2)
+  applyFlip(container, data)
 }
 
 /**
@@ -66,6 +68,18 @@ function tracePath(g: Graphics, w: number, h: number, r: RectangleObject['corner
     g.rect(0, 0, w, h)
     return
   }
+  // Uniform radius — use Pixi's `roundRect` primitive. The manual
+  // arcTo/lineTo trace produces visible white seams under thick
+  // centred strokes (Pixi v8 strokes each path segment separately
+  // and the joins don't fully fill the corners). `roundRect` emits
+  // one closed shape which the stroker handles as a single primitive.
+  if (cTl === cTr && cTr === cBr && cBr === cBl) {
+    g.roundRect(0, 0, w, h, cTl)
+    return
+  }
+  // Per-corner radii — fall back to the manual trace. Strokes here
+  // can show the same seam artefact, but per-corner radii aren't a
+  // common combination with thick strokes.
   g.moveTo(cTl, 0)
   g.lineTo(w - cTr, 0)
   if (cTr > 0) g.arcTo(w, 0, w, cTr, cTr)

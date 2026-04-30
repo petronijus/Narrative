@@ -23,4 +23,80 @@
     padding: 0;
     overflow: hidden;
   }
+
+  /* Sliders — strip every default chrome (focus outline, track
+     border / box-shadow) and replace the native track with a flat
+     tinted channel. The thumb is custom-styled too so it sits
+     centred on the new track regardless of browser. */
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    outline: none;
+    box-shadow: none;
+    border: none;
+    cursor: pointer;
+    /* Enlarge the hit-test box so drags don't bail when the cursor
+       drifts a few pixels off the visible track. The visible track
+       stays 4px (drawn by the runnable-track pseudo); the input
+       element itself is 16px tall, centred around the thumb. */
+    height: 16px;
+    padding: 0;
+    /* Disable native touch gestures (scrolling / pinch) on the
+       slider so a vertical drift never pulls the gesture away into
+       the surrounding scroll container — the slider keeps the
+       pointer for the entire drag. */
+    touch-action: none;
+  }
+  input[type='range']:focus,
+  input[type='range']:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+
+  /* WebKit / Blink */
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 4px;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px; /* (track height − thumb height) / 2 */
+    border-radius: 9999px;
+    background: hsl(var(--primary));
+    border: 2px solid hsl(var(--background));
+    box-shadow: 0 0 0 1px hsl(var(--border));
+    cursor: pointer;
+  }
+
+  /* Firefox */
+  input[type='range']::-moz-range-track {
+    height: 4px;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+  }
+  input[type='range']::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: hsl(var(--primary));
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: hsl(var(--primary));
+    border: 2px solid hsl(var(--background));
+    box-shadow: 0 0 0 1px hsl(var(--border));
+    cursor: pointer;
+  }
 }

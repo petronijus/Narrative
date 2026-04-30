@@ -58,15 +58,19 @@ export class ResourceManager {
 
     let texture: Texture | null = null
     try {
-      texture = await Assets.load<Texture>(url)
+      // Pin the loader explicitly: imgproxy URLs end in `@webp` / `@jpg`
+      // (format spec, not a file extension), so Pixi's extension-based
+      // dispatch otherwise warns "could not be loaded as we don't know
+      // how to parse it" before falling back. `parser: 'loadTextures'`
+      // tells Pixi to use the bitmap/texture loader regardless of the
+      // URL's tail (Pixi 8 renamed `loadParser` → `parser`).
+      texture = await Assets.load<Texture>({ src: url, parser: 'loadTextures' })
     } catch {
       texture = null
     }
 
-    // Fallback for URLs with no/unrecognised extension (e.g. imgproxy paths
-    // ending in "@webp") where Assets can't pick a loader → returns null/errors.
-    // Texture.from bypasses extension detection by loading the URL into an
-    // HTMLImageElement directly.
+    // Fallback for URLs that even the explicit loader can't parse —
+    // load via HTMLImageElement directly so we still get a Texture.
     if (!texture || !(texture as { source?: unknown }).source) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
@@ -82,6 +86,12 @@ export class ResourceManager {
   /**
    * Uvolní referenci na texturu. Při refCount=0 zničí texturu a uvolní GPU paměť.
    * Volání releaseTexture na neexistující URL je no-op (bezpečné).
+   *
+   * Uses Assets.unload(url) for textures that came through Assets.load
+   * (the happy path); falls back to texture.destroy(true) for the
+   * <img>-decoded fallback below where the texture isn't tracked by
+   * Assets. This avoids Pixi's "managed TextureSource was destroyed
+   * instead of unloaded" warning that fires on every poster swap.
    */
   releaseTexture(url: string): void {
     const entry = this.textures.get(url)
@@ -89,7 +99,12 @@ export class ResourceManager {
 
     entry.refCount -= 1
     if (entry.refCount <= 0) {
-      entry.texture.destroy(true)
+      void Assets.unload(url).catch(() => {
+        // Not in the Assets cache (came from the <img> fallback path) —
+        // destroy directly. Catch keeps the cleanup chain alive even if
+        // Assets has already unloaded the source from another release.
+        if (!entry.texture.destroyed) entry.texture.destroy(true)
+      })
       this.textures.delete(url)
     }
   }
@@ -99,8 +114,10 @@ export class ResourceManager {
    * Po volání destroyAll() není instance použitelná.
    */
   destroyAll(): void {
-    for (const [, entry] of this.textures) {
-      entry.texture.destroy(true)
+    for (const [url, entry] of this.textures) {
+      void Assets.unload(url).catch(() => {
+        if (!entry.texture.destroyed) entry.texture.destroy(true)
+      })
     }
     this.textures.clear()
     for (const [, entry] of this.procedural) {

@@ -32,6 +32,10 @@ import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
 import { useCropMode } from '../state/CropModeContext'
 import { CropOverlay } from '../ui/CropOverlay'
+import { PathPointsOverlay } from '../ui/PathPointsOverlay'
+import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
+import { useAnimations } from '../state/useAnimations'
+import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
@@ -50,8 +54,9 @@ import {
   groupObjects,
   ungroupObjects,
 } from '@narrative/slide-model'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
 import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
-import type { SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
+import type { SlideObject, SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -347,10 +352,83 @@ function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean
   return [value, setValue]
 }
 
+/**
+ * Flatten a parametric shape (rectangle / triangle / polygon) into a
+ * PathObject with one anchor per outline vertex, place it, and remove
+ * the original. Returns the new path id (or null on failure).
+ *
+ * Used by the dbl-click → point-edit gesture: anchors of a true path
+ * can be dragged independently, but the parametric shapes can't carry
+ * non-uniform corner positions in their schema. Conversion is
+ * destructive on shape-specific fields (cornerRadius, fillStyle, …)
+ * but preserves position, size, fill and stroke.
+ */
+function convertToPathAndPlace(
+  mutationCtx: ObjectsMutationContext,
+  source: SlideObject,
+): string | null {
+  const w = source.width
+  const h = source.height
+  let anchors: PathAnchor[] | null = null
+  if (source.type === 'rectangle') {
+    anchors = [
+      { x: 0, y: 0 },
+      { x: w, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
+    ]
+  } else if (source.type === 'triangle') {
+    anchors = [
+      { x: w / 2, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
+    ]
+  } else if (source.type === 'polygon') {
+    const sides = Math.max(3, Math.min(12, source.sides))
+    const cx = w / 2
+    const cy = h / 2
+    const rx = w / 2
+    const ry = h / 2
+    anchors = []
+    // Top-pointing regular n-gon — same orientation the polygonRenderer uses.
+    for (let i = 0; i < sides; i++) {
+      const t = -Math.PI / 2 + (i * 2 * Math.PI) / sides
+      anchors.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) })
+    }
+  }
+  if (anchors === null) return null
+
+  const filled =
+    'fill' in source && typeof (source as { fill: number }).fill === 'number'
+      ? (source as { fill: number }).fill
+      : undefined
+  const fillAlpha = 'fillAlpha' in source ? (source as { fillAlpha?: number }).fillAlpha : undefined
+  const stroke = (source as { stroke?: number }).stroke ?? 0x000000
+  const strokeWidth = (source as { strokeWidth?: number }).strokeWidth ?? 0
+
+  const created = createObjectOfType(mutationCtx, 'path', {
+    x: source.x,
+    y: source.y,
+    width: w,
+    height: h,
+    rotation: source.rotation,
+    anchors,
+    closed: true,
+    stroke,
+    strokeWidth,
+    ...(filled !== undefined ? { fill: filled } : {}),
+    ...(fillAlpha !== undefined ? { fillAlpha } : {}),
+  } as Partial<SlideObject>)
+  removeObject(mutationCtx, source.id)
+  return created.id
+}
+
 export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
-  const { selectedIds, selectOne, selectMany, toggle, clear } = useSelection()
+  const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
+  const { animations, animationsCtx } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
+  const { pathPointsId, enterPathPoints, exitPathPoints } = usePathPointsMode()
   const { activeTool, setActiveTool } = useTool()
   // P15: collapse state for the left (Slides) and right (Inspector)
   // sidebars. Persisted per-device via localStorage. Mirrors the
@@ -604,6 +682,20 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         }
       }
 
+      // Path point-edit: clicking off the anchor dots exits the mode and
+      // the click falls through as a regular selection gesture.
+      if (pathPointsId !== null) {
+        const target = e.target as HTMLElement | null
+        const onHandle =
+          target !== null && target.closest('[data-path-points-handle="true"]') !== null
+        if (!onHandle) {
+          exitPathPoints()
+          // fall through to normal selection / marquee handling.
+        } else {
+          return
+        }
+      }
+
       // Hand tool — pan the scroll container while the pointer is held.
       if (activeTool === 'hand') {
         const scroller = stageScrollRef.current
@@ -820,6 +912,8 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       canvasInstance,
       cropImageId,
       exitCrop,
+      pathPointsId,
+      exitPathPoints,
       selectMany,
       editingTextId,
       endEdit,
@@ -1196,8 +1290,38 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         enterCrop(hitId)
         return
       }
+      if (hit.type === 'path') {
+        // Figma-style point edit: dbl-click a path → show draggable
+        // anchors. Mutating anchors needs editor permissions.
+        if (isViewer) return
+        selectOne(hitId)
+        enterPathPoints(hitId)
+        return
+      }
+      if (hit.type === 'rectangle' || hit.type === 'triangle' || hit.type === 'polygon') {
+        // Figma "Edit Object" on a parametric shape → flatten to a path
+        // with one anchor per outline corner, then enter point-edit.
+        // Loses cornerRadius / fillStyle / etc. (PathObject schema is
+        // narrower). That's the trade-off for independent corner moves.
+        if (isViewer || mutationCtx === null) return
+        const newId = convertToPathAndPlace(mutationCtx, hit)
+        if (newId !== null) {
+          selectOne(newId)
+          enterPathPoints(newId)
+        }
+        return
+      }
     },
-    [canvasInstance, objects, selectOne, beginEdit, enterCrop, isViewer],
+    [
+      canvasInstance,
+      objects,
+      selectOne,
+      beginEdit,
+      enterCrop,
+      enterPathPoints,
+      isViewer,
+      mutationCtx,
+    ],
   )
 
   // ---------------------------------------------------------------------------
@@ -1285,6 +1409,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Crop mode wins over plain selection clearing — Esc exits it.
         if (cropImageId !== null) {
           exitCrop()
+          return
+        }
+        // Path point-edit also wins over selection clearing.
+        if (pathPointsId !== null) {
+          exitPathPoints()
           return
         }
         // Clear canvas selection on Escape. No preventDefault — other
@@ -1849,6 +1978,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           // driven by CropOverlay — suppress the normal
                           // 8-handle transform rig.
                           if (cropImageId !== null && sid === cropImageId) return false
+                          // While point-edit is active on this path, hide
+                          // the bounding-box handles so the anchor dots
+                          // are unobstructed.
+                          if (pathPointsId !== null && sid === pathPointsId) return false
                           return true
                         })
                         if (editableIds.length === 0) return null
@@ -1912,6 +2045,29 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         const obj = objects.find((o) => o.id === cropImageId)
                         if (obj === undefined || obj.type !== 'image') return null
                         return <CropOverlay obj={obj} mutationCtx={mutationCtx} />
+                      })()}
+
+                    {/* Path point-edit overlay — anchors as draggable dots. */}
+                    {pathPointsId !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const obj = objects.find((o) => o.id === pathPointsId)
+                        if (obj === undefined || obj.type !== 'path') return null
+                        return <PathPointsOverlay obj={obj} mutationCtx={mutationCtx} />
+                      })()}
+
+                    {/* moveTo animation target overlay — silhouette + draggable
+                        end-point handle when a moveTo step is selected. */}
+                    {selectedAnimationId !== null &&
+                      animationsCtx !== null &&
+                      (() => {
+                        const step = animations.find((a) => a.id === selectedAnimationId)
+                        if (step === undefined || step.preset !== 'moveTo') return null
+                        const obj = objects.find((o) => o.id === step.objectId)
+                        if (obj === undefined) return null
+                        return (
+                          <MoveToTargetOverlay obj={obj} step={step} mutationCtx={animationsCtx} />
+                        )
                       })()}
                   </div>
                 </div>
