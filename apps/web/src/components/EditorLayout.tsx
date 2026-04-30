@@ -418,6 +418,9 @@ function convertToPathAndPlace(
     strokeWidth,
     ...(filled !== undefined ? { fill: filled } : {}),
     ...(fillAlpha !== undefined ? { fillAlpha } : {}),
+    // Preserve group membership so flattening a member of a group
+    // doesn't silently drop it out of the group.
+    ...(source.groupId !== undefined && source.groupId !== '' ? { groupId: source.groupId } : {}),
   } as Partial<SlideObject>)
   removeObject(mutationCtx, source.id)
   return created.id
@@ -520,6 +523,15 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   } | null>(null)
   /** Middle-mouse pan flag — drives the grabbing cursor while held. */
   const [middlePanning, setMiddlePanning] = useState(false)
+  /**
+   * Figma-style group isolation: which group the user has "entered"
+   * via dbl-click. While set, clicks on a member of this group select
+   * the single member instead of promoting to the whole group, and
+   * dbl-clicks on members proceed to the type-specific action
+   * (crop / path-edit) without breaking the group. Esc or a click
+   * outside the group's members exits isolation.
+   */
+  const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null)
 
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
@@ -770,6 +782,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Klik na prázdnou plochu
         if (!e.shiftKey) {
           clear()
+          // Empty-canvas click also exits group isolation, mirroring
+          // Figma's behaviour.
+          if (enteredGroupId !== null) setEnteredGroupId(null)
         }
         // Start marquee drag
         const ms: MarqueeState = {
@@ -790,8 +805,17 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       // out of the current selection if they really want).
       const hitObj = objects.find((o) => o.id === hitId)
       const hitGroupId = hitObj?.groupId
-      const groupMembers: string[] =
-        hitGroupId !== undefined && hitGroupId !== ''
+      // Group isolation: while we've "entered" a group via dbl-click,
+      // clicks on its own members select the single member instead of
+      // promoting to the whole group. Clicks on objects OUTSIDE the
+      // entered group exit isolation and behave normally.
+      const inIsolation = enteredGroupId !== null && hitGroupId === enteredGroupId
+      if (enteredGroupId !== null && hitGroupId !== enteredGroupId) {
+        setEnteredGroupId(null)
+      }
+      const groupMembers: string[] = inIsolation
+        ? [hitId]
+        : hitGroupId !== undefined && hitGroupId !== ''
           ? objects.filter((o) => o.groupId === hitGroupId).map((o) => o.id)
           : [hitId]
 
@@ -914,6 +938,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       exitCrop,
       pathPointsId,
       exitPathPoints,
+      enteredGroupId,
       selectMany,
       editingTextId,
       endEdit,
@@ -1276,6 +1301,18 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       if (hitId === null) return
       const hit = objects.find((o) => o.id === hitId)
       if (hit === undefined) return
+      // Group isolation: dbl-click a member of a group we haven't
+      // entered yet → "enter" the group and select that member, but
+      // DO NOT fall through to the type-specific edit (which for
+      // rectangles flattens to a path and would drop the member out
+      // of the group). A second dbl-click while in isolation does
+      // proceed to crop / point-edit / etc. as usual.
+      const hitGroupId = hit.groupId !== undefined && hit.groupId !== '' ? hit.groupId : null
+      if (hitGroupId !== null && hitGroupId !== enteredGroupId) {
+        setEnteredGroupId(hitGroupId)
+        selectOne(hitId)
+        return
+      }
       if (hit.type === 'text') {
         selectOne(hitId)
         beginEdit(hitId)
@@ -1321,6 +1358,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       enterPathPoints,
       isViewer,
       mutationCtx,
+      enteredGroupId,
     ],
   )
 
@@ -1414,6 +1452,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Path point-edit also wins over selection clearing.
         if (pathPointsId !== null) {
           exitPathPoints()
+          return
+        }
+        // Group isolation also wins over selection clearing.
+        if (enteredGroupId !== null) {
+          setEnteredGroupId(null)
           return
         }
         // Clear canvas selection on Escape. No preventDefault — other
