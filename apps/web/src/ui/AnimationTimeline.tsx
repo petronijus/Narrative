@@ -428,6 +428,15 @@ export function AnimationTimeline() {
         existing.push(l)
       }
     }
+    // Show every video object on the timeline even when it has no
+    // animation steps — the row's trigger icon is the visual cue for
+    // timing other animations against the video's start.
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      if (buckets.has(o.id)) continue
+      buckets.set(o.id, [])
+      naturalOrder.push(o.id)
+    }
 
     let finalOrder = naturalOrder
     if (rowOrderPref !== null) {
@@ -529,7 +538,7 @@ export function AnimationTimeline() {
     // dragStamp is included so toggling the drag state forces a re-layout
     // without the pinned-lane pass, letting bumped bars drop back down.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [laidOut, rowOrderPref, dragStamp])
+  }, [laidOut, rowOrderPref, dragStamp, slideObjects])
 
   const rowsTotalHeight = rows.reduce((acc, r) => acc + r.height, 0)
   /** Y-offsets of each row boundary — rows.length + 1 entries (0..total). */
@@ -1312,6 +1321,34 @@ export function AnimationTimeline() {
                               return o?.name ?? o?.type ?? objectId
                             })()}
                           </span>
+                          {/* Video trigger icon — shows the playback gate so
+                            you can time other steps against the video. */}
+                          {(() => {
+                            const o = slideObjects.find((x) => x.id === objectId)
+                            if (o?.type !== 'video') return null
+                            if (o.playOnClick === true) {
+                              return (
+                                <MousePointerClick
+                                  className="h-3 w-3 flex-shrink-0 text-amber-400"
+                                  aria-label="Video plays on click"
+                                />
+                              )
+                            }
+                            if (o.autoplay === true) {
+                              return (
+                                <Play
+                                  className="h-3 w-3 flex-shrink-0 text-emerald-400"
+                                  aria-label="Video autoplays on slide enter"
+                                />
+                              )
+                            }
+                            return (
+                              <Pause
+                                className="h-3 w-3 flex-shrink-0 text-gray-500"
+                                aria-label="Video starts paused"
+                              />
+                            )
+                          })()}
                         </div>
 
                         {/* Bars — one per animation on this object. */}
