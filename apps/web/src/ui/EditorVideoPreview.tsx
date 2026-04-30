@@ -102,6 +102,19 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     }
   }, [])
 
+  // Latest trim / poster values held in refs so the HLS-attach effect's
+  // listeners always read the current value WITHOUT re-running (which
+  // would tear down HLS and rewind the video to the start — that's
+  // exactly what made trim-end-handle scrubs jump to the wrong frame).
+  const trimStartRef = useRef(videoObject.trimStart ?? 0)
+  const trimEndRef = useRef(videoObject.trimEnd ?? 0)
+  const posterTimeRef = useRef(videoObject.posterTime ?? 0)
+  useEffect(() => {
+    trimStartRef.current = Math.max(0, videoObject.trimStart ?? 0)
+    trimEndRef.current = videoObject.trimEnd ?? 0
+    posterTimeRef.current = videoObject.posterTime ?? 0
+  }, [videoObject.trimStart, videoObject.trimEnd, videoObject.posterTime])
+
   // Wire up HLS the moment we have a hlsManifestUrl.
   useEffect(() => {
     if (info?.transcodeStatus !== 'done') return
@@ -131,48 +144,62 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.addEventListener('canplay', onCanPlay, { once: true })
     }
 
-    // Initial seek: poster frame wins, then trimStart, then 0.
-    const trimStart = Math.max(0, videoObject.trimStart ?? 0)
-    const posterTime = videoObject.posterTime
-    const initialSeek =
-      posterTime !== undefined && posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
-    if (initialSeek > 0) {
-      videoEl.addEventListener(
-        'loadedmetadata',
-        () => {
-          videoEl.currentTime = initialSeek
-        },
-        { once: true },
-      )
-    }
+    // Initial seek: poster frame wins, then trimStart, then 0. Computed
+    // on the first loadedmetadata so it reflects the latest values from
+    // the refs (not a stale closure capture).
+    videoEl.addEventListener(
+      'loadedmetadata',
+      () => {
+        const trimStart = trimStartRef.current
+        const posterTime = posterTimeRef.current
+        const initialSeek = posterTime > 0 ? Math.max(trimStart, posterTime) : trimStart
+        if (initialSeek > 0) videoEl.currentTime = initialSeek
+      },
+      { once: true },
+    )
     // Rewind to trimStart on Play if we're sitting on the poster preview.
     const onPlay = (): void => {
-      if (
-        posterTime !== undefined &&
-        posterTime > 0 &&
-        Math.abs(videoEl.currentTime - posterTime) < 0.05
-      ) {
+      const posterTime = posterTimeRef.current
+      const trimStart = trimStartRef.current
+      if (posterTime > 0 && Math.abs(videoEl.currentTime - posterTime) < 0.05) {
         videoEl.currentTime = trimStart
       }
     }
     videoEl.addEventListener('play', onPlay)
-    const trimEnd = videoObject.trimEnd
     const onTimeUpdate = (): void => {
-      if (trimEnd !== undefined && trimEnd > 0 && videoEl.currentTime >= trimEnd) {
+      const trimEnd = trimEndRef.current
+      if (trimEnd > 0 && videoEl.currentTime >= trimEnd) {
         videoEl.pause()
       }
     }
     videoEl.addEventListener('timeupdate', onTimeUpdate)
 
-    // Publish currentTime so Inspector's "Use current frame" can read it.
+    // Publish currentTime + a seek() handle on a window registry. The
+    // Inspector's trim filmstrip / poster-frame slider use seek() to
+    // scrub the underlying <video> while dragging so the user sees the
+    // exact frame they're trimming to.
     const reg = window as unknown as {
-      __narrative_video_currents?: Record<string, { currentTime: number }>
+      __narrative_video_currents?: Record<
+        string,
+        { currentTime: number; seek?: (sec: number) => void }
+      >
     }
     if (reg.__narrative_video_currents === undefined) reg.__narrative_video_currents = {}
     const currents = reg.__narrative_video_currents
-    currents[videoObject.id] = { currentTime: 0 }
+    currents[videoObject.id] = {
+      currentTime: 0,
+      seek: (sec: number) => {
+        if (videoEl.readyState < 1) return
+        if (!videoEl.paused) videoEl.pause()
+        const safe = Math.max(0, Math.min(videoEl.duration || sec, sec))
+        if (Math.abs(videoEl.currentTime - safe) > 0.01) {
+          videoEl.currentTime = safe
+        }
+      },
+    }
     const onTime = (): void => {
-      currents[videoObject.id] = { currentTime: videoEl.currentTime }
+      const entry = currents[videoObject.id]
+      if (entry !== undefined) entry.currentTime = videoEl.currentTime
     }
     videoEl.addEventListener('timeupdate', onTime)
     videoEl.addEventListener('seeked', onTime)
@@ -190,18 +217,18 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('timeupdate', onTimeUpdate)
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
+      delete currents[videoObject.id]
       if (hlsRef.current !== null) {
         hlsRef.current.destroy()
         hlsRef.current = null
       }
     }
+    // Trim / poster deps intentionally omitted — we read them from refs
+    // inside the listeners so updates don't tear down HLS.
   }, [
     info?.transcodeStatus,
     info?.hlsManifestUrl,
     videoObject.id,
-    videoObject.trimStart,
-    videoObject.trimEnd,
-    videoObject.posterTime,
     videoObject.autoplay,
     videoObject.volume,
     isPresent,
@@ -226,6 +253,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
         opacity: videoObject.opacity,
+        // Solid black backdrop hides the Pixi-painted poster + play
+        // icon underneath — without it the Pixi visuals flash through
+        // whenever the HTML <video> goes transparent during a seek
+        // (e.g. while dragging the trim / poster slider in the
+        // Inspector). Standard "black behind the video" convention.
+        background: '#000',
         // Editor: pointer-events:none passes clicks through to transform handles.
         // Present: accept clicks so the user can play/pause.
         pointerEvents: isPresent ? 'auto' : 'none',

@@ -3839,6 +3839,180 @@ function TextSection({ obj, patch }: TextSectionProps) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Filmstrip-style trim — drag the in / out handles to set trimStart /
+ * trimEnd. The lit region between handles is the kept range; the
+ * darkened cuffs on either side are trimmed away. No number inputs;
+ * the position of the handles IS the source of truth.
+ *
+ * Drag math: each handle captures (pointerX, originalSec) on pointerdown
+ * and writes the new value on pointermove using the track's clientWidth
+ * so the math is independent of canvas zoom. Min separation of 0.1 s
+ * keeps the kept range from collapsing to zero.
+ */
+function TrimFilmstrip({
+  obj,
+  patch,
+}: {
+  obj: VideoObject
+  patch: (p: SlideObjectPatch<VideoObject>) => void
+}) {
+  const { info } = useVideoInfo(obj.assetId !== '' ? obj.assetId : null)
+  const duration = info?.durationSec ?? 0
+  const hasDuration = duration > 0
+
+  const trimStart = obj.trimStart ?? 0
+  const trimEnd = obj.trimEnd !== undefined && obj.trimEnd > 0 ? obj.trimEnd : duration
+  const minGap = 0.1
+
+  const trackRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{
+    handle: 'start' | 'end'
+    startX: number
+    originalSec: number
+    trackWidth: number
+  } | null>(null)
+
+  if (!hasDuration) return null
+
+  const startPct = (trimStart / duration) * 100
+  const endPct = (trimEnd / duration) * 100
+
+  const scrubVideo = (sec: number): void => {
+    const reg = (
+      window as unknown as {
+        __narrative_video_currents?: Record<
+          string,
+          { currentTime: number; seek?: (sec: number) => void }
+        >
+      }
+    ).__narrative_video_currents
+    reg?.[obj.id]?.seek?.(sec)
+  }
+
+  const writeStart = (sec: number): void => {
+    const clamped = Math.max(0, Math.min(trimEnd - minGap, sec))
+    patch({
+      trimStart: clamped <= 0 ? undefined : clamped,
+    } as unknown as SlideObjectPatch<VideoObject>)
+    scrubVideo(clamped)
+  }
+  const writeEnd = (sec: number): void => {
+    const clamped = Math.max(trimStart + minGap, Math.min(duration, sec))
+    patch({
+      trimEnd: clamped >= duration ? undefined : clamped,
+    } as unknown as SlideObjectPatch<VideoObject>)
+    scrubVideo(clamped)
+  }
+
+  const onPointerDown = (handle: 'start' | 'end') => (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    e.preventDefault()
+    const track = trackRef.current
+    if (track === null) return
+    ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+    dragRef.current = {
+      handle,
+      startX: e.clientX,
+      originalSec: handle === 'start' ? trimStart : trimEnd,
+      trackWidth: track.clientWidth,
+    }
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag === null) return
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const dxPx = e.clientX - drag.startX
+    const dxSec = (dxPx / Math.max(1, drag.trackWidth)) * duration
+    const next = drag.originalSec + dxSec
+    if (drag.handle === 'start') writeStart(next)
+    else writeEnd(next)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current === null) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    dragRef.current = null
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <SubLabel>Trim</SubLabel>
+      <div
+        ref={trackRef}
+        className="relative h-8 w-full overflow-hidden rounded-md border border-input field-surface"
+      >
+        {/* Filmstrip texture — repeating hash gives the strip a subtle
+            "frames" look without paying for actual frame thumbnails. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 opacity-40"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(90deg, hsl(0 0% 100% / 0.04) 0 6px, hsl(0 0% 100% / 0.08) 6px 8px)',
+          }}
+        />
+        {/* Trimmed cuffs — left and right of the kept region. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 bg-background/70"
+          style={{ width: `${startPct}%` }}
+        />
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 right-0 bg-background/70"
+          style={{ width: `${100 - endPct}%` }}
+        />
+        {/* Kept region outline — primary tint so the in/out range pops. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 border-y-2 border-primary/80"
+          style={{ left: `${startPct}%`, width: `${endPct - startPct}%` }}
+        />
+        {/* In handle. */}
+        <div
+          role="slider"
+          aria-label="Trim start"
+          aria-valuemin={0}
+          aria-valuemax={duration}
+          aria-valuenow={trimStart}
+          onPointerDown={onPointerDown('start')}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-primary"
+          style={{ left: `${startPct}%`, touchAction: 'none' }}
+        >
+          <div className="h-3 w-0.5 rounded bg-white/80" />
+        </div>
+        {/* Out handle. */}
+        <div
+          role="slider"
+          aria-label="Trim end"
+          aria-valuemin={0}
+          aria-valuemax={duration}
+          aria-valuenow={trimEnd}
+          onPointerDown={onPointerDown('end')}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-primary"
+          style={{ left: `${endPct}%`, touchAction: 'none' }}
+        >
+          <div className="h-3 w-0.5 rounded bg-white/80" />
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-[10px] tabular-nums text-muted-foreground/70">
+        <span>{formatTimecode(trimStart)}</span>
+        <span>{formatTimecode(trimEnd - trimStart)} kept</span>
+        <span>{formatTimecode(trimEnd)}</span>
+      </div>
+    </div>
+  )
+}
+
+/**
  * P8: poster-frame picker — Keynote-style. Single scrub slider whose
  * position IS the poster time; a timecode below shows the current value.
  * No number input, no buttons — drop the slider where you want and
@@ -3872,6 +4046,17 @@ function PosterFrameRow({
     patch({
       posterTime: clamped <= 0 ? undefined : clamped,
     } as unknown as SlideObjectPatch<VideoObject>)
+    // Scrub the live <video> overlay so the user sees the exact frame
+    // they're picking as the poster.
+    const reg = (
+      window as unknown as {
+        __narrative_video_currents?: Record<
+          string,
+          { currentTime: number; seek?: (sec: number) => void }
+        >
+      }
+    ).__narrative_video_currents
+    reg?.[obj.id]?.seek?.(clamped)
   }
 
   return (
@@ -3981,28 +4166,7 @@ function VideoSection({
           to native ratio" checkbox lived here; it's now redundant. */}
 
       <PosterFrameRow obj={obj} patch={patch} />
-      <NumberField
-        id={`inspector-video-trim-start-${obj.id}`}
-        label="Trim ⏵"
-        value={obj.trimStart ?? 0}
-        step={0.1}
-        onChange={(v) =>
-          patch({
-            trimStart: v <= 0 ? undefined : v,
-          } as unknown as SlideObjectPatch<VideoObject>)
-        }
-      />
-      <NumberField
-        id={`inspector-video-trim-end-${obj.id}`}
-        label="Trim ⏵|"
-        value={obj.trimEnd ?? 0}
-        step={0.1}
-        onChange={(v) =>
-          patch({
-            trimEnd: v <= 0 ? undefined : v,
-          } as unknown as SlideObjectPatch<VideoObject>)
-        }
-      />
+      <TrimFilmstrip obj={obj} patch={patch} />
     </Section>
   )
 }
@@ -4306,7 +4470,10 @@ function AnimationsSection({
     // step actually moves the object instead of being a no-op.
     let seededParams = params
     if (preset === 'moveTo' && seededParams === undefined) {
-      seededParams = { targetX: 200, targetY: 200 }
+      // targetX / targetY = destination CENTRE in slide-coords (matches
+      // Pixi pivot convention so the on-canvas ghost lines up with
+      // where playback finishes). Default seeds the slide centre.
+      seededParams = { targetX: 960, targetY: 540 }
     } else if (preset === 'rotateTo' && seededParams === undefined) {
       seededParams = { angleDeg: 180 }
     }
