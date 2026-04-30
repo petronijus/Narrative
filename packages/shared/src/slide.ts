@@ -467,6 +467,19 @@ export interface VideoObject extends BaseSlideObject {
    */
   playOnClick?: boolean
   /**
+   * Animation-style trigger for video playback so the video can be
+   * sequenced relative to the slide's animation steps:
+   *   • 'onEnter'        → start at slide-enter + delay (≡ autoplay)
+   *   • 'withPrevious'   → start at prevStep.start + delay
+   *   • 'afterPrevious'  → start at prevStep.end + delay
+   *   • 'onClick'        → wait for user click (≡ playOnClick)
+   * Default behavior when missing: 'onClick' if playOnClick is set,
+   * else 'onEnter' if autoplay is set, else 'manual' (no trigger).
+   */
+  videoTrigger?: 'onEnter' | 'withPrevious' | 'afterPrevious' | 'onClick'
+  /** Delay in seconds applied to the video's trigger anchor. */
+  videoDelay?: number
+  /**
    * Loop playback in present mode. Default: false.
    */
   loop?: boolean

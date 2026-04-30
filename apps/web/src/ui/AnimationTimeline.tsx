@@ -43,7 +43,15 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
-import { removeAnimation, reorderAnimations, updateAnimation } from '@narrative/slide-model'
+import {
+  removeAnimation,
+  reorderAnimations,
+  updateAnimation,
+  updateObject,
+} from '@narrative/slide-model'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
+import type { SlideObjectPatch, VideoObject } from '@narrative/shared'
+import { useVideoInfo } from '../state/useVideoInfo.js'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
 import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
 import { useAnimations } from '../state/useAnimations.js'
@@ -204,12 +212,175 @@ function writeRowOrder(slideId: string | null, order: string[]): void {
   }
 }
 
+/**
+ * Resolves the playback trigger for a video. Falls back to the legacy
+ * boolean flags when the explicit `videoTrigger` field isn't set so
+ * existing decks behave unchanged.
+ */
+function getVideoTrigger(v: VideoObject): 'onEnter' | 'withPrevious' | 'afterPrevious' | 'onClick' {
+  if (v.videoTrigger !== undefined) return v.videoTrigger
+  if (v.playOnClick === true) return 'onClick'
+  if (v.autoplay === true) return 'onEnter'
+  return 'afterPrevious'
+}
+
+/**
+ * Where the video's clip block should sit on the timeline. Mirrors
+ * `layoutSteps` for animations: anchored to the last animation step's
+ * start (withPrevious) or end (afterPrevious / onClick), or to slide
+ * enter (onEnter). Returns startSec in seconds.
+ */
+function computeVideoStartSec(v: VideoObject, laidOut: LaidOutStep[]): number {
+  const trigger = getVideoTrigger(v)
+  const delay = v.videoDelay ?? 0
+  if (trigger === 'onEnter') return Math.max(0, delay)
+  if (laidOut.length === 0) return Math.max(0, delay)
+  const last = laidOut[laidOut.length - 1]!
+  if (trigger === 'withPrevious') return Math.max(0, last.startSec + delay)
+  return Math.max(0, last.startSec + (last.step.duration ?? 0) + delay)
+}
+
+interface VideoClipBarProps {
+  video: VideoObject
+  startSec: number
+  pxPerSec: number
+  laidOut: LaidOutStep[]
+  objectsCtx: ObjectsMutationContext | null
+  isViewer: boolean
+  selected: boolean
+  onSelect: () => void
+}
+
+/**
+ * Read-only-ish clip block for a video on the animation timeline. The
+ * block's WIDTH is the clip duration (trim range or full duration);
+ * dragging the BODY rewrites `videoDelay` so the start can be timed
+ * after another animation. Drag math mirrors the animation-bar drag:
+ * pointer-down captures originalDelay + originalStartSec; pointermove
+ * computes a new delay relative to the trigger anchor.
+ */
+function VideoClipBar({
+  video,
+  startSec,
+  pxPerSec,
+  laidOut,
+  objectsCtx,
+  isViewer,
+  selected,
+  onSelect,
+}: VideoClipBarProps) {
+  const { info } = useVideoInfo(video.assetId !== '' ? video.assetId : null)
+  const fullDur = info?.durationSec ?? 0
+  const trimStart = video.trimStart ?? 0
+  const trimEnd = video.trimEnd !== undefined && video.trimEnd > 0 ? video.trimEnd : fullDur
+  const clipDur = trimEnd > trimStart ? trimEnd - trimStart : fullDur > 0 ? fullDur : 4
+
+  const dragRef = useRef<{
+    startPointerX: number
+    originalDelay: number
+    anchorSec: number
+  } | null>(null)
+
+  const trigger = getVideoTrigger(video)
+
+  // Anchor (the t at which delay=0 lands the bar's left edge) — needed
+  // to translate pointer dx → new delay during drag.
+  const anchorSec = (() => {
+    if (trigger === 'onEnter') return 0
+    if (laidOut.length === 0) return 0
+    const last = laidOut[laidOut.length - 1]!
+    if (trigger === 'withPrevious') return last.startSec
+    return last.startSec + (last.step.duration ?? 0)
+  })()
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    if (isViewer || objectsCtx === null) return
+    e.stopPropagation()
+    ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+    dragRef.current = {
+      startPointerX: e.clientX,
+      originalDelay: video.videoDelay ?? 0,
+      anchorSec,
+    }
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const drag = dragRef.current
+    if (drag === null || objectsCtx === null) return
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
+    const dxSec = (e.clientX - drag.startPointerX) / pxPerSec
+    const nextDelay = Math.max(-drag.anchorSec, drag.originalDelay + dxSec)
+    const patch: SlideObjectPatch<VideoObject> = {
+      videoDelay: nextDelay <= 0.0001 ? undefined : nextDelay,
+    } as unknown as SlideObjectPatch<VideoObject>
+    // First drag also pins the trigger so the bar's anchor stops
+    // shifting when the user re-orders the underlying animations.
+    if (video.videoTrigger === undefined) {
+      ;(patch as Record<string, unknown>).videoTrigger = trigger
+    }
+    updateObject<VideoObject>(objectsCtx, video.id, patch)
+  }
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (dragRef.current === null) return
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+    dragRef.current = null
+  }
+
+  const leftPx = GRIP_WIDTH + Math.round(startSec * pxPerSec)
+  const widthPx = Math.max(48, Math.round(clipDur * pxPerSec))
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      onClick={onSelect}
+      title={
+        trigger === 'onClick'
+          ? 'Video plays on click — drag to add a delay before the click cue'
+          : `Video starts at ${startSec.toFixed(2)}s — drag to retime`
+      }
+      className={[
+        'absolute flex items-center gap-1 overflow-hidden rounded text-[11px] text-white shadow-sm',
+        'bg-blue-700/80 hover:bg-blue-700 transition-colors',
+        isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+        'select-none',
+        selected ? 'ring-2 ring-blue-300 ring-offset-1 ring-offset-gray-900' : '',
+      ].join(' ')}
+      style={{
+        left: leftPx,
+        top: BAR_TOP,
+        width: widthPx,
+        height: BAR_HEIGHT,
+        touchAction: 'none',
+      }}
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-full items-center justify-center"
+        style={{
+          width: TRIGGER_ICON_WIDTH,
+          background: triggerIconBg(trigger),
+        }}
+      >
+        <TriggerIcon trigger={trigger} />
+      </span>
+      <span className="truncate px-1">{video.name ?? 'video'}</span>
+    </div>
+  )
+}
+
 export function AnimationTimeline() {
   const { animations, animationsCtx } = useAnimations()
   const { activeSlideId } = useActiveSlide()
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
-  const { objects: slideObjects } = useSlideObjects()
+  const { objects: slideObjects, objectsCtx } = useSlideObjects()
   const { selectOne, selectedAnimationId, setSelectedAnimationId } = useSelection()
   const isViewer = role === 'viewer'
 
@@ -1350,6 +1521,32 @@ export function AnimationTimeline() {
                             )
                           })()}
                         </div>
+
+                        {/* Video clip block — sequenced like an
+                          animation step (anchored to onEnter / with /
+                          afterPrevious / onClick + delay). Drag the
+                          body to retime; selecting it picks the video
+                          object on the canvas. */}
+                        {(() => {
+                          const o = slideObjects.find((x) => x.id === objectId)
+                          if (o?.type !== 'video') return null
+                          const startSec = computeVideoStartSec(o, laidOut)
+                          return (
+                            <VideoClipBar
+                              video={o}
+                              startSec={startSec}
+                              pxPerSec={pxPerSec}
+                              laidOut={laidOut}
+                              objectsCtx={objectsCtx}
+                              isViewer={isViewer}
+                              selected={selectedAnimationId === `video:${o.id}`}
+                              onSelect={() => {
+                                setSelectedAnimationId(`video:${o.id}`)
+                                selectOne(o.id)
+                              }}
+                            />
+                          )
+                        })()}
 
                         {/* Bars — one per animation on this object. */}
                         {items.map(({ step, startSec, lane }) => {
