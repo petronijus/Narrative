@@ -35,6 +35,10 @@ import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { updateObject } from '@narrative/slide-model'
+import {
+  attachLiveVideo as attachLiveVideoToRenderer,
+  detachLiveVideo as detachLiveVideoFromRenderer,
+} from '../renderer/objectRenderers/videoRenderer'
 
 export interface EditorVideoPreviewProps {
   videoObject: VideoObject
@@ -137,6 +141,22 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.src = hlsUrl
     }
 
+    // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
+    // the renderer rebuilds the sprite from a live VideoSource so the
+    // video lives inside the Pixi scene graph (and therefore respects
+    // Y.Array layer order). Editor mode only; present mode uses
+    // VideoOverlay's own pipeline.
+    if (!isPresent) {
+      const onCanPlay = (): void => {
+        attachLiveVideoToRenderer(videoObject.id, videoEl)
+      }
+      // Some browsers fire canplay before our listener is attached if
+      // the manifest comes from cache — trigger immediately if already
+      // ready.
+      if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
+      else videoEl.addEventListener('canplay', onCanPlay, { once: true })
+    }
+
     if (isPresent && videoObject.autoplay === true) {
       const onCanPlay = (): void => {
         void videoEl.play().catch(() => undefined)
@@ -218,6 +238,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
       delete currents[videoObject.id]
+      if (!isPresent) detachLiveVideoFromRenderer(videoObject.id)
       if (hlsRef.current !== null) {
         hlsRef.current.destroy()
         hlsRef.current = null
@@ -238,6 +259,11 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // poster placeholder painted by videoRenderer is enough.
   if (info?.transcodeStatus !== 'done') return null
 
+  // Editor mode: the visible video lives inside the Pixi scene graph
+  // (videoRenderer's VideoSource sprite). The DOM wrapper still spans
+  // the video's bounds so the hover-controls bar lands on top of the
+  // right region; the inner <video> element itself is invisible
+  // because Pixi is what the user sees.
   return (
     <div
       aria-hidden="true"
@@ -247,18 +273,13 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         top: videoObject.y,
         width: videoObject.width,
         height: videoObject.height,
-        // Apply rotation around the centre to match the Pixi
-        // container's (pivot-at-centre) rotation. opacity directly
-        // mirrors the object's opacity.
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
         opacity: videoObject.opacity,
-        // Solid black backdrop hides the Pixi-painted poster + play
-        // icon underneath — without it the Pixi visuals flash through
-        // whenever the HTML <video> goes transparent during a seek
-        // (e.g. while dragging the trim / poster slider in the
-        // Inspector). Standard "black behind the video" convention.
-        background: '#000',
+        // Present mode shows the <video> directly — black backdrop matches
+        // the standard letterbox convention. Editor mode delegates the
+        // visual to Pixi, so the wrapper itself stays transparent.
+        ...(isPresent ? { background: '#000' } : null),
         // Editor: pointer-events:none passes clicks through to transform handles.
         // Present: accept clicks so the user can play/pause.
         pointerEvents: isPresent ? 'auto' : 'none',
@@ -298,6 +319,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           objectFit: videoObject.fit ?? 'contain',
           pointerEvents: 'auto',
           background: 'transparent',
+          // Editor: the Pixi sprite is the visible representation, so
+          // hide this <video> while keeping it in DOM (HLS / VideoSource
+          // need a live element to decode into).
+          ...(isPresent ? null : { opacity: 0 }),
         }}
       />
 

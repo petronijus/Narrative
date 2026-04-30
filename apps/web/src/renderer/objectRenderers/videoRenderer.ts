@@ -29,7 +29,7 @@
  * - All async continuations check this flag before doing work.
  */
 
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js'
+import { Container, Graphics, Sprite, Text, Texture, VideoSource } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import { getDefaultVideoInfoResolver } from '../videoInfo.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
@@ -51,6 +51,197 @@ const PLAY_ICON_TAG = Symbol('vidPlayIcon')
 const ABORTED_TAG = Symbol('vidAborted')
 const ACQUIRED_URL_TAG = Symbol('vidAcquiredUrl')
 const POLL_TIMER_TAG = Symbol('vidPollTimer')
+const LATEST_DATA_TAG = Symbol('vidLatestData')
+const LIVE_VIDEO_TAG = Symbol('vidLive')
+
+/**
+ * Per-deck registry mapping object id → mounted Container so the
+ * EditorVideoPreview can hand its hidden <video> element to the renderer
+ * once HLS has loaded. The renderer then builds a Pixi VideoSource sprite
+ * that lives inside the scene graph — Y.Array layer order naturally
+ * applies (no DOM-overlay-on-top-of-canvas problem).
+ */
+const containerRegistry = new Map<string, Container>()
+
+interface LiveVideoState {
+  videoEl: HTMLVideoElement
+  source: VideoSource
+  texture: Texture
+  sprite: Sprite
+  spriteWrap: Container
+  fit: 'cover' | 'contain'
+  rvfcId: number | null
+}
+
+function setLatestData(node: Container, data: VideoObject): void {
+  asAny(node)[LATEST_DATA_TAG] = data
+}
+function getLatestData(node: Container): VideoObject | undefined {
+  return asAny(node)[LATEST_DATA_TAG] as VideoObject | undefined
+}
+function getLive(node: Container): LiveVideoState | undefined {
+  return asAny(node)[LIVE_VIDEO_TAG] as LiveVideoState | undefined
+}
+function setLive(node: Container, state: LiveVideoState | undefined): void {
+  asAny(node)[LIVE_VIDEO_TAG] = state
+}
+
+/**
+ * Buffer for video elements that arrive before the container is mounted
+ * (or while the scene graph is rebuilding). On mount, we drain any
+ * matching entry and attach.
+ */
+const pendingVideoEls = new Map<string, HTMLVideoElement>()
+
+/**
+ * Public entry point: hand the renderer a hidden <video> element to use
+ * as the live frame source for `id`. Replaces the static poster sprite
+ * with a Pixi VideoSource sprite so the video is part of the Pixi scene
+ * graph (and respects Y.Array layer order — that's the whole point).
+ *
+ * Safe to call before the renderer has mounted the container; the call
+ * is buffered and applied on next mount.
+ */
+export function attachLiveVideo(id: string, videoEl: HTMLVideoElement): void {
+  const container = containerRegistry.get(id)
+  if (container === undefined) {
+    pendingVideoEls.set(id, videoEl)
+    return
+  }
+  attachLiveVideoToContainer(container, videoEl)
+}
+
+export function detachLiveVideo(id: string): void {
+  pendingVideoEls.delete(id)
+  const container = containerRegistry.get(id)
+  if (container === undefined) return
+  teardownLiveVideo(container)
+  // Restore the poster path: re-run startLoad so the static sprite returns.
+  const data = getLatestData(container)
+  if (data !== undefined) startLoad(container, data)
+}
+
+function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElement): void {
+  if (container.destroyed) return
+  // Already attached for this exact element — no-op.
+  const existing = getLive(container)
+  if (existing !== undefined && existing.videoEl === videoEl) return
+  if (existing !== undefined) teardownLiveVideo(container)
+
+  const data = getLatestData(container)
+  if (data === undefined) return
+  const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+  const box = { w: data.width, h: data.height }
+
+  // Drop the placeholder + poster + play icon — the live video covers them.
+  const ph = getPlaceholder(container)
+  if (ph !== undefined && !ph.destroyed) ph.visible = false
+  releasePosterTexture(container)
+  teardownSpriteWrap(container)
+  removePlayIcon(container)
+
+  const source = new VideoSource({ resource: videoEl, autoLoad: false, autoPlay: false })
+  const texture = new Texture({ source })
+  const sprite = new Sprite(texture)
+  applyFit(sprite, texture, box, fit)
+
+  const spriteWrap = new Container()
+  spriteWrap.addChild(sprite)
+  if (fit === 'cover') {
+    const mask = applyCoverMask(spriteWrap, undefined, box)
+    setMask(container, mask)
+  }
+  container.addChild(spriteWrap)
+  setSpriteWrap(container, spriteWrap)
+  setSprite(container, sprite)
+
+  // Pixi's autoStart is false (Canvas.tsx) so VideoSource's auto-update
+  // ticker never fires renders. Use rVFC ourselves: each new video frame
+  // → mark the scene dirty so the scheduler paints once. If rVFC isn't
+  // available (Firefox older builds), fall back to a 30 fps timer.
+  const live: LiveVideoState = {
+    videoEl,
+    source,
+    texture,
+    sprite,
+    spriteWrap,
+    fit,
+    rvfcId: null,
+  }
+  type RVFCVideo = HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: () => void) => number
+    cancelVideoFrameCallback?: (id: number) => void
+  }
+  const v = videoEl as RVFCVideo
+  if (typeof v.requestVideoFrameCallback === 'function') {
+    const tick = (): void => {
+      if (container.destroyed) return
+      markRenderDirty()
+      live.rvfcId = v.requestVideoFrameCallback?.(tick) ?? null
+    }
+    live.rvfcId = v.requestVideoFrameCallback(tick)
+  }
+  // rVFC only fires while the video is decoding new frames — i.e. while
+  // playing. Pause/seek don't trigger it, but VideoSource still updates
+  // the texture on `seeked`. Mark dirty on these events so the new frame
+  // actually paints under autoStart:false.
+  const wakeup = (): void => {
+    if (container.destroyed) return
+    markRenderDirty()
+  }
+  videoEl.addEventListener('seeked', wakeup)
+  videoEl.addEventListener('loadeddata', wakeup)
+  videoEl.addEventListener('play', wakeup)
+  asAny(container).__vidWakeupHandlers = { wakeup, videoEl }
+
+  setLive(container, live)
+  markRenderDirty()
+}
+
+function teardownLiveVideo(container: Container): void {
+  const live = getLive(container)
+  if (live === undefined) return
+  const v = live.videoEl as HTMLVideoElement & { cancelVideoFrameCallback?: (id: number) => void }
+  if (live.rvfcId !== null && typeof v.cancelVideoFrameCallback === 'function') {
+    v.cancelVideoFrameCallback(live.rvfcId)
+  }
+  const handlers = asAny(container).__vidWakeupHandlers as
+    | { wakeup: () => void; videoEl: HTMLVideoElement }
+    | undefined
+  if (handlers !== undefined) {
+    handlers.videoEl.removeEventListener('seeked', handlers.wakeup)
+    handlers.videoEl.removeEventListener('loadeddata', handlers.wakeup)
+    handlers.videoEl.removeEventListener('play', handlers.wakeup)
+    delete asAny(container).__vidWakeupHandlers
+  }
+  if (!live.spriteWrap.destroyed) live.spriteWrap.destroy({ children: true })
+  if (!live.texture.destroyed) live.texture.destroy(true)
+  setLive(container, undefined)
+  setSpriteWrap(container, undefined)
+  setSprite(container, undefined)
+  setMask(container, undefined)
+}
+
+function refitLiveVideo(container: Container, data: VideoObject): void {
+  const live = getLive(container)
+  if (live === undefined) return
+  const fit: 'cover' | 'contain' = data.fit ?? 'contain'
+  const box = { w: data.width, h: data.height }
+  applyFit(live.sprite, live.texture, box, fit)
+  if (fit === 'cover') {
+    const existingMask = getMask(container)
+    const newMask = applyCoverMask(live.spriteWrap, existingMask, box)
+    setMask(container, newMask)
+  } else {
+    const existingMask = getMask(container)
+    if (existingMask !== undefined) {
+      live.spriteWrap.mask = null
+      existingMask.destroy()
+      setMask(container, undefined)
+    }
+  }
+  live.fit = fit
+}
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -549,7 +740,17 @@ export const videoRenderer = {
 
     applyObjectTransform(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
+    setLatestData(container, data)
+    containerRegistry.set(data.id, container)
     startLoad(container, data)
+
+    // If a hidden <video> element registered itself BEFORE this mount
+    // (rare race during scene-graph rebuild), pick it up now.
+    const pending = pendingVideoEls.get(data.id)
+    if (pending !== undefined) {
+      pendingVideoEls.delete(data.id)
+      attachLiveVideoToContainer(container, pending)
+    }
 
     return container
   },
@@ -557,6 +758,15 @@ export const videoRenderer = {
   update(node: Container, prev: VideoObject, next: VideoObject): void {
     applyObjectTransform(node, next)
     applyFilterEffects(node, next.shadow, next.blur)
+    setLatestData(node, next)
+    // If size or fit changed, re-fit the live video sprite too.
+    if (
+      prev.width !== next.width ||
+      prev.height !== next.height ||
+      (prev.fit ?? 'contain') !== (next.fit ?? 'contain')
+    ) {
+      refitLiveVideo(node, next)
+    }
 
     const box = { w: next.width, h: next.height }
 
@@ -721,14 +931,25 @@ export const videoRenderer = {
     if ('shadow' in patch || 'blur' in patch) {
       patchFilterEffects(node, 'shadow' in patch, patch.shadow, 'blur' in patch, patch.blur)
     }
+    if (patch.width !== undefined || patch.height !== undefined || patch.fit !== undefined) {
+      const cached = getLatestData(node)
+      if (cached !== undefined) refitLiveVideo(node, cached)
+    }
   },
 
   destroy(node: Container): void {
     setAborted(node)
     stopPolling(node)
 
+    teardownLiveVideo(node)
     releasePosterTexture(node)
     destroyFilterEffects(node)
+
+    const data = getLatestData(node)
+    if (data !== undefined) {
+      const reg = containerRegistry.get(data.id)
+      if (reg === node) containerRegistry.delete(data.id)
+    }
 
     node.destroy({ children: true })
   },
