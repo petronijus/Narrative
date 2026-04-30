@@ -249,6 +249,10 @@ interface VideoClipBarProps {
   isViewer: boolean
   selected: boolean
   onSelect: () => void
+  /** Publishes the resolved clip duration so the parent can extend its
+   *  total track length to fit the video. Called whenever the loaded
+   *  durationSec changes for this video. */
+  onClipDuration: (videoId: string, clipDurationSec: number) => void
 }
 
 /**
@@ -268,12 +272,20 @@ function VideoClipBar({
   isViewer,
   selected,
   onSelect,
+  onClipDuration,
 }: VideoClipBarProps) {
   const { info } = useVideoInfo(video.assetId !== '' ? video.assetId : null)
   const fullDur = info?.durationSec ?? 0
   const trimStart = video.trimStart ?? 0
   const trimEnd = video.trimEnd !== undefined && video.trimEnd > 0 ? video.trimEnd : fullDur
   const clipDur = trimEnd > trimStart ? trimEnd - trimStart : fullDur > 0 ? fullDur : 4
+
+  // Publish the clip duration up so the timeline's totalSec extends
+  // to cover the video. Without this the ruler / playhead can't reach
+  // the video's tail.
+  useEffect(() => {
+    onClipDuration(video.id, clipDur)
+  }, [video.id, clipDur, onClipDuration])
 
   const dragRef = useRef<{
     startPointerX: number
@@ -723,16 +735,63 @@ export function AnimationTimeline() {
     return out
   }, [rows])
 
+  // Per-video clip duration cache (sec). Populated by VideoClipBar
+  // children via the onClipDuration callback so the timeline's total
+  // length can extend past the last animation step to cover the video.
+  const [videoClipDurations, setVideoClipDurations] = useState<Record<string, number>>({})
+  const onVideoClipDuration = useCallback((videoId: string, clipDurationSec: number) => {
+    setVideoClipDurations((prev) =>
+      prev[videoId] === clipDurationSec ? prev : { ...prev, [videoId]: clipDurationSec },
+    )
+  }, [])
+
+  // When the playhead moves (manual scrub or programmatic), seek every
+  // video on the slide to the matching frame inside its clip range.
+  // Outside the clip: snap the videoEl to the trim edge so it shows
+  // the right still. EditorVideoPreview publishes a seek() handle on
+  // window.__narrative_video_currents that owns the actual seek call.
+  useEffect(() => {
+    type Reg = Record<string, { currentTime: number; seek?: (sec: number) => void }>
+    const reg = (window as unknown as { __narrative_video_currents?: Reg })
+      .__narrative_video_currents
+    if (reg === undefined) return
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      const seek = reg[o.id]?.seek
+      if (seek === undefined) continue
+      const startSec = computeVideoStartSec(o, laidOut)
+      const dur = videoClipDurations[o.id] ?? 0
+      const trimStart = o.trimStart ?? 0
+      const trimEnd =
+        o.trimEnd !== undefined && o.trimEnd > 0 ? o.trimEnd : trimStart + (dur > 0 ? dur : 0)
+      if (playheadSec < startSec) {
+        seek(trimStart)
+      } else if (dur > 0 && playheadSec > startSec + dur) {
+        seek(trimEnd)
+      } else {
+        seek(trimStart + (playheadSec - startSec))
+      }
+    }
+  }, [playheadSec, slideObjects, laidOut, videoClipDurations])
+
   const totalSec = useMemo(() => {
     // Visible track = last step's end + 5 s of headroom, with a 10 s
     // floor. Headroom lets the author scrub past the last animation
     // and drag steps further out without the ruler clipping.
-    const contentEnd = laidOut.reduce(
+    const animEnd = laidOut.reduce(
       (max, { step, startSec }) => Math.max(max, startSec + (step.duration ?? 0)),
       0,
     )
-    return Math.max(contentEnd + 5, 10)
-  }, [laidOut])
+    // Extend to cover any video clip block — videoStart + clipDuration.
+    let videoEnd = 0
+    for (const o of slideObjects) {
+      if (o.type !== 'video') continue
+      const dur = videoClipDurations[o.id] ?? 0
+      if (dur <= 0) continue
+      videoEnd = Math.max(videoEnd, computeVideoStartSec(o, laidOut) + dur)
+    }
+    return Math.max(animEnd + 5, videoEnd + 5, 10)
+  }, [laidOut, slideObjects, videoClipDurations])
 
   const trackWidthPx = GRIP_WIDTH + Math.ceil(totalSec * pxPerSec) + 32
   const tickCount = Math.ceil(totalSec) + 1
@@ -1544,6 +1603,7 @@ export function AnimationTimeline() {
                                 setSelectedAnimationId(`video:${o.id}`)
                                 selectOne(o.id)
                               }}
+                              onClipDuration={onVideoClipDuration}
                             />
                           )
                         })()}
