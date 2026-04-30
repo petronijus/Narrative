@@ -3839,11 +3839,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
 // ---------------------------------------------------------------------------
 
 /**
- * P8: poster-frame picker — number input + scrub slider + "Use current
- * frame" button that snapshots whatever time the editor's <video>
- * overlay is paused at. The overlay publishes its currentTime to a
- * window registry keyed by VideoObject id.
+ * P8: poster-frame picker — Keynote-style. Single scrub slider whose
+ * position IS the poster time; a timecode below shows the current value.
+ * No number input, no buttons — drop the slider where you want and
+ * release. Hidden when video duration isn't known yet.
  */
+function formatTimecode(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) sec = 0
+  const m = Math.floor(sec / 60)
+  const s = sec - m * 60
+  // Show 1 decimal so dragging the slider gives instant precise feedback
+  // (a 90-frame video at 30 fps is still discriminable as 0.0 → 3.0).
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`
+}
+
 function PosterFrameRow({
   obj,
   patch,
@@ -3856,94 +3865,31 @@ function PosterFrameRow({
   const hasDuration = duration > 0
   const value = obj.posterTime ?? 0
 
+  if (!hasDuration) return null
+
   const setPoster = (v: number): void => {
-    const clamped = hasDuration ? Math.max(0, Math.min(duration, v)) : Math.max(0, v)
+    const clamped = Math.max(0, Math.min(duration, v))
     patch({
       posterTime: clamped <= 0 ? undefined : clamped,
     } as unknown as SlideObjectPatch<VideoObject>)
   }
 
-  const captureCurrent = (): void => {
-    const reg = (
-      window as unknown as {
-        __narrative_video_currents?: Record<string, { currentTime: number }>
-      }
-    ).__narrative_video_currents
-    const t = reg?.[obj.id]?.currentTime
-    if (typeof t === 'number' && t > 0) setPoster(t)
-  }
-
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <label
-          htmlFor={`inspector-video-poster-${obj.id}`}
-          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-        >
-          Poster
-        </label>
-        <input
-          id={`inspector-video-poster-${obj.id}`}
-          type="number"
-          step={0.1}
-          min={0}
-          {...(hasDuration ? { max: duration } : {})}
-          value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0}
-          onChange={(e) => {
-            const parsed = Number.parseFloat(e.target.value)
-            if (Number.isFinite(parsed)) setPoster(parsed)
-          }}
-          onKeyDown={(e) =>
-            handleShiftArrowStep(e, value, 0.1, setPoster, {
-              min: 0,
-              ...(hasDuration ? { max: duration } : {}),
-            })
-          }
-          className={[
-            'w-20 rounded-md border border-input field-surface px-2 py-0.5',
-            'text-right text-xs text-foreground',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          ].join(' ')}
-        />
-        <span className="text-[10px] text-muted-foreground/70">
-          {hasDuration ? `/ ${duration.toFixed(1)}s` : 's'}
-        </span>
-      </div>
-      {hasDuration && (
-        <div className="ml-[4.5rem] flex items-center gap-1.5">
-          <input
-            type="range"
-            aria-label="Scrub poster frame"
-            min={0}
-            max={duration}
-            step={Math.max(0.05, duration / 200)}
-            value={value}
-            onChange={(e) => setPoster(Number.parseFloat(e.target.value))}
-            className="flex-1 accent-primary"
-          />
-        </div>
-      )}
-      <div className="ml-[4.5rem] flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={captureCurrent}
-          title="Pause the video at the frame you want, then click to capture its time as the poster."
-          className="rounded-md border border-border field-surface px-2 py-0.5 text-[10px] text-foreground hover:bg-accent"
-        >
-          Use current frame
-        </button>
-        {value > 0 && (
-          <button
-            type="button"
-            onClick={() =>
-              patch({ posterTime: undefined } as unknown as SlideObjectPatch<VideoObject>)
-            }
-            title="Reset poster to the auto-generated thumbnail at t=0"
-            className="rounded-md border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-          >
-            Reset
-          </button>
-        )}
+      <SubLabel>Poster frame</SubLabel>
+      <input
+        id={`inspector-video-poster-${obj.id}`}
+        type="range"
+        aria-label="Poster frame"
+        min={0}
+        max={duration}
+        step={Math.max(0.05, duration / 200)}
+        value={value}
+        onChange={(e) => setPoster(Number.parseFloat(e.target.value))}
+        className="w-full accent-primary"
+      />
+      <div className="text-right text-[10px] tabular-nums text-muted-foreground/70">
+        {formatTimecode(value)} / {formatTimecode(duration)}
       </div>
     </div>
   )
@@ -4127,6 +4073,11 @@ function AnimationItem({
   const hasDirection = step.preset === 'slideIn' || step.preset === 'slideOut'
   const direction = (step.params?.['direction'] as string | undefined) ?? 'up'
   const distance = (step.params?.['distance'] as number | undefined) ?? 100
+  const isMoveTo = step.preset === 'moveTo'
+  const isRotateTo = step.preset === 'rotateTo'
+  const targetX = (step.params?.['targetX'] as number | undefined) ?? 0
+  const targetY = (step.params?.['targetY'] as number | undefined) ?? 0
+  const angleDeg = (step.params?.['angleDeg'] as number | undefined) ?? 360
   return (
     <li
       onClick={onSelect}
@@ -4242,6 +4193,56 @@ function AnimationItem({
           />
         </label>
       </div>
+      {isMoveTo && (
+        <div className="grid grid-cols-2 gap-1">
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Target X
+            <input
+              type="number"
+              step={1}
+              value={targetX}
+              aria-label="Target X"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                if (Number.isFinite(v)) patchParams({ targetX: v })
+              }}
+            />
+          </label>
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Target Y
+            <input
+              type="number"
+              step={1}
+              value={targetY}
+              aria-label="Target Y"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                if (Number.isFinite(v)) patchParams({ targetY: v })
+              }}
+            />
+          </label>
+        </div>
+      )}
+      {isRotateTo && (
+        <div className="grid grid-cols-2 gap-1">
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Angle (°)
+            <input
+              type="number"
+              step={1}
+              value={angleDeg}
+              aria-label="Target angle"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                if (Number.isFinite(v)) patchParams({ angleDeg: v })
+              }}
+            />
+          </label>
+        </div>
+      )}
       {hasDirection && (
         <div className="grid grid-cols-2 gap-1">
           <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
@@ -4301,6 +4302,14 @@ function AnimationsSection({
   const { selectedAnimationId, setSelectedAnimationId, selectOne } = useSelection()
 
   function handleAddAnimation(preset: AnimationStep['preset'], params?: Record<string, unknown>) {
+    // Seed sensible defaults for motion presets so a freshly-added
+    // step actually moves the object instead of being a no-op.
+    let seededParams = params
+    if (preset === 'moveTo' && seededParams === undefined) {
+      seededParams = { targetX: 200, targetY: 200 }
+    } else if (preset === 'rotateTo' && seededParams === undefined) {
+      seededParams = { angleDeg: 180 }
+    }
     addAnimation(mutationCtx, {
       objectId,
       preset,
@@ -4308,7 +4317,7 @@ function AnimationsSection({
       duration: 0.6,
       delay: 0,
       easing: 'power2.out',
-      ...(params !== undefined ? { params } : {}),
+      ...(seededParams !== undefined ? { params: seededParams } : {}),
     })
   }
 
@@ -4367,6 +4376,10 @@ function AnimationsSection({
             <option value="fadeOut">fadeOut</option>
             <option value="scaleOut">scaleOut</option>
             <option value="slideOut">slideOut</option>
+          </optgroup>
+          <optgroup label="Motion">
+            <option value="moveTo">moveTo (A→B)</option>
+            <option value="rotateTo">rotateTo</option>
           </optgroup>
         </select>
       </div>
