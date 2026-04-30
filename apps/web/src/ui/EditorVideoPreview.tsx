@@ -144,18 +144,15 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
     // the renderer rebuilds the sprite from a live VideoSource so the
     // video lives inside the Pixi scene graph (and therefore respects
-    // Y.Array layer order). Editor mode only; present mode uses
-    // VideoOverlay's own pipeline.
-    if (!isPresent) {
-      const onCanPlay = (): void => {
-        attachLiveVideoToRenderer(videoObject.id, videoEl)
-      }
-      // Some browsers fire canplay before our listener is attached if
-      // the manifest comes from cache — trigger immediately if already
-      // ready.
-      if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
-      else videoEl.addEventListener('canplay', onCanPlay, { once: true })
+    // Y.Array layer order). Used in BOTH editor and present mode so the
+    // visible representation is always the Pixi sprite. The DOM <video>
+    // stays around (invisible) so hls.js / VideoSource can decode into
+    // it and audio plays normally.
+    const onCanPlay = (): void => {
+      attachLiveVideoToRenderer(videoObject.id, videoEl)
     }
+    if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
+    else videoEl.addEventListener('canplay', onCanPlay, { once: true })
 
     if (isPresent && videoObject.autoplay === true) {
       const onCanPlay = (): void => {
@@ -189,7 +186,15 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     const onTimeUpdate = (): void => {
       const trimEnd = trimEndRef.current
       if (trimEnd > 0 && videoEl.currentTime >= trimEnd) {
-        videoEl.pause()
+        // With loop enabled, jump back to trimStart and keep playing —
+        // the native videoEl.loop only loops between 0 and full
+        // duration, ignoring our trim range.
+        if (videoObject.loop === true) {
+          videoEl.currentTime = trimStartRef.current
+          if (videoEl.paused) void videoEl.play().catch(() => undefined)
+        } else {
+          videoEl.pause()
+        }
       }
     }
     videoEl.addEventListener('timeupdate', onTimeUpdate)
@@ -238,7 +243,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
       delete currents[videoObject.id]
-      if (!isPresent) detachLiveVideoFromRenderer(videoObject.id)
+      detachLiveVideoFromRenderer(videoObject.id)
       if (hlsRef.current !== null) {
         hlsRef.current.destroy()
         hlsRef.current = null
@@ -259,11 +264,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // poster placeholder painted by videoRenderer is enough.
   if (info?.transcodeStatus !== 'done') return null
 
-  // Editor mode: the visible video lives inside the Pixi scene graph
-  // (videoRenderer's VideoSource sprite). The DOM wrapper still spans
-  // the video's bounds so the hover-controls bar lands on top of the
-  // right region; the inner <video> element itself is invisible
-  // because Pixi is what the user sees.
+  // The visible video lives inside the Pixi scene graph
+  // (videoRenderer's VideoSource sprite), in BOTH editor and present
+  // modes — that's what makes Y.Array layer order work. The DOM wrapper
+  // here still spans the video's bounds so present-mode click-to-toggle
+  // and the editor's hover-controls bar land on the right region; the
+  // inner <video> element itself is invisible because Pixi paints it.
   return (
     <div
       aria-hidden="true"
@@ -275,11 +281,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
         height: videoObject.height,
         transform: `rotate(${videoObject.rotation}rad)`,
         transformOrigin: 'center',
-        opacity: videoObject.opacity,
-        // Present mode shows the <video> directly — black backdrop matches
-        // the standard letterbox convention. Editor mode delegates the
-        // visual to Pixi, so the wrapper itself stays transparent.
-        ...(isPresent ? { background: '#000' } : null),
+        // Pixi sprite handles opacity for the visible representation;
+        // the wrapper itself just hosts the (invisible) <video> + the
+        // hover-controls bar.
+        opacity: 1,
         // Editor: pointer-events:none passes clicks through to transform handles.
         // Present: accept clicks so the user can play/pause.
         pointerEvents: isPresent ? 'auto' : 'none',
@@ -319,10 +324,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           objectFit: videoObject.fit ?? 'contain',
           pointerEvents: 'auto',
           background: 'transparent',
-          // Editor: the Pixi sprite is the visible representation, so
-          // hide this <video> while keeping it in DOM (HLS / VideoSource
-          // need a live element to decode into).
-          ...(isPresent ? null : { opacity: 0 }),
+          // The Pixi sprite is the visible representation in both modes,
+          // so always hide this <video> — keeping it in DOM is required
+          // for hls.js / VideoSource to decode into and for audio.
+          opacity: 0,
         }}
       />
 
