@@ -19,6 +19,7 @@
 
 import { useState } from 'react'
 import { useAwareness } from '../state/useAwareness.js'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PeerInfo } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -53,22 +54,30 @@ function AvatarChip({ peer, isLocal }: AvatarChipProps) {
   const label = isLocal ? `${peer.state.user.name} (you)` : peer.state.user.name
 
   return (
-    <li role="listitem" className="relative flex-shrink-0" title={label}>
-      <div
-        aria-label={label}
-        className="flex items-center justify-center rounded-full text-white font-semibold select-none"
-        style={{
-          width: CHIP_SIZE,
-          height: CHIP_SIZE,
-          backgroundColor: peer.state.user.color,
-          fontSize: 10,
-          letterSpacing: '0.02em',
-          boxShadow: isLocal ? `0 0 0 2px white, 0 0 0 3px ${peer.state.user.color}` : undefined,
-          cursor: 'default',
-        }}
-      >
-        {initials}
-      </div>
+    <li role="listitem" className="relative flex-shrink-0">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            aria-label={label}
+            tabIndex={0}
+            className="flex items-center justify-center rounded-full text-white font-semibold select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            style={{
+              width: CHIP_SIZE,
+              height: CHIP_SIZE,
+              backgroundColor: peer.state.user.color,
+              fontSize: 10,
+              letterSpacing: '0.02em',
+              boxShadow: isLocal
+                ? `0 0 0 2px white, 0 0 0 3px ${peer.state.user.color}`
+                : undefined,
+              cursor: 'default',
+            }}
+          >
+            {initials}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{label}</TooltipContent>
+      </Tooltip>
     </li>
   )
 }

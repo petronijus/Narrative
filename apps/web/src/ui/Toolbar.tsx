@@ -412,12 +412,6 @@ export function Toolbar() {
         {/* M10: Signed-in user + sign-out */}
         {user !== null && (
           <div className="flex items-center gap-2 ml-1">
-            <span
-              className="hidden lg:block text-xs text-muted-foreground truncate max-w-[120px]"
-              title={user.email ?? user.sub}
-            >
-              {user.name ?? user.email ?? user.sub.slice(0, 8)}
-            </span>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

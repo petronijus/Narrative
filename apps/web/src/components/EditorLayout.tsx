@@ -510,6 +510,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
   // so the scroll adjustment is synchronous with the zoom-induced
   // layout change — no visible jump.
+  //
+  // The scroller is full-bleed under the chrome (top toolbar, side
+  // panels, bottom panels) so frosted-glass blur has artboard content
+  // to sample. That means clientWidth/clientHeight don't represent the
+  // visible channel; we shift the target by half the asymmetric inset
+  // so the artboard centres in the *visible* area instead of being
+  // partially covered by the bottom panels / inspector.
   useLayoutEffect(() => {
     const scroller = stageScrollRef.current
     const artboard = canvasContainerRef.current
@@ -518,9 +525,11 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     const s = scroller.getBoundingClientRect()
     const centerX = a.left - s.left + scroller.scrollLeft + a.width / 2
     const centerY = a.top - s.top + scroller.scrollTop + a.height / 2
-    scroller.scrollLeft = Math.max(0, centerX - scroller.clientWidth / 2)
-    scroller.scrollTop = Math.max(0, centerY - scroller.clientHeight / 2)
-  }, [zoom])
+    const channelOffsetX = (slidesInset - inspectorInset) / 2
+    const channelOffsetY = (topBarH - bottomPanelsH) / 2
+    scroller.scrollLeft = Math.max(0, centerX - scroller.clientWidth / 2 - channelOffsetX)
+    scroller.scrollTop = Math.max(0, centerY - scroller.clientHeight / 2 - channelOffsetY)
+  }, [zoom, slidesInset, inspectorInset, topBarH, bottomPanelsH])
 
   // Canvas size observer
   useEffect(() => {
