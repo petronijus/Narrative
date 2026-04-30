@@ -123,7 +123,6 @@ export function detachLiveVideo(id: string): void {
 
 function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElement): void {
   if (container.destroyed) return
-  // Already attached for this exact element — no-op.
   const existing = getLive(container)
   if (existing !== undefined && existing.videoEl === videoEl) return
   if (existing !== undefined) teardownLiveVideo(container)
@@ -140,10 +139,14 @@ function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElem
   teardownSpriteWrap(container)
   removePlayIcon(container)
 
-  const source = new VideoSource({ resource: videoEl, autoLoad: false, autoPlay: false })
+  // autoLoad defaults to true → VideoSource registers its play / pause /
+  // seeked listeners, which is what drives the per-frame texture upload
+  // flag. Without that, our markRenderDirty calls would render with a
+  // stale texture. autoPlay false so VideoSource doesn't try to start
+  // playback (the editor controls that).
+  const source = new VideoSource({ resource: videoEl, autoPlay: false })
   const texture = new Texture({ source })
   const sprite = new Sprite(texture)
-  applyFit(sprite, texture, box, fit)
 
   const spriteWrap = new Container()
   spriteWrap.addChild(sprite)
@@ -155,10 +158,6 @@ function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElem
   setSpriteWrap(container, spriteWrap)
   setSprite(container, sprite)
 
-  // Pixi's autoStart is false (Canvas.tsx) so VideoSource's auto-update
-  // ticker never fires renders. Use rVFC ourselves: each new video frame
-  // → mark the scene dirty so the scheduler paints once. If rVFC isn't
-  // available (Firefox older builds), fall back to a 30 fps timer.
   const live: LiveVideoState = {
     videoEl,
     source,
@@ -168,51 +167,100 @@ function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElem
     fit,
     rvfcId: null,
   }
-  type RVFCVideo = HTMLVideoElement & {
-    requestVideoFrameCallback?: (cb: () => void) => number
-    cancelVideoFrameCallback?: (id: number) => void
-  }
-  const v = videoEl as RVFCVideo
-  if (typeof v.requestVideoFrameCallback === 'function') {
-    const tick = (): void => {
-      if (container.destroyed) return
-      markRenderDirty()
-      live.rvfcId = v.requestVideoFrameCallback?.(tick) ?? null
-    }
-    live.rvfcId = v.requestVideoFrameCallback(tick)
-  }
-  // rVFC only fires while the video is decoding new frames — i.e. while
-  // playing. Pause/seek don't trigger it, but VideoSource still updates
-  // the texture on `seeked`. Mark dirty on these events so the new frame
-  // actually paints under autoStart:false.
-  const wakeup = (): void => {
+  setLive(container, live)
+
+  // Apply fit now (texture may have valid dimensions if HLS already
+  // ready) and re-apply on metadata load so the sprite gets sized
+  // correctly even if we attached before the video knew its dimensions.
+  const refit = (): void => {
     if (container.destroyed) return
+    const cached = getLatestData(container)
+    if (cached !== undefined) refitLiveVideo(container, cached)
     markRenderDirty()
   }
-  videoEl.addEventListener('seeked', wakeup)
-  videoEl.addEventListener('loadeddata', wakeup)
-  videoEl.addEventListener('play', wakeup)
-  asAny(container).__vidWakeupHandlers = { wakeup, videoEl }
+  refit()
+  videoEl.addEventListener('loadedmetadata', refit)
 
-  setLive(container, live)
+  // Pixi runs autoStart:false — Ticker.shared isn't pumping frames, so
+  // we have to call markRenderDirty manually. Defer via rAF so any
+  // VideoSource listener registered for the same event has a chance to
+  // run first (e.g. updateFrame on `seeked` flips the upload flag —
+  // we render AFTER that flip so the new frame actually shows).
+  const safeMark = (): void => {
+    if (container.destroyed) return
+    requestAnimationFrame(() => {
+      if (!container.destroyed) markRenderDirty()
+    })
+  }
+  videoEl.addEventListener('seeked', safeMark)
+  videoEl.addEventListener('canplay', safeMark)
+  videoEl.addEventListener('loadeddata', safeMark)
+
+  // While the video is playing, run a rAF loop that marks dirty every
+  // frame. Pixi's render path picks up VideoSource's pending upload and
+  // paints the latest frame. Loop self-stops when the video pauses.
+  let playLoopId: number | null = null
+  const playLoop = (): void => {
+    if (videoEl.paused || videoEl.ended || container.destroyed) {
+      playLoopId = null
+      return
+    }
+    markRenderDirty()
+    playLoopId = requestAnimationFrame(playLoop)
+  }
+  const startPlayLoop = (): void => {
+    if (playLoopId !== null) return
+    playLoopId = requestAnimationFrame(playLoop)
+  }
+  const stopPlayLoop = (): void => {
+    if (playLoopId !== null) {
+      cancelAnimationFrame(playLoopId)
+      playLoopId = null
+    }
+  }
+  videoEl.addEventListener('play', startPlayLoop)
+  videoEl.addEventListener('pause', stopPlayLoop)
+  videoEl.addEventListener('ended', stopPlayLoop)
+  // If the video was already playing when we attached, kick the loop off.
+  if (!videoEl.paused) startPlayLoop()
+
+  asAny(container).__vidLiveHandlers = {
+    videoEl,
+    refit,
+    safeMark,
+    startPlayLoop,
+    stopPlayLoop,
+    getPlayLoopId: () => playLoopId,
+  }
+
   markRenderDirty()
 }
 
 function teardownLiveVideo(container: Container): void {
   const live = getLive(container)
   if (live === undefined) return
-  const v = live.videoEl as HTMLVideoElement & { cancelVideoFrameCallback?: (id: number) => void }
-  if (live.rvfcId !== null && typeof v.cancelVideoFrameCallback === 'function') {
-    v.cancelVideoFrameCallback(live.rvfcId)
-  }
-  const handlers = asAny(container).__vidWakeupHandlers as
-    | { wakeup: () => void; videoEl: HTMLVideoElement }
+  const handlers = asAny(container).__vidLiveHandlers as
+    | {
+        videoEl: HTMLVideoElement
+        refit: () => void
+        safeMark: () => void
+        startPlayLoop: () => void
+        stopPlayLoop: () => void
+        getPlayLoopId: () => number | null
+      }
     | undefined
   if (handlers !== undefined) {
-    handlers.videoEl.removeEventListener('seeked', handlers.wakeup)
-    handlers.videoEl.removeEventListener('loadeddata', handlers.wakeup)
-    handlers.videoEl.removeEventListener('play', handlers.wakeup)
-    delete asAny(container).__vidWakeupHandlers
+    const { videoEl, refit, safeMark, startPlayLoop, stopPlayLoop, getPlayLoopId } = handlers
+    videoEl.removeEventListener('loadedmetadata', refit)
+    videoEl.removeEventListener('seeked', safeMark)
+    videoEl.removeEventListener('canplay', safeMark)
+    videoEl.removeEventListener('loadeddata', safeMark)
+    videoEl.removeEventListener('play', startPlayLoop)
+    videoEl.removeEventListener('pause', stopPlayLoop)
+    videoEl.removeEventListener('ended', stopPlayLoop)
+    const id = getPlayLoopId()
+    if (id !== null) cancelAnimationFrame(id)
+    delete asAny(container).__vidLiveHandlers
   }
   if (!live.spriteWrap.destroyed) live.spriteWrap.destroy({ children: true })
   if (!live.texture.destroyed) live.texture.destroy(true)

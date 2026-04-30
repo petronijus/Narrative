@@ -32,6 +32,10 @@ import type { VideoObject } from '@narrative/shared'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { OverlayCompositor } from '../renderer/overlay/OverlayCompositor.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
+import {
+  attachLiveVideo as attachLiveVideoToRenderer,
+  detachLiveVideo as detachLiveVideoFromRenderer,
+} from '../renderer/objectRenderers/videoRenderer.js'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -180,6 +184,17 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       videoRef.current = videoEl
       attachHls(videoEl)
 
+      // Hand the videoEl to the Pixi videoRenderer so the visible
+      // representation lives inside the scene graph (layer order works
+      // naturally). The DOM <video> stays invisible — kept around for
+      // hls.js / VideoSource to decode into and for click-to-toggle.
+      videoEl.style.opacity = '0'
+      const onCanPlayAttach = (): void => {
+        attachLiveVideoToRenderer(videoObject.id, videoEl)
+      }
+      if (videoEl.readyState >= 2) attachLiveVideoToRenderer(videoObject.id, videoEl)
+      else videoEl.addEventListener('canplay', onCanPlayAttach, { once: true })
+
       const handle = compositor.registerOverlay({
         pixiContainer,
         domElement: videoEl,
@@ -209,6 +224,7 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     return () => {
       cancelled = true
       if (raf !== 0) cancelAnimationFrame(raf)
+      detachLiveVideoFromRenderer(videoObject.id)
       if (hlsRef.current !== null) {
         hlsRef.current.destroy()
         hlsRef.current = null
