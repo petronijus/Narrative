@@ -2200,88 +2200,6 @@ function fillModeOf(style: FillStyle | undefined): FillMode {
   return style.kind
 }
 
-type StrokeJoin = 'miter' | 'round' | 'bevel'
-
-/**
- * 3-button segmented group for the stroke corner-join style. Each
- * icon previews how the stroke renders at a 90° corner (sharp,
- * rounded-md, or bevelled). Disabled for ellipses since they have no
- * corners — the group still renders for layout consistency but is
- * non-interactive.
- */
-function StrokeJoinGroup({
-  value,
-  disabled = false,
-  onChange,
-}: {
-  value: StrokeJoin
-  disabled?: boolean
-  onChange: (next: StrokeJoin) => void
-}) {
-  const OPTIONS: Array<{ value: StrokeJoin; label: string; path: string }> = [
-    {
-      value: 'miter',
-      label: 'Sharp corner',
-      // Right-angle path with no rounding / chamfer.
-      path: 'M3 11 L3 3 L11 3',
-    },
-    {
-      value: 'round',
-      label: 'Rounded corner',
-      // 90° arc through the corner.
-      path: 'M3 11 L3 5 A2 2 0 0 1 5 3 L11 3',
-    },
-    {
-      value: 'bevel',
-      label: 'Bevelled corner',
-      // 45° clip across the inside corner.
-      path: 'M3 11 L3 5 L5 3 L11 3',
-    },
-  ]
-  return (
-    <div
-      role="group"
-      aria-label="Stroke corner join"
-      className="flex items-stretch overflow-hidden rounded-md border border-input field-surface"
-    >
-      {OPTIONS.map(({ value: v, label, path }, idx) => {
-        const active = v === value
-        return (
-          <button
-            key={v}
-            type="button"
-            aria-label={label}
-            aria-pressed={active}
-            title={label}
-            disabled={disabled}
-            onClick={() => onChange(v)}
-            className={[
-              'flex h-7 w-7 items-center justify-center transition-colors',
-              idx > 0 ? 'border-l border-input' : '',
-              active
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-              disabled ? 'cursor-not-allowed opacity-50' : '',
-            ].join(' ')}
-          >
-            <svg
-              viewBox="0 0 14 14"
-              className="h-3.5 w-3.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.75}
-              strokeLinecap="round"
-              aria-hidden
-            >
-              <path d={path} />
-            </svg>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 /**
  * Stroke row — same layout as FillBody. Single row with a Solid /
  * Dashed dropdown and a colour swatch + hex pill, plus a small
@@ -2390,17 +2308,6 @@ function StrokeBody({
             }}
           />
         </div>
-        <StrokeJoinGroup
-          value={obj.strokeJoin ?? 'miter'}
-          disabled={obj.type === 'ellipse'}
-          onChange={(next) =>
-            patch(
-              ensureStrokeVisible({
-                strokeJoin: next === 'miter' ? undefined : next,
-              } as unknown as SlideObjectPatch<FilledShape>),
-            )
-          }
-        />
       </div>
     </div>
   )

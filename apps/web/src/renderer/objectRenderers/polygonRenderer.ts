@@ -89,13 +89,7 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
       strokeDashedPolyline(g, pts, true, { color: data.stroke, width: w, alpha: sa })
     } else {
       g.poly(points)
-      g.stroke({
-        color: data.stroke,
-        width: w,
-        alignment: 0.5,
-        alpha: sa,
-        join: data.strokeJoin ?? 'miter',
-      })
+      g.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: sa })
     }
   }
 }

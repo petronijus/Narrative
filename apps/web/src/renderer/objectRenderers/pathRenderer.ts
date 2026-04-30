@@ -71,7 +71,7 @@ function drawPath(g: Graphics, data: PathObject): void {
     alpha: data.strokeAlpha ?? 1,
     width: data.strokeWidth,
     cap: 'round',
-    join: data.strokeJoin ?? 'round',
+    join: 'round',
   })
 }
 
