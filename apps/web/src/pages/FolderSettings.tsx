@@ -23,7 +23,9 @@ import {
   FolderDocProvider,
   useFolderTokens,
   useFolderMutations,
+  useTokenUsages,
 } from '../state/FolderDocProvider.js'
+import type { TokenUsage } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
@@ -179,7 +181,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
 
         {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
         {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
-        {activeTab === 'textStyles' && <TextStylesTab />}
+        {activeTab === 'textStyles' && <TextStylesTab folderId={folderId} />}
         {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
       </main>
     </div>
@@ -763,24 +765,23 @@ interface ColorsTabProps {
   folderId: string
 }
 
-function ColorsTab({ folderId: _folderId }: ColorsTabProps) {
+function ColorsTab({ folderId }: ColorsTabProps) {
   const snapshot = useFolderTokens()
-  const { addToken, updateToken, deleteToken, listUsages } = useFolderMutations()
+  const { addToken, updateToken, deleteToken } = useFolderMutations()
   const colorsList = Object.values(snapshot.colors)
   const atCap = colorsList.length >= MAX_COLORS
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
-  const [deleteUsages, setDeleteUsages] = useState<string[]>([])
+
+  const { usages, loading: usagesLoading } = useTokenUsages(
+    folderId,
+    deleteTargetId !== null ? 'colors' : null,
+    deleteTargetId,
+  )
 
   const handleAddColor = () => {
     if (atCap) return
     addToken('colors', { name: 'New color', value: '#3b82f6' })
-  }
-
-  const handleDeleteRequest = (id: string) => {
-    const usages = listUsages('colors', id)
-    setDeleteUsages(usages)
-    setDeleteTargetId(id)
   }
 
   const handleDeleteConfirm = () => {
@@ -788,7 +789,6 @@ function ColorsTab({ folderId: _folderId }: ColorsTabProps) {
       deleteToken('colors', deleteTargetId)
     }
     setDeleteTargetId(null)
-    setDeleteUsages([])
   }
 
   return (
@@ -840,22 +840,19 @@ function ColorsTab({ folderId: _folderId }: ColorsTabProps) {
               key={color.id}
               color={color}
               onUpdate={(patch) => updateToken('colors', color.id, patch)}
-              onDeleteRequest={() => handleDeleteRequest(color.id)}
+              onDeleteRequest={() => setDeleteTargetId(color.id)}
             />
           ))}
         </div>
       )}
 
-      {/* Delete confirmation modal (usage-aware, P4 wires real usage list) */}
       {deleteTargetId !== null && (
         <DeleteTokenModal
           tokenName={snapshot.colors[deleteTargetId]?.name ?? 'color'}
-          usageCount={deleteUsages.length}
+          usages={usages}
+          loading={usagesLoading}
           onConfirm={handleDeleteConfirm}
-          onCancel={() => {
-            setDeleteTargetId(null)
-            setDeleteUsages([])
-          }}
+          onCancel={() => setDeleteTargetId(null)}
         />
       )}
     </div>
@@ -990,14 +987,23 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
 // Text styles tab
 // ---------------------------------------------------------------------------
 
-function TextStylesTab() {
+interface TextStylesTabProps {
+  folderId: string
+}
+
+function TextStylesTab({ folderId }: TextStylesTabProps) {
   const snapshot = useFolderTokens()
-  const { addToken, updateToken, deleteToken, listUsages } = useFolderMutations()
+  const { addToken, updateToken, deleteToken } = useFolderMutations()
   const stylesList = Object.values(snapshot.textStyles)
   const colorsList = Object.values(snapshot.colors)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
-  const [deleteUsages, setDeleteUsages] = useState<string[]>([])
+
+  const { usages, loading: usagesLoading } = useTokenUsages(
+    folderId,
+    deleteTargetId !== null ? 'textStyles' : null,
+    deleteTargetId,
+  )
 
   const selected = selectedId !== null ? (snapshot.textStyles[selectedId] ?? null) : null
 
@@ -1014,19 +1020,12 @@ function TextStylesTab() {
     setSelectedId(id)
   }
 
-  const handleDeleteRequest = (id: string) => {
-    const usages = listUsages('textStyles', id)
-    setDeleteUsages(usages)
-    setDeleteTargetId(id)
-  }
-
   const handleDeleteConfirm = () => {
     if (deleteTargetId !== null) {
       deleteToken('textStyles', deleteTargetId)
       if (selectedId === deleteTargetId) setSelectedId(null)
     }
     setDeleteTargetId(null)
-    setDeleteUsages([])
   }
 
   return (
@@ -1090,7 +1089,7 @@ function TextStylesTab() {
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation()
-                    handleDeleteRequest(style.id)
+                    setDeleteTargetId(style.id)
                   }}
                   aria-label={`Delete style ${style.name}`}
                   className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -1121,12 +1120,10 @@ function TextStylesTab() {
       {deleteTargetId !== null && (
         <DeleteTokenModal
           tokenName={snapshot.textStyles[deleteTargetId]?.name ?? 'style'}
-          usageCount={deleteUsages.length}
+          usages={usages}
+          loading={usagesLoading}
           onConfirm={handleDeleteConfirm}
-          onCancel={() => {
-            setDeleteTargetId(null)
-            setDeleteUsages([])
-          }}
+          onCancel={() => setDeleteTargetId(null)}
         />
       )}
     </div>
@@ -1311,17 +1308,42 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
 
 // ---------------------------------------------------------------------------
 // DeleteTokenModal — usage-aware delete confirm.
-// P2: listUsages() stubs return []. P4 wires real usage scanning.
+// P4: real usage scan wired via useTokenUsages hook.
 // ---------------------------------------------------------------------------
+
+const MAX_VISIBLE_USAGES = 8
 
 interface DeleteTokenModalProps {
   tokenName: string
-  usageCount: number
+  usages: TokenUsage[]
+  loading: boolean
   onConfirm: () => void
   onCancel: () => void
 }
 
-function DeleteTokenModal({ tokenName, usageCount, onConfirm, onCancel }: DeleteTokenModalProps) {
+function usageLabel(entry: TokenUsage): string {
+  if (entry.kind === 'deck') {
+    const loc = entry.objectId !== undefined ? ` · object ${entry.objectId.slice(0, 6)}` : ''
+    return `Deck "${entry.deckTitle}" · slide ${entry.slideIndex + 1}${loc} · ${entry.field}`
+  }
+  if (entry.kind === 'component') {
+    const loc = entry.objectId !== undefined ? ` · object ${entry.objectId.slice(0, 6)}` : ''
+    return `Component "${entry.componentName}"${loc} · ${entry.field}`
+  }
+  return `Text style "${entry.styleName}" · ${entry.field}`
+}
+
+function DeleteTokenModal({
+  tokenName,
+  usages,
+  loading,
+  onConfirm,
+  onCancel,
+}: DeleteTokenModalProps) {
+  const usageCount = usages.length
+  const visibleUsages = usages.slice(0, MAX_VISIBLE_USAGES)
+  const hiddenCount = usageCount - visibleUsages.length
+
   return (
     <div
       role="dialog"
@@ -1336,17 +1358,37 @@ function DeleteTokenModal({ tokenName, usageCount, onConfirm, onCancel }: Delete
       }}
       tabIndex={-1}
     >
-      <div className="panel w-[400px] rounded-xl border border-border p-5 shadow-xl">
+      <div className="panel w-[440px] rounded-xl border border-border p-5 shadow-xl">
         <h2 className="mb-2 text-sm font-semibold text-foreground">
           Delete &ldquo;{tokenName}&rdquo;?
         </h2>
 
-        {usageCount > 0 ? (
-          <p className="mb-4 text-sm text-muted-foreground">
-            This token is referenced in{' '}
-            <span className="font-medium text-foreground">{usageCount} place(s)</span>. Deleting it
-            will break those references.
-          </p>
+        {loading ? (
+          <p className="mb-4 text-sm text-muted-foreground">Scanning for usages…</p>
+        ) : usageCount > 0 ? (
+          <>
+            <p className="mb-2 text-sm text-muted-foreground">
+              This token is referenced in{' '}
+              <span className="font-medium text-foreground">{usageCount} place(s)</span>. Deleting
+              it will break those references.
+            </p>
+            <ul
+              role="list"
+              aria-label="Usage list"
+              className="mb-4 max-h-48 overflow-y-auto rounded-md border border-border bg-surface-1 py-1 text-xs text-muted-foreground"
+            >
+              {visibleUsages.map((entry, i) => (
+                <li key={i} className="px-3 py-1.5 odd:bg-surface-2/40">
+                  {usageLabel(entry)}
+                </li>
+              ))}
+              {hiddenCount > 0 && (
+                <li className="px-3 py-1.5 text-muted-foreground/60">
+                  +{hiddenCount} more reference{hiddenCount === 1 ? '' : 's'} not shown
+                </li>
+              )}
+            </ul>
+          </>
         ) : (
           <p className="mb-4 text-sm text-muted-foreground">
             This token is not currently used in any slide. It will be permanently removed.
@@ -1357,7 +1399,13 @@ function DeleteTokenModal({ tokenName, usageCount, onConfirm, onCancel }: Delete
           <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="destructive" size="sm" onClick={onConfirm}>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onConfirm}
+            disabled={loading}
+            aria-disabled={loading}
+          >
             {usageCount > 0 ? 'Delete anyway' : 'Delete'}
           </Button>
         </div>

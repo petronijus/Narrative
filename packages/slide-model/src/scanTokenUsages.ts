@@ -35,7 +35,7 @@ export interface DeckUsageEntry {
   deckId: string
   deckTitle: string
   slideIndex: number
-  objectId?: string
+  objectId?: string | undefined
   field: string
 }
 
@@ -43,7 +43,7 @@ export interface ComponentUsageEntry {
   kind: 'component'
   componentId: string
   componentName: string
-  objectId?: string
+  objectId?: string | undefined
   field: string
 }
 
