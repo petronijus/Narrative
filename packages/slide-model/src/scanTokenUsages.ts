@@ -151,6 +151,34 @@ function scanAnimationMap(stepMap: Y.Map<unknown>, tokenKey: string): string[] {
   return matches
 }
 
+/**
+ * Visit every leaf object in an `objects` Y.Array, descending into the
+ * `children` Y.Array of group objects so token refs inside groups are
+ * not silently skipped.
+ */
+function walkObjectsArray(
+  objects: Y.Array<Y.Map<unknown>>,
+  visit: (objMap: Y.Map<unknown>, objectId: string | undefined) => void,
+): void {
+  for (let i = 0; i < objects.length; i++) {
+    const objMap = objects.get(i)
+    if (!(objMap instanceof Y.Map)) continue
+    const objectId = typeof objMap.get('id') === 'string' ? (objMap.get('id') as string) : undefined
+
+    visit(objMap, objectId)
+
+    // Recurse into group children. Groups store their tree in a nested
+    // `children` Y.Array of Y.Maps with the same shape as a slide's
+    // `objects` array.
+    if (objMap.get('type') === 'group') {
+      const children = objMap.get('children')
+      if (children instanceof Y.Array) {
+        walkObjectsArray(children, visit)
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // scanDeckDoc — scan a replayed deck Y.Doc for token references
 // ---------------------------------------------------------------------------
@@ -177,17 +205,12 @@ export function scanDeckDoc(
 
     const objects = slideMap.get('objects')
     if (objects instanceof Y.Array) {
-      for (let oi = 0; oi < objects.length; oi++) {
-        const objMap = objects.get(oi)
-        if (!(objMap instanceof Y.Map)) continue
-        const objectId =
-          typeof objMap.get('id') === 'string' ? (objMap.get('id') as string) : undefined
-
+      walkObjectsArray(objects, (objMap, objectId) => {
         const fields = scanObjectMap(objMap, tokenKey)
         for (const field of fields) {
           entries.push({ kind: 'deck', deckId, deckTitle, slideIndex, objectId, field })
         }
-      }
+      })
     }
 
     const animations = slideMap.get('animations')
@@ -238,17 +261,12 @@ export function scanComponentDoc(
 
     const objects = slideMap.get('objects')
     if (objects instanceof Y.Array) {
-      for (let oi = 0; oi < objects.length; oi++) {
-        const objMap = objects.get(oi)
-        if (!(objMap instanceof Y.Map)) continue
-        const objectId =
-          typeof objMap.get('id') === 'string' ? (objMap.get('id') as string) : undefined
-
+      walkObjectsArray(objects, (objMap, objectId) => {
         const fields = scanObjectMap(objMap, tokenKey)
         for (const field of fields) {
           entries.push({ kind: 'component', componentId, componentName, objectId, field })
         }
-      }
+      })
     }
 
     const animations = slideMap.get('animations')

@@ -343,11 +343,12 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   }, [])
 
   /**
-   * Lists slide objects that reference a given token.
-   * Stub for P2 — returns [] until P4 usage indexing.
+   * @deprecated P4: use the async `useTokenUsages(folderId, category, id)`
+   * hook instead. Calling this throws so silent empty lists don't hide
+   * real references.
    */
   const listUsages = useCallback((_category: TokenCategory, _id: string): string[] => {
-    return []
+    throw new Error('listUsages is deprecated; use the useTokenUsages(folderId, category, id) hook')
   }, [])
 
   const mutations: FolderMutationsContextValue = {
@@ -357,14 +358,22 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     listUsages,
   }
 
-  if (value === null) {
-    // Render children even before sync so they mount (avoids layout flash).
-    const emptyValue: FolderDocContextValue = {
-      doc: new Y.Doc(), // placeholder; replaced on sync
-      tokens: emptyTokensSnapshot(),
+  // Stable placeholder so we don't `new Y.Doc()` on every render before
+  // the real provider's first sync.
+  const placeholderRef = useRef<FolderDocContextValue | null>(null)
+  if (placeholderRef.current === null) {
+    placeholderRef.current = { doc: new Y.Doc(), tokens: emptyTokensSnapshot() }
+  }
+  useEffect(() => {
+    return () => {
+      placeholderRef.current?.doc.destroy()
+      placeholderRef.current = null
     }
+  }, [])
+
+  if (value === null) {
     return (
-      <FolderDocContext.Provider value={emptyValue}>
+      <FolderDocContext.Provider value={placeholderRef.current}>
         <FolderMutationsContext.Provider value={mutations}>
           {children}
         </FolderMutationsContext.Provider>

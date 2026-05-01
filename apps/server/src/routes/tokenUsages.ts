@@ -77,6 +77,18 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
     { preHandler: authPreHandler },
     async (request, reply) => {
       const { folderId, category, tokenId } = request.params
+
+      // Whitelist the token category at the boundary — anything else
+      // would silently produce an empty result set against a fabricated
+      // tokenKey, which is confusing for callers.
+      const VALID_CATEGORIES = ['colors', 'textStyles', 'effectStyles'] as const
+      type ValidCategory = (typeof VALID_CATEGORIES)[number]
+      if (!(VALID_CATEGORIES as readonly string[]).includes(category)) {
+        return reply.status(400).send({
+          error: `Invalid token category. Allowed: ${VALID_CATEGORIES.join(', ')}`,
+        })
+      }
+      const safeCategory = category as ValidCategory
       const userId = request.user!.sub
 
       // Verify folder exists and caller is the owner
@@ -93,13 +105,13 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
         return reply.status(403).send({ error: 'Forbidden' })
       }
 
-      const tokenKey = `${category}.${tokenId}`
+      const tokenKey = `${safeCategory}.${tokenId}`
       const usages: UsageEntry[] = []
 
       // -----------------------------------------------------------------------
       // 1. Folder doc — textStyle color refs (only for colors category)
       // -----------------------------------------------------------------------
-      if (category === 'colors') {
+      if (safeCategory === 'colors') {
         const folderUpdateRows = await db
           .select({ update: folderUpdates.update })
           .from(folderUpdates)
