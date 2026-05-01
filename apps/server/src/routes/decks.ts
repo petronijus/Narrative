@@ -26,17 +26,19 @@
 
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { eq, inArray, sql, and } from 'drizzle-orm'
 import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { decks, deckPermissions } from '../db/schema.js'
+import { decks, deckPermissions, folders } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { getOrProvisionDrafts } from './folders.js'
 
 interface CreateDeckBody {
   title?: string
+  folderId?: string
 }
 
 /** Hard cap on the data-URL payload — protects against giant uploads. */
@@ -46,6 +48,7 @@ interface DeckRow {
   id: string
   title: string
   ownerUserId: string
+  folderId: string
   thumbnailKey: string | null
   thumbnailUpdatedAt: Date | null
   createdAt: Date
@@ -93,23 +96,49 @@ function parseDataUrl(input: string): { mime: 'image/jpeg' | 'image/png'; bytes:
 export async function registerDeckRoutes(app: FastifyInstance, db: Database): Promise<void> {
   // ---------------------------------------------------------------------------
   // GET /decks — list decks accessible to the authenticated user
+  //
+  // Optional query param: ?folderId=<id>
+  //   When provided, returns only decks in that folder. Folder ownership is
+  //   verified; attempting to filter by another user's folder returns 403.
   // ---------------------------------------------------------------------------
   app.get('/decks', { preHandler: authPreHandler }, async (request, reply) => {
     const userId = request.user!.sub
+    const query = request.query as Record<string, string>
+    const filterFolderId = query['folderId'] ?? null
 
     // Determine if running in bypass/dev mode by checking bypass flag on plugin opts.
     const isBypass =
       (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts?.bypass === true
 
+    // If a folder filter was requested, verify the caller owns that folder.
+    if (filterFolderId !== null) {
+      const [folder] = await db
+        .select({ ownerUserId: folders.ownerUserId })
+        .from(folders)
+        .where(eq(folders.id, filterFolderId))
+        .limit(1)
+
+      if (!folder) {
+        return reply.status(404).send({ error: 'Folder not found' })
+      }
+
+      // In bypass mode the synthesized userId is 'dev-user'; also allow demo-user's folders.
+      const allowedOwners = isBypass ? [userId, 'demo-user'] : [userId]
+      if (!allowedOwners.includes(folder.ownerUserId)) {
+        return reply.status(403).send({ error: 'Forbidden' })
+      }
+    }
+
     if (isBypass) {
       // BYPASS_AUTH=true dev fallback: query both 'dev-user' and legacy 'demo-user' owned decks.
       // TODO(post-M10): remove when production migration script has run.
-      const rows = await db
-        .select()
-        .from(decks)
-        .where(inArray(decks.ownerUserId, ['dev-user', 'demo-user']))
-        .orderBy(decks.createdAt)
+      const ownerCondition = inArray(decks.ownerUserId, ['dev-user', 'demo-user'])
+      const whereClause =
+        filterFolderId !== null
+          ? and(ownerCondition, eq(decks.folderId, filterFolderId))
+          : ownerCondition
 
+      const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
       return reply.send(rows.map(withThumbnailUrl))
     }
 
@@ -121,12 +150,13 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       .from(deckPermissions)
       .where(eq(deckPermissions.userId, userId))
 
-    const rows = await db
-      .select()
-      .from(decks)
-      .where(sql`${decks.id} IN (${accessibleDeckIds})`)
-      .orderBy(decks.createdAt)
+    const accessCondition = sql`${decks.id} IN (${accessibleDeckIds})`
+    const whereClause =
+      filterFolderId !== null
+        ? and(accessCondition, eq(decks.folderId, filterFolderId))
+        : accessCondition
 
+    const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
     return reply.send(rows.map(withThumbnailUrl))
   })
 
@@ -181,13 +211,38 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
 
   // ---------------------------------------------------------------------------
   // POST /decks — create new deck
+  //
+  // Optional body fields:
+  //   folderId — if provided, deck is created in that folder (must be owned by caller).
+  //              If absent, defaults to the caller's "Drafts" folder (auto-provisioned if needed).
   // ---------------------------------------------------------------------------
   app.post<{ Body: CreateDeckBody }>(
     '/decks',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { title = 'Untitled Deck' } = request.body ?? {}
+      const { title = 'Untitled Deck', folderId: requestedFolderId } = request.body ?? {}
       const ownerUserId = request.user!.sub
+
+      // Resolve the target folder — verify ownership when explicitly provided.
+      let targetFolderId: string
+      if (requestedFolderId) {
+        const [folder] = await db
+          .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+          .from(folders)
+          .where(eq(folders.id, requestedFolderId))
+          .limit(1)
+
+        if (!folder) {
+          return reply.status(404).send({ error: 'Folder not found' })
+        }
+        if (folder.ownerUserId !== ownerUserId) {
+          return reply.status(403).send({ error: 'Forbidden' })
+        }
+        targetFolderId = folder.id
+      } else {
+        // Auto-provision Drafts if the user doesn't have one yet.
+        targetFolderId = await getOrProvisionDrafts(db, ownerUserId)
+      }
 
       const id = nanoid(12)
       const now = new Date()
@@ -201,6 +256,7 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
             id,
             title,
             ownerUserId,
+            folderId: targetFolderId,
             createdAt: now,
             updatedAt: now,
           })
