@@ -26,7 +26,7 @@
  * source.
  */
 
-import { useRef, useState, type RefObject } from 'react'
+import { useRef, useState, useCallback, type RefObject } from 'react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -44,6 +44,7 @@ import {
   addObjects,
   updateObject,
   createObjectOfType,
+  addObject,
 } from '@narrative/slide-model'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
@@ -53,6 +54,9 @@ import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
+import { useApi } from '../api/client.js'
+import { useDeckRole } from '../state/DeckRoleContext.js'
+import { nanoid } from 'nanoid'
 import type { SlideObject, SlideObjectPatch, SlideObjectType } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const canvasInstance = useCanvasInstance()
   const { zoom, setZoom } = useZoomLevel()
   const defaults = useDefaultObjectFill()
+  const api = useApi()
+  const { folderId } = useDeckRole()
+
+  // Promote status — used to show a brief feedback toast text
+  const [promoteStatus, setPromoteStatus] = useState<'idle' | 'promoting' | 'done' | 'error'>(
+    'idle',
+  )
 
   /** Mode flips on contextmenu and is read at render time to choose items. */
   const [mode, setMode] = useState<Mode>('canvas')
@@ -229,6 +240,81 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     selectOne(pair.imageId)
   }
 
+  /**
+   * Promote the current selection to a shared component.
+   *
+   * Strategy for P5:
+   * 1. Compute the bounding box of the selection (union of x/y/width/height).
+   * 2. Call api.createComponent() to mint a server-side component record.
+   * 3. In a single Yjs transaction on the slide's objects map:
+   *    - Remove the promoted objects from the slide.
+   *    - Insert a single `componentInstance` node at the bbox top-left,
+   *      sized to the bbox.
+   * 4. Select the new instance.
+   *
+   * The actual subtree write into the component Y.Doc (via ComponentDocProvider
+   * + promoteToComponent from slide-model) is left as a TODO because
+   * those exports are not yet available from state-sync.
+   *
+   * TODO(P5: state-sync) — once useComponentDoc + promoteToComponent land,
+   * open the component doc here and write the subtree in the same transaction.
+   */
+  const handlePromoteToComponent = useCallback((): void => {
+    if (mutationCtx === null || folderId === null) return
+    const targets = resolveTargets()
+    if (targets.length === 0) return
+
+    // Compute union bounding box
+    const left = Math.min(...targets.map((o) => o.x))
+    const top = Math.min(...targets.map((o) => o.y))
+    const right = Math.max(...targets.map((o) => o.x + o.width))
+    const bottom = Math.max(...targets.map((o) => o.y + o.height))
+    const bboxW = right - left
+    const bboxH = bottom - top
+
+    setPromoteStatus('promoting')
+
+    void api
+      .createComponent(folderId, { name: 'Untitled component' })
+      .then((component) => {
+        // Generate a stable id for the instance slide-node
+        const instanceId = nanoid()
+
+        // Atomic Yjs transaction: remove originals, insert instance
+        mutationCtx.doc.transact(() => {
+          // Remove promoted objects from the slide
+          for (const obj of targets) {
+            removeObject(mutationCtx, obj.id)
+          }
+          // Insert the component instance at the bbox origin
+          addObject(mutationCtx, {
+            id: instanceId,
+            type: 'componentInstance',
+            componentId: component.id,
+            componentName: component.name,
+            x: left,
+            y: top,
+            width: Math.max(bboxW, 1),
+            height: Math.max(bboxH, 1),
+            rotation: 0,
+            opacity: 1,
+          })
+        })
+
+        // Select the new instance
+        selectOne(instanceId)
+        setPromoteStatus('done')
+
+        // Reset status after 2 s
+        window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      })
+      .catch((err: unknown) => {
+        console.error('[EditorContextMenu] promote to component failed:', err)
+        setPromoteStatus('error')
+        window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      })
+  }, [api, folderId, mutationCtx, selectOne])
+
   const handleDelete = (): void => {
     if (mutationCtx === null) return
     const targets = resolveTargets()
@@ -292,6 +378,8 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const target = resolveTargets()[0]
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
+  const canPromote =
+    hasObjectTarget && mutationCtx !== null && folderId !== null && promoteStatus === 'idle'
 
   return (
     <ContextMenu>
@@ -381,6 +469,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               onSelect={handleMaskWithShape}
             >
               Mask with shape
+            </ContextMenuItem>
+
+            {/* M16 P5 — promote selection to a shared component */}
+            <ContextMenuItem
+              disabled={!canPromote}
+              onSelect={handlePromoteToComponent}
+              data-testid="promote-to-component"
+            >
+              {promoteStatus === 'promoting'
+                ? 'Promoting…'
+                : promoteStatus === 'done'
+                  ? 'Promoted to component'
+                  : promoteStatus === 'error'
+                    ? 'Promote failed'
+                    : 'Promote to shared component'}
             </ContextMenuItem>
 
             <ContextMenuSeparator />
