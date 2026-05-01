@@ -476,44 +476,49 @@ function TextStylesTab() {
         ) : (
           <ul role="listbox" aria-label="Text styles" className="py-1">
             {stylesList.map((style) => (
-              <li key={style.id} className="group">
+              <li
+                key={style.id}
+                role="option"
+                aria-selected={selectedId === style.id}
+                onClick={() => setSelectedId(style.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setSelectedId(style.id)
+                  }
+                }}
+                tabIndex={0}
+                className={[
+                  'group flex w-full cursor-pointer items-center gap-2 px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
+                  selectedId === style.id
+                    ? 'bg-primary/10 text-foreground'
+                    : 'text-foreground hover:bg-accent',
+                ].join(' ')}
+              >
+                {/* Mini preview */}
+                <span
+                  className="shrink-0 leading-none"
+                  style={{
+                    fontFamily: style.family,
+                    fontWeight: style.weight,
+                    fontSize: Math.min(style.size ?? 16, 16),
+                    color: typeof style.color === 'string' ? style.color : undefined,
+                  }}
+                  aria-hidden="true"
+                >
+                  Aa
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px]">{style.name}</span>
                 <button
                   type="button"
-                  role="option"
-                  aria-selected={selectedId === style.id}
-                  onClick={() => setSelectedId(style.id)}
-                  className={[
-                    'flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40',
-                    selectedId === style.id
-                      ? 'bg-primary/10 text-foreground'
-                      : 'text-foreground hover:bg-accent',
-                  ].join(' ')}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDeleteRequest(style.id)
+                  }}
+                  aria-label={`Delete style ${style.name}`}
+                  className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 >
-                  {/* Mini preview */}
-                  <span
-                    className="shrink-0 leading-none"
-                    style={{
-                      fontFamily: style.family,
-                      fontWeight: style.weight,
-                      fontSize: Math.min(style.size ?? 16, 16),
-                      color: typeof style.color === 'string' ? style.color : undefined,
-                    }}
-                    aria-hidden="true"
-                  >
-                    Aa
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{style.name}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDeleteRequest(style.id)
-                    }}
-                    aria-label={`Delete style ${style.name}`}
-                    className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  >
-                    <Trash2 className="h-3 w-3" aria-hidden="true" />
-                  </button>
+                  <Trash2 className="h-3 w-3" aria-hidden="true" />
                 </button>
               </li>
             ))}
