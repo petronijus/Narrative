@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
-import { useDeckFonts } from '../state/useDeckFonts.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
 import {
   applyInlineFormatIfSelected,
   refocusActiveTextEdit,
@@ -68,7 +68,8 @@ function nearestWeight(target: number, available: ReadonlyArray<number>): number
 }
 
 export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
-  const { fonts } = useDeckFonts()
+  const folderFontsCtx = useFolderFontsOptional()
+  const fonts = folderFontsCtx?.fonts ?? []
 
   // Resolve the current value as a number (the legacy 'normal' / 'bold'
   // strings map to 400 / 700 in the picker UI).

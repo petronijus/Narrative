@@ -64,9 +64,10 @@ export interface UploadEntry {
   assetId?: string // set on status='done' (or during finalizing for video)
   width?: number
   height?: number
-  // P15: populated only for font uploads — comes back from the server's
-  // opentype.js parse and is forwarded to the deck Y.Doc registry by
-  // the consumer (FontUploadSheet).
+  // P15 (legacy): populated only for font uploads — comes back from
+  // the server's opentype.js parse. After M16 P3 consolidation no
+  // consumer reads these fields any more (folder fonts use a
+  // dedicated /api/folders/:folderId/fonts upload route, not tus).
   fontFamily?: string
   fontWeight?: number
   fontStyle?: 'normal' | 'italic'

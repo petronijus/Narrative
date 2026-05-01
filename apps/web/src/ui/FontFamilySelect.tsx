@@ -1,21 +1,23 @@
 /**
  * ui/FontFamilySelect.tsx
  *
- * P15: native <select> with system fonts + an <optgroup> of deck-
- * uploaded custom fonts, plus a small upload button that opens the
- * FontUploadSheet. Used inside the Inspector's text section.
+ * Native <select> with system fonts + an <optgroup> of folder-uploaded
+ * custom fonts, plus a small upload button that opens the
+ * FolderFontUploadDialog. Used inside the Inspector's text section.
  *
  * Custom font values use just the family name (CSS picks the
  * weight/style from the @font-face descriptors); system fonts use the
  * full CSS stack so the fallback chain stays sensible.
+ *
+ * M16 P3 (consolidated): uploaded fonts are folder-scoped only; the
+ * legacy deck-fonts pipeline has been removed.
  */
 
 import { Upload } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
-import { useDeckFonts } from '../state/useDeckFonts.js'
 import { useFolderFontsOptional } from '../state/useFolderFonts.js'
-import { FontUploadSheet } from './FontUploadSheet.js'
+import { FolderFontUploadDialog } from './FolderFontUploadDialog.js'
 import {
   applyInlineFormatIfSelected,
   refocusActiveTextEdit,
@@ -41,18 +43,10 @@ const SYSTEM_FONTS: ReadonlyArray<{ label: string; value: string }> = [
 ]
 
 export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps) {
-  const { fonts } = useDeckFonts()
   const folderFontsCtx = useFolderFontsOptional()
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  // Group custom (deck-level) fonts by family.
-  const customFamilies = useMemo(() => {
-    const set = new Set<string>()
-    for (const f of fonts) set.add(f.family)
-    return [...set].sort((a, b) => a.localeCompare(b))
-  }, [fonts])
-
-  // Group folder-level fonts by family.
+  // Group folder-level custom fonts by family.
   const folderFamilies = useMemo(() => {
     if (!folderFontsCtx) return []
     const set = new Set<string>()
@@ -125,15 +119,6 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
             ))}
           </optgroup>
         )}
-        {customFamilies.length > 0 && (
-          <optgroup label="Custom (this deck)">
-            {customFamilies.map((family) => (
-              <option key={family} value={family}>
-                {family}
-              </option>
-            ))}
-          </optgroup>
-        )}
       </select>
 
       <button
@@ -141,7 +126,7 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
         onClick={() => setSheetOpen(true)}
         disabled={disabled}
         aria-label="Upload custom font"
-        title="Upload custom font for this deck"
+        title="Upload custom font for this folder"
         className={[
           'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded',
           'text-muted-foreground/70 transition-colors',
@@ -153,7 +138,7 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
         <Upload className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
 
-      {sheetOpen && <FontUploadSheet onClose={() => setSheetOpen(false)} />}
+      {sheetOpen && <FolderFontUploadDialog onClose={() => setSheetOpen(false)} />}
     </div>
   )
 }

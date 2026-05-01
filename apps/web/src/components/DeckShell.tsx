@@ -44,7 +44,6 @@ import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider, useDeckRole } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { RulersProvider } from '../state/RulersContext.js'
-import { FontLoader } from '../state/FontLoader.js'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
@@ -166,12 +165,6 @@ export function DeckShell() {
               <MediaUploadProvider deckId={id}>
                 <RulersProvider>
                   <CanvasInstanceContext.Provider value={canvasInstance}>
-                    {/* P15: FontLoader needs BOTH the Y.Doc (deck fonts
-                        array) and the live Pixi canvas instance, so it
-                        mounts here — inside both providers — to bridge
-                        deck-level FontFace install + Pixi text refresh
-                        on first paint. */}
-                    <FontLoader />
                     <Outlet
                       context={{ onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue}
                     />

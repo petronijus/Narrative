@@ -241,20 +241,6 @@ export async function getFontAsset(db: Database, id: string): Promise<FontAssetR
   return toFontRow(row)
 }
 
-/**
- * Returns every font asset belonging to a deck. Used by the
- * GET /api/decks/:id/fonts route to seed FontLoader on first paint
- * (cheaper than walking the Y.Doc on the server).
- */
-export async function listFontAssets(db: Database, deckId: string): Promise<FontAssetRow[]> {
-  const rows = await db
-    .select()
-    .from(mediaAssets)
-    .where(and(eq(mediaAssets.deckId, deckId), eq(mediaAssets.kind, 'font')))
-
-  return rows.map(toFontRow)
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toFontRow(row: any): FontAssetRow {
   return {

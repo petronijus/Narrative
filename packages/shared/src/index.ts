@@ -51,7 +51,6 @@ export type {
   ImageBackground,
   SlideBackground,
   DeckGuide,
-  DeckFontEntry,
 } from './deck.js'
 
 export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND } from './deck.js'

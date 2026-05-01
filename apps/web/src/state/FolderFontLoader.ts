@@ -1,31 +1,33 @@
 /**
  * state/FolderFontLoader.ts
  *
- * M16 P3: Side-effect component that installs folder-scoped custom fonts
- * into document.fonts + Pixi's HTMLText cache.
+ * M16 P3 (consolidated): installs folder-scoped custom fonts into
+ * document.fonts + Pixi's HTMLText cache, and refreshes any live Text
+ * nodes that picked up a fallback face on first paint.
  *
- * Mirrors the deck-level FontLoader (state/FontLoader.tsx) but sources
- * its font list from useFolderFonts() instead of useDeckFonts().
+ * This is the single FontLoader after the M16 P3 consolidation — the
+ * deck-level FontLoader has been removed.
  *
- * Mounted inside FolderDocGate > FolderFontsProvider so it has access
- * to the live folder font list.
- *
- * Per-font cache: the installedRef map is keyed by assetId. A font that is
- * already in document.fonts is not re-fetched when the component re-renders.
- *
- * Cache is per component instance (ref), so navigating away destroys it.
- * The module-level cache in useFolderFonts.ts prevents the list re-fetch;
- * FontFace objects themselves are recreated on remount but the browser's
- * own font cache means the bytes aren't re-downloaded.
+ * Mounted inside FolderFontsProvider (via DeckShell's FolderDocGate) so
+ * it has access to the live folder font list. The CanvasInstance is read
+ * from CanvasInstanceContext via a ref so the Pixi-refresh call always
+ * sees the current canvas (even if it spins up after fonts have loaded).
  */
 
 import { useEffect, useRef } from 'react'
 import { Cache } from 'pixi.js'
 import { useFolderFonts } from './useFolderFonts.js'
+import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 
-// Reuse the same Pixi cache helpers as FontLoader — copy the shape
-// so we don't create an unnecessary dependency on FontLoader internals.
-
+/**
+ * Pixi v8's HTMLText pipeline does NOT consult `document.fonts` when
+ * embedding @font-face declarations into the SVG it rasterises — it
+ * only looks at its own asset Cache under the key `${family}-and-url`
+ * (see pixi.js/scene/text-html/utils/getFontCss). Without an entry
+ * there, getFontCss returns "" and the SVG falls back to the system
+ * font. Register every loaded face in that exact shape so HTMLText
+ * picks them up.
+ */
 interface PixiFontCacheEntry {
   url: string
   faces: { weight: string; style: string }[]
@@ -75,7 +77,16 @@ interface InstalledFont {
  */
 export function FolderFontLoader(): null {
   const { fonts } = useFolderFonts()
+  const canvas = useCanvasInstance()
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
+
+  // Live ref to the canvas so the async IIFE below always reads the
+  // CURRENT instance — without this, the closure captures whatever
+  // `canvas` was at scheduling time. On a cold-start reload that's
+  // typically null (Pixi hasn't finished `app.init()` yet), so the
+  // refresh call after FontFace.load was a silent no-op.
+  const canvasRef = useRef<CanvasInstance | null>(canvas)
+  canvasRef.current = canvas
 
   useEffect(() => {
     let cancelled = false
@@ -113,6 +124,10 @@ export function FolderFontLoader(): null {
             weight: String(font.weight),
             style: font.style,
           })
+
+          // Cold-start: read canvas via ref so we get whatever is current
+          // RIGHT NOW, not the value at IIFE-schedule time.
+          canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(font.family)
         } catch (err) {
           // Drop the placeholder so a future re-emit retries
           installed.delete(font.assetId)
@@ -131,12 +146,29 @@ export function FolderFontLoader(): null {
       }
       removeFromPixiFontCache(slot.family, slot.weight, slot.style)
       installed.delete(id)
+      canvasRef.current?.sceneGraph.refreshTextNodesUsingFamily(slot.family)
     }
 
     return () => {
       cancelled = true
     }
   }, [fonts])
+
+  // Cold-start catch-up: when the Pixi canvas appears AFTER fonts have
+  // already loaded (the typical reload sequence — FontFace.load resolves
+  // before app.init does), walk every already-installed family and force
+  // a re-rasterise so the text picks up the fallback-vs-installed swap.
+  useEffect(() => {
+    if (canvas === null) return
+    const installed = installedRef.current
+    const seen = new Set<string>()
+    for (const slot of installed.values()) {
+      if (slot.face === undefined) continue
+      if (seen.has(slot.family)) continue
+      seen.add(slot.family)
+      canvas.sceneGraph.refreshTextNodesUsingFamily(slot.family)
+    }
+  }, [canvas])
 
   return null
 }

@@ -204,7 +204,5 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
   }
 
   const fullValue: SlideDocContextValue = { ...value, wsStatus }
-  // FontLoader is mounted in DeckShell (inside CanvasInstanceContext.Provider)
-  // because it needs both Y.Doc context AND the live Pixi canvas.
   return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
 }

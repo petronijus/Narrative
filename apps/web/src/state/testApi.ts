@@ -78,21 +78,6 @@ export interface TestApi {
     opts: { id: string; x: number; y: number; w: number; h: number; text: string },
     slideId?: string,
   ): void
-  /**
-   * P15: read the deck-level fonts Y.Array as a plain JS snapshot.
-   * Used by font-upload e2e specs to assert sync without poking
-   * Y.Doc internals.
-   */
-  deckFonts(): Array<{
-    id: string
-    family: string
-    weight: number
-    style: 'normal' | 'italic'
-    postscriptName: string
-    addedBy: string
-    addedAt: number
-    originalFilename?: string
-  }>
   /** Append a new slide to the deck. Returns its id. */
   addSlide(): string
   /** Ordered list of slide ids in the deck. */
@@ -305,51 +290,6 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         rotation: 0,
         opacity: 1,
       })
-    },
-    deckFonts() {
-      // listDeckFonts is the canonical reader; importing here would
-      // create a circular ts dep through the index, so we walk the
-      // raw Y.Array. Same shape as DeckFontEntry.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const arr = deckCtx.doc.getArray<any>('fonts')
-      const out: ReturnType<TestApi['deckFonts']> = []
-      for (let i = 0; i < arr.length; i++) {
-        const m = arr.get(i)
-        if (m === undefined) continue
-        const id = m.get('id')
-        const family = m.get('family')
-        const weight = m.get('weight')
-        const style = m.get('style')
-        const postscriptName = m.get('postscriptName')
-        const addedBy = m.get('addedBy')
-        const addedAt = m.get('addedAt')
-        const originalFilename = m.get('originalFilename')
-        if (
-          typeof id !== 'string' ||
-          typeof family !== 'string' ||
-          typeof weight !== 'number' ||
-          (style !== 'normal' && style !== 'italic') ||
-          typeof postscriptName !== 'string' ||
-          typeof addedBy !== 'string' ||
-          typeof addedAt !== 'number'
-        ) {
-          continue
-        }
-        const entry: ReturnType<TestApi['deckFonts']>[number] = {
-          id,
-          family,
-          weight,
-          style,
-          postscriptName,
-          addedBy,
-          addedAt,
-        }
-        if (typeof originalFilename === 'string' && originalFilename !== '') {
-          entry.originalFilename = originalFilename
-        }
-        out.push(entry)
-      }
-      return out
     },
     objectIds(slideId) {
       const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id

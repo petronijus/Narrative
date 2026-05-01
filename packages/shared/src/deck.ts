@@ -147,28 +147,3 @@ export interface DeckGuide {
   orientation: 'horizontal' | 'vertical'
   position: number
 }
-
-/**
- * P15: a custom font uploaded by an editor of this deck and made
- * available to all collaborators. The TTF/OTF bytes live in MinIO at
- * `decks/<deckId>/fonts/<id>/original.<ext>`; the entry below is what
- * syncs through the Y.Doc so peers know which fonts to install.
- *
- * `family` is the canonical OpenType family name (CSS sees this), and
- * weight/style let multiple uploads collapse into one logical family
- * with multiple faces. `id` matches `media_assets.id` so the URL route
- * (`GET /api/media/:id/font-url`) resolves to the same bytes.
- */
-export interface DeckFontEntry {
-  id: string
-  family: string
-  weight: number
-  style: 'normal' | 'italic'
-  postscriptName: string
-  /** userId of the uploader, for attribution in the picker. */
-  addedBy: string
-  /** Epoch ms — used to sort the picker list newest-first. */
-  addedAt: number
-  /** Original filename from the uploader's disk, for the picker tooltip. */
-  originalFilename?: string
-}
