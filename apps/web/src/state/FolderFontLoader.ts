@@ -93,6 +93,14 @@ export function FolderFontLoader(): null {
     const installed = installedRef.current
     const live = new Set(fonts.map((f) => f.assetId))
 
+    // Track IDs for which THIS effect invocation reserved a placeholder slot.
+    // If cleanup fires before the async load completes (e.g. React 18
+    // strict-mode double-invoke), we must delete the placeholder so the
+    // next effect invocation can retry — otherwise it sees `installed.has(id)
+    // === true` (a stale placeholder with face=undefined), skips the font
+    // entirely, and the load that was cancelled never gets retried.
+    const pendingIds = new Set<string>()
+
     // Install new fonts
     for (const font of fonts) {
       if (installed.has(font.assetId)) continue
@@ -104,6 +112,7 @@ export function FolderFontLoader(): null {
         weight: String(font.weight),
         style: font.style,
       })
+      pendingIds.add(font.assetId)
 
       void (async () => {
         try {
@@ -113,11 +122,17 @@ export function FolderFontLoader(): null {
             display: 'swap',
           })
           await face.load()
+          // If cleanup ran while we were loading, bail without installing.
+          // The cleanup will have already deleted the placeholder slot, so
+          // the next effect invocation will retry.
           if (cancelled) return
 
           document.fonts.add(face)
           addToPixiFontCache(font.family, font.url, String(font.weight), font.style)
 
+          // Slot is now fully installed — remove from pending so cleanup
+          // does NOT delete it (the face is live and should stay).
+          pendingIds.delete(font.assetId)
           installed.set(font.assetId, {
             face,
             family: font.family,
@@ -131,6 +146,7 @@ export function FolderFontLoader(): null {
         } catch (err) {
           // Drop the placeholder so a future re-emit retries
           installed.delete(font.assetId)
+          pendingIds.delete(font.assetId)
           console.warn('[FolderFontLoader] failed to install', font.assetId, err)
         }
       })()
@@ -151,6 +167,16 @@ export function FolderFontLoader(): null {
 
     return () => {
       cancelled = true
+      // Delete placeholder slots for any loads that were in-flight when
+      // cleanup fired. Without this, the next effect invocation (e.g. after
+      // React 18 strict-mode double-invoke) skips them because
+      // `installed.has(id)` is still true, and the cancelled async bails
+      // before calling `document.fonts.add()` — leaving the font permanently
+      // uninstalled with no error.
+      for (const id of pendingIds) {
+        installed.delete(id)
+      }
+      pendingIds.clear()
     }
   }, [fonts])
 
