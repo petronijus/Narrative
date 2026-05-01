@@ -25,6 +25,7 @@ import { HexColorPicker } from 'react-colorful'
 import { Pipette } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
+import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // EyeDropper API types — not yet in the official TypeScript lib.
@@ -78,6 +79,14 @@ export interface ColorInputProps {
   onAlphaChange?: (alpha: number) => void
   /** Definitive alpha commit on slider release. Defaults to `onAlphaChange`. */
   onAlphaCommit?: (alpha: number) => void
+  /**
+   * M16 P2: folder palette to render inside the popover above Recents.
+   * When provided alongside `onTokenSelect`, clicking a swatch links the
+   * fill to that token. `activeTokenRef` highlights the current link.
+   */
+  tokenColors?: ColorTokenSnapshot[]
+  activeTokenRef?: TokenRef | null
+  onTokenSelect?: (ref: TokenRef) => void
 }
 
 const CHECKER_BG =
@@ -114,6 +123,9 @@ export function ColorInput({
   alpha,
   onAlphaChange,
   onAlphaCommit,
+  tokenColors,
+  activeTokenRef,
+  onTokenSelect,
 }: ColorInputProps) {
   const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
   const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
@@ -321,6 +333,45 @@ export function ColorInput({
                 <span className="w-9 text-right text-[10px] tabular-nums text-muted-foreground">
                   {Math.round(alphaVal * 100)}%
                 </span>
+              </div>
+            )}
+
+            {/* M16 P2: folder palette above Recents inside the popover.
+                Clicking a swatch links the fill to that token. */}
+            {tokenColors !== undefined && tokenColors.length > 0 && onTokenSelect !== undefined && (
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  Folder palette
+                </p>
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Folder palette">
+                  {tokenColors.map((c) => {
+                    const activeId =
+                      activeTokenRef !== null && activeTokenRef !== undefined
+                        ? (activeTokenRef.$token.split('.')[1] ?? null)
+                        : null
+                    const isActive = activeId === c.id
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        title={`${c.name}\n${c.value.toUpperCase()}`}
+                        aria-label={`Apply token: ${c.name}`}
+                        aria-pressed={isActive}
+                        onClick={() => {
+                          onTokenSelect({ $token: `colors.${c.id}` })
+                          setOpen(false)
+                        }}
+                        className={[
+                          'h-5 w-5 rounded-sm border transition',
+                          isActive
+                            ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                            : 'border-border hover:border-border-strong',
+                        ].join(' ')}
+                        style={{ background: c.value }}
+                      />
+                    )
+                  })}
+                </div>
               </div>
             )}
 

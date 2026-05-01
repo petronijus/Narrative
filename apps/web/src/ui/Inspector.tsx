@@ -136,7 +136,6 @@ import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import { useFolderTokens } from '../state/FolderDocProvider.js'
 import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
-import { useNavigate } from 'react-router-dom'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2479,7 +2478,6 @@ function FillBody({
   patch: (p: SlideObjectPatch<FilledShape>) => void
 }) {
   const folderTokensSnapshot = useFolderTokens()
-  const navigate = useNavigate()
   // Convert the colors Record to an array for rendering
   const colorTokensList: ColorTokenSnapshot[] = Object.values(folderTokensSnapshot.colors)
 
@@ -2598,6 +2596,14 @@ function FillBody({
               onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
               inputClassName="!h-5 !w-7"
               hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+              tokenColors={colorTokensList}
+              activeTokenRef={currentTokenRef}
+              onTokenSelect={(tokenRef) =>
+                patch({
+                  fill: tokenRef,
+                  fillStyle: undefined,
+                } as unknown as SlideObjectPatch<FilledShape>)
+              }
             />
           </div>
         )}
@@ -2632,22 +2638,9 @@ function FillBody({
         )}
       </div>
 
-      {/* Folder palette — always visible inside the Solid mode so users
-          see the design-system tokens first. Clicking a swatch links the
-          fill to that token (writes a TokenRef). */}
-      {mode === 'solid' && colorTokensList.length > 0 && (
-        <FillTokenPanel
-          colors={colorTokensList}
-          activeTokenRef={currentTokenRef}
-          onSelect={(tokenRef) => {
-            patch({
-              fill: tokenRef,
-              fillStyle: undefined,
-            } as unknown as SlideObjectPatch<FilledShape>)
-          }}
-          onNavigateToSettings={() => void navigate(-1)}
-        />
-      )}
+      {/* Folder palette is rendered inside the ColorInput popover (above
+          Recents). When the fill is linked to a token, the row above
+          shows a "Linked: <name> [×]" chip in place of the hex input. */}
 
       {/* Gradient sub-editor — keeps the previous fillStyle mounted while
           collapsing so the closing animation has content to slide. The
@@ -2696,65 +2689,8 @@ function FillBody({
   )
 }
 
-// ---------------------------------------------------------------------------
-// FillTokenPanel — M16 P2 token swatch grid inside the fill picker
-// ---------------------------------------------------------------------------
-
-interface FillTokenPanelProps {
-  colors: ColorTokenSnapshot[]
-  activeTokenRef: TokenRef | null
-  onSelect: (ref: TokenRef) => void
-  onNavigateToSettings: () => void
-}
-
-function FillTokenPanel({
-  colors,
-  activeTokenRef,
-  onSelect,
-  onNavigateToSettings,
-}: FillTokenPanelProps) {
-  if (colors.length === 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-border py-4 text-center">
-        <p className="text-[11px] text-muted-foreground">Define colors in folder settings</p>
-        <button
-          type="button"
-          onClick={onNavigateToSettings}
-          className="rounded-md border border-border bg-surface-1 px-2.5 py-1 text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
-          Open settings
-        </button>
-      </div>
-    )
-  }
-
-  const activeId = activeTokenRef !== null ? (activeTokenRef.$token.split('.')[1] ?? null) : null
-
-  return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Color tokens">
-      {colors.map((color) => {
-        const isActive = activeId === color.id
-        return (
-          <button
-            key={color.id}
-            type="button"
-            title={`${color.name}\n${color.value.toUpperCase()}`}
-            aria-label={`Apply token: ${color.name}`}
-            aria-pressed={isActive}
-            onClick={() => onSelect({ $token: `colors.${color.id}` })}
-            className={[
-              'h-6 w-6 rounded-md border-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-              isActive
-                ? 'border-primary shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                : 'border-transparent hover:border-border-strong',
-            ].join(' ')}
-            style={{ background: color.value }}
-          />
-        )
-      })}
-    </div>
-  )
-}
+// FillTokenPanel was the standalone token swatch grid; superseded by
+// the folder palette row inside ColorInput's popover.
 
 const MAX_GRADIENT_STOPS = 10
 
