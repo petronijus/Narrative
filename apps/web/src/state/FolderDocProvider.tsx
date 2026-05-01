@@ -27,11 +27,13 @@
  *   Share-token access is NOT supported for folder docs.
  */
 
-import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { nanoid } from 'nanoid'
 import { useAuth } from './AuthContext.js'
+import { useApi } from '../api/client.js'
+import type { TokenUsage } from '../api/client.js'
 import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
 import type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
 import type {
@@ -341,11 +343,12 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   }, [])
 
   /**
-   * Lists slide objects that reference a given token.
-   * Stub for P2 — returns [] until P4 usage indexing.
+   * @deprecated P4: use the async `useTokenUsages(folderId, category, id)`
+   * hook instead. Calling this throws so silent empty lists don't hide
+   * real references.
    */
   const listUsages = useCallback((_category: TokenCategory, _id: string): string[] => {
-    return []
+    throw new Error('listUsages is deprecated; use the useTokenUsages(folderId, category, id) hook')
   }, [])
 
   const mutations: FolderMutationsContextValue = {
@@ -355,14 +358,22 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     listUsages,
   }
 
-  if (value === null) {
-    // Render children even before sync so they mount (avoids layout flash).
-    const emptyValue: FolderDocContextValue = {
-      doc: new Y.Doc(), // placeholder; replaced on sync
-      tokens: emptyTokensSnapshot(),
+  // Stable placeholder so we don't `new Y.Doc()` on every render before
+  // the real provider's first sync.
+  const placeholderRef = useRef<FolderDocContextValue | null>(null)
+  if (placeholderRef.current === null) {
+    placeholderRef.current = { doc: new Y.Doc(), tokens: emptyTokensSnapshot() }
+  }
+  useEffect(() => {
+    return () => {
+      placeholderRef.current?.doc.destroy()
+      placeholderRef.current = null
     }
+  }, [])
+
+  if (value === null) {
     return (
-      <FolderDocContext.Provider value={emptyValue}>
+      <FolderDocContext.Provider value={placeholderRef.current}>
         <FolderMutationsContext.Provider value={mutations}>
           {children}
         </FolderMutationsContext.Provider>
@@ -420,7 +431,88 @@ export function useFolderMutations(): FolderMutationsContextValue {
 }
 
 // ---------------------------------------------------------------------------
+// useTokenUsages — fetch on-demand usage scan (M16 P4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetches all references to a design token across decks, components, and text
+ * styles in the given folder.  Returns loading state + results.
+ *
+ * Design decision (option b from P4 spec): separate hook rather than making
+ * `listUsages` async, so the synchronous stub in FolderMutationsContext
+ * stays intact for callers that don't need loading state.
+ *
+ * `category` and `tokenId` are used to build the token key — pass null for
+ * either to skip the fetch (modal not yet open).
+ *
+ * Usage:
+ *   const { usages, loading, error } = useTokenUsages(folderId, 'colors', id)
+ *
+ * Must be used inside a component tree that renders <FolderDocProvider>.
+ * Does NOT require FolderDocProvider itself — only the API client is used.
+ */
+export interface TokenUsagesState {
+  usages: TokenUsage[]
+  loading: boolean
+  error: string | null
+}
+
+export function useTokenUsages(
+  folderId: string,
+  category: string | null,
+  tokenId: string | null,
+): TokenUsagesState {
+  const api = useApi()
+  const [state, setState] = useState<TokenUsagesState>({
+    usages: [],
+    loading: false,
+    error: null,
+  })
+
+  // Stable key so the effect re-fires only when the target actually changes.
+  const key = useMemo(
+    () => (category !== null && tokenId !== null ? `${category}.${tokenId}` : null),
+    [category, tokenId],
+  )
+
+  useEffect(() => {
+    if (key === null || category === null || tokenId === null) {
+      setState({ usages: [], loading: false, error: null })
+      return
+    }
+
+    let cancelled = false
+
+    setState({ usages: [], loading: true, error: null })
+
+    api
+      .listTokenUsages(folderId, category, tokenId)
+      .then((usages) => {
+        if (!cancelled) {
+          setState({ usages, loading: false, error: null })
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setState({
+            usages: [],
+            loading: false,
+            error: err instanceof Error ? err.message : 'Failed to scan usages',
+          })
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [api, folderId, key, category, tokenId])
+
+  return state
+}
+
+// ---------------------------------------------------------------------------
 // Convenience named re-exports for editor-ui agent
 // ---------------------------------------------------------------------------
 
 export type { FolderTokensSnapshot, FolderDocContextValue } from './FolderDocContext.js'
+export type { TokenUsage } from '../api/client.js'

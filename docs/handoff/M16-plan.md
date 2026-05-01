@@ -73,11 +73,19 @@ postscript_name, url, status`.
 - Font picker in text inspector lists folder fonts first.
 - Present-mode preloader extended to include folder fonts.
 
-### P4 — Token consumption polish _(branch: `feat/m16-p4-token-polish`)_
+### P4 — Token consumption polish _(branch: `feat/m16-p4-token-polish`)_ **COMPLETE**
 
-- Palette-first color picker.
-- "Detach token" per field.
-- Token rename propagates (refs by id).
+- Palette-first color picker. ✓ (shipped in P2)
+- "Detach token" per field. ✓
+- Token rename propagates (refs by id). ✓
+- Usage scan on delete:
+  - `GET /folders/:folderId/tokens/:category/:tokenId/usages` endpoint
+    scans all decks + components in folder (replay Y.Doc, walk objects +
+    animations) plus folder doc textStyle color refs. ✓
+  - `useTokenUsages(folderId, category, tokenId)` hook in
+    `FolderDocProvider.tsx` fetches on demand. ✓
+  - `DeleteTokenModal` shows spinner while loading, scrollable usage list
+    (max 8 rows + "+N more"), disables "Delete anyway" until scan resolves. ✓
 
 ### P5 — Component master — data model _(branch: `feat/m16-p5-component-model`)_
 

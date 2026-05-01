@@ -203,10 +203,26 @@ export const componentInstanceRenderer: ObjectRenderer<ComponentInstanceObject> 
   },
 
   destroy(node: Container): void {
+    // Guard each child destroy: Pixi's text-cache cleanup can throw under
+    // strict-mode double-invoke or when the same texture has already been
+    // returned to the pool via a different code path. Swallow so the rest
+    // of the scene-graph teardown still runs.
     const graphics = getGraphics(node)
     const label = getLabel(node)
-    graphics?.destroy()
-    label?.destroy()
-    node.destroy()
+    try {
+      graphics?.destroy()
+    } catch {
+      // ignore — graphics layer is now dangling but will be GC'd with node
+    }
+    try {
+      label?.destroy()
+    } catch {
+      // ignore — same reason as above
+    }
+    try {
+      node.destroy({ children: true })
+    } catch {
+      // ignore — final fallback so a single bad destroy doesn't crash the canvas
+    }
   },
 }

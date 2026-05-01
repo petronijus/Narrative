@@ -125,6 +125,15 @@ export type {
   FolderTokensSnapshot,
 } from './tokens.js'
 
+// Token usage scanner (M16 P4)
+export { scanDeckDoc, scanComponentDoc, scanFolderDoc } from './scanTokenUsages.js'
+export type {
+  UsageEntry,
+  DeckUsageEntry,
+  ComponentUsageEntry,
+  TextStyleUsageEntry,
+} from './scanTokenUsages.js'
+
 // Awareness helpers (M8)
 export { generatePeerId, toPeerInfo, peerColorFromId } from './awareness.js'
 

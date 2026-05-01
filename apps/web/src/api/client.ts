@@ -106,6 +106,16 @@ export interface ApiClient {
   uploadFolderFont(folderId: string, file: File): Promise<FolderFontSummary>
   /** Delete a folder font by asset id. */
   deleteFolderFont(folderId: string, assetId: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
+  // M16 P4 — Token usage scanning
+  // ---------------------------------------------------------------------------
+  /**
+   * Scan all decks, components, and text styles in the folder for references
+   * to the given token.  Intended for delete-time warnings.  May take up to
+   * a few seconds for large folders — callers should show a loading indicator.
+   */
+  listTokenUsages(folderId: string, category: string, tokenId: string): Promise<TokenUsage[]>
 }
 
 export interface DeckSummary {
@@ -175,6 +185,33 @@ export interface FolderFontSummary {
   sizeBytes: number
   uploadedAt: string
 }
+
+// ---------------------------------------------------------------------------
+// M16 P4 — Token usage types
+// ---------------------------------------------------------------------------
+
+export type TokenUsage =
+  | {
+      kind: 'deck'
+      deckId: string
+      deckTitle: string
+      slideIndex: number
+      objectId?: string
+      field: string
+    }
+  | {
+      kind: 'component'
+      componentId: string
+      componentName: string
+      objectId?: string
+      field: string
+    }
+  | {
+      kind: 'textStyle'
+      styleId: string
+      styleName: string
+      field: 'color'
+    }
 
 export interface DeckPermission {
   userId: string
@@ -425,6 +462,17 @@ export function createApiClient(getToken: () => string | null): ApiClient {
         method: 'DELETE',
       })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    // -------------------------------------------------------------------------
+    // M16 P4 — Token usage scanning
+    // -------------------------------------------------------------------------
+
+    listTokenUsages: async (folderId, category, tokenId) => {
+      const data = await requestJson<{ usages: TokenUsage[] }>(
+        `/folders/${folderId}/tokens/${encodeURIComponent(category)}/${encodeURIComponent(tokenId)}/usages`,
+      )
+      return data.usages
     },
   }
 }

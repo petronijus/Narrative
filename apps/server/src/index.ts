@@ -28,6 +28,7 @@ import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerDeckRoutes } from './routes/decks.js'
 import { registerFolderRoutes } from './routes/folders.js'
 import { registerComponentRoutes } from './routes/components.js'
+import { registerTokenUsageRoutes } from './routes/tokenUsages.js'
 import { registerSharingRoutes } from './routes/sharing.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
@@ -143,6 +144,9 @@ await registerFolderRoutes(app, db)
 
 // Component routes (M16 P5)
 await registerComponentRoutes(app, db)
+
+// Token usage scanning (M16 P4)
+await registerTokenUsageRoutes(app, db)
 
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)

@@ -61,6 +61,9 @@ importers:
       '@narrative/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@narrative/slide-model':
+        specifier: workspace:*
+        version: link:../../packages/slide-model
       '@sentry/node':
         specifier: ^8.51.0
         version: 8.55.1
