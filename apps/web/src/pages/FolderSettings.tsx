@@ -495,14 +495,15 @@ function TextStylesTab() {
                     : 'text-foreground hover:bg-accent',
                 ].join(' ')}
               >
-                {/* Mini preview */}
+                {/* Mini preview — forced white background so light token
+                    colors stay legible against the dark UI. */}
                 <span
-                  className="shrink-0 leading-none"
+                  className="shrink-0 grid h-7 w-8 place-items-center rounded bg-white leading-none"
                   style={{
                     fontFamily: style.family,
                     fontWeight: style.weight,
-                    fontSize: Math.min(style.size ?? 16, 16),
-                    color: typeof style.color === 'string' ? style.color : undefined,
+                    fontSize: Math.min(style.size ?? 16, 14),
+                    color: typeof style.color === 'string' ? style.color : '#0f172a',
                   }}
                   aria-hidden="true"
                 >
@@ -712,8 +713,9 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
         )}
       </SettingsFieldRow>
 
-      {/* Preview */}
-      <div className="mt-2 rounded-lg border border-border bg-surface-1 p-4">
+      {/* Preview — render on a white slide-like surface so the
+          token color is always legible regardless of editor theme. */}
+      <div className="mt-2 rounded-lg border border-border bg-white p-4 text-black">
         <p
           style={{
             fontFamily: style.family,
