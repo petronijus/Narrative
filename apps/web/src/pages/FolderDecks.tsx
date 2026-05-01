@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, LogOut, MoreVertical, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
+import { ChevronLeft, LogOut, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
@@ -244,16 +244,6 @@ function FolderDecksInner() {
                 </Button>
               </div>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigate(`/folder/${folderId}/settings`)}
-              aria-label="Folder settings"
-              className="gap-1.5"
-            >
-              <Settings className="h-4 w-4" aria-hidden="true" />
-              Settings
-            </Button>
             <Button
               onClick={() => void handleCreateDeck()}
               disabled={creating}
@@ -560,8 +550,8 @@ function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
           onClick={onOpenSettings}
           className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         >
-          <Settings className="h-3 w-3" aria-hidden="true" />
-          Edit in Settings
+          <Pencil className="h-3 w-3" aria-hidden="true" />
+          Edit
         </button>
       </div>
 
