@@ -18,7 +18,7 @@
 
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckPermissions, decks, folders } from '../db/schema.js'
+import { deckPermissions, decks, folders, components } from '../db/schema.js'
 import { findShareLink } from './shareLinks.js'
 
 // ---------------------------------------------------------------------------
@@ -172,6 +172,49 @@ export async function resolveDeckAccess(
   }
 
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Component access — M16 P5
+// ---------------------------------------------------------------------------
+
+export interface ComponentAccessResult {
+  role: 'owner'
+  reason: 'direct'
+}
+
+/**
+ * Resolves whether a userId may access a component's Hocuspocus Y.Doc.
+ *
+ * A component is folder-scoped: only the owning folder's owner may connect.
+ * Resolution:
+ *   1. Look up components.folder_id.
+ *   2. Delegate to resolveFolderAccess with that folderId.
+ *
+ * Returns { role: 'owner', reason: 'direct' } on success, or null on deny.
+ * `userId` must be non-null — share-link access is not supported.
+ */
+export async function resolveComponentAccess(
+  db: Database,
+  args: { componentId: string; userId: string | null },
+): Promise<ComponentAccessResult | null> {
+  if (!args.userId) return null
+
+  const [row] = await db
+    .select({ folderId: components.folderId })
+    .from(components)
+    .where(eq(components.id, args.componentId))
+    .limit(1)
+
+  if (!row) return null
+
+  const folderAccess = await resolveFolderAccess(db, {
+    folderId: row.folderId,
+    userId: args.userId,
+  })
+
+  if (!folderAccess) return null
+  return { role: 'owner', reason: 'direct' }
 }
 
 /**

@@ -28,7 +28,11 @@ import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
 import type { JwtVerifier } from '../auth/jwt.js'
-import { resolveDeckAccess, resolveFolderAccess } from '../auth/permissions.js'
+import {
+  resolveDeckAccess,
+  resolveFolderAccess,
+  resolveComponentAccess,
+} from '../auth/permissions.js'
 
 export interface HocuspocusServerOptions {
   port: number
@@ -101,6 +105,31 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
         data.context.role = access.role
 
         // Folders are always read-write for the owner.
+        connection.readOnly = false
+
+        console.log(
+          `[hocuspocus] authenticate → doc=${documentName} user=${userId} role=${access.role} reason=${access.reason}`,
+        )
+        return
+      }
+
+      if (documentName.startsWith('component:')) {
+        // Component doc — owner-only (folder owner), no share-link support.
+        const componentId = documentName.slice('component:'.length)
+
+        if (!userId) {
+          throw new Error('Forbidden')
+        }
+
+        const access = await resolveComponentAccess(db, { componentId, userId })
+        if (!access) {
+          throw new Error('Forbidden')
+        }
+
+        data.context.userId = userId
+        data.context.componentId = componentId
+        data.context.role = access.role
+
         connection.readOnly = false
 
         console.log(

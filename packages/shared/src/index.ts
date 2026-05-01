@@ -22,6 +22,8 @@ export type {
   TextListStyle,
   ImageObject,
   VideoObject,
+  ComponentInstanceObject,
+  ComponentInstanceOverrides,
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,
