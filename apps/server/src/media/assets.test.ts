@@ -32,6 +32,7 @@ const now = new Date('2026-04-20T10:00:00Z')
 const sampleAsset: MediaAsset = {
   id: 'asset-abc123',
   deckId: 'deck-1',
+  folderId: null,
   uploaderUserId: 'user-42',
   mimeType: 'image/jpeg',
   sizeBytes: 204800,
@@ -57,6 +58,7 @@ const sampleAsset: MediaAsset = {
 const sampleVideoAsset: MediaAsset = {
   id: 'asset-vid-001',
   deckId: 'deck-1',
+  folderId: null,
   uploaderUserId: 'user-42',
   mimeType: 'video/mp4',
   sizeBytes: 10485760,

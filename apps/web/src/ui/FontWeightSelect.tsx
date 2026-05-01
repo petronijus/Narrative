@@ -17,7 +17,8 @@
 
 import { useEffect, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
-import { useDeckFonts } from '../state/useDeckFonts.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
+import { SYSTEM_FONTS } from './FontFamilySelect.js'
 import {
   applyInlineFormatIfSelected,
   refocusActiveTextEdit,
@@ -68,7 +69,8 @@ function nearestWeight(target: number, available: ReadonlyArray<number>): number
 }
 
 export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
-  const { fonts } = useDeckFonts()
+  const folderFontsCtx = useFolderFontsOptional()
+  const fonts = folderFontsCtx?.fonts ?? []
 
   // Resolve the current value as a number (the legacy 'normal' / 'bold'
   // strings map to 400 / 700 in the picker UI).
@@ -78,8 +80,10 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
     return obj.fontWeight
   }, [obj.fontWeight])
 
-  // Is the selected family one of our custom uploads? If so, restrict
-  // the picker to its uploaded weights.
+  // Resolve the available weights for the active family:
+  // 1. Folder font upload → only the cuts actually uploaded.
+  // 2. System font stack → the curated list on SYSTEM_FONTS.
+  // 3. Unknown family / "System default" → the full 100..900 range.
   const primary = pickPrimaryFamily(obj.fontFamily)
   const customWeights = useMemo(() => {
     if (primary === null) return null
@@ -90,19 +94,25 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
     return [...set].sort((a, b) => a - b)
   }, [primary, fonts])
 
+  const systemWeights = useMemo(() => {
+    if (customWeights !== null) return null
+    if (obj.fontFamily === undefined || obj.fontFamily === '') return null
+    const sys = SYSTEM_FONTS.find((f) => f.value === obj.fontFamily)
+    return sys ? [...sys.weights] : null
+  }, [customWeights, obj.fontFamily])
+
+  const allowed = customWeights ?? systemWeights
   const options =
-    customWeights === null
-      ? ALL_WEIGHTS
-      : ALL_WEIGHTS.filter((w) => customWeights.includes(w.value))
+    allowed === null ? ALL_WEIGHTS : ALL_WEIGHTS.filter((w) => allowed.includes(w.value))
 
   // If the current weight isn't in the list (e.g. user just switched
   // family from System to a custom one with only 400 + 700), nudge
   // fontWeight to the nearest available so the rendered face matches
   // the picker label.
   useEffect(() => {
-    if (customWeights === null) return
-    if (customWeights.includes(currentNumeric)) return
-    const next = nearestWeight(currentNumeric, customWeights) as
+    if (allowed === null) return
+    if (allowed.includes(currentNumeric)) return
+    const next = nearestWeight(currentNumeric, allowed) as
       | 100
       | 200
       | 300
@@ -115,7 +125,7 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
     patch({ fontWeight: next } as SlideObjectPatch<TextObject>)
     // Intentionally not depending on `patch` — it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [primary, currentNumeric, customWeights?.join(',')])
+  }, [primary, currentNumeric, allowed?.join(',')])
 
   return (
     <div className="flex items-center gap-2" data-text-edit-keep-focus>
@@ -166,7 +176,15 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
         ].join(' ')}
       >
         {options.map((w) => (
-          <option key={w.value} value={w.value}>
+          <option
+            key={w.value}
+            value={w.value}
+            style={
+              obj.fontFamily !== undefined && obj.fontFamily !== ''
+                ? { fontFamily: obj.fontFamily, fontWeight: w.value }
+                : { fontWeight: w.value }
+            }
+          >
             {w.label}
           </option>
         ))}

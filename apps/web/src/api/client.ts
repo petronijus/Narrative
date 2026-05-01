@@ -73,6 +73,20 @@ export interface ApiClient {
     deckIds: string[],
     destFolderId: string,
   ): Promise<{ movedCount: number }>
+
+  // ---------------------------------------------------------------------------
+  // M16 P3 — Folder font API
+  // ---------------------------------------------------------------------------
+  /** List fonts uploaded to a folder. */
+  listFolderFonts(folderId: string): Promise<FolderFontSummary[]>
+  /**
+   * Upload a font file to a folder.
+   * Sends the raw file bytes as body with the file's MIME type as Content-Type.
+   * Optional original filename via X-Filename header for extension detection.
+   */
+  uploadFolderFont(folderId: string, file: File): Promise<FolderFontSummary>
+  /** Delete a folder font by asset id. */
+  deleteFolderFont(folderId: string, assetId: string): Promise<void>
 }
 
 export interface DeckSummary {
@@ -104,6 +118,26 @@ export interface FolderSummary {
   /** Number of decks currently in the folder. */
   deckCount: number
   createdAt: string
+}
+
+// ---------------------------------------------------------------------------
+// M16 P3 — Folder font types
+// ---------------------------------------------------------------------------
+
+/**
+ * A font asset uploaded to a folder and stored in MinIO.
+ * Returned by listFolderFonts / uploadFolderFont.
+ */
+export interface FolderFontSummary {
+  assetId: string
+  family: string
+  weight: number
+  style: 'normal' | 'italic'
+  postscriptName: string
+  /** Presigned MinIO URL — valid for ~1 h. Refresh by calling listFolderFonts again. */
+  url: string
+  sizeBytes: number
+  uploadedAt: string
 }
 
 export interface DeckPermission {
@@ -289,6 +323,47 @@ export function createApiClient(getToken: () => string | null): ApiClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deckIds, destFolderId }),
       }),
+
+    // -------------------------------------------------------------------------
+    // M16 P3 — Folder font methods
+    // -------------------------------------------------------------------------
+
+    listFolderFonts: async (folderId) => {
+      const data = await requestJson<{ fonts: FolderFontSummary[] }>(
+        `/api/folders/${folderId}/fonts`,
+      )
+      return data.fonts
+    },
+
+    uploadFolderFont: async (folderId, file) => {
+      const mime = file.type && file.type !== 'application/octet-stream' ? file.type : 'font/ttf'
+      const arrayBuf = await file.arrayBuffer()
+      const res = await request(`/api/folders/${folderId}/fonts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': mime,
+          'X-Filename': file.name,
+        },
+        body: arrayBuf,
+      })
+      if (!res.ok) {
+        let body: unknown
+        try {
+          body = await res.json()
+        } catch {
+          body = {}
+        }
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
+      }
+      return res.json() as Promise<FolderFontSummary>
+    },
+
+    deleteFolderFont: async (folderId, assetId) => {
+      const res = await request(`/api/folders/${folderId}/fonts/${assetId}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
   }
 }
 

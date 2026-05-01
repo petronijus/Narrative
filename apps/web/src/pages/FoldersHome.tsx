@@ -121,8 +121,7 @@ export function FoldersHome() {
     <div className="flex h-screen flex-col bg-background text-foreground">
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold tracking-tight">Narrative</h1>
+        <div className="flex items-center justify-end">
           <div className="flex items-center gap-3">
             {user !== null && (
               <div className="flex items-center gap-2">
@@ -159,6 +158,16 @@ export function FoldersHome() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
+        {/* Hero */}
+        <section className="mb-12 mt-12 text-center">
+          <h1 className="text-7xl md:text-8xl font-bold tracking-tight leading-none bg-gradient-to-b from-foreground to-muted-foreground/60 bg-clip-text text-transparent">
+            Narrative
+          </h1>
+          <p className="mt-4 text-base md:text-lg text-muted-foreground/80">
+            Pro tool for keynote masters
+          </p>
+        </section>
+
         {error !== null && (
           <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
             {error}

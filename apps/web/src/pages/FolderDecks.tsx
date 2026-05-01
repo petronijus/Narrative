@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, LogOut, MoreVertical, Pencil, Plus, Settings, Trash2 } from 'lucide-react'
+import { ChevronLeft, LogOut, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,8 @@ import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
 import type { DeckSummary, FolderSummary } from '../api/client.js'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
+import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
+import { FolderFontLoader } from '../state/FolderFontLoader.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -42,7 +44,12 @@ export function FolderDecks() {
   if (folderId === undefined) return null
   return (
     <FolderDocProvider folderId={folderId}>
-      <FolderDecksInner />
+      <FolderFontsProvider folderId={folderId}>
+        {/* Loader registers each folder font with document.fonts so the
+            styleguide preview renders in the actual face. */}
+        <FolderFontLoader />
+        <FolderDecksInner />
+      </FolderFontsProvider>
     </FolderDocProvider>
   )
 }
@@ -244,16 +251,6 @@ function FolderDecksInner() {
                 </Button>
               </div>
             )}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigate(`/folder/${folderId}/settings`)}
-              aria-label="Folder settings"
-              className="gap-1.5"
-            >
-              <Settings className="h-4 w-4" aria-hidden="true" />
-              Settings
-            </Button>
             <Button
               onClick={() => void handleCreateDeck()}
               disabled={creating}
@@ -542,10 +539,13 @@ interface FolderStyleguideProps {
 
 function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
   const { colors, textStyles } = useFolderTokens()
+  const { fonts } = useFolderFonts()
   const colorList = Object.values(colors)
   const styleList = Object.values(textStyles)
+  // Group fonts by family — multiple weights/styles share a chip.
+  const fontFamilies = Array.from(new Set(fonts.map((f) => f.family))).sort()
 
-  if (colorList.length === 0 && styleList.length === 0) {
+  if (colorList.length === 0 && styleList.length === 0 && fontFamilies.length === 0) {
     return null
   }
 
@@ -560,8 +560,8 @@ function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
           onClick={onOpenSettings}
           className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         >
-          <Settings className="h-3 w-3" aria-hidden="true" />
-          Edit in Settings
+          <Pencil className="h-3 w-3" aria-hidden="true" />
+          Edit
         </button>
       </div>
 
@@ -606,6 +606,30 @@ function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
               </div>
               <span className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/70">
                 {s.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Fonts row — show each uploaded family rendered in itself. */}
+      {fontFamilies.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/40 pt-3">
+          {fontFamilies.map((family) => (
+            <div key={family} className="flex flex-col items-start" title={family}>
+              <div className="rounded bg-white px-2 py-1 text-black">
+                <span
+                  className="leading-none"
+                  style={{
+                    fontFamily: `"${family}", system-ui, sans-serif`,
+                    fontSize: 18,
+                  }}
+                >
+                  Aa
+                </span>
+              </div>
+              <span className="mt-0.5 max-w-[120px] truncate text-[10px] text-muted-foreground/70">
+                {family}
               </span>
             </div>
           ))}

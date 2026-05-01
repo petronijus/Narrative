@@ -87,16 +87,6 @@ export {
 } from './deckGuides.js'
 export type { DeckGuidesContext } from './deckGuides.js'
 
-// Deck-level fonts (P15)
-export {
-  getDeckFontsCtx,
-  listDeckFonts,
-  addDeckFont,
-  removeDeckFont,
-  subscribeToDeckFonts,
-} from './deckFonts.js'
-export type { DeckFontsContext } from './deckFonts.js'
-
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 

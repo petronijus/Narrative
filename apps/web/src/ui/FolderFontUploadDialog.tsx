@@ -1,69 +1,61 @@
 /**
- * ui/FontUploadSheet.tsx
+ * ui/FolderFontUploadDialog.tsx
  *
- * P15: lightweight modal that lets the user pick a .ttf / .otf file
- * and (a) uploads it via the shared media tus pipeline, (b) writes
- * the resulting metadata to the deck Y.Doc so every collaborator
- * sees it, and (c) lists the deck's existing fonts with a delete
- * button (uploader / owner only).
+ * M16 P3 (consolidated): the in-editor "upload custom font" entry point.
+ *
+ * Replaces the old deck-scoped FontUploadSheet. Posts the file directly
+ * to /api/folders/<folderId>/fonts via the API client's uploadFolderFont
+ * helper (multipart-free raw binary upload). On success, refreshes the
+ * folder fonts cache so FolderFontLoader picks up the new face.
+ *
+ * The folderId is read from DeckRoleContext — the caller (the inspector)
+ * only renders the button when a deck is open, which guarantees a
+ * folderId once the deck row has loaded. While folderId is null we
+ * silently disable the upload button (rare race condition).
+ *
+ * Also lists the folder's existing fonts with a delete button.
  */
 
 import { useCallback, useRef, useState } from 'react'
 import { Loader2, Trash2, Upload, X } from 'lucide-react'
-import { addDeckFont, removeDeckFont } from '@narrative/slide-model'
-import type { DeckFontEntry } from '@narrative/shared'
-import { useDeckFonts } from '../state/useDeckFonts.js'
-import { useMediaUpload } from '../state/useMediaUpload.js'
-import { useAuth } from '../state/AuthContext.js'
+import { useApi } from '../api/client.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
+import { useDeckRole } from '../state/DeckRoleContext.js'
 
-interface FontUploadSheetProps {
+interface FolderFontUploadDialogProps {
   onClose(): void
 }
 
-export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
-  const { fonts, fontsCtx } = useDeckFonts()
-  const { startUpload } = useMediaUpload()
-  const { user } = useAuth()
+export function FolderFontUploadDialog({ onClose }: FolderFontUploadDialogProps) {
+  const api = useApi()
+  const { folderId } = useDeckRole()
+  const folderFontsCtx = useFolderFontsOptional()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const fonts = folderFontsCtx?.fonts ?? []
+
   const onPick = useCallback(
-    (file: File) => {
+    async (file: File) => {
+      if (!folderId) {
+        setError('No folder context — cannot upload a folder font here.')
+        return
+      }
       setError(null)
       setBusy(true)
-      const userId = user?.sub ?? 'unknown'
-      startUpload(file, {
-        onDone: (entry) => {
-          setBusy(false)
-          if (entry.status !== 'done' || entry.assetId === undefined) {
-            setError(entry.error ?? 'Upload failed')
-            return
-          }
-          if (
-            entry.fontFamily === undefined ||
-            entry.fontWeight === undefined ||
-            entry.fontStyle === undefined ||
-            entry.fontPostscriptName === undefined
-          ) {
-            setError('Server returned no font metadata — is this a valid TTF / OTF?')
-            return
-          }
-          const deckEntry: DeckFontEntry = {
-            id: entry.assetId,
-            family: entry.fontFamily,
-            weight: entry.fontWeight,
-            style: entry.fontStyle,
-            postscriptName: entry.fontPostscriptName,
-            addedBy: userId,
-            addedAt: Date.now(),
-            originalFilename: entry.filename,
-          }
-          addDeckFont(fontsCtx, deckEntry)
-        },
-      })
+      try {
+        await api.uploadFolderFont(folderId, file)
+        await folderFontsCtx?.refresh()
+      } catch (err: unknown) {
+        const body = (err as { body?: { error?: string } }).body
+        const msg = body?.error ?? (err instanceof Error ? err.message : 'Upload failed')
+        setError(msg)
+      } finally {
+        setBusy(false)
+      }
     },
-    [startUpload, user, fontsCtx],
+    [api, folderId, folderFontsCtx],
   )
 
   const onDrop = useCallback(
@@ -71,7 +63,7 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
       e.preventDefault()
       e.stopPropagation()
       const file = e.dataTransfer.files?.[0]
-      if (file) onPick(file)
+      if (file) void onPick(file)
     },
     [onPick],
   )
@@ -81,6 +73,20 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
   }, [])
+
+  const onDelete = useCallback(
+    async (assetId: string) => {
+      if (!folderId) return
+      setError(null)
+      try {
+        await api.deleteFolderFont(folderId, assetId)
+        await folderFontsCtx?.refresh()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Delete failed')
+      }
+    },
+    [api, folderId, folderFontsCtx],
+  )
 
   return (
     <div
@@ -102,7 +108,7 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
           <X className="h-4 w-4" aria-hidden="true" />
         </button>
 
-        <h2 className="text-sm font-semibold">Custom fonts</h2>
+        <h2 className="text-sm font-semibold">Folder fonts</h2>
 
         <div
           onDrop={onDrop}
@@ -120,15 +126,17 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
           ) : (
             <Upload className="h-5 w-5 text-foreground/70" aria-hidden="true" />
           )}
-          <span>{busy ? 'Uploading…' : 'Drop a .ttf or .otf here, or click to choose'}</span>
+          <span>
+            {busy ? 'Uploading…' : 'Drop a .ttf, .otf, or .woff2 here, or click to choose'}
+          </span>
           <input
             ref={inputRef}
             type="file"
-            accept=".ttf,.otf,font/ttf,font/otf,font/sfnt,application/font-ttf,application/font-otf,application/x-font-ttf,application/x-font-otf,application/x-font-opentype,application/x-font-truetype,application/vnd.ms-opentype"
+            accept=".ttf,.otf,.woff2,font/ttf,font/otf,font/woff2"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0]
-              if (file) onPick(file)
+              if (file) void onPick(file)
               // Reset so re-picking the same file fires onChange.
               e.currentTarget.value = ''
             }}
@@ -144,12 +152,12 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
         {fonts.length > 0 && (
           <>
             <h3 className="mt-1 text-xs font-medium text-muted-foreground">
-              In this deck ({fonts.length})
+              In this folder ({fonts.length})
             </h3>
             <ul className="flex max-h-48 flex-col gap-1 overflow-auto">
               {fonts.map((f) => (
                 <li
-                  key={f.id}
+                  key={f.assetId}
                   className="flex items-center gap-2 rounded border border-border px-2 py-1 text-xs"
                 >
                   <span className="flex-1 truncate" style={{ fontFamily: f.family }}>
@@ -160,7 +168,7 @@ export function FontUploadSheet({ onClose }: FontUploadSheetProps) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => removeDeckFont(fontsCtx, f.id)}
+                    onClick={() => void onDelete(f.assetId)}
                     aria-label={`Remove ${f.family}`}
                     title="Remove"
                     className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-destructive/20 hover:text-destructive"

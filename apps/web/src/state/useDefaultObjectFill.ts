@@ -38,6 +38,8 @@ export function useDefaultObjectFill(): {
     primaryHex,
     fillDefaults: primaryHex !== undefined ? { fill: primaryHex } : {},
     strokeDefaults: primaryHex !== undefined ? { stroke: primaryHex } : {},
-    textColorDefaults: primaryHex !== undefined ? { color: primaryHex } : {},
+    // Text always defaults to black — accent colors are too saturated
+    // to read as body / heading copy in 99% of slides.
+    textColorDefaults: { color: 0x000000 },
   }
 }
