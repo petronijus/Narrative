@@ -22,12 +22,32 @@ import { Button } from '@/components/ui/button'
 import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
 import type { DeckSummary, FolderSummary } from '../api/client.js'
+import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
 // ---------------------------------------------------------------------------
 
+/**
+ * Outer wrapper — pulls folderId from the URL and mounts the folder
+ * Y.Doc provider so the inner page can render the live styleguide
+ * (colors / text styles).
+ */
 export function FolderDecks() {
+  const { folderId } = useParams<{ folderId: string }>()
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (folderId === undefined) void navigate('/')
+  }, [folderId, navigate])
+  if (folderId === undefined) return null
+  return (
+    <FolderDocProvider folderId={folderId}>
+      <FolderDecksInner />
+    </FolderDocProvider>
+  )
+}
+
+function FolderDecksInner() {
   const { folderId } = useParams<{ folderId: string }>()
   const navigate = useNavigate()
   const api = useApi()
@@ -252,6 +272,10 @@ export function FolderDecks() {
           <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
             {error}
           </div>
+        )}
+
+        {folderId !== undefined && (
+          <FolderStyleguide onOpenSettings={() => void navigate(`/folder/${folderId}/settings`)} />
         )}
 
         {loading ? (
@@ -504,5 +528,89 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename, onMoveRequest }
       </div>
       <p className="mt-0.5 text-xs text-muted-foreground/80">{date}</p>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// FolderStyleguide — compact preview of the folder's tokens above the
+// deck grid, with a shortcut to the settings page.
+// ---------------------------------------------------------------------------
+
+interface FolderStyleguideProps {
+  onOpenSettings: () => void
+}
+
+function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
+  const { colors, textStyles } = useFolderTokens()
+  const colorList = Object.values(colors)
+  const styleList = Object.values(textStyles)
+
+  if (colorList.length === 0 && styleList.length === 0) {
+    return null
+  }
+
+  return (
+    <section className="panel mb-6 rounded-xl border border-border p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">
+          Style guide
+        </h2>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <Settings className="h-3 w-3" aria-hidden="true" />
+          Edit in Settings
+        </button>
+      </div>
+
+      {/* Colors row */}
+      {colorList.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          {colorList.map((c) => (
+            <div
+              key={c.id}
+              title={`${c.name} — ${c.value}`}
+              className="h-6 w-6 shrink-0 rounded border border-border-strong/60 shadow-inner"
+              style={{ backgroundColor: c.value }}
+              aria-label={c.name}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Text styles row — render each on a small white chip so any
+          token color is legible against the dark UI. */}
+      {styleList.length > 0 && (
+        <div className="flex flex-wrap items-end gap-2">
+          {styleList.map((s) => (
+            <div
+              key={s.id}
+              className="flex flex-col items-start"
+              title={`${s.name} — ${s.family} ${s.weight} ${s.size}px`}
+            >
+              <div className="rounded bg-white px-2 py-1 text-black">
+                <span
+                  className="leading-none"
+                  style={{
+                    fontFamily: s.family,
+                    fontWeight: s.weight,
+                    // Cap the chip preview size so big "Title" styles still fit.
+                    fontSize: Math.min(s.size ?? 16, 22),
+                    color: typeof s.color === 'string' ? s.color : '#0f172a',
+                  }}
+                >
+                  Aa
+                </span>
+              </div>
+              <span className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/70">
+                {s.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
