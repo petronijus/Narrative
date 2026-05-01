@@ -60,7 +60,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import { ColorInput } from './ColorInput.js'
+import { TokenColorInput } from './TokenColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
@@ -1720,7 +1720,7 @@ function BackgroundSection({
 
         {current.kind === 'color' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
+            <TokenColorInput
               value={numberToHex(current.color)}
               onChange={(hex) =>
                 updateSlideBackground(deckCtx, slideId, {
@@ -2419,7 +2419,7 @@ function StrokeBody({
         </select>
 
         <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-          <ColorInput
+          <TokenColorInput
             value={strokeHex}
             onChange={(hex) =>
               patch(
@@ -2590,7 +2590,7 @@ function FillBody({
 
         {mode === 'solid' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
+            <TokenColorInput
               value={solidHex}
               onChange={(hex) => patch({ fill: hexToNumber(hex) })}
               ariaLabel="Fill color"
@@ -2921,7 +2921,7 @@ function GradientPreviewBar({
             {/* Hidden ColorInput — popover anchors to its (invisible)
                 swatch trigger, which sits exactly under the handle. */}
             <div className="pointer-events-none absolute inset-0 opacity-0">
-              <ColorInput
+              <TokenColorInput
                 value={numberToHex(stop.color)}
                 onChange={(hex) => onUpdate(idx, { color: hexToNumber(hex) })}
                 alpha={stop.alpha ?? 1}
@@ -2982,7 +2982,7 @@ function GradientStopRow({
         className="w-10 flex-shrink-0 rounded-md border border-input field-surface px-1 py-0.5 text-[11px] text-foreground focus:border-ring focus:outline-none"
       />
       <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-input field-surface px-1">
-        <ColorInput
+        <TokenColorInput
           value={numberToHex(stop.color)}
           onChange={(hex) => onChange({ color: hexToNumber(hex) })}
           ariaLabel="Stop color"
@@ -3127,7 +3127,7 @@ function LineStrokeSection({
       <div className="flex items-center gap-2">
         <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Color</span>
         <div className="flex flex-1 items-center gap-1.5">
-          <ColorInput
+          <TokenColorInput
             value={strokeHex}
             onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
             ariaLabel="Stroke color"
@@ -3381,7 +3381,7 @@ function ShadowControls({
     <div className="flex flex-col gap-1.5 pt-1">
       {/* Color swatch + hex (Fill-style) + X / Y offsets in one row. */}
       <div className="flex w-full min-w-0 items-center gap-1">
-        <ColorInput
+        <TokenColorInput
           value={numberToHex(colourAsNumber(shadow.color))}
           onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
           ariaLabel="Shadow color"
@@ -3873,7 +3873,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             alpha popover. No "Color" label; context is the Text panel. */}
         <div data-text-edit-keep-focus>
           <div className="flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
+            <TokenColorInput
               value={numberToHex(colourAsNumber(selAttrs?.color ?? obj.color))}
               onChange={(hex) => {
                 // The picker fires onChange continuously while the user
@@ -3952,7 +3952,7 @@ function TextSection({ obj, patch }: TextSectionProps) {
             />
             {obj.stroke !== undefined && (
               <>
-                <ColorInput
+                <TokenColorInput
                   value={numberToHex(colourAsNumber(obj.stroke))}
                   onChange={(hex) =>
                     patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)

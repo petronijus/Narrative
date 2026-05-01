@@ -84,9 +84,10 @@ export interface ColorInputProps {
    * When provided alongside `onTokenSelect`, clicking a swatch links the
    * fill to that token. `activeTokenRef` highlights the current link.
    */
-  tokenColors?: ColorTokenSnapshot[]
-  activeTokenRef?: TokenRef | null
-  onTokenSelect?: (ref: TokenRef) => void
+  tokenColors?: ColorTokenSnapshot[] | undefined
+  activeTokenRef?: TokenRef | null | undefined
+  onTokenSelect?: ((ref: TokenRef) => void) | undefined
+  onOpenFolderSettings?: (() => void) | undefined
   /**
    * When the parent fill is linked to a token, render this label (the
    * token name) in place of the hex input + an ✕ Unlink button that
@@ -95,11 +96,6 @@ export interface ColorInputProps {
    */
   linkedLabel?: string | undefined
   onUnlink?: (() => void) | undefined
-  /**
-   * Optional handler for the "+" button next to the folder palette
-   * row — opens the folder's color settings editor.
-   */
-  onOpenFolderSettings?: (() => void) | undefined
 }
 
 const CHECKER_BG =
@@ -148,12 +144,21 @@ export function ColorInput({
   const commitAlpha = onAlphaCommit ?? onAlphaChange
   const { colors: recentColors, push } = useRecentColors()
   const [open, setOpen] = useState(false)
+
   // When a folder-token swatch is clicked we close the popover without
   // pushing the previous hex into the recent-colors history (the user
   // didn't actually pick a hex).
   const skipCloseCommitRef = useRef(false)
 
   const commit = onCommit ?? onChange
+
+  // ColorInput is intentionally context-free; the auto-pull (folder
+  // palette + Settings link + hex fallback for non-token fields) lives
+  // in <TokenColorInput> so tests / non-editor callers don't need a
+  // Router or FolderDocProvider parent.
+  const effectiveTokenColors = tokenColors
+  const effectiveOnOpenFolderSettings = onOpenFolderSettings
+  const effectiveOnTokenSelect = onTokenSelect
 
   // Local draft for the hex input. The parent's `value` is the source
   // of truth, but committing only valid `#RRGGBB` strings means
@@ -363,60 +368,62 @@ export function ColorInput({
 
             {/* M16 P2: folder palette above Recents inside the popover.
                 Clicking a swatch links the fill to that token. */}
-            {tokenColors !== undefined && tokenColors.length > 0 && onTokenSelect !== undefined && (
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                    Folder palette
-                  </p>
-                  {onOpenFolderSettings !== undefined && (
-                    <button
-                      type="button"
-                      title="Edit folder colors"
-                      aria-label="Edit folder colors"
-                      onClick={() => {
-                        skipCloseCommitRef.current = true
-                        setOpen(false)
-                        onOpenFolderSettings()
-                      }}
-                      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
-                    >
-                      <Plus className="h-3 w-3" aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Folder palette">
-                  {tokenColors.map((c) => {
-                    const activeId =
-                      activeTokenRef !== null && activeTokenRef !== undefined
-                        ? (activeTokenRef.$token.split('.')[1] ?? null)
-                        : null
-                    const isActive = activeId === c.id
-                    return (
+            {effectiveTokenColors !== undefined &&
+              effectiveTokenColors.length > 0 &&
+              effectiveOnTokenSelect !== undefined && (
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                      Folder palette
+                    </p>
+                    {effectiveOnOpenFolderSettings !== undefined && (
                       <button
-                        key={c.id}
                         type="button"
-                        title={`${c.name}\n${c.value.toUpperCase()}`}
-                        aria-label={`Apply token: ${c.name}`}
-                        aria-pressed={isActive}
+                        title="Edit folder colors"
+                        aria-label="Edit folder colors"
                         onClick={() => {
                           skipCloseCommitRef.current = true
-                          onTokenSelect({ $token: `colors.${c.id}` })
                           setOpen(false)
+                          effectiveOnOpenFolderSettings()
                         }}
-                        className={[
-                          'h-5 w-5 rounded-sm border transition',
-                          isActive
-                            ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                            : 'border-border hover:border-border-strong',
-                        ].join(' ')}
-                        style={{ background: c.value }}
-                      />
-                    )
-                  })}
+                        className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+                      >
+                        <Plus className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Folder palette">
+                    {effectiveTokenColors.map((c) => {
+                      const activeId =
+                        activeTokenRef !== null && activeTokenRef !== undefined
+                          ? (activeTokenRef.$token.split('.')[1] ?? null)
+                          : null
+                      const isActive = activeId === c.id
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          title={`${c.name}\n${c.value.toUpperCase()}`}
+                          aria-label={`Apply token: ${c.name}`}
+                          aria-pressed={isActive}
+                          onClick={() => {
+                            skipCloseCommitRef.current = true
+                            effectiveOnTokenSelect({ $token: `colors.${c.id}` })
+                            setOpen(false)
+                          }}
+                          className={[
+                            'h-5 w-5 rounded-sm border transition',
+                            isActive
+                              ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                              : 'border-border hover:border-border-strong',
+                          ].join(' ')}
+                          style={{ background: c.value }}
+                        />
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             {/* Recent colors swatch row inside the popover. */}
             {recentColors.length > 0 && (

@@ -95,8 +95,14 @@ let mockTokenSnapshot: FolderTokensSnapshot = {
   effectStyles: {},
 }
 
+vi.mock('./TokenColorInput', async () => {
+  const actual = await vi.importActual<typeof import('./ColorInput')>('./ColorInput')
+  return { TokenColorInput: actual.ColorInput }
+})
+
 vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => mockTokenSnapshot,
+  useFolderTokensOptional: () => mockTokenSnapshot,
   useFolderMutations: () => ({
     addToken: vi.fn(),
     updateToken: vi.fn(),

@@ -398,6 +398,16 @@ export function useFolderTokens(): FolderTokensSnapshot {
 }
 
 /**
+ * Like {@link useFolderTokens} but returns null when no provider is
+ * mounted. Use from shared widgets (color pickers, etc.) that should
+ * gracefully degrade outside the editor / folder context.
+ */
+export function useFolderTokensOptional(): FolderTokensSnapshot | null {
+  const ctx = useContext(FolderDocContext)
+  return ctx ? ctx.tokens : null
+}
+
+/**
  * Returns the folder mutation helpers.
  * Must be used inside `<FolderDocProvider>`.
  */

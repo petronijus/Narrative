@@ -75,6 +75,7 @@ import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
+import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
 import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -433,6 +434,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { pathPointsId, enterPathPoints, exitPathPoints } = usePathPointsMode()
   const { activeTool, setActiveTool } = useTool()
+  const objectDefaults = useDefaultObjectFill()
   // P15: collapse state for the left (Slides) and right (Inspector)
   // sidebars. Persisted per-device via localStorage. Mirrors the
   // existing collapse pattern on AnimationTimeline + SlideNotesPanel.
@@ -1193,11 +1195,18 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           // Tiny-drag fallback — treat as click-to-create with default size.
           const minSize = 6
           let created: { id: string } | null = null
+          const colorDefaults =
+            dr.tool === 'line' || dr.tool === 'arrow'
+              ? objectDefaults.strokeDefaults
+              : dr.tool === 'text'
+                ? objectDefaults.textColorDefaults
+                : objectDefaults.fillDefaults
           if (w < minSize && h < minSize) {
             created = createObjectOfType(mutationCtx, dr.tool, {
               x: dr.startX,
               y: dr.startY,
-            })
+              ...colorDefaults,
+            } as Parameters<typeof createObjectOfType>[2])
           } else if (dr.tool === 'line' || dr.tool === 'arrow') {
             created = createObjectOfType(mutationCtx, dr.tool, {
               x,
@@ -1206,9 +1215,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
               height: h,
               p1: { x: dr.startX - x, y: dr.startY - y },
               p2: { x: cx - x, y: cy - y },
-            })
+              ...colorDefaults,
+            } as Parameters<typeof createObjectOfType>[2])
           } else {
-            created = createObjectOfType(mutationCtx, dr.tool, { x, y, width: w, height: h })
+            created = createObjectOfType(mutationCtx, dr.tool, {
+              x,
+              y,
+              width: w,
+              height: h,
+              ...colorDefaults,
+            } as Parameters<typeof createObjectOfType>[2])
           }
           // P15: select the freshly created object so the user can
           // immediately drag / resize / edit without re-clicking. Mirrors

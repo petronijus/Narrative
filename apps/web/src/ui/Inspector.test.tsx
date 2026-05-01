@@ -244,8 +244,14 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
 })
 
 // M16 P2: FolderDocProvider — empty token snapshot so Inspector renders without throwing
+vi.mock('./TokenColorInput', async () => {
+  const actual = await vi.importActual<typeof import('./ColorInput')>('./ColorInput')
+  return { TokenColorInput: actual.ColorInput }
+})
+
 vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
+  useFolderTokensOptional: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderMutations: () => ({
     addToken: vi.fn(),
     updateToken: vi.fn(),
