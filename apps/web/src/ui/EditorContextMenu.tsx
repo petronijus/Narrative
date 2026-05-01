@@ -56,7 +56,11 @@ import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
 import { useApi } from '../api/client.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { nanoid } from 'nanoid'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useAuth } from '../state/AuthContext.js'
+import { promoteToComponent } from '@narrative/slide-model'
+import { writeComponentMasterTree } from '../state/writeComponentMasterTree.js'
 import type { SlideObject, SlideObjectPatch, SlideObjectType } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -93,6 +97,9 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const defaults = useDefaultObjectFill()
   const api = useApi()
   const { folderId } = useDeckRole()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
+  const { token } = useAuth()
 
   // Promote status — used to show a brief feedback toast text
   const [promoteStatus, setPromoteStatus] = useState<'idle' | 'promoting' | 'done' | 'error'>(
@@ -243,77 +250,78 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   /**
    * Promote the current selection to a shared component.
    *
-   * Strategy for P5:
-   * 1. Compute the bounding box of the selection (union of x/y/width/height).
-   * 2. Call api.createComponent() to mint a server-side component record.
-   * 3. In a single Yjs transaction on the slide's objects map:
-   *    - Remove the promoted objects from the slide.
-   *    - Insert a single `componentInstance` node at the bbox top-left,
-   *      sized to the bbox.
-   * 4. Select the new instance.
-   *
-   * The actual subtree write into the component Y.Doc (via ComponentDocProvider
-   * + promoteToComponent from slide-model) is left as a TODO because
-   * those exports are not yet available from state-sync.
-   *
-   * TODO(P5: state-sync) — once useComponentDoc + promoteToComponent land,
-   * open the component doc here and write the subtree in the same transaction.
+   * Order of operations:
+   * 1. Build a serialisable plan via `promoteToComponent` (slide-model).
+   * 2. Mint the Postgres row with the plan's `componentId` so server +
+   *    Y.Doc agree on the master id.
+   * 3. Open a transient Hocuspocus connection to the new component doc
+   *    and write masterTree + masterAnimations into it.
+   * 4. In one slide-level Yjs transaction, remove the promoted objects
+   *    and insert the instance node — undo restores the originals
+   *    atomically because everything happens inside a single transact.
+   * 5. Select the new instance.
    */
   const handlePromoteToComponent = useCallback((): void => {
     if (mutationCtx === null || folderId === null) return
+    if (deckCtx === null || activeSlideId === null) return
     const targets = resolveTargets()
     if (targets.length === 0) return
 
-    // Compute union bounding box
-    const left = Math.min(...targets.map((o) => o.x))
-    const top = Math.min(...targets.map((o) => o.y))
-    const right = Math.max(...targets.map((o) => o.x + o.width))
-    const bottom = Math.max(...targets.map((o) => o.y + o.height))
-    const bboxW = right - left
-    const bboxH = bottom - top
-
     setPromoteStatus('promoting')
 
-    void api
-      .createComponent(folderId, { name: 'Untitled component' })
-      .then((component) => {
-        // Generate a stable id for the instance slide-node
-        const instanceId = nanoid()
+    let plan: ReturnType<typeof promoteToComponent>
+    try {
+      plan = promoteToComponent(
+        deckCtx,
+        activeSlideId,
+        targets.map((t) => t.id),
+        folderId,
+      )
+    } catch (err) {
+      console.warn('[EditorContextMenu] promote-to-component plan failed', err)
+      setPromoteStatus('error')
+      window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      return
+    }
 
-        // Atomic Yjs transaction: remove originals, insert instance
-        mutationCtx.doc.transact(() => {
-          // Remove promoted objects from the slide
-          for (const obj of targets) {
-            removeObject(mutationCtx, obj.id)
-          }
-          // Insert the component instance at the bbox origin
-          addObject(mutationCtx, {
-            id: instanceId,
-            type: 'componentInstance',
-            componentId: component.id,
-            componentName: component.name,
-            x: left,
-            y: top,
-            width: Math.max(bboxW, 1),
-            height: Math.max(bboxH, 1),
-            rotation: 0,
-            opacity: 1,
-          })
+    void (async () => {
+      try {
+        const component = await api.createComponent(folderId, {
+          id: plan.componentId,
+          name: 'Untitled component',
         })
 
-        // Select the new instance
-        selectOne(instanceId)
-        setPromoteStatus('done')
+        await writeComponentMasterTree({
+          componentId: component.id,
+          masterTree: plan.masterTree,
+          masterAnimations: plan.masterAnimations,
+          token,
+        })
 
-        // Reset status after 2 s
+        // Atomic slide-level transaction: remove originals, add instance.
+        mutationCtx.doc.transact(() => {
+          for (const id of plan.removedObjectIds) {
+            removeObject(mutationCtx, id)
+          }
+          addObject(mutationCtx, plan.instanceObject)
+        })
+
+        selectOne(plan.instanceObject.id)
+        setPromoteStatus('done')
         window.setTimeout(() => setPromoteStatus('idle'), 2000)
-      })
-      .catch((err: unknown) => {
-        console.error('[EditorContextMenu] promote to component failed:', err)
+      } catch (err) {
+        // Cleanup-on-failure is intentionally NOT performed here:
+        // - The Postgres row stays — the user can delete it from the
+        //   Components tab in folder settings if it's empty.
+        // - The slide is unchanged because the transaction never fired.
+        // Surface the failure so the user knows nothing was promoted.
+
+        console.warn('[EditorContextMenu] promote to component failed', err)
         setPromoteStatus('error')
         window.setTimeout(() => setPromoteStatus('idle'), 2000)
-      })
-  }, [api, folderId, mutationCtx, selectOne])
+      }
+    })()
+  }, [api, folderId, mutationCtx, deckCtx, activeSlideId, selectOne, token])
 
   const handleDelete = (): void => {
     if (mutationCtx === null) return

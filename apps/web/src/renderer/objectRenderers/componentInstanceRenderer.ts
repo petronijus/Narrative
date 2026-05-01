@@ -35,6 +35,10 @@ const GRAPHICS_TAG = Symbol('compInstGraphics')
 const LABEL_TAG = Symbol('compInstLabel')
 const DATA_TAG = Symbol('compInstData')
 
+// `Container` from Pixi v8 has no public typing for arbitrary symbol-keyed
+// slots, so we widen to `any` for the symbol-key access pattern. Sticking
+// the slots on the node directly (rather than a side Map) means GC is
+// automatic when the node is destroyed by the reconciler.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asAny = (node: Container): any => node as any
 

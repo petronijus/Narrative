@@ -97,18 +97,25 @@ export function ComponentDocProvider({ componentId, children }: ComponentDocProv
     }
   }, [componentId, token])
 
-  if (value === null) {
-    // Render children before sync to avoid a layout flash.
-    const placeholder: ComponentDocContextValue = {
-      doc: new Y.Doc(),
-      synced: false,
-    }
-    return (
-      <ComponentDocContext.Provider value={placeholder}>{children}</ComponentDocContext.Provider>
-    )
+  // Stable placeholder doc reused across renders before the real one is
+  // wired up. Without this we'd `new Y.Doc()` every render and never
+  // destroy the orphan instances — a slow memory leak.
+  const placeholderRef = useRef<ComponentDocContextValue | null>(null)
+  if (placeholderRef.current === null) {
+    placeholderRef.current = { doc: new Y.Doc(), synced: false }
   }
+  useEffect(() => {
+    return () => {
+      placeholderRef.current?.doc.destroy()
+      placeholderRef.current = null
+    }
+  }, [])
 
-  return <ComponentDocContext.Provider value={value}>{children}</ComponentDocContext.Provider>
+  return (
+    <ComponentDocContext.Provider value={value ?? placeholderRef.current}>
+      {children}
+    </ComponentDocContext.Provider>
+  )
 }
 
 // ---------------------------------------------------------------------------
