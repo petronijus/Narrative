@@ -23,6 +23,8 @@ import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
 import type { DeckSummary, FolderSummary } from '../api/client.js'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
+import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
+import { FolderFontLoader } from '../state/FolderFontLoader.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -42,7 +44,12 @@ export function FolderDecks() {
   if (folderId === undefined) return null
   return (
     <FolderDocProvider folderId={folderId}>
-      <FolderDecksInner />
+      <FolderFontsProvider folderId={folderId}>
+        {/* Loader registers each folder font with document.fonts so the
+            styleguide preview renders in the actual face. */}
+        <FolderFontLoader />
+        <FolderDecksInner />
+      </FolderFontsProvider>
     </FolderDocProvider>
   )
 }
@@ -532,10 +539,13 @@ interface FolderStyleguideProps {
 
 function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
   const { colors, textStyles } = useFolderTokens()
+  const { fonts } = useFolderFonts()
   const colorList = Object.values(colors)
   const styleList = Object.values(textStyles)
+  // Group fonts by family — multiple weights/styles share a chip.
+  const fontFamilies = Array.from(new Set(fonts.map((f) => f.family))).sort()
 
-  if (colorList.length === 0 && styleList.length === 0) {
+  if (colorList.length === 0 && styleList.length === 0 && fontFamilies.length === 0) {
     return null
   }
 
@@ -596,6 +606,30 @@ function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
               </div>
               <span className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/70">
                 {s.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Fonts row — show each uploaded family rendered in itself. */}
+      {fontFamilies.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/40 pt-3">
+          {fontFamilies.map((family) => (
+            <div key={family} className="flex flex-col items-start" title={family}>
+              <div className="rounded bg-white px-2 py-1 text-black">
+                <span
+                  className="leading-none"
+                  style={{
+                    fontFamily: `"${family}", system-ui, sans-serif`,
+                    fontSize: 18,
+                  }}
+                >
+                  Aa
+                </span>
+              </div>
+              <span className="mt-0.5 max-w-[120px] truncate text-[10px] text-muted-foreground/70">
+                {family}
               </span>
             </div>
           ))}

@@ -25,6 +25,7 @@ import {
   useFolderMutations,
 } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
+import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
 import { MAX_COLORS } from '../state/defaultTokens.js'
 import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slide-model'
@@ -199,6 +200,10 @@ interface FontsTabProps {
 function FontsTab({ folderId }: FontsTabProps) {
   return (
     <FolderFontsProvider folderId={folderId}>
+      {/* Register every uploaded font with document.fonts so the previews
+          below render in the actual face instead of falling back to
+          system-ui. Mirrors the loader DeckShell mounts during editing. */}
+      <FolderFontLoader />
       <FontsTabInner folderId={folderId} />
     </FolderFontsProvider>
   )
@@ -272,17 +277,6 @@ function FontsTabInner({ folderId }: FontsTabProps) {
     <div className="px-8 py-6">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-foreground">Folder fonts</h2>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="gap-1.5"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          aria-label="Upload font"
-        >
-          <Upload className="h-4 w-4" aria-hidden="true" />
-          {uploading ? 'Uploading…' : 'Upload font'}
-        </Button>
       </div>
 
       {/* Hidden file input */}
@@ -296,15 +290,18 @@ function FontsTabInner({ folderId }: FontsTabProps) {
         onChange={(e) => void handleFiles(e.target.files)}
       />
 
-      {/* Drop zone */}
-      <div
-        role="region"
-        aria-label="Font drop zone"
+      {/* Drop zone — also clickable to open the file picker */}
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={uploading}
+        aria-label="Upload font — drop or click to choose"
         className={[
-          'mb-4 flex flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
+          'mb-4 flex w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
           isDragOver
             ? 'border-primary bg-primary/5 text-foreground'
-            : 'border-border text-muted-foreground',
+            : 'border-border text-muted-foreground hover:border-border-strong hover:text-foreground',
+          uploading ? 'pointer-events-none opacity-60' : '',
         ].join(' ')}
         onDragOver={(e) => {
           e.preventDefault()
@@ -317,10 +314,12 @@ function FontsTabInner({ folderId }: FontsTabProps) {
           void handleFiles(e.dataTransfer.files)
         }}
       >
-        <Upload className="mb-2 h-6 w-6 opacity-40" aria-hidden="true" />
-        <p className="text-sm">Drop .ttf, .otf, or .woff2 files here</p>
-        <p className="mt-0.5 text-xs opacity-60">or use the Upload font button above</p>
-      </div>
+        <Upload className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
+        <p className="text-sm font-medium">
+          {uploading ? 'Uploading…' : 'Drop .ttf, .otf, or .woff2 here'}
+        </p>
+        <p className="mt-0.5 text-xs opacity-60">or click to choose a file</p>
+      </button>
 
       {/* Error messages */}
       {(error !== null || uploadError !== null) && (
@@ -329,15 +328,15 @@ function FontsTabInner({ folderId }: FontsTabProps) {
         </div>
       )}
 
-      {/* Font list */}
+      {/* Font list — grouped by family so multiple weights/styles share a row. */}
       {loading && fonts.length === 0 ? (
         <p className="text-xs text-muted-foreground/70">Loading…</p>
       ) : fonts.length === 0 ? (
         <p className="text-xs text-muted-foreground/70">No fonts uploaded yet.</p>
       ) : (
         <ul role="list" aria-label="Folder fonts" className="flex flex-col gap-2">
-          {fonts.map((font) => (
-            <FontRow key={font.assetId} font={font} onDelete={handleDelete} />
+          {groupFontsByFamily(fonts).map((group) => (
+            <FontFamilyRow key={group.family} group={group} onDelete={handleDelete} />
           ))}
         </ul>
       )}
@@ -345,11 +344,124 @@ function FontsTabInner({ folderId }: FontsTabProps) {
   )
 }
 
+interface FontFamilyGroup {
+  family: string
+  faces: FolderFontSummary[]
+}
+
+function groupFontsByFamily(fonts: FolderFontSummary[]): FontFamilyGroup[] {
+  const map = new Map<string, FolderFontSummary[]>()
+  for (const f of fonts) {
+    const arr = map.get(f.family) ?? []
+    arr.push(f)
+    map.set(f.family, arr)
+  }
+  return [...map.entries()]
+    .map(([family, faces]) => ({
+      family,
+      faces: faces.sort((a, b) => a.weight - b.weight || a.style.localeCompare(b.style)),
+    }))
+    .sort((a, b) => a.family.localeCompare(b.family))
+}
+
+interface FontFamilyRowProps {
+  group: FontFamilyGroup
+  onDelete: (assetId: string) => void
+}
+
+function FontFamilyRow({ group, onDelete }: FontFamilyRowProps) {
+  const { family, faces } = group
+  const totalKB = faces.reduce((sum, f) => sum + f.sizeBytes, 0) / 1024
+  return (
+    <li
+      role="listitem"
+      className="group flex items-stretch gap-3 rounded-md border border-border bg-surface-1 px-4 py-3"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{family}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {faces.map((f) => (
+            <FaceChip key={f.assetId} face={f} onDelete={() => onDelete(f.assetId)} />
+          ))}
+        </div>
+        <p className="mt-1.5 text-[10px] text-muted-foreground/50">
+          {faces.length} {faces.length === 1 ? 'face' : 'faces'} · {totalKB.toFixed(0)} KB
+        </p>
+      </div>
+
+      {/* Live preview rendered on a forced white surface */}
+      <div className="hidden shrink-0 self-center rounded-md bg-white px-3 py-2 text-black sm:block">
+        <span
+          className="leading-tight"
+          style={{
+            fontFamily: `"${family}", system-ui, sans-serif`,
+            fontWeight: faces[0]?.weight ?? 400,
+            fontStyle: faces[0]?.style ?? 'normal',
+            fontSize: 22,
+          }}
+        >
+          The quick brown fox
+        </span>
+      </div>
+    </li>
+  )
+}
+
+interface FaceChipProps {
+  face: FolderFontSummary
+  onDelete: () => void
+}
+
+function FaceChip({ face, onDelete }: FaceChipProps) {
+  const [confirming, setConfirming] = useState(false)
+  const label = `${face.weight}${face.style === 'italic' ? ' italic' : ''}`
+  return (
+    <span className="inline-flex items-center gap-1 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+      {label}
+      {confirming ? (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(false)
+              onDelete()
+            }}
+            className="rounded px-1 text-destructive hover:bg-destructive/10"
+            aria-label={`Confirm delete ${face.postscriptName}`}
+          >
+            ✓
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="rounded px-1 text-muted-foreground hover:bg-accent"
+            aria-label="Cancel"
+          >
+            ✕
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          aria-label={`Delete ${face.postscriptName}`}
+          className="opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+        >
+          <Trash2 className="h-2.5 w-2.5" aria-hidden="true" />
+        </button>
+      )}
+    </span>
+  )
+}
+
+// Legacy single-font row (unused now after grouping; kept as reference until P3 wraps).
+
 interface FontRowProps {
   font: FolderFontSummary
   onDelete: (assetId: string) => void
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function FontRow({ font, onDelete }: FontRowProps) {
   const [confirming, setConfirming] = useState(false)
 
@@ -366,6 +478,23 @@ function FontRow({ font, onDelete }: FontRowProps) {
         <p className="mt-0.5 text-[10px] text-muted-foreground/50">
           {(font.sizeBytes / 1024).toFixed(0)} KB
         </p>
+      </div>
+
+      {/* Live preview rendered with the uploaded font, on a forced
+          white surface so light variants stay legible against dark
+          theme. */}
+      <div className="hidden shrink-0 rounded-md bg-white px-3 py-2 text-black sm:block">
+        <span
+          className="leading-tight"
+          style={{
+            fontFamily: `"${font.family}", system-ui, sans-serif`,
+            fontWeight: font.weight,
+            fontStyle: font.style,
+            fontSize: 22,
+          }}
+        >
+          The quick brown fox
+        </span>
       </div>
 
       {confirming ? (

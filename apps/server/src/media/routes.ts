@@ -183,6 +183,47 @@ export async function registerMediaRoutes(
 ): Promise<void> {
   const { db } = opts
 
+  // Raw-buffer body parser for font uploads. Fastify rejects unknown
+  // content-types with 415 by default — register every font MIME we
+  // accept (including application/octet-stream) so handlers see the
+  // body as a Buffer.
+  const fontBufferParser = (
+    _req: FastifyRequest,
+    payload: NodeJS.ReadableStream,
+    done: (err: Error | null, body?: unknown) => void,
+  ) => {
+    const chunks: Buffer[] = []
+    let total = 0
+    payload.on('data', (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
+      chunks.push(buf)
+      total += buf.length
+      if (total > MAX_FONT_BYTES) {
+        payload.removeAllListeners()
+        done(new Error('Font exceeds 10 MB limit'))
+      }
+    })
+    payload.on('end', () => done(null, Buffer.concat(chunks)))
+    payload.on('error', (err) => done(err))
+  }
+  for (const mime of [
+    'font/ttf',
+    'font/otf',
+    'font/woff2',
+    'application/font-woff2',
+    'application/x-font-ttf',
+    'application/x-font-opentype',
+    'application/octet-stream',
+  ]) {
+    try {
+      app.addContentTypeParser(mime, { parseAs: 'buffer' }, (_req, body, done) => done(null, body))
+    } catch {
+      // Already registered (eg by tus for octet-stream variants) — safe to ignore.
+    }
+  }
+  // Silence unused-warning if the streaming variant ends up unused.
+  void fontBufferParser
+
   // -------------------------------------------------------------------------
   // GET /api/media/:assetId/url?variant=<variant>
   // -------------------------------------------------------------------------
