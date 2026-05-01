@@ -53,19 +53,31 @@ export interface DefaultTextStyle {
 }
 
 /**
- * 8 standard text styles spanning a typographic scale.
+ * 10 slide-oriented text styles — title slide → footnote.
  * `letterSpacing` is in em units (negative = tighter).
  */
 export const DEFAULT_TEXT_STYLES: DefaultTextStyle[] = [
+  // Title slide — biggest, accent color so it stands out.
   {
-    name: 'Display',
+    name: 'Title',
     family: 'Inter',
     weight: 700,
-    size: 64,
-    lineHeight: 1.05,
+    size: 96,
+    lineHeight: 1.0,
     letterSpacing: -0.02,
     colorKey: 'accent-primary',
   },
+  // Chapter divider slide — big but a step below Title.
+  {
+    name: 'Chapter',
+    family: 'Inter',
+    weight: 700,
+    size: 72,
+    lineHeight: 1.05,
+    letterSpacing: -0.015,
+    colorKey: 'neutral-900',
+  },
+  // Slide heading hierarchy.
   {
     name: 'Heading 1',
     family: 'Inter',
@@ -93,40 +105,54 @@ export const DEFAULT_TEXT_STYLES: DefaultTextStyle[] = [
     letterSpacing: 0,
     colorKey: 'neutral-900',
   },
-  {
-    name: 'Subhead',
-    family: 'Inter',
-    weight: 500,
-    size: 20,
-    lineHeight: 1.3,
-    letterSpacing: 0,
-    colorKey: 'neutral-700',
-  },
-  {
-    name: 'Body Large',
-    family: 'Inter',
-    weight: 400,
-    size: 18,
-    lineHeight: 1.5,
-    letterSpacing: 0,
-    colorKey: 'neutral-700',
-  },
+  // Body copy.
   {
     name: 'Body',
     family: 'Inter',
     weight: 400,
-    size: 16,
+    size: 20,
     lineHeight: 1.5,
     letterSpacing: 0,
     colorKey: 'neutral-700',
   },
+  // Bulleted list item — same size as body, looser leading for readability.
+  {
+    name: 'Bullet',
+    family: 'Inter',
+    weight: 400,
+    size: 20,
+    lineHeight: 1.6,
+    letterSpacing: 0,
+    colorKey: 'neutral-700',
+  },
+  // Pulled quote / emphasis.
+  {
+    name: 'Quote',
+    family: 'Inter',
+    weight: 500,
+    size: 24,
+    lineHeight: 1.35,
+    letterSpacing: -0.005,
+    colorKey: 'neutral-700',
+  },
+  // Caption / description below an image or chart.
   {
     name: 'Caption',
     family: 'Inter',
     weight: 400,
-    size: 12,
+    size: 14,
     lineHeight: 1.4,
-    letterSpacing: 0.02,
+    letterSpacing: 0.01,
+    colorKey: 'neutral-500',
+  },
+  // Footnote / source / fine print.
+  {
+    name: 'Footnote',
+    family: 'Inter',
+    weight: 400,
+    size: 11,
+    lineHeight: 1.4,
+    letterSpacing: 0.04,
     colorKey: 'neutral-500',
   },
 ]
