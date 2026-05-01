@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
-import { addObject, addObjects } from './mutations.js'
+import { addObject } from './mutations.js'
 import { addAnimation } from './animationMutations.js'
 import { getSlideObjectsCtx, getSlideAnimationsCtx, listSlides } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'

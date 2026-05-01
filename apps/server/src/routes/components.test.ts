@@ -13,7 +13,7 @@
  *   DELETE /components/:id                 → 204 on success; 403/404 guards
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { registerComponentRoutes } from './components.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
