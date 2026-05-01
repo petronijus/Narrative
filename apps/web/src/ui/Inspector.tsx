@@ -124,6 +124,7 @@ import type {
   ImageObject,
   TextObject,
   VideoObject,
+  ComponentInstanceObject,
   SlideObjectPatch,
   AnimationStep,
   AnimationTrigger,
@@ -728,6 +729,21 @@ export function Inspector() {
     updateObject(mutationCtx, obj.id, p)
   }
 
+  // M16 P5 — Component instance has its own minimal inspector.
+  if (obj.type === 'componentInstance') {
+    return (
+      <ComponentInstanceInspector
+        obj={obj}
+        objects={objects}
+        mutationCtx={mutationCtx}
+        animMutationCtx={animMutationCtx}
+        animations={animations}
+        isViewer={isViewer}
+        patch={patch as (p: SlideObjectPatch<SlideObject>) => void}
+      />
+    )
+  }
+
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {/* M10: viewer mode notice */}
@@ -877,6 +893,152 @@ export function Inspector() {
       {/* P6: Layers panel — full ordered list of slide objects with
           drag-drop reorder. Shown at the bottom so it scrolls
           independently of the focused object's properties. */}
+      {mutationCtx !== null && (
+        <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ComponentInstanceInspector — M16 P5
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal inspector for a selected component instance.
+ *
+ * Shows:
+ * - Component name badge + disabled "Edit master" button (P6).
+ * - Position + Size sections (same fields as other objects — delegates to
+ *   the shared PositionSection so the UX is identical).
+ * - Transparency.
+ * - Animations (instances can carry their own animation steps — P8 adds
+ *   master-step inheritance; for P5 the panel is identical to a group).
+ * - Layers.
+ *
+ * TODO(P6) — wire "Edit master" button to open the component edit context.
+ */
+interface ComponentInstanceInspectorProps {
+  obj: ComponentInstanceObject
+  objects: SlideObject[]
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx']
+  animMutationCtx: ReturnType<typeof useAnimations>['animationsCtx']
+  animations: AnimationStep[]
+  isViewer: boolean
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+}
+
+function ComponentInstanceInspector({
+  obj,
+  objects,
+  mutationCtx,
+  animMutationCtx,
+  animations,
+  isViewer,
+  patch,
+}: ComponentInstanceInspectorProps) {
+  return (
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
+      {isViewer && (
+        <div className="border-b border-border bg-muted/50 px-3 py-1.5">
+          <p className="text-[10px] text-muted-foreground/80">View only</p>
+        </div>
+      )}
+
+      {/* Component badge */}
+      <Section title="Component" storageKey="comp-instance-header">
+        <div className="flex items-center gap-2">
+          {/* ⌘ icon badge */}
+          <span
+            className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border border-[#6366f1]/40 bg-[#6366f1]/10 text-xs text-[#6366f1]"
+            aria-hidden="true"
+          >
+            ⌘
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+            {obj.componentName ?? 'Component'}
+          </span>
+          {/* Edit master — deferred to P6 */}
+          <button
+            type="button"
+            disabled
+            title="Edit master — coming in P6"
+            className="flex-shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground/50 cursor-not-allowed select-none"
+            aria-label="Edit master (coming in P6)"
+          >
+            Edit master
+          </button>
+        </div>
+        <p className="text-[10px] text-muted-foreground/60">Component ID: {obj.componentId}</p>
+      </Section>
+
+      {/* Identity (name + lock) */}
+      <Section title="Identity" storageKey="comp-identity">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor={`inspector-name-${obj.id}`}
+            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+          >
+            Name
+          </label>
+          <NameField
+            obj={obj}
+            objects={objects}
+            disabled={isViewer}
+            onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
+          />
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                locked: obj.locked === true ? undefined : true,
+              } as SlideObjectPatch<SlideObject>)
+            }
+            disabled={isViewer}
+            aria-pressed={obj.locked === true}
+            aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
+            title={obj.locked === true ? 'Unlock' : 'Lock'}
+            className={[
+              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
+              obj.locked === true
+                ? 'border-primary bg-primary/15 text-primary'
+                : 'border-border text-muted-foreground hover:text-foreground',
+              'disabled:opacity-40',
+            ].join(' ')}
+          >
+            {obj.locked === true ? (
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </Section>
+
+      {/* Position + Size — delegate to shared section (same UX as any object) */}
+      <PositionSection obj={obj} patch={patch} disabled={isViewer} layerMutationCtx={mutationCtx} />
+
+      {/* Transparency */}
+      <Section title="Transparency" storageKey="comp-transparency">
+        <TransparencySlider
+          id={`inspector-opacity-${obj.id}`}
+          value={obj.opacity}
+          onChange={(v) => patch({ opacity: Math.min(1, Math.max(0, v)) })}
+          disabled={isViewer}
+        />
+      </Section>
+
+      {/* Animations — component instances can be animated like any other node */}
+      {animMutationCtx !== null && (
+        <AnimationsSection
+          objectId={obj.id}
+          animations={animations}
+          mutationCtx={animMutationCtx}
+          totalAnimations={animations.length}
+        />
+      )}
+
+      {/* Layers */}
       {mutationCtx !== null && (
         <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
       )}

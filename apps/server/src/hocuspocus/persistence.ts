@@ -24,17 +24,23 @@ import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@
 import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckUpdates, folderUpdates } from '../db/schema.js'
+import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
 
 // ---------------------------------------------------------------------------
 // Internal: parse doc name to determine storage backend
 // ---------------------------------------------------------------------------
 
-type DocTarget = { kind: 'deck'; id: string } | { kind: 'folder'; id: string }
+type DocTarget =
+  | { kind: 'deck'; id: string }
+  | { kind: 'folder'; id: string }
+  | { kind: 'component'; id: string }
 
 function parseDocName(name: string): DocTarget {
   if (name.startsWith('folder:')) {
     return { kind: 'folder', id: name.slice('folder:'.length) }
+  }
+  if (name.startsWith('component:')) {
+    return { kind: 'component', id: name.slice('component:'.length) }
   }
   // deck:<id> prefix OR legacy bare deck id (backward compat)
   const id = name.startsWith('deck:') ? name.slice('deck:'.length) : name
@@ -70,6 +76,23 @@ export class PostgresPersistence implements Extension {
       }
 
       console.log(`[persistence] Loaded ${rows.length} updates for folder=${target.id}`)
+      return doc
+    }
+
+    if (target.kind === 'component') {
+      const rows = await this.db
+        .select({ update: componentUpdates.update })
+        .from(componentUpdates)
+        .where(eq(componentUpdates.componentId, target.id))
+        .orderBy(componentUpdates.id)
+
+      if (rows.length === 0) return
+
+      for (const row of rows) {
+        Y.applyUpdate(doc, row.update)
+      }
+
+      console.log(`[persistence] Loaded ${rows.length} updates for component=${target.id}`)
       return doc
     }
 
@@ -118,6 +141,17 @@ export class PostgresPersistence implements Extension {
       })
       console.log(
         `[persistence] Stored update for folder=${target.id} (${update.byteLength} bytes)`,
+      )
+      return
+    }
+
+    if (target.kind === 'component') {
+      await this.db.insert(componentUpdates).values({
+        componentId: target.id,
+        update,
+      })
+      console.log(
+        `[persistence] Stored update for component=${target.id} (${update.byteLength} bytes)`,
       )
       return
     }

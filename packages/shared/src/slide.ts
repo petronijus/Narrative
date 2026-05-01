@@ -553,6 +553,77 @@ export interface VideoObject extends BaseSlideObject {
   alt?: string
 }
 
+// ---------------------------------------------------------------------------
+// M16 P5 — Component instance
+// ---------------------------------------------------------------------------
+
+/**
+ * Override payload carried by a ComponentInstanceObject.
+ * All fields are optional — an empty overrides object means "use master".
+ *
+ * The schema is intentionally sparse for P5; P7 fills the leaf and animation
+ * override slots when override editing lands. Storing the struct here
+ * reserves the Yjs map keys so future writes don't require doc migration.
+ */
+export interface ComponentInstanceOverrides {
+  /**
+   * Per-leaf overrides keyed by the original leaf object id (preserved from
+   * the promoted subtree so they are stable across master edits).
+   */
+  leaves?: Record<
+    string,
+    {
+      text?: string
+      fill?: number | TokenRef
+      stroke?: number | TokenRef
+      transform?: { x?: number; y?: number }
+    }
+  >
+  /**
+   * Per-animation-step overrides keyed by AnimationStep.id.
+   * P5 reserves the slot; P7/P8 populate it.
+   */
+  animations?: Record<
+    string,
+    {
+      trigger?: string
+      delay?: number
+      duration?: number
+      ease?: string
+      disabled?: true
+    }
+  >
+}
+
+/**
+ * M16 P5 — A placed instance of a shared component master.
+ *
+ * The renderer (P6/P7) resolves this node by:
+ *   1. Subscribing to the component Y.Doc via `component:<componentId>`.
+ *   2. Rendering the master subtree at position (x, y).
+ *   3. Applying overrides field-by-field over the master values.
+ *
+ * For P5 only position + bounding-box geometry are placed; overrides is an
+ * empty placeholder so P7 can write into the slot without touching Y.Doc
+ * layout. The renderer shows a labeled placeholder box for now (P6 expands).
+ *
+ * Extends BaseSlideObject so it participates in the standard transform /
+ * selection / layer pipeline without special-casing.
+ */
+export interface ComponentInstanceObject extends BaseSlideObject {
+  type: 'componentInstance'
+  /** Reference to the master component (Y.Doc name: `component:<componentId>`). */
+  componentId: string
+  /**
+   * Denormalized display name — copied from the master at promotion time and
+   * refreshed by the editor whenever the master is renamed (P7+).
+   * Used for the P5 placeholder label. Falls back to "Component" when missing.
+   */
+  componentName?: string
+  /** Sparse per-leaf / per-animation overrides. Empty for P5 — reserved for P7. */
+  overrides?: ComponentInstanceOverrides
+}
+
 /**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
@@ -567,6 +638,7 @@ export type SlideObject =
   | TextObject
   | ImageObject
   | VideoObject
+  | ComponentInstanceObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']

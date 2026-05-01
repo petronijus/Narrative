@@ -15,7 +15,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ChevronLeft, Plus, Settings, Trash2, Upload, X } from 'lucide-react'
 import { useApi } from '../api/client.js'
-import type { FolderFontSummary } from '../api/client.js'
+import type { FolderFontSummary, ComponentSummary } from '../api/client.js'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HexColorPicker } from 'react-colorful'
@@ -34,7 +34,7 @@ import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slid
 // Tab type
 // ---------------------------------------------------------------------------
 
-type SettingsTab = 'colors' | 'textStyles' | 'fonts'
+type SettingsTab = 'colors' | 'textStyles' | 'fonts' | 'components'
 
 // ---------------------------------------------------------------------------
 // FolderSettingsInner — rendered inside FolderDocProvider
@@ -92,6 +92,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
     { id: 'colors', label: 'Colors' },
     { id: 'fonts', label: 'Fonts' },
     { id: 'textStyles', label: 'Text styles' },
+    { id: 'components', label: 'Components' },
   ]
 
   return (
@@ -179,6 +180,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
         {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
         {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
         {activeTab === 'textStyles' && <TextStylesTab />}
+        {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
       </main>
     </div>
   )
@@ -531,6 +533,225 @@ function FontRow({ font, onDelete }: FontRowProps) {
         </button>
       )}
     </li>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Components tab (M16 P5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Folder settings → Components tab.
+ *
+ * Grid of shared components: thumbnail placeholder + name + usage count.
+ * Inline rename. Delete with confirm.
+ *
+ * P5: usage count is "—" (P7 wires real instance counting).
+ * P6: thumbnail will be replaced with a live component snapshot.
+ *
+ * TODO(P5: state-sync) — api.listComponents / createComponent / renameComponent /
+ * deleteComponent are currently stubs that return empty arrays until the server
+ * routes land. Replace TODO comments in api/client.ts once the routes ship.
+ */
+interface ComponentsTabProps {
+  folderId: string
+}
+
+function ComponentsTab({ folderId }: ComponentsTabProps) {
+  const api = useApi()
+  const [components, setComponents] = useState<ComponentSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const list = await api.listComponents(folderId)
+      setComponents(list)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load components')
+    } finally {
+      setLoading(false)
+    }
+  }, [api, folderId])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  return (
+    <div className="px-8 py-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-foreground">Shared components</h2>
+      </div>
+
+      {error !== null && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="text-xs text-muted-foreground/70">Loading…</p>
+      ) : components.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-sm text-muted-foreground">No components yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">
+            Promote any selection in the editor to create a shared component.
+          </p>
+        </div>
+      ) : (
+        <div
+          className="grid gap-4"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}
+          role="list"
+          aria-label="Shared components"
+        >
+          {components.map((component) => (
+            <ComponentCard
+              key={component.id}
+              component={component}
+              onRename={async (name) => {
+                await api.renameComponent(component.id, name)
+                await refresh()
+              }}
+              onDelete={async () => {
+                await api.deleteComponent(component.id)
+                await refresh()
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface ComponentCardProps {
+  component: ComponentSummary
+  onRename: (name: string) => Promise<void>
+  onDelete: () => Promise<void>
+}
+
+function ComponentCard({ component, onRename, onDelete }: ComponentCardProps) {
+  const [editing, setEditing] = useState(false)
+  const [nameDraft, setNameDraft] = useState(component.name)
+  const [confirming, setConfirming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!editing) setNameDraft(component.name)
+  }, [component.name, editing])
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  const commitRename = async () => {
+    setEditing(false)
+    const trimmed = nameDraft.trim()
+    if (trimmed === '' || trimmed === component.name) {
+      setNameDraft(component.name)
+      return
+    }
+    try {
+      await onRename(trimmed)
+      setRenameError(null)
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : 'Rename failed')
+      setNameDraft(component.name)
+    }
+  }
+
+  return (
+    <div
+      role="listitem"
+      className="group flex flex-col gap-2 rounded-lg border border-border bg-surface-1 p-3"
+      data-testid="component-card"
+    >
+      {/* Thumbnail placeholder — P6 replaces with live snapshot */}
+      <div
+        className="flex h-24 w-full items-center justify-center rounded-md border border-dashed border-[#6366f1]/40 bg-[#6366f1]/05"
+        aria-hidden="true"
+      >
+        <span className="text-2xl text-[#6366f1]/40">⌘</span>
+      </div>
+
+      {/* Name — inline-editable on double-click */}
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={nameDraft}
+          onChange={(e) => setNameDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void commitRename()
+            } else if (e.key === 'Escape') {
+              setEditing(false)
+              setNameDraft(component.name)
+            }
+          }}
+          onBlur={() => void commitRename()}
+          maxLength={200}
+          className="w-full rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-center text-xs text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+          aria-label="Component name"
+        />
+      ) : (
+        <button
+          type="button"
+          onDoubleClick={() => setEditing(true)}
+          title="Double-click to rename"
+          className="w-full truncate rounded-sm px-1 py-0.5 text-center text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+        >
+          {component.name}
+        </button>
+      )}
+
+      {renameError !== null && <p className="text-[10px] text-destructive">{renameError}</p>}
+
+      {/* Usage count — P7 wires real count */}
+      <p className="text-center text-[10px] text-muted-foreground/60">Used — times</p>
+
+      {/* Delete — with confirm */}
+      {confirming ? (
+        <div className="flex items-center justify-center gap-1">
+          <span className="text-[10px] text-muted-foreground">Delete?</span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(false)
+              void onDelete()
+            }}
+            className="rounded-md px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+            aria-label={`Confirm delete ${component.name}`}
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+            aria-label="Cancel"
+          >
+            No
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          aria-label={`Delete component ${component.name}`}
+          className="flex items-center justify-center gap-1 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+        >
+          <Trash2 className="h-3 w-3" aria-hidden="true" />
+          <span className="text-[10px]">Delete</span>
+        </button>
+      )}
+    </div>
   )
 }
 

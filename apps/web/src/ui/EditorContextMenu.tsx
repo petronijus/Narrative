@@ -26,7 +26,7 @@
  * source.
  */
 
-import { useRef, useState, type RefObject } from 'react'
+import { useRef, useState, useCallback, type RefObject } from 'react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -44,6 +44,7 @@ import {
   addObjects,
   updateObject,
   createObjectOfType,
+  addObject,
 } from '@narrative/slide-model'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
@@ -53,6 +54,13 @@ import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
+import { useApi } from '../api/client.js'
+import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useAuth } from '../state/AuthContext.js'
+import { promoteToComponent } from '@narrative/slide-model'
+import { writeComponentMasterTree } from '../state/writeComponentMasterTree.js'
 import type { SlideObject, SlideObjectPatch, SlideObjectType } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -87,6 +95,16 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const canvasInstance = useCanvasInstance()
   const { zoom, setZoom } = useZoomLevel()
   const defaults = useDefaultObjectFill()
+  const api = useApi()
+  const { folderId } = useDeckRole()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
+  const { token } = useAuth()
+
+  // Promote status — used to show a brief feedback toast text
+  const [promoteStatus, setPromoteStatus] = useState<'idle' | 'promoting' | 'done' | 'error'>(
+    'idle',
+  )
 
   /** Mode flips on contextmenu and is read at render time to choose items. */
   const [mode, setMode] = useState<Mode>('canvas')
@@ -229,6 +247,82 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     selectOne(pair.imageId)
   }
 
+  /**
+   * Promote the current selection to a shared component.
+   *
+   * Order of operations:
+   * 1. Build a serialisable plan via `promoteToComponent` (slide-model).
+   * 2. Mint the Postgres row with the plan's `componentId` so server +
+   *    Y.Doc agree on the master id.
+   * 3. Open a transient Hocuspocus connection to the new component doc
+   *    and write masterTree + masterAnimations into it.
+   * 4. In one slide-level Yjs transaction, remove the promoted objects
+   *    and insert the instance node — undo restores the originals
+   *    atomically because everything happens inside a single transact.
+   * 5. Select the new instance.
+   */
+  const handlePromoteToComponent = useCallback((): void => {
+    if (mutationCtx === null || folderId === null) return
+    if (deckCtx === null || activeSlideId === null) return
+    const targets = resolveTargets()
+    if (targets.length === 0) return
+
+    setPromoteStatus('promoting')
+
+    let plan: ReturnType<typeof promoteToComponent>
+    try {
+      plan = promoteToComponent(
+        deckCtx,
+        activeSlideId,
+        targets.map((t) => t.id),
+        folderId,
+      )
+    } catch (err) {
+      console.warn('[EditorContextMenu] promote-to-component plan failed', err)
+      setPromoteStatus('error')
+      window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      return
+    }
+
+    void (async () => {
+      try {
+        const component = await api.createComponent(folderId, {
+          id: plan.componentId,
+          name: 'Untitled component',
+        })
+
+        await writeComponentMasterTree({
+          componentId: component.id,
+          masterTree: plan.masterTree,
+          masterAnimations: plan.masterAnimations,
+          token,
+        })
+
+        // Atomic slide-level transaction: remove originals, add instance.
+        mutationCtx.doc.transact(() => {
+          for (const id of plan.removedObjectIds) {
+            removeObject(mutationCtx, id)
+          }
+          addObject(mutationCtx, plan.instanceObject)
+        })
+
+        selectOne(plan.instanceObject.id)
+        setPromoteStatus('done')
+        window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      } catch (err) {
+        // Cleanup-on-failure is intentionally NOT performed here:
+        // - The Postgres row stays — the user can delete it from the
+        //   Components tab in folder settings if it's empty.
+        // - The slide is unchanged because the transaction never fired.
+        // Surface the failure so the user knows nothing was promoted.
+
+        console.warn('[EditorContextMenu] promote to component failed', err)
+        setPromoteStatus('error')
+        window.setTimeout(() => setPromoteStatus('idle'), 2000)
+      }
+    })()
+  }, [api, folderId, mutationCtx, deckCtx, activeSlideId, selectOne, token])
+
   const handleDelete = (): void => {
     if (mutationCtx === null) return
     const targets = resolveTargets()
@@ -292,6 +386,8 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const target = resolveTargets()[0]
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
+  const canPromote =
+    hasObjectTarget && mutationCtx !== null && folderId !== null && promoteStatus === 'idle'
 
   return (
     <ContextMenu>
@@ -381,6 +477,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               onSelect={handleMaskWithShape}
             >
               Mask with shape
+            </ContextMenuItem>
+
+            {/* M16 P5 — promote selection to a shared component */}
+            <ContextMenuItem
+              disabled={!canPromote}
+              onSelect={handlePromoteToComponent}
+              data-testid="promote-to-component"
+            >
+              {promoteStatus === 'promoting'
+                ? 'Promoting…'
+                : promoteStatus === 'done'
+                  ? 'Promoted to component'
+                  : promoteStatus === 'error'
+                    ? 'Promote failed'
+                    : 'Promote to shared component'}
             </ContextMenuItem>
 
             <ContextMenuSeparator />

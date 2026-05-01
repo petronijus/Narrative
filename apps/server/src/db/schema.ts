@@ -302,6 +302,61 @@ export const mediaAssets = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// components — master component metadata (M16 P5)
+// ---------------------------------------------------------------------------
+
+/**
+ * One master component per row. The actual content lives in a Hocuspocus
+ * Y.Doc named `component:<id>` backed by component_updates rows.
+ *
+ * The component is folder-scoped: ON DELETE CASCADE from folders ensures
+ * all component rows (and their updates) are removed when the folder goes.
+ *
+ * thumbnail_key follows the same pattern as decks.thumbnail_key — NULL until
+ * the editor uploads a first snapshot, then a MinIO object key.
+ */
+export const components = pgTable(
+  'components',
+  {
+    id: text('id').primaryKey(),
+    folderId: text('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().default('Untitled component'),
+    thumbnailKey: text('thumbnail_key'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [index('components_folder_id_idx').on(t.folderId)],
+)
+
+// ---------------------------------------------------------------------------
+// component_updates — append-only Yjs update log for component:<id> docs (M16 P5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stores Hocuspocus Y.Doc updates for component master documents.
+ * Each component has a doc named `component:<componentId>` on the Hocuspocus
+ * server. Mirrors deck_updates / folder_updates: onLoadDocument applies all
+ * rows sequentially; onStoreDocument appends the current state as a new row.
+ *
+ * ON DELETE CASCADE from components keeps this clean when a component is
+ * deleted via the REST API.
+ */
+export const componentUpdates = pgTable(
+  'component_updates',
+  {
+    id: serial('id').primaryKey(),
+    componentId: text('component_id')
+      .notNull()
+      .references(() => components.id, { onDelete: 'cascade' }),
+    update: bytea('update').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('component_updates_component_id_idx').on(t.componentId)],
+)
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -319,3 +374,7 @@ export type ShareLink = typeof shareLinks.$inferSelect
 export type NewShareLink = typeof shareLinks.$inferInsert
 export type MediaAsset = typeof mediaAssets.$inferSelect
 export type NewMediaAsset = typeof mediaAssets.$inferInsert
+export type Component = typeof components.$inferSelect
+export type NewComponent = typeof components.$inferInsert
+export type ComponentUpdate = typeof componentUpdates.$inferSelect
+export type NewComponentUpdate = typeof componentUpdates.$inferInsert

@@ -75,6 +75,25 @@ export interface ApiClient {
   ): Promise<{ movedCount: number }>
 
   // ---------------------------------------------------------------------------
+  // M16 P5 — Component API
+  // ---------------------------------------------------------------------------
+  /** List components in a folder (owner only). */
+  listComponents(folderId: string): Promise<ComponentSummary[]>
+  /**
+   * Create a component metadata row. Pass `id` to pre-assign the component id
+   * so the Hocuspocus doc name is known before connecting (avoids a round-trip).
+   * Omit to let the server generate a nanoid(12).
+   */
+  createComponent(
+    folderId: string,
+    opts?: { name?: string; id?: string },
+  ): Promise<ComponentSummary>
+  /** Rename a component (owner only). */
+  renameComponent(componentId: string, name: string): Promise<ComponentSummary>
+  /** Delete a component and cascade its update log (owner only). Caller handles instance cleanup. */
+  deleteComponent(componentId: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
   // M16 P3 — Folder font API
   // ---------------------------------------------------------------------------
   /** List fonts uploaded to a folder. */
@@ -118,6 +137,23 @@ export interface FolderSummary {
   /** Number of decks currently in the folder. */
   deckCount: number
   createdAt: string
+}
+
+// ---------------------------------------------------------------------------
+// M16 P5 — Folder component types
+// TODO(P5: state-sync) — align with server ComponentSummary shape once the
+// REST routes (GET/POST /folders/:id/components, PATCH/DELETE /components/:id)
+// are implemented by the state-sync agent.
+// ---------------------------------------------------------------------------
+
+export interface ComponentSummary {
+  id: string
+  folderId: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  /** Signed imgproxy URL. NULL until the editor uploads a first thumbnail. */
+  thumbnailUrl?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +359,32 @@ export function createApiClient(getToken: () => string | null): ApiClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deckIds, destFolderId }),
       }),
+
+    // -------------------------------------------------------------------------
+    // M16 P5 — Component methods
+    // -------------------------------------------------------------------------
+
+    listComponents: (folderId) =>
+      requestJson<ComponentSummary[]>(`/folders/${folderId}/components`),
+
+    createComponent: (folderId, opts) =>
+      requestJson<ComponentSummary>(`/folders/${folderId}/components`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts ?? {}),
+      }),
+
+    renameComponent: (componentId, name) =>
+      requestJson<ComponentSummary>(`/components/${componentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+
+    deleteComponent: async (componentId) => {
+      const res = await request(`/components/${componentId}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
 
     // -------------------------------------------------------------------------
     // M16 P3 — Folder font methods

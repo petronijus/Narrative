@@ -30,10 +30,24 @@ const mockListFolders = vi
   ])
 const mockRenameFolder = vi.fn().mockResolvedValue({})
 
+// M16 P5 — Component API mocks
+const mockListComponents = vi.fn().mockResolvedValue([])
+const mockRenameComponent = vi.fn().mockResolvedValue({})
+const mockDeleteComponent = vi.fn().mockResolvedValue(undefined)
+
+// M16 P3 — Font API mocks (needed to avoid unmatched call errors)
+const mockListFolderFonts = vi.fn().mockResolvedValue([])
+
 vi.mock('../api/client', () => ({
   useApi: () => ({
     listFolders: mockListFolders,
     renameFolder: mockRenameFolder,
+    listComponents: mockListComponents,
+    renameComponent: mockRenameComponent,
+    deleteComponent: mockDeleteComponent,
+    listFolderFonts: mockListFolderFonts,
+    uploadFolderFont: vi.fn(),
+    deleteFolderFont: vi.fn(),
   }),
 }))
 
@@ -266,6 +280,95 @@ describe('FolderSettings page', () => {
 
     await waitFor(() => {
       expect(screen.getByText('FolderDecks')).toBeInTheDocument()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // M16 P5 — Components tab smoke tests
+  // ---------------------------------------------------------------------------
+
+  it('renders the Components tab button', () => {
+    renderFolderSettings()
+    expect(screen.getByRole('tab', { name: 'Components' })).toBeInTheDocument()
+  })
+
+  it('shows the Components tab empty state when no components exist', async () => {
+    mockListComponents.mockResolvedValueOnce([])
+    renderFolderSettings()
+    fireEvent.click(screen.getByRole('tab', { name: 'Components' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('No components yet.')).toBeInTheDocument()
+      expect(screen.getByText(/promote any selection in the editor/i)).toBeInTheDocument()
+    })
+  })
+
+  it('renders component cards when components exist', async () => {
+    mockListComponents.mockResolvedValueOnce([
+      {
+        id: 'comp-1',
+        folderId: 'folder-1',
+        name: 'Header banner',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        id: 'comp-2',
+        folderId: 'folder-1',
+        name: 'Footer',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ])
+
+    renderFolderSettings()
+    fireEvent.click(screen.getByRole('tab', { name: 'Components' }))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('component-card')).toHaveLength(2)
+      expect(screen.getByText('Header banner')).toBeInTheDocument()
+      expect(screen.getByText('Footer')).toBeInTheDocument()
+    })
+  })
+
+  it('calls listComponents with the folder id', async () => {
+    mockListComponents.mockResolvedValueOnce([])
+    renderFolderSettings('folder-1')
+    fireEvent.click(screen.getByRole('tab', { name: 'Components' }))
+
+    await waitFor(() => {
+      expect(mockListComponents).toHaveBeenCalledWith('folder-1')
+    })
+  })
+
+  it('shows delete confirm flow for a component', async () => {
+    mockListComponents.mockResolvedValue([
+      {
+        id: 'comp-1',
+        folderId: 'folder-1',
+        name: 'My Card',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ])
+
+    renderFolderSettings()
+    fireEvent.click(screen.getByRole('tab', { name: 'Components' }))
+
+    // Wait for the card
+    await waitFor(() => {
+      expect(screen.getByText('My Card')).toBeInTheDocument()
+    })
+
+    // Click the delete button (hidden by default via opacity-0 + group-hover)
+    const deleteBtn = screen.getByLabelText(/delete component my card/i, {
+      hidden: true,
+    } as Parameters<typeof screen.getByLabelText>[1])
+    fireEvent.click(deleteBtn)
+
+    // Confirm prompt should appear
+    await waitFor(() => {
+      expect(screen.getByLabelText(/confirm delete my card/i)).toBeInTheDocument()
     })
   })
 })

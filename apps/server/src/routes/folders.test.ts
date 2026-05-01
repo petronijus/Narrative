@@ -490,7 +490,10 @@ describe('DELETE /folders/:id', () => {
     expect(res.statusCode).toBe(204)
   })
 
-  it('returns 409 folder_not_empty when folder has decks', async () => {
+  // M16 P1 follow-up: DELETE /folders/:id now cascades contained decks
+  // instead of rejecting non-empty folders with 409. Drafts is the only
+  // folder that still cannot be deleted.
+  it.skip('returns 409 folder_not_empty when folder has decks (legacy behaviour)', async () => {
     const now = new Date()
     const folder: MockFolder = {
       id: 'f-full',
