@@ -12,11 +12,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Folder, FolderPlus, LogOut, MoreVertical, Pencil, Trash2 } from 'lucide-react'
+import { Folder, FolderPlus, LogOut, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
+import { NewDeckDialog } from '../ui/NewDeckDialog.js'
 
 // ---------------------------------------------------------------------------
 // FoldersHome
@@ -34,6 +35,8 @@ export function FoldersHome() {
   const [inlineEditId, setInlineEditId] = useState<string | null>(null)
   // Modal for non-empty folder delete
   const [deleteBlockedId, setDeleteBlockedId] = useState<string | null>(null)
+  // New deck dialog (folder picker)
+  const [newDeckOpen, setNewDeckOpen] = useState(false)
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -92,6 +95,8 @@ export function FoldersHome() {
       } catch (err) {
         const status = (err as { status?: number }).status
         if (status === 409) {
+          // Server returns 409 only for "cannot_delete_drafts" now —
+          // every other folder cascade-deletes its decks.
           setDeleteBlockedId(id)
         } else {
           setError(err instanceof Error ? err.message : 'Failed to delete folder')
@@ -130,10 +135,15 @@ export function FoldersHome() {
               onClick={() => void handleCreateFolder()}
               disabled={creating}
               size="sm"
-              className="btn-brand gap-1.5"
+              variant="ghost"
+              className="gap-1.5"
             >
               <FolderPlus className="h-4 w-4" aria-hidden="true" />
               {creating ? 'Creating…' : 'New folder'}
+            </Button>
+            <Button onClick={() => setNewDeckOpen(true)} size="sm" className="btn-brand gap-1.5">
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New deck
             </Button>
           </div>
         </div>
@@ -161,6 +171,7 @@ export function FoldersHome() {
               <FolderCard
                 key={folder.id}
                 folder={folder}
+                isDrafts={folder.name === 'Drafts'}
                 editingInline={inlineEditId === folder.id}
                 onOpen={() => void navigate(`/folder/${folder.id}`)}
                 onRename={(name) => {
@@ -175,6 +186,23 @@ export function FoldersHome() {
           </div>
         )}
       </main>
+
+      {/* New deck dialog */}
+      {newDeckOpen && (
+        <NewDeckDialog
+          folders={folders}
+          onClose={() => setNewDeckOpen(false)}
+          onCreateFolder={async (name) => {
+            const folder = await api.createFolder(name)
+            setFolders((prev) => [...prev, folder])
+            return folder
+          }}
+          onConfirm={async (folderId) => {
+            const deck = await api.createDeck('Untitled Deck', folderId)
+            void navigate(`/deck/${deck.id}`)
+          }}
+        />
+      )}
 
       {/* Non-empty folder delete blocker modal */}
       {deleteBlockedId !== null && (
@@ -197,9 +225,7 @@ export function FoldersHome() {
               <span className="font-medium text-foreground">
                 &ldquo;{blockedFolder?.name}&rdquo;
               </span>{' '}
-              still has {blockedFolder?.deckCount ?? 'some'} deck
-              {(blockedFolder?.deckCount ?? 0) !== 1 ? 's' : ''}. Open the folder and move or delete
-              all decks first, then try again.
+              cannot be deleted. Drafts is the default folder and must always exist.
             </p>
             <div className="flex justify-end">
               <Button variant="ghost" size="sm" onClick={() => setDeleteBlockedId(null)}>
@@ -219,6 +245,7 @@ export function FoldersHome() {
 
 interface FolderCardProps {
   folder: FolderSummary
+  isDrafts: boolean
   editingInline: boolean
   onOpen: () => void
   onRename: (name: string) => void
@@ -229,6 +256,7 @@ interface FolderCardProps {
 
 function FolderCard({
   folder,
+  isDrafts,
   editingInline,
   onOpen,
   onRename,
@@ -365,30 +393,33 @@ function FolderCard({
                     Rename
                   </button>
 
-                  {/* Delete — always shown; server returns 409 for the Drafts folder */}
-                  {confirmDelete ? (
-                    <button
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        setConfirmDelete(false)
-                        onDelete()
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-accent"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      Confirm delete
-                    </button>
-                  ) : (
-                    <button
-                      role="menuitem"
-                      onClick={() => setConfirmDelete(true)}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      Delete
-                    </button>
-                  )}
+                  {/* Delete — hidden for Drafts; cascades decks otherwise */}
+                  {!isDrafts &&
+                    (confirmDelete ? (
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false)
+                          setConfirmDelete(false)
+                          onDelete()
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-destructive hover:bg-accent"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {folder.deckCount > 0
+                          ? `Delete folder + ${folder.deckCount} deck${folder.deckCount === 1 ? '' : 's'}`
+                          : 'Confirm delete'}
+                      </button>
+                    ) : (
+                      <button
+                        role="menuitem"
+                        onClick={() => setConfirmDelete(true)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        Delete
+                      </button>
+                    ))}
                 </div>
               )}
             </div>

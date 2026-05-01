@@ -26,6 +26,8 @@ const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
 export interface ApiClient {
   /** List decks. Pass `folderId` to filter to a specific folder. */
   listDecks(opts?: { folderId?: string }): Promise<DeckSummary[]>
+  /** Fetch a single deck by id. */
+  getDeck(id: string): Promise<DeckSummary>
   /** Create a deck. Omit `folderId` to land in the caller's Drafts folder. */
   createDeck(title?: string, folderId?: string): Promise<DeckSummary>
   renameDeck(id: string, title: string): Promise<DeckSummary>
@@ -179,6 +181,8 @@ export function createApiClient(getToken: () => string | null): ApiClient {
       const url = opts?.folderId != null ? `/decks?folderId=${opts.folderId}` : '/decks'
       return requestJson<DeckSummary[]>(url)
     },
+
+    getDeck: (id) => requestJson<DeckSummary>(`/decks/${id}`),
 
     createDeck: (title = 'Untitled Deck', folderId) =>
       requestJson<DeckSummary>('/decks', {

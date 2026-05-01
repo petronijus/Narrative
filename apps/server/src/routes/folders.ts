@@ -26,6 +26,8 @@ import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { folders, decks } from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
+import { DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -187,7 +189,10 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
   )
 
   // -------------------------------------------------------------------------
-  // DELETE /folders/:id — delete folder (empty only; cannot delete Drafts)
+  // DELETE /folders/:id — delete folder + all contained decks (cannot delete Drafts)
+  //
+  // M16 P1 follow-up: the UI double-confirms, so we cascade-delete decks
+  // belonging to the folder. Drafts is still protected.
   // -------------------------------------------------------------------------
   app.delete<{ Params: { id: string } }>(
     '/folders/:id',
@@ -214,19 +219,37 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         return reply.status(409).send({ error: 'cannot_delete_drafts' })
       }
 
-      // Check if folder has any decks
-      const [countRow] = await db
-        .select({ count: sql<number>`cast(count(*) as int)` })
+      // Capture thumbnail keys so we can clean up MinIO blobs after the
+      // cascade. Loss-tolerant — orphaned blobs can be reaped later.
+      const containedDecks = await db
+        .select({ id: decks.id, thumbnailKey: decks.thumbnailKey })
         .from(decks)
         .where(eq(decks.folderId, id))
 
-      const deckCount = countRow?.count ?? 0
-      if (deckCount > 0) {
-        return reply.status(409).send({ error: 'folder_not_empty', deckCount })
+      // Delete decks first (FK is ON DELETE RESTRICT). Cascades remove
+      // deck_updates / deck_permissions / share_links / media_assets rows.
+      if (containedDecks.length > 0) {
+        await db.delete(decks).where(eq(decks.folderId, id))
       }
 
       await db.delete(folders).where(eq(folders.id, id))
-      return reply.status(204).send()
+
+      // Best-effort thumbnail cleanup
+      const keys = containedDecks
+        .map((d) => d.thumbnailKey)
+        .filter((k): k is string => k != null && k !== '')
+      if (keys.length > 0) {
+        const s3 = buildS3Client()
+        for (const key of keys) {
+          try {
+            await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+          } catch (err) {
+            request.log.warn({ err, key }, 'thumbnail delete failed (orphan left)')
+          }
+        }
+      }
+
+      return reply.status(204).send({ deletedDeckCount: containedDecks.length })
     },
   )
 
