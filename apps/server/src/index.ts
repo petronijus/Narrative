@@ -26,6 +26,7 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerDeckRoutes } from './routes/decks.js'
+import { registerFolderRoutes } from './routes/folders.js'
 import { registerSharingRoutes } from './routes/sharing.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
@@ -135,6 +136,9 @@ await registerMetricsEndpoint(app)
 
 // Deck routes
 await registerDeckRoutes(app, db)
+
+// Folder routes (M16 P1)
+await registerFolderRoutes(app, db)
 
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)

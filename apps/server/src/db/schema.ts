@@ -73,25 +73,59 @@ export const transcodeStatusEnum = pgEnum('media_transcode_status', [
 ])
 
 // ---------------------------------------------------------------------------
+// folders — flat, owner-scoped folder list (M16 P1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Single-level folder that groups decks under an owner.
+ * No parent_id — the hierarchy is intentionally flat.
+ *
+ * Every user has at least one "Drafts" folder; new decks land there by default.
+ * Deleting a folder is only permitted when it contains no decks.
+ */
+export const folders = pgTable(
+  'folders',
+  {
+    id: text('id').primaryKey(),
+    ownerUserId: text('owner_user_id').notNull(),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('folders_owner_user_id_idx').on(t.ownerUserId)],
+)
+
+// ---------------------------------------------------------------------------
 // decks — metadata table
 // ---------------------------------------------------------------------------
 
-export const decks = pgTable('decks', {
-  id: text('id').primaryKey(),
-  title: text('title').notNull().default('Untitled Deck'),
-  /** Denormalized primary owner for quick lookups. Mirrors deck_permissions owner row. */
-  ownerUserId: text('owner_user_id').notNull(), // M4: always 'demo-user'; M10 phase 2: real JWT sub
-  /**
-   * MinIO object key for the home-page deck preview thumbnail.
-   * The editor uploads a JPEG snapshot of the first slide here so the
-   * Landing grid can render previews on a fresh device / incognito.
-   * NULL until the first thumbnail upload completes.
-   */
-  thumbnailKey: text('thumbnail_key'),
-  thumbnailUpdatedAt: timestamp('thumbnail_updated_at'),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-  updatedAt: timestamp('updated_at').defaultNow().notNull(),
-})
+export const decks = pgTable(
+  'decks',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull().default('Untitled Deck'),
+    /** Denormalized primary owner for quick lookups. Mirrors deck_permissions owner row. */
+    ownerUserId: text('owner_user_id').notNull(), // M4: always 'demo-user'; M10 phase 2: real JWT sub
+    /**
+     * M16 P1: folder this deck belongs to.
+     * Every deck must be in exactly one folder. References folders(id).
+     * ON DELETE RESTRICT prevents deleting a non-empty folder.
+     */
+    folderId: text('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'restrict' }),
+    /**
+     * MinIO object key for the home-page deck preview thumbnail.
+     * The editor uploads a JPEG snapshot of the first slide here so the
+     * Landing grid can render previews on a fresh device / incognito.
+     * NULL until the first thumbnail upload completes.
+     */
+    thumbnailKey: text('thumbnail_key'),
+    thumbnailUpdatedAt: timestamp('thumbnail_updated_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [index('decks_folder_id_idx').on(t.folderId)],
+)
 
 // ---------------------------------------------------------------------------
 // deck_updates — append-only Yjs update log
@@ -235,6 +269,8 @@ export const mediaAssets = pgTable(
 // Inferred types
 // ---------------------------------------------------------------------------
 
+export type Folder = typeof folders.$inferSelect
+export type NewFolder = typeof folders.$inferInsert
 export type Deck = typeof decks.$inferSelect
 export type NewDeck = typeof decks.$inferInsert
 export type DeckUpdate = typeof deckUpdates.$inferSelect
