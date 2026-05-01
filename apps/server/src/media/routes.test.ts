@@ -85,6 +85,7 @@ const FIXTURE_VIDEO_DONE: VideoAssetRow = {
 const FIXTURE_ASSET: MediaAsset = {
   id: 'asset-test-01',
   deckId: 'deck-alpha',
+  folderId: null,
   uploaderUserId: 'dev-user',
   mimeType: 'image/jpeg',
   sizeBytes: 102400,

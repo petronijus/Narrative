@@ -242,9 +242,17 @@ export const mediaAssets = pgTable(
   'media_assets',
   {
     id: text('id').primaryKey(), // nanoid produced by media agent on upload start
-    deckId: text('deck_id')
-      .notNull()
-      .references(() => decks.id, { onDelete: 'cascade' }),
+    /**
+     * Deck this asset belongs to. NULL for folder-scoped font assets (M16 P3).
+     * ON DELETE CASCADE — when deck is deleted, all its media rows are removed.
+     */
+    deckId: text('deck_id').references(() => decks.id, { onDelete: 'cascade' }),
+    /**
+     * M16 P3: Folder this asset belongs to. NULL for deck-scoped assets.
+     * When kind='font' and folder_id is set, the row is a folder-level font.
+     * ON DELETE CASCADE — when folder is deleted, all folder fonts are removed.
+     */
+    folderId: text('folder_id').references(() => folders.id, { onDelete: 'cascade' }),
     uploaderUserId: text('uploader_user_id').notNull(),
     mimeType: text('mime_type').notNull(), // e.g. image/png, image/jpeg
     sizeBytes: integer('size_bytes').notNull(),
@@ -287,7 +295,10 @@ export const mediaAssets = pgTable(
     /** Postscript name — uniquely identifies one face within a family. */
     fontPostscriptName: text('font_postscript_name'),
   },
-  (t) => [index('media_assets_deck_idx').on(t.deckId)],
+  (t) => [
+    index('media_assets_deck_idx').on(t.deckId),
+    index('media_assets_folder_id_idx').on(t.folderId),
+  ],
 )
 
 // ---------------------------------------------------------------------------

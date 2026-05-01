@@ -13,7 +13,7 @@
  * but the original MinIO objects remain orphaned. See migration 0002 for details.
  */
 
-import { eq, and } from 'drizzle-orm'
+import { eq, and, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { mediaAssets } from '../db/schema.js'
 import type { MediaAsset } from '../db/schema.js'
@@ -55,7 +55,10 @@ export interface VideoAssetRow {
 export interface CreateMediaAssetArgs {
   /** nanoid produced by the media agent at upload-start time */
   id: string
-  deckId: string
+  /** Deck the asset belongs to. NULL for folder-scoped font assets (M16 P3). */
+  deckId?: string
+  /** Folder the asset belongs to. Set only for folder-scoped fonts (M16 P3). */
+  folderId?: string
   uploaderUserId: string
   mimeType: string
   sizeBytes: number
@@ -93,7 +96,8 @@ export interface CreateMediaAssetArgs {
 export async function createMediaAsset(db: Database, args: CreateMediaAssetArgs): Promise<void> {
   await db.insert(mediaAssets).values({
     id: args.id,
-    deckId: args.deckId,
+    deckId: args.deckId ?? null,
+    folderId: args.folderId ?? null,
     uploaderUserId: args.uploaderUserId,
     mimeType: args.mimeType,
     sizeBytes: args.sizeBytes,
@@ -152,6 +156,7 @@ export async function getVideoAsset(db: Database, id: string): Promise<VideoAsse
   const row = rows[0]
   if (!row) return null
 
+  if (row.deckId === null) return null
   return {
     id: row.id,
     deckId: row.deckId,
@@ -180,22 +185,24 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
     .from(mediaAssets)
     .where(and(eq(mediaAssets.deckId, deckId), eq(mediaAssets.kind, 'video')))
 
-  return rows.map((row) => ({
-    id: row.id,
-    deckId: row.deckId,
-    mimeType: row.mimeType,
-    sizeBytes: row.sizeBytes,
-    storageKey: row.storageKey,
-    width: row.width,
-    height: row.height,
-    durationSec: row.durationSec,
-    hlsManifestKey: row.hlsManifestKey,
-    posterKey: row.posterKey,
-    thumbnailKey: row.thumbnailKey,
-    transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
-    transcodeError: row.transcodeError,
-    createdAt: row.createdAt,
-  }))
+  return rows
+    .filter((row): row is typeof row & { deckId: string } => row.deckId !== null)
+    .map((row) => ({
+      id: row.id,
+      deckId: row.deckId,
+      mimeType: row.mimeType,
+      sizeBytes: row.sizeBytes,
+      storageKey: row.storageKey,
+      width: row.width,
+      height: row.height,
+      durationSec: row.durationSec,
+      hlsManifestKey: row.hlsManifestKey,
+      posterKey: row.posterKey,
+      thumbnailKey: row.thumbnailKey,
+      transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
+      transcodeError: row.transcodeError,
+      createdAt: row.createdAt,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +211,10 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
 
 export interface FontAssetRow {
   id: string
-  deckId: string
+  /** Deck the font belongs to. Null for folder-scoped fonts. */
+  deckId: string | null
+  /** Folder the font belongs to. Null for deck-scoped fonts. */
+  folderId: string | null
   mimeType: string
   storageKey: string
   fontFamily: string
@@ -213,6 +223,7 @@ export interface FontAssetRow {
   fontPostscriptName: string
   uploaderUserId: string
   originalFilename: string | null
+  sizeBytes: number
   createdAt: Date
 }
 
@@ -248,7 +259,8 @@ export async function listFontAssets(db: Database, deckId: string): Promise<Font
 function toFontRow(row: any): FontAssetRow {
   return {
     id: row.id,
-    deckId: row.deckId,
+    deckId: row.deckId ?? null,
+    folderId: row.folderId ?? null,
     mimeType: row.mimeType,
     storageKey: row.storageKey,
     fontFamily: row.fontFamily ?? '',
@@ -257,8 +269,84 @@ function toFontRow(row: any): FontAssetRow {
     fontPostscriptName: row.fontPostscriptName ?? row.fontFamily ?? '',
     uploaderUserId: row.uploaderUserId,
     originalFilename: row.originalFilename,
+    sizeBytes: row.sizeBytes ?? 0,
     createdAt: row.createdAt,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Folder-scoped font helpers (M16 P3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns every font asset belonging to a folder (kind='font', folder_id=folderId,
+ * deck_id IS NULL). These are the fonts uploaded via the folder settings page.
+ */
+export async function listFolderFontAssets(
+  db: Database,
+  folderId: string,
+): Promise<FontAssetRow[]> {
+  const rows = await db
+    .select()
+    .from(mediaAssets)
+    .where(
+      and(
+        eq(mediaAssets.folderId, folderId),
+        eq(mediaAssets.kind, 'font'),
+        isNull(mediaAssets.deckId),
+      ),
+    )
+  return rows.map(toFontRow)
+}
+
+/**
+ * Returns a single folder-scoped font by asset id.
+ * Returns null when not found or when the row belongs to a deck rather than a folder.
+ */
+export async function getFolderFontAsset(
+  db: Database,
+  assetId: string,
+  folderId: string,
+): Promise<FontAssetRow | null> {
+  const rows = await db
+    .select()
+    .from(mediaAssets)
+    .where(
+      and(
+        eq(mediaAssets.id, assetId),
+        eq(mediaAssets.folderId, folderId),
+        eq(mediaAssets.kind, 'font'),
+        isNull(mediaAssets.deckId),
+      ),
+    )
+    .limit(1)
+  const row = rows[0]
+  if (!row) return null
+  return toFontRow(row)
+}
+
+/**
+ * Returns true when the given postscript name already exists in the folder.
+ * Used to reject uploads that would create a duplicate face.
+ */
+export async function folderFontPostscriptCollides(
+  db: Database,
+  folderId: string,
+  postscriptName: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: mediaAssets.id })
+    .from(mediaAssets)
+    .where(
+      and(
+        eq(mediaAssets.folderId, folderId),
+        eq(mediaAssets.kind, 'font'),
+        isNull(mediaAssets.deckId),
+        eq(mediaAssets.fontPostscriptName, postscriptName),
+      ),
+    )
+    .limit(1)
+  return rows.length > 0
 }
 
 // ---------------------------------------------------------------------------

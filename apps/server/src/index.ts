@@ -30,6 +30,7 @@ import { registerFolderRoutes } from './routes/folders.js'
 import { registerSharingRoutes } from './routes/sharing.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
+import { registerFolderFontRoutes } from './media/folderFonts.js'
 import { closeQueueConnection } from './media/enqueue.js'
 import { registerMetricsEndpoint } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
@@ -146,6 +147,9 @@ await registerSharingRoutes(app, db)
 // Media routes: tus upload + signed URL + delete
 registerTusPlugin(app, { db })
 await registerMediaRoutes(app, { db })
+
+// Folder font routes (M16 P3)
+await registerFolderFontRoutes(app, db)
 
 // ---------------------------------------------------------------------------
 // Hocuspocus WebSocket server

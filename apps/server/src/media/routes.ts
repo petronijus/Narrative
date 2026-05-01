@@ -111,7 +111,7 @@ export async function registerMediaRoutes(
     const userId = request.user?.sub ?? null
     const shareToken = (request.query as Record<string, string>)['share_token'] ?? null
     const access = await resolveDeckAccess(db, {
-      deckId: asset.deckId,
+      deckId: asset.deckId ?? '',
       userId,
       shareToken,
     })
@@ -237,7 +237,7 @@ export async function registerMediaRoutes(
     const userId = request.user?.sub ?? null
     const shareToken = request.query.share_token ?? null
     const access = await resolveDeckAccess(db, {
-      deckId: asset.deckId,
+      deckId: asset.deckId ?? '',
       userId,
       shareToken,
     })
@@ -277,7 +277,7 @@ export async function registerMediaRoutes(
     // 2. Only owner may delete
     const userId = request.user?.sub ?? null
     const access = await resolveDeckAccess(db, {
-      deckId: asset.deckId,
+      deckId: asset.deckId ?? '',
       userId,
       shareToken: null,
     })

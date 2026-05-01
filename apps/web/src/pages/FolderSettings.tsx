@@ -11,10 +11,11 @@
  * Wraps with FolderDocProvider so token mutations land on the folder Y.Doc.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, Plus, Settings, Trash2, X } from 'lucide-react'
+import { ChevronLeft, Plus, Settings, Trash2, Upload, X } from 'lucide-react'
 import { useApi } from '../api/client.js'
+import type { FolderFontSummary } from '../api/client.js'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HexColorPicker } from 'react-colorful'
@@ -23,6 +24,7 @@ import {
   useFolderTokens,
   useFolderMutations,
 } from '../state/FolderDocProvider.js'
+import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import type { FolderSummary } from '../api/client.js'
 import { MAX_COLORS } from '../state/defaultTokens.js'
 import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slide-model'
@@ -31,7 +33,7 @@ import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slid
 // Tab type
 // ---------------------------------------------------------------------------
 
-type SettingsTab = 'colors' | 'textStyles'
+type SettingsTab = 'colors' | 'textStyles' | 'fonts'
 
 // ---------------------------------------------------------------------------
 // FolderSettingsInner — rendered inside FolderDocProvider
@@ -87,6 +89,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
 
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: 'colors', label: 'Colors' },
+    { id: 'fonts', label: 'Fonts' },
     { id: 'textStyles', label: 'Text styles' },
   ]
 
@@ -173,9 +176,232 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
         )}
 
         {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
+        {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
         {activeTab === 'textStyles' && <TextStylesTab />}
       </main>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Fonts tab (M16 P3)
+// ---------------------------------------------------------------------------
+
+interface FontsTabProps {
+  folderId: string
+}
+
+/**
+ * Fonts tab body — wraps content in FolderFontsProvider so it can share the
+ * same cache instance as DeckShell's FolderFontLoader when both are mounted,
+ * and works standalone on the settings page when the editor isn't open.
+ */
+function FontsTab({ folderId }: FontsTabProps) {
+  return (
+    <FolderFontsProvider folderId={folderId}>
+      <FontsTabInner folderId={folderId} />
+    </FolderFontsProvider>
+  )
+}
+
+function FontsTabInner({ folderId }: FontsTabProps) {
+  const api = useApi()
+  const { fonts, loading, error, refresh } = useFolderFonts()
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return
+      setUploadError(null)
+
+      for (const file of Array.from(files)) {
+        const ext = file.name.split('.').pop()?.toLowerCase()
+        if (!ext || !['ttf', 'otf', 'woff2'].includes(ext)) {
+          setUploadError(
+            `Unsupported file type: ${file.name}. Only .ttf, .otf, .woff2 are accepted.`,
+          )
+          continue
+        }
+
+        setUploading(true)
+        try {
+          const uploaded = await api.uploadFolderFont(folderId, file)
+          // Push the font into document.fonts immediately so it's selectable
+          // in text-style editor without a page reload.
+          try {
+            const face = new FontFace(uploaded.family, `url(${uploaded.url})`, {
+              weight: String(uploaded.weight),
+              style: uploaded.style,
+              display: 'swap',
+            })
+            await face.load()
+            document.fonts.add(face)
+          } catch {
+            // Font registered server-side; browser load failure is non-fatal here.
+          }
+          await refresh()
+        } catch (err: unknown) {
+          const body = (err as { body?: { error?: string } }).body
+          const msg = body?.error ?? (err instanceof Error ? err.message : 'Upload failed')
+          setUploadError(msg)
+        } finally {
+          setUploading(false)
+        }
+      }
+    },
+    [api, folderId, refresh],
+  )
+
+  const handleDelete = useCallback(
+    async (assetId: string) => {
+      setUploadError(null)
+      try {
+        await api.deleteFolderFont(folderId, assetId)
+        await refresh()
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : 'Delete failed')
+      }
+    },
+    [api, folderId, refresh],
+  )
+
+  return (
+    <div className="px-8 py-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-foreground">Folder fonts</h2>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1.5"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          aria-label="Upload font"
+        >
+          <Upload className="h-4 w-4" aria-hidden="true" />
+          {uploading ? 'Uploading…' : 'Upload font'}
+        </Button>
+      </div>
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".ttf,.otf,.woff2"
+        multiple
+        className="hidden"
+        aria-hidden="true"
+        onChange={(e) => void handleFiles(e.target.files)}
+      />
+
+      {/* Drop zone */}
+      <div
+        role="region"
+        aria-label="Font drop zone"
+        className={[
+          'mb-4 flex flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors',
+          isDragOver
+            ? 'border-primary bg-primary/5 text-foreground'
+            : 'border-border text-muted-foreground',
+        ].join(' ')}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setIsDragOver(true)
+        }}
+        onDragLeave={() => setIsDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setIsDragOver(false)
+          void handleFiles(e.dataTransfer.files)
+        }}
+      >
+        <Upload className="mb-2 h-6 w-6 opacity-40" aria-hidden="true" />
+        <p className="text-sm">Drop .ttf, .otf, or .woff2 files here</p>
+        <p className="mt-0.5 text-xs opacity-60">or use the Upload font button above</p>
+      </div>
+
+      {/* Error messages */}
+      {(error !== null || uploadError !== null) && (
+        <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive-foreground">
+          {error ?? uploadError}
+        </div>
+      )}
+
+      {/* Font list */}
+      {loading && fonts.length === 0 ? (
+        <p className="text-xs text-muted-foreground/70">Loading…</p>
+      ) : fonts.length === 0 ? (
+        <p className="text-xs text-muted-foreground/70">No fonts uploaded yet.</p>
+      ) : (
+        <ul role="list" aria-label="Folder fonts" className="flex flex-col gap-2">
+          {fonts.map((font) => (
+            <FontRow key={font.assetId} font={font} onDelete={handleDelete} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+interface FontRowProps {
+  font: FolderFontSummary
+  onDelete: (assetId: string) => void
+}
+
+function FontRow({ font, onDelete }: FontRowProps) {
+  const [confirming, setConfirming] = useState(false)
+
+  return (
+    <li
+      role="listitem"
+      className="group flex items-center gap-3 rounded-md border border-border bg-surface-1 px-4 py-3"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{font.family}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground/70">
+          {font.weight} · {font.style} · {font.postscriptName}
+        </p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground/50">
+          {(font.sizeBytes / 1024).toFixed(0)} KB
+        </p>
+      </div>
+
+      {confirming ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <span className="text-xs text-muted-foreground">Delete?</span>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(false)
+              onDelete(font.assetId)
+            }}
+            className="rounded-md px-2 py-0.5 text-xs text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            aria-label={`Confirm delete ${font.family}`}
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            aria-label="Cancel delete"
+          >
+            No
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          aria-label={`Delete font ${font.family}`}
+          className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
+    </li>
   )
 }
 

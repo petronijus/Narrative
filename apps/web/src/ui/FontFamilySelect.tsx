@@ -14,6 +14,7 @@ import { Upload } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
 import { useDeckFonts } from '../state/useDeckFonts.js'
+import { useFolderFontsOptional } from '../state/useFolderFonts.js'
 import { FontUploadSheet } from './FontUploadSheet.js'
 import {
   applyInlineFormatIfSelected,
@@ -41,17 +42,23 @@ const SYSTEM_FONTS: ReadonlyArray<{ label: string; value: string }> = [
 
 export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps) {
   const { fonts } = useDeckFonts()
+  const folderFontsCtx = useFolderFontsOptional()
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  // Group custom fonts by family so multiple weights/styles collapse
-  // to one picker entry. The picker stores `family` only — the
-  // explicit fontWeight field on the TextObject already controls
-  // which uploaded face the browser picks via @font-face matching.
+  // Group custom (deck-level) fonts by family.
   const customFamilies = useMemo(() => {
     const set = new Set<string>()
     for (const f of fonts) set.add(f.family)
     return [...set].sort((a, b) => a.localeCompare(b))
   }, [fonts])
+
+  // Group folder-level fonts by family.
+  const folderFamilies = useMemo(() => {
+    if (!folderFontsCtx) return []
+    const set = new Set<string>()
+    for (const f of folderFontsCtx.fonts) set.add(f.family)
+    return [...set].sort((a, b) => a.localeCompare(b))
+  }, [folderFontsCtx])
 
   return (
     <div className="flex flex-1 items-center gap-1" data-text-edit-keep-focus>
@@ -109,6 +116,15 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
             </option>
           ))}
         </optgroup>
+        {folderFamilies.length > 0 && (
+          <optgroup label="Folder fonts">
+            {folderFamilies.map((family) => (
+              <option key={`folder-${family}`} value={family}>
+                {family}
+              </option>
+            ))}
+          </optgroup>
+        )}
         {customFamilies.length > 0 && (
           <optgroup label="Custom (this deck)">
             {customFamilies.map((family) => (

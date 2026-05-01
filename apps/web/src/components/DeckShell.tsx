@@ -46,6 +46,8 @@ import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { RulersProvider } from '../state/RulersContext.js'
 import { FontLoader } from '../state/FontLoader.js'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
+import { FolderFontsProvider } from '../state/useFolderFonts.js'
+import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { TokensProvider, useTokensResolve } from '../state/TokensContext.js'
 import { setColourResolver } from '../renderer/colourResolver.js'
 
@@ -87,9 +89,12 @@ function FolderDocGate({ children }: FolderDocGateProps) {
   }
 
   return (
-    <FolderDocProvider folderId={folderId}>
-      <FolderTokensBridge>{children}</FolderTokensBridge>
-    </FolderDocProvider>
+    <FolderFontsProvider folderId={folderId}>
+      <FolderFontLoader />
+      <FolderDocProvider folderId={folderId}>
+        <FolderTokensBridge>{children}</FolderTokensBridge>
+      </FolderDocProvider>
+    </FolderFontsProvider>
   )
 }
 
