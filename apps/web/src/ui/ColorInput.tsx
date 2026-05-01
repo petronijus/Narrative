@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { HexColorPicker } from 'react-colorful'
-import { Pipette } from 'lucide-react'
+import { Pipette, X } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
@@ -87,6 +87,14 @@ export interface ColorInputProps {
   tokenColors?: ColorTokenSnapshot[]
   activeTokenRef?: TokenRef | null
   onTokenSelect?: (ref: TokenRef) => void
+  /**
+   * When the parent fill is linked to a token, render this label (the
+   * token name) in place of the hex input + an ✕ Unlink button that
+   * calls `onUnlink`. Swatch trigger keeps opening the popover so the
+   * user can still adjust alpha while the link is active.
+   */
+  linkedLabel?: string | undefined
+  onUnlink?: (() => void) | undefined
 }
 
 const CHECKER_BG =
@@ -126,6 +134,8 @@ export function ColorInput({
   tokenColors,
   activeTokenRef,
   onTokenSelect,
+  linkedLabel,
+  onUnlink,
 }: ColorInputProps) {
   const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
   const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
@@ -415,23 +425,42 @@ export function ColorInput({
         </PopoverContent>
       </Popover>
 
-      {showHex && (
-        <input
-          type="text"
-          aria-label={`${ariaLabel} hex`}
-          value={hexDraft}
-          onChange={handleHexChange}
-          onFocus={() => {
-            isFocusedRef.current = true
-          }}
-          onBlur={handleHexBlur}
-          className={[
-            'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
-            'font-mono text-xs text-foreground',
-            'focus:border-ring focus:outline-none',
-            hexClassName,
-          ].join(' ')}
-        />
+      {linkedLabel !== undefined ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+            {linkedLabel}
+          </span>
+          {onUnlink !== undefined && (
+            <button
+              type="button"
+              title="Unlink token — write current value as literal"
+              aria-label="Unlink token"
+              onClick={onUnlink}
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+            >
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      ) : (
+        showHex && (
+          <input
+            type="text"
+            aria-label={`${ariaLabel} hex`}
+            value={hexDraft}
+            onChange={handleHexChange}
+            onFocus={() => {
+              isFocusedRef.current = true
+            }}
+            onBlur={handleHexBlur}
+            className={[
+              'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
+              'font-mono text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
+              hexClassName,
+            ].join(' ')}
+          />
+        )
       )}
     </div>
   )

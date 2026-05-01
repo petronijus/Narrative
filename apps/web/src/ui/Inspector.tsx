@@ -2585,13 +2585,13 @@ function FillBody({
           <option value="image">Image</option>
         </select>
 
-        {mode === 'solid' && !fillIsToken && (
+        {mode === 'solid' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
             <ColorInput
               value={solidHex}
               onChange={(hex) => patch({ fill: hexToNumber(hex) })}
               ariaLabel="Fill color"
-              showHex
+              showHex={!fillIsToken}
               alpha={fillAlpha}
               onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
               inputClassName="!h-5 !w-7"
@@ -2604,36 +2604,17 @@ function FillBody({
                   fillStyle: undefined,
                 } as unknown as SlideObjectPatch<FilledShape>)
               }
+              linkedLabel={fillIsToken && linkedToken !== null ? linkedToken.name : undefined}
+              onUnlink={
+                fillIsToken && linkedToken !== null
+                  ? () =>
+                      patch({
+                        fill: hexToNumber(linkedToken.value),
+                        fillStyle: undefined,
+                      } as unknown as SlideObjectPatch<FilledShape>)
+                  : undefined
+              }
             />
-          </div>
-        )}
-
-        {/* When the solid fill is linked to a folder color token, replace
-            the hex input with a linked chip + Unlink button. */}
-        {mode === 'solid' && fillIsToken && linkedToken !== null && (
-          <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-input field-surface px-1.5">
-            <span
-              className="h-4 w-4 shrink-0 rounded-sm border border-input"
-              style={{ background: linkedToken.value }}
-              aria-hidden="true"
-            />
-            <span className="min-w-0 flex-1 truncate text-[10px] text-muted-foreground">
-              {linkedToken.name}
-            </span>
-            <button
-              type="button"
-              title="Unlink token — write current value as literal"
-              aria-label="Unlink token"
-              onClick={() => {
-                patch({
-                  fill: hexToNumber(linkedToken.value),
-                  fillStyle: undefined,
-                } as unknown as SlideObjectPatch<FilledShape>)
-              }}
-              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
-            >
-              <X className="h-3 w-3" aria-hidden="true" />
-            </button>
           </div>
         )}
       </div>
