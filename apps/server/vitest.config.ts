@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@narrative/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
+      '@narrative/slide-model': path.resolve(__dirname, '../../packages/slide-model/src/index.ts'),
     },
   },
   test: {
