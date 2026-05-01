@@ -60,7 +60,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import { ColorInput } from './ColorInput.js'
+import { TokenColorInput } from './TokenColorInput.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
@@ -80,6 +80,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useNavigate } from 'react-router-dom'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
@@ -133,6 +134,9 @@ import type {
   ObjectHyperlink,
 } from '@narrative/shared'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
+import { useFolderTokens } from '../state/FolderDocProvider.js'
+import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
+import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,6 +145,18 @@ import { DEFAULT_BACKGROUND } from '@narrative/shared'
 /** Číslo (hex) → #rrggbb string pro <input type="color"> */
 function numberToHex(value: number): string {
   return '#' + value.toString(16).padStart(6, '0')
+}
+
+/**
+ * M16 P2: coerces `number | TokenRef` to `number` for existing Inspector
+ * code that handles colours as hex numbers.  TokenRef values return 0
+ * (transparent black) until the token picker UI (P4) provides proper
+ * resolution here.  Literal numbers pass through unchanged.
+ */
+function colourAsNumber(value: number | TokenRef | undefined): number {
+  if (value === undefined) return 0
+  if (isTokenRef(value)) return 0
+  return value
 }
 
 /** #rrggbb string → číslo pro Y.Doc */
@@ -1704,7 +1720,7 @@ function BackgroundSection({
 
         {current.kind === 'color' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
+            <TokenColorInput
               value={numberToHex(current.color)}
               onChange={(hex) =>
                 updateSlideBackground(deckCtx, slideId, {
@@ -2324,12 +2340,15 @@ function CornerRadiusRow({
 }
 
 // ---------------------------------------------------------------------------
-// Fill picker — solid / linear gradient / radial gradient
+// Fill picker — solid / linear gradient / radial gradient / token (M16 P2)
 // ---------------------------------------------------------------------------
 
 type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 
-function fillModeOf(style: FillStyle | undefined): FillMode {
+function fillModeOf(style: FillStyle | undefined, _fillIsToken: boolean): FillMode {
+  // M16 P2 follow-up: tokens are no longer a separate fill mode — the
+  // fill picker always shows the folder palette in the Solid row, and
+  // a TokenRef just marks the solid fill as "linked" to a token.
   if (style === undefined) return 'solid'
   return style.kind
 }
@@ -2351,7 +2370,7 @@ function StrokeBody({
   obj: FilledShape
   patch: (p: SlideObjectPatch<FilledShape>) => void
 }) {
-  const strokeHex = numberToHex(obj.stroke ?? 0x000000)
+  const strokeHex = numberToHex(colourAsNumber(obj.stroke) ?? 0x000000)
   const strokeAlpha = obj.strokeAlpha ?? 1
   const strokeWidth = obj.strokeWidth ?? 0
   // PathObject historically uses `dash` (boolean) where the parametric
@@ -2400,7 +2419,7 @@ function StrokeBody({
         </select>
 
         <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-          <ColorInput
+          <TokenColorInput
             value={strokeHex}
             onChange={(hex) =>
               patch(
@@ -2459,11 +2478,35 @@ function FillBody({
   obj: FilledShape
   patch: (p: SlideObjectPatch<FilledShape>) => void
 }) {
-  const mode = fillModeOf(obj.fillStyle)
+  const folderTokensSnapshot = useFolderTokens()
+  const { folderId } = useDeckRole()
+  const navigate = useNavigate()
+  // Convert the colors Record to an array for rendering
+  const colorTokensList: ColorTokenSnapshot[] = Object.values(folderTokensSnapshot.colors)
+
+  // M16 P2: detect if current fill is a TokenRef.
+  // `obj.fill` is typed as `number | TokenRef` — at runtime the Yjs value may
+  // be a TokenRef object when the state-sync agent writes one.
+  const rawFill: number | TokenRef = obj.fill as number | TokenRef
+  const currentTokenRef: TokenRef | null = isTokenRef(rawFill) ? rawFill : null
+  const fillIsToken = currentTokenRef !== null
+
+  const mode = fillModeOf(obj.fillStyle, fillIsToken)
   // PathObject's `fill` is optional — fall back to white so the picker
   // and gradient seed always have a starting colour.
-  const solidHex = numberToHex(obj.fill ?? 0xffffff)
+  // When fill is a token, resolve to the current literal for seed purposes.
+  const resolvedTokenHex =
+    currentTokenRef !== null
+      ? (resolveTokenValue(currentTokenRef, folderTokensSnapshot) ?? '#ffffff')
+      : null
+  const solidHex = resolvedTokenHex ?? numberToHex(typeof rawFill === 'number' ? rawFill : 0xffffff)
   const fillAlpha = obj.fillAlpha ?? 1
+
+  // The linked token's metadata (name, value) for the "Linked:" chip
+  const tokenIdFromRef =
+    currentTokenRef !== null ? (currentTokenRef.$token.split('.')[1] ?? null) : null
+  const linkedToken =
+    tokenIdFromRef !== null ? (folderTokensSnapshot.colors[tokenIdFromRef] ?? null) : null
 
   // Keep the last-seen gradient / image fillStyle around so the closing
   // transition has content to collapse. Without this, switching mode →
@@ -2485,6 +2528,11 @@ function FillBody({
 
   const setMode = (next: FillMode): void => {
     if (next === mode) return
+    // If the current fill is a TokenRef and we're switching away from
+    // solid, unlink (write resolved hex as a literal first).
+    if (fillIsToken && next !== 'solid') {
+      patch({ fill: hexToNumber(solidHex) } as unknown as SlideObjectPatch<FilledShape>)
+    }
     if (next === 'solid') {
       patch({ fillStyle: undefined } as unknown as SlideObjectPatch<FilledShape>)
       return
@@ -2499,7 +2547,7 @@ function FillBody({
     // Seed a two-stop gradient from the current solid colour + a darker
     // tint of itself (multiply RGB by 0.55) so the object reads as a
     // gradient without slamming to pure black on the second stop.
-    const startColor = obj.fill ?? 0xffffff
+    const startColor = typeof rawFill === 'number' ? rawFill : 0xffffff
     const r = (startColor >> 16) & 0xff
     const g = (startColor >> 8) & 0xff
     const b = startColor & 0xff
@@ -2542,19 +2590,44 @@ function FillBody({
 
         {mode === 'solid' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
+            <TokenColorInput
               value={solidHex}
               onChange={(hex) => patch({ fill: hexToNumber(hex) })}
               ariaLabel="Fill color"
-              showHex
+              showHex={!fillIsToken}
               alpha={fillAlpha}
               onAlphaChange={(a) => patch({ fillAlpha: a } as SlideObjectPatch<FilledShape>)}
               inputClassName="!h-5 !w-7"
               hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
+              tokenColors={colorTokensList}
+              activeTokenRef={currentTokenRef}
+              onTokenSelect={(tokenRef) =>
+                patch({
+                  fill: tokenRef,
+                  fillStyle: undefined,
+                } as unknown as SlideObjectPatch<FilledShape>)
+              }
+              linkedLabel={fillIsToken && linkedToken !== null ? linkedToken.name : undefined}
+              onUnlink={
+                fillIsToken && linkedToken !== null
+                  ? () =>
+                      patch({
+                        fill: hexToNumber(linkedToken.value),
+                        fillStyle: undefined,
+                      } as unknown as SlideObjectPatch<FilledShape>)
+                  : undefined
+              }
+              onOpenFolderSettings={
+                folderId !== null ? () => void navigate(`/folder/${folderId}/settings`) : undefined
+              }
             />
           </div>
         )}
       </div>
+
+      {/* Folder palette is rendered inside the ColorInput popover (above
+          Recents). When the fill is linked to a token, the row above
+          shows a "Linked: <name> [×]" chip in place of the hex input. */}
 
       {/* Gradient sub-editor — keeps the previous fillStyle mounted while
           collapsing so the closing animation has content to slide. The
@@ -2602,6 +2675,9 @@ function FillBody({
     </div>
   )
 }
+
+// FillTokenPanel was the standalone token swatch grid; superseded by
+// the folder palette row inside ColorInput's popover.
 
 const MAX_GRADIENT_STOPS = 10
 
@@ -2845,7 +2921,7 @@ function GradientPreviewBar({
             {/* Hidden ColorInput — popover anchors to its (invisible)
                 swatch trigger, which sits exactly under the handle. */}
             <div className="pointer-events-none absolute inset-0 opacity-0">
-              <ColorInput
+              <TokenColorInput
                 value={numberToHex(stop.color)}
                 onChange={(hex) => onUpdate(idx, { color: hexToNumber(hex) })}
                 alpha={stop.alpha ?? 1}
@@ -2906,7 +2982,7 @@ function GradientStopRow({
         className="w-10 flex-shrink-0 rounded-md border border-input field-surface px-1 py-0.5 text-[11px] text-foreground focus:border-ring focus:outline-none"
       />
       <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-input field-surface px-1">
-        <ColorInput
+        <TokenColorInput
           value={numberToHex(stop.color)}
           onChange={(hex) => onChange({ color: hexToNumber(hex) })}
           ariaLabel="Stop color"
@@ -3043,7 +3119,7 @@ function LineStrokeSection({
   obj: LineObject | ArrowObject | PathObject
   patch: (p: SlideObjectPatch<LineObject | ArrowObject | PathObject>) => void
 }) {
-  const strokeHex = numberToHex(obj.stroke)
+  const strokeHex = numberToHex(colourAsNumber(obj.stroke))
   const dashOn = obj.dash === true
 
   return (
@@ -3051,7 +3127,7 @@ function LineStrokeSection({
       <div className="flex items-center gap-2">
         <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Color</span>
         <div className="flex flex-1 items-center gap-1.5">
-          <ColorInput
+          <TokenColorInput
             value={strokeHex}
             onChange={(hex) => patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<typeof obj>)}
             ariaLabel="Stroke color"
@@ -3305,8 +3381,8 @@ function ShadowControls({
     <div className="flex flex-col gap-1.5 pt-1">
       {/* Color swatch + hex (Fill-style) + X / Y offsets in one row. */}
       <div className="flex w-full min-w-0 items-center gap-1">
-        <ColorInput
-          value={numberToHex(shadow.color)}
+        <TokenColorInput
+          value={numberToHex(colourAsNumber(shadow.color))}
           onChange={(hex) => onChange({ ...shadow, color: hexToNumber(hex) })}
           ariaLabel="Shadow color"
           showHex={false}
@@ -3509,6 +3585,9 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
 function TextSection({ obj, patch }: TextSectionProps) {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
+  // M16 P2: folder text style tokens
+  const folderTokensSnapshot = useFolderTokens()
+  const textStylesList = Object.values(folderTokensSnapshot.textStyles)
 
   // Re-render whenever the active text-edit selection changes so the
   // Bold / Italic / Underline buttons can highlight based on the run
@@ -3524,6 +3603,42 @@ function TextSection({ obj, patch }: TextSectionProps) {
   const effectiveItalic = selAttrs?.italic !== undefined ? selAttrs.italic : boxItalic
   const effectiveUnderline = selAttrs?.underline !== undefined ? selAttrs.underline : boxUnderline
 
+  // M16 P2: linked text style — stored in textStyleId field (cast via unknown
+  // because the shared type doesn't have this field yet; state-sync agent owns schema).
+  const rawObj: Record<string, unknown> = obj as unknown as Record<string, unknown>
+  const textStyleId: string | undefined =
+    typeof rawObj['textStyleId'] === 'string' ? rawObj['textStyleId'] : undefined
+  const linkedTextStyle =
+    textStyleId !== undefined ? (folderTokensSnapshot.textStyles[textStyleId] ?? null) : null
+
+  const applyTextStyle = (styleId: string | null) => {
+    if (styleId === null) {
+      // Detach — clear textStyleId, leave inline values intact
+      patch({ textStyleId: undefined } as unknown as SlideObjectPatch<TextObject>)
+      return
+    }
+    const style = folderTokensSnapshot.textStyles[styleId]
+    if (style === undefined) return
+    // Write all style properties + store styleId for the "Linked" indicator.
+    // TextStyleTokenSnapshot uses `family`, `weight`, `size` (not fontFamily etc.)
+    const colorVal = style.color
+    const colorNum =
+      typeof colorVal === 'string' && /^#[0-9a-f]{6}$/i.test(colorVal)
+        ? hexToNumber(colorVal)
+        : isTokenRef(colorVal)
+          ? colorVal // pass the TokenRef through; renderer resolves it
+          : undefined
+    patch({
+      ...(style.family !== undefined ? { fontFamily: style.family } : {}),
+      ...(style.weight !== undefined ? { fontWeight: style.weight } : {}),
+      ...(style.size !== undefined ? { fontSize: style.size } : {}),
+      ...(style.lineHeight !== undefined ? { lineHeight: style.lineHeight } : {}),
+      ...(style.letterSpacing !== undefined ? { letterSpacing: style.letterSpacing } : {}),
+      ...(colorNum !== undefined ? { color: colorNum } : {}),
+      textStyleId: style.id,
+    } as unknown as SlideObjectPatch<TextObject>)
+  }
+
   return (
     <>
       {/* P15: removed "Text content" textarea — double-click on the
@@ -3531,6 +3646,50 @@ function TextSection({ obj, patch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
+        {/* M16 P2: Text style dropdown — only shown when folder has text styles defined */}
+        {textStylesList.length > 0 && (
+          <div className="flex items-center gap-2" data-text-edit-keep-focus>
+            <label
+              htmlFor={`inspector-textstyle-${obj.id}`}
+              className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+            >
+              Preset
+            </label>
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <select
+                id={`inspector-textstyle-${obj.id}`}
+                aria-label="Text style preset"
+                value={textStyleId ?? ''}
+                onChange={(e) => applyTextStyle(e.target.value === '' ? null : e.target.value)}
+                disabled={isViewer}
+                className={[
+                  'h-7 min-w-0 flex-1 rounded-md border border-input field-surface px-1.5 text-[11px] text-foreground',
+                  'focus:border-ring focus:outline-none',
+                ].join(' ')}
+              >
+                <option value="">(Custom)</option>
+                {textStylesList.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              {/* Detach button — visible only when a style is linked */}
+              {linkedTextStyle !== null && !isViewer && (
+                <button
+                  type="button"
+                  title="Detach style — keep current values"
+                  aria-label="Detach text style"
+                  onClick={() => applyTextStyle(null)}
+                  className="h-7 shrink-0 rounded-md border border-input px-1.5 text-[10px] text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                >
+                  Detach
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <FontSizeField obj={obj} patch={patch} selAttrs={selAttrs} />
 
         {/* Font family — a curated set of web-safe + system stacks. User
@@ -3714,8 +3873,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
             alpha popover. No "Color" label; context is the Text panel. */}
         <div data-text-edit-keep-focus>
           <div className="flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
-            <ColorInput
-              value={numberToHex(selAttrs?.color ?? obj.color)}
+            <TokenColorInput
+              value={numberToHex(colourAsNumber(selAttrs?.color ?? obj.color))}
               onChange={(hex) => {
                 // The picker fires onChange continuously while the user
                 // drags. Do NOT call refocusActiveTextEdit here — pulling
@@ -3793,8 +3952,8 @@ function TextSection({ obj, patch }: TextSectionProps) {
             />
             {obj.stroke !== undefined && (
               <>
-                <ColorInput
-                  value={numberToHex(obj.stroke)}
+                <TokenColorInput
+                  value={numberToHex(colourAsNumber(obj.stroke))}
                   onChange={(hex) =>
                     patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
                   }

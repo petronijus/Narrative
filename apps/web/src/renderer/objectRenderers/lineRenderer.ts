@@ -17,6 +17,7 @@ import type { LineObject, ArrowObject, LineCap } from '@narrative/shared'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
 import { applyFlip } from './applyFlip.js'
+import { resolveColour } from '../colourResolver.js'
 
 type LineLike = LineObject | ArrowObject
 
@@ -68,7 +69,8 @@ function drawArrowhead(
 
 function drawLine(g: Graphics, data: LineLike): void {
   g.clear()
-  const { p1, p2, stroke, strokeWidth } = data
+  const { p1, p2, strokeWidth } = data
+  const stroke = resolveColour(data.stroke)
   const sa = data.strokeAlpha ?? 1
   const dash = data.dash === true
   if (dash) {

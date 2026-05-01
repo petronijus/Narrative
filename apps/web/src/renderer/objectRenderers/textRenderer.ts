@@ -35,6 +35,7 @@ import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
+import { resolveColour } from '../colourResolver.js'
 
 /**
  * Pixi v8 `HTMLText` rasterizes its SVG asynchronously
@@ -241,7 +242,7 @@ function buildStyleOpts(data: TextObject): any {
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
-    fill: colorWithAlpha(data.color, data.colorAlpha ?? 1),
+    fill: colorWithAlpha(resolveColour(data.color), data.colorAlpha ?? 1),
     align: data.align,
     // Pixi.HTMLText renders via an SVG foreignObject, so descenders
     // are never clipped by a texture boundary — TextStyle.padding (used
@@ -273,7 +274,7 @@ function buildStyleOpts(data: TextObject): any {
       : data.fontSize * 1.2
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
-      color: hexToColorString(data.stroke),
+      color: hexToColorString(resolveColour(data.stroke)),
       alpha: data.strokeAlpha ?? 1,
       width: data.strokeWidth ?? 1,
     }

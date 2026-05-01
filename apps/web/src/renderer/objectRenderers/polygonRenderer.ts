@@ -18,6 +18,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 import { applyFlip } from './applyFlip.js'
+import { resolveColour } from '../colourResolver.js'
 
 type PolygonLike = TriangleObject | PolygonObject
 
@@ -62,23 +63,26 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
       if (cachedData !== undefined && cachedG !== undefined)
         drawPolygon(cachedG, container, cachedData)
     })
+    const fillColour = resolveColour(data.fill)
     if (texture !== null) {
       g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      g.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
+      g.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
+    const fillColour = resolveColour(data.fill)
+    const resolved = fillStyleToPixi(data.fillStyle, fillColour, data.width, data.height, container)
     const fillInput =
       data.fillStyle === undefined
-        ? { color: data.fill, alpha: data.fillAlpha ?? 1 }
+        ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
         : resolved.input
     g.fill(fillInput)
   }
   // Save latest data for async redraw in image-fill onReady.
   asAny(container)[LATEST_DATA_TAG] = data
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
+    const strokeColour = resolveColour(data.stroke)
     const w = data.strokeWidth ?? 1
     const sa = data.strokeAlpha ?? 1
     if (data.strokeDash === true) {
@@ -86,10 +90,10 @@ function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): 
       for (let i = 0; i < points.length; i += 2) {
         pts.push({ x: points[i]!, y: points[i + 1]! })
       }
-      strokeDashedPolyline(g, pts, true, { color: data.stroke, width: w, alpha: sa })
+      strokeDashedPolyline(g, pts, true, { color: strokeColour, width: w, alpha: sa })
     } else {
       g.poly(points)
-      g.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: sa })
+      g.stroke({ color: strokeColour, width: w, alignment: 0.5, alpha: sa })
     }
   }
 }

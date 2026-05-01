@@ -21,6 +21,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleEllipse } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 import { applyFlip } from './applyFlip.js'
+import { resolveColour } from '../colourResolver.js'
 
 /** Interní tag klíče pro identifikaci Graphics a cached fill uvnitř Containeru. */
 const GRAPHICS_TAG = Symbol('ellipseGraphics')
@@ -67,29 +68,32 @@ function drawEllipse(graphics: Graphics, container: Container, data: EllipseObje
       const g = getGraphics(container)
       if (cached !== undefined && g !== undefined) drawEllipse(g, container, cached)
     })
+    const fillColour = resolveColour(data.fill)
     if (texture !== null) {
       graphics.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      graphics.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
+      graphics.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
+    const fillColour = resolveColour(data.fill)
+    const resolved = fillStyleToPixi(data.fillStyle, fillColour, data.width, data.height, container)
     const fillInput =
       data.fillStyle === undefined
-        ? { color: data.fill, alpha: data.fillAlpha ?? 1 }
+        ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
         : resolved.input
     graphics.fill(fillInput)
   }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
+    const strokeColour = resolveColour(data.stroke)
     const w = data.strokeWidth ?? 1
     const sa = data.strokeAlpha ?? 1
     if (data.strokeDash === true) {
       const pts = sampleEllipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
-      strokeDashedPolyline(graphics, pts, true, { color: data.stroke, width: w, alpha: sa })
+      strokeDashedPolyline(graphics, pts, true, { color: strokeColour, width: w, alpha: sa })
     } else {
       graphics.ellipse(data.width / 2, data.height / 2, data.width / 2, data.height / 2)
-      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: sa })
+      graphics.stroke({ color: strokeColour, width: w, alignment: 0.5, alpha: sa })
     }
   }
 }

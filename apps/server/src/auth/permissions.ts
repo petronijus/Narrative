@@ -18,7 +18,7 @@
 
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckPermissions, decks } from '../db/schema.js'
+import { deckPermissions, decks, folders } from '../db/schema.js'
 import { findShareLink } from './shareLinks.js'
 
 // ---------------------------------------------------------------------------
@@ -197,4 +197,40 @@ export async function checkDeckPermission(
 
   if (!access) return false
   return roleAtLeast(access.role, args.required)
+}
+
+// ---------------------------------------------------------------------------
+// Folder access — M16 P2
+// ---------------------------------------------------------------------------
+
+export interface FolderAccessResult {
+  role: 'owner'
+  reason: 'direct'
+}
+
+/**
+ * Resolves whether a userId may access a folder's Hocuspocus Y.Doc.
+ *
+ * Folders have a single owner; no per-folder ACL table exists yet.
+ * Rule: only the folder's `owner_user_id` may connect.
+ *
+ * Returns { role: 'owner', reason: 'direct' } on success, or null on deny.
+ * `userId` must be non-null — share-link access to folder docs is not supported.
+ */
+export async function resolveFolderAccess(
+  db: Database,
+  args: { folderId: string; userId: string | null },
+): Promise<FolderAccessResult | null> {
+  if (!args.userId) return null
+
+  const [row] = await db
+    .select({ ownerUserId: folders.ownerUserId })
+    .from(folders)
+    .where(eq(folders.id, args.folderId))
+    .limit(1)
+
+  if (!row) return null
+  if (row.ownerUserId !== args.userId) return null
+
+  return { role: 'owner', reason: 'direct' }
 }

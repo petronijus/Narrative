@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { Inspector } from './Inspector'
 import { SelectionProvider } from '../state/SelectionContext'
 import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
@@ -242,6 +243,45 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
   }
 })
 
+// M16 P2: FolderDocProvider — empty token snapshot so Inspector renders without throwing
+vi.mock('./TokenColorInput', async () => {
+  const actual = await vi.importActual<typeof import('./ColorInput')>('./ColorInput')
+  return { TokenColorInput: actual.ColorInput }
+})
+
+vi.mock('../state/FolderDocProvider', () => ({
+  useFolderTokens: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
+  useFolderTokensOptional: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
+  useFolderMutations: () => ({
+    addToken: vi.fn(),
+    updateToken: vi.fn(),
+    deleteToken: vi.fn(),
+    listUsages: () => [],
+  }),
+  FolderDocProvider: ({ children }: { children: unknown }) => children,
+}))
+
+vi.mock('../state/DeckRoleContext', () => ({
+  useDeckRole: () => ({ role: 'owner', folderId: 'folder-1' }),
+}))
+
+vi.mock('../state/CropModeContext', () => ({
+  useCropMode: () => ({ cropMode: false, setCropMode: vi.fn() }),
+}))
+
+vi.mock('../state/applyShapeMask', () => ({
+  applyShapeMask: vi.fn(),
+  isMaskableShape: () => false,
+}))
+
+vi.mock('../state/useMediaUpload', () => ({
+  useMediaUpload: () => ({ upload: vi.fn(), uploads: [] }),
+}))
+
+vi.mock('../state/useVideoInfo', () => ({
+  useVideoInfo: () => null,
+}))
+
 const RECT_OBJ: SlideObject = {
   id: 'rect-1',
   type: 'rectangle',
@@ -300,13 +340,15 @@ function renderWithSelection(obj: SlideObject) {
   }
 
   return render(
-    <SlideDocContext.Provider value={ctxValue}>
-      <ActiveSlideContext.Provider value={createMockActiveSlide()}>
-        <SelectionProvider>
-          <Inner />
-        </SelectionProvider>
-      </ActiveSlideContext.Provider>
-    </SlideDocContext.Provider>,
+    <MemoryRouter>
+      <SlideDocContext.Provider value={ctxValue}>
+        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+          <SelectionProvider>
+            <Inner />
+          </SelectionProvider>
+        </ActiveSlideContext.Provider>
+      </SlideDocContext.Provider>
+    </MemoryRouter>,
   )
 }
 
@@ -513,13 +555,15 @@ describe('Inspector — multi-select placeholder', () => {
     }
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
-          <SelectionProvider>
-            <MultiSelectInner />
-          </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+      <MemoryRouter>
+        <SlideDocContext.Provider value={ctxValue}>
+          <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+            <SelectionProvider>
+              <MultiSelectInner />
+            </SelectionProvider>
+          </ActiveSlideContext.Provider>
+        </SlideDocContext.Provider>
+      </MemoryRouter>,
     )
 
     expect(screen.getByText(/Multi-select/)).toBeInTheDocument()

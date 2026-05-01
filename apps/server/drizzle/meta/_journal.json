@@ -43,6 +43,20 @@
       "when": 1777497833369,
       "tag": "0005_deck_thumbnail",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777584233369,
+      "tag": "0006_m16_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777670633369,
+      "tag": "0007_m16_folder_updates",
+      "breakpoints": true
     }
   ]
 }

@@ -48,6 +48,7 @@ import { useAuth } from '../state/AuthContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { ShareDialog } from './ShareDialog.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
+import { useApi } from '../api/client.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { createObjectOfType } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
@@ -102,6 +103,23 @@ export function Toolbar() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
   const { user, logout } = useAuth()
+  const api = useApi()
+  const [folderId, setFolderId] = useState<string | null>(null)
+  useEffect(() => {
+    if (id == null) return
+    let cancelled = false
+    api
+      .getDeck(id)
+      .then((d) => {
+        if (!cancelled) setFolderId(d.folderId ?? null)
+      })
+      .catch(() => {
+        // Best-effort — fall back to /folders on Home click.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api, id])
   const { role } = useDeckRole()
   const [shareOpen, setShareOpen] = useState(false)
   const isViewer = role === 'viewer'
@@ -249,7 +267,7 @@ export function Toolbar() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => navigate('/')}
+              onClick={() => navigate(folderId != null ? `/folder/${folderId}` : '/')}
               aria-label="Back to deck list"
               className="h-7 w-7"
             >

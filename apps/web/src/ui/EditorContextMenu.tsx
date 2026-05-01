@@ -52,6 +52,7 @@ import { useSelection } from '../state/SelectionContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
+import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
 import type { SlideObject, SlideObjectPatch, SlideObjectType } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
   const canvasInstance = useCanvasInstance()
   const { zoom, setZoom } = useZoomLevel()
+  const defaults = useDefaultObjectFill()
 
   /** Mode flips on contextmenu and is read at render time to choose items. */
   const [mode, setMode] = useState<Mode>('canvas')
@@ -261,10 +263,17 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     const { x, y } = cursorCoordsRef.current
     const DEFAULT_W = type === 'text' ? 200 : 160
     const DEFAULT_H = type === 'text' ? 60 : 120
+    const colorDefaults =
+      type === 'line' || type === 'arrow'
+        ? defaults.strokeDefaults
+        : type === 'text'
+          ? defaults.textColorDefaults
+          : defaults.fillDefaults
     createObjectOfType(mutationCtx, type, {
       x: x - DEFAULT_W / 2,
       y: y - DEFAULT_H / 2,
-    })
+      ...colorDefaults,
+    } as Parameters<typeof createObjectOfType>[2])
   }
 
   const handleSelectAll = (): void => {

@@ -22,9 +22,10 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { HexColorPicker } from 'react-colorful'
-import { Pipette } from 'lucide-react'
+import { Pipette, Plus, X } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
+import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // EyeDropper API types — not yet in the official TypeScript lib.
@@ -78,6 +79,23 @@ export interface ColorInputProps {
   onAlphaChange?: (alpha: number) => void
   /** Definitive alpha commit on slider release. Defaults to `onAlphaChange`. */
   onAlphaCommit?: (alpha: number) => void
+  /**
+   * M16 P2: folder palette to render inside the popover above Recents.
+   * When provided alongside `onTokenSelect`, clicking a swatch links the
+   * fill to that token. `activeTokenRef` highlights the current link.
+   */
+  tokenColors?: ColorTokenSnapshot[] | undefined
+  activeTokenRef?: TokenRef | null | undefined
+  onTokenSelect?: ((ref: TokenRef) => void) | undefined
+  onOpenFolderSettings?: (() => void) | undefined
+  /**
+   * When the parent fill is linked to a token, render this label (the
+   * token name) in place of the hex input + an ✕ Unlink button that
+   * calls `onUnlink`. Swatch trigger keeps opening the popover so the
+   * user can still adjust alpha while the link is active.
+   */
+  linkedLabel?: string | undefined
+  onUnlink?: (() => void) | undefined
 }
 
 const CHECKER_BG =
@@ -114,6 +132,12 @@ export function ColorInput({
   alpha,
   onAlphaChange,
   onAlphaCommit,
+  tokenColors,
+  activeTokenRef,
+  onTokenSelect,
+  linkedLabel,
+  onUnlink,
+  onOpenFolderSettings,
 }: ColorInputProps) {
   const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
   const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
@@ -121,7 +145,20 @@ export function ColorInput({
   const { colors: recentColors, push } = useRecentColors()
   const [open, setOpen] = useState(false)
 
+  // When a folder-token swatch is clicked we close the popover without
+  // pushing the previous hex into the recent-colors history (the user
+  // didn't actually pick a hex).
+  const skipCloseCommitRef = useRef(false)
+
   const commit = onCommit ?? onChange
+
+  // ColorInput is intentionally context-free; the auto-pull (folder
+  // palette + Settings link + hex fallback for non-token fields) lives
+  // in <TokenColorInput> so tests / non-editor callers don't need a
+  // Router or FolderDocProvider parent.
+  const effectiveTokenColors = tokenColors
+  const effectiveOnOpenFolderSettings = onOpenFolderSettings
+  const effectiveOnTokenSelect = onTokenSelect
 
   // Local draft for the hex input. The parent's `value` is the source
   // of truth, but committing only valid `#RRGGBB` strings means
@@ -192,6 +229,11 @@ export function ColorInput({
   const handleOpenChange = (next: boolean): void => {
     setOpen(next)
     if (!next) {
+      if (skipCloseCommitRef.current) {
+        // Token was just picked — don't push the previous hex into recents.
+        skipCloseCommitRef.current = false
+        return
+      }
       // Closing → commit current value + add to recent.
       commit(value)
       push(value)
@@ -324,48 +366,131 @@ export function ColorInput({
               </div>
             )}
 
+            {/* M16 P2: folder palette above Recents inside the popover.
+                Clicking a swatch links the fill to that token. */}
+            {effectiveTokenColors !== undefined &&
+              effectiveTokenColors.length > 0 &&
+              effectiveOnTokenSelect !== undefined && (
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                      Folder palette
+                    </p>
+                    {effectiveOnOpenFolderSettings !== undefined && (
+                      <button
+                        type="button"
+                        title="Edit folder colors"
+                        aria-label="Edit folder colors"
+                        onClick={() => {
+                          skipCloseCommitRef.current = true
+                          setOpen(false)
+                          effectiveOnOpenFolderSettings()
+                        }}
+                        className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+                      >
+                        <Plus className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Folder palette">
+                    {effectiveTokenColors.map((c) => {
+                      const activeId =
+                        activeTokenRef !== null && activeTokenRef !== undefined
+                          ? (activeTokenRef.$token.split('.')[1] ?? null)
+                          : null
+                      const isActive = activeId === c.id
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          title={`${c.name}\n${c.value.toUpperCase()}`}
+                          aria-label={`Apply token: ${c.name}`}
+                          aria-pressed={isActive}
+                          onClick={() => {
+                            skipCloseCommitRef.current = true
+                            effectiveOnTokenSelect({ $token: `colors.${c.id}` })
+                            setOpen(false)
+                          }}
+                          className={[
+                            'h-5 w-5 rounded-sm border transition',
+                            isActive
+                              ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                              : 'border-border hover:border-border-strong',
+                          ].join(' ')}
+                          style={{ background: c.value }}
+                        />
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
             {/* Recent colors swatch row inside the popover. */}
             {recentColors.length > 0 && (
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Recent colors">
-                {recentColors.map((hex) => (
-                  <button
-                    key={hex}
-                    type="button"
-                    title={hex.toUpperCase()}
-                    aria-label={`Recent color ${hex.toUpperCase()}`}
-                    onClick={() => handleSwatchClick(hex)}
-                    className={[
-                      'h-5 w-5 rounded-sm border transition',
-                      hex.toLowerCase() === value.toLowerCase()
-                        ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                        : 'border-border hover:border-border-strong',
-                    ].join(' ')}
-                    style={{ background: hex }}
-                  />
-                ))}
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  Recent
+                </p>
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Recent colors">
+                  {recentColors.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      title={hex.toUpperCase()}
+                      aria-label={`Recent color ${hex.toUpperCase()}`}
+                      onClick={() => handleSwatchClick(hex)}
+                      className={[
+                        'h-5 w-5 rounded-sm border transition',
+                        hex.toLowerCase() === value.toLowerCase()
+                          ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                          : 'border-border hover:border-border-strong',
+                      ].join(' ')}
+                      style={{ background: hex }}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
         </PopoverContent>
       </Popover>
 
-      {showHex && (
-        <input
-          type="text"
-          aria-label={`${ariaLabel} hex`}
-          value={hexDraft}
-          onChange={handleHexChange}
-          onFocus={() => {
-            isFocusedRef.current = true
-          }}
-          onBlur={handleHexBlur}
-          className={[
-            'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
-            'font-mono text-xs text-foreground',
-            'focus:border-ring focus:outline-none',
-            hexClassName,
-          ].join(' ')}
-        />
+      {linkedLabel !== undefined ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+            {linkedLabel}
+          </span>
+          {onUnlink !== undefined && (
+            <button
+              type="button"
+              title="Unlink token — write current value as literal"
+              aria-label="Unlink token"
+              onClick={onUnlink}
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+            >
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      ) : (
+        showHex && (
+          <input
+            type="text"
+            aria-label={`${ariaLabel} hex`}
+            value={hexDraft}
+            onChange={handleHexChange}
+            onFocus={() => {
+              isFocusedRef.current = true
+            }}
+            onBlur={handleHexBlur}
+            className={[
+              'flex-1 rounded-md border border-input field-surface px-2 py-0.5',
+              'font-mono text-xs text-foreground',
+              'focus:border-ring focus:outline-none',
+              hexClassName,
+            ].join(' ')}
+          />
+        )
       )}
     </div>
   )
