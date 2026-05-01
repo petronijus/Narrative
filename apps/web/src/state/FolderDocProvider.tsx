@@ -39,6 +39,7 @@ import type {
   TextStyleTokenSnapshot,
   EffectStyleTokenSnapshot,
 } from '@narrative/slide-model'
+import { DEFAULT_COLORS, DEFAULT_TEXT_STYLES } from './defaultTokens.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
@@ -65,6 +66,48 @@ function getCategoryMap(doc: Y.Doc, category: TokenCategory): Y.Map<Y.Map<unknow
     })
   }
   return cat
+}
+
+/**
+ * Seed a fresh folder doc with the default design-system palette + text
+ * styles. Idempotent — only fires when both `colors` and `textStyles`
+ * sub-maps are completely empty, so a user who deletes everything is not
+ * fighting the seeder.
+ */
+function seedDefaultsIfEmpty(doc: Y.Doc): void {
+  const colorsMap = getCategoryMap(doc, 'colors')
+  const textStylesMap = getCategoryMap(doc, 'textStyles')
+  if (colorsMap.size > 0 || textStylesMap.size > 0) return
+
+  doc.transact(() => {
+    const idByKey: Record<string, string> = {}
+    for (const c of DEFAULT_COLORS) {
+      const id = nanoid(10)
+      idByKey[c.key] = id
+      const m = new Y.Map<unknown>()
+      m.set('id', id)
+      m.set('name', c.name)
+      m.set('value', c.value)
+      colorsMap.set(id, m)
+    }
+
+    for (const ts of DEFAULT_TEXT_STYLES) {
+      const id = nanoid(10)
+      const colorId = idByKey[ts.colorKey]
+      const m = new Y.Map<unknown>()
+      m.set('id', id)
+      m.set('name', ts.name)
+      m.set('family', ts.family)
+      m.set('weight', ts.weight)
+      m.set('size', ts.size)
+      m.set('lineHeight', ts.lineHeight)
+      m.set('letterSpacing', ts.letterSpacing)
+      if (colorId !== undefined) {
+        m.set('color', { $token: `colors.${colorId}` })
+      }
+      textStylesMap.set(id, m)
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +250,10 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
       document: doc,
       ...(token !== null ? { token } : { token: null }),
       onSynced() {
-        // After server sync, rebuild snapshot and subscribe to live updates.
+        // First sync after server roundtrip — if the doc is brand new
+        // (colors AND textStyles both empty), seed the design-system
+        // defaults inside a single transaction. Idempotent.
+        seedDefaultsIfEmpty(doc)
         tokens = buildSnapshot(doc)
         setValue({ doc, tokens })
       },

@@ -24,17 +24,14 @@ import {
   useFolderMutations,
 } from '../state/FolderDocProvider.js'
 import type { FolderSummary } from '../api/client.js'
-import type {
-  ColorTokenSnapshot,
-  TextStyleTokenSnapshot,
-  EffectStyleTokenSnapshot,
-} from '@narrative/slide-model'
+import { MAX_COLORS } from '../state/defaultTokens.js'
+import type { ColorTokenSnapshot, TextStyleTokenSnapshot } from '@narrative/slide-model'
 
 // ---------------------------------------------------------------------------
 // Tab type
 // ---------------------------------------------------------------------------
 
-type SettingsTab = 'colors' | 'textStyles' | 'effectStyles'
+type SettingsTab = 'colors' | 'textStyles'
 
 // ---------------------------------------------------------------------------
 // FolderSettingsInner — rendered inside FolderDocProvider
@@ -91,7 +88,6 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
   const TABS: { id: SettingsTab; label: string }[] = [
     { id: 'colors', label: 'Colors' },
     { id: 'textStyles', label: 'Text styles' },
-    { id: 'effectStyles', label: 'Effect styles' },
   ]
 
   return (
@@ -178,7 +174,6 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
 
         {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
         {activeTab === 'textStyles' && <TextStylesTab />}
-        {activeTab === 'effectStyles' && <EffectStylesTab />}
       </main>
     </div>
   )
@@ -196,11 +191,13 @@ function ColorsTab({ folderId: _folderId }: ColorsTabProps) {
   const snapshot = useFolderTokens()
   const { addToken, updateToken, deleteToken, listUsages } = useFolderMutations()
   const colorsList = Object.values(snapshot.colors)
+  const atCap = colorsList.length >= MAX_COLORS
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deleteUsages, setDeleteUsages] = useState<string[]>([])
 
   const handleAddColor = () => {
+    if (atCap) return
     addToken('colors', { name: 'New color', value: '#3b82f6' })
   }
 
@@ -221,17 +218,30 @@ function ColorsTab({ folderId: _folderId }: ColorsTabProps) {
   return (
     <div className="px-8 py-6">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground">Color tokens</h2>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="gap-1.5"
-          onClick={handleAddColor}
-          aria-label="Add new color token"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          New color
-        </Button>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-foreground">Color tokens</h2>
+          <span className="text-xs tabular-nums text-muted-foreground/70">
+            {colorsList.length} / {MAX_COLORS}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {atCap && (
+            <span className="text-xs text-muted-foreground/80">
+              Maximum {MAX_COLORS} colors per folder — delete one to add another.
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5"
+            onClick={handleAddColor}
+            disabled={atCap}
+            aria-label="Add new color token"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add color
+          </Button>
+        </div>
       </div>
 
       {colorsList.length === 0 ? (
@@ -713,152 +723,6 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
         </p>
       </div>
     </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Effect styles tab
-// ---------------------------------------------------------------------------
-
-function EffectStylesTab() {
-  const snapshot = useFolderTokens()
-  const { addToken, deleteToken, listUsages } = useFolderMutations()
-  const effectsList = Object.values(snapshot.effectStyles)
-  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
-  const [deleteUsages, setDeleteUsages] = useState<string[]>([])
-
-  const handleDeleteRequest = (id: string) => {
-    const usages = listUsages('effectStyles', id)
-    setDeleteUsages(usages)
-    setDeleteTargetId(id)
-  }
-
-  const handleDeleteConfirm = () => {
-    if (deleteTargetId !== null) {
-      deleteToken('effectStyles', deleteTargetId)
-    }
-    setDeleteTargetId(null)
-    setDeleteUsages([])
-  }
-
-  const addShadow = () => {
-    addToken('effectStyles', {
-      name: 'Drop shadow',
-      kind: 'shadow',
-      params: { offsetX: 0, offsetY: 4, blur: 8, spread: 0, color: '#000000', opacity: 0.25 },
-    })
-  }
-
-  const addBlur = () => {
-    addToken('effectStyles', {
-      name: 'Background blur',
-      kind: 'blur',
-      params: { radius: 8 },
-    })
-  }
-
-  return (
-    <div className="px-8 py-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-foreground">Effect styles</h2>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" className="gap-1.5" onClick={addShadow}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New shadow
-          </Button>
-          <Button size="sm" variant="ghost" className="gap-1.5" onClick={addBlur}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New blur
-          </Button>
-        </div>
-      </div>
-
-      {effectsList.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <p className="text-sm text-muted-foreground">No effect styles yet.</p>
-          <p className="mt-1 text-xs text-muted-foreground/60">
-            Add a shadow or blur preset to reuse across slides.
-          </p>
-        </div>
-      ) : (
-        <ul className="flex flex-col gap-2" role="list" aria-label="Effect styles">
-          {effectsList.map((effect) => (
-            <EffectRow
-              key={effect.id}
-              effect={effect}
-              onDeleteRequest={() => handleDeleteRequest(effect.id)}
-            />
-          ))}
-        </ul>
-      )}
-
-      {deleteTargetId !== null && (
-        <DeleteTokenModal
-          tokenName={snapshot.effectStyles[deleteTargetId]?.name ?? 'effect'}
-          usageCount={deleteUsages.length}
-          onConfirm={handleDeleteConfirm}
-          onCancel={() => {
-            setDeleteTargetId(null)
-            setDeleteUsages([])
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// EffectRow
-// ---------------------------------------------------------------------------
-
-interface EffectRowProps {
-  effect: EffectStyleTokenSnapshot
-  onDeleteRequest: () => void
-}
-
-function EffectRow({ effect, onDeleteRequest }: EffectRowProps) {
-  const shadowOffsetX = typeof effect.params['offsetX'] === 'number' ? effect.params['offsetX'] : 0
-  const shadowOffsetY = typeof effect.params['offsetY'] === 'number' ? effect.params['offsetY'] : 0
-  const blurRadius =
-    typeof effect.params['blur'] === 'number'
-      ? effect.params['blur']
-      : typeof effect.params['radius'] === 'number'
-        ? effect.params['radius']
-        : 0
-  const spread = typeof effect.params['spread'] === 'number' ? effect.params['spread'] : 0
-
-  return (
-    <li className="panel group flex items-center gap-3 rounded-lg border border-border px-4 py-3">
-      {/* Kind badge */}
-      <span
-        className={[
-          'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-          effect.kind === 'shadow'
-            ? 'bg-blue-500/10 text-blue-400'
-            : 'bg-violet-500/10 text-violet-400',
-        ].join(' ')}
-      >
-        {effect.kind}
-      </span>
-
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground">{effect.name}</p>
-        <p className="text-[11px] text-muted-foreground/70">
-          {effect.kind === 'shadow'
-            ? `${shadowOffsetX}px ${shadowOffsetY}px ${blurRadius}px ${spread}px`
-            : `Blur ${blurRadius}px`}
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={onDeleteRequest}
-        aria-label={`Delete effect ${effect.name}`}
-        className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-      >
-        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
-    </li>
   )
 }
 

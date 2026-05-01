@@ -9,7 +9,7 @@
  *   - Renaming a color token inline
  *   - Delete modal scaffold (usage-warning included)
  *   - Text style tab renders + add
- *   - Effect style tab renders + add
+ *   - (Effect styles tab dropped per M16 P2 spec revision)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -149,11 +149,11 @@ describe('FolderSettings page', () => {
     ])
   })
 
-  it('renders all three tabs', async () => {
+  it('renders Colors and Text styles tabs', async () => {
     renderFolderSettings()
     expect(screen.getByRole('tab', { name: 'Colors' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Text styles' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Effect styles' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Effect styles' })).not.toBeInTheDocument()
   })
 
   it('shows Settings in the header breadcrumb', async () => {
@@ -252,32 +252,6 @@ describe('FolderSettings page', () => {
     await waitFor(() => {
       // After adding a style, the list should have the "New style" entry
       expect(screen.getByText('New style')).toBeInTheDocument()
-    })
-  })
-
-  it('switches to Effect styles tab', () => {
-    renderFolderSettings()
-    fireEvent.click(screen.getByRole('tab', { name: 'Effect styles' }))
-    expect(screen.getByText('No effect styles yet.')).toBeInTheDocument()
-  })
-
-  it('adds a shadow effect', async () => {
-    renderFolderSettings()
-    fireEvent.click(screen.getByRole('tab', { name: 'Effect styles' }))
-    fireEvent.click(screen.getByRole('button', { name: /new shadow/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText('Drop shadow')).toBeInTheDocument()
-    })
-  })
-
-  it('adds a blur effect', async () => {
-    renderFolderSettings()
-    fireEvent.click(screen.getByRole('tab', { name: 'Effect styles' }))
-    fireEvent.click(screen.getByRole('button', { name: /new blur/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText('Background blur')).toBeInTheDocument()
     })
   })
 
