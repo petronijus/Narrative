@@ -33,13 +33,32 @@ interface FontFamilySelectProps {
   disabled: boolean
 }
 
-const SYSTEM_FONTS: ReadonlyArray<{ label: string; value: string }> = [
-  { label: 'Inter', value: 'Inter, system-ui, sans-serif' },
-  { label: 'Helvetica', value: "'Helvetica Neue', Helvetica, Arial, sans-serif" },
-  { label: 'Georgia', value: "Georgia, 'Times New Roman', serif" },
-  { label: 'Times', value: "'Times New Roman', Times, serif" },
-  { label: 'Courier', value: "'Courier New', Courier, monospace" },
-  { label: 'SF Mono', value: "'SF Mono', Menlo, monospace" },
+/**
+ * System font stacks. `weights` is the realistic list of cuts the user
+ * can expect to find pre-installed on macOS / Windows (and that the
+ * browser will not synthesize). System fonts typically ship only
+ * Regular + Bold; Inter is the exception because Vite serves the
+ * variable face that covers 100..900.
+ */
+export const SYSTEM_FONTS: ReadonlyArray<{
+  label: string
+  value: string
+  weights: ReadonlyArray<number>
+}> = [
+  {
+    label: 'Inter',
+    value: 'Inter, system-ui, sans-serif',
+    weights: [100, 200, 300, 400, 500, 600, 700, 800, 900],
+  },
+  {
+    label: 'Helvetica',
+    value: "'Helvetica Neue', Helvetica, Arial, sans-serif",
+    weights: [400, 700],
+  },
+  { label: 'Georgia', value: "Georgia, 'Times New Roman', serif", weights: [400, 700] },
+  { label: 'Times', value: "'Times New Roman', Times, serif", weights: [400, 700] },
+  { label: 'Courier', value: "'Courier New', Courier, monospace", weights: [400, 700] },
+  { label: 'SF Mono', value: "'SF Mono', Menlo, monospace", weights: [400, 700] },
 ]
 
 export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps) {
