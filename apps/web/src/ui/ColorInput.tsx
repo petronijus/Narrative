@@ -132,6 +132,10 @@ export function ColorInput({
   const commitAlpha = onAlphaCommit ?? onAlphaChange
   const { colors: recentColors, push } = useRecentColors()
   const [open, setOpen] = useState(false)
+  // When a folder-token swatch is clicked we close the popover without
+  // pushing the previous hex into the recent-colors history (the user
+  // didn't actually pick a hex).
+  const skipCloseCommitRef = useRef(false)
 
   const commit = onCommit ?? onChange
 
@@ -204,6 +208,11 @@ export function ColorInput({
   const handleOpenChange = (next: boolean): void => {
     setOpen(next)
     if (!next) {
+      if (skipCloseCommitRef.current) {
+        // Token was just picked — don't push the previous hex into recents.
+        skipCloseCommitRef.current = false
+        return
+      }
       // Closing → commit current value + add to recent.
       commit(value)
       push(value)
@@ -358,6 +367,7 @@ export function ColorInput({
                         aria-label={`Apply token: ${c.name}`}
                         aria-pressed={isActive}
                         onClick={() => {
+                          skipCloseCommitRef.current = true
                           onTokenSelect({ $token: `colors.${c.id}` })
                           setOpen(false)
                         }}
@@ -377,23 +387,28 @@ export function ColorInput({
 
             {/* Recent colors swatch row inside the popover. */}
             {recentColors.length > 0 && (
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Recent colors">
-                {recentColors.map((hex) => (
-                  <button
-                    key={hex}
-                    type="button"
-                    title={hex.toUpperCase()}
-                    aria-label={`Recent color ${hex.toUpperCase()}`}
-                    onClick={() => handleSwatchClick(hex)}
-                    className={[
-                      'h-5 w-5 rounded-sm border transition',
-                      hex.toLowerCase() === value.toLowerCase()
-                        ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                        : 'border-border hover:border-border-strong',
-                    ].join(' ')}
-                    style={{ background: hex }}
-                  />
-                ))}
+              <div>
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  Recent
+                </p>
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label="Recent colors">
+                  {recentColors.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      title={hex.toUpperCase()}
+                      aria-label={`Recent color ${hex.toUpperCase()}`}
+                      onClick={() => handleSwatchClick(hex)}
+                      className={[
+                        'h-5 w-5 rounded-sm border transition',
+                        hex.toLowerCase() === value.toLowerCase()
+                          ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                          : 'border-border hover:border-border-strong',
+                      ].join(' ')}
+                      style={{ background: hex }}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
