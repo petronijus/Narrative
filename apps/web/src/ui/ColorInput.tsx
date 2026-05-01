@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { HexColorPicker } from 'react-colorful'
-import { Pipette, X } from 'lucide-react'
+import { Pipette, Plus, X } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
@@ -95,6 +95,11 @@ export interface ColorInputProps {
    */
   linkedLabel?: string | undefined
   onUnlink?: (() => void) | undefined
+  /**
+   * Optional handler for the "+" button next to the folder palette
+   * row — opens the folder's color settings editor.
+   */
+  onOpenFolderSettings?: (() => void) | undefined
 }
 
 const CHECKER_BG =
@@ -136,6 +141,7 @@ export function ColorInput({
   onTokenSelect,
   linkedLabel,
   onUnlink,
+  onOpenFolderSettings,
 }: ColorInputProps) {
   const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
   const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
@@ -359,9 +365,26 @@ export function ColorInput({
                 Clicking a swatch links the fill to that token. */}
             {tokenColors !== undefined && tokenColors.length > 0 && onTokenSelect !== undefined && (
               <div>
-                <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                  Folder palette
-                </p>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                    Folder palette
+                  </p>
+                  {onOpenFolderSettings !== undefined && (
+                    <button
+                      type="button"
+                      title="Edit folder colors"
+                      aria-label="Edit folder colors"
+                      onClick={() => {
+                        skipCloseCommitRef.current = true
+                        setOpen(false)
+                        onOpenFolderSettings()
+                      }}
+                      className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+                    >
+                      <Plus className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-1.5" role="group" aria-label="Folder palette">
                   {tokenColors.map((c) => {
                     const activeId =

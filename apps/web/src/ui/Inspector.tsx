@@ -80,6 +80,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { useNavigate } from 'react-router-dom'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
@@ -2478,6 +2479,8 @@ function FillBody({
   patch: (p: SlideObjectPatch<FilledShape>) => void
 }) {
   const folderTokensSnapshot = useFolderTokens()
+  const { folderId } = useDeckRole()
+  const navigate = useNavigate()
   // Convert the colors Record to an array for rendering
   const colorTokensList: ColorTokenSnapshot[] = Object.values(folderTokensSnapshot.colors)
 
@@ -2613,6 +2616,9 @@ function FillBody({
                         fillStyle: undefined,
                       } as unknown as SlideObjectPatch<FilledShape>)
                   : undefined
+              }
+              onOpenFolderSettings={
+                folderId !== null ? () => void navigate(`/folder/${folderId}/settings`) : undefined
               }
             />
           </div>
