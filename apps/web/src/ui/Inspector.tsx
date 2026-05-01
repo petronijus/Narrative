@@ -2343,10 +2343,12 @@ function CornerRadiusRow({
 // Fill picker — solid / linear gradient / radial gradient / token (M16 P2)
 // ---------------------------------------------------------------------------
 
-type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image' | 'token'
+type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 
-function fillModeOf(style: FillStyle | undefined, fillIsToken: boolean): FillMode {
-  if (fillIsToken) return 'token'
+function fillModeOf(style: FillStyle | undefined, _fillIsToken: boolean): FillMode {
+  // M16 P2 follow-up: tokens are no longer a separate fill mode — the
+  // fill picker always shows the folder palette in the Solid row, and
+  // a TokenRef just marks the solid fill as "linked" to a token.
   if (style === undefined) return 'solid'
   return style.kind
 }
@@ -2525,8 +2527,9 @@ function FillBody({
 
   const setMode = (next: FillMode): void => {
     if (next === mode) return
-    // Switching away from token → unlink (write resolved hex back as literal)
-    if (mode === 'token' && next !== 'token') {
+    // If the current fill is a TokenRef and we're switching away from
+    // solid, unlink (write resolved hex as a literal first).
+    if (fillIsToken && next !== 'solid') {
       patch({ fill: hexToNumber(solidHex) } as unknown as SlideObjectPatch<FilledShape>)
     }
     if (next === 'solid') {
@@ -2538,11 +2541,6 @@ function FillBody({
       patch({
         fillStyle: { kind: 'image', assetId: '', fit: 'cover' },
       } as SlideObjectPatch<FilledShape>)
-      return
-    }
-    if (next === 'token') {
-      // Clear fillStyle; fill will be overwritten when user clicks a token swatch.
-      patch({ fillStyle: undefined } as unknown as SlideObjectPatch<FilledShape>)
       return
     }
     // Seed a two-stop gradient from the current solid colour + a darker
@@ -2587,10 +2585,9 @@ function FillBody({
           <option value="linearGradient">Linear</option>
           <option value="radialGradient">Radial</option>
           <option value="image">Image</option>
-          <option value="token">Token</option>
         </select>
 
-        {mode === 'solid' && (
+        {mode === 'solid' && !fillIsToken && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
             <ColorInput
               value={solidHex}
@@ -2605,8 +2602,9 @@ function FillBody({
           </div>
         )}
 
-        {/* M16 P2: When solid fill is actually a token link, show chip + Unlink */}
-        {mode === 'token' && linkedToken !== null && (
+        {/* When the solid fill is linked to a folder color token, replace
+            the hex input with a linked chip + Unlink button. */}
+        {mode === 'solid' && fillIsToken && linkedToken !== null && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md border border-input field-surface px-1.5">
             <span
               className="h-4 w-4 shrink-0 rounded-sm border border-input"
@@ -2634,31 +2632,22 @@ function FillBody({
         )}
       </div>
 
-      {/* M16 P2: Token swatch grid — shown when mode is 'token' */}
-      <div
-        className={[
-          'grid overflow-hidden transition-[grid-template-rows,margin] duration-200 ease-out',
-          '[grid-template-columns:minmax(0,1fr)]',
-          mode === 'token' ? 'mt-1.5 grid-rows-[1fr]' : 'mt-0 grid-rows-[0fr]',
-        ].join(' ')}
-        aria-hidden={mode !== 'token'}
-      >
-        <div className="min-h-0 min-w-0">
-          {mode === 'token' && (
-            <FillTokenPanel
-              colors={colorTokensList}
-              activeTokenRef={currentTokenRef}
-              onSelect={(tokenRef) => {
-                patch({
-                  fill: tokenRef,
-                  fillStyle: undefined,
-                } as unknown as SlideObjectPatch<FilledShape>)
-              }}
-              onNavigateToSettings={() => void navigate(-1)}
-            />
-          )}
-        </div>
-      </div>
+      {/* Folder palette — always visible inside the Solid mode so users
+          see the design-system tokens first. Clicking a swatch links the
+          fill to that token (writes a TokenRef). */}
+      {mode === 'solid' && colorTokensList.length > 0 && (
+        <FillTokenPanel
+          colors={colorTokensList}
+          activeTokenRef={currentTokenRef}
+          onSelect={(tokenRef) => {
+            patch({
+              fill: tokenRef,
+              fillStyle: undefined,
+            } as unknown as SlideObjectPatch<FilledShape>)
+          }}
+          onNavigateToSettings={() => void navigate(-1)}
+        />
+      )}
 
       {/* Gradient sub-editor — keeps the previous fillStyle mounted while
           collapsing so the closing animation has content to slide. The
