@@ -5,11 +5,16 @@
  * Implementuje onLoadDocument a onStoreDocument hooks.
  *
  * Strategy (M4 — append-only):
- *   onLoadDocument: načte všechny update rows pro deck, aplikuje sekvenčně
+ *   onLoadDocument: načte všechny update rows pro dokument, aplikuje sekvenčně
  *   onStoreDocument: uloží Y.encodeStateAsUpdate() jako nový row
  *
  * Hocuspocus volá onStoreDocument debounced (default 2s po posledním onChange),
  * takže při aktivní editaci neukladáme po každém znaku.
+ *
+ * Doc name routing (M16 P2):
+ *   `deck:<id>`   → deck_updates table, deckId column
+ *   `folder:<id>` → folder_updates table, folderId column
+ *   Anything else is treated as a legacy bare deckId (backward compat).
  *
  * TODO(M29): kompakce — po N updatech sloučit do jednoho snapshot row
  *            (loadDocument je teď O(N) updates, pro tisíce updates zpomalí)
@@ -19,7 +24,26 @@ import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@
 import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckUpdates } from '../db/schema.js'
+import { deckUpdates, folderUpdates } from '../db/schema.js'
+
+// ---------------------------------------------------------------------------
+// Internal: parse doc name to determine storage backend
+// ---------------------------------------------------------------------------
+
+type DocTarget = { kind: 'deck'; id: string } | { kind: 'folder'; id: string }
+
+function parseDocName(name: string): DocTarget {
+  if (name.startsWith('folder:')) {
+    return { kind: 'folder', id: name.slice('folder:'.length) }
+  }
+  // deck:<id> prefix OR legacy bare deck id (backward compat)
+  const id = name.startsWith('deck:') ? name.slice('deck:'.length) : name
+  return { kind: 'deck', id }
+}
+
+// ---------------------------------------------------------------------------
+// PostgresPersistence
+// ---------------------------------------------------------------------------
 
 export class PostgresPersistence implements Extension {
   private readonly db: Database
@@ -29,12 +53,31 @@ export class PostgresPersistence implements Extension {
   }
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<Y.Doc | void> {
-    const deckId = data.documentName
+    const target = parseDocName(data.documentName)
+    const doc = data.document
 
+    if (target.kind === 'folder') {
+      const rows = await this.db
+        .select({ update: folderUpdates.update })
+        .from(folderUpdates)
+        .where(eq(folderUpdates.folderId, target.id))
+        .orderBy(folderUpdates.id)
+
+      if (rows.length === 0) return
+
+      for (const row of rows) {
+        Y.applyUpdate(doc, row.update)
+      }
+
+      console.log(`[persistence] Loaded ${rows.length} updates for folder=${target.id}`)
+      return doc
+    }
+
+    // deck (legacy bare id or deck:<id> prefix)
     const rows = await this.db
       .select({ update: deckUpdates.update })
       .from(deckUpdates)
-      .where(eq(deckUpdates.deckId, deckId))
+      .where(eq(deckUpdates.deckId, target.id))
       .orderBy(deckUpdates.id)
 
     if (rows.length === 0) {
@@ -42,17 +85,16 @@ export class PostgresPersistence implements Extension {
       return
     }
 
-    const doc = data.document
     for (const row of rows) {
       Y.applyUpdate(doc, row.update)
     }
 
-    console.log(`[persistence] Loaded ${rows.length} updates for deck=${deckId}`)
+    console.log(`[persistence] Loaded ${rows.length} updates for deck=${target.id}`)
     return doc
   }
 
   async onStoreDocument(data: onStoreDocumentPayload): Promise<void> {
-    const deckId = data.documentName
+    const target = parseDocName(data.documentName)
     const ctx = data.context as { role?: string; userId?: string } | undefined
 
     // Defense-in-depth: skip persistence for viewer connections.
@@ -62,18 +104,29 @@ export class PostgresPersistence implements Extension {
     // through a viewer-context document).
     if (ctx?.role === 'viewer') {
       console.warn(
-        `[persistence] Blocked write from viewer userId=${ctx.userId ?? 'unknown'} deck=${deckId}`,
+        `[persistence] Blocked write from viewer userId=${ctx.userId ?? 'unknown'} doc=${data.documentName}`,
       )
       return
     }
 
     const update = Y.encodeStateAsUpdate(data.document)
 
+    if (target.kind === 'folder') {
+      await this.db.insert(folderUpdates).values({
+        folderId: target.id,
+        update,
+      })
+      console.log(
+        `[persistence] Stored update for folder=${target.id} (${update.byteLength} bytes)`,
+      )
+      return
+    }
+
     await this.db.insert(deckUpdates).values({
-      deckId,
+      deckId: target.id,
       update,
     })
 
-    console.log(`[persistence] Stored update for deck=${deckId} (${update.byteLength} bytes)`)
+    console.log(`[persistence] Stored update for deck=${target.id} (${update.byteLength} bytes)`)
   }
 }

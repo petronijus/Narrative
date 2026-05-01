@@ -31,6 +31,8 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as Y from 'yjs'
+import { isTokenRef } from '@narrative/shared'
+import type { TokenRef } from '@narrative/shared'
 import {
   type ObjectsMutationContext,
   toDelta,
@@ -52,7 +54,8 @@ function weightToCss(w: TextObject['fontWeight']): string {
   return String(w)
 }
 
-function hexToCss(n: number): string {
+function hexToCss(n: number | TokenRef): string {
+  if (isTokenRef(n)) return '#000000' // TokenRef: fallback to black until token picker lands (M16 P4)
   return '#' + n.toString(16).padStart(6, '0')
 }
 

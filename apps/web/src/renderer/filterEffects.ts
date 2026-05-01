@@ -14,6 +14,7 @@
 import { BlurFilter, type Container, type Filter } from 'pixi.js'
 import { DropShadowFilter } from 'pixi-filters'
 import type { ShadowStyle } from '@narrative/shared'
+import { resolveColour } from './colourResolver.js'
 
 interface FilterSlots {
   blur?: BlurFilter
@@ -126,7 +127,7 @@ function installFilterEffectsNow(
     if (shadow !== undefined) {
       const blurPx = Math.max(0, shadow.blur)
       const filter = new DropShadowFilter({
-        color: shadow.color,
+        color: resolveColour(shadow.color),
         alpha: shadow.opacity,
         blur: blurPx,
         offset: { x: shadow.offsetX, y: shadow.offsetY },

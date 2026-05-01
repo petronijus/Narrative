@@ -14,6 +14,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { applyFlip } from './applyFlip.js'
 import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
+import { resolveColour } from '../colourResolver.js'
 
 const GRAPHICS_TAG = Symbol('pathGraphics')
 const LATEST_DATA_TAG = Symbol('pathLatestData')
@@ -83,23 +84,25 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
         if (cachedData !== undefined && cachedG !== undefined)
           drawPath(cachedG, container, cachedData)
       })
+      const fillColour = resolveColour(data.fill ?? 0xffffff)
       if (texture !== null) {
         g.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
       } else {
-        g.fill({ color: data.fill ?? 0xffffff, alpha: data.fillAlpha ?? 1 })
+        g.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
       }
     } else {
       releaseImageFill(container)
+      const fillColour = resolveColour(data.fill ?? 0xffffff)
       const resolved = fillStyleToPixi(
         data.fillStyle,
-        data.fill ?? 0xffffff,
+        fillColour,
         data.width,
         data.height,
         container,
       )
       const fillInput =
         data.fillStyle === undefined
-          ? { color: data.fill ?? 0xffffff, alpha: data.fillAlpha ?? 1 }
+          ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
           : resolved.input
       g.fill(fillInput)
     }
@@ -117,7 +120,7 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
   if (data.strokeWidth > 0) {
     tracePath(g, data)
     g.stroke({
-      color: data.stroke,
+      color: resolveColour(data.stroke),
       alpha: data.strokeAlpha ?? 1,
       width: data.strokeWidth,
       cap: 'round',

@@ -1,6 +1,9 @@
 // @narrative/shared — shared types across apps and packages
 // Pure TypeScript — no runtime dependencies.
 
+export type { TokenRef } from './slide.js'
+export { isTokenRef } from './slide.js'
+
 export type {
   BaseSlideObject,
   RectangleObject,

@@ -12,7 +12,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Folder, FolderPlus, LogOut, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
+import {
+  Folder,
+  FolderPlus,
+  LogOut,
+  MoreVertical,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2,
+} from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
@@ -264,6 +273,7 @@ function FolderCard({
   onInlineEditStart,
   onInlineEditEnd,
 }: FolderCardProps) {
+  const navigate = useNavigate()
   const [draft, setDraft] = useState(folder.name)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -391,6 +401,18 @@ function FolderCard({
                   >
                     <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     Rename
+                  </button>
+
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      void navigate(`/folder/${folder.id}/settings`)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                  >
+                    <Settings className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                    Settings
                   </button>
 
                   {/* Delete — hidden for Drafts; cascades decks otherwise */}

@@ -145,6 +145,31 @@ export const deckUpdates = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// folder_updates — append-only Yjs update log for folder design-token docs (M16 P2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stores Hocuspocus Y.Doc updates for folder-scoped design token documents.
+ * Each folder has a doc named `folder:<folderId>` on the Hocuspocus server.
+ * The Y.Doc layout: tokens Y.Map → colors/textStyles/effectStyles sub-maps.
+ *
+ * Mirrors deck_updates strategy: onLoadDocument applies all rows sequentially;
+ * onStoreDocument appends the current state as a new row (debounced by Hocuspocus).
+ */
+export const folderUpdates = pgTable(
+  'folder_updates',
+  {
+    id: serial('id').primaryKey(),
+    folderId: text('folder_id')
+      .notNull()
+      .references(() => folders.id, { onDelete: 'cascade' }),
+    update: bytea('update').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('folder_updates_folder_id_idx').on(t.folderId)],
+)
+
+// ---------------------------------------------------------------------------
 // deck_permissions — per-deck role per user (M10)
 // ---------------------------------------------------------------------------
 
@@ -271,6 +296,8 @@ export const mediaAssets = pgTable(
 
 export type Folder = typeof folders.$inferSelect
 export type NewFolder = typeof folders.$inferInsert
+export type FolderUpdate = typeof folderUpdates.$inferSelect
+export type NewFolderUpdate = typeof folderUpdates.$inferInsert
 export type Deck = typeof decks.$inferSelect
 export type NewDeck = typeof decks.$inferInsert
 export type DeckUpdate = typeof deckUpdates.$inferSelect

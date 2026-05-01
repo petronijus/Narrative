@@ -15,6 +15,11 @@
  *   the protocol level (no client changes broadcast). Additionally,
  *   PostgresPersistence.onStoreDocument checks role and skips persisting viewer updates
  *   as a defense-in-depth measure.
+ *
+ * Doc name routing (M16 P2):
+ *   `deck:<id>`   → deck access via resolveDeckAccess (existing path)
+ *   `folder:<id>` → folder access via resolveFolderAccess (owner-only, no share-link)
+ *   Legacy bare name → treated as deck id (backward compat)
  */
 
 import { Server } from '@hocuspocus/server'
@@ -23,7 +28,7 @@ import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
 import type { JwtVerifier } from '../auth/jwt.js'
-import { resolveDeckAccess } from '../auth/permissions.js'
+import { resolveDeckAccess, resolveFolderAccess } from '../auth/permissions.js'
 
 export interface HocuspocusServerOptions {
   port: number
@@ -54,6 +59,7 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       if (shareToken) {
         // Share-token access — skip JWT validation entirely.
         // resolveDeckAccess will validate the token below.
+        // Note: folder docs do NOT support share-token access.
       } else if (bypass) {
         userId = 'dev-user'
       } else if (token) {
@@ -72,6 +78,38 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
         throw new Error('Invalid credentials')
       }
 
+      // ---------------------------------------------------------------------------
+      // Route auth by doc name prefix
+      // ---------------------------------------------------------------------------
+
+      if (documentName.startsWith('folder:')) {
+        // Folder doc — owner-only, no share-link support.
+        const folderId = documentName.slice('folder:'.length)
+
+        if (!userId) {
+          // Share-token path reached for a folder doc — not allowed.
+          throw new Error('Forbidden')
+        }
+
+        const access = await resolveFolderAccess(db, { folderId, userId })
+        if (!access) {
+          throw new Error('Forbidden')
+        }
+
+        data.context.userId = userId
+        data.context.folderId = folderId
+        data.context.role = access.role
+
+        // Folders are always read-write for the owner.
+        connection.readOnly = false
+
+        console.log(
+          `[hocuspocus] authenticate → doc=${documentName} user=${userId} role=${access.role} reason=${access.reason}`,
+        )
+        return
+      }
+
+      // Deck doc (deck:<id> prefix or legacy bare id)
       const access = await resolveDeckAccess(db, {
         deckId: documentName,
         userId,

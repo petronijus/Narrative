@@ -18,6 +18,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { strokeDashedPolyline, sampleRoundedRect } from '../strokeDashed.js'
 import { ensureImageFill, releaseImageFill } from '../imageFillLoader.js'
 import { applyFlip } from './applyFlip.js'
+import { resolveColour } from '../colourResolver.js'
 
 function cornerRadiusEqual(a: CornerRadius | undefined, b: CornerRadius | undefined): boolean {
   if (a === b) return true
@@ -95,6 +96,7 @@ function tracePath(g: Graphics, w: number, h: number, r: RectangleObject['corner
 function drawRect(graphics: Graphics, container: Container, data: RectangleObject): void {
   graphics.clear()
   tracePath(graphics, data.width, data.height, data.cornerRadius)
+  const fillColour = resolveColour(data.fill)
   if (data.fillStyle?.kind === 'image') {
     // Image fill: ask the loader for a cached texture. When we hit a
     // cache miss, null is returned — we paint the solid fallback while
@@ -108,18 +110,19 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
     if (texture !== null) {
       graphics.fill(imageFillToPixiFill(data.fillStyle, texture, data.width, data.height))
     } else {
-      graphics.fill({ color: data.fill, alpha: data.fillAlpha ?? 1 })
+      graphics.fill({ color: fillColour, alpha: data.fillAlpha ?? 1 })
     }
   } else {
     releaseImageFill(container)
-    const resolved = fillStyleToPixi(data.fillStyle, data.fill, data.width, data.height, container)
+    const resolved = fillStyleToPixi(data.fillStyle, fillColour, data.width, data.height, container)
     const fillInput =
       data.fillStyle === undefined
-        ? { color: data.fill, alpha: data.fillAlpha ?? 1 }
+        ? { color: fillColour, alpha: data.fillAlpha ?? 1 }
         : resolved.input
     graphics.fill(fillInput)
   }
   if (data.stroke !== undefined && (data.strokeWidth ?? 0) > 0) {
+    const strokeColour = resolveColour(data.stroke)
     const w = data.strokeWidth ?? 1
     const strokeAlpha = data.strokeAlpha ?? 1
     if (data.strokeDash === true) {
@@ -134,13 +137,13 @@ function drawRect(graphics: Graphics, container: Container, data: RectangleObjec
           : (data.cornerRadius ?? { tl: 0, tr: 0, br: 0, bl: 0 })
       const pts = sampleRoundedRect(data.width, data.height, r)
       strokeDashedPolyline(graphics, pts, true, {
-        color: data.stroke,
+        color: strokeColour,
         width: w,
         alpha: strokeAlpha,
       })
     } else {
       tracePath(graphics, data.width, data.height, data.cornerRadius)
-      graphics.stroke({ color: data.stroke, width: w, alignment: 0.5, alpha: strokeAlpha })
+      graphics.stroke({ color: strokeColour, width: w, alignment: 0.5, alpha: strokeAlpha })
     }
   }
 }

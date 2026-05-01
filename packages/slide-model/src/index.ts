@@ -121,6 +121,16 @@ export {
 // Undo
 export { createUndoManager } from './undo.js'
 
+// Design tokens (M16 P2)
+export { isTokenRef, resolveTokenValue } from './tokens.js'
+export type {
+  TokenRef,
+  ColorTokenSnapshot,
+  TextStyleTokenSnapshot,
+  EffectStyleTokenSnapshot,
+  FolderTokensSnapshot,
+} from './tokens.js'
+
 // Awareness helpers (M8)
 export { generatePeerId, toPeerInfo, peerColorFromId } from './awareness.js'
 

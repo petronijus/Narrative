@@ -10,6 +10,39 @@
 
 import type * as Y from 'yjs'
 
+// ---------------------------------------------------------------------------
+// M16 P2 — Design token reference
+// ---------------------------------------------------------------------------
+
+/**
+ * A symbolic reference to a design token stored in the parent folder's Y.Doc.
+ * Format: `{ $token: "<category>.<id>" }`
+ * Example: `{ $token: "colors.abc1234567" }`
+ *
+ * Accepted categories: `colors` | `textStyles` | `effectStyles`.
+ * The id is the nanoid(10) generated when the token was created.
+ *
+ * When a field typed `number | TokenRef` holds a TokenRef, the renderer
+ * resolves it via `TokensContext.resolve()` before painting.  The literal
+ * `number` is always kept in parallel as a fallback (last-known value) so
+ * the object renders correctly when the folder doc is not yet synced.
+ */
+export interface TokenRef {
+  $token: string
+}
+
+/**
+ * Type guard — returns true when `v` is a `TokenRef` object.
+ */
+export function isTokenRef(v: unknown): v is TokenRef {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    '$token' in v &&
+    typeof (v as Record<string, unknown>)['$token'] === 'string'
+  )
+}
+
 /**
  * P5c: optional drop shadow. Applied as a DropShadowFilter on the
  * Pixi container of any object type that declares this mixin — so
@@ -27,8 +60,8 @@ export type ObjectHyperlink =
   | { kind: 'url'; href: string; target?: '_self' | '_blank' }
 
 export interface ShadowStyle {
-  /** Shadow color hex. */
-  color: number
+  /** Shadow color hex or token ref. */
+  color: number | TokenRef
   /** Shadow blur radius in slide-px (≥ 0). */
   blur: number
   /** Horizontal offset in slide-px. */
@@ -111,8 +144,8 @@ export interface BaseSlideObject {
  * matches the existing line/arrow/path convention.
  */
 export interface StrokeStyleFields {
-  /** Stroke colour. Missing ⇒ no stroke. */
-  stroke?: number
+  /** Stroke colour or token ref. Missing ⇒ no stroke. */
+  stroke?: number | TokenRef
   /** Stroke width in slide-px. Rendered only when stroke is set. */
   strokeWidth?: number
   /** Dashed stroke pattern — true = dashed, false/undefined = solid. */
@@ -175,8 +208,8 @@ export type CornerRadius =
 
 export interface RectangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'rectangle'
-  /** Solid fallback colour hex. Rendered only when fillStyle is not set. */
-  fill: number
+  /** Solid fallback colour hex or token ref. Rendered only when fillStyle is not set. */
+  fill: number | TokenRef
   /** Fill alpha 0..1. Missing ⇒ 1. */
   fillAlpha?: number
   /** Optional gradient / image fill. Takes precedence over `fill`. */
@@ -187,8 +220,8 @@ export interface RectangleObject extends BaseSlideObject, StrokeStyleFields {
 
 export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
   type: 'ellipse'
-  /** Solid fallback colour hex. */
-  fill: number
+  /** Solid fallback colour hex or token ref. */
+  fill: number | TokenRef
   /** Fill alpha 0..1. Missing ⇒ 1. */
   fillAlpha?: number
   /** Optional gradient / image fill. Takes precedence over `fill`. */
@@ -202,14 +235,14 @@ export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
  */
 export interface TriangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'triangle'
-  fill: number
+  fill: number | TokenRef
   fillAlpha?: number
   fillStyle?: FillStyle
 }
 
 export interface PolygonObject extends BaseSlideObject, StrokeStyleFields {
   type: 'polygon'
-  fill: number
+  fill: number | TokenRef
   fillAlpha?: number
   fillStyle?: FillStyle
   /** Number of sides. Clamped to [3, 12] in the renderer. */
@@ -233,8 +266,8 @@ export type LineCap = 'none' | 'round' | 'square' | 'arrow'
 
 export interface LineObject extends BaseSlideObject, LineEndpoints {
   type: 'line'
-  /** Stroke colour. */
-  stroke: number
+  /** Stroke colour or token ref. */
+  stroke: number | TokenRef
   /** Stroke alpha 0..1. Missing ⇒ 1. */
   strokeAlpha?: number
   /** Stroke width in slide-px. */
@@ -247,7 +280,7 @@ export interface LineObject extends BaseSlideObject, LineEndpoints {
 
 export interface ArrowObject extends BaseSlideObject, LineEndpoints {
   type: 'arrow'
-  stroke: number
+  stroke: number | TokenRef
   strokeAlpha?: number
   strokeWidth: number
   startCap?: LineCap
@@ -274,11 +307,11 @@ export interface PathAnchor {
 export interface PathObject extends BaseSlideObject {
   type: 'path'
   anchors: PathAnchor[]
-  stroke: number
+  stroke: number | TokenRef
   strokeAlpha?: number
   strokeWidth: number
   /** Optional fill for a closed path. */
-  fill?: number
+  fill?: number | TokenRef
   fillAlpha?: number
   /**
    * Optional gradient or image fill — same schema as the parametric
@@ -315,8 +348,8 @@ export interface TextObject extends BaseSlideObject {
   text: string | Y.Text
   fontSize: number
   fontWeight: FontWeight
-  /** Default color for runs whose own attribute does not override it. */
-  color: number
+  /** Default color for runs whose own attribute does not override it. May be a token ref. */
+  color: number | TokenRef
   /** Text fill alpha 0..1. Missing ⇒ 1. */
   colorAlpha?: number
   align: 'left' | 'center' | 'right'
@@ -352,8 +385,8 @@ export interface TextObject extends BaseSlideObject {
    * plain paragraph. Renderer prepends the glyph per line.
    */
   listStyle?: TextListStyle
-  /** Optional stroke on glyphs. */
-  stroke?: number
+  /** Optional stroke on glyphs. May be a token ref. */
+  stroke?: number | TokenRef
   /** Stroke alpha 0..1. Missing ⇒ 1. */
   strokeAlpha?: number
   /** Stroke width in px. Rendered only when stroke is set. Default 1. */

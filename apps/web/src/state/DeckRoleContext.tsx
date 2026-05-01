@@ -23,9 +23,15 @@ export type DeckRole = 'owner' | 'editor' | 'viewer'
 interface DeckRoleContextValue {
   role: DeckRole
   isLoading: boolean
+  /** M16 P2: folder this deck belongs to. null while loading. */
+  folderId: string | null
 }
 
-const DeckRoleContext = createContext<DeckRoleContextValue>({ role: 'viewer', isLoading: false })
+const DeckRoleContext = createContext<DeckRoleContextValue>({
+  role: 'viewer',
+  isLoading: false,
+  folderId: null,
+})
 
 interface DeckRoleProviderProps {
   deckId: string
@@ -38,6 +44,7 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
   const api = useApi()
 
   const [role, setRole] = useState<DeckRole>('viewer')
+  const [folderId, setFolderId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -76,6 +83,10 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
           // until server provides the field. For M10 this is acceptable.
           setRole(deck !== undefined ? 'editor' : 'viewer')
         }
+        // M16 P2: expose folderId so DeckShell can open the folder token doc.
+        if (deck?.folderId) {
+          setFolderId(deck.folderId)
+        }
       })
       .catch(() => {
         if (cancelled) return
@@ -91,7 +102,11 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
     }
   }, [deckId, user, api, location.search])
 
-  return <DeckRoleContext.Provider value={{ role, isLoading }}>{children}</DeckRoleContext.Provider>
+  return (
+    <DeckRoleContext.Provider value={{ role, folderId, isLoading }}>
+      {children}
+    </DeckRoleContext.Provider>
+  )
 }
 
 export function useDeckRole(): DeckRoleContextValue {

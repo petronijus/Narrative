@@ -16,6 +16,7 @@ import { ThemeProvider } from './state/ThemeContext.js'
 import { PerfHudProvider } from './state/PerfHudContext.js'
 import { FoldersHome } from './pages/FoldersHome.js'
 import { FolderDecks } from './pages/FolderDecks.js'
+import { FolderSettings } from './pages/FolderSettings.js'
 import { DeckEditor } from './pages/DeckEditor.js'
 import { DeckPresent } from './pages/DeckPresent.js'
 import { DeckShell } from './components/DeckShell.js'
@@ -44,6 +45,7 @@ export function App() {
               <Route element={<ProtectedRoute />}>
                 <Route path="/" element={<FoldersHome />} />
                 <Route path="/folder/:folderId" element={<FolderDecks />} />
+                <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
                 <Route path="/deck/:id" element={<DeckShell />}>
                   <Route index element={<DeckEditor />} />
                   <Route path="present" element={<DeckPresent />} />
