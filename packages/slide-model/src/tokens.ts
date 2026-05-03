@@ -48,6 +48,19 @@ export interface TextStyleTokenSnapshot {
    * May be a hex string or a TokenRef referencing a color token.
    */
   color?: string | TokenRef
+  /** CSS text-transform — uppercase / lowercase / capitalize / none. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */
+  paragraphSpaceBefore?: number
+  /** Vertical space inserted BELOW each paragraph, in px. Default 0. */
+  paragraphSpaceAfter?: number
+  /**
+   * True for the seeded "minimum set" text styles (Title, Body, Caption…)
+   * that ship with every new folder. Builtins guarantee that the editor
+   * always has a "Body" style to seed new text objects from, so the UI
+   * blocks deletion of these entries. Renaming / restyling is allowed.
+   */
+  builtin?: boolean
 }
 
 export interface EffectStyleTokenSnapshot {

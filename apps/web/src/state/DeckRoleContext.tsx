@@ -33,6 +33,28 @@ const DeckRoleContext = createContext<DeckRoleContextValue>({
   folderId: null,
 })
 
+/**
+ * Static-value variant for surfaces outside the deck path that still
+ * need to feed `useDeckRole()` consumers (toolbar, inspector, picker,
+ * etc.). Used by the component master editor — it knows its folderId
+ * from the route and grants the user 'owner' role for the master.
+ */
+export function DeckRoleStaticProvider({
+  role,
+  folderId,
+  children,
+}: {
+  role: DeckRole
+  folderId: string | null
+  children: ReactNode
+}) {
+  return (
+    <DeckRoleContext.Provider value={{ role, folderId, isLoading: false }}>
+      {children}
+    </DeckRoleContext.Provider>
+  )
+}
+
 interface DeckRoleProviderProps {
   deckId: string
   children: ReactNode

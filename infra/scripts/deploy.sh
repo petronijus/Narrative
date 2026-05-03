@@ -93,11 +93,11 @@ docker build \
 # Vytvoříme tmp container a zkopírujeme /srv/web do web_static volume
 WEB_CONTAINER=$(docker create "${WEB_IMAGE}:latest")
 # Zajistíme existenci volume
-docker volume create narrative-infra_web_static 2>/dev/null || true
+docker volume create narrative_web_static 2>/dev/null || true
 # Zkopírujeme přes tar pipe
 docker cp "${WEB_CONTAINER}:/srv/web/." - \
   | docker run --rm -i \
-      -v narrative-infra_web_static:/srv/web \
+      -v narrative_web_static:/srv/web \
       alpine sh -c "cd /srv/web && tar xf -"
 docker rm "${WEB_CONTAINER}"
 
@@ -129,19 +129,29 @@ else
   exit 1
 fi
 
-log "Healthcheck Caddy..."
-if curl -fsS --max-time 10 "https://${DOMAIN}/health" > /dev/null 2>&1 \
-  || curl -fksSL --max-time 10 "https://${DOMAIN}/health" > /dev/null 2>&1; then
+log "Healthcheck Caddy (internal Docker network)..."
+# Caddy is not exposed on the host — Cloudflare Tunnel reaches it via the
+# `caddy` Docker network alias. Probe through a one-shot container on that
+# network so we don't depend on host port binding.
+if docker run --rm --network "narrative_default" curlimages/curl:8.10.1 \
+    -fsS --max-time 10 http://caddy/health > /dev/null 2>&1; then
   log "Caddy healthcheck OK"
 else
-  warn "Caddy https health check selhal — může být první deploy (Let's Encrypt provisioning)"
+  warn "Caddy /health did not respond on the internal network — check 'docker logs narrative-caddy'"
+fi
+
+log "Healthcheck cloudflared tunnel..."
+if docker logs narrative-cloudflared 2>&1 | tail -50 | grep -q "Registered tunnel connection"; then
+  log "cloudflared connected to Cloudflare edge"
+else
+  warn "cloudflared has no registered tunnel connection yet — check 'docker logs narrative-cloudflared'"
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}Deploy dokončen.${NC}"
 echo "  Prostředí:  ${ENV}"
-echo "  Doména:     https://${DOMAIN}"
+echo "  Doména:     https://${DOMAIN}  (via Cloudflare Tunnel)"
 echo "  API:        https://${DOMAIN}/api/decks"
 echo "  WebSocket:  wss://${DOMAIN}/ws"
 echo ""

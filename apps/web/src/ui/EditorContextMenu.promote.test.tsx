@@ -131,6 +131,55 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
 // nanoid — deterministic id so we can assert on it
 vi.mock('nanoid', () => ({ nanoid: () => 'instance-id-1' }))
 
+// P5+P6+P7+P8 hooks the menu reads at render time. Each mock returns the
+// minimal shape the component actually consumes — rendering the menu
+// must not touch the real provider tree.
+vi.mock('../state/useSlideDoc', () => ({
+  useSlideDoc: () => ({
+    deckCtx: {
+      doc: { transact: (fn: () => void) => fn() },
+      slides: { length: 0 } as unknown,
+    },
+  }),
+}))
+vi.mock('../state/ActiveSlideContext', () => ({
+  useActiveSlide: () => ({ activeSlideId: 'slide-1' }),
+}))
+vi.mock('../state/AuthContext', () => ({
+  useAuth: () => ({ token: null, user: null, login: vi.fn(), logout: vi.fn() }),
+}))
+vi.mock('../state/useFolderComponents', () => ({
+  useFolderComponents: () => ({
+    components: [],
+    loading: false,
+    invalidate: vi.fn(),
+  }),
+  invalidateFolderComponentsCache: vi.fn(),
+}))
+vi.mock('../state/componentDocCache', () => ({
+  acquireComponentDoc: vi.fn(),
+  releaseComponentDoc: vi.fn(),
+  getComponentDoc: () => null,
+  getComponentDocSyncStatus: () => 'pending',
+  subscribeToComponentDoc: () => () => {},
+}))
+vi.mock('../state/readMasterDoc', () => ({
+  readMasterDoc: () => null,
+}))
+vi.mock('../state/writeComponentMasterTree', () => ({
+  writeComponentMasterTree: vi.fn(async () => {}),
+}))
+vi.mock('../state/extractComponentSnapshot', () => ({
+  extractComponentSnapshot: () => null,
+}))
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>()
+  return {
+    ...actual,
+    useNavigate: () => vi.fn(),
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Helper: render the component and trigger a right-click on a simulated object
 // ---------------------------------------------------------------------------

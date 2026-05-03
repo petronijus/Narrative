@@ -12,10 +12,11 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ChevronLeft, Plus, Settings, Trash2, Upload, X } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import type { FolderFontSummary, ComponentSummary } from '../api/client.js'
+import { invalidateFolderComponentsCache } from '../state/useFolderComponents.js'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { HexColorPicker } from 'react-colorful'
@@ -27,6 +28,7 @@ import {
 } from '../state/FolderDocProvider.js'
 import type { TokenUsage } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
+import { SYSTEM_FONTS } from '../ui/FontFamilySelect.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
 import { MAX_COLORS } from '../state/defaultTokens.js'
@@ -49,7 +51,30 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
   const [editingName, setEditingName] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const nameInputRef = useRef<HTMLInputElement>(null)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('colors')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabFromUrl = searchParams.get('tab')
+  const initialTab: SettingsTab =
+    tabFromUrl === 'colors' ||
+    tabFromUrl === 'textStyles' ||
+    tabFromUrl === 'fonts' ||
+    tabFromUrl === 'components'
+      ? tabFromUrl
+      : 'colors'
+  const [activeTab, setActiveTabState] = useState<SettingsTab>(initialTab)
+  const setActiveTab = useCallback(
+    (tab: SettingsTab) => {
+      setActiveTabState(tab)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.set('tab', tab)
+          return next
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
   const [error, setError] = useState<string | null>(null)
 
   // Load folder info for the breadcrumb + name
@@ -181,7 +206,12 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
 
         {activeTab === 'colors' && <ColorsTab folderId={folderId} />}
         {activeTab === 'fonts' && <FontsTab folderId={folderId} />}
-        {activeTab === 'textStyles' && <TextStylesTab folderId={folderId} />}
+        {activeTab === 'textStyles' && (
+          <FolderFontsProvider folderId={folderId}>
+            <FolderFontLoader />
+            <TextStylesTab folderId={folderId} />
+          </FolderFontsProvider>
+        )}
         {activeTab === 'components' && <ComponentsTab folderId={folderId} />}
       </main>
     </div>
@@ -264,11 +294,20 @@ function FontsTabInner({ folderId }: FontsTabProps) {
     [api, folderId, refresh],
   )
 
+  const [, setPromoteNotice] = useState<string | null>(null)
   const handleDelete = useCallback(
     async (assetId: string) => {
       setUploadError(null)
+      setPromoteNotice(null)
       try {
-        await api.deleteFolderFont(folderId, assetId)
+        const result = await api.deleteFolderFont(folderId, assetId)
+        if (result.promotedToDeckCount > 0) {
+          setPromoteNotice(
+            `Font kept on ${result.promotedToDeckCount} existing deck${
+              result.promotedToDeckCount > 1 ? 's' : ''
+            } as a deck-specific font, so no presentation breaks.`,
+          )
+        }
         await refresh()
       } catch (err) {
         setUploadError(err instanceof Error ? err.message : 'Delete failed')
@@ -561,14 +600,23 @@ interface ComponentsTabProps {
 
 function ComponentsTab({ folderId }: ComponentsTabProps) {
   const api = useApi()
+  const navigate = useNavigate()
+  const { markComponentDeleted } = useFolderMutations()
   const [components, setComponents] = useState<ComponentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [usageCounts, setUsageCounts] = useState<Record<string, number> | null>(null)
 
   const refresh = useCallback(async () => {
     try {
       const list = await api.listComponents(folderId)
       setComponents(list)
+      // Fire one batch usage-count request alongside the list. Cards
+      // render the count synchronously instead of N+1 fetches.
+      api
+        .listComponentInstanceCounts(folderId)
+        .then((counts) => setUsageCounts(counts))
+        .catch(() => setUsageCounts({}))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load components')
     } finally {
@@ -612,14 +660,31 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
             <ComponentCard
               key={component.id}
               component={component}
+              onOpen={() => navigate(`/folder/${folderId}/component/${component.id}`)}
               onRename={async (name) => {
                 await api.renameComponent(component.id, name)
+                invalidateFolderComponentsCache(folderId)
                 await refresh()
               }}
               onDelete={async () => {
                 await api.deleteComponent(component.id)
+                // Replicate deletion signal to all peers via the folder
+                // Y.Doc so every open editor (including remote clients)
+                // sweeps matching ComponentInstance objects from their deck.
+                // This is the authoritative cross-peer path.
+                markComponentDeleted(component.id)
+                // Also dispatch a local window event as a fast-path for the
+                // originating client (handled synchronously before the CRDT
+                // observer round-trip).
+                window.dispatchEvent(
+                  new CustomEvent('narrative:component-deleted', {
+                    detail: { componentId: component.id },
+                  }),
+                )
+                invalidateFolderComponentsCache(folderId)
                 await refresh()
               }}
+              usageCount={usageCounts !== null ? (usageCounts[component.id] ?? 0) : null}
             />
           ))}
         </div>
@@ -630,16 +695,33 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
 
 interface ComponentCardProps {
   component: ComponentSummary
+  onOpen: () => void
   onRename: (name: string) => Promise<void>
   onDelete: () => Promise<void>
+  /**
+   * M16 P6 — pre-fetched "Used N times" count from the parent's batch
+   * `listComponentInstanceCounts(folderId)` call. `null` while the batch
+   * is in flight; a number once it lands.
+   */
+  usageCount: number | null
 }
 
-function ComponentCard({ component, onRename, onDelete }: ComponentCardProps) {
+function ComponentCard({ component, onOpen, onRename, onDelete, usageCount }: ComponentCardProps) {
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(component.name)
   const [confirming, setConfirming] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Confirm-flow uses the same parent-fetched count. The count is
+  // batch-fetched at tab mount; if a stale read is a concern we'd
+  // re-fire the batch on confirm — for now the parent re-fetches on
+  // refresh() (delete completion).
+  const confirmCount = usageCount
+  const confirmCountLoading = usageCount === null
+  const beginConfirm = useCallback(() => {
+    setConfirming(true)
+  }, [])
 
   useEffect(() => {
     if (!editing) setNameDraft(component.name)
@@ -674,13 +756,27 @@ function ComponentCard({ component, onRename, onDelete }: ComponentCardProps) {
       className="group flex flex-col gap-2 rounded-lg border border-border bg-surface-1 p-3"
       data-testid="component-card"
     >
-      {/* Thumbnail placeholder — P6 replaces with live snapshot */}
-      <div
-        className="flex h-24 w-full items-center justify-center rounded-md border border-dashed border-[#6366f1]/40 bg-[#6366f1]/05"
-        aria-hidden="true"
+      {/* Thumbnail — server-rendered snapshot if available, else placeholder. */}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex h-24 w-full items-center justify-center overflow-hidden rounded-md border border-dashed border-[#6366f1]/40 bg-[#6366f1]/05 hover:border-[#6366f1]/70 hover:bg-[#6366f1]/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+        aria-label={`Open ${component.name} master`}
+        title="Open master"
       >
-        <span className="text-2xl text-[#6366f1]/40">⌘</span>
-      </div>
+        {component.thumbnailUrl != null ? (
+          <img
+            src={component.thumbnailUrl}
+            alt=""
+            className="h-full w-full object-cover"
+            draggable={false}
+          />
+        ) : (
+          <span className="text-2xl text-[#6366f1]/40" aria-hidden="true">
+            ⌘
+          </span>
+        )}
+      </button>
 
       {/* Name — inline-editable on double-click */}
       {editing ? (
@@ -715,37 +811,59 @@ function ComponentCard({ component, onRename, onDelete }: ComponentCardProps) {
 
       {renameError !== null && <p className="text-[10px] text-destructive">{renameError}</p>}
 
-      {/* Usage count — P7 wires real count */}
-      <p className="text-center text-[10px] text-muted-foreground/60">Used — times</p>
+      {/* M16 P6 — usage count (real) */}
+      <p
+        className="text-center text-[10px] text-muted-foreground/60"
+        data-testid="component-usage-count"
+      >
+        {usageCount === null
+          ? 'Used — times'
+          : `Used in ${usageCount} ${usageCount === 1 ? 'place' : 'places'}`}
+      </p>
 
-      {/* Delete — with confirm */}
+      {/* Delete with usage warning */}
       {confirming ? (
-        <div className="flex items-center justify-center gap-1">
-          <span className="text-[10px] text-muted-foreground">Delete?</span>
-          <button
-            type="button"
-            onClick={() => {
-              setConfirming(false)
-              void onDelete()
-            }}
-            className="rounded-md px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
-            aria-label={`Confirm delete ${component.name}`}
+        <div className="flex flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+          <p
+            className="text-[10px] leading-tight text-foreground"
+            data-testid="component-delete-warning"
           >
-            Yes
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
-            aria-label="Cancel"
-          >
-            No
-          </button>
+            {confirmCountLoading
+              ? 'Checking usage…'
+              : confirmCount === null
+                ? 'Could not load usage count.'
+                : confirmCount === 0
+                  ? 'Not used anywhere. Delete?'
+                  : `Used in ${confirmCount} ${confirmCount === 1 ? 'place' : 'places'}. Deleting will leave them as broken instances. Delete anyway?`}
+          </p>
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+              aria-label="Cancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={confirmCountLoading}
+              onClick={() => {
+                setConfirming(false)
+                void onDelete()
+              }}
+              data-testid="component-delete-confirm"
+              className="rounded-md px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+              aria-label={`Confirm delete ${component.name}`}
+            >
+              Delete
+            </button>
+          </div>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => setConfirming(true)}
+          onClick={beginConfirm}
           aria-label={`Delete component ${component.name}`}
           className="flex items-center justify-center gap-1 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
         >
@@ -1085,17 +1203,30 @@ function TextStylesTab({ folderId }: TextStylesTabProps) {
                   Aa
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{style.name}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setDeleteTargetId(style.id)
-                  }}
-                  aria-label={`Delete style ${style.name}`}
-                  className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                >
-                  <Trash2 className="h-3 w-3" aria-hidden="true" />
-                </button>
+                {style.builtin === true ? (
+                  // Builtin styles can't be deleted — show a subdued
+                  // lock-style hint in the slot the trash would occupy
+                  // so the row height stays consistent.
+                  <span
+                    className="shrink-0 rounded-md px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider text-muted-foreground/40"
+                    title="Built-in text style — cannot be deleted"
+                    aria-label="Built-in"
+                  >
+                    Default
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTargetId(style.id)
+                    }}
+                    aria-label={`Delete style ${style.name}`}
+                    className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-accent hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    <Trash2 className="h-3 w-3" aria-hidden="true" />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -1142,6 +1273,7 @@ interface TextStyleEditorProps {
 
 function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
   const [nameDraft, setNameDraft] = useState(style.name)
+  const { fonts: folderFonts } = useFolderFonts()
 
   useEffect(() => {
     setNameDraft(style.name)
@@ -1149,147 +1281,313 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
 
   const colorValue = typeof style.color === 'string' ? style.color : '#000000'
 
+  // Mirror the Inspector's family picker: native <select> with system
+  // stacks plus an optgroup of folder-uploaded custom families. If the
+  // current style.family doesn't match any known option (legacy data
+  // typed by hand) we keep it as a "Custom" option so it stays visible
+  // and selected.
+  const folderFamilies = Array.from(new Set(folderFonts.map((f) => f.family))).sort((a, b) =>
+    a.localeCompare(b),
+  )
+  const currentFamily = style.family ?? ''
+  const knownValues = new Set<string>(['', ...SYSTEM_FONTS.map((f) => f.value), ...folderFamilies])
+  const familyIsCustom = currentFamily !== '' && !knownValues.has(currentFamily)
+
+  // Mirror Inspector's FontWeightSelect: derive the allowed weight set
+  // from the active family. Folder uploads → only the cuts uploaded;
+  // curated system stacks → the realistic 400/700 (or full Inter range);
+  // unknown / "System default" → all weights. Picking a missing weight
+  // would just fall back to system, which looks like the font "didn't
+  // take" — so we hide them.
+  const primaryFamily = (() => {
+    if (currentFamily === '') return null
+    const first =
+      currentFamily
+        .split(',')[0]
+        ?.trim()
+        .replace(/^["']|["']$/g, '') ?? ''
+    return first === '' ? null : first
+  })()
+  const allowedWeights: ReadonlyArray<number> | null = (() => {
+    if (primaryFamily !== null) {
+      const matches = folderFonts.filter((f) => f.family === primaryFamily)
+      if (matches.length > 0) {
+        return [...new Set(matches.map((m) => m.weight))].sort((a, b) => a - b)
+      }
+    }
+    if (currentFamily === '') return null
+    const sys = SYSTEM_FONTS.find((f) => f.value === currentFamily)
+    return sys ? [...sys.weights] : null
+  })()
+  const allWeights: ReadonlyArray<{ value: number; label: string }> = [
+    { value: 100, label: 'Thin 100' },
+    { value: 200, label: 'Extra light 200' },
+    { value: 300, label: 'Light 300' },
+    { value: 400, label: 'Regular 400' },
+    { value: 500, label: 'Medium 500' },
+    { value: 600, label: 'Semibold 600' },
+    { value: 700, label: 'Bold 700' },
+    { value: 800, label: 'Extra bold 800' },
+    { value: 900, label: 'Black 900' },
+  ]
+  const weightOptions =
+    allowedWeights === null
+      ? allWeights
+      : allWeights.filter((w) => allowedWeights.includes(w.value))
+
+  // If the persisted weight isn't in the allowed set (e.g. user just
+  // switched from a 100..900 stack to a folder font that only ships
+  // 400/700), nudge the token to the nearest available so the preview
+  // and rendered text stay coherent. Run as an effect so the write is
+  // outside render.
+  useEffect(() => {
+    if (allowedWeights === null) return
+    const cur = style.weight ?? 400
+    if (allowedWeights.includes(cur)) return
+    let best = allowedWeights[0] ?? 400
+    let bestDelta = Math.abs(cur - best)
+    for (const w of allowedWeights) {
+      const d = Math.abs(cur - w)
+      if (d < bestDelta) {
+        best = w
+        bestDelta = d
+      }
+    }
+    onUpdate({ weight: best })
+    // Intentionally not depending on onUpdate — would loop on stable refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryFamily, style.weight, allowedWeights?.join(',')])
+
   return (
-    <div className="flex flex-col gap-4 max-w-sm">
+    <div className="flex flex-col gap-4">
       <h3 className="text-sm font-semibold text-foreground">Edit text style</h3>
 
-      {/* Name */}
-      <SettingsFieldRow label="Name">
-        <input
-          type="text"
-          value={nameDraft}
-          onChange={(e) => setNameDraft(e.target.value)}
-          onBlur={() => {
-            const trimmed = nameDraft.trim()
-            if (trimmed !== '' && trimmed !== style.name) {
-              onUpdate({ name: trimmed })
-            } else {
-              setNameDraft(style.name)
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          }}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Style name"
-        />
-      </SettingsFieldRow>
-
-      {/* Font family */}
-      <SettingsFieldRow label="Family">
-        <input
-          type="text"
-          value={style.family ?? ''}
-          onChange={(e) => onUpdate({ family: e.target.value })}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Font family"
-        />
-      </SettingsFieldRow>
-
-      {/* Font weight */}
-      <SettingsFieldRow label="Weight">
-        <select
-          value={String(style.weight ?? 400)}
-          onChange={(e) => onUpdate({ weight: Number(e.target.value) as 400 })}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Font weight"
-        >
-          {[100, 200, 300, 400, 500, 600, 700, 800, 900].map((w) => (
-            <option key={w} value={w}>
-              {w}
-            </option>
-          ))}
-        </select>
-      </SettingsFieldRow>
-
-      {/* Font size */}
-      <SettingsFieldRow label="Size">
-        <input
-          type="number"
-          min={1}
-          value={style.size ?? 16}
-          onChange={(e) => onUpdate({ size: Math.max(1, Number(e.target.value)) })}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Font size"
-        />
-      </SettingsFieldRow>
-
-      {/* Line height */}
-      <SettingsFieldRow label="Line height">
-        <input
-          type="number"
-          min={0.5}
-          step={0.05}
-          value={style.lineHeight ?? 1.5}
-          onChange={(e) => onUpdate({ lineHeight: Math.max(0.5, Number(e.target.value)) })}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Line height"
-        />
-      </SettingsFieldRow>
-
-      {/* Letter spacing */}
-      <SettingsFieldRow label="Letter spacing">
-        <input
-          type="number"
-          step={0.01}
-          value={style.letterSpacing ?? 0}
-          onChange={(e) => onUpdate({ letterSpacing: Number(e.target.value) })}
-          className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
-          aria-label="Letter spacing"
-        />
-      </SettingsFieldRow>
-
-      {/* Color — literal hex */}
-      <SettingsFieldRow label="Color">
-        <div className="flex items-center gap-1.5">
-          <input
-            type="color"
-            value={colorValue}
-            onChange={(e) => onUpdate({ color: e.target.value })}
-            className="h-7 w-10 cursor-pointer rounded border border-input p-0.5 focus:outline-none"
-            aria-label="Text color"
-          />
+      {/* Form fields stay narrow — long inputs hurt readability. The
+          preview below escapes this constraint so the operator can
+          gauge the style at slide-realistic widths. */}
+      <div className="flex max-w-sm flex-col gap-4">
+        {/* Name */}
+        <SettingsFieldRow label="Name">
           <input
             type="text"
-            value={colorValue}
-            onChange={(e) => {
-              const raw = e.target.value.trim()
-              const hex = raw.startsWith('#') ? raw : `#${raw}`
-              if (/^#[0-9a-f]{6}$/i.test(hex)) {
-                onUpdate({ color: hex.toLowerCase() })
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={() => {
+              const trimmed = nameDraft.trim()
+              if (trimmed !== '' && trimmed !== style.name) {
+                onUpdate({ name: trimmed })
+              } else {
+                setNameDraft(style.name)
               }
             }}
-            className="w-full rounded-md border border-input field-surface px-2 py-1 font-mono text-sm text-foreground focus:border-ring focus:outline-none"
-            aria-label="Color hex"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Style name"
           />
-        </div>
-        {/* Token color swatches from Colors tab */}
-        {colors.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Color tokens">
-            {colors.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                title={`${c.name} (${c.value.toUpperCase()})`}
-                aria-label={`Use color token: ${c.name}`}
-                onClick={() => onUpdate({ color: c.value })}
-                className={[
-                  'h-5 w-5 rounded-sm border transition',
-                  colorValue === c.value
-                    ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
-                    : 'border-border hover:border-border-strong',
-                ].join(' ')}
-                style={{ background: c.value }}
-              />
-            ))}
-          </div>
-        )}
-      </SettingsFieldRow>
+        </SettingsFieldRow>
 
-      {/* Preview — render on a white slide-like surface so the
-          token color is always legible regardless of editor theme. */}
-      <div className="mt-2 rounded-lg border border-border bg-white p-4 text-black">
+        {/* Font family */}
+        <SettingsFieldRow label="Family">
+          <select
+            value={currentFamily}
+            onChange={(e) => {
+              const v = e.target.value
+              onUpdate(v === '' ? {} : { family: v })
+            }}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Font family"
+          >
+            <option value="">System default</option>
+            <optgroup label="System">
+              {SYSTEM_FONTS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </optgroup>
+            {folderFamilies.length > 0 && (
+              <optgroup label="Folder fonts">
+                {folderFamilies.map((family) => (
+                  <option key={`folder-${family}`} value={family}>
+                    {family}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {familyIsCustom && (
+              <optgroup label="Custom">
+                <option value={currentFamily}>{currentFamily}</option>
+              </optgroup>
+            )}
+          </select>
+        </SettingsFieldRow>
+
+        {/* Font weight — filtered to the cuts the active family actually
+          provides (mirrors the Inspector's FontWeightSelect). */}
+        <SettingsFieldRow label="Weight">
+          <select
+            value={String(style.weight ?? 400)}
+            onChange={(e) => onUpdate({ weight: Number(e.target.value) as 400 })}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Font weight"
+          >
+            {weightOptions.map((w) => (
+              <option
+                key={w.value}
+                value={w.value}
+                style={
+                  currentFamily !== ''
+                    ? { fontFamily: currentFamily, fontWeight: w.value }
+                    : { fontWeight: w.value }
+                }
+              >
+                {w.label}
+              </option>
+            ))}
+          </select>
+        </SettingsFieldRow>
+
+        {/* Font size */}
+        <SettingsFieldRow label="Size">
+          <input
+            type="number"
+            min={1}
+            value={style.size ?? 16}
+            onChange={(e) => onUpdate({ size: Math.max(1, Number(e.target.value)) })}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Font size"
+          />
+        </SettingsFieldRow>
+
+        {/* Line height */}
+        <SettingsFieldRow label="Line height">
+          <input
+            type="number"
+            min={0.5}
+            step={0.05}
+            value={style.lineHeight ?? 1.5}
+            onChange={(e) => onUpdate({ lineHeight: Math.max(0.5, Number(e.target.value)) })}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Line height"
+          />
+        </SettingsFieldRow>
+
+        {/* Letter spacing */}
+        <SettingsFieldRow label="Letter spacing">
+          <input
+            type="number"
+            step={0.01}
+            value={style.letterSpacing ?? 0}
+            onChange={(e) => onUpdate({ letterSpacing: Number(e.target.value) })}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Letter spacing"
+          />
+        </SettingsFieldRow>
+
+        {/* Paragraph spacing — vertical gap above each paragraph block. */}
+        <SettingsFieldRow label="Space before">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={style.paragraphSpaceBefore ?? 0}
+            onChange={(e) =>
+              onUpdate({ paragraphSpaceBefore: Math.max(0, Number(e.target.value)) })
+            }
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Paragraph space before"
+          />
+        </SettingsFieldRow>
+
+        {/* Paragraph spacing — vertical gap below each paragraph block. */}
+        <SettingsFieldRow label="Space after">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={style.paragraphSpaceAfter ?? 0}
+            onChange={(e) => onUpdate({ paragraphSpaceAfter: Math.max(0, Number(e.target.value)) })}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Paragraph space after"
+          />
+        </SettingsFieldRow>
+
+        {/* Case transform — applied at render time only, underlying text
+          content keeps its original casing. */}
+        <SettingsFieldRow label="Case">
+          <select
+            value={style.textTransform ?? 'none'}
+            onChange={(e) => {
+              const v = e.target.value as 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+              onUpdate(v === 'none' ? {} : { textTransform: v })
+            }}
+            className="w-full rounded-md border border-input field-surface px-2 py-1 text-sm text-foreground focus:border-ring focus:outline-none"
+            aria-label="Text case"
+          >
+            <option value="none">As typed</option>
+            <option value="uppercase">UPPERCASE</option>
+            <option value="lowercase">lowercase</option>
+            <option value="capitalize">Capitalize Each Word</option>
+          </select>
+        </SettingsFieldRow>
+
+        {/* Color — literal hex */}
+        <SettingsFieldRow label="Color">
+          <div className="flex items-center gap-1.5">
+            <input
+              type="color"
+              value={colorValue}
+              onChange={(e) => onUpdate({ color: e.target.value })}
+              className="h-7 w-10 cursor-pointer rounded border border-input p-0.5 focus:outline-none"
+              aria-label="Text color"
+            />
+            <input
+              type="text"
+              value={colorValue}
+              onChange={(e) => {
+                const raw = e.target.value.trim()
+                const hex = raw.startsWith('#') ? raw : `#${raw}`
+                if (/^#[0-9a-f]{6}$/i.test(hex)) {
+                  onUpdate({ color: hex.toLowerCase() })
+                }
+              }}
+              className="w-full rounded-md border border-input field-surface px-2 py-1 font-mono text-sm text-foreground focus:border-ring focus:outline-none"
+              aria-label="Color hex"
+            />
+          </div>
+          {/* Token color swatches from Colors tab */}
+          {colors.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="Color tokens">
+              {colors.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  title={`${c.name} (${c.value.toUpperCase()})`}
+                  aria-label={`Use color token: ${c.name}`}
+                  onClick={() => onUpdate({ color: c.value })}
+                  className={[
+                    'h-5 w-5 rounded-sm border transition',
+                    colorValue === c.value
+                      ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
+                      : 'border-border hover:border-border-strong',
+                  ].join(' ')}
+                  style={{ background: c.value }}
+                />
+              ))}
+            </div>
+          )}
+        </SettingsFieldRow>
+      </div>
+
+      {/* Preview — full-width on a white slide-like surface so the
+          token color is always legible regardless of editor theme.
+          Larger styles (Title / Chapter) need the room so the line
+          doesn't wrap mid-preview. */}
+      <div className="mt-2 w-full rounded-lg border border-border bg-white p-6 text-black">
         <p
+          className="break-words"
           style={{
             fontFamily: style.family,
             fontWeight: style.weight,
@@ -1297,6 +1595,15 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
             lineHeight: style.lineHeight,
             letterSpacing: style.letterSpacing,
             color: colorValue,
+            ...(style.textTransform !== undefined && style.textTransform !== 'none'
+              ? { textTransform: style.textTransform }
+              : {}),
+            ...(typeof style.paragraphSpaceBefore === 'number' && style.paragraphSpaceBefore > 0
+              ? { marginTop: style.paragraphSpaceBefore }
+              : {}),
+            ...(typeof style.paragraphSpaceAfter === 'number' && style.paragraphSpaceAfter > 0
+              ? { marginBottom: style.paragraphSpaceAfter }
+              : {}),
           }}
         >
           The quick brown fox jumps over the lazy dog.

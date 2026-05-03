@@ -33,6 +33,7 @@ import {
   resolveFolderAccess,
   resolveComponentAccess,
 } from '../auth/permissions.js'
+import { setHocuspocusInstance } from './presence.js'
 
 export interface HocuspocusServerOptions {
   port: number
@@ -171,7 +172,8 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
 
     async onConnect(data) {
       metrics.incConnections()
-      // userId will be set in onAuthenticate; log connection attempt here.
+      // userId is populated by onAuthenticate (which runs AFTER
+      // onConnect), so presence registration happens there instead.
       console.log(`[hocuspocus] connect → doc=${data.documentName}`)
     },
 
@@ -188,6 +190,10 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       metrics.recordUpdate(encoded.byteLength)
     },
   })
+
+  // Register the live instance so the /folders/:id/active-editors
+  // route can read presence directly off Hocuspocus' connection map.
+  setHocuspocusInstance(server)
 
   return server
 }

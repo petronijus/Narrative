@@ -57,6 +57,18 @@ function getTokensMap(doc: Y.Doc): Y.Map<unknown> {
   return doc.getMap<unknown>('tokens')
 }
 
+/**
+ * Returns the `deletedComponentIds` Y.Array on the folder Y.Doc.
+ * The array is created on demand (its mere existence is harmless on docs
+ * that pre-date M16 P8 because Yjs allocates the root map slot lazily).
+ *
+ * Each element is a componentId string. Duplicates are possible when two
+ * peers delete the same master concurrently — consumers deduplicate via Set.
+ */
+function getDeletedComponentIdsArray(doc: Y.Doc): Y.Array<string> {
+  return doc.getArray<string>('deletedComponentIds')
+}
+
 function getCategoryMap(doc: Y.Doc, category: TokenCategory): Y.Map<Y.Map<unknown>> {
   const tokens = getTokensMap(doc)
   let cat = tokens.get(category) as Y.Map<Y.Map<unknown>> | undefined
@@ -104,11 +116,62 @@ function seedDefaultsIfEmpty(doc: Y.Doc): void {
       m.set('size', ts.size)
       m.set('lineHeight', ts.lineHeight)
       m.set('letterSpacing', ts.letterSpacing)
+      // Mark seeded styles as builtin so the UI prevents deletion. The
+      // editor relies on at least "Body" surviving for default text
+      // styling on new objects.
+      m.set('builtin', true)
       if (colorId !== undefined) {
         m.set('color', { $token: `colors.${colorId}` })
       }
       textStylesMap.set(id, m)
     }
+  })
+}
+
+/**
+ * Rename the seeded "Footnote" text style to "Footnotes and pages" on
+ * existing folder docs that were seeded before the rename. Only touches
+ * builtin entries (or unflagged entries whose name still matches the
+ * old label) so user-created styles named "Footnote" are left alone.
+ * Idempotent.
+ */
+function renameLegacyFootnoteStyle(doc: Y.Doc): void {
+  const textStylesMap = getCategoryMap(doc, 'textStyles')
+  if (textStylesMap.size === 0) return
+  doc.transact(() => {
+    textStylesMap.forEach((m) => {
+      const name = m.get('name')
+      if (typeof name !== 'string') return
+      if (name.toLowerCase() !== 'footnote') return
+      // Builtin or legacy unflagged seed → safe to rename.
+      const builtin = m.get('builtin')
+      if (builtin === true || builtin === undefined) {
+        m.set('name', 'Footnotes and pages')
+        m.set('builtin', true)
+      }
+    })
+  })
+}
+
+/**
+ * Migrate older folder docs that were seeded before `builtin` existed.
+ * Any text style whose name matches a {@link DEFAULT_TEXT_STYLES} entry
+ * and has no explicit `builtin` flag is upgraded to `builtin: true` —
+ * matches the intent of the original seed without needing a server-side
+ * migration. Idempotent.
+ */
+function backfillBuiltinTextStyles(doc: Y.Doc): void {
+  const textStylesMap = getCategoryMap(doc, 'textStyles')
+  if (textStylesMap.size === 0) return
+  const builtinNames = new Set(DEFAULT_TEXT_STYLES.map((s) => s.name.toLowerCase()))
+  doc.transact(() => {
+    textStylesMap.forEach((m) => {
+      if (m.has('builtin')) return
+      const name = m.get('name')
+      if (typeof name === 'string' && builtinNames.has(name.toLowerCase())) {
+        m.set('builtin', true)
+      }
+    })
   })
 }
 
@@ -155,6 +218,21 @@ function deserializeTextStyle(m: Y.Map<unknown>): TextStyleTokenSnapshot | null 
   if (typeof size === 'number') out.size = size
   if (typeof lineHeight === 'number') out.lineHeight = lineHeight
   if (typeof letterSpacing === 'number') out.letterSpacing = letterSpacing
+  const builtin = m.get('builtin')
+  if (builtin === true) out.builtin = true
+  const textTransform = m.get('textTransform')
+  if (
+    textTransform === 'uppercase' ||
+    textTransform === 'lowercase' ||
+    textTransform === 'capitalize' ||
+    textTransform === 'none'
+  ) {
+    out.textTransform = textTransform
+  }
+  const paragraphSpaceBefore = m.get('paragraphSpaceBefore')
+  if (typeof paragraphSpaceBefore === 'number') out.paragraphSpaceBefore = paragraphSpaceBefore
+  const paragraphSpaceAfter = m.get('paragraphSpaceAfter')
+  if (typeof paragraphSpaceAfter === 'number') out.paragraphSpaceAfter = paragraphSpaceAfter
   // color may be a hex string or a serialized TokenRef object
   if (typeof color === 'string') out.color = color
   else if (
@@ -190,10 +268,15 @@ function buildSnapshot(doc: Y.Doc): FolderTokensSnapshot {
   const textStylesMap = tokensMap.get('textStyles') as Y.Map<Y.Map<unknown>> | undefined
   const effectStylesMap = tokensMap.get('effectStyles') as Y.Map<Y.Map<unknown>> | undefined
 
+  const deletedArr = getDeletedComponentIdsArray(doc)
+  const deletedComponentIds = new Set<string>()
+  deletedArr.forEach((id) => deletedComponentIds.add(id))
+
   return {
     colors: yMapToRecord(colorsMap, deserializeColor),
     textStyles: yMapToRecord(textStylesMap, deserializeTextStyle),
     effectStyles: yMapToRecord(effectStylesMap, deserializeEffectStyle),
+    deletedComponentIds,
   }
 }
 
@@ -218,6 +301,17 @@ interface FolderMutationsContextValue {
   updateToken(category: TokenCategory, id: string, patch: Partial<TokenInit>): void
   deleteToken(category: TokenCategory, id: string): void
   listUsages(category: TokenCategory, id: string): string[]
+  /**
+   * Records `componentId` in the folder's CRDT-replicated `deletedComponentIds`
+   * array. Call this immediately after `api.deleteComponent` succeeds so every
+   * peer with the folder doc open learns about the deletion and can sweep
+   * matching component instances from their open deck.
+   *
+   * Idempotency note: duplicate entries are allowed; consumers deduplicate via
+   * a Set when reading. This avoids a read-before-write that would otherwise
+   * require a transaction scan.
+   */
+  markComponentDeleted(componentId: string): void
 }
 
 const FolderMutationsContext = createContext<FolderMutationsContextValue | null>(null)
@@ -256,6 +350,12 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
         // (colors AND textStyles both empty), seed the design-system
         // defaults inside a single transaction. Idempotent.
         seedDefaultsIfEmpty(doc)
+        // Older folders predate the `builtin` flag — tag any text style
+        // matching a default name so the UI can keep them undeletable.
+        backfillBuiltinTextStyles(doc)
+        // Pre-existing folders carry the legacy "Footnote" label — bump
+        // them to the new name so the picker matches what's documented.
+        renameLegacyFootnoteStyle(doc)
         tokens = buildSnapshot(doc)
         setValue({ doc, tokens })
       },
@@ -277,8 +377,14 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     const tokensMap = getTokensMap(doc)
     tokensMap.observeDeep(observer)
 
+    // Also observe the deletedComponentIds array so snapshot re-fires when
+    // any peer writes a deletion signal (CRDT-replicated cascade trigger).
+    const deletedArr = getDeletedComponentIdsArray(doc)
+    deletedArr.observe(observer)
+
     return () => {
       tokensMap.unobserveDeep(observer)
+      deletedArr.unobserve(observer)
       provider.destroy()
       doc.destroy()
       providerRef.current = null
@@ -336,7 +442,13 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     const doc = docRef.current
     if (!doc) return
     const catMap = getCategoryMap(doc, category)
-    if (!catMap.has(id)) return
+    const entry = catMap.get(id)
+    if (!entry) return
+    // Builtin text styles are part of the seeded minimum set — the
+    // editor seeds new text objects from "Body" and falls back across
+    // the others, so the UI must always have them available. Block
+    // deletion at the mutation layer too as defense in depth.
+    if (category === 'textStyles' && entry.get('builtin') === true) return
     doc.transact(() => {
       catMap.delete(id)
     })
@@ -351,11 +463,29 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     throw new Error('listUsages is deprecated; use the useTokenUsages(folderId, category, id) hook')
   }, [])
 
+  /**
+   * Appends `componentId` to the folder's CRDT-replicated `deletedComponentIds`
+   * Y.Array. Every peer observing this folder doc will see the write and can
+   * sweep matching ComponentInstance objects from their open deck.
+   *
+   * Call immediately after `api.deleteComponent` succeeds. Duplicate entries
+   * are acceptable — consumers read via a Set.
+   */
+  const markComponentDeleted = useCallback((componentId: string): void => {
+    const doc = docRef.current
+    if (!doc) return
+    const arr = getDeletedComponentIdsArray(doc)
+    doc.transact(() => {
+      arr.push([componentId])
+    })
+  }, [])
+
   const mutations: FolderMutationsContextValue = {
     addToken,
     updateToken,
     deleteToken,
     listUsages,
+    markComponentDeleted,
   }
 
   // Stable placeholder so we don't `new Y.Doc()` on every render before

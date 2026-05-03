@@ -37,6 +37,7 @@ import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
 import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
+import { InstanceLeafTextEditor } from '../ui/InstanceLeafTextEditor'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
@@ -53,10 +54,26 @@ import {
   moveObjectsLayer,
   groupObjects,
   ungroupObjects,
+  resolveInstanceTree,
+  setLeafOverridePatch,
+  applyInstanceFit,
 } from '@narrative/slide-model'
 import type { ObjectsMutationContext } from '@narrative/slide-model'
 import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
-import type { SlideObject, SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
+import type {
+  SlideObject,
+  SlideObjectType,
+  PathAnchor,
+  PathObject,
+  ComponentInstanceObject,
+} from '@narrative/shared'
+import {
+  hitTestInstanceLeaf,
+  INSTANCE_HIT_PAD,
+} from '../renderer/objectRenderers/componentInstanceRenderer.js'
+import { InstanceEditHandles } from '../ui/InstanceEditHandles.js'
+import { getComponentDoc } from '../state/componentDocCache.js'
+import { extractComponentSnapshot } from '../state/extractComponentSnapshot.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -320,6 +337,15 @@ function DraftOverlay({
 
 export interface EditorLayoutProps {
   onCanvasReady?: ((instance: CanvasInstance | null) => void) | undefined
+  /**
+   * M16 P-flatten — when true, the editor shell renders in
+   * "component master" mode: slides panel is hidden, slide-creation
+   * affordances are gone, and the active doc is treated as a
+   * single-slide artboard (the master). Everything else (toolbar,
+   * inspector, transform handles, undo, animations) is shared with
+   * the deck path so master editing has full editor parity.
+   */
+  masterMode?: boolean
 }
 
 /**
@@ -427,10 +453,28 @@ function convertToPathAndPlace(
   return created.id
 }
 
-export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
-  const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
+export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayoutProps = {}) {
+  const {
+    selectedIds,
+    selectOne,
+    selectMany,
+    toggle,
+    clear,
+    selectedAnimationId,
+    activeInstanceEditId,
+    activeLeafId,
+    enterInstanceEdit,
+    exitInstanceEdit,
+    selectLeaf,
+    clearLeaf,
+  } = useSelection()
   const { animations, animationsCtx } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
+  // Inline text-edit state for component-instance leaves. Lives separate
+  // from useTextEdit because instance leaves don't exist in the slide's
+  // object array — TextEditOverlay's read/write paths can't address
+  // them. Cleared on commit / Esc / outside-click.
+  const [instanceLeafTextEditId, setInstanceLeafTextEditId] = useState<string | null>(null)
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { pathPointsId, enterPathPoints, exitPathPoints } = usePathPointsMode()
   const { activeTool, setActiveTool } = useTool()
@@ -451,7 +495,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   // not extend behind them. The Inspector is fixed-width so its
   // inset is just `inspectorCollapsed ? 36 : 256`.
   const [slidesWidth, setSlidesWidth] = useState(240)
-  const slidesInset = slidesCollapsed ? 36 : slidesWidth
+  // masterMode hides the slides panel column entirely — inset is 0 so
+  // the toolbar / canvas / timeline stack uses the full width.
+  const slidesInset = masterMode ? 0 : slidesCollapsed ? 36 : slidesWidth
   const inspectorInset = inspectorCollapsed ? 36 : 256
 
   // P15: live heights of the floating toolbar (top) and the bottom
@@ -556,6 +602,31 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
     initialImageRects: Map<string, { x: number; y: number; width: number; height: number }>
   } | null>(null)
 
+  /**
+   * Drag state for instance-edit leaf moves. Lives separately from the
+   * regular dragRef because the mutation path is different — we write
+   * setLeafOverridePatch(instance, leaf, { x, y }) instead of
+   * bulkUpdateObjects on slide objects.
+   *
+   * `innerScale` snapshots the inner letterbox scale at drag-start so
+   * the slide-space pointer delta can be converted back into master
+   * coordinates (`leaf.x` lives in master space).
+   *
+   * `moved` is a deadzone gate — pure clicks (no mouse movement) must
+   * not write an override or trigger a fit pass, otherwise sub-px
+   * pointermove jitter accumulates into visible drift across selections.
+   */
+  const leafDragRef = useRef<{
+    instanceId: string
+    leafId: string
+    startX: number
+    startY: number
+    initialX: number
+    initialY: number
+    innerScale: number
+    moved: boolean
+  } | null>(null)
+
   /** Marquee drag state */
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const marqueeRef = useRef<MarqueeState | null>(null)
@@ -597,6 +668,171 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
   useEffect(() => {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
+
+  // ---------------------------------------------------------------------------
+  // M16 P8 — Stale instance-edit guard
+  //
+  // When a peer deletes the instance peer B is currently editing, the local
+  // `activeInstanceEditId` points to an object that no longer exists in the
+  // slide.  React to Y.Doc-driven `objects` changes and clear edit state.
+  //
+  // Similarly, if a peer removes a leaf from the master while B is editing
+  // that leaf, `activeLeafId` becomes a phantom selection — clear it too.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Re-fit the instance bbox to enclose the union of all resolved leaves
+   * after a per-leaf override edit (drag, resize, etc.). The trick: we
+   * also write `overrides.masterBboxOverride` so the renderer's letterbox
+   * math sees a "virtual" master bbox of the same proportions as the new
+   * outer bbox. That keeps `scale = min(W/bbox.w, H/bbox.h)` constant, so
+   * inner content stays visually pixel-stable. Original master.bbox is
+   * never touched.
+   *
+   * Trigger: end of leaf drag, end of leaf resize, exit-edit-mode.
+   */
+  const fitInstanceBoundsRef = useRef<(instanceId: string) => void>(() => {})
+  fitInstanceBoundsRef.current = (instanceId: string): void => {
+    if (mutationCtx === null) return
+    // Read FRESH from the slide Y.Doc — the React `objects` closure can
+    // still hold pre-drag state because the subscription dispatch is rAF-
+    // batched. Stale data here would feed the fit a wrong leaf union and
+    // create a positive feedback loop on every subsequent click.
+    let instanceObj: ComponentInstanceObject | null = null
+    for (let i = 0; i < mutationCtx.objects.length; i++) {
+      const m = mutationCtx.objects.get(i)
+      if (m.get('id') === instanceId && m.get('type') === 'componentInstance') {
+        instanceObj = m.toJSON() as ComponentInstanceObject
+        break
+      }
+    }
+    if (instanceObj === null) return
+    const doc = getComponentDoc(instanceObj.componentId)
+    if (doc === null) return
+    const snap = extractComponentSnapshot(doc)
+    if (snap === null || snap.objects.length === 0) return
+    const resolved = resolveInstanceTree(snap.objects, instanceObj.overrides)
+    if (resolved.length === 0) return
+
+    // Master-space union of resolved leaves (post-overrides).
+    let umin = { x: Infinity, y: Infinity }
+    let umax = { x: -Infinity, y: -Infinity }
+    for (const leaf of resolved) {
+      const lx = typeof leaf.x === 'number' ? leaf.x : 0
+      const ly = typeof leaf.y === 'number' ? leaf.y : 0
+      const lw = typeof leaf.width === 'number' ? leaf.width : 0
+      const lh = typeof leaf.height === 'number' ? leaf.height : 0
+      if (lx < umin.x) umin.x = lx
+      if (ly < umin.y) umin.y = ly
+      if (lx + lw > umax.x) umax.x = lx + lw
+      if (ly + lh > umax.y) umax.y = ly + lh
+    }
+    if (!Number.isFinite(umin.x) || !Number.isFinite(umin.y)) return
+    const uw = umax.x - umin.x
+    const uh = umax.y - umin.y
+    if (uw <= 0 || uh <= 0) return
+
+    // Effective bbox currently in use by the renderer for fit math.
+    const effBbox = instanceObj.overrides?.masterBboxOverride ?? snap.bbox
+    if (effBbox.width <= 0 || effBbox.height <= 0) return
+    const scale = Math.min(instanceObj.width / effBbox.width, instanceObj.height / effBbox.height)
+    if (!Number.isFinite(scale) || scale <= 0) return
+
+    // Slide-space content top-left = data.x + (data.w - effBbox.w*scale)/2 - effBbox.x*scale + tx + umin.x*scale
+    const tx = instanceObj.overrides?.transform?.x ?? 0
+    const ty = instanceObj.overrides?.transform?.y ?? 0
+    const offsetX_old = (instanceObj.width - effBbox.width * scale) / 2
+    const offsetY_old = (instanceObj.height - effBbox.height * scale) / 2
+    const contentSlideMinX = instanceObj.x + offsetX_old - effBbox.x * scale + tx + umin.x * scale
+    const contentSlideMinY = instanceObj.y + offsetY_old - effBbox.y * scale + ty + umin.y * scale
+
+    // New instance bbox = content slide-rect (no padding — auto-fit hugs
+    // content; user can still resize the outer bbox manually if they want
+    // breathing room).
+    const newX = contentSlideMinX
+    const newY = contentSlideMinY
+    const newW = uw * scale
+    const newH = uh * scale
+
+    // New masterBboxOverride matches the inner shape: same proportions as
+    // the outer bbox so the renderer's scale recompute lands on the same
+    // value. We use union directly (master-space units) — this guarantees
+    // scale_new = min(newW/uw, newH/uh) = scale exactly.
+    const newBboxOverride = { x: umin.x, y: umin.y, width: uw, height: uh }
+
+    // No-op early-out if nothing materially changed.
+    const close = (a: number, b: number): boolean => Math.abs(a - b) < 0.5
+    if (
+      close(newX, instanceObj.x) &&
+      close(newY, instanceObj.y) &&
+      close(newW, instanceObj.width) &&
+      close(newH, instanceObj.height) &&
+      instanceObj.overrides?.masterBboxOverride !== undefined &&
+      close(instanceObj.overrides.masterBboxOverride.x, umin.x) &&
+      close(instanceObj.overrides.masterBboxOverride.y, umin.y) &&
+      close(instanceObj.overrides.masterBboxOverride.width, uw) &&
+      close(instanceObj.overrides.masterBboxOverride.height, uh)
+    ) {
+      return
+    }
+
+    // CRUCIAL: write through applyInstanceFit (single Yjs transaction
+    // that mutates the existing overrides Y.Map in place) — NOT
+    // updateObject({ overrides: plainJson }), which would replace the
+    // overrides Y.Map with a plain JS object. The next setLeafOverridePatch
+    // call would then see a non-Y.Map at the slot and create a fresh
+    // empty Y.Map, dropping `masterBboxOverride` and causing the
+    // letterbox math to silently re-baseline against the master bbox.
+    applyInstanceFit(
+      mutationCtx,
+      instanceId,
+      { x: newX, y: newY, width: newW, height: newH },
+      newBboxOverride,
+    )
+  }
+
+  useEffect(() => {
+    if (activeInstanceEditId === null) {
+      // Edit mode exited externally — close the inline leaf text editor too.
+      if (instanceLeafTextEditId !== null) setInstanceLeafTextEditId(null)
+      return
+    }
+
+    // Check 1: instance itself gone from the slide.
+    const instanceObj = objects.find((o) => o.id === activeInstanceEditId)
+    if (instanceObj === undefined || instanceObj.type !== 'componentInstance') {
+      exitInstanceEdit()
+      return
+    }
+
+    // Check 2: leaf no longer in master snapshot.
+    if (activeLeafId !== null) {
+      try {
+        const doc = getComponentDoc(instanceObj.componentId)
+        if (doc !== null) {
+          const snap = extractComponentSnapshot(doc)
+          if (snap !== null) {
+            const leafStillExists = snap.objects.some((o) => o.id === activeLeafId)
+            if (!leafStillExists) {
+              // Leaf gone from master — clear leaf selection but stay in
+              // instance edit mode (the instance still exists).
+              clearLeaf()
+            }
+          }
+        }
+      } catch {
+        // Snapshot unavailable (master not synced) — conservative: leave
+        // activeLeafId in place; it might just be a transient sync gap.
+      }
+    }
+  }, [
+    objects,
+    activeInstanceEditId,
+    activeLeafId,
+    exitInstanceEdit,
+    clearLeaf,
+    instanceLeafTextEditId,
+  ])
 
   // Keep the artboard centred in the viewport on mount AND after every
   // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
@@ -762,6 +998,80 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         setDraft({ ...draftRef.current })
         ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
         return
+      }
+
+      // M16 P8 — Instance edit mode runs BEFORE the regular hit-test.
+      // Inside the active instance bbox we always want to route clicks to
+      // leaf selection, even when the click lands on transparent space
+      // between leaves (the regular sceneGraph hit-test would return null
+      // and fall through to marquee). Outside the bbox we exit edit mode
+      // and fall through to the normal selection path below.
+      if (activeInstanceEditId !== null && canvasInstance !== null) {
+        const instanceObj = objects.find((o) => o.id === activeInstanceEditId)
+        if (instanceObj !== undefined && instanceObj.type === 'componentInstance') {
+          const instBounds = canvasInstance.sceneGraph.getBounds(activeInstanceEditId)
+          // Same INSTANCE_HIT_PAD pad the leaf hit-test uses — ensures a
+          // line / arrow / shape flush with the instance border keeps its
+          // grab area inside the click-eligible region.
+          const insideInstance =
+            instBounds !== null &&
+            x >= instBounds.world.x - INSTANCE_HIT_PAD &&
+            x <= instBounds.world.x + instBounds.world.width + INSTANCE_HIT_PAD &&
+            y >= instBounds.world.y - INSTANCE_HIT_PAD &&
+            y <= instBounds.world.y + instBounds.world.height + INSTANCE_HIT_PAD
+          if (insideInstance) {
+            const instanceNode = canvasInstance.sceneGraph.getNode(activeInstanceEditId)
+            if (instanceNode !== undefined && !instanceNode.container.destroyed) {
+              const doc = getComponentDoc(instanceObj.componentId)
+              const snap = doc !== null ? extractComponentSnapshot(doc) : null
+              const resolvedLeaves = resolveInstanceTree(snap?.objects ?? [], instanceObj.overrides)
+              const leafId = hitTestInstanceLeaf(
+                instanceNode.container,
+                x,
+                y,
+                canvasInstance.sceneGraph.getSlideOriginX(),
+                canvasInstance.sceneGraph.getSlideOriginY(),
+                resolvedLeaves,
+              )
+              if (leafId !== null) {
+                selectLeaf(leafId)
+                // Start a leaf drag so the user can move the leaf body
+                // around inside the instance just like a normal object.
+                const leaf = resolvedLeaves.find((l) => l.id === leafId)
+                if (leaf !== undefined) {
+                  // Snapshot inner letterbox scale so the slide-space
+                  // pointer delta can be converted back to master units.
+                  const effBbox = instanceObj.overrides?.masterBboxOverride ?? snap?.bbox
+                  const innerScale =
+                    effBbox !== undefined && effBbox.width > 0 && effBbox.height > 0
+                      ? Math.min(
+                          instanceObj.width / effBbox.width,
+                          instanceObj.height / effBbox.height,
+                        )
+                      : 1
+                  leafDragRef.current = {
+                    instanceId: activeInstanceEditId,
+                    leafId,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    initialX: leaf.x,
+                    initialY: leaf.y,
+                    innerScale: innerScale > 0 ? innerScale : 1,
+                    moved: false,
+                  }
+                }
+              }
+              ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+              return
+            }
+          } else {
+            // Click outside the instance bbox — exit edit mode and fall
+            // through to normal selection logic below.
+            exitInstanceEdit()
+          }
+        } else {
+          exitInstanceEdit()
+        }
       }
 
       // Hit test — preferuj SceneGraph.hitTest pokud dostupný
@@ -944,6 +1254,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       selectMany,
       editingTextId,
       endEdit,
+      activeInstanceEditId,
+      exitInstanceEdit,
+      selectLeaf,
     ],
   )
 
@@ -1039,6 +1352,40 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         return
       }
 
+      // Instance-edit leaf drag — translates a leaf inside its instance via
+      // the override layer instead of mutating the slide-object array.
+      const leafDrag = leafDragRef.current
+      if (leafDrag !== null && mutationCtx !== null) {
+        const z = zoomRef.current || 1
+        // Screen-px → slide-space.
+        const dxSlideRaw = (e.clientX - leafDrag.startX) / z
+        const dySlideRaw = (e.clientY - leafDrag.startY) / z
+        // Deadzone — fire only past 2 slide-px of total movement. Below
+        // this we treat the gesture as a pure click (e.g. browsers can
+        // emit a single pointermove between pointerdown and pointerup
+        // even when the user didn't intentionally drag).
+        const DEADZONE = 2
+        if (!leafDrag.moved && Math.abs(dxSlideRaw) < DEADZONE && Math.abs(dySlideRaw) < DEADZONE) {
+          return
+        }
+        leafDrag.moved = true
+        let dxSlide = dxSlideRaw
+        let dySlide = dySlideRaw
+        if (e.shiftKey) {
+          if (Math.abs(dxSlide) >= Math.abs(dySlide)) dySlide = 0
+          else dxSlide = 0
+        }
+        // leaf.x lives in master space; the inner container scales master
+        // → slide by `innerScale`, so master-delta = slide-delta / innerScale.
+        const dxMaster = dxSlide / leafDrag.innerScale
+        const dyMaster = dySlide / leafDrag.innerScale
+        setLeafOverridePatch(mutationCtx, leafDrag.instanceId, leafDrag.leafId, {
+          x: leafDrag.initialX + dxMaster,
+          y: leafDrag.initialY + dyMaster,
+        })
+        return
+      }
+
       // Object drag
       const drag = dragRef.current
       if (drag === null || !drag.active) return
@@ -1048,8 +1395,19 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       // recover a slide-space delta so the object tracks the cursor 1:1
       // at any zoom level.
       const z = zoomRef.current || 1
-      const dx = (e.clientX - drag.startX) / z
-      const dy = (e.clientY - drag.startY) / z
+      let dx = (e.clientX - drag.startX) / z
+      let dy = (e.clientY - drag.startY) / z
+
+      // Shift constrains the move to the dominant axis. Applies to plain
+      // drags AND alt-duplicate drags (the duplicate is created on
+      // pointerdown, this branch only moves it).
+      if (e.shiftKey) {
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          dy = 0
+        } else {
+          dx = 0
+        }
+      }
 
       // Propose new positions
       const proposed = drag.initialPositions.map((init) => ({
@@ -1154,6 +1512,16 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         return
       }
 
+      // Instance-edit leaf drag teardown. Only fit when the user
+      // actually moved past the deadzone — pure clicks must not retrigger
+      // the fit pass (would compound subpixel drift across selections).
+      if (leafDragRef.current !== null) {
+        const { instanceId, moved } = leafDragRef.current
+        leafDragRef.current = null
+        if (moved) fitInstanceBoundsRef.current(instanceId)
+        return
+      }
+
       // Pen session — just release the current drag (the controls set
       // during pointermove stay on the anchor). If no drag delta, clear
       // the controls so tap-clicks produce polyline segments.
@@ -1229,7 +1597,13 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
           // P15: select the freshly created object so the user can
           // immediately drag / resize / edit without re-clicking. Mirrors
           // Figma / Keynote behaviour after a tool-driven create.
-          if (created !== null) selectOne(created.id)
+          if (created !== null) {
+            selectOne(created.id)
+            // QoL: text dropped from the toolbar enters edit mode immediately —
+            // matches Figma/Keynote, saves the otherwise-mandatory double-click.
+            // selectAllOnEnter so the first keystroke replaces the placeholder.
+            if (dr.tool === 'text') beginEdit(created.id, { selectAllOnEnter: true })
+          }
         }
         setActiveTool('select')
         return
@@ -1329,8 +1703,42 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         selectOne(hitId)
         return
       }
+      // M16 P8 — doubleclick on a ComponentInstance:
+      //   - Already in edit mode for this instance + a text leaf is
+      //     selected → open inline text editor on that leaf.
+      //   - Otherwise enter instance-edit mode for this instance.
+      // sceneGraph.hitTest returns the outer instance because leaves
+      // aren't registered as scene-graph nodes — we resolve the active
+      // leaf via the override tree.
+      if (hit.type === 'componentInstance') {
+        if (isViewer) return
+        if (activeInstanceEditId === hitId && activeLeafId !== null) {
+          const doc = getComponentDoc(hit.componentId)
+          if (doc !== null) {
+            const snap = extractComponentSnapshot(doc)
+            if (snap !== null) {
+              const resolved = resolveInstanceTree(snap.objects, hit.overrides)
+              const leafObj = resolved.find((o) => o.id === activeLeafId)
+              if (leafObj !== undefined && leafObj.type === 'text') {
+                if (leafObj.isSlideNumber === true) return
+                setInstanceLeafTextEditId(activeLeafId)
+                return
+              }
+            }
+          }
+          // Fall through to no-op when leaf isn't a text leaf.
+          return
+        }
+        selectOne(hitId)
+        enterInstanceEdit(hitId)
+        return
+      }
       if (hit.type === 'text') {
         selectOne(hitId)
+        // Page-number text fields render the live deck index; their
+        // stored content is intentionally ignored. Block content edit
+        // — styling still works through the inspector.
+        if (hit.isSlideNumber === true) return
         beginEdit(hitId)
         return
       }
@@ -1375,6 +1783,9 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
       isViewer,
       mutationCtx,
       enteredGroupId,
+      enterInstanceEdit,
+      activeInstanceEditId,
+      activeLeafId,
     ],
   )
 
@@ -1473,6 +1884,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         // Group isolation also wins over selection clearing.
         if (enteredGroupId !== null) {
           setEnteredGroupId(null)
+          return
+        }
+        // M16 P8 — Instance edit mode: Esc exits without clearing the
+        // outer selection (the instance stays selected).
+        if (activeInstanceEditId !== null) {
+          exitInstanceEdit()
           return
         }
         // Clear canvas selection on Escape. No preventDefault — other
@@ -1811,33 +2228,38 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
 
       {/* Left sidebar — slides panel, user-resizable (P3) +
           collapsible (P15). Width animates between collapsed (36 px)
-          and the user's stored expanded width. */}
-      <div data-shortcut-scope="slidePanel" className="absolute inset-y-0 left-0 z-10 flex">
-        <ResizableSidebar
-          storageKey="narrative:sidebarWidth"
-          minWidth={180}
-          maxWidth={420}
-          defaultWidth={240}
-          side="left"
-          className="panel border-r border-border"
-          collapsed={slidesCollapsed}
-          onWidthChange={setSlidesWidth}
-          collapsedContent={
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSlidesCollapsed(false)}
-              aria-label="Show slides panel"
-              title="Show slides panel"
-              className="mx-auto mt-2 h-7 w-7"
-            >
-              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
-            </Button>
-          }
-        >
-          <SlidesPanel onCollapse={(): void => setSlidesCollapsed(true)} />
-        </ResizableSidebar>
-      </div>
+          and the user's stored expanded width.
+          masterMode: hidden entirely — masters are single-slide and
+          the slides-panel affordances (add / reorder / delete) don't
+          apply. */}
+      {!masterMode && (
+        <div data-shortcut-scope="slidePanel" className="absolute inset-y-0 left-0 z-10 flex">
+          <ResizableSidebar
+            storageKey="narrative:sidebarWidth"
+            minWidth={180}
+            maxWidth={420}
+            defaultWidth={240}
+            side="left"
+            className="panel border-r border-border"
+            collapsed={slidesCollapsed}
+            onWidthChange={setSlidesWidth}
+            collapsedContent={
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSlidesCollapsed(false)}
+                aria-label="Show slides panel"
+                title="Show slides panel"
+                className="mx-auto mt-2 h-7 w-7"
+              >
+                <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            }
+          >
+            <SlidesPanel onCollapse={(): void => setSlidesCollapsed(true)} />
+          </ResizableSidebar>
+        </div>
+      )}
 
       {/* Toolbar — absolute layer at the top of the inner channel
           between the side panels. Sits above the canvas with the
@@ -1849,7 +2271,7 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
         style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
       >
         <div className="pointer-events-auto w-full">
-          <Toolbar />
+          <Toolbar masterMode={masterMode} />
         </div>
       </div>
 
@@ -2029,7 +2451,12 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                       canvasInstance !== null &&
                       mutationCtx !== null &&
                       (() => {
-                        // Build the subset of selected ids that are editable.
+                        // M16 P8 — while inside instance edit mode, the outer
+                        // transform rig is suppressed for the active instance
+                        // (the instance outer chrome becomes a faded dashed
+                        // border via InstanceEditHandles below). Other selected
+                        // objects that are NOT the active instance still get
+                        // normal handles.
                         const editableIds = [...selectedIds].filter((sid) => {
                           const o = objects.find((x) => x.id === sid)
                           if (o === undefined || o.locked === true) return false
@@ -2041,6 +2468,10 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                           // the bounding-box handles so the anchor dots
                           // are unobstructed.
                           if (pathPointsId !== null && sid === pathPointsId) return false
+                          // While instance edit mode is active, suppress the
+                          // outer handles for that specific instance.
+                          if (activeInstanceEditId !== null && sid === activeInstanceEditId)
+                            return false
                           return true
                         })
                         if (editableIds.length === 0) return null
@@ -2060,8 +2491,20 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         // applied in TransformHandles).
                         const aspectLock = editableIds.some((sid) => {
                           const o = objects.find((x) => x.id === sid)
-                          return o?.aspectLocked === true
+                          return o?.aspectLocked === true || o?.type === 'componentInstance'
                         })
+                        // Figma-style violet selection chrome when every
+                        // selected object is a ComponentInstance. Mixed
+                        // selections fall back to the default blue —
+                        // matches Figma's behaviour where mixing
+                        // components with primitives drops the purple
+                        // affordance.
+                        const allComponents =
+                          editableIds.length > 0 &&
+                          editableIds.every((sid) => {
+                            const o = objects.find((x) => x.id === sid)
+                            return o?.type === 'componentInstance'
+                          })
                         return (
                           <TransformHandles
                             objectIds={editableIds}
@@ -2075,6 +2518,32 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                               position: g.position,
                             }))}
                             objects={objects}
+                            accent={allComponents ? 'component' : 'default'}
+                          />
+                        )
+                      })()}
+
+                    {/* M16 P8 — Instance edit mode overlay.
+                        Renders a faded dashed outline over the active instance
+                        and full transform handles + violet chrome over the
+                        selected leaf. Only shown when not in viewer mode. */}
+                    {!isViewer &&
+                      activeInstanceEditId !== null &&
+                      canvasInstance !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const instanceObj = objects.find((o) => o.id === activeInstanceEditId)
+                        if (instanceObj === undefined || instanceObj.type !== 'componentInstance')
+                          return null
+                        return (
+                          <InstanceEditHandles
+                            instanceObj={instanceObj}
+                            activeLeafId={activeLeafId}
+                            sceneGraph={canvasInstance.sceneGraph}
+                            mutationCtx={mutationCtx}
+                            onSnapGuides={handleSnapGuides}
+                            otherBounds={otherBounds}
+                            onEditEnd={() => fitInstanceBoundsRef.current(instanceObj.id)}
                           />
                         )
                       })()}
@@ -2094,6 +2563,37 @@ export function EditorLayout({ onCanvasReady }: EditorLayoutProps = {}) {
                         if (obj === undefined || obj.type !== 'text') return null
                         return (
                           <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
+                        )
+                      })()}
+
+                    {/* M16 P8: inline editor for a TextObject leaf inside
+                      an active component-instance edit session. Writes
+                      through setLeafOverridePatch({ text }) — separate
+                      from TextEditOverlay because instance leaves
+                      aren't in the slide's object array. */}
+                    {instanceLeafTextEditId !== null &&
+                      activeInstanceEditId !== null &&
+                      canvasInstance !== null &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const instanceObj = objects.find((o) => o.id === activeInstanceEditId)
+                        if (instanceObj === undefined || instanceObj.type !== 'componentInstance')
+                          return null
+                        const doc = getComponentDoc(instanceObj.componentId)
+                        if (doc === null) return null
+                        const snap = extractComponentSnapshot(doc)
+                        if (snap === null) return null
+                        const resolved = resolveInstanceTree(snap.objects, instanceObj.overrides)
+                        const leaf = resolved.find((o) => o.id === instanceLeafTextEditId)
+                        if (leaf === undefined || leaf.type !== 'text') return null
+                        return (
+                          <InstanceLeafTextEditor
+                            instanceObj={instanceObj}
+                            leaf={leaf}
+                            sceneGraph={canvasInstance.sceneGraph}
+                            mutationCtx={mutationCtx}
+                            onCommit={() => setInstanceLeafTextEditId(null)}
+                          />
                         )
                       })()}
 

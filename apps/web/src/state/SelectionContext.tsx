@@ -31,6 +31,47 @@ export interface SelectionContextValue {
   selectedAnimationId: string | null
   setSelectedAnimationId: React.Dispatch<React.SetStateAction<string | null>>
 
+  // ---------------------------------------------------------------------------
+  // M16 P8: instance edit mode
+  // ---------------------------------------------------------------------------
+
+  /**
+   * When non-null, the user has double-clicked a ComponentInstance and is
+   * editing one of its master leaves. The outer instance chrome switches to
+   * a faded dashed border; clicks inside the instance pick leaves instead of
+   * re-selecting the whole instance.
+   */
+  activeInstanceEditId: string | null
+  /**
+   * The master leaf id currently selected while in instance edit mode.
+   * Null when no leaf is picked (user entered the instance but hasn't
+   * clicked a child yet). This id is NOT present in the slide's objects
+   * array — it's a phantom selection resolved from the master snapshot.
+   */
+  activeLeafId: string | null
+
+  /**
+   * Enter instance edit mode for the given ComponentInstance id.
+   * Clears activeLeafId. Does NOT change the outer object selection
+   * so the instance outer handles remain visible (faded) during editing.
+   */
+  enterInstanceEdit: (instanceId: string) => void
+  /**
+   * Exit instance edit mode. Clears both activeInstanceEditId and activeLeafId.
+   */
+  exitInstanceEdit: () => void
+  /**
+   * Select a leaf while in instance edit mode. Noop when
+   * activeInstanceEditId is null.
+   */
+  selectLeaf: (leafId: string) => void
+  /**
+   * Clear the active leaf selection without exiting instance edit mode.
+   * Use when the currently selected leaf disappears from the master
+   * (e.g. a peer deleted it) but the instance itself is still alive.
+   */
+  clearLeaf: () => void
+
   // Backward-compat aliasy (M2 callsites)
   /** @deprecated Použij selectOne(). */
   setSelectedId: (id: string) => void
@@ -43,6 +84,8 @@ const SelectionContext = createContext<SelectionContextValue | null>(null)
 export function SelectionProvider({ children }: { children: React.ReactNode }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set())
   const [selectedAnimationId, setSelectedAnimationId] = useState<string | null>(null)
+  const [activeInstanceEditId, setActiveInstanceEditId] = useState<string | null>(null)
+  const [activeLeafId, setActiveLeafId] = useState<string | null>(null)
 
   // P6 E2E: write the current selection to a global snapshot so Playwright
   // specs can observe selection changes without walking React internals.
@@ -90,6 +133,27 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
 
   const clear = useCallback(() => {
     setSelectedIds(new Set())
+    // Exiting to empty selection also exits instance-edit mode.
+    setActiveInstanceEditId(null)
+    setActiveLeafId(null)
+  }, [])
+
+  const enterInstanceEdit = useCallback((instanceId: string) => {
+    setActiveInstanceEditId(instanceId)
+    setActiveLeafId(null)
+  }, [])
+
+  const exitInstanceEdit = useCallback(() => {
+    setActiveInstanceEditId(null)
+    setActiveLeafId(null)
+  }, [])
+
+  const selectLeaf = useCallback((leafId: string) => {
+    setActiveLeafId(leafId)
+  }, [])
+
+  const clearLeaf = useCallback(() => {
+    setActiveLeafId(null)
   }, [])
 
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds])
@@ -108,6 +172,12 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
     clear,
     selectedAnimationId,
     setSelectedAnimationId,
+    activeInstanceEditId,
+    activeLeafId,
+    enterInstanceEdit,
+    exitInstanceEdit,
+    selectLeaf,
+    clearLeaf,
     // Backward-compat aliasy
     setSelectedId: selectOne,
     clearSelection: clear,

@@ -27,7 +27,6 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import {
@@ -45,22 +44,7 @@ import {
   scanFolderDoc,
   type UsageEntry,
 } from '@narrative/slide-model'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Rehydrates a Y.Doc by applying a sequence of binary updates in order.
- * Returns a fresh Y.Doc — callers should destroy it when done.
- */
-function replayUpdates(updateRows: Array<{ update: Uint8Array }>): Y.Doc {
-  const doc = new Y.Doc()
-  for (const row of updateRows) {
-    Y.applyUpdate(doc, row.update)
-  }
-  return doc
-}
+import { replayUpdates } from '../media/replayDoc.js'
 
 // ---------------------------------------------------------------------------
 // Route registration

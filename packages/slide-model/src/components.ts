@@ -251,6 +251,19 @@ export function promoteToComponent(
     throw new Error('promoteToComponent: none of the specified objectIds exist on the slide')
   }
 
+  // --- Reject nested components ---
+  // Components are intentionally flat: a master subtree must not itself
+  // contain a componentInstance. Nesting opens the door to recursive
+  // expansion, override-merge ambiguity (master-of-master vs instance
+  // overrides at every level), and animation-id remap collisions —
+  // surface area we explicitly don't want to pay for. Detach the
+  // inner instance(s) first if you really need this composition.
+  if (promotedObjects.some((o) => o.type === 'componentInstance')) {
+    throw new Error(
+      'promoteToComponent: selection contains a component instance — components cannot be nested. Detach the inner instance first.',
+    )
+  }
+
   // --- Compute bounding box ---
   const bbox = computeBoundingBox(promotedObjects)
 

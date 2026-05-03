@@ -7,8 +7,11 @@
  *   API_PORT        (default 3001) — Fastify HTTP
  *   HOCUSPOCUS_PORT (default 3002) — Hocuspocus WebSocket
  *
- * Auth (M10 phase 2):
- *   AUTHENTIK_ISSUER, AUTHENTIK_JWKS_URL, AUTHENTIK_CLIENT_ID must be set in production.
+ * Auth (M10 phase 2 — Google OIDC since 2026-05):
+ *   OIDC_ISSUER, OIDC_JWKS_URL, OIDC_CLIENT_ID must be set in production.
+ *   OIDC_ALLOWED_EMAILS (comma-separated) and/or OIDC_ALLOWED_DOMAIN gate
+ *   which Google accounts can sign in. Set at least one — without an
+ *   allowlist, anyone with a Google account would gain access.
  *   BYPASS_AUTH=true skips OIDC validation and synthesizes 'dev-user' for all requests.
  *   A loud warning is logged when bypass is active. NEVER use in production.
  *
@@ -49,13 +52,28 @@ const isDev = process.env['NODE_ENV'] !== 'production'
 
 const bypassAuth = process.env['BYPASS_AUTH'] === 'true'
 
+const allowedEmails = (process.env['OIDC_ALLOWED_EMAILS'] ?? '')
+  .split(',')
+  .map((e) => e.trim())
+  .filter(Boolean)
+const allowedDomain = process.env['OIDC_ALLOWED_DOMAIN']?.trim() || undefined
+
 const verifier = bypassAuth
   ? null
   : createJwtVerifier({
-      issuer: process.env['AUTHENTIK_ISSUER']!,
-      jwksUrl: process.env['AUTHENTIK_JWKS_URL']!,
-      audience: process.env['AUTHENTIK_CLIENT_ID']!,
+      issuer: process.env['OIDC_ISSUER']!,
+      jwksUrl: process.env['OIDC_JWKS_URL']!,
+      audience: process.env['OIDC_CLIENT_ID']!,
+      allowedEmails,
+      ...(allowedDomain ? { allowedDomain } : {}),
     })
+
+if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain) {
+  console.warn(
+    '[server] OIDC_ALLOWED_EMAILS and OIDC_ALLOWED_DOMAIN are both empty — ' +
+      'ANY Google account will be allowed to sign in. Set one of them in production.',
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Dev migrations

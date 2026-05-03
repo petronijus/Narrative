@@ -14,6 +14,7 @@ import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/
 import { plainObjectToYMap } from './bindings.js'
 import { getObjectTypeDef } from './registry.js'
 import { createTextValue } from './richText.js'
+import type { RichDeltaOp } from './richText.js'
 
 /**
  * Symbol pro identifikaci lokálních user mutací.
@@ -46,15 +47,45 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
   // inline formatting (italic / underline / fontWeight / color) on
   // ranges concurrently. Promote a plain string to Y.Text on insert.
   let prepared = obj
-  if (obj.type === 'text') {
-    const t = (obj as { text: unknown }).text
+
+  // Paste path: an optional `_richTextOps` Quill-delta ride-along carries
+  // inline formatting from the source text object (Y.Text isn't JSON-
+  // serializable so the clipboard captures it as a delta). Strip the
+  // marker before persisting and apply the delta after integration so
+  // the Y.Text has a doc context.
+  let richOps: RichDeltaOp[] | null = null
+  const opsField = (obj as { _richTextOps?: unknown })._richTextOps
+  if (Array.isArray(opsField)) {
+    richOps = opsField as RichDeltaOp[]
+    const { _richTextOps: _drop, ...rest } = obj as unknown as Record<string, unknown>
+    void _drop
+    prepared = rest as unknown as SlideObject
+  }
+
+  if (prepared.type === 'text') {
+    const t = (prepared as { text: unknown }).text
     if (typeof t === 'string') {
-      prepared = { ...obj, text: createTextValue(t) } as SlideObject
+      prepared = { ...prepared, text: createTextValue(t) } as SlideObject
     }
   }
   const yMap = plainObjectToYMap(prepared)
   ctx.doc.transact(() => {
     ctx.objects.push([yMap])
+    if (richOps !== null) {
+      const yt = yMap.get('text')
+      if (yt instanceof Y.Text) {
+        if (yt.length > 0) yt.delete(0, yt.length)
+        // applyDelta replays the captured insert+attributes ops onto the
+        // freshly-integrated Y.Text, restoring per-run italic/underline/
+        // weight/color exactly as on the source.
+        yt.applyDelta(
+          richOps as unknown as Array<{
+            insert: string
+            attributes?: Record<string, unknown>
+          }>,
+        )
+      }
+    }
   }, LOCAL_ORIGIN)
 }
 
@@ -184,20 +215,60 @@ export function duplicateObject(
     y: (sourcePlain['y'] as number) + offset.y,
   }
 
-  // Build a fresh Y.Map for the duplicate. Any Y.Text values must be
-  // CLONED (not referenced) — Yjs forbids the same CRDT instance from
-  // living in two parents at once.
+  // Build a fresh Y.Map for the duplicate. Any Yjs CRDT values
+  // (Y.Text / Y.Map / Y.Array) must be deep-CLONED — Yjs forbids the
+  // same CRDT instance from living in two parents at once, and reusing
+  // an already-integrated subtree blows up during _integrate (the
+  // source's _prelimContent has already been nulled). Capture Y.Text
+  // deltas so we can replay inline formatting after integration —
+  // toString() drops run attributes.
+  const richTextDeltas: Array<{ path: string[]; delta: ReturnType<Y.Text['toDelta']> }> = []
+  const cloneYjsValue = (value: unknown, path: string[]): unknown => {
+    if (value instanceof Y.Text) {
+      richTextDeltas.push({ path, delta: value.toDelta() })
+      return new Y.Text()
+    }
+    if (value instanceof Y.Map) {
+      const m = new Y.Map<unknown>()
+      for (const [k, v] of value.entries()) {
+        m.set(k, cloneYjsValue(v, [...path, k]))
+      }
+      return m
+    }
+    if (value instanceof Y.Array) {
+      const a = new Y.Array<unknown>()
+      const items: unknown[] = []
+      for (let i = 0; i < value.length; i++) {
+        items.push(cloneYjsValue(value.get(i), [...path, String(i)]))
+      }
+      a.push(items)
+      return a
+    }
+    return value
+  }
   const newYMap = new Y.Map<unknown>()
   for (const [key, value] of Object.entries(clonedPlain)) {
-    if (value instanceof Y.Text) {
-      newYMap.set(key, createTextValue(value.toString()))
-    } else {
-      newYMap.set(key, value)
-    }
+    newYMap.set(key, cloneYjsValue(value, [key]))
   }
 
   ctx.doc.transact(() => {
     ctx.objects.push([newYMap])
+    for (const { path, delta } of richTextDeltas) {
+      // Walk the freshly-integrated tree to the cloned Y.Text and
+      // replay the captured delta.
+      let cursor: unknown = newYMap
+      for (const seg of path) {
+        if (cursor instanceof Y.Map) {
+          cursor = cursor.get(seg)
+        } else if (cursor instanceof Y.Array) {
+          cursor = cursor.get(Number(seg))
+        } else {
+          cursor = undefined
+          break
+        }
+      }
+      if (cursor instanceof Y.Text) cursor.applyDelta(delta)
+    }
   }, LOCAL_ORIGIN)
 
   // Vrátíme plain kopii — přečteme ze Y.Array (YMap je teď v doc kontextu)
@@ -603,7 +674,44 @@ export function addObjects(ctx: ObjectsMutationContext, objects: ReadonlyArray<S
   if (objects.length === 0) return
   ctx.doc.transact(() => {
     for (const obj of objects) {
-      ctx.objects.push([plainObjectToYMap(obj)])
+      // Promote text bodies from plain string → Y.Text, mirroring the
+      // single-object addObject path. Without this, callers feeding
+      // deeply-plain objects (e.g. component-instance detach reading
+      // through readMasterDoc) lose CRDT semantics on the text field.
+      let prepared = obj
+
+      // Paste path — strip `_richTextOps` (Quill delta carrying inline
+      // formatting) before persisting; we replay it onto the integrated
+      // Y.Text below.
+      let richOps: RichDeltaOp[] | null = null
+      const opsField = (obj as { _richTextOps?: unknown })._richTextOps
+      if (Array.isArray(opsField)) {
+        richOps = opsField as RichDeltaOp[]
+        const { _richTextOps: _drop, ...rest } = obj as unknown as Record<string, unknown>
+        void _drop
+        prepared = rest as unknown as SlideObject
+      }
+
+      if (prepared.type === 'text') {
+        const t = (prepared as { text: unknown }).text
+        if (typeof t === 'string') {
+          prepared = { ...prepared, text: createTextValue(t) } as SlideObject
+        }
+      }
+      const yMap = plainObjectToYMap(prepared)
+      ctx.objects.push([yMap])
+      if (richOps !== null) {
+        const yt = yMap.get('text')
+        if (yt instanceof Y.Text) {
+          if (yt.length > 0) yt.delete(0, yt.length)
+          yt.applyDelta(
+            richOps as unknown as Array<{
+              insert: string
+              attributes?: Record<string, unknown>
+            }>,
+          )
+        }
+      }
     }
   }, LOCAL_ORIGIN)
 }

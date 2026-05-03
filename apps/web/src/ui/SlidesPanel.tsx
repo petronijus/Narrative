@@ -940,6 +940,11 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element 
       scope: 'slidePanel',
       preventDefault: true,
       description: 'Paste slide(s) after active',
+      // Yield to canvas Mod+V (object paste) when the slide clipboard is
+      // empty — e.g. user copied an object on canvas, clicked another
+      // thumbnail to navigate, then hit Mod+V expecting to paste the
+      // object on the new slide.
+      canHandle: () => hasSlideClipboard(),
       handler: () => {
         const target = activeSlideId ?? slides[slides.length - 1]?.id ?? null
         if (target !== null) handlePaste(target)

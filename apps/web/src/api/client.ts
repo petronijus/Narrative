@@ -73,6 +73,12 @@ export interface ApiClient {
     deckIds: string[],
     destFolderId: string,
   ): Promise<{ movedCount: number }>
+  /**
+   * List active editors per deck for a folder. Returns only decks with
+   * at least one editor besides the caller. Used by the folder view to
+   * show "who is editing" bubbles on each deck tile.
+   */
+  listFolderActiveEditors(folderId: string): Promise<ActiveEditorsEntry[]>
 
   // ---------------------------------------------------------------------------
   // M16 P5 — Component API
@@ -92,6 +98,27 @@ export interface ApiClient {
   renameComponent(componentId: string, name: string): Promise<ComponentSummary>
   /** Delete a component and cascade its update log (owner only). Caller handles instance cleanup. */
   deleteComponent(componentId: string): Promise<void>
+  /**
+   * Upload (or replace) the master preview thumbnail for a component.
+   * `dataUrl` must be a base64 data: URL of image/jpeg or image/png.
+   * Server caps the decoded payload at ~1 MB.
+   */
+  uploadComponentThumbnail(componentId: string, dataUrl: string): Promise<ComponentSummary>
+  /**
+   * M16 P6 — Count how many `componentInstance` nodes (across every deck in
+   * the component's folder) target this master. Used for delete-time warnings
+   * and the "Used N times" badge in the component picker / Components tab.
+   *
+   * Owner-only. May take 1–2 s on folders with many decks (replays each deck
+   * Y.Doc from `deck_updates`). Server caches nothing — call sparingly.
+   */
+  getComponentInstanceCount(componentId: string): Promise<number>
+  /**
+   * Batch instance counts for every component in a folder. Replays each
+   * deck once and returns a `componentId → count` record. Prefer over
+   * many `getComponentInstanceCount` calls when listing a folder.
+   */
+  listComponentInstanceCounts(folderId: string): Promise<Record<string, number>>
 
   // ---------------------------------------------------------------------------
   // M16 P3 — Folder font API
@@ -104,8 +131,14 @@ export interface ApiClient {
    * Optional original filename via X-Filename header for extension detection.
    */
   uploadFolderFont(folderId: string, file: File): Promise<FolderFontSummary>
-  /** Delete a folder font by asset id. */
-  deleteFolderFont(folderId: string, assetId: string): Promise<void>
+  /**
+   * Delete a folder font by asset id.
+   * Returns the number of decks the font was promoted to (deck-scoped clones)
+   * — non-zero when the folder still has presentations that may reference it.
+   */
+  deleteFolderFont(folderId: string, assetId: string): Promise<{ promotedToDeckCount: number }>
+  /** List fonts that have been promoted to deck scope (deck-specific fonts). */
+  listDeckFonts(deckId: string): Promise<FolderFontSummary[]>
 
   // ---------------------------------------------------------------------------
   // M16 P4 — Token usage scanning
@@ -147,6 +180,12 @@ export interface FolderSummary {
   /** Number of decks currently in the folder. */
   deckCount: number
   createdAt: string
+}
+
+/** Snapshot of users actively editing a single deck (excludes caller). */
+export interface ActiveEditorsEntry {
+  deckId: string
+  userIds: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +436,9 @@ export function createApiClient(getToken: () => string | null): ApiClient {
         body: JSON.stringify({ deckIds, destFolderId }),
       }),
 
+    listFolderActiveEditors: (folderId) =>
+      requestJson<ActiveEditorsEntry[]>(`/folders/${folderId}/active-editors`),
+
     // -------------------------------------------------------------------------
     // M16 P5 — Component methods
     // -------------------------------------------------------------------------
@@ -421,6 +463,25 @@ export function createApiClient(getToken: () => string | null): ApiClient {
     deleteComponent: async (componentId) => {
       const res = await request(`/components/${componentId}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    uploadComponentThumbnail: (componentId, dataUrl) =>
+      requestJson<ComponentSummary>(`/components/${componentId}/thumbnail`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl }),
+      }),
+
+    getComponentInstanceCount: async (componentId) => {
+      const data = await requestJson<{ count: number }>(`/components/${componentId}/instance-count`)
+      return data.count
+    },
+
+    listComponentInstanceCounts: async (folderId) => {
+      const data = await requestJson<{ counts: Record<string, number> }>(
+        `/folders/${folderId}/component-instance-counts`,
+      )
+      return data.counts
     },
 
     // -------------------------------------------------------------------------
@@ -462,6 +523,19 @@ export function createApiClient(getToken: () => string | null): ApiClient {
         method: 'DELETE',
       })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+      if (res.status === 200) {
+        try {
+          return (await res.json()) as { promotedToDeckCount: number }
+        } catch {
+          return { promotedToDeckCount: 0 }
+        }
+      }
+      return { promotedToDeckCount: 0 }
+    },
+
+    listDeckFonts: async (deckId) => {
+      const data = await requestJson<{ fonts: FolderFontSummary[] }>(`/api/decks/${deckId}/fonts`)
+      return data.fonts
     },
 
     // -------------------------------------------------------------------------

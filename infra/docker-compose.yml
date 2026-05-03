@@ -1,14 +1,22 @@
 # Narrative — Docker Compose (dev + prod-like local)
 #
 # Workflow:
-#   dev (native):      docker compose up postgres authentik-postgres authentik-redis authentik-server authentik-worker
-#                      → then pnpm dev
+#   dev (native):      docker compose up postgres minio media-redis  → then pnpm dev
+#                      (auth in dev runs with BYPASS_AUTH=true; no IdP container needed)
 #   prod-like local:   docker compose up            → all services in containers
 #   prod deploy:       docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Project / container naming:
+#   Top-level `name: narrative` sets the compose project name, so volumes and
+#   networks are prefixed `narrative_*`. Each service also pins an explicit
+#   `container_name: narrative-<svc>` so `docker ps` groups them visually.
+
+name: narrative
 
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: narrative-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-narrative}
@@ -29,6 +37,7 @@ services:
     build:
       context: ../
       dockerfile: apps/server/Dockerfile
+    container_name: narrative-server
     restart: unless-stopped
     depends_on:
       postgres:
@@ -51,82 +60,16 @@ services:
       retries: 5
       start_period: 30s
 
-  # ─── Authentik OIDC Identity Provider (M10) ───────────────────────────────────
-  authentik-postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: authentik
-      POSTGRES_USER: authentik
-      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD:?AUTHENTIK_POSTGRES_PASSWORD is required}
-    volumes:
-      - authentik_pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U authentik -d authentik']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  authentik-redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    healthcheck:
-      test: ['CMD-SHELL', 'redis-cli ping | grep PONG']
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  authentik-server:
-    image: ghcr.io/goauthentik/server:2024.8.3
-    restart: unless-stopped
-    command: server
-    depends_on:
-      authentik-postgres:
-        condition: service_healthy
-      authentik-redis:
-        condition: service_healthy
-    environment:
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?required}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: 'false'
-      # Bootstrap credentials for first run only — used by akadmin setup flow
-      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
-      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-admin@narrative.local}
-    volumes:
-      - authentik_media:/media
-      - authentik_certs:/certs
-      - ./authentik/blueprints/custom:/blueprints/custom:ro
-    ports:
-      - '${AUTHENTIK_HTTP_PORT:-9000}:9000'
-
-  authentik-worker:
-    image: ghcr.io/goauthentik/server:2024.8.3
-    restart: unless-stopped
-    command: worker
-    depends_on:
-      authentik-server:
-        condition: service_started
-    environment:
-      AUTHENTIK_REDIS__HOST: authentik-redis
-      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
-      AUTHENTIK_POSTGRESQL__USER: authentik
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD}
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: 'false'
-    volumes:
-      - authentik_media:/media
-      - authentik_certs:/certs
-      - ./authentik/blueprints/custom:/blueprints/custom:ro
+  # ─── Identity provider ───────────────────────────────────────────────────────
+  # Google OIDC is used directly (no self-hosted IdP container). The web client
+  # talks to https://accounts.google.com via PKCE; the server validates ID tokens
+  # against Google's JWKS and gates access via OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN.
+  # See README "Authentication" section for setup.
 
   # ─── MinIO object storage (M11) ──────────────────────────────────────────────
   minio:
     image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: narrative-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -135,7 +78,7 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - '${MINIO_API_PORT:-9100}:9000' # S3 API (avoids collision with Authentik on 9000)
+      - '${MINIO_API_PORT:-9100}:9000' # S3 API
       - '${MINIO_CONSOLE_PORT:-9101}:9001' # Web console
     healthcheck:
       test: ['CMD', 'mc', 'ready', 'local']
@@ -148,6 +91,7 @@ services:
   # then exits. A non-zero exit fails the stack — intentional, makes config drift loud.
   minio-init:
     image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    container_name: narrative-minio-init
     depends_on:
       minio:
         condition: service_healthy
@@ -171,6 +115,7 @@ services:
   # auth latency. See ADR in docs/adr/.
   media-redis:
     image: redis:7-alpine
+    container_name: narrative-media-redis
     restart: unless-stopped
     volumes:
       - media_redis_data:/data
@@ -195,6 +140,7 @@ services:
     build:
       context: ../
       dockerfile: apps/video-worker/Dockerfile
+    container_name: narrative-video-worker
     restart: unless-stopped
     depends_on:
       media-redis:
@@ -214,6 +160,7 @@ services:
   # ─── imgproxy (M11) ──────────────────────────────────────────────────────────
   imgproxy:
     image: darthsim/imgproxy:v3.27
+    container_name: narrative-imgproxy
     restart: unless-stopped
     environment:
       IMGPROXY_KEY: ${IMGPROXY_KEY:?required}
@@ -233,12 +180,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  authentik_pg_data:
-    driver: local
-  authentik_media:
-    driver: local
-  authentik_certs:
     driver: local
   minio_data:
     driver: local

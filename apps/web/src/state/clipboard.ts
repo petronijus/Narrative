@@ -15,7 +15,31 @@
  */
 
 import { nanoid } from 'nanoid'
+import * as Y from 'yjs'
 import type { SlideObject } from '@narrative/shared'
+import { toDelta } from '@narrative/slide-model'
+
+/**
+ * Capture inline formatting on a TextObject's Y.Text body as a Quill
+ * delta and return a JSON-safe plain snapshot. The delta rides along on
+ * `_richTextOps` and is consumed by slide-model `addObject` on paste,
+ * which replays it into a freshly-integrated Y.Text. Without this step
+ * Y.Text is opaque to JSON.stringify and inline italics/underline/
+ * weight/color silently disappear on paste.
+ */
+function snapshotForClipboard(o: SlideObject): SlideObject {
+  if (o.type === 'text') {
+    const t = (o as { text: unknown }).text
+    if (t instanceof Y.Text) {
+      return {
+        ...(o as object),
+        text: t.toString(),
+        _richTextOps: toDelta(t),
+      } as unknown as SlideObject
+    }
+  }
+  return o
+}
 
 const LS_KEY = 'narrative:clipboard'
 
@@ -74,7 +98,13 @@ export function setClipboard(objects: ReadonlyArray<SlideObject>): void {
     clearLS()
     return
   }
-  clipboard = objects.map((o) => structuredClone(o))
+  // Snapshot Y.Text bodies into a JSON-safe delta first, THEN JSON
+  // round-trip. JSON round-trip (rather than structuredClone) because
+  // text objects can carry transient non-serializable side data attached
+  // by upstream code (e.g. font-face load callbacks) which breaks
+  // structuredClone with DataCloneError. JSON silently drops functions/
+  // symbols, leaving exactly the persistable state.
+  clipboard = objects.map((o) => JSON.parse(JSON.stringify(snapshotForClipboard(o))) as SlideObject)
   writeLS(clipboard)
 }
 

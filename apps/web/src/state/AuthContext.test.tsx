@@ -117,6 +117,7 @@ describe('AuthProvider', () => {
     mockGetUser.mockResolvedValue({
       profile: { sub: 'user-123', email: 'test@example.com', name: 'Test User' },
       access_token: 'access-token-abc',
+      id_token: 'id-token-abc',
       expired: false,
     })
 
@@ -137,6 +138,7 @@ describe('AuthProvider', () => {
     mockGetUser.mockResolvedValue({
       profile: { sub: 'user-123' },
       access_token: 'old-token',
+      id_token: 'old-id-token',
       expired: true,
     })
 

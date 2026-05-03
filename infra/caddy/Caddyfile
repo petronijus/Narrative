@@ -1,8 +1,10 @@
 # Narrative — Caddyfile
 #
-# DOMAIN env var:
-#   - localhost (or IP)  → HTTP only, no TLS
-#   - real domain        → automatic Let's Encrypt TLS
+# TLS:
+#   In prod, Cloudflare Tunnel (cloudflared) terminates HTTPS at the edge and
+#   tunnels plain HTTP back to caddy:80. So Caddy never speaks TLS — every site
+#   block is prefixed with `http://` to disable Caddy's automatic HTTPS.
+#   No port 80 / 443 binding on the host, no Let's Encrypt, no DNS challenge.
 #
 # Routing:
 #   {$DOMAIN}              → React SPA (static files)
@@ -10,13 +12,19 @@
 #   {$DOMAIN}/ws*          → Hocuspocus WebSocket (port 3002)
 #   {$DOMAIN}/storage/*    → MinIO S3 API (port 9000) for presigned URL fetches [M11]
 #   {$DOMAIN}/imgproxy/*   → imgproxy image transforms (port 8080) [M11]
-#   auth.{$DOMAIN}         → Authentik OIDC server (port 9000) [M10]
 #   minio.{$DOMAIN}        → MinIO web console (port 9001) [M11]
 #
-# DNS requirement: {$DOMAIN}, auth.{$DOMAIN}, and minio.{$DOMAIN} must resolve to this server.
-# Use a wildcard A record (*.example.com → server IP) or explicit A records per subdomain.
+# Identity: Google OIDC is used directly (no self-hosted IdP), so no auth.DOMAIN.
+#
+# DNS: managed by Cloudflare automatically when you create the tunnel route in
+# the Cloudflare Zero Trust dashboard (Networks → Tunnels → Public Hostname).
 
-{$DOMAIN:localhost} {
+# Global option: disable automatic HTTPS — Cloudflare handles TLS.
+{
+  auto_https off
+}
+
+http://{$DOMAIN:localhost} {
 
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
@@ -74,31 +82,12 @@
   }
 }
 
-# ── Authentik OIDC (M10) ───────────────────────────────────────────────────────
-# Subdomain: auth.{$DOMAIN} → Authentik server container on port 9000.
-# In dev (DOMAIN=localhost) this block is unreachable — use localhost:9000 directly.
-# In prod Caddy handles TLS automatically for auth.{$DOMAIN}.
-auth.{$DOMAIN:localhost} {
-  reverse_proxy authentik-server:9000 {
-    # Pass real IP — Authentik uses it for rate limiting and audit logs
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
-    header_up X-Forwarded-Proto {scheme}
-  }
-
-  log {
-    output stdout
-    format json
-    level INFO
-  }
-}
-
 # ── MinIO web console (M11) ────────────────────────────────────────────────────
 # Subdomain: minio.{$DOMAIN} → MinIO console on port 9001.
-# Admin access only — protect with firewall or Authentik forward auth in M29.
+# Admin access only — protect with firewall.
 # In dev (DOMAIN=localhost) this block is unreachable — use localhost:9101 directly.
 # DNS: requires minio.{$DOMAIN} A record or wildcard *.{$DOMAIN}.
-minio.{$DOMAIN:localhost} {
+http://minio.{$DOMAIN:localhost} {
   reverse_proxy minio:9001
 
   log {

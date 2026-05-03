@@ -22,13 +22,6 @@ infra/.env.prod
 # Backups
 backups/
 
-# Authentik runtime state (media uploads, generated certs) — not committed
-infra/authentik/media/*
-infra/authentik/certs/*
-# Keep directory structure via .gitkeep
-!infra/authentik/media/.gitkeep
-!infra/authentik/certs/.gitkeep
-
 # Claude local settings
 .claude/settings.local.json
 

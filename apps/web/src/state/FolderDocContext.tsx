@@ -28,6 +28,17 @@ export interface FolderTokensSnapshot {
   colors: Record<string, ColorTokenSnapshot>
   textStyles: Record<string, TextStyleTokenSnapshot>
   effectStyles: Record<string, EffectStyleTokenSnapshot>
+  /**
+   * CRDT-replicated set of component ids that have been deleted from this
+   * folder. Written by the client that calls `api.deleteComponent` via
+   * `markComponentDeleted(folderId, componentId)`. Every peer observing the
+   * folder Y.Doc receives the write and can sweep its open deck accordingly.
+   *
+   * Stored as a Y.Array of strings on the folder doc (key `deletedComponentIds`).
+   * Duplicate entries are possible when two peers concurrently delete the same
+   * master — consumers should deduplicate via a Set.
+   */
+  deletedComponentIds: ReadonlySet<string>
 }
 
 export interface FolderDocContextValue {
@@ -44,5 +55,5 @@ export const FolderDocContext = createContext<FolderDocContextValue | null>(null
 // ---------------------------------------------------------------------------
 
 export function emptyTokensSnapshot(): FolderTokensSnapshot {
-  return { colors: {}, textStyles: {}, effectStyles: {} }
+  return { colors: {}, textStyles: {}, effectStyles: {}, deletedComponentIds: new Set() }
 }

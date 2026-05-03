@@ -38,13 +38,14 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
-import { folders, mediaAssets } from '../db/schema.js'
+import { decks, folders, mediaAssets } from '../db/schema.js'
 import {
   getMediaAsset,
   getVideoAsset,
   getFontAsset,
   deleteMediaAsset,
   listFolderFontAssets,
+  listDeckFontAssets,
   getFolderFontAsset,
   folderFontPostscriptCollides,
 } from './assets.js'
@@ -533,21 +534,89 @@ export async function registerMediaRoutes(
         return reply.status(404).send({ error: 'Font asset not found' })
       }
 
-      await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
+      // Find decks in the folder. Each one gets a deck-scoped clone so any
+      // presentation that references the font keeps rendering — the editor
+      // surfaces a "deck-specific font" notice for those decks. We can't
+      // cheaply scan Yjs docs to know which decks actually use the font;
+      // cloning to all decks in the folder is the safe deterministic
+      // option (storage is shared via the same MinIO key, so the only
+      // cost is N media_assets rows).
+      const folderDecks = await db
+        .select({ id: decks.id })
+        .from(decks)
+        .where(eq(decks.folderId, folderId))
 
-      try {
-        const s3 = buildS3Client()
-        await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: asset.storageKey }))
-      } catch (err) {
-        request.log.warn(
-          { err, key: asset.storageKey },
-          '[folderFonts] MinIO delete failed (orphaned)',
+      let promotedToDeckCount = 0
+      if (folderDecks.length > 0) {
+        await db.insert(mediaAssets).values(
+          folderDecks.map((d) => ({
+            id: nanoid(),
+            deckId: d.id,
+            folderId: null,
+            uploaderUserId: asset.uploaderUserId,
+            mimeType: asset.mimeType,
+            sizeBytes: asset.sizeBytes,
+            storageKey: asset.storageKey,
+            originalFilename: asset.originalFilename,
+            kind: 'font' as const,
+            fontFamily: asset.fontFamily,
+            fontWeight: asset.fontWeight,
+            fontStyle: asset.fontStyle,
+            fontPostscriptName: asset.fontPostscriptName,
+          })),
         )
+        promotedToDeckCount = folderDecks.length
       }
 
-      return reply.status(204).send()
+      await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
+
+      // S3 object intentionally NOT deleted when clones exist — they share
+      // the same storageKey. Only collect the orphan when no decks were
+      // promoted (folder had no decks).
+      if (promotedToDeckCount === 0) {
+        try {
+          const s3 = buildS3Client()
+          await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: asset.storageKey }))
+        } catch (err) {
+          request.log.warn(
+            { err, key: asset.storageKey },
+            '[folderFonts] MinIO delete failed (orphaned)',
+          )
+        }
+      }
+
+      return reply.status(200).send({ promotedToDeckCount })
     },
   )
+
+  // -------------------------------------------------------------------------
+  // GET /api/decks/:deckId/fonts — list deck-scoped fonts
+  //
+  // Created when a folder font is deleted while presentations still
+  // reference it (see DELETE /api/folders/:folderId/fonts/:assetId). The
+  // editor mounts these alongside folder fonts so the deck keeps
+  // rendering — and shows a "deck-specific font" notice for awareness.
+  // -------------------------------------------------------------------------
+  app.get<{
+    Params: { deckId: string }
+  }>('/api/decks/:deckId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
+    const { deckId } = request.params
+    const userId = request.user?.sub ?? null
+    const shareToken = (request.query as Record<string, string>)['share_token'] ?? null
+
+    const access = await resolveDeckAccess(db, { deckId, userId, shareToken })
+    if (!access) return reply.status(403).send({ error: 'Forbidden' })
+
+    const rows = await listDeckFontAssets(db, deckId)
+    const fonts = await Promise.all(
+      rows.map(async (row) => {
+        const url = await presignGetUrl(row.storageKey)
+        return serializeFolderFontRow(row, url)
+      }),
+    )
+
+    return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+  })
 
   // -------------------------------------------------------------------------
   // DELETE /api/media/:assetId  (owner only)

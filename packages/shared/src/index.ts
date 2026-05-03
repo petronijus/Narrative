@@ -17,6 +17,7 @@ export type {
   PathObject,
   PathAnchor,
   TextObject,
+  TextStyleOverrideKey,
   FontWeight,
   TextVerticalAlign,
   TextListStyle,
@@ -24,6 +25,7 @@ export type {
   VideoObject,
   ComponentInstanceObject,
   ComponentInstanceOverrides,
+  LeafOverridePayload,
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,
@@ -41,6 +43,8 @@ export type {
   NormalizedPathAnchor,
 } from './slide.js'
 
+export { TEXT_STYLE_OVERRIDE_KEYS, isTextStyleOverrideKey } from './slide.js'
+
 export type {
   SlideTransitionKind,
   SlidePushDirection,
@@ -55,7 +59,7 @@ export type {
   DeckGuide,
 } from './deck.js'
 
-export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND } from './deck.js'
+export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND, computeSlideNumber } from './deck.js'
 
 export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animation.js'
 

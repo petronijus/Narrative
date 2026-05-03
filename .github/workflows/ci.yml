@@ -99,8 +99,6 @@ jobs:
         env:
           # Stub required env vars — values are irrelevant for config validation
           POSTGRES_PASSWORD: ci-stub
-          AUTHENTIK_POSTGRES_PASSWORD: ci-stub
-          AUTHENTIK_SECRET_KEY: ci-stub
           MINIO_ROOT_USER: ci-stub
           MINIO_ROOT_PASSWORD: ci-stub
           IMGPROXY_KEY: ci-stub

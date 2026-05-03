@@ -31,8 +31,10 @@ import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
 import { stripFilterEffectsTree } from './filterEffects.js'
 import { applyBackground } from './ArtboardBackground.js'
+import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
+import { setRenderingSlideNumber } from './slideNumberContext.js'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -69,7 +71,11 @@ export interface ThumbnailRenderer {
    * leaves the canvas transparent so the SlidesPanel's card bg shows
    * through (matches the pre-P2 behaviour).
    */
-  renderSlide(objects: SlideObject[], background?: SlideBackground): Promise<string>
+  renderSlide(
+    objects: SlideObject[],
+    background?: SlideBackground,
+    slideNumber?: number,
+  ): Promise<string>
 
   /**
    * Destroys the underlying offscreen Pixi Application and releases GPU resources.
@@ -116,6 +122,10 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     autoStart: false,
     sharedTicker: false,
   })
+  // Same Pixi WebGL HTMLText race fix as the main canvas — without
+  // this, thumbnail mounts that render multiple text leaves can leak
+  // each other's pooled <img> into one another's textures.
+  patchHTMLTextRace(app.renderer)
 
   let destroyed = false
 
@@ -130,7 +140,14 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   async function renderSlideInternal(
     objects: SlideObject[],
     background?: SlideBackground,
+    slideNumber?: number,
   ): Promise<string> {
+    // Set the page-number context so any text leaf flagged
+    // `isSlideNumber` rasterises with this slide's value. Cleared
+    // before any await — concurrent thumbnail renders are serialised
+    // through `renderQueue`, so we never have two slides racing for the
+    // global, but we still defensively reset on each call.
+    setRenderingSlideNumber(slideNumber)
     // Build a temp container that holds the full slide content scaled to thumbnail size.
     const slideContainer = new Container()
     // Scale the entire slide down to thumbnail dimensions.
@@ -292,7 +309,11 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
   // ---------------------------------------------------------------------------
 
   return {
-    renderSlide(objects: SlideObject[], background?: SlideBackground): Promise<string> {
+    renderSlide(
+      objects: SlideObject[],
+      background?: SlideBackground,
+      slideNumber?: number,
+    ): Promise<string> {
       if (destroyed) {
         return Promise.reject(new Error('[ThumbnailRenderer] renderer has been destroyed'))
       }
@@ -314,7 +335,10 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
             return
           }
           try {
-            return renderSlideInternal(objects, background).then(resolveRender, rejectRender)
+            return renderSlideInternal(objects, background, slideNumber).then(
+              resolveRender,
+              rejectRender,
+            )
           } catch (err) {
             rejectRender(err)
           }

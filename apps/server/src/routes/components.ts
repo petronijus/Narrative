@@ -21,10 +21,35 @@
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
 import { eq } from 'drizzle-orm'
+import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { components, folders } from '../db/schema.js'
+import { components, folders, decks, deckUpdates } from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
+import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { replayUpdates } from '../media/replayDoc.js'
+import * as Y from 'yjs'
+
+/** Hard cap on the data-URL payload — protects against giant uploads. */
+const MAX_THUMBNAIL_BYTES = 1_000_000 // 1 MB after base64 decode
+
+/**
+ * Parse a `data:image/(jpeg|png);base64,XXXX` URL into its mime + bytes.
+ * Returns null on any parse failure or unsupported mime.
+ */
+function parseDataUrl(input: string): { mime: 'image/jpeg' | 'image/png'; bytes: Buffer } | null {
+  const m = /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(input)
+  if (m === null) return null
+  const mime = m[1] as 'image/jpeg' | 'image/png'
+  let bytes: Buffer
+  try {
+    bytes = Buffer.from(m[2] ?? '', 'base64')
+  } catch {
+    return null
+  }
+  if (bytes.byteLength === 0) return null
+  return { mime, bytes }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -95,6 +120,63 @@ async function checkComponentOwner(
   if (folderResult === 'not_found' || folderResult === 'forbidden') return 'forbidden'
 
   return { id: row.id, folderId: row.folderId }
+}
+
+// ---------------------------------------------------------------------------
+// Instance counting helper (M16 P6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walks every slide in a replayed deck Y.Doc and counts component-instance
+ * nodes whose `componentId` matches `targetComponentId`. Recurses into the
+ * `children` Y.Array of group objects to mirror the P4 walker pattern —
+ * a component instance can live inside a group.
+ */
+function countInstancesInDeckDoc(deckDoc: Y.Doc, targetComponentId: string): number {
+  const counts = countAllInstancesInDeckDoc(deckDoc)
+  return counts.get(targetComponentId) ?? 0
+}
+
+/**
+ * Walks a deck doc once and returns a `componentId → count` map of every
+ * `componentInstance` it contains. Reused by the batch endpoint so the
+ * drawer can fetch every count in one request instead of N+1.
+ */
+function countAllInstancesInDeckDoc(deckDoc: Y.Doc): Map<string, number> {
+  const counts = new Map<string, number>()
+  const slides = deckDoc.getArray<Y.Map<unknown>>('slides')
+
+  function walk(arr: Y.Array<Y.Map<unknown>>): void {
+    for (let i = 0; i < arr.length; i++) {
+      const objMap = arr.get(i)
+      if (!(objMap instanceof Y.Map)) continue
+
+      if (objMap.get('type') === 'componentInstance') {
+        const cid = objMap.get('componentId')
+        if (typeof cid === 'string' && cid !== '') {
+          counts.set(cid, (counts.get(cid) ?? 0) + 1)
+        }
+      }
+
+      if (objMap.get('type') === 'group') {
+        const children = objMap.get('children')
+        if (children instanceof Y.Array) {
+          walk(children as Y.Array<Y.Map<unknown>>)
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < slides.length; i++) {
+    const slideMap = slides.get(i)
+    if (!(slideMap instanceof Y.Map)) continue
+    const objects = slideMap.get('objects')
+    if (objects instanceof Y.Array) {
+      walk(objects as Y.Array<Y.Map<unknown>>)
+    }
+  }
+
+  return counts
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +295,182 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
       }
 
       return reply.send(withThumbnailUrl(updated))
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // PUT /components/:id/thumbnail — upload component master snapshot (owner)
+  //
+  // Accepts a JSON body { dataUrl: "data:image/(jpeg|png);base64,..." }.
+  // Mirrors the deck thumbnail pattern. The MinIO key is stable per
+  // component (`components/<id>/thumb.<ext>`) so overwrites coalesce.
+  // -------------------------------------------------------------------------
+  app.put<{ Params: { id: string }; Body: { dataUrl?: unknown } }>(
+    '/components/:id/thumbnail',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      const { id } = request.params
+      const userId = request.user!.sub
+
+      const componentResult = await checkComponentOwner(db, id, userId)
+      if (componentResult === 'not_found') {
+        return reply.status(404).send({ error: 'Component not found' })
+      }
+      if (componentResult === 'forbidden') {
+        return reply.status(403).send({ error: 'Forbidden' })
+      }
+
+      const dataUrlRaw = request.body?.dataUrl
+      if (typeof dataUrlRaw !== 'string' || dataUrlRaw === '') {
+        return reply.status(400).send({ error: 'dataUrl is required' })
+      }
+      const parsed = parseDataUrl(dataUrlRaw)
+      if (parsed === null) {
+        return reply
+          .status(400)
+          .send({ error: 'dataUrl must be a base64 data: URL of image/jpeg or image/png' })
+      }
+      if (parsed.bytes.byteLength > MAX_THUMBNAIL_BYTES) {
+        return reply.status(413).send({ error: 'thumbnail too large' })
+      }
+
+      const ext = parsed.mime === 'image/png' ? 'png' : 'jpg'
+      const storageKey = `components/${id}/thumb.${ext}`
+      const s3 = buildS3Client()
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: MEDIA_BUCKET,
+            Key: storageKey,
+            Body: parsed.bytes,
+            ContentType: parsed.mime,
+            CacheControl: 'public, max-age=60',
+          }),
+        )
+      } catch (err) {
+        request.log.error({ err, componentId: id }, 'component thumbnail upload failed')
+        return reply.status(502).send({ error: 'storage upload failed' })
+      }
+
+      const [updated] = await db
+        .update(components)
+        .set({ thumbnailKey: storageKey, updatedAt: new Date() })
+        .where(eq(components.id, id))
+        .returning()
+      if (!updated) {
+        return reply.status(404).send({ error: 'Component not found' })
+      }
+      return reply.send(withThumbnailUrl(updated))
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /components/:id/instance-count
+  //
+  // Replays each deck Y.Doc in the same folder and counts how many
+  // `componentInstance` nodes target this componentId. Used by the editor
+  // UI to warn before deleting a master that's still in use, and to show
+  // "Used N times" in the picker drawer + Components tab.
+  //
+  // Owner-only. No Hocuspocus connections — direct DB read of `deck_updates`.
+  // -------------------------------------------------------------------------
+  app.get<{ Params: { id: string } }>(
+    '/components/:id/instance-count',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      const { id } = request.params
+      const userId = request.user!.sub
+
+      const componentResult = await checkComponentOwner(db, id, userId)
+      if (componentResult === 'not_found') {
+        return reply.status(404).send({ error: 'Component not found' })
+      }
+      if (componentResult === 'forbidden') {
+        return reply.status(403).send({ error: 'Forbidden' })
+      }
+
+      // Iterate every deck in the same folder.
+      const deckRows = await db
+        .select({ id: decks.id })
+        .from(decks)
+        .where(eq(decks.folderId, componentResult.folderId))
+        .orderBy(decks.createdAt)
+
+      let count = 0
+
+      for (const deck of deckRows) {
+        const updateRows = await db
+          .select({ update: deckUpdates.update })
+          .from(deckUpdates)
+          .where(eq(deckUpdates.deckId, deck.id))
+          .orderBy(deckUpdates.id)
+
+        if (updateRows.length === 0) continue
+
+        const deckDoc = replayUpdates(updateRows)
+        try {
+          count += countInstancesInDeckDoc(deckDoc, id)
+        } finally {
+          deckDoc.destroy()
+        }
+      }
+
+      return reply.send({ count })
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // GET /folders/:folderId/component-instance-counts
+  //
+  // Batch variant of `instance-count` — replays each deck Y.Doc in the
+  // folder ONCE and returns a `componentId → count` map for every
+  // `componentInstance` found. Used by the picker drawer + Components
+  // tab to avoid N+1 requests.
+  // -------------------------------------------------------------------------
+  app.get<{ Params: { folderId: string } }>(
+    '/folders/:folderId/component-instance-counts',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      const { folderId } = request.params
+      const userId = request.user!.sub
+
+      const folderResult = await checkFolderOwner(db, folderId, userId)
+      if (folderResult === 'not_found') {
+        return reply.status(404).send({ error: 'Folder not found' })
+      }
+      if (folderResult === 'forbidden') {
+        return reply.status(403).send({ error: 'Forbidden' })
+      }
+
+      const deckRows = await db
+        .select({ id: decks.id })
+        .from(decks)
+        .where(eq(decks.folderId, folderId))
+        .orderBy(decks.createdAt)
+
+      const counts: Record<string, number> = {}
+
+      for (const deck of deckRows) {
+        const updateRows = await db
+          .select({ update: deckUpdates.update })
+          .from(deckUpdates)
+          .where(eq(deckUpdates.deckId, deck.id))
+          .orderBy(deckUpdates.id)
+
+        if (updateRows.length === 0) continue
+
+        const deckDoc = replayUpdates(updateRows)
+        try {
+          const perDeck = countAllInstancesInDeckDoc(deckDoc)
+          for (const [cid, n] of perDeck) {
+            counts[cid] = (counts[cid] ?? 0) + n
+          }
+        } finally {
+          deckDoc.destroy()
+        }
+      }
+
+      return reply.send({ counts })
     },
   )
 

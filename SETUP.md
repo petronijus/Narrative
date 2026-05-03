@@ -30,10 +30,10 @@ pnpm install
 # 64 hex chars each — required by imgproxy URL signing.
 openssl rand -hex 32   # → IMGPROXY_KEY
 openssl rand -hex 32   # → IMGPROXY_SALT
-
-# Optional (only needed once you boot Authentik): another 32-byte hex value.
-openssl rand -hex 32   # → AUTHENTIK_SECRET_KEY
 ```
+
+Identity is Google OIDC — no IdP secret to generate. For dev you can leave
+`OIDC_*` vars at the example values and just set `BYPASS_AUTH=true`.
 
 ## 3. Create `.env`
 
@@ -48,7 +48,7 @@ Open `.env` and at minimum:
 | `POSTGRES_PASSWORD`                | Pick any; copy the same value into `POSTGRES_URL`. |
 | `MINIO_ROOT_USER` / `_PASSWORD`    | Any 8+ char value (used by Docker + the server).   |
 | `IMGPROXY_KEY`, `IMGPROXY_SALT`    | Paste the two 64-hex values from step 2.           |
-| `BYPASS_AUTH` / `VITE_BYPASS_AUTH` | Set both to `true` — skip Authentik for dev.       |
+| `BYPASS_AUTH` / `VITE_BYPASS_AUTH` | Set both to `true` — skip Google OIDC for dev.     |
 
 Leave everything else at the defaults. In particular:
 
@@ -112,22 +112,18 @@ docker compose --env-file ../.env up -d media-redis video-worker
 
 `video-worker` is a stub on this branch — see `apps/video-worker/src/processors/transcode.ts`. Running it just verifies the queue connects.
 
-## 8. Optional: Authentik (real auth)
+## 8. Optional: real Google OIDC sign-in (skip for normal dev)
 
-Skip in dev unless you're actively testing the auth flow. With `BYPASS_AUTH=true`
-the editor synthesises a `dev-user` principal and skips JWT validation entirely.
+With `BYPASS_AUTH=true` the editor synthesises a `dev-user` principal and skips
+JWT validation entirely — that's the recommended dev setup. Only do the steps
+below if you're actively testing the real OIDC flow.
 
-If you do want it on:
-
-```bash
-# 1. Pick AUTHENTIK_BOOTSTRAP_PASSWORD in .env
-docker compose -f infra/docker-compose.yml --env-file .env up -d authentik-server authentik-worker authentik-redis authentik-postgres
-# 2. Wait ~60 s for the blueprint to apply
-docker compose -f infra/docker-compose.yml --env-file .env logs -f authentik-server | grep -i blueprint
-# 3. Set BYPASS_AUTH=false and VITE_BYPASS_AUTH=false
-# 4. Restart `pnpm dev`
-# 5. Open http://localhost:9000 → log in as `akadmin` → add yourself to `narrative-users` group
-```
+1. https://console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID → Web app
+2. Authorized redirect URI: `http://localhost:5173/auth/callback`
+3. Copy the Client ID into both `OIDC_CLIENT_ID` and `VITE_OIDC_CLIENT_ID` in `.env`
+4. Set `OIDC_ALLOWED_EMAILS=your.email@gmail.com` (or `OIDC_ALLOWED_DOMAIN=yourdomain.com`)
+5. Set `BYPASS_AUTH=false` and `VITE_BYPASS_AUTH=false`
+6. Restart `pnpm dev`
 
 ## Verifying everything works
 

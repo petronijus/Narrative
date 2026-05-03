@@ -94,6 +94,21 @@ export function PerfHud() {
         return
       }
       const { app, resourceManager } = handle
+      // After Vite HMR or a Canvas remount, `__narrative_perf` may
+      // briefly point at a destroyed Application whose `ticker` /
+      // `stage` are nulled out. Treat any of those as "not ready"
+      // rather than crashing the HUD interval.
+      if (
+        app === null ||
+        app === undefined ||
+        app.ticker === undefined ||
+        app.ticker === null ||
+        app.stage === undefined ||
+        app.stage === null
+      ) {
+        setSnap((s) => (s.ready ? { ...s, ready: false } : s))
+        return
+      }
       const fps = app.ticker.FPS
       const buf = fpsBufRef.current
       buf.push(fps)

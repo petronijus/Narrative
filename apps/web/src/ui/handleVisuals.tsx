@@ -26,6 +26,26 @@ export const HANDLE_SIZE = 8
  *  constant. */
 export const ROTATION_OFFSET = 24
 
+/** Selection-chrome accent. 'default' = ordinary slide objects (blue, matches
+ *  the rest of the editor's selection chrome). 'component' = ComponentInstance
+ *  objects, drawn in violet to mirror Figma's purple component highlight so
+ *  the user can tell at a glance whether the selection is a master-backed
+ *  instance or an ordinary object. */
+export type SelectionAccent = 'default' | 'component'
+
+/** Tailwind class for the handle border. Both classes are referenced as
+ *  string literals so JIT picks them up — never build dynamically. */
+const ACCENT_BORDER: Record<SelectionAccent, string> = {
+  default: 'border-blue-400',
+  component: 'border-violet-500',
+}
+
+/** Hex of the same accent for the SVG selection polygon stroke. */
+export const ACCENT_STROKE: Record<SelectionAccent, string> = {
+  default: '#60a5fa', // blue-400
+  component: '#8b5cf6', // violet-500
+}
+
 export interface HandleProps {
   /** Slide-space position relative to the parent layer. */
   left: number
@@ -42,6 +62,8 @@ export interface HandleProps {
   onPointerUp?: (e: ReactPointerEvent<HTMLDivElement>) => void
   /** Optional extra DOM attribute (used by tests / outside-click guard). */
   dataAttr?: { name: string; value: string }
+  /** Optional accent — defaults to 'default' (blue). */
+  accent?: SelectionAccent
 }
 
 export function Handle({
@@ -55,6 +77,7 @@ export function Handle({
   onPointerMove,
   onPointerUp,
   dataAttr,
+  accent = 'default',
 }: HandleProps) {
   const style: CSSProperties = {
     left,
@@ -77,7 +100,7 @@ export function Handle({
       role="button"
       aria-label={ariaLabel}
       tabIndex={-1}
-      className="absolute box-border border-2 border-blue-400 bg-white"
+      className={`absolute box-border border-2 bg-white ${ACCENT_BORDER[accent]}`}
       style={style}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

@@ -99,4 +99,32 @@
     box-shadow: 0 0 0 1px hsl(var(--border));
     cursor: pointer;
   }
+
+  /* Vertical slider variant (zoom pill).
+     The horizontal rules above pin physical `height` to drive track
+     thickness, but in `writing-mode: vertical-lr` height is the
+     track's *length*. Without this override the runnable-track
+     collapses to 4px tall and the input itself to 16px tall, so the
+     slider becomes a tiny stub. We let the Tailwind size classes
+     drive length and pin width to control thickness instead. */
+  input[type='range'].zoom-slider {
+    height: auto;
+    width: 16px;
+  }
+  input[type='range'].zoom-slider::-webkit-slider-runnable-track {
+    height: auto;
+    width: 4px;
+  }
+  input[type='range'].zoom-slider::-webkit-slider-thumb {
+    margin-top: 0;
+    margin-left: -5px;
+  }
+  input[type='range'].zoom-slider::-moz-range-track {
+    height: auto;
+    width: 4px;
+  }
+  input[type='range'].zoom-slider::-moz-range-progress {
+    height: auto;
+    width: 4px;
+  }
 }

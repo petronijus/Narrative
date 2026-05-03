@@ -1,37 +1,41 @@
 /**
  * state/ComponentDocProvider.tsx
  *
- * M16 P5 — Provider that opens a Hocuspocus connection to `component:<componentId>`
- * and exposes the live master Y.Doc to descendant components.
+ * M16 P5 / P6 — Provider that exposes a single component master Y.Doc to
+ * descendant components.
  *
- * Y.Doc schema (component master):
- *   slides: Y.Array<Y.Map>   — same multi-slide schema as a deck doc, except
- *                               the component only ever has one slide (the master canvas).
- *   animations: Y.Array<Y.Map> — animation steps for the master objects.
+ * P6 refactor: this provider now wraps the module-level
+ * {@link componentDocCache} singleton. One Hocuspocus connection is opened
+ * per `componentId` regardless of how many providers / instances reference
+ * it, so a slide with N instances of the same master only pays one WS.
  *
- * For P5 the provider exposes read access only — write helpers (for editing the
- * master) land in P6/P7. The `doc` ref is available for consumers that need
- * to subscribe to changes directly.
+ * Auth: the provider also installs the auth-context-backed token getter
+ * into the cache so renderer-side acquires (which don't have direct access
+ * to React context) can pick up the current Bearer token at connect time.
  *
- * Auth:
- *   JWT Bearer token injected from AuthContext (same as FolderDocProvider).
- *   Share-token access is NOT supported for component docs.
+ * Y.Doc schema:
+ *   slides: Y.Array<Y.Map>     — single-slide deck shape (master canvas)
+ *   slides[0].objects/animations
  *
  * Usage:
  *   <ComponentDocProvider componentId="abc123">
  *     <YourEditorContent />
  *   </ComponentDocProvider>
  *
- *   // Inside a descendant:
- *   const doc = useComponentDoc('abc123')
+ *   const { doc, synced } = useComponentDoc('abc123')
  */
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
 import { useAuth } from './AuthContext.js'
-
-const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
+import {
+  acquireComponentDoc,
+  releaseComponentDoc,
+  getComponentDoc,
+  getComponentDocSyncStatus,
+  subscribeToComponentDoc,
+  registerComponentDocTokenGetter,
+} from './componentDocCache.js'
 
 // ---------------------------------------------------------------------------
 // Context
@@ -55,79 +59,73 @@ interface ComponentDocProviderProps {
   children: React.ReactNode
 }
 
-/**
- * Opens a WebSocket connection to the component master Y.Doc and makes it
- * available to all descendants via `useComponentDoc`.
- *
- * One provider per component editor view. Unmounting destroys the WS
- * connection and the local Y.Doc replica.
- */
 export function ComponentDocProvider({ componentId, children }: ComponentDocProviderProps) {
   const { token } = useAuth()
-  const [value, setValue] = useState<ComponentDocContextValue | null>(null)
-  const providerRef = useRef<HocuspocusProvider | null>(null)
-  const docRef = useRef<Y.Doc | null>(null)
+  const tokenRef = useRef<string | null>(token)
+  tokenRef.current = token
 
-  useEffect(() => {
-    if (providerRef.current !== null) return
-
-    const doc = new Y.Doc()
-    docRef.current = doc
-
-    setValue({ doc, synced: false })
-
-    const provider = new HocuspocusProvider({
-      url: HOCUSPOCUS_URL,
-      name: `component:${componentId}`,
-      document: doc,
-      ...(token !== null ? { token } : { token: null }),
-      onSynced() {
-        setValue({ doc, synced: true })
-      },
-    })
-
-    providerRef.current = provider
-
-    return () => {
-      provider.destroy()
-      doc.destroy()
-      providerRef.current = null
-      docRef.current = null
-      setValue(null)
-    }
-  }, [componentId, token])
-
-  // Stable placeholder doc reused across renders before the real one is
-  // wired up. Without this we'd `new Y.Doc()` every render and never
-  // destroy the orphan instances — a slow memory leak.
-  const placeholderRef = useRef<ComponentDocContextValue | null>(null)
+  // Stable placeholder doc — handed out before the cache hands us a real
+  // one so consumers always have a valid Y.Doc reference (just empty).
+  const placeholderRef = useRef<Y.Doc | null>(null)
   if (placeholderRef.current === null) {
-    placeholderRef.current = { doc: new Y.Doc(), synced: false }
+    placeholderRef.current = new Y.Doc()
   }
+
+  const [value, setValue] = useState<ComponentDocContextValue>(() => ({
+    // Non-null assertion safe: placeholderRef set in the line above.
+    doc: placeholderRef.current as Y.Doc,
+    synced: false,
+  }))
+
+  // Token getter registration — separate effect from componentId so the
+  // getter stays installed for the full provider lifetime regardless of
+  // componentId churn. Coexists with Canvas's getter via the cache's
+  // registration set (first non-null wins).
+  useEffect(() => {
+    const unregister = registerComponentDocTokenGetter(() => tokenRef.current)
+    return unregister
+  }, [])
+
+  useEffect(() => {
+    acquireComponentDoc(componentId)
+
+    const refresh = (): void => {
+      const doc = getComponentDoc(componentId)
+      if (doc === null) return
+      const synced = getComponentDocSyncStatus(componentId) === 'synced'
+      setValue({ doc, synced })
+    }
+    refresh()
+
+    const unsubscribe = subscribeToComponentDoc(componentId, refresh)
+
+    return () => {
+      unsubscribe()
+      releaseComponentDoc(componentId)
+    }
+  }, [componentId])
+
+  // Tear down the placeholder on full unmount.
   useEffect(() => {
     return () => {
-      placeholderRef.current?.doc.destroy()
+      try {
+        placeholderRef.current?.destroy()
+      } catch {
+        // ignore
+      }
       placeholderRef.current = null
     }
   }, [])
 
-  return (
-    <ComponentDocContext.Provider value={value ?? placeholderRef.current}>
-      {children}
-    </ComponentDocContext.Provider>
-  )
+  return <ComponentDocContext.Provider value={value}>{children}</ComponentDocContext.Provider>
 }
 
 // ---------------------------------------------------------------------------
-// Hook
+// Hooks
 // ---------------------------------------------------------------------------
 
 /**
  * Returns the live Y.Doc for the component master.
- * Triggers a re-render when the `synced` flag changes (i.e. on first server
- * round-trip). For fine-grained reactivity, subscribe to specific Y.Map / Y.Array
- * entries using `observeDeep` inside a `useEffect`.
- *
  * Must be used inside `<ComponentDocProvider componentId={...}>`.
  */
 export function useComponentDoc(componentId: string): ComponentDocContextValue {
@@ -142,8 +140,6 @@ export function useComponentDoc(componentId: string): ComponentDocContextValue {
 
 /**
  * Like {@link useComponentDoc} but returns null when no provider is mounted.
- * Use from shared widgets that should gracefully degrade outside the component
- * editor context.
  */
 export function useComponentDocOptional(): ComponentDocContextValue | null {
   return useContext(ComponentDocContext)

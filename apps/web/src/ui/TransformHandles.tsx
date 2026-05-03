@@ -116,13 +116,17 @@ export interface TransformHandlesProps {
    * cropped photo, drag corner → cropped output scales as one.
    */
   objects?: ReadonlyArray<SlideObject>
+  /** Selection-chrome accent. Forwarded to the SVG outline + handle
+   *  borders. Defaults to 'default' (blue); pass 'component' to render
+   *  the Figma-style violet chrome for ComponentInstance selections. */
+  accent?: SelectionAccent
 }
 
 // ---------------------------------------------------------------------------
 // Handle geometry helpers
 // ---------------------------------------------------------------------------
 
-import { ROTATION_OFFSET, Handle } from './handleVisuals.js'
+import { ROTATION_OFFSET, Handle, ACCENT_STROKE, type SelectionAccent } from './handleVisuals.js'
 
 /**
  * Interpoluje bod mezi dvěma body (pro edge midpoints).
@@ -439,6 +443,7 @@ export function TransformHandles({
   extraGuides = [],
   forceAspectLock = false,
   objects = [],
+  accent = 'default',
 }: TransformHandlesProps) {
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
@@ -710,7 +715,7 @@ export function TransformHandles({
             bounds.corners.map((c) => ({ x: c.x - svgMinX, y: c.y - svgMinY })),
           )}
           fill="none"
-          stroke="#60a5fa"
+          stroke={ACCENT_STROKE[accent]}
           strokeWidth={1.5 * inv}
           strokeDasharray={isMulti ? `${4 * inv} ${3 * inv}` : undefined}
         />
@@ -727,6 +732,7 @@ export function TransformHandles({
           shape={h.kind === 'rotate' ? 'circle' : 'square'}
           inv={inv}
           ariaLabel={h.ariaLabel}
+          accent={accent}
           onPointerDown={(e) => handlePointerDown(e, h.kind)}
         />
       ))}

@@ -14,7 +14,33 @@
  * valid; ids are slide-local so collisions across decks are fine).
  */
 
-import type { Slide } from '@narrative/shared'
+import * as Y from 'yjs'
+import type { Slide, SlideObject } from '@narrative/shared'
+import { toDelta } from '@narrative/slide-model'
+
+/**
+ * Snapshot inline rich-text formatting on text objects within a slide
+ * into a JSON-safe Quill delta on `_richTextOps`. Mirror of the
+ * object-level helper in state/clipboard.ts — needed because Y.Text
+ * isn't serializable, so without this step inline italics/underline/
+ * weight/color would silently disappear when pasting a copied slide.
+ */
+function snapshotSlide(s: Slide): Slide {
+  const objects = s.objects.map((o): SlideObject => {
+    if (o.type === 'text') {
+      const t = (o as { text: unknown }).text
+      if (t instanceof Y.Text) {
+        return {
+          ...(o as object),
+          text: t.toString(),
+          _richTextOps: toDelta(t),
+        } as unknown as SlideObject
+      }
+    }
+    return o
+  })
+  return { ...s, objects }
+}
 
 const LS_KEY = 'narrative:slideClipboard'
 
@@ -61,7 +87,11 @@ export function setSlideClipboard(slides: ReadonlyArray<Slide>): void {
     clearLS()
     return
   }
-  clipboard = slides.map((s) => structuredClone(s))
+  // Snapshot Y.Text bodies into JSON-safe deltas, THEN JSON round-trip.
+  // JSON (rather than structuredClone) because slide objects can carry
+  // transient non-serializable side data (e.g. text font-face load
+  // callbacks) that crashes structuredClone with DataCloneError.
+  clipboard = slides.map((s) => JSON.parse(JSON.stringify(snapshotSlide(s))) as Slide)
   writeLS(clipboard)
 }
 

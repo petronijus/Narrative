@@ -25,6 +25,7 @@ import { getRenderer } from './objectRenderers'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
+import { getInstanceLeafContainer } from './objectRenderers/componentInstanceRenderer.js'
 
 interface SceneNode {
   container: Container
@@ -129,6 +130,17 @@ export class SceneGraph {
     this.root.x = originX
     this.root.y = originY
     this.markDirty()
+  }
+
+  /** Slide-space origin in Pixi world coords — read by hit-test helpers
+   *  that need to translate slide coords to world before walking
+   *  Container.toLocal(). Avoids hardcoding the bleedPx default at the
+   *  call site. */
+  getSlideOriginX(): number {
+    return this.slideOriginX
+  }
+  getSlideOriginY(): number {
+    return this.slideOriginY
   }
 
   /**
@@ -521,6 +533,29 @@ export class SceneGraph {
   }
 
   /**
+   * Re-render every text node flagged `isSlideNumber` so it picks up the
+   * latest value from the slide-number context. Walks the entire Pixi
+   * tree (including container instances and nested components) since
+   * page-number leaves can live anywhere — top-level objects, instance
+   * children, nested instances.
+   */
+  refreshSlideNumberTexts(): void {
+    const textRenderer = getRenderer('text') as
+      | { refreshSlideNumberText?: (n: Container) => boolean }
+      | undefined
+    if (textRenderer?.refreshSlideNumberText === undefined) return
+    let touched = 0
+    const walk = (c: Container): void => {
+      if (textRenderer.refreshSlideNumberText!(c)) touched++
+      for (const child of c.children) {
+        if (child instanceof Container) walk(child)
+      }
+    }
+    walk(this.root)
+    if (touched > 0) this.markDirty()
+  }
+
+  /**
    * P2: returns (and lazily creates) the artboard-background Container —
    * kept as the FIRST child of the active root so every slide object
    * stacks above it. Consumers call this from the background observer +
@@ -672,6 +707,28 @@ export class SceneGraph {
       const { width, height } = node.data
 
       node.container.toLocal(worldPoint, undefined, localPoint)
+
+      // Lines and arrows have a degenerate AABB (height=0 for horizontal,
+      // width=0 for vertical, etc.) so a strict bounds test makes them
+      // pixel-perfect to hit. Use a point-to-segment distance test with a
+      // generous slack pad so the click target is at least ~10 px wide.
+      // For diagonal lines this also avoids the opposite problem of the
+      // AABB being huge but the actual line covering only a thin diagonal
+      // — unreachable corners no longer steal clicks.
+      if (node.data.type === 'line' || node.data.type === 'arrow') {
+        const ld = node.data
+        const threshold = Math.max(ld.strokeWidth / 2 + 6, 10)
+        const dist = distanceToSegment(
+          localPoint.x,
+          localPoint.y,
+          ld.p1.x,
+          ld.p1.y,
+          ld.p2.x,
+          ld.p2.y,
+        )
+        if (dist <= threshold) return id
+        continue
+      }
 
       if (
         localPoint.x >= 0 &&
@@ -826,4 +883,168 @@ export class SceneGraph {
   get rootContainer(): Container {
     return this.root
   }
+
+  /**
+   * M16 P8 — Compute ObjectBounds for an arbitrary Container that is NOT
+   * tracked in `nodes` (e.g. a phantom instance-leaf container).
+   *
+   * The container is expected to follow the same pivot convention as
+   * slide-level nodes: pivot at (w/2, h/2), container.x/y is the centre.
+   * `slideObj` supplies width, height (and optionally rotation). The
+   * container's world-space position is derived from Pixi's global
+   * transform chain so it correctly accounts for the instance's
+   * outer scale/translate/rotate — the leaf's inner-container transform
+   * is relative to the instance, not the artboard.
+   *
+   * Returns null when the container has been destroyed.
+   */
+  getContainerBoundsFromData(container: Container, slideObj: SlideObject): ObjectBounds | null {
+    try {
+      if (container.destroyed) return null
+    } catch {
+      return null
+    }
+    const w = slideObj.width
+    const h = slideObj.height
+    const halfW = w / 2
+    const halfH = h / 2
+
+    // Walk the Pixi world transform to express the container's local-space
+    // corners in artboard (slide) space. container.toGlobal() converts a
+    // local point to Pixi world space; we then subtract the slide origin to
+    // recover slide coords.
+    const cx = this.slideOriginX
+    const cy = this.slideOriginY
+
+    // Four local corners. All leaf renderers (rectangle, ellipse, image, …)
+    // draw their graphics from local (0,0) to (w,h) and set pivot at
+    // (w/2, h/2). So local (0,0) is the rendering top-left, NOT the centre.
+    // toGlobal() operates in the container's local frame, so we pass the
+    // actual drawn corners (0,0)→(w,h) and compute the centre at (halfW,halfH).
+    const localCorners = [
+      { x: 0, y: 0 },
+      { x: w, y: 0 },
+      { x: w, y: h },
+      { x: 0, y: h },
+    ]
+
+    const scratch = new Point()
+    const worldCorners = localCorners.map((lc) => {
+      container.toGlobal({ x: lc.x, y: lc.y }, scratch)
+      return { x: scratch.x - cx, y: scratch.y - cy }
+    })
+
+    const xs = worldCorners.map((c) => c.x)
+    const ys = worldCorners.map((c) => c.y)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+
+    // Centre in slide coords: the pivot is at local (halfW, halfH).
+    container.toGlobal({ x: halfW, y: halfH }, scratch)
+    const centreX = scratch.x - cx
+    const centreY = scratch.y - cy
+
+    // Rotation: use the container's own rotation but account for any rotation
+    // accumulated from parent containers (inner + instance).
+    // worldTransform decomposition: atan2(b, a) where a,b are first-column
+    // of the 2×2 rotation block.
+    const wt = container.worldTransform
+    const rotation = Math.atan2(wt.b, wt.a)
+
+    return {
+      world: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+      corners: worldCorners,
+      center: { x: centreX, y: centreY },
+      rotation,
+    }
+  }
+
+  /**
+   * DEV-only helper for E2E specs.
+   *
+   * Given an instanceId and a leafId (master-object id), resolve the leaf
+   * container from the instance's childMap and return its slide-space corners
+   * + center as computed by getContainerBoundsFromData.
+   *
+   * Uses the leaf container's actual Pixi world transform — no SlideObject
+   * data is needed here because we derive width/height from the container's
+   * Pixi bounds (getBounds().width/height) which correctly reflects the
+   * innerContainer scale.
+   *
+   * Returns null if the instance or leaf is not yet mounted.
+   */
+  getInstanceLeafBounds(
+    instanceId: string,
+    leafId: string,
+  ): { corners: Array<{ x: number; y: number }>; center: { x: number; y: number } } | null {
+    const node = this.nodes.get(instanceId)
+    if (node === undefined) return null
+    const leafContainer = getInstanceLeafContainer(node.container, leafId)
+    if (leafContainer === null) return null
+    if (leafContainer.destroyed) return null
+
+    // Derive width/height from the Pixi bounds to avoid needing a SlideObject.
+    // getBounds() returns the AABB in world space; we need the LOCAL dimensions
+    // (before outer instance transform). Use the container's own rotation +
+    // scale to un-rotate the world AABB — simpler: read from the worldTransform
+    // directly. The leaf's localTransform encodes scale implicitly via the inner
+    // container's scale; the leaf's own scale is always 1. We can recover the
+    // local dimensions from worldTransform by looking at the column lengths
+    // (which give the scale × 1 == scale), but that's fragile.
+    //
+    // Safest: use getLocalBounds() which returns bounds in LOCAL space,
+    // unaffected by parent transforms. width/height are what the Graphics drew.
+    const lb = leafContainer.getLocalBounds()
+    const w = lb.width
+    const h = lb.height
+
+    // Reuse the same math as getContainerBoundsFromData but inline (we can't
+    // call it because we don't have a SlideObject at hand here).
+    const cx = this.slideOriginX
+    const cy = this.slideOriginY
+
+    const localCorners = [
+      { x: lb.x, y: lb.y },
+      { x: lb.x + w, y: lb.y },
+      { x: lb.x + w, y: lb.y + h },
+      { x: lb.x, y: lb.y + h },
+    ]
+    const scratch = new Point()
+    const corners = localCorners.map((lc) => {
+      leafContainer.toGlobal({ x: lc.x, y: lc.y }, scratch)
+      return { x: scratch.x - cx, y: scratch.y - cy }
+    })
+
+    leafContainer.toGlobal({ x: lb.x + w / 2, y: lb.y + h / 2 }, scratch)
+    const center = { x: scratch.x - cx, y: scratch.y - cy }
+
+    return { corners, center }
+  }
+}
+
+/**
+ * Euclidean distance from point (px, py) to the line segment (ax, ay)→(bx, by).
+ * Standard projection-onto-segment + clamp formula. Used for line/arrow hit
+ * testing where AABB-based tests are degenerate.
+ */
+function distanceToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax
+  const aby = by - ay
+  const lenSq = abx * abx + aby * aby
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay)
+  let t = ((px - ax) * abx + (py - ay) * aby) / lenSq
+  if (t < 0) t = 0
+  else if (t > 1) t = 1
+  const cx = ax + t * abx
+  const cy = ay + t * aby
+  return Math.hypot(px - cx, py - cy)
 }

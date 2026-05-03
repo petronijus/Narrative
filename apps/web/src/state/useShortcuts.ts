@@ -58,6 +58,15 @@ export interface ShortcutBinding {
   description?: string
   /** Call e.preventDefault() when this binding fires. Default: false. */
   preventDefault?: boolean
+  /**
+   * Optional gate. When provided and returning false, the binding is
+   * skipped — `preventDefault` is NOT applied and (for sticky pointer
+   * scopes) the scope chain falls through to the next scope. Use this
+   * when a scoped shortcut should yield to a fallback scope under some
+   * runtime condition (e.g. slide-panel Mod+V yielding to canvas paste
+   * when the slide clipboard is empty).
+   */
+  canHandle?: () => boolean
 }
 
 interface ParsedKey {
@@ -237,31 +246,46 @@ function handleKeyDown(e: KeyboardEvent): void {
   // containers — they don't claim ambient input.
   const rawScope = detectScope(e.target)
   const inputFocused = isInputElement(e.target)
-  // Resolution order:
-  //   1. event.target inside a scoped container → that scope wins.
-  //   2. otherwise, the last pointer-clicked scope (slidePanel / timeline
-  //      survives a thumbnail click that doesn't keep DOM focus).
-  //   3. otherwise, canvas as the ambient default (so Delete / arrows
-  //      work after selecting a Pixi object — Pixi canvas isn't focusable).
-  // Inputs always block — let the user type.
-  const effectiveScope = inputFocused ? null : (rawScope ?? pointerActiveScope ?? 'canvas')
+  // Scope chain (priority order) for non-global bindings:
+  //   1. Explicit DOM scope (target inside data-shortcut-scope) → only that scope.
+  //   2. Sticky pointer scope (e.g. slidePanel after a thumbnail click) →
+  //      try that scope first, then fall through to canvas. This lets
+  //      e.g. Mod+V paste objects on canvas when the slide-panel binding
+  //      opts out via canHandle (no slide clipboard).
+  //   3. Otherwise, canvas as ambient default.
+  // Inputs always block scoped bindings — let the user type.
+  let scopeChain: string[]
+  if (inputFocused) {
+    scopeChain = []
+  } else if (rawScope !== null) {
+    scopeChain = [rawScope]
+  } else if (pointerActiveScope !== null && pointerActiveScope !== 'canvas') {
+    scopeChain = [pointerActiveScope, 'canvas']
+  } else {
+    scopeChain = ['canvas']
+  }
 
+  let scopedFired = false
+  for (const tryScope of scopeChain) {
+    for (const entry of registry.values()) {
+      const { scope, parsedKeys, handlerRef, bindings } = entry
+      if (scope === 'global') continue
+      if (scope !== tryScope) continue
+      if (!eventMatchesParsed(parsedKeys, e)) continue
+      if (bindings.canHandle !== undefined && !bindings.canHandle()) continue
+      if (bindings.preventDefault === true) e.preventDefault()
+      handlerRef.current(e)
+      scopedFired = true
+    }
+    if (scopedFired) break
+  }
+
+  if (inputFocused) return
   for (const entry of registry.values()) {
     const { scope, parsedKeys, handlerRef, bindings } = entry
-
-    if (scope === 'global') {
-      // Global shortcuts are blocked when an input/textarea/contenteditable
-      // is focused so the user can type freely.
-      if (inputFocused) continue
-    } else {
-      // Scoped shortcuts only fire when the event target is inside a
-      // matching `data-shortcut-scope` container, OR when the canvas is
-      // the ambient default (see effectiveScope above).
-      if (effectiveScope !== scope) continue
-    }
-
+    if (scope !== 'global') continue
     if (!eventMatchesParsed(parsedKeys, e)) continue
-
+    if (bindings.canHandle !== undefined && !bindings.canHandle()) continue
     if (bindings.preventDefault === true) e.preventDefault()
     handlerRef.current(e)
   }

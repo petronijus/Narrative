@@ -76,7 +76,7 @@ function TestFolderDocProvider({ doc, children }: { doc: Y.Doc; children: React.
         })
       }
 
-      return { colors, textStyles, effectStyles }
+      return { colors, textStyles, effectStyles, deletedComponentIds: new Set<string>() }
     }
 
     const handler = () => {

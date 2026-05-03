@@ -4,13 +4,11 @@
 #
 # Changes vs base compose:
 #   - Server ports bound to 127.0.0.1 (Caddy sits in front)
-#   - Caddy service with auto-TLS
-#   - Postgres volume on ZFS dataset (PG_DATA_PATH env var)
-#   - Authentik HTTP port bound to 127.0.0.1 (proxied via auth.DOMAIN subdomain)
-#   - Authentik volumes on ZFS dataset (AUTHENTIK_DATA_PATH env var)
-#   - MinIO ports bound to 127.0.0.1, data on ZFS (MINIO_DATA_PATH env var) [M11]
-#   - imgproxy port bound to 127.0.0.1, IMGPROXY_REPORT_DOWNLOADING_ERRORS=false [M11]
-#   - media-redis port bound to 127.0.0.1, data on ZFS (MEDIA_REDIS_DATA_PATH env var) [M12]
+#   - Caddy serves plain HTTP on the internal Docker network only — TLS is
+#     terminated by Cloudflare at the edge, then cloudflared tunnels back to caddy:80.
+#   - cloudflared service runs the tunnel (TUNNEL_TOKEN required)
+#   - Postgres / MinIO / media-redis bind volumes (set *_DATA_PATH in .env.prod)
+#   - MinIO + imgproxy + media-redis ports bound to 127.0.0.1 (admin access via SSH)
 #   - video-worker restart=always; resource limits deferred to M29 [M12]
 #   - Restart policy `always`
 #   - env_file: .env.prod (gitignored)
@@ -36,32 +34,6 @@ services:
       # Bind to 127.0.0.1 only — Caddy reverse-proxies
       - '127.0.0.1:${API_PORT:-3001}:3001'
       - '127.0.0.1:${HOCUSPOCUS_PORT:-3002}:3002'
-
-  # ─── Authentik prod overrides ─────────────────────────────────────────────────
-  authentik-postgres:
-    restart: always
-    volumes:
-      # ZFS dataset mount — set AUTHENTIK_DATA_PATH in .env.prod
-      # Example: AUTHENTIK_DATA_PATH=/mnt/tank/narrative/authentik
-      - ${AUTHENTIK_DATA_PATH:-authentik_pg_data}/postgres:/var/lib/postgresql/data
-    ports: [] # no external port in prod — internal network only
-
-  authentik-server:
-    restart: always
-    ports:
-      # Bind to localhost — proxied by Caddy as auth.DOMAIN
-      - '127.0.0.1:${AUTHENTIK_HTTP_PORT:-9000}:9000'
-    volumes:
-      - ${AUTHENTIK_DATA_PATH:-authentik_media}/media:/media
-      - ${AUTHENTIK_DATA_PATH:-authentik_certs}/certs:/certs
-      - ./authentik/blueprints/custom:/blueprints/custom:ro
-
-  authentik-worker:
-    restart: always
-    volumes:
-      - ${AUTHENTIK_DATA_PATH:-authentik_media}/media:/media
-      - ${AUTHENTIK_DATA_PATH:-authentik_certs}/certs:/certs
-      - ./authentik/blueprints/custom:/blueprints/custom:ro
 
   # ─── MinIO prod overrides (M11) ──────────────────────────────────────────────
   minio:
@@ -111,11 +83,12 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    container_name: narrative-caddy
     restart: always
-    ports:
-      - '80:80'
-      - '443:443'
-      - '443:443/udp' # HTTP/3
+    # No published ports — Caddy is reachable only on the internal Docker network
+    # via `caddy:80`. Public ingress is handled by the `cloudflared` service below.
+    expose:
+      - '80'
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -127,8 +100,6 @@ services:
     depends_on:
       server:
         condition: service_healthy
-      authentik-server:
-        condition: service_started
       minio:
         condition: service_healthy
       imgproxy:
@@ -139,6 +110,27 @@ services:
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  # ─── Cloudflare Tunnel ───────────────────────────────────────────────────────
+  # Outbound-only tunnel: no port forwarding, no Let's Encrypt. Cloudflare
+  # terminates TLS at the edge and tunnels HTTP back to caddy:80.
+  #
+  # Setup (one time):
+  #   1. https://one.dash.cloudflare.com → Networks → Tunnels → Create a tunnel
+  #   2. Name it (e.g. "narrative"), copy the TUNNEL_TOKEN into .env.prod
+  #   3. Public Hostname → service: http://caddy:80, hostname: narrative.YOURDOMAIN
+  #   4. (Optional) repeat for minio.YOURDOMAIN → http://caddy:80
+  #
+  # The token contains everything cloudflared needs (tunnel UUID, account, secret),
+  # so no extra config file is required.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: narrative-cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN env var is required}
+    depends_on:
+      caddy:
+        condition: service_healthy
 
 volumes:
   caddy_data:

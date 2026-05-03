@@ -17,7 +17,9 @@
 import { useEffect, useRef } from 'react'
 import { Cache } from 'pixi.js'
 import { useFolderFonts } from './useFolderFonts.js'
+import { useDeckFontsOptional } from './useDeckFonts.js'
 import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import type { FolderFontSummary } from '../api/client.js'
 
 /**
  * Pixi v8's HTMLText pipeline does NOT consult `document.fonts` when
@@ -76,7 +78,13 @@ interface InstalledFont {
  * each change to the folder font list.
  */
 export function FolderFontLoader(): null {
-  const { fonts } = useFolderFonts()
+  const { fonts: folderFonts } = useFolderFonts()
+  // When mounted inside a deck, also pull deck-scoped promoted fonts so
+  // they install through the same Pixi cache pipeline. Outside a deck
+  // (e.g. folder grid preload), useDeckFontsOptional returns null.
+  const deckCtx = useDeckFontsOptional()
+  const fonts: FolderFontSummary[] =
+    deckCtx === null ? folderFonts : [...folderFonts, ...deckCtx.fonts]
   const canvas = useCanvasInstance()
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
 

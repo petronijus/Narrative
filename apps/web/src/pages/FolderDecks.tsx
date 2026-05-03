@@ -22,9 +22,11 @@ import { Button } from '@/components/ui/button'
 import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
 import type { DeckSummary, FolderSummary } from '../api/client.js'
+import { peerColorFromId } from '@narrative/shared'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
+import { useFolderComponents } from '../state/useFolderComponents.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -72,6 +74,10 @@ function FolderDecksInner() {
   const [thumbnails] = useState<Record<string, string>>(() => getAllDeckThumbnails())
   // id of deck for which the Move modal is open
   const [moveDeckId, setMoveDeckId] = useState<string | null>(null)
+  // deckId → list of other userIds currently editing it (caller filtered
+  // out server-side). Polled separately from the deck list so a slow
+  // active-editors response doesn't delay first paint.
+  const [activeEditors, setActiveEditors] = useState<Record<string, string[]>>({})
 
   const fetchData = useCallback(async () => {
     if (folderId === undefined) return
@@ -101,6 +107,31 @@ function FolderDecksInner() {
   useEffect(() => {
     void fetchData()
   }, [fetchData])
+
+  // Poll "who is editing each deck" every 5s. Server reads from the
+  // Hocuspocus in-memory presence tracker — cheap, no DB lookup.
+  // Stops when the page unmounts or folderId changes.
+  useEffect(() => {
+    if (folderId === undefined) return
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const entries = await api.listFolderActiveEditors(folderId)
+        if (cancelled) return
+        const next: Record<string, string[]> = {}
+        for (const e of entries) next[e.deckId] = e.userIds
+        setActiveEditors(next)
+      } catch {
+        // Best-effort UX — silent on failure.
+      }
+    }
+    void refresh()
+    const handle = window.setInterval(() => void refresh(), 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(handle)
+    }
+  }, [api, folderId])
 
   // Auto-focus folder name input when entering edit mode.
   useEffect(() => {
@@ -272,7 +303,16 @@ function FolderDecksInner() {
         )}
 
         {folderId !== undefined && (
-          <FolderStyleguide onOpenSettings={() => void navigate(`/folder/${folderId}/settings`)} />
+          <FolderStyleguide
+            onOpenSettings={(tab, focusId) => {
+              const params = new URLSearchParams()
+              if (tab !== undefined) params.set('tab', tab)
+              if (focusId !== undefined) params.set('focus', focusId)
+              const qs = params.toString()
+              void navigate(`/folder/${folderId}/settings${qs === '' ? '' : `?${qs}`}`)
+            }}
+            folderId={folderId}
+          />
         )}
 
         {loading ? (
@@ -291,6 +331,7 @@ function FolderDecksInner() {
                 key={deck.id}
                 deck={deck}
                 thumbnail={deck.thumbnailUrl ?? thumbnails[deck.id]}
+                activeEditors={activeEditors[deck.id] ?? EMPTY_EDITORS}
                 onOpen={() => void navigate(`/deck/${deck.id}`)}
                 onDelete={() => void handleDeleteDeck(deck.id)}
                 onRename={(title) => void handleRenameDeck(deck.id, title)}
@@ -322,13 +363,27 @@ function FolderDecksInner() {
 interface DeckCardProps {
   deck: DeckSummary
   thumbnail?: string | undefined
+  /** Other users currently editing this deck (caller filtered out). */
+  activeEditors: string[]
   onOpen: () => void
   onDelete: () => void
   onRename: (title: string) => void
   onMoveRequest: () => void
 }
 
-function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename, onMoveRequest }: DeckCardProps) {
+// Stable empty-array reference so DeckCard's prop identity doesn't flip
+// every render when nobody is editing the deck.
+const EMPTY_EDITORS: string[] = []
+
+function DeckCard({
+  deck,
+  thumbnail,
+  activeEditors,
+  onOpen,
+  onDelete,
+  onRename,
+  onMoveRequest,
+}: DeckCardProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(deck.title)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -384,7 +439,9 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename, onMoveRequest }
   return (
     <div
       onClick={editing || menuOpen ? undefined : onOpen}
-      className="panel group relative cursor-pointer rounded-lg border border-border p-4 hover:border-border-strong hover:shadow-glow transition-all"
+      className={`panel group relative cursor-pointer rounded-lg border border-border p-4 hover:border-border-strong hover:shadow-glow transition-all ${
+        menuOpen ? 'z-30' : ''
+      }`}
     >
       {/* Thumbnail */}
       <div className="mb-3 aspect-video overflow-hidden rounded-md bg-surface-2 flex items-center justify-center">
@@ -429,6 +486,13 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename, onMoveRequest }
             >
               {deck.title}
             </p>
+            {/* Active editor bubbles — sit right of the name, before the
+                kebab. Visible at all times (not just on hover) so the
+                user can spot collaborators without rolling over each
+                tile. */}
+            {activeEditors.length > 0 && (
+              <ActiveEditorsBubbles userIds={activeEditors} className="shrink-0" />
+            )}
             {/* Kebab menu */}
             <div className="relative shrink-0 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
               <button
@@ -529,112 +593,280 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename, onMoveRequest }
 }
 
 // ---------------------------------------------------------------------------
+// ActiveEditorsBubbles — small avatar bubbles overlaid on the deck
+// thumbnail, one per other user currently editing the deck. Driven by
+// the parent's 5s poll of /folders/:id/active-editors.
+//
+// We don't have user names/pics in this surface (the API only returns
+// raw user ids), so the bubble is a deterministic colour swatch + the
+// first character of the id. The id is also the tooltip so hovering
+// gives the operator something to verify against.
+// ---------------------------------------------------------------------------
+
+interface ActiveEditorsBubblesProps {
+  userIds: string[]
+  className?: string
+}
+
+function ActiveEditorsBubbles({ userIds, className = '' }: ActiveEditorsBubblesProps) {
+  const MAX = 3
+  const visible = userIds.slice(0, MAX)
+  const overflow = userIds.length - visible.length
+  return (
+    <div className={`flex -space-x-1.5 ${className}`}>
+      {visible.map((uid) => {
+        const colour = peerColorFromId(uid)
+        const initial =
+          uid
+            .replace(/^share:/, '')
+            .charAt(0)
+            .toUpperCase() || '?'
+        return (
+          <span
+            key={uid}
+            title={`Editing: ${uid}`}
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-background text-[10px] font-semibold leading-none text-white shadow-sm"
+            style={{ backgroundColor: colour }}
+            aria-label={`User ${uid} is editing`}
+          >
+            {initial}
+          </span>
+        )
+      })}
+      {overflow > 0 && (
+        <span
+          className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full border border-background bg-surface-3 px-1 text-[10px] font-semibold leading-none text-foreground shadow-sm"
+          title={`${overflow} more editor${overflow === 1 ? '' : 's'}`}
+        >
+          +{overflow}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // FolderStyleguide — compact preview of the folder's tokens above the
 // deck grid, with a shortcut to the settings page.
 // ---------------------------------------------------------------------------
 
+type StyleguideTab = 'colors' | 'textStyles' | 'fonts' | 'components'
+
 interface FolderStyleguideProps {
-  onOpenSettings: () => void
+  onOpenSettings: (tab?: StyleguideTab, focusId?: string) => void
+  folderId: string
 }
 
-function FolderStyleguide({ onOpenSettings }: FolderStyleguideProps) {
+function FolderStyleguide({ onOpenSettings, folderId }: FolderStyleguideProps) {
   const { colors, textStyles } = useFolderTokens()
   const { fonts } = useFolderFonts()
+  const { components } = useFolderComponents(folderId, { eager: true })
   const colorList = Object.values(colors)
   const styleList = Object.values(textStyles)
-  // Group fonts by family — multiple weights/styles share a chip.
-  const fontFamilies = Array.from(new Set(fonts.map((f) => f.family))).sort()
+  // Group fonts by family — multiple weights/styles share a chip. We
+  // also need a representative font asset per family so clicking the
+  // chip can deep-link to that specific entry on the Fonts tab.
+  const fontFamilyEntries = Array.from(
+    fonts
+      .reduce((acc, f) => {
+        if (!acc.has(f.family)) acc.set(f.family, f.assetId)
+        return acc
+      }, new Map<string, string>())
+      .entries(),
+  ).sort((a, b) => a[0].localeCompare(b[0]))
+  const componentList = components ?? []
 
-  if (colorList.length === 0 && styleList.length === 0 && fontFamilies.length === 0) {
+  if (
+    colorList.length === 0 &&
+    styleList.length === 0 &&
+    fontFamilyEntries.length === 0 &&
+    componentList.length === 0
+  ) {
     return null
   }
 
+  // Whole section is a click target → opens settings on the Colors tab
+  // by default. Children stop propagation so their own tab routing
+  // wins. Pencil icon stays as an obvious affordance in the corner.
   return (
-    <section className="panel mb-6 rounded-xl border border-border p-4">
+    <section
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenSettings('colors')}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpenSettings('colors')
+        }
+      }}
+      className="panel group mb-6 cursor-pointer rounded-xl border border-border p-4 transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      aria-label="Open style guide"
+    >
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/80">
           Style guide
         </h2>
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-        >
+        <span className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors group-hover:bg-accent group-hover:text-foreground">
           <Pencil className="h-3 w-3" aria-hidden="true" />
           Edit
-        </button>
+        </span>
       </div>
 
-      {/* Colors row */}
-      {colorList.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          {colorList.map((c) => (
-            <div
-              key={c.id}
-              title={`${c.name} — ${c.value}`}
-              className="h-6 w-6 shrink-0 rounded border border-border-strong/60 shadow-inner"
-              style={{ backgroundColor: c.value }}
-              aria-label={c.name}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Text styles row — render each on a small white chip so any
-          token color is legible against the dark UI. */}
-      {styleList.length > 0 && (
-        <div className="flex flex-wrap items-end gap-2">
-          {styleList.map((s) => (
-            <div
-              key={s.id}
-              className="flex flex-col items-start"
-              title={`${s.name} — ${s.family} ${s.weight} ${s.size}px`}
-            >
-              <div className="rounded bg-white px-2 py-1 text-black">
-                <span
-                  className="leading-none"
-                  style={{
-                    fontFamily: s.family,
-                    fontWeight: s.weight,
-                    // Cap the chip preview size so big "Title" styles still fit.
-                    fontSize: Math.min(s.size ?? 16, 22),
-                    color: typeof s.color === 'string' ? s.color : '#0f172a',
-                  }}
-                >
-                  Aa
-                </span>
+      {/* Two-column layout: tokens (colors / text styles / fonts) on
+          the left, components on the right. 50:50 split on md+ so
+          components get half the row regardless of count. Stacks on
+          narrow viewports. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
+        <div className="min-w-0 space-y-3">
+          {/* Colors row */}
+          {colorList.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Colors
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {colorList.map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    title={`${c.name} — ${c.value}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenSettings('colors', c.id)
+                    }}
+                    className="h-6 w-6 shrink-0 rounded border border-border-strong/60 shadow-inner transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    style={{ backgroundColor: c.value }}
+                    aria-label={`Edit color ${c.name}`}
+                  />
+                ))}
               </div>
-              <span className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/70">
-                {s.name}
-              </span>
             </div>
-          ))}
-        </div>
-      )}
+          )}
 
-      {/* Fonts row — show each uploaded family rendered in itself. */}
-      {fontFamilies.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border/40 pt-3">
-          {fontFamilies.map((family) => (
-            <div key={family} className="flex flex-col items-start" title={family}>
-              <div className="rounded bg-white px-2 py-1 text-black">
-                <span
-                  className="leading-none"
-                  style={{
-                    fontFamily: `"${family}", system-ui, sans-serif`,
-                    fontSize: 18,
-                  }}
-                >
-                  Aa
-                </span>
+          {/* Text styles row — render each on a small white chip so any
+              token color is legible against the dark UI. */}
+          {styleList.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Text styles
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                {styleList.map((s) => (
+                  <button
+                    type="button"
+                    key={s.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenSettings('textStyles', s.id)
+                    }}
+                    className="flex flex-col items-start rounded transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    title={`Edit ${s.name} — ${s.family} ${s.weight} ${s.size}px`}
+                    aria-label={`Edit text style ${s.name}`}
+                  >
+                    <div className="rounded bg-white px-2 py-1 text-black">
+                      <span
+                        className="leading-none"
+                        style={{
+                          fontFamily: s.family,
+                          fontWeight: s.weight,
+                          fontSize: Math.min(s.size ?? 16, 22),
+                          color: typeof s.color === 'string' ? s.color : '#0f172a',
+                        }}
+                      >
+                        Aa
+                      </span>
+                    </div>
+                    <span className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/70">
+                      {s.name}
+                    </span>
+                  </button>
+                ))}
               </div>
-              <span className="mt-0.5 max-w-[120px] truncate text-[10px] text-muted-foreground/70">
-                {family}
-              </span>
             </div>
-          ))}
+          )}
+
+          {/* Custom fonts row — show each uploaded family rendered in itself. */}
+          {fontFamilyEntries.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Custom fonts
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                {fontFamilyEntries.map(([family, assetId]) => (
+                  <button
+                    type="button"
+                    key={family}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenSettings('fonts', assetId)
+                    }}
+                    className="flex flex-col items-start rounded transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    title={`Edit ${family}`}
+                    aria-label={`Edit font ${family}`}
+                  >
+                    <div className="rounded bg-white px-2 py-1 text-black">
+                      <span
+                        className="leading-none"
+                        style={{
+                          fontFamily: `"${family}", system-ui, sans-serif`,
+                          fontSize: 18,
+                        }}
+                      >
+                        Aa
+                      </span>
+                    </div>
+                    <span className="mt-0.5 max-w-[120px] truncate text-[10px] text-muted-foreground/70">
+                      {family}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Components column — vertical divider on md+, top divider on
+            stacked layout. Caps width so a wall of components doesn't
+            crowd the tokens. */}
+        {componentList.length > 0 && (
+          <div className="min-w-0 border-t border-border/40 pt-3 md:max-w-[360px] md:border-l md:border-t-0 md:pl-4 md:pt-0">
+            <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+              Components
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              {componentList.map((c) => (
+                <button
+                  type="button"
+                  key={c.id}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenSettings('components', c.id)
+                  }}
+                  className="flex flex-col items-start rounded transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                  title={`Edit ${c.name}`}
+                  aria-label={`Edit component ${c.name}`}
+                >
+                  <div className="flex h-12 w-20 items-center justify-center overflow-hidden rounded border border-border-strong/60 bg-surface-2">
+                    {c.thumbnailUrl !== undefined && c.thumbnailUrl !== null ? (
+                      <img
+                        src={c.thumbnailUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        draggable={false}
+                      />
+                    ) : (
+                      <span className="text-[9px] text-muted-foreground/60">No preview</span>
+                    )}
+                  </div>
+                  <span className="mt-0.5 max-w-[80px] truncate text-[10px] text-muted-foreground/70">
+                    {c.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

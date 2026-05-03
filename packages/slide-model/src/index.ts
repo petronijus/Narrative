@@ -115,6 +115,30 @@ export { createUndoManager } from './undo.js'
 export { promoteToComponent, getComponentDocName, pruneAnimationsToScope } from './components.js'
 export type { PromoteToComponentPlan } from './components.js'
 
+// Component instance override resolver (M16 P7)
+export { resolveInstanceTree, resolveInstanceAnimations } from './resolveOverrides.js'
+
+// Component instance override mutations (M16 P7)
+export {
+  setLeafOverride,
+  setLeafOverridePatch,
+  seedInstanceTextCopy,
+  clearLeafOverride,
+  setAnimationOverride,
+  clearAnimationOverride,
+  resetAllOverrides,
+  applyInstanceFit,
+  resetInstanceFit,
+  instanceMasterMissing,
+  removeComponentInstancesFromDoc,
+} from './instanceOverrides.js'
+export type {
+  LeafOverridePatch,
+  GenericLeafOverridePatch,
+  AnimationOverridePatch,
+  MasterPresenceProbe,
+} from './instanceOverrides.js'
+
 // Design tokens (M16 P2)
 export { isTokenRef, resolveTokenValue } from './tokens.js'
 export type {
@@ -146,16 +170,6 @@ export {
   subscribeToDeckSlideEvents,
 } from './slideObserve.js'
 export type { SlideSummary, ObjectChangeSet } from './slideObserve.js'
-
-// Observer — objects (deprecated, backward compat — remove in M10)
-export {
-  subscribeToObjects,
-  subscribeToObjectChanges,
-  subscribeToObjectChangesWithFlush,
-} from './observe.js'
-
-// Observer — animations (deprecated, backward compat — remove in M10)
-export { subscribeToAnimations } from './animationObserve.js'
 
 // ---------------------------------------------------------------------------
 // Builtin object type registrations

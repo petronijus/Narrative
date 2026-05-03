@@ -23,13 +23,33 @@
  *
  * Connection URL from env: VITE_HOCUSPOCUS_URL (default ws://localhost:3002)
  * Document name = deckId from props (passed from URL param /deck/:id)
+ *
+ * M16 P6 — Optional `doc` prop.
+ *   When supplied, the provider treats the given Y.Doc as the slide doc and
+ *   skips the Hocuspocus connection entirely. This is the contract used by
+ *   `<ComponentMasterEditor>` so the master Y.Doc obtained from
+ *   `componentDocCache` can drive the same editor stack (Inspector,
+ *   selection, undo, ...) without a deckId.
+ *
+ *   Contract:
+ *     - When `doc` is supplied, `deckId` becomes a logical identity used only
+ *       for awareness peer-id storage and load-timing keys; no WS opens.
+ *     - Awareness is still wired up against a transient HocuspocusProvider
+ *       NOT — instead a dummy awareness object is created so consumers that
+ *       expect `awareness` keep working (peer-cursor / selection overlays
+ *       gracefully degrade with an empty roster).
+ *     - The caller owns the doc's lifecycle (acquire/release on the cache).
+ *       This provider must NOT destroy the doc on unmount.
+ *
+ *   The deck path (no `doc` prop) is unchanged.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { useAuth } from './AuthContext.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { Awareness } from 'y-protocols/awareness'
 import {
   createUndoManager,
   generatePeerId,
@@ -64,10 +84,33 @@ function getOrCreatePeerId(): string {
 
 interface SlideDocProviderProps {
   deckId: string
+  /**
+   * M16 P6 — When supplied, the provider uses this Y.Doc instead of opening
+   * a Hocuspocus WebSocket. Used by the component master editor to drive the
+   * standard editor stack against the master doc held by `componentDocCache`.
+   * The caller owns the doc's lifecycle; we do NOT destroy it on unmount.
+   */
+  doc?: Y.Doc
   children: React.ReactNode
 }
 
-export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
+export function SlideDocProvider({ deckId, doc: externalDoc, children }: SlideDocProviderProps) {
+  if (externalDoc !== undefined) {
+    return (
+      <ExternalDocSlideProvider deckId={deckId} doc={externalDoc}>
+        {children}
+      </ExternalDocSlideProvider>
+    )
+  }
+  return <HocuspocusSlideProvider deckId={deckId}>{children}</HocuspocusSlideProvider>
+}
+
+interface HocuspocusSlideProviderProps {
+  deckId: string
+  children: React.ReactNode
+}
+
+function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderProps) {
   const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
   const location = useLocation()
@@ -205,4 +248,92 @@ export function SlideDocProvider({ deckId, children }: SlideDocProviderProps) {
 
   const fullValue: SlideDocContextValue = { ...value, wsStatus }
   return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
+}
+
+// ---------------------------------------------------------------------------
+// External-doc variant — M16 P6
+// ---------------------------------------------------------------------------
+
+interface ExternalDocSlideProviderProps {
+  deckId: string
+  doc: Y.Doc
+  children: React.ReactNode
+}
+
+/**
+ * Drives the SlideDoc context against an externally-owned Y.Doc — used by the
+ * component master editor where the doc lives in `componentDocCache` and
+ * outlives any single mount.
+ *
+ * Differences from the deck path:
+ *   - No HocuspocusProvider (the cache owns the connection).
+ *   - `wsStatus` is reported as 'connected' once we have a doc reference;
+ *     consumers that gate on it ("Connecting…" overlay) bypass entirely.
+ *   - Awareness is a local-only y-protocols Awareness instance — peer chips
+ *     and cursor overlays still work but show only the local user. Master
+ *     editing is a single-user concept for P6; P7+ can wire shared
+ *     awareness via the cache if/when collaborative master editing lands.
+ *   - Doc is NEVER destroyed on unmount — the cache controls lifecycle.
+ *   - The doc is seeded by `writeComponentMasterTree` (one slide, id='master')
+ *     before the cache exposes it; we do NOT call hydrateSlideDoc here.
+ */
+function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlideProviderProps) {
+  const { user } = useAuth()
+
+  const localUser = useMemo<PeerUser>(() => {
+    const peerId = getOrCreatePeerId()
+    return {
+      id: user?.sub ?? peerId,
+      name: user?.name ?? user?.email ?? `User ${peerId.slice(0, 4)}`,
+      color: peerColorFromId(peerId),
+    }
+  }, [user])
+
+  const value = useMemo<SlideDocContextValue>(() => {
+    const slides = doc.getArray('slides') as SlideMutationContext['slides']
+    const deckCtx: SlideMutationContext = { doc, slides }
+    const undoManager = createUndoManager(deckCtx)
+    // Local-only awareness — y-protocols Awareness with this doc is a valid
+    // "no peers" implementation that the rest of the editor can read from.
+    const awareness = new Awareness(doc)
+    awareness.setLocalState({
+      user: localUser,
+      selectedObjectIds: [],
+      cursor: null,
+    })
+    return {
+      deckCtx,
+      undoManager,
+      awareness,
+      localUser,
+      wsStatus: 'connected',
+    }
+  }, [doc, localUser])
+
+  // We deliberately do NOT call hydrateSlideDoc here. The component master
+  // doc is seeded by `writeComponentMasterTree` immediately after promotion
+  // with a single slide whose id is 'master' — calling hydrateSlideDoc would
+  // seed a fresh nanoid id instead. The cache guarantees the doc is fully
+  // synced before `<ComponentMasterEditor>` mounts this provider, so the
+  // master slide is always present.
+
+  // Awareness is a fresh Awareness instance per provider instance —
+  // dispose on unmount to avoid leaking the local-state listeners.
+  useEffect(() => {
+    const a = value.awareness
+    return () => {
+      try {
+        a.destroy()
+      } catch {
+        // ignore — Awareness.destroy is idempotent in newer versions
+      }
+    }
+  }, [value.awareness])
+
+  // Note: deckId is part of the public API but unused in the external-doc
+  // path — referenced here so eslint no-unused-vars stays happy without an
+  // underscore-prefix rename that would also leak into the type.
+  void deckId
+
+  return <SlideDocContext.Provider value={value}>{children}</SlideDocContext.Provider>
 }

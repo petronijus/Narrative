@@ -1,10 +1,10 @@
 /**
  * scripts/migrateDemoUserDecks.ts
  *
- * One-off migration script: reassign all 'demo-user' decks to a real Authentik user.
+ * One-off migration script: reassign all 'demo-user' decks to a real OIDC user (sub claim).
  *
- * Usage (after M10 deploy with real auth):
- *   pnpm --filter @narrative/server db:migrate-demo <authentik-user-sub>
+ * Usage (after deploying with real OIDC auth):
+ *   pnpm --filter @narrative/server db:migrate-demo <oidc-user-sub>
  *
  * What it does:
  *   For each deck where owner_user_id = 'demo-user':
@@ -33,7 +33,7 @@ const { Pool } = pg
 const _rawArg = process.argv[2]
 
 if (!_rawArg || _rawArg.trim() === '') {
-  console.error('Usage: pnpm --filter @narrative/server db:migrate-demo <authentik-user-sub>')
+  console.error('Usage: pnpm --filter @narrative/server db:migrate-demo <oidc-user-sub>')
   process.exit(1)
 }
 

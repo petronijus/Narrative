@@ -36,6 +36,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
 import { resolveColour } from '../colourResolver.js'
+import { getRenderingSlideNumber } from '../slideNumberContext.js'
 
 /**
  * Pixi v8 `HTMLText` rasterizes its SVG asynchronously
@@ -58,11 +59,25 @@ import { resolveColour } from '../colourResolver.js'
  * which empirically covers Pixi's worst-case rasterise window without
  * burning CPU during steady-state animation/typing.
  */
-function scheduleAsyncTextureCatchup(node: { __narrativeCatchupActive?: boolean }): void {
+function scheduleAsyncTextureCatchup(node: {
+  __narrativeCatchupActive?: boolean
+  destroyed?: boolean
+}): void {
+  // A destroy() call walks Pixi's child tree and fires `unload` on
+  // every renderable, which routes through the patched onViewUpdate
+  // below. Without this guard we'd schedule a rAF render against a
+  // node whose texture source is already freed — the next paint then
+  // hits `texSubImage2D` with a zero-sized image and the glyphs come
+  // back as black rectangles (the WebGL INVALID_VALUE in the logs).
+  if (node.destroyed === true) return
   if (node.__narrativeCatchupActive === true) return
   node.__narrativeCatchupActive = true
   let n = 0
   const tick = (): void => {
+    if (node.destroyed === true) {
+      node.__narrativeCatchupActive = false
+      return
+    }
     markRenderDirty()
     if (n < 2) {
       n += 1
@@ -127,19 +142,58 @@ function buildHtml(data: TextObject): string {
   if (data.italic === true) defaults.italic = true
   if (data.underline === true) defaults.underline = true
   const t = data.text
-  if (t instanceof Y.Text) {
+  let inner: string
+  if (data.isSlideNumber === true) {
+    // Page-number field — render the live deck index for the slide
+    // currently being painted. Stored `text` content is intentionally
+    // ignored; only style fields apply. When no slide context is
+    // available (e.g. the master editor with no host slide, or a
+    // skipped slide) we render an empty string so the user still sees
+    // their styled box.
+    const n = getRenderingSlideNumber()
+    const value = typeof n === 'number' ? String(n) : ''
+    inner = toHtml([{ insert: value }], defaults)
+  } else if (t instanceof Y.Text) {
     const delta = toDelta(t)
-    const html = toHtml(delta, defaults)
-    return prependListMarkersHtml(html, data.listStyle)
+    inner = toHtml(delta, defaults)
+  } else {
+    // Legacy string — escape and pass through the same toHtml renderer
+    // so the inherited defaults still apply.
+    const escaped = (typeof t === 'string' ? t : '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+    inner = toHtml([{ insert: escaped }], defaults)
   }
-  // Legacy string — escape and pass through the same toHtml renderer
-  // so the inherited defaults still apply.
-  const escaped = (typeof t === 'string' ? t : '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  const html = toHtml([{ insert: escaped }], defaults)
-  return prependListMarkersHtml(html, data.listStyle)
+  inner = prependListMarkersHtml(inner, data.listStyle)
+  // Paragraph spacing — when either margin is non-zero, split the
+  // single-string output on `<br>` boundaries and re-emit each segment
+  // as a `<div style="margin-top:Xpx;margin-bottom:Ypx">` so the
+  // foreignObject layout inserts the requested gap between blocks.
+  // Each Enter in the editor produces a `<br>`, so a "line break" maps
+  // 1:1 to a "paragraph break" in this model.
+  const psB = data.paragraphSpaceBefore
+  const psA = data.paragraphSpaceAfter
+  if ((typeof psB === 'number' && psB > 0) || (typeof psA === 'number' && psA > 0)) {
+    const lines = inner.split(/<br\s*\/?>(?![^<]*>)/i)
+    const top = typeof psB === 'number' && psB > 0 ? psB : 0
+    const bottom = typeof psA === 'number' && psA > 0 ? psA : 0
+    inner = lines
+      .map(
+        (l) =>
+          `<div style="margin-top:${top}px;margin-bottom:${bottom}px">${l.length > 0 ? l : '&nbsp;'}</div>`,
+      )
+      .join('')
+  }
+  // Visual case transform — wrap in a span with the corresponding CSS
+  // so the underlying text stays editable in its original casing while
+  // the rendered SVG glyphs reflect the transform. Pixi.HTMLText uses
+  // SVG foreignObject, so HTML+CSS works.
+  const tt = data.textTransform
+  if (tt === 'uppercase' || tt === 'lowercase' || tt === 'capitalize') {
+    return `<span style="text-transform:${tt}">${inner}</span>`
+  }
+  return inner
 }
 
 /**
@@ -436,23 +490,60 @@ function applyClipMask(container: Container, data: TextObject): void {
   mask.fill({ color: 0xffffff })
 }
 
-export const textRenderer = {
-  type: 'text' as const,
+/**
+ * Shared mount body. The `wireCatchup` flag controls whether the new
+ * HTMLText invalidations should poke the main-scene RenderScheduler.
+ * The main editor wants this on (HTMLText rasterizes its SVG async, so
+ * the first frame after slide switch may catch the texture mid-load).
+ * The thumbnail pipeline wants it OFF — its renderer is offscreen and
+ * uses `texturePromise` + a second `app.renderer.render()` to wait for
+ * the rasterise; cross-context dirty-flagging through the main
+ * scheduler corrupts the upload.
+ */
+// ---------------------------------------------------------------------------
+// Per-node HTML cache-busting
+// ---------------------------------------------------------------------------
+//
+// Pixi v8's HTMLText pipeline caches its rasterised SVG textures keyed
+// by the HTML string. Two HTMLText nodes with byte-identical content
+// therefore share one cached entry — usually fine, but when one of
+// them re-rasterises (font load, style edit, resize) the other can
+// briefly read a stale or already-evicted texture object and render
+// the wrong glyphs. In a deck this surfaces as duplicate component
+// instances whose headline disappears, swaps with the body content,
+// or briefly shows another text node's content.
+//
+// We force per-node cache-key uniqueness by prefixing the HTML with an
+// invisible HTML comment that contains the HTMLText's pixi `uid` —
+// every Container has a readonly numeric uid that's unique within the
+// process and stable for the node's lifetime. The comment doesn't
+// affect SVG layout, and because the uid is stable, Pixi's
+// "rasterise only when string differs" optimisation still kicks in
+// when the actual content of THIS node hasn't changed.
+//
+// This is a userland workaround for a Pixi-internal cache aliasing
+// issue; the proper fix lives upstream. Until they tighten the cache
+// key, a per-node uid prefix is the cheapest deterministic guarantee
+// that two HTMLText nodes cannot share a backing texture.
+function buildHtmlForNode(textNode: HTMLText, data: TextObject): string {
+  return `<!--n:${textNode.uid}-->${buildHtml(data)}`
+}
 
-  /**
-   * Build a Container + Pixi Text node for the given TextObject data.
-   * Container is positioned and rotated per the data; pivot is centred.
-   */
-  mount(data: TextObject): Container {
-    const container = new Container()
-    const textNode = new HTMLText({
-      text: buildHtml(data),
-      style: new HTMLTextStyle(buildStyleOpts(data)),
-    })
+function mountTextContainer(data: TextObject, opts: { wireCatchup: boolean }): Container {
+  const container = new Container()
+  const textNode = new HTMLText({
+    text: '',
+    style: new HTMLTextStyle(buildStyleOpts(data)),
+  })
+  // Set after construction so the per-node uid is allocated against
+  // this specific HTMLText instance — keeps the cache key unique even
+  // when two nodes carry byte-identical user content.
+  textNode.text = buildHtmlForNode(textNode, data)
 
-    container.addChild(textNode)
+  container.addChild(textNode)
 
-    asAny(container)[TEXT_TAG] = textNode
+  asAny(container)[TEXT_TAG] = textNode
+  if (opts.wireCatchup) {
     wireRedrawOnAsyncTextureUpdate(textNode)
     // The HTMLText constructor fires onViewUpdate synchronously BEFORE
     // we patch it above, so the very first SVG→texture rasterise is
@@ -462,20 +553,40 @@ export const textRenderer = {
     // one catchup cascade on mount so the new node always gets a few
     // follow-up frames to pick up its first texture.
     scheduleAsyncTextureCatchup(textNode as unknown as { __narrativeCatchupActive?: boolean })
+  }
 
-    applyObjectTransform(container, data)
-    applyHorizontalAlign(textNode, data)
-    applyVerticalAlign(textNode, data)
-    applyClipMask(container, data)
-    applyFilterEffects(container, data.shadow, data.blur)
-    setStoredData(container, data)
+  applyObjectTransform(container, data)
+  applyHorizontalAlign(textNode, data)
+  applyVerticalAlign(textNode, data)
+  applyClipMask(container, data)
+  applyFilterEffects(container, data.shadow, data.blur)
+  setStoredData(container, data)
 
-    // When a TextObject mounts before the deck's custom font loads,
-    // FontLoader eventually calls SceneGraph.refreshTextNodesUsingFamily()
-    // which re-applies the style and clears Pixi's CanvasTextSystem cache.
-    // No per-node listener needed.
+  return container
+}
 
-    return container
+export const textRenderer = {
+  type: 'text' as const,
+
+  /**
+   * Build a Container + Pixi Text node for the given TextObject data.
+   * Container is positioned and rotated per the data; pivot is centred.
+   */
+  mount(data: TextObject): Container {
+    return mountTextContainer(data, { wireCatchup: true })
+  },
+
+  /**
+   * Thumbnail variant — skips the main-scene RenderScheduler catchup.
+   * The thumbnail pipeline parents the node under an offscreen Pixi
+   * Application, awaits HTMLText's `texturePromise`, and renders a
+   * second frame on its own renderer. Calling `markRenderDirty()` on
+   * the main scene from inside that flow makes the main editor
+   * renderer try to upload the offscreen texture (foreign GL context)
+   * → `texSubImage2D: bad image data` and intermittent black glyphs.
+   */
+  thumbnailMount(data: TextObject): Container {
+    return mountTextContainer(data, { wireCatchup: false })
   },
 
   /**
@@ -493,7 +604,7 @@ export const textRenderer = {
     // instance). The cost is one HTML string concatenation per update;
     // Pixi's HTMLText only re-rasterises when the string actually
     // differs.
-    textNode.text = buildHtml(next)
+    textNode.text = buildHtmlForNode(textNode, next)
 
     const styleChanged =
       prev.fontSize !== next.fontSize ||
@@ -590,7 +701,10 @@ export const textRenderer = {
       'lineHeight' in patch ||
       'stroke' in patch ||
       'strokeAlpha' in patch ||
-      'strokeWidth' in patch
+      'strokeWidth' in patch ||
+      'textTransform' in patch ||
+      'paragraphSpaceBefore' in patch ||
+      'paragraphSpaceAfter' in patch
 
     // Use the stored last-applied data as the merge base so non-Pixi
     // fields (vAlign, listStyle, font metadata) are preserved across
@@ -648,7 +762,7 @@ export const textRenderer = {
       // The HTML always tracks the merged data — text changes,
       // listStyle, italic / underline / weight defaults all affect
       // the emitted markup.
-      textNode.text = buildHtml(merged)
+      textNode.text = buildHtmlForNode(textNode, merged)
       if (patch.width !== undefined) {
         const dataX = node.x - node.pivot.x
         const newPivotX = patch.width / 2
@@ -687,6 +801,27 @@ export const textRenderer = {
    * Release the Text node, mask, and container. Called when the object
    * is removed from the slide.
    */
+  /**
+   * Re-render the HTMLText body from the stored data without rebuilding
+   * the style. Called by SceneGraph.refreshSlideNumberTexts() when the
+   * deck's computed slide number changes (slide reorder, skip-toggle,
+   * active-slide change). For non-slide-number text nodes this is a
+   * no-op since `buildHtml` produces the same string.
+   *
+   * Returns true when this container is a text container managed by
+   * this renderer AND its stored data has the slide-number flag — used
+   * by the SceneGraph walker to skip irrelevant subtrees.
+   */
+  refreshSlideNumberText(node: Container): boolean {
+    const textNode = getTextNode(node)
+    if (textNode === undefined) return false
+    const stored = getStoredData(node)
+    if (stored === undefined || stored.isSlideNumber !== true) return false
+    textNode.text = buildHtmlForNode(textNode, stored)
+    applyVerticalAlign(textNode, stored)
+    return true
+  },
+
   destroy(node: Container): void {
     const textNode = getTextNode(node)
     textNode?.destroy()

@@ -71,80 +71,77 @@ lint → typecheck → build → test + Docker build validation.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
-## Authentication (M10)
+## Authentication
 
 ### Architecture
 
-Authentik is the self-hosted OIDC identity provider. Both the Narrative web app and server validate JWTs issued by Authentik.
+Identity is provided by **Google OIDC directly** (no self-hosted IdP container).
+The web client runs the standard PKCE authorization-code flow against
+`https://accounts.google.com`; the server validates the resulting **ID token**
+(a JWT) against Google's JWKS at `https://www.googleapis.com/oauth2/v3/certs`.
 
 ```
 User → Narrative web (http://localhost:5173)
-      → redirects to Authentik authorize endpoint (auth.DOMAIN or localhost:9000)
-      → user logs in at Authentik
-      → Authentik redirects back with authorization code
-      → web exchanges code for JWT access token (PKCE flow — no client secret)
-      → web stores token, sends as Bearer on every API/WS request
-      → server validates JWT signature via Authentik JWKS endpoint
-      → server checks issuer claim matches AUTHENTIK_ISSUER
+      → redirects to https://accounts.google.com/.../authorize (PKCE)
+      → user logs in with Google account
+      → Google redirects back with authorization code
+      → web exchanges code for { id_token, access_token } (PKCE — no client secret)
+      → web stores id_token, sends as Bearer on every API/WS request
+      → server verifies id_token signature against Google JWKS
+      → server checks `iss` = https://accounts.google.com (or accounts.google.com)
+      → server checks `aud` = OIDC_CLIENT_ID
+      → server checks email against OIDC_ALLOWED_EMAILS / OIDC_ALLOWED_DOMAIN
 ```
 
-Access control: users must be members of the `narrative-users` group in Authentik. The blueprint creates this group automatically; you add users to it manually via the Authentik admin UI.
+> Note: we send the **ID token**, not the access token, because Google's
+> access tokens are opaque strings — only the ID token is a JWT the server
+> can verify offline.
+
+Access control: since Google itself authenticates anyone with a Google account,
+the deployment is gated by an **email allowlist** enforced server-side
+(`OIDC_ALLOWED_EMAILS` exact match and/or `OIDC_ALLOWED_DOMAIN` workspace
+domain). At least one MUST be set in production — the server logs a loud
+warning at boot if both are empty.
 
 ### First-run setup
 
-```bash
-# 1. Generate secrets
-openssl rand -hex 32    # → AUTHENTIK_SECRET_KEY in .env
-openssl rand -hex 16    # → AUTHENTIK_POSTGRES_PASSWORD in .env
+1. **Create the OAuth client** at <https://console.cloud.google.com> →
+   APIs & Services → Credentials → **Create OAuth 2.0 Client ID** → Web application.
+   - Authorized JavaScript origins: `http://localhost:5173` (dev) and `https://YOUR_DOMAIN` (prod)
+   - Authorized redirect URIs: `http://localhost:5173/auth/callback` and `https://YOUR_DOMAIN/auth/callback`
+2. **Copy the Client ID** (ends in `.apps.googleusercontent.com`) into `.env` /
+   `infra/.env.prod`:
+   - `OIDC_CLIENT_ID` (server-side, validates `aud` claim)
+   - `VITE_OIDC_CLIENT_ID` (web bundle, used by oidc-client-ts)
+3. **Set the allowlist** (at least one):
+   ```
+   OIDC_ALLOWED_EMAILS=you@example.com,colleague@example.com
+   # or
+   OIDC_ALLOWED_DOMAIN=example.com
+   ```
+4. **For dev**, you can keep `BYPASS_AUTH=true` and skip steps 1–3 — the server
+   synthesises a `dev-user`. Set `BYPASS_AUTH=false` only when you need to
+   exercise the real OIDC flow.
 
-# 2. Set env vars in .env (dev) or infra/.env.prod (prod)
-#    Required: AUTHENTIK_SECRET_KEY, AUTHENTIK_POSTGRES_PASSWORD,
-#              AUTHENTIK_BOOTSTRAP_PASSWORD, AUTHENTIK_BOOTSTRAP_EMAIL
+### DNS + ingress (production)
 
-# 3. Start services
-cd infra
-docker compose --env-file ../.env -f docker-compose.yml up -d
+Public ingress is via **Cloudflare Tunnel** (`cloudflared` container), not a
+port-forward + Let's Encrypt. Cloudflare terminates TLS at the edge and proxies
+plain HTTP to `caddy:80` over an outbound-only tunnel.
 
-# 4. Wait for blueprint to apply (30–60 s on first run)
-docker compose -f docker-compose.yml logs -f authentik-server | grep -i blueprint
+Setup (one time):
 
-# 5. Open Authentik admin
-#    → http://localhost:9000
-#    → Username: akadmin
-#    → Password: value of AUTHENTIK_BOOTSTRAP_PASSWORD
-#    → If AUTHENTIK_BOOTSTRAP_PASSWORD was empty: visit http://localhost:9000/if/flow/initial-setup/
+1. <https://one.dash.cloudflare.com> → Networks → Tunnels → Create a tunnel
+2. Name it (e.g. `narrative`), copy the install token (long `eyJ…` string) into
+   `CLOUDFLARE_TUNNEL_TOKEN` in `infra/.env.prod`
+3. In the tunnel's **Public Hostname** tab add a route:
+   - Subdomain: `narrative` (or whatever)
+   - Domain: your zone
+   - Service: `http://caddy:80`
+4. (Optional) repeat for `minio.YOURDOMAIN` if you want the MinIO console online.
 
-# 6. Update the redirect URI for your production domain
-#    Admin UI → Providers → Narrative OIDC Provider → Edit
-#    Add: https://narrative.example.com/auth/callback
-
-# 7. Create the first Narrative user
-#    Admin UI → Directory → Users → Create
-#    Then: Directory → Groups → narrative-users → Add member
-
-# 8. Verify OIDC endpoints are reachable
-./scripts/verify-authentik.sh
-```
-
-### Blueprint
-
-`infra/authentik/blueprints/custom/narrative-oidc.yaml` is applied automatically on each Authentik server start. It creates (idempotently):
-
-- OIDC provider `Narrative OIDC Provider` — public client, PKCE, client ID `narrative-web`
-- Application `Narrative` linked to the provider
-- Group `narrative-users`
-- Expression policy restricting app access to group members
-
-The blueprint pre-registers `http://localhost:5173/auth/callback` as a redirect URI. Add your production URI via admin UI or edit the blueprint before first run.
-
-### DNS (production)
-
-Both `narrative.example.com` and `auth.narrative.example.com` must resolve to the server IP. Use either:
-
-- A wildcard DNS record: `*.narrative.example.com → server IP`
-- Two explicit A records: `narrative.example.com` + `auth.narrative.example.com`
-
-Caddy handles TLS automatically for both via Let's Encrypt.
+DNS records are created automatically by Cloudflare. No router port-forward
+needed; the VM only needs outbound 443 to Cloudflare.
 
 ## Video pipeline (M12)
 
@@ -163,7 +160,7 @@ User uploads video via tus.io (existing upload endpoint)
 
 ### Services
 
-- `media-redis` — dedicated Redis instance for the BullMQ queue (port 6380 by default, separate from Authentik's Redis on its internal Docker network).
+- `media-redis` — dedicated Redis instance for the BullMQ queue (port 6380 by default).
 - `video-worker` — Node.js + ffmpeg container, runs `@narrative/video-worker` package.
 
 ### MinIO bucket layout extension
@@ -241,21 +238,6 @@ The `transcodeProcessor` in `apps/video-worker/src/processors/transcode.ts` is a
 - HLS variant selection UI in the player
 - DRM / signed HLS URLs (M29+)
 - Resource limits on video-worker (M29 — profile first)
-
-### Authentik version
-
-Pinned to `ghcr.io/goauthentik/server:2024.8.3`. To upgrade: update the image tag in `infra/docker-compose.yml` (both `authentik-server` and `authentik-worker`) and review the Authentik changelog for breaking changes.
-
-### Consumer expectations for phase 2 (server JWT middleware)
-
-The server implementation in M10 phase 2 should:
-
-- Fetch JWKS from `AUTHENTIK_JWKS_URL` (internal Docker network, no TLS needed)
-- Validate JWT signature using keys from JWKS
-- Verify `iss` claim matches `AUTHENTIK_ISSUER`
-- Verify `aud` claim includes `AUTHENTIK_CLIENT_ID` (`narrative-web`)
-- Reject tokens with `exp` in the past
-- Extract `sub` (user ID) and `email` claims for request context
 
 ---
 

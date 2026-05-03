@@ -370,6 +370,25 @@ export interface TextObject extends BaseSlideObject {
   lineHeight?: number
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
+  /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */
+  paragraphSpaceBefore?: number
+  /** Vertical space inserted BELOW each paragraph, in px. Default 0. */
+  paragraphSpaceAfter?: number
+  /**
+   * Visual case transform — applied at render time only, the underlying
+   * text content stays untouched (so editing in-place still shows the
+   * original casing). Maps directly to CSS `text-transform`.
+   */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /**
+   * When this object is linked to a folder text style via `textStyleId`,
+   * this list records every typography field the user has hand-tweaked
+   * since applying the preset. Edits to the underlying token in folder
+   * settings propagate to non-overridden fields only — the override
+   * list is what makes "preset bumped to size 50, but my one-off size
+   * 30 stays" work. "Reset to preset" wipes this back to empty.
+   */
+  textStyleOverrides?: Array<TextStyleOverrideKey>
   /**
    * Default italic for runs whose own attribute does not override it.
    * Pixi maps to `font-style: italic`. Missing ⇒ upright.
@@ -391,6 +410,47 @@ export interface TextObject extends BaseSlideObject {
   strokeAlpha?: number
   /** Stroke width in px. Rendered only when stroke is set. Default 1. */
   strokeWidth?: number
+  /**
+   * Page-number field. When true, the renderer ignores `text` and instead
+   * displays the live slide number of the slide hosting this object (or the
+   * slide hosting the component instance, when this leaf lives inside one).
+   * Counter walks the deck in order and skips slides flagged `skipped`.
+   * Styling (font, size, color, alignment, transform, etc.) is honoured
+   * normally — only the text content is overridden at render time.
+   */
+  isSlideNumber?: boolean
+}
+
+/** Keys of TextObject typography fields that participate in preset binding. */
+export type TextStyleOverrideKey =
+  | 'fontFamily'
+  | 'fontWeight'
+  | 'fontSize'
+  | 'lineHeight'
+  | 'letterSpacing'
+  | 'paragraphSpaceBefore'
+  | 'paragraphSpaceAfter'
+  | 'color'
+  | 'textTransform'
+
+const TEXT_STYLE_OVERRIDE_KEY_SET: ReadonlySet<TextStyleOverrideKey> = new Set([
+  'fontFamily',
+  'fontWeight',
+  'fontSize',
+  'lineHeight',
+  'letterSpacing',
+  'paragraphSpaceBefore',
+  'paragraphSpaceAfter',
+  'color',
+  'textTransform',
+])
+
+export const TEXT_STYLE_OVERRIDE_KEYS: ReadonlyArray<TextStyleOverrideKey> = Array.from(
+  TEXT_STYLE_OVERRIDE_KEY_SET,
+)
+
+export function isTextStyleOverrideKey(k: string): k is TextStyleOverrideKey {
+  return TEXT_STYLE_OVERRIDE_KEY_SET.has(k as TextStyleOverrideKey)
 }
 
 /**
@@ -558,6 +618,82 @@ export interface VideoObject extends BaseSlideObject {
 // ---------------------------------------------------------------------------
 
 /**
+ * Per-leaf override patch for a ComponentInstanceObject.
+ *
+ * This is a flat bag of optional fields covering all overridable properties
+ * across all concrete leaf types (text, shapes, images, etc.). The type is
+ * intentionally wide (not narrowed per leaf type) so the override storage can
+ * accept any field without knowing the master leaf's type at write time.
+ *
+ * Structural fields (`id`, `type`, `groupId`) are intentionally absent —
+ * they are always master-controlled.
+ *
+ * Special fields:
+ *   `transform` — ADDITIVE delta on master x/y (see `ComponentInstanceOverrides`
+ *                 leaves docs for the override semantics).
+ *   `text`      — String value only. Y.Text is never stored in an override;
+ *                 the seed is captured as a plain string at instance creation.
+ */
+export interface LeafOverridePayload {
+  // --- BaseSlideObject fields ---
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  rotation?: number
+  opacity?: number
+  name?: string
+  locked?: boolean
+  shadow?: ShadowStyle
+  blur?: number
+  hyperlink?: ObjectHyperlink
+  aspectLocked?: boolean
+  flipH?: boolean
+  flipV?: boolean
+
+  // --- Fill / stroke (shared across shape types) ---
+  fill?: number | TokenRef
+  fillAlpha?: number
+  fillStyle?: FillStyle
+  stroke?: number | TokenRef
+  strokeWidth?: number
+  strokeDash?: boolean
+  strokeAlpha?: number
+  cornerRadius?: CornerRadius
+
+  // --- Text fields ---
+  text?: string
+  fontSize?: number
+  fontWeight?: FontWeight
+  color?: number | TokenRef
+  colorAlpha?: number
+  align?: 'left' | 'center' | 'right'
+  fontFamily?: string
+  vAlign?: TextVerticalAlign
+  lineHeight?: number
+  letterSpacing?: number
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  textStyleOverrides?: Array<TextStyleOverrideKey>
+  italic?: boolean
+
+  // --- Image fields ---
+  assetId?: string
+  imageRect?: { x: number; y: number; width: number; height: number }
+  fit?: 'cover' | 'contain' | 'fill' | 'none'
+  mask?: { type: string; [key: string]: unknown }
+
+  // --- Additive nudge (not from SlideObject — override-only concept) ---
+  /**
+   * Additive x/y delta applied on top of master position.
+   * Stored as a nested Y.Map for per-axis CRDT merge.
+   * If the same patch also contains an absolute `x` or `y`, those win.
+   */
+  transform?: { x?: number; y?: number }
+}
+
+/**
  * Override payload carried by a ComponentInstanceObject.
  * All fields are optional — an empty overrides object means "use master".
  *
@@ -567,21 +703,70 @@ export interface VideoObject extends BaseSlideObject {
  */
 export interface ComponentInstanceOverrides {
   /**
+   * P7: instance-level inner-content offset, applied on top of the
+   * letterbox fit math. Lets the user nudge the master subtree inside
+   * the instance bbox without moving the instance itself (which would
+   * shift its anchor on the slide). Values in instance-space pixels.
+   */
+  transform?: { x?: number; y?: number }
+  /**
+   * Instance-level "virtual master bbox". When set, replaces the master
+   * snapshot's bbox in the renderer's letterbox-fit math
+   * (`applyInnerFit`). Used by the auto-fit pass that grows the
+   * instance bounding box to enclose moved/resized leaves WITHOUT
+   * changing the inner content scale: scale =
+   * min(data.w / bbox.w, data.h / bbox.h), so growing data.w in
+   * lock-step with bbox.w keeps the scale identical.
+   *
+   * Coordinates are in master-space. Cleared by Reset.
+   */
+  masterBboxOverride?: { x: number; y: number; width: number; height: number }
+  /**
    * Per-leaf overrides keyed by the original leaf object id (preserved from
    * the promoted subtree so they are stable across master edits).
+   *
+   * Each entry is a `Partial<SlideObject>` patch (minus `id`, `type`,
+   * `groupId` which are structural and always master-controlled). The
+   * resolver merges the patch on top of the master leaf, field by field.
+   *
+   * Special-case semantics:
+   *
+   *   `text`          — replaces master copy entirely. Text copy is seeded
+   *                     from the master at instance-creation time and is
+   *                     never re-propagated; only style fields (fontSize,
+   *                     fontWeight, color, etc.) continue to propagate.
+   *
+   *   `transform.x` / `transform.y` — ADDITIVE delta on master x/y.
+   *                     The resolver computes: finalX = master.x + override.transform.x.
+   *                     Used when the user nudges a leaf via canvas drag.
+   *
+   *   `x` / `y` (direct) — ABSOLUTE override, replaces master x/y entirely.
+   *                     Used when the user sets position via the inspector.
+   *                     If both `x` and `transform.x` are present in the
+   *                     same patch, the absolute `x` wins (additive transform
+   *                     is ignored for that axis).
+   *
+   *   All other fields (`fill`, `stroke`, `opacity`, `rotation`, `fontSize`,
+   *   `fontWeight`, `color`, `cornerRadius`, `assetId`, `shadow`, `fillStyle`,
+   *   `imageRect`, `mask`, etc.) — replace the master value wholesale.
+   *   Nested sub-objects (shadow, fillStyle, imageRect, mask) are stored as
+   *   plain JSON and replaced atomically (not deep-merged).
    */
-  leaves?: Record<
-    string,
-    {
-      text?: string
-      fill?: number | TokenRef
-      stroke?: number | TokenRef
-      transform?: { x?: number; y?: number }
-    }
-  >
+  leaves?: Record<string, LeafOverridePayload>
   /**
    * Per-animation-step overrides keyed by AnimationStep.id.
    * P5 reserves the slot; P7/P8 populate it.
+   *
+   * P8 — `order` field. The slide-level animation panel surfaces every
+   * master step as a row inside a per-instance group. The user can drag
+   * those rows to re-order the playback sequence WITHOUT mutating the
+   * master. Instead, each touched step records its desired index in
+   * `order`. The resolver honours `order` when at least one step in the
+   * group has it set: steps with explicit `order` sort first by that
+   * value, then unordered steps follow in their master order. Removing
+   * the override (drag back to "natural" position) writes
+   * `{ order: undefined }` so the slot is cleared and the master order
+   * resumes.
    */
   animations?: Record<
     string,
@@ -591,6 +776,7 @@ export interface ComponentInstanceOverrides {
       duration?: number
       ease?: string
       disabled?: true
+      order?: number
     }
   >
 }

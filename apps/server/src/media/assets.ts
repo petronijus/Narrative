@@ -335,6 +335,26 @@ export async function folderFontPostscriptCollides(
   return rows.length > 0
 }
 
+/**
+ * Returns every font asset bound to a single deck (kind='font', deck_id=:deckId,
+ * folder_id IS NULL). Populated when the user deletes a folder font that's
+ * referenced by one or more decks — the row is "promoted" to deck scope so
+ * the presentation keeps rendering.
+ */
+export async function listDeckFontAssets(db: Database, deckId: string): Promise<FontAssetRow[]> {
+  const rows = await db
+    .select()
+    .from(mediaAssets)
+    .where(
+      and(
+        eq(mediaAssets.deckId, deckId),
+        eq(mediaAssets.kind, 'font'),
+        isNull(mediaAssets.folderId),
+      ),
+    )
+  return rows.map(toFontRow)
+}
+
 // ---------------------------------------------------------------------------
 // Update — transcode lifecycle (called by BullMQ worker, phase 2)
 // ---------------------------------------------------------------------------

@@ -97,40 +97,29 @@ export async function writeComponentMasterTree({
 }
 
 /**
- * Recursive plain → Y.Map / Y.Array conversion. SlideObjects use plain
- * arrays for things like gradient stops or path points, so we walk the
- * object tree converting nested arrays / objects into their Yjs
- * counterparts.
+ * Plain → Y.Map conversion that mirrors the regular slide-side
+ * bindings.ts:plainObjectToYMap — SHALLOW. Nested arrays (path anchors,
+ * gradient stops, group children) and nested objects (fillStyle,
+ * cpIn/cpOut) are stored as plain JS values inside the Y.Map. The only
+ * special case is `text` body strings, promoted to Y.Text so the
+ * deck-style text renderer can subscribe to char-level changes.
  *
- * Strings, numbers, booleans, null pass through. Y.Text is restored
- * from a plain string via `Y.Text(s)` — only relevant for `text`
- * objects whose body was serialized to a string in `promoteToComponent`.
+ * The previous deep-walk version produced Y.Map/Y.Array trees that
+ * crashed the standard renderers (e.g. pathRenderer indexed
+ * `anchors[0]` and got undefined because the field was a Y.Array, not
+ * a plain JS array). The flat-component refactor mounts the deck
+ * editor against the master Y.Doc directly, so the master must have
+ * the exact same per-object shape as a deck slide object.
  */
 function plainObjectToYMap(input: Record<string, unknown> | unknown): Y.Map<unknown> {
   const map = new Y.Map<unknown>()
   if (input === null || typeof input !== 'object') return map
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
-    map.set(k, plainToYValue(k, v))
+    if (k === 'text' && typeof v === 'string') {
+      map.set(k, new Y.Text(v))
+      continue
+    }
+    map.set(k, v)
   }
   return map
-}
-
-function plainToYValue(key: string, v: unknown): unknown {
-  if (v === null) return null
-  if (typeof v !== 'object') return v
-  if (Array.isArray(v)) {
-    const arr = new Y.Array<unknown>()
-    for (const item of v) {
-      arr.push([plainToYValue(key, item)])
-    }
-    return arr
-  }
-  // Restore Y.Text for text-object bodies so the deck-style renderer
-  // can subscribe to character-level changes later. Detection is
-  // heuristic: the field is named `text` and the value is a string.
-  if (key === 'text' && typeof v === 'string') {
-    return new Y.Text(v)
-  }
-  // Plain object → nested Y.Map.
-  return plainObjectToYMap(v as Record<string, unknown>)
 }

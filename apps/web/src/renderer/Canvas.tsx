@@ -30,6 +30,7 @@ import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
 import { RenderScheduler, setDefaultRenderScheduler } from './RenderScheduler'
 import { installPixiBindGroupPatch } from './pixiBindGroupPatch.js'
+import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 
 // Install the BindGroup crash workaround once at module load. See the
 // patch file for the full Pixi v8 bug writeup.
@@ -42,9 +43,17 @@ import {
 import { createVideoInfoResolver, setDefaultVideoInfoResolver } from './videoInfo.js'
 import { useSlideObjectChanges } from '../state/useSlideObjectChanges'
 import { useSlideBackground } from '../state/useSlideBackground.js'
+import { useSlides } from '../state/useSlides.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { computeSlideNumber } from '@narrative/shared'
+import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { useAuth } from '../state/AuthContext.js'
+import {
+  registerComponentDocTokenGetter,
+  disposeComponentDocCache,
+} from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
@@ -127,6 +136,13 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
     setDefaultImageUrlResolver(createImageUrlResolver(apiBase, () => tokenRef.current))
     setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase, () => tokenRef.current))
+    // M16 P6: install token getter for the component-doc cache so renderer
+    // nodes (which don't sit inside a React provider) can open authenticated
+    // Hocuspocus connections to `component:<id>` masters. Registered (not
+    // set) so it coexists with ComponentDocProvider's getter in the master
+    // editor — both push into the same registry and the cache picks the
+    // first non-null result.
+    const unregisterTokenGetter = registerComponentDocTokenGetter(() => tokenRef.current)
 
     let cancelled = false
     let app: Application | null = null
@@ -166,6 +182,15 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
         app.destroy(true, { children: true, texture: true })
         return
       }
+
+      // Userland mitigation for a Pixi v8 WebGL race in
+      // HTMLTextSystem._buildTexturePromise — see patchHTMLTextRace
+      // for the full breakdown. Without this, duplicate component
+      // instances rendering identical text leaves can show each
+      // other's content (or a totally unrelated text node's content)
+      // for a frame after any rasterise event. Must run AFTER
+      // `app.init()` so `app.renderer.htmlText` exists.
+      patchHTMLTextRace(app.renderer, { wakeRenderScheduler: true })
 
       containerEl.appendChild(app.canvas)
 
@@ -258,6 +283,7 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
 
     return () => {
       cancelled = true
+      unregisterTokenGetter()
 
       if (instanceRef.current !== null) {
         const {
@@ -290,9 +316,28 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
 
         liveGraph.destroy()
         liveRM.destroyAll()
+        // M16 P6: tear down all cached component master docs + their WS
+        // connections. SceneGraph.destroy above has already destroyed the
+        // componentInstance nodes (which release their cache refs), so the
+        // linger-timer entries are the only ones still alive — flush them.
+        disposeComponentDocCache()
         // Compositor musí být zničen PŘED app.destroy() — potřebuje ticker pro cleanup
         liveCompositor.destroy()
-        liveApp.destroy(true, { children: true, texture: true })
+        // Pixi v8's Application.destroy can throw inside the system runner
+        // (TexturePool.returnTexture sees a destroyed renderer state) when
+        // a HTMLText texture is mid-flight during route navigation —
+        // happens reliably on edit→present transitions with a
+        // componentInstance on the slide. Swallow so the rest of the
+        // editor unmount finishes; the Pixi GL context will be GC'd.
+        try {
+          liveApp.destroy(true, { children: true, texture: true })
+        } catch {
+          // Pixi v8 TexturePool race during edit↔present navigation
+          // (HTMLText texture mid-flight at SystemRunner emit time).
+          // Non-fatal — GL context is GC'd by the browser. Silenced
+          // because it fires on every edit→present transition with a
+          // componentInstance on stage and is pure noise for QA.
+        }
 
         // Drop the perf HUD's reference so it doesn't sample a torn-down app.
         const w = window as unknown as { __narrative_perf?: unknown }
@@ -304,6 +349,24 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // intentional empty deps: mount-only effect with StrictMode guard; onReady stable via parent useCallback
+
+  // Page-number support: keep the renderer's slide-number context aligned
+  // with the deck's active slide. Set synchronously during render so that
+  // any text node mounted later in this render pass (via useSlideObjectChanges
+  // initial emission) sees the correct value when its `buildHtml` reads
+  // the global. The follow-up effect refreshes already-mounted text nodes
+  // when the value changes (e.g. after a slide reorder where the active
+  // slide stays the same).
+  const slides = useSlides()
+  const { activeSlideId } = useActiveSlide()
+  const currentSlideNumber =
+    activeSlideId !== null ? computeSlideNumber(slides, activeSlideId) : undefined
+  setRenderingSlideNumber(currentSlideNumber)
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (instance === null) return
+    instance.sceneGraph.refreshSlideNumberTexts()
+  }, [currentSlideNumber, pixiReady])
 
   // Reaktivita na Y.Doc přes incremental changes (M3).
   // Initial state přichází synchronně jako první emise (added = current).

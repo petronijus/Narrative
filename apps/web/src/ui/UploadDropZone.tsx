@@ -19,11 +19,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createObjectOfType } from '@narrative/slide-model'
+import { createObjectOfType, addObject } from '@narrative/slide-model'
+import { nanoid } from 'nanoid'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useSelection } from '../state/SelectionContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
+import { COMPONENT_DRAG_MIME } from './ComponentPickerDrawer.js'
+import { readMasterFullBbox } from '../state/readMasterDoc.js'
 
 // ---------------------------------------------------------------------------
 // Coordinate helper (mirrors EditorLayout.clientToCanvasCoords)
@@ -57,6 +61,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const { role } = useDeckRole()
   const { startUpload } = useMediaUpload()
   const { objectsCtx } = useSlideObjects()
+  const { selectOne } = useSelection()
 
   const [isDragOver, setIsDragOver] = useState(false)
   const [dragFileType, setDragFileType] = useState<'image' | 'video' | 'mixed' | null>(null)
@@ -185,6 +190,49 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       const rect = el.getBoundingClientRect()
       const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect)
       pendingDropCoordsRef.current = dropCoords
+
+      // M16 P6 — component drag-out from the picker drawer.
+      const componentPayload = e.dataTransfer?.getData(COMPONENT_DRAG_MIME) ?? ''
+      if (componentPayload !== '' && objectsCtx !== null) {
+        try {
+          const parsed = JSON.parse(componentPayload) as { componentId: string }
+          if (typeof parsed.componentId === 'string' && parsed.componentId !== '') {
+            // M16 P-flatten: components carry their authored slide-space
+            // position. Drag-out from the picker also lands the instance
+            // at the master's bbox 1:1 — the dropCoords are ignored.
+            // The user can drag the instance from there or hit
+            // "Reset position" in the inspector to snap back to the
+            // canonical placement. Matches Figma's "instance position
+            // tracks master".
+            void (async (): Promise<void> => {
+              const bbox = await readMasterFullBbox(parsed.componentId)
+              if (objectsCtx === null) return
+              const width = bbox?.width ?? 400
+              const height = bbox?.height ?? 300
+              const x = bbox?.x ?? dropCoords.x - width / 2
+              const y = bbox?.y ?? dropCoords.y - height / 2
+              const newId = nanoid()
+              addObject(objectsCtx, {
+                id: newId,
+                type: 'componentInstance',
+                componentId: parsed.componentId,
+                x,
+                y,
+                width,
+                height,
+                rotation: 0,
+                opacity: 1,
+              })
+              // Replace any prior selection with the freshly-dropped
+              // instance — Figma-style "drop and start manipulating".
+              selectOne(newId)
+            })()
+          }
+        } catch {
+          // Malformed payload — ignore; the file branch below still runs if applicable.
+        }
+        return
+      }
 
       const files = Array.from(e.dataTransfer?.files ?? [])
       const accepted = files.filter(

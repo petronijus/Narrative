@@ -29,6 +29,7 @@ import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type { SlideObject, SlideBackground } from '@narrative/shared'
+import { computeSlideNumber } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
 import { useSlides } from './useSlides.js'
 import type * as Y from 'yjs'
@@ -119,6 +120,12 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   // background changes.
   const latestBackgroundRef = useRef<Map<string, SlideBackground | undefined>>(new Map())
 
+  // Always-fresh snapshot of the deck slides for slide-number computation.
+  // The render scheduler reads this through a ref so a useCallback with
+  // empty deps doesn't capture a stale list across reorders.
+  const slidesRef = useRef(allSlides)
+  slidesRef.current = allSlides
+
   // Per-slide debounce cancellers — cancelled on cleanup or slide removal.
   const debouncersRef = useRef<
     Map<string, { debounced: (id: string) => void; cancel: () => void }>
@@ -153,10 +160,11 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
 
     const objects = latestObjectsRef.current.get(slideId) ?? []
     const background = latestBackgroundRef.current.get(slideId)
+    const slideNumber = computeSlideNumber(slidesRef.current, slideId)
     inFlightRef.current.add(slideId)
 
     renderer
-      .renderSlide(objects, background)
+      .renderSlide(objects, background, slideNumber)
       .then((dataUrl) => {
         setThumbnails((prev) => {
           const next = new Map(prev)
@@ -383,6 +391,24 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       scheduleRender(slide.id)
     }
   }, [allSlides, slideIds, scheduleRender])
+
+  // Re-render every tracked thumbnail when the deck order or skipped
+  // flags change, since `computeSlideNumber` reads from that list and
+  // any slide may host a `isSlideNumber` text leaf whose displayed
+  // number just shifted.
+  useEffect(() => {
+    const fingerprint = allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|')
+    void fingerprint
+    for (const id of slideIds) scheduleRender(id)
+    // Depend on a stable fingerprint string so unrelated slide-prop
+    // edits (background, name) don't double-trigger here — the
+    // background-watch effect above already covers those.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|'),
+    slideIds,
+    scheduleRender,
+  ])
 
   // ---------------------------------------------------------------------------
   // Cleanup all per-slide state on unmount

@@ -7,10 +7,15 @@
  *   - useAuth() hook: { user, token, isLoading, login, logout, refreshToken }
  *   - AuthProvider: wraps app, restores session on mount, configures silent renewal
  *
- * UserManager config reads from Vite env:
- *   VITE_AUTHENTIK_ISSUER
- *   VITE_AUTHENTIK_CLIENT_ID
- *   VITE_AUTHENTIK_REDIRECT_URI
+ * UserManager config reads from Vite env (Google OIDC since 2026-05):
+ *   VITE_OIDC_ISSUER         e.g. https://accounts.google.com
+ *   VITE_OIDC_CLIENT_ID      Google OAuth client_id ending in .apps.googleusercontent.com
+ *   VITE_OIDC_REDIRECT_URI   e.g. https://narrative.example.com/auth/callback
+ *
+ * Bearer token to the API: we send `id_token` (a JWT) rather than `access_token`
+ * because Google access_tokens are opaque strings, not JWTs, and the server
+ * verifier expects a JWT. ID tokens for the configured client_id are signed
+ * by Google with RS256 and validated against Google's JWKS.
  *
  * Token storage: oidc-client-ts default (sessionStorage) — do not roll your own.
  * NEVER log tokens to console or error tracking.
@@ -54,14 +59,16 @@ export interface AuthContextValue {
 
 export function createUserManager(): UserManager {
   return new UserManager({
-    authority: import.meta.env['VITE_AUTHENTIK_ISSUER'] ?? '',
-    client_id: import.meta.env['VITE_AUTHENTIK_CLIENT_ID'] ?? '',
+    authority: import.meta.env['VITE_OIDC_ISSUER'] ?? '',
+    client_id: import.meta.env['VITE_OIDC_CLIENT_ID'] ?? '',
     redirect_uri:
-      import.meta.env['VITE_AUTHENTIK_REDIRECT_URI'] ?? `${window.location.origin}/auth/callback`,
+      import.meta.env['VITE_OIDC_REDIRECT_URI'] ?? `${window.location.origin}/auth/callback`,
     response_type: 'code',
     scope: 'openid profile email',
     post_logout_redirect_uri: window.location.origin,
     loadUserInfo: true,
+    // Google's OIDC discovery doc does not advertise refresh tokens for the
+    // browser PKCE flow; silent renew uses the iframe-based prompt=none path.
     automaticSilentRenew: true,
   })
 }
@@ -122,8 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setToken(null)
     } else {
       setUser(oidcUserToAuthUser(oidcUser))
-      // access_token intentionally stored in state; never logged
-      setToken(oidcUser.access_token)
+      // We send the ID token (a JWT) as Bearer; Google access_tokens are opaque.
+      // Token intentionally stored in state; never logged.
+      setToken(oidcUser.id_token ?? null)
     }
   }, [])
 

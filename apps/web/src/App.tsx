@@ -17,6 +17,7 @@ import { PerfHudProvider } from './state/PerfHudContext.js'
 import { FoldersHome } from './pages/FoldersHome.js'
 import { FolderDecks } from './pages/FolderDecks.js'
 import { FolderSettings } from './pages/FolderSettings.js'
+import { ComponentMasterEditor } from './pages/ComponentMasterEditor.js'
 import { DeckEditor } from './pages/DeckEditor.js'
 import { DeckPresent } from './pages/DeckPresent.js'
 import { DeckShell } from './components/DeckShell.js'
@@ -46,6 +47,10 @@ export function App() {
                 <Route path="/" element={<FoldersHome />} />
                 <Route path="/folder/:folderId" element={<FolderDecks />} />
                 <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
+                <Route
+                  path="/folder/:folderId/component/:componentId"
+                  element={<ComponentMasterEditor />}
+                />
                 <Route path="/deck/:id" element={<DeckShell />}>
                   <Route index element={<DeckEditor />} />
                   <Route path="present" element={<DeckPresent />} />

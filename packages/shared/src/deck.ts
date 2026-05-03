@@ -132,6 +132,28 @@ export interface Slide {
   collapsed?: boolean
 }
 
+/**
+ * Compute the 1-based page number for `slideId` among the deck's
+ * non-skipped slides. Returns `undefined` when the slide is unknown or
+ * is itself flagged skipped (skipped slides never render in present
+ * mode, so the displayed number is moot).
+ *
+ * Slides without a "page number" text object still consume a counter
+ * tick — the count reflects deck position, not whether a badge exists.
+ */
+export function computeSlideNumber(
+  slides: ReadonlyArray<Pick<Slide, 'id' | 'skipped'>>,
+  slideId: string,
+): number | undefined {
+  let n = 0
+  for (const s of slides) {
+    if (s.skipped === true) continue
+    n += 1
+    if (s.id === slideId) return n
+  }
+  return undefined
+}
+
 // ---------------------------------------------------------------------------
 // P11: deck-level rulers + guides
 // ---------------------------------------------------------------------------

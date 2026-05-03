@@ -18,6 +18,7 @@
  */
 
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -54,9 +55,18 @@ import {
   Volume2,
   VolumeX,
   X,
+  CaseLower,
+  CaseSensitive,
+  CaseUpper,
   CirclePlay,
+  Hash,
+  MoreVertical,
   MousePointerClick,
+  Plus,
+  RotateCcw,
   Rows3,
+  Save,
+  Type,
   type LucideIcon,
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -80,7 +90,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlides } from '../state/useSlides.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
@@ -99,6 +109,13 @@ import {
   groupObjects,
   ungroupObjects,
   removeObject,
+  setLeafOverride,
+  clearLeafOverride,
+  resetAllOverrides,
+  resetInstanceFit,
+  resolveInstanceTree,
+  setLeafOverridePatch,
+  listSlides,
 } from '@narrative/slide-model'
 import type {
   AnimationsMutationContext,
@@ -123,6 +140,7 @@ import type {
   ImageFillStyle,
   ImageObject,
   TextObject,
+  TextStyleOverrideKey,
   VideoObject,
   ComponentInstanceObject,
   SlideObjectPatch,
@@ -133,11 +151,29 @@ import type {
   SlidePushDirection,
   SlideBackground,
   ObjectHyperlink,
+  LeafOverridePayload,
 } from '@narrative/shared'
-import { DEFAULT_BACKGROUND } from '@narrative/shared'
-import { useFolderTokens } from '../state/FolderDocProvider.js'
+import { DEFAULT_BACKGROUND, isTextStyleOverrideKey } from '@narrative/shared'
+import {
+  useFolderTokens,
+  useFolderTokensOptional,
+  useFolderMutations,
+} from '../state/FolderDocProvider.js'
+import { emptyTokensSnapshot } from '../state/FolderDocContext.js'
 import { isTokenRef, resolveTokenValue } from '@narrative/slide-model'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
+import { useInstanceMasterSnapshot } from '../state/useInstanceMasterSnapshot.js'
+import { readMasterFullBbox } from '../state/readMasterDoc.js'
+import { getComponentDoc, getComponentDocSyncStatus } from '../state/componentDocCache.js'
+import { extractComponentSnapshot } from '../state/extractComponentSnapshot.js'
+import type { ComponentSnapshot } from '../state/extractComponentSnapshot.js'
+import { useFolderComponents } from '../state/useFolderComponents.js'
+import { useApi, type ComponentSummary } from '../api/client.js'
+import { useAuth } from '../state/AuthContext.js'
+import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
+import { SlideNumberPromptDialog } from './SlideNumberPromptDialog.js'
+import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
+import { ComponentAnimationGroup } from './ComponentAnimationGroup.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -689,11 +725,112 @@ function Section({
 // ---------------------------------------------------------------------------
 
 export function Inspector() {
-  const { selectedIds, selectedId } = useSelection()
+  const { selectedIds, selectedId, activeInstanceEditId, activeLeafId } = useSelection()
+  const { selectOne } = useSelection()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { animations, animationsCtx: animMutationCtx } = useAnimations()
-  const { role } = useDeckRole()
+  const { role, folderId: deckFolderId } = useDeckRole()
   const isViewer = role === 'viewer'
+
+  // Hooks needed by the slide-number recommendation modal. Always
+  // declared here so hook-order stays stable regardless of which
+  // sub-inspector renders.
+  const api = useApi()
+  const { token } = useAuth()
+  const { deckCtx } = useSlideDoc()
+  const { activeSlideId } = useActiveSlide()
+  // Use the optional variant so the Inspector can render during the
+  // brief window after a route change when DeckRole hasn't resolved
+  // folderId yet — FolderDocGate skips FolderDocProvider in that
+  // window and the strict `useFolderTokens()` would throw, taking
+  // down the whole editor. Empty snapshot is safe — every token
+  // lookup falls through to literal hex.
+  const folderTokens = useFolderTokensOptional() ?? emptyTokensSnapshot()
+  const [slideNumberPromptOpen, setSlideNumberPromptOpen] = useState(false)
+  const slideNumberPromptTargetIdRef = useRef<string | null>(null)
+  const closeSlideNumberPrompt = useCallback(() => {
+    setSlideNumberPromptOpen(false)
+    slideNumberPromptTargetIdRef.current = null
+  }, [])
+  const footnotesAndPagesStyleId = useMemo<string | null>(() => {
+    const match = Object.values(folderTokens.textStyles).find(
+      (s) => s.name?.toLowerCase() === 'footnotes and pages',
+    )
+    return match?.id ?? null
+  }, [folderTokens])
+  const handleApplyTextStyle = useCallback(() => {
+    const targetId = slideNumberPromptTargetIdRef.current
+    closeSlideNumberPrompt()
+    if (targetId === null || mutationCtx === null) return
+    if (footnotesAndPagesStyleId === null) return
+    const style = folderTokens.textStyles[footnotesAndPagesStyleId]
+    const stylePatch: Record<string, unknown> = {
+      isSlideNumber: true,
+      textStyleId: footnotesAndPagesStyleId,
+      textStyleOverrides: [],
+    }
+    if (style !== undefined) {
+      if (typeof style.family === 'string' && style.family !== '')
+        stylePatch['fontFamily'] = style.family
+      if (typeof style.weight === 'number') stylePatch['fontWeight'] = style.weight
+      if (typeof style.size === 'number' && style.size > 0) stylePatch['fontSize'] = style.size
+      if (typeof style.lineHeight === 'number' && style.lineHeight > 0)
+        stylePatch['lineHeight'] = style.lineHeight
+      if (typeof style.letterSpacing === 'number') stylePatch['letterSpacing'] = style.letterSpacing
+      if (
+        style.textTransform === 'uppercase' ||
+        style.textTransform === 'lowercase' ||
+        style.textTransform === 'capitalize'
+      ) {
+        stylePatch['textTransform'] = style.textTransform
+      }
+      if (style.color !== undefined) stylePatch['color'] = style.color
+    }
+    updateObject(mutationCtx, targetId, stylePatch as SlideObjectPatch<TextObject>)
+  }, [closeSlideNumberPrompt, footnotesAndPagesStyleId, folderTokens, mutationCtx])
+  const handleCreateComponent = useCallback(() => {
+    const targetId = slideNumberPromptTargetIdRef.current
+    closeSlideNumberPrompt()
+    if (targetId === null) return
+    if (mutationCtx === null || deckCtx === null || activeSlideId === null) return
+    if (deckFolderId === null) return
+    // Flag the master text BEFORE promotion so the resulting component
+    // master inherits the page-number behaviour.
+    updateObject(mutationCtx, targetId, {
+      isSlideNumber: true,
+    } as unknown as SlideObjectPatch<TextObject>)
+    void promoteSelectionToComponent({
+      api,
+      folderId: deckFolderId,
+      mutationCtx,
+      deckCtx,
+      activeSlideId,
+      targetIds: [targetId],
+      name: 'Page number',
+      token,
+    })
+      .then(({ instanceId }) => selectOne(instanceId))
+      .catch((err: unknown) => {
+        console.warn('[Inspector] slide-number → component promote failed', err)
+      })
+  }, [
+    activeSlideId,
+    api,
+    closeSlideNumberPrompt,
+    deckCtx,
+    deckFolderId,
+    mutationCtx,
+    selectOne,
+    token,
+  ])
+  const handleLeaveAsIs = useCallback(() => {
+    const targetId = slideNumberPromptTargetIdRef.current
+    closeSlideNumberPrompt()
+    if (targetId === null || mutationCtx === null) return
+    updateObject(mutationCtx, targetId, {
+      isSlideNumber: true,
+    } as unknown as SlideObjectPatch<TextObject>)
+  }, [closeSlideNumberPrompt, mutationCtx])
 
   // useSlideObjects emits a fresh array reference on every Y.Doc edit
   // (including each Y.Text keystroke during inline edit). Memoise the
@@ -704,6 +841,23 @@ export function Inspector() {
     () => (selectedId === null ? undefined : objects.find((o) => o.id === selectedId)),
     [objects, selectedId],
   )
+
+  // M16 P8 — When inside instance edit mode with a leaf selected, resolve
+  // the synthesised leaf object and render the leaf inspector. This bypasses
+  // the normal selectedId → obj flow because the leaf is not in `objects`.
+  const instanceEditLeaf: SlideObject | null = useMemo(() => {
+    if (activeInstanceEditId === null || activeLeafId === null) return null
+    const instObj = objects.find((o) => o.id === activeInstanceEditId)
+    if (instObj === undefined || instObj.type !== 'componentInstance') return null
+    const status = getComponentDocSyncStatus(instObj.componentId)
+    if (status !== 'synced') return null
+    const doc = getComponentDoc(instObj.componentId)
+    if (doc === null) return null
+    const snap = extractComponentSnapshot(doc)
+    if (snap === null) return null
+    const resolved = resolveInstanceTree(snap.objects, instObj.overrides)
+    return resolved.find((o) => o.id === activeLeafId) ?? null
+  }, [activeInstanceEditId, activeLeafId, objects])
 
   // Multi-select inspector — align / distribute / layer order.
   if (selectedIds.size > 1) {
@@ -726,7 +880,32 @@ export function Inspector() {
     // M10: viewer role — no mutations
     if (isViewer) return
     if (obj === undefined || mutationCtx === null) return
+    // M16 P8 — When in instance edit mode with a leaf selected, route
+    // all mutations to setLeafOverridePatch instead of updateObject.
+    if (activeInstanceEditId !== null && activeLeafId !== null && instanceEditLeaf !== null) {
+      setLeafOverridePatch(
+        mutationCtx,
+        activeInstanceEditId,
+        activeLeafId,
+        p as Parameters<typeof setLeafOverridePatch>[3],
+      )
+      return
+    }
     updateObject(mutationCtx, obj.id, p)
+  }
+
+  // M16 P8 — Leaf inspector while inside instance edit mode.
+  if (activeInstanceEditId !== null && activeLeafId !== null && instanceEditLeaf !== null) {
+    return (
+      <InstanceLeafInspector
+        leaf={instanceEditLeaf}
+        instanceId={activeInstanceEditId}
+        objects={objects}
+        mutationCtx={mutationCtx}
+        isViewer={isViewer}
+        patch={patch as (p: SlideObjectPatch<SlideObject>) => void}
+      />
+    )
   }
 
   // M16 P5 — Component instance has its own minimal inspector.
@@ -797,7 +976,74 @@ export function Inspector() {
             )}
           </button>
         </div>
+        {/* Page-number field (text only). When ON, the renderer ignores
+            stored content and shows the live deck index for the slide
+            hosting this text (or hosting the component instance, when
+            the leaf lives inside one). Styling continues to apply. */}
+        {obj.type === 'text' && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Field</span>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (obj.isSlideNumber === true) {
+                  // Toggling OFF — never gated by the recommendation modal.
+                  patch({
+                    isSlideNumber: undefined,
+                  } as unknown as SlideObjectPatch<SlideObject>)
+                  return
+                }
+                // Toggling ON. If this is the first page-number text in
+                // the deck, surface the recommendation modal. Otherwise
+                // just flip the flag.
+                let firstInDeck = true
+                if (deckCtx !== null) {
+                  outer: for (const slide of listSlides(deckCtx)) {
+                    for (const o of slide.objects) {
+                      if (
+                        o.type === 'text' &&
+                        (o as TextObject).isSlideNumber === true &&
+                        o.id !== obj.id
+                      ) {
+                        firstInDeck = false
+                        break outer
+                      }
+                    }
+                  }
+                }
+                if (firstInDeck) {
+                  slideNumberPromptTargetIdRef.current = obj.id
+                  setSlideNumberPromptOpen(true)
+                  return
+                }
+                patch({ isSlideNumber: true } as unknown as SlideObjectPatch<SlideObject>)
+              }}
+              disabled={isViewer}
+              aria-pressed={obj.isSlideNumber === true}
+              title="Use this text box as the slide-number field"
+              className={[
+                'flex items-center gap-1.5 rounded-md border border-input px-2 py-1 text-[11px] transition-colors',
+                obj.isSlideNumber === true
+                  ? 'bg-primary/15 text-primary'
+                  : 'field-surface text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                'disabled:opacity-40',
+              ].join(' ')}
+            >
+              <Hash className="h-3 w-3" aria-hidden />
+              Page number
+            </button>
+          </div>
+        )}
       </Section>
+      <SlideNumberPromptDialog
+        open={slideNumberPromptOpen}
+        textStyleAvailable={footnotesAndPagesStyleId !== null}
+        onApplyTextStyle={handleApplyTextStyle}
+        onCreateComponent={handleCreateComponent}
+        onLeaveAsIs={handleLeaveAsIs}
+        onCancel={closeSlideNumberPrompt}
+      />
 
       {/* Position — Figma-style condensed block:
           alignment row | X+Y row | rotation + flip row.
@@ -916,7 +1162,11 @@ export function Inspector() {
  *   master-step inheritance; for P5 the panel is identical to a group).
  * - Layers.
  *
- * TODO(P6) — wire "Edit master" button to open the component edit context.
+ * P6 + P7 + P8 wired:
+ *   - "Edit master" navigates to /folder/<id>/component/<id>.
+ *   - Per-leaf overrides + Reset to master (P7).
+ *   - Component animations in the inspector via shared row (P8).
+ *   - Master-missing repair panel (Detach / Replace…).
  */
 interface ComponentInstanceInspectorProps {
   obj: ComponentInstanceObject
@@ -937,6 +1187,56 @@ function ComponentInstanceInspector({
   isViewer,
   patch,
 }: ComponentInstanceInspectorProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { folderId } = useDeckRole()
+  const editMasterDisabled = folderId === null
+  // M16 P7 — subscribe to the master doc; we need the master subtree to
+  // render the override leaves panel, and the synced/missing status to
+  // decide whether to show the warning panel instead.
+  const master = useInstanceMasterSnapshot(obj.componentId)
+  const overridesEmpty =
+    obj.overrides === undefined ||
+    ((obj.overrides.leaves === undefined || Object.keys(obj.overrides.leaves).length === 0) &&
+      (obj.overrides.animations === undefined ||
+        Object.keys(obj.overrides.animations).length === 0))
+  const handleResetAll = (): void => {
+    if (mutationCtx === null) return
+    resetAllOverrides(mutationCtx, obj.id)
+  }
+  // M16 P-flatten: snap the instance's slide-space placement back to the
+  // master's authored x/y and clear the rotation/transform. Width/height
+  // are intentionally preserved — if the user resized the bbox or moved
+  // leaves outside the master's authored bounds, shrinking the bbox here
+  // would orphan those leaves off-canvas (impossible to grab). Reads the
+  // master fresh on each click so a master that's been re-positioned
+  // since insert reflects the latest.
+  const [resetPositionBusy, setResetPositionBusy] = useState(false)
+  const handleResetPosition = (): void => {
+    if (mutationCtx === null || resetPositionBusy) return
+    setResetPositionBusy(true)
+    void (async (): Promise<void> => {
+      try {
+        if (mutationCtx === null) return
+        const bbox = await readMasterFullBbox(obj.componentId)
+        if (bbox === null) return
+        // resetInstanceFit writes x/y AND clears the instance-level
+        // transform nudge from the existing overrides Y.Map IN PLACE.
+        // Going through `updateObject({ overrides: plainObj })` would
+        // replace the overrides Y.Map with a plain JS object; the next
+        // setLeafOverridePatch call would then rebuild a fresh empty
+        // Y.Map, dropping every other leaf override. Width/height,
+        // masterBboxOverride, rotation, and leaf/animation overrides
+        // are intentionally left alone (see resetInstanceFit docstring).
+        resetInstanceFit(mutationCtx, obj.id, {
+          x: bbox.x,
+          y: bbox.y,
+        })
+      } finally {
+        setResetPositionBusy(false)
+      }
+    })()
+  }
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {isViewer && (
@@ -958,18 +1258,74 @@ function ComponentInstanceInspector({
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
             {obj.componentName ?? 'Component'}
           </span>
-          {/* Edit master — deferred to P6 */}
+          {/* M16 P6 — Edit master button. Navigates to the component master
+              editor. Disabled if we don't yet know the folderId (DeckRole
+              still loading). */}
           <button
             type="button"
-            disabled
-            title="Edit master — coming in P6"
-            className="flex-shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-muted-foreground/50 cursor-not-allowed select-none"
-            aria-label="Edit master (coming in P6)"
+            disabled={editMasterDisabled}
+            onClick={() => {
+              if (folderId === null) return
+              navigate(`/folder/${folderId}/component/${obj.componentId}`, {
+                state: { from: location.pathname + location.search },
+              })
+            }}
+            title={editMasterDisabled ? 'Loading…' : 'Open the component master in the editor'}
+            data-testid="inspector-edit-master"
+            className="flex-shrink-0 rounded-md border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
+            aria-label="Edit master"
           >
             Edit master
           </button>
         </div>
         <p className="text-[10px] text-muted-foreground/60">Component ID: {obj.componentId}</p>
+        <button
+          type="button"
+          disabled={isViewer || mutationCtx === null || resetPositionBusy}
+          onClick={handleResetPosition}
+          data-testid="inspector-reset-position"
+          className={[
+            'w-full rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground',
+            'hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50',
+          ].join(' ')}
+        >
+          {resetPositionBusy ? 'Resetting…' : 'Reset to master placement'}
+        </button>
+        <p className="text-[10px] text-muted-foreground/70">
+          Snap x/y and rotation back to the master. Width/height are kept.
+        </p>
+
+        {/* Inline overrides — leaves with non-text overrides + a single
+            Reset overrides button. Folded into the Component section so
+            every instance-level control lives in one place. Hidden when
+            the master is missing (see panel below). */}
+        {master.status !== 'missing' && (
+          <div className="mt-2 flex flex-col gap-2 border-t border-border/40 pt-2">
+            <InstanceLeavesPanel
+              obj={obj}
+              master={master.snapshot}
+              masterStatus={master.status}
+              mutationCtx={mutationCtx}
+              isViewer={isViewer}
+              inline
+            />
+            <button
+              type="button"
+              disabled={isViewer || mutationCtx === null || overridesEmpty}
+              onClick={handleResetAll}
+              data-testid="inspector-reset-overrides"
+              className={[
+                'w-full rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground',
+                'hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              Reset overrides
+            </button>
+            <p className="text-[10px] text-muted-foreground/70">
+              Clears all leaf + animation overrides except the seeded text content.
+            </p>
+          </div>
+        )}
       </Section>
 
       {/* Identity (name + lock) */}
@@ -1028,7 +1384,36 @@ function ComponentInstanceInspector({
         />
       </Section>
 
-      {/* Animations — component instances can be animated like any other node */}
+      {/* M16 P7 — Override editor (master-missing path only).
+          The synced + pending states are folded into the Component
+          section above so all instance-level controls live together. */}
+      {master.status === 'missing' && (
+        <InstanceMissingMasterPanel
+          obj={obj}
+          mutationCtx={mutationCtx}
+          isViewer={isViewer}
+          folderId={folderId}
+        />
+      )}
+
+      {/* M16 P8 — Component animations parallel surface.
+          Mirrors the timeline's component group: one row per master
+          step, each with the same per-instance override controls. The
+          group manages its own drag-reorder gesture (writes `order`
+          overrides in a single Yjs transaction). */}
+      {master.status !== 'missing' && (
+        <Section title="Component animations" storageKey="comp-instance-anim">
+          <ComponentAnimationGroup
+            instance={obj}
+            mutationCtx={mutationCtx}
+            disabled={isViewer}
+            hideHeader
+          />
+        </Section>
+      )}
+
+      {/* Animations — component instances can also carry their own
+          slide-level animation steps (separate from the master's). */}
       {animMutationCtx !== null && (
         <AnimationsSection
           objectId={obj.id}
@@ -1043,6 +1428,494 @@ function ComponentInstanceInspector({
         <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// M16 P7 — Instance leaves panel
+// ---------------------------------------------------------------------------
+
+interface InstanceLeavesPanelProps {
+  obj: ComponentInstanceObject
+  master: ComponentSnapshot | null
+  masterStatus: 'pending' | 'synced' | 'missing'
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx']
+  isViewer: boolean
+  /** When true, render the body without the surrounding Section
+   *  (caller already provides a container — used to fold the panel
+   *  into the Component section). */
+  inline?: boolean
+}
+
+/**
+ * Lists every leaf in the master subtree as a collapsible override row.
+ *
+ * Master snapshots are flat SlideObject arrays (groups are encoded via
+ * `groupId` membership rather than nested children); the panel mirrors
+ * the master tree structure by indenting leaves whose `groupId` matches
+ * a previously-seen leaf id at depth 0. We don't recurse N levels — the
+ * promote step (M16 P5) flattens nesting deeper than that.
+ *
+ * Each row is keyed by the leaf id so React reuses the row's collapse
+ * state across master mutations, and so editing one leaf's override
+ * does not re-render unrelated rows (the row reads its own override
+ * slice from `obj.overrides.leaves[leafId]`).
+ */
+function InstanceLeavesPanel({
+  obj,
+  master,
+  masterStatus,
+  mutationCtx,
+  isViewer,
+  inline = false,
+}: InstanceLeavesPanelProps) {
+  const leaves = master?.objects ?? []
+  // Only render leaves that carry MEANINGFUL overrides — meaningful
+  // means anything other than the seeded text copy that
+  // seedInstanceTextCopy plants on every instance at creation time. If
+  // a leaf's override slot only contains `text` (and nothing else),
+  // it's just the captured master copy and isn't a user-authored
+  // change, so we skip it.
+  const modifiedLeaves = leaves.filter((leaf) => {
+    const ov = obj.overrides?.leaves?.[leaf.id]
+    if (ov === undefined) return false
+    return countMeaningfulOverrides(ov) > 0
+  })
+  const body = (
+    <>
+      {masterStatus === 'pending' && (
+        <p className="text-[11px] text-muted-foreground" data-testid="leaves-loading">
+          Loading master…
+        </p>
+      )}
+      {masterStatus !== 'pending' && modifiedLeaves.length === 0 && (
+        <p className="text-[11px] text-muted-foreground/70">
+          No overrides — instance matches master.
+        </p>
+      )}
+      {modifiedLeaves.map((leaf) => {
+        const ov = obj.overrides?.leaves?.[leaf.id]
+        return (
+          <LeafOverrideRow
+            key={leaf.id}
+            leaf={leaf}
+            override={ov}
+            instanceId={obj.id}
+            mutationCtx={mutationCtx}
+            disabled={isViewer}
+          />
+        )
+      })}
+    </>
+  )
+  if (inline) return <div className="flex flex-col">{body}</div>
+  return (
+    <Section title="Instance overrides" storageKey="comp-instance-overrides">
+      {body}
+    </Section>
+  )
+}
+
+/**
+ * Returns the number of override keys that count as a "real" override
+ * — every key in the leaf override slot except `text` (which is seeded
+ * verbatim from the master at instance-creation time and should not
+ * surface as a user-authored modification). For `transform`, we count
+ * each axis separately.
+ */
+function countMeaningfulOverrides(ov: LeafOverridePayload): number {
+  let n = 0
+  for (const key of Object.keys(ov) as Array<keyof LeafOverridePayload>) {
+    if (key === 'text') continue
+    if (key === 'transform') {
+      const t = ov.transform
+      if (t === undefined) continue
+      if (t.x !== undefined) n += 1
+      if (t.y !== undefined) n += 1
+      continue
+    }
+    if (ov[key] !== undefined) n += 1
+  }
+  return n
+}
+
+// ---------------------------------------------------------------------------
+// LeafOverrideRow — one row in the leaves panel
+// ---------------------------------------------------------------------------
+
+interface LeafOverrideRowProps {
+  leaf: SlideObject
+  override: NonNullable<ComponentInstanceObject['overrides']>['leaves'] extends
+    | Record<string, infer V>
+    | undefined
+    ? V | undefined
+    : never
+  instanceId: string
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx']
+  disabled: boolean
+}
+
+/**
+ * One collapsible row per leaf. Renders the override-supported fields
+ * for the leaf type; surfaces a "modified" badge when at least one
+ * field has an override; offers a "Reset to master" button that
+ * dispatches `clearLeafOverride` for the whole leaf in a single
+ * transaction.
+ *
+ * Rule: each individual control writes via the state-sync helper
+ * (setLeafOverride / clearLeafOverride). The row never pokes
+ * obj.overrides directly — that's the contract from the data layer.
+ */
+function LeafOverrideRow({
+  leaf,
+  override,
+  instanceId,
+  mutationCtx,
+  disabled,
+}: LeafOverrideRowProps): JSX.Element | null {
+  const [expanded, setExpanded] = useState(true)
+
+  if (override === undefined) return null
+
+  const entries = buildOverrideEntries(override, instanceId, leaf.id, mutationCtx)
+  if (entries.length === 0) return null
+
+  const handleResetLeaf = (): void => {
+    if (mutationCtx === null) return
+    clearLeafOverride(mutationCtx, instanceId, leaf.id)
+  }
+
+  const label = leaf.name !== undefined && leaf.name !== '' ? leaf.name : leaf.type
+
+  return (
+    <div
+      data-testid={`leaf-override-row-${leaf.id}`}
+      data-modified="true"
+      className="border-b border-border/40 last:border-b-0"
+    >
+      {/* Header — toggle + name + count + reset (matches Section pill style) */}
+      <div className="flex items-center gap-1 py-1">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
+          className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/70 hover:text-foreground"
+        >
+          <ChevronDown
+            className={`h-3 w-3 transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`}
+            aria-hidden="true"
+          />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">{label}</span>
+        <span
+          className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
+          data-testid={`leaf-badge-${leaf.id}`}
+        >
+          {entries.length}
+        </span>
+        <button
+          type="button"
+          disabled={disabled || mutationCtx === null}
+          onClick={handleResetLeaf}
+          aria-label={`Reset ${label} to master`}
+          title="Reset all"
+          data-testid={`leaf-reset-${leaf.id}`}
+          className="flex-shrink-0 rounded px-1.5 text-[10px] text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Reset
+        </button>
+      </div>
+      {/* Body — read-only list of overridden properties + per-property
+          reset. Mounted only when expanded so the panel render stays
+          O(visible-rows). */}
+      {expanded && (
+        <ul className="flex flex-col gap-px pb-1.5 pl-5">
+          {entries.map((e) => (
+            <li
+              key={e.key}
+              className="flex items-center gap-1.5 text-[10px]"
+              data-testid={`leaf-override-entry-${leaf.id}-${e.key}`}
+            >
+              <span className="w-16 flex-shrink-0 text-muted-foreground">{e.label}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-foreground/90">
+                {e.value}
+              </span>
+              <button
+                type="button"
+                disabled={disabled || mutationCtx === null}
+                onClick={e.clear}
+                aria-label={`Reset ${e.label}`}
+                title={`Reset ${e.label}`}
+                data-testid={`leaf-override-clear-${leaf.id}-${e.key}`}
+                className="flex-shrink-0 rounded px-1 text-muted-foreground/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Reset
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Override entry construction — turn a LeafOverridePayload into a flat
+// list of {label, value, clear} entries. Skips `text` (the seeded master
+// copy is not a user-authored override). Every other key surfaces; rare
+// types render as "modified" to keep the inspector readable.
+// ---------------------------------------------------------------------------
+
+interface OverrideEntry {
+  key: string
+  label: string
+  value: string
+  clear: () => void
+}
+
+const OVERRIDE_LABELS: Partial<Record<keyof LeafOverridePayload, string>> = {
+  x: 'X',
+  y: 'Y',
+  width: 'Width',
+  height: 'Height',
+  rotation: 'Rotation',
+  opacity: 'Opacity',
+  name: 'Name',
+  locked: 'Locked',
+  shadow: 'Shadow',
+  blur: 'Blur',
+  hyperlink: 'Hyperlink',
+  aspectLocked: 'Aspect lock',
+  flipH: 'Flip H',
+  flipV: 'Flip V',
+  fill: 'Fill',
+  fillAlpha: 'Fill α',
+  fillStyle: 'Fill style',
+  stroke: 'Stroke',
+  strokeWidth: 'Stroke W',
+  strokeDash: 'Stroke dash',
+  strokeAlpha: 'Stroke α',
+  cornerRadius: 'Corners',
+  fontSize: 'Size',
+  fontWeight: 'Weight',
+  color: 'Color',
+  colorAlpha: 'Color α',
+  align: 'Align',
+  fontFamily: 'Font',
+  vAlign: 'V-align',
+  lineHeight: 'Line height',
+  letterSpacing: 'Letter sp.',
+  paragraphSpaceBefore: 'Para before',
+  paragraphSpaceAfter: 'Para after',
+  textTransform: 'Transform',
+  textStyleOverrides: 'Text style',
+  italic: 'Italic',
+  assetId: 'Asset',
+  imageRect: 'Image rect',
+  fit: 'Fit',
+  mask: 'Mask',
+}
+
+function formatColor(v: number | TokenRef): string {
+  return typeof v === 'number' ? numberToHex(v).toUpperCase() : `token:${v.$token}`
+}
+
+function formatOverrideValue(key: keyof LeafOverridePayload, value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (key === 'fill' || key === 'stroke' || key === 'color') {
+    return formatColor(value as number | TokenRef)
+  }
+  if (typeof value === 'boolean') return value ? 'on' : 'off'
+  if (typeof value === 'number') {
+    if (key === 'opacity' || key === 'fillAlpha' || key === 'strokeAlpha' || key === 'colorAlpha') {
+      return `${Math.round(value * 100)}%`
+    }
+    if (key === 'rotation') return `${Math.round(value * 10) / 10}°`
+    return String(Math.round(value * 100) / 100)
+  }
+  if (typeof value === 'string') return value
+  if (Array.isArray(value))
+    return value.length === 0 ? '[]' : `${value.length} item${value.length === 1 ? '' : 's'}`
+  return 'modified'
+}
+
+function buildOverrideEntries(
+  ov: LeafOverridePayload,
+  instanceId: string,
+  leafId: string,
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx'],
+): OverrideEntry[] {
+  const entries: OverrideEntry[] = []
+  // transform — split into per-axis offsets so each can be cleared.
+  if (ov.transform?.x !== undefined) {
+    entries.push({
+      key: 'transform-x',
+      label: 'X offset',
+      value: `${ov.transform.x}px`,
+      clear: () => {
+        if (mutationCtx === null) return
+        // writeTransform deletes axes whose value is `undefined`. The
+        // public patch type doesn't model the sentinel, so we widen via
+        // unknown to opt in to the per-axis clear semantics.
+        setLeafOverride(mutationCtx, instanceId, leafId, {
+          transform: { x: undefined } as unknown as { x?: number; y?: number },
+        })
+      },
+    })
+  }
+  if (ov.transform?.y !== undefined) {
+    entries.push({
+      key: 'transform-y',
+      label: 'Y offset',
+      value: `${ov.transform.y}px`,
+      clear: () => {
+        if (mutationCtx === null) return
+        setLeafOverride(mutationCtx, instanceId, leafId, {
+          transform: { y: undefined } as unknown as { x?: number; y?: number },
+        })
+      },
+    })
+  }
+  // Generic walk for every remaining override key. `text` is excluded
+  // because it's seeded from the master at instance creation and is
+  // not a user-authored modification.
+  for (const key of Object.keys(ov) as Array<keyof LeafOverridePayload>) {
+    if (key === 'text' || key === 'transform') continue
+    const value = ov[key]
+    if (value === undefined) continue
+    const label = OVERRIDE_LABELS[key] ?? key
+    entries.push({
+      key,
+      label,
+      value: formatOverrideValue(key, value),
+      clear: () => {
+        if (mutationCtx === null) return
+        setLeafOverride(mutationCtx, instanceId, leafId, {
+          [key]: undefined,
+        } as unknown as Parameters<typeof setLeafOverride>[3])
+      },
+    })
+  }
+  return entries
+}
+
+// ---------------------------------------------------------------------------
+// InstanceMissingMasterPanel — shown when the master doc is gone
+// ---------------------------------------------------------------------------
+
+interface InstanceMissingMasterPanelProps {
+  obj: ComponentInstanceObject
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx']
+  isViewer: boolean
+  folderId: string | null
+}
+
+/**
+ * Replaces the leaves panel when the master Y.Doc resolves to "missing"
+ * (cache reports synced + null snapshot, i.e. server-side delete). Two
+ * actions are offered:
+ *
+ *   - Detach (preserve nothing)
+ *       Removes the instance node. There's no master snapshot to expand
+ *       so we can't do P6's "place master objects on the slide" detach;
+ *       the placeholder shape and any local overrides are dropped.
+ *
+ *   - Replace…
+ *       Opens the standard ComponentPickerDrawer. Picking a component
+ *       rewrites instance.componentId in a single Yjs transaction so the
+ *       renderer + cache pick up the new master automatically.
+ */
+function InstanceMissingMasterPanel({
+  obj,
+  mutationCtx,
+  isViewer,
+  folderId,
+}: InstanceMissingMasterPanelProps): JSX.Element {
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const folderComponents = useFolderComponents(folderId, { eager: true })
+  const api = useApi()
+  const [usageCounts, setUsageCounts] = useState<Record<string, number> | null>(null)
+
+  const handleDetach = (): void => {
+    if (mutationCtx === null) return
+    removeObject(mutationCtx, obj.id)
+  }
+  const handleOpenReplace = (): void => {
+    setPickerOpen(true)
+    void folderComponents.invalidate()
+    if (folderId !== null) {
+      setUsageCounts(null)
+      api
+        .listComponentInstanceCounts(folderId)
+        .then((counts) => setUsageCounts(counts))
+        .catch(() => setUsageCounts({}))
+    } else {
+      setUsageCounts({})
+    }
+  }
+  const handlePickReplacement = (component: ComponentSummary): void => {
+    if (mutationCtx === null) return
+    // Single updateObject call → single Yjs transaction → single undo step.
+    // We deliberately keep the existing overrides slot intact: the new
+    // master may share leaf ids (rare, but supported via stable promote
+    // ids), and dangling overrides are silently skipped by the resolver.
+    // Users who want a clean slate hit "Reset overrides" after replacing.
+    updateObject<ComponentInstanceObject>(mutationCtx, obj.id, {
+      componentId: component.id,
+      componentName: component.name,
+    } as SlideObjectPatch<ComponentInstanceObject>)
+    setPickerOpen(false)
+  }
+
+  return (
+    <>
+      <Section title="Missing master" storageKey="comp-missing">
+        <div
+          className="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2"
+          data-testid="missing-master-panel"
+        >
+          <p className="text-[11px] text-foreground">
+            The component this instance references no longer exists. The shape is preserved on the
+            slide as a placeholder.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              disabled={isViewer || mutationCtx === null}
+              onClick={handleDetach}
+              data-testid="missing-master-detach"
+              className={[
+                'rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground',
+                'hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              Detach (preserve nothing)
+            </button>
+            <button
+              type="button"
+              disabled={isViewer || mutationCtx === null || folderId === null}
+              onClick={handleOpenReplace}
+              data-testid="missing-master-replace"
+              className={[
+                'rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground',
+                'hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              Replace…
+            </button>
+          </div>
+        </div>
+      </Section>
+      <ComponentPickerDrawer
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        components={folderComponents.components}
+        loading={folderComponents.loading}
+        usageCounts={usageCounts}
+        onPick={handlePickReplacement}
+      />
+    </>
   )
 }
 
@@ -1136,12 +2009,39 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
     applyShapeMask(mutationCtx, maskPair.image.id, maskPair.shape.id)
   }
 
+  // Promote the current multi-selection to a shared component template.
+  // Cannot include a componentInstance in the source set — matches the
+  // same guard surfaced in the right-click menu.
+  const containsInstance = selectedObjects.some((o) => o.type === 'componentInstance')
+  const canCreateTemplate = !isViewer && selectedObjects.length >= 1 && !containsInstance
+  const runCreateTemplate = (): void => {
+    if (!canCreateTemplate) return
+    window.dispatchEvent(
+      new CustomEvent('narrative:create-component-template', { detail: { ids: selectedIds } }),
+    )
+  }
+
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       <Section title={`${selectedIds.length} objects`} storageKey="multi-header">
         <p className="text-[10px] text-muted-foreground/70">
           Align, distribute + layer actions apply to every selected object.
         </p>
+      </Section>
+      <Section title="Component" storageKey="multi-component">
+        <button
+          type="button"
+          onClick={runCreateTemplate}
+          disabled={!canCreateTemplate}
+          title={
+            containsInstance
+              ? 'Cannot include a component instance in a new template'
+              : 'Create a reusable component template from the selection'
+          }
+          className="w-full rounded-md border border-border bg-input px-2 py-1 text-xs text-foreground hover:bg-input/70 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Create component template
+        </button>
       </Section>
       <Section title="Align" storageKey="multi-align">
         <div className="grid grid-cols-6 gap-1">
@@ -3744,12 +4644,45 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
   )
 }
 
-function TextSection({ obj, patch }: TextSectionProps) {
+function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   // M16 P2: folder text style tokens
   const folderTokensSnapshot = useFolderTokens()
+  const { addToken, updateToken } = useFolderMutations()
   const textStylesList = Object.values(folderTokensSnapshot.textStyles)
+  const [presetMenuOpen, setPresetMenuOpen] = useState(false)
+  const presetMenuRef = useRef<HTMLDivElement>(null)
+  // Close the preset action menu on any outside click.
+  useEffect(() => {
+    if (!presetMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (presetMenuRef.current && !presetMenuRef.current.contains(e.target as Node)) {
+        setPresetMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [presetMenuOpen])
+  const [newPresetOpen, setNewPresetOpen] = useState(false)
+  const [newPresetName, setNewPresetName] = useState('')
+  const newPresetInputRef = useRef<HTMLInputElement>(null)
+  // Auto-focus the modal input on open + suggest a non-colliding default.
+  useEffect(() => {
+    if (!newPresetOpen) return
+    const existing = new Set(textStylesList.map((s) => s.name.toLowerCase()))
+    let n = 1
+    let suggested = 'New style'
+    while (existing.has(suggested.toLowerCase())) {
+      n += 1
+      suggested = `New style ${n}`
+    }
+    setNewPresetName(suggested)
+    requestAnimationFrame(() => {
+      newPresetInputRef.current?.focus()
+      newPresetInputRef.current?.select()
+    })
+  }, [newPresetOpen, textStylesList])
 
   // Re-render whenever the active text-edit selection changes so the
   // Bold / Italic / Underline buttons can highlight based on the run
@@ -3772,6 +4705,47 @@ function TextSection({ obj, patch }: TextSectionProps) {
     typeof rawObj['textStyleId'] === 'string' ? rawObj['textStyleId'] : undefined
   const linkedTextStyle =
     textStyleId !== undefined ? (folderTokensSnapshot.textStyles[textStyleId] ?? null) : null
+
+  // Override-tracking patch wrapper. When the object is linked to a
+  // folder text style and the patch touches one of the typography
+  // fields that participates in preset binding, we record the field
+  // name in `textStyleOverrides` so a later edit to the underlying
+  // token in folder settings will skip that field. Non-typography
+  // patches (align, italic, listStyle, …) pass through unmodified.
+  // Patches that already include `textStyleOverrides` (e.g. "Reset to
+  // preset" writing []) bypass the wrapper to avoid clobbering an
+  // explicit override-state reset.
+  //
+  // We alias the inbound `patch` prop to `rawPatch` and re-bind the
+  // local name `patch` to the wrapper so every existing call site in
+  // this section automatically picks up override-tracking with no
+  // further edits.
+  const patch = (p: SlideObjectPatch<TextObject>): void => {
+    const anyP = p as unknown as Record<string, unknown>
+    if (textStyleId === undefined) {
+      rawPatch(p)
+      return
+    }
+    if ('textStyleOverrides' in anyP) {
+      rawPatch(p)
+      return
+    }
+    const touched: TextStyleOverrideKey[] = []
+    for (const k of Object.keys(anyP)) {
+      if (isTextStyleOverrideKey(k)) touched.push(k)
+    }
+    if (touched.length === 0) {
+      rawPatch(p)
+      return
+    }
+    const existing =
+      (obj as { textStyleOverrides?: TextStyleOverrideKey[] }).textStyleOverrides ?? []
+    const merged = Array.from(new Set([...existing, ...touched]))
+    rawPatch({
+      ...p,
+      textStyleOverrides: merged,
+    } as unknown as SlideObjectPatch<TextObject>)
+  }
 
   const applyTextStyle = (styleId: string | null) => {
     if (styleId === null) {
@@ -3796,8 +4770,20 @@ function TextSection({ obj, patch }: TextSectionProps) {
       ...(style.size !== undefined ? { fontSize: style.size } : {}),
       ...(style.lineHeight !== undefined ? { lineHeight: style.lineHeight } : {}),
       ...(style.letterSpacing !== undefined ? { letterSpacing: style.letterSpacing } : {}),
+      // Paragraph spacing — write 0 explicitly when the preset has
+      // none so reapplying a preset without spacing resets a previous
+      // override (mirrors the textTransform behaviour below).
+      paragraphSpaceBefore: style.paragraphSpaceBefore ?? 0,
+      paragraphSpaceAfter: style.paragraphSpaceAfter ?? 0,
       ...(colorNum !== undefined ? { color: colorNum } : {}),
+      // Always write textTransform — undefined explicitly clears any
+      // previous override so a preset without a transform resets the
+      // object back to "none" instead of inheriting the old value.
+      textTransform: style.textTransform ?? 'none',
       textStyleId: style.id,
+      // Reset the override list — applying a preset is a fresh
+      // baseline, not a per-field tweak.
+      textStyleOverrides: [],
     } as unknown as SlideObjectPatch<TextObject>)
   }
 
@@ -3836,17 +4822,113 @@ function TextSection({ obj, patch }: TextSectionProps) {
                   </option>
                 ))}
               </select>
-              {/* Detach button — visible only when a style is linked */}
-              {linkedTextStyle !== null && !isViewer && (
-                <button
-                  type="button"
-                  title="Detach style — keep current values"
-                  aria-label="Detach text style"
-                  onClick={() => applyTextStyle(null)}
-                  className="h-7 shrink-0 rounded-md border border-input px-1.5 text-[10px] text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                >
-                  Detach
-                </button>
+              {/* Preset action menu — "Update" pushes current object
+                  typography back to the linked token (only meaningful
+                  when one is linked); "Create new preset" promotes the
+                  current object's typography to a new folder text
+                  style and links this object to it. */}
+              {!isViewer && (
+                <div ref={presetMenuRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    aria-label="Preset actions"
+                    aria-haspopup="menu"
+                    aria-expanded={presetMenuOpen}
+                    onClick={() => setPresetMenuOpen((v) => !v)}
+                    className="flex h-7 w-7 items-center justify-center rounded-md border border-input text-muted-foreground hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    title="Preset actions"
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  {presetMenuOpen && (
+                    <div
+                      role="menu"
+                      aria-label="Preset actions"
+                      className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-border bg-popover py-1 shadow-lg"
+                    >
+                      {linkedTextStyle !== null && (
+                        <button
+                          role="menuitem"
+                          type="button"
+                          onClick={() => {
+                            // Reset = re-apply the linked preset's
+                            // typography onto this object, AND drop
+                            // every per-run inline override so
+                            // hand-formatted highlights (a bolded
+                            // word, a coloured span) are wiped too.
+                            // The user's mental model is "back to the
+                            // preset, no exceptions".
+                            clearAllInlineRunAttrs(obj.text, [
+                              'fontFamily',
+                              'fontWeight',
+                              'fontSize',
+                              'color',
+                              'italic',
+                              'underline',
+                            ])
+                            applyTextStyle(linkedTextStyle.id)
+                            setPresetMenuOpen(false)
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+                        >
+                          <RotateCcw className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                          Reset to preset
+                        </button>
+                      )}
+                      {linkedTextStyle !== null && (
+                        <button
+                          role="menuitem"
+                          type="button"
+                          onClick={() => {
+                            // Push the current object's typography back
+                            // onto the linked token — same shape that
+                            // applyTextStyle would write in reverse.
+                            const currentColor =
+                              typeof obj.color === 'number'
+                                ? `#${obj.color.toString(16).padStart(6, '0')}`
+                                : undefined
+                            updateToken('textStyles', linkedTextStyle.id, {
+                              ...(typeof obj.fontFamily === 'string'
+                                ? { family: obj.fontFamily }
+                                : {}),
+                              ...(typeof obj.fontWeight === 'number'
+                                ? { weight: obj.fontWeight }
+                                : {}),
+                              ...(typeof obj.fontSize === 'number' ? { size: obj.fontSize } : {}),
+                              ...(typeof obj.lineHeight === 'number'
+                                ? { lineHeight: obj.lineHeight }
+                                : {}),
+                              ...(typeof obj.letterSpacing === 'number'
+                                ? { letterSpacing: obj.letterSpacing }
+                                : {}),
+                              paragraphSpaceBefore: obj.paragraphSpaceBefore ?? 0,
+                              paragraphSpaceAfter: obj.paragraphSpaceAfter ?? 0,
+                              ...(currentColor !== undefined ? { color: currentColor } : {}),
+                              textTransform: obj.textTransform ?? 'none',
+                            })
+                            setPresetMenuOpen(false)
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+                        >
+                          <Save className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                          Update preset
+                        </button>
+                      )}
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={() => {
+                          setPresetMenuOpen(false)
+                          setNewPresetOpen(true)
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
+                      >
+                        <Plus className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                        Create new text style
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -4004,6 +5086,27 @@ function TextSection({ obj, patch }: TextSectionProps) {
           />
         </div>
 
+        {/* Case transform — visual only, underlying text stays in
+            original casing. Click the active option again to reset. */}
+        <div className="flex items-center gap-2">
+          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Case</span>
+          <AlignButtonGroup
+            value={obj.textTransform ?? 'none'}
+            onChange={(v) =>
+              patch({
+                textTransform: v === 'none' ? undefined : v,
+              } as unknown as SlideObjectPatch<TextObject>)
+            }
+            ariaLabel="Text case"
+            options={[
+              { value: 'none', label: 'As typed', Icon: Type },
+              { value: 'uppercase', label: 'UPPERCASE', Icon: CaseUpper },
+              { value: 'lowercase', label: 'lowercase', Icon: CaseLower },
+              { value: 'capitalize', label: 'Capitalize', Icon: CaseSensitive },
+            ]}
+          />
+        </div>
+
         {/* Line height + Letter spacing in a single 2-column row,
             Figma-style. Glyphs hint the field; values stay numeric. */}
         <div className="flex items-center gap-1">
@@ -4028,6 +5131,45 @@ function TextSection({ obj, patch }: TextSectionProps) {
             value={obj.letterSpacing ?? 0}
             step={0.5}
             onChange={(v) => patch({ letterSpacing: v } as SlideObjectPatch<TextObject>)}
+          />
+        </div>
+
+        {/* Paragraph spacing — vertical gap above and below each
+            paragraph block. The renderer wraps every line break in a
+            <div> with these margins so multi-paragraph text gets the
+            requested room without the user fiddling with line-height. */}
+        <div className="flex items-center gap-1">
+          <CompactNumberField
+            id={`inspector-paragraphspacebefore-${obj.id}`}
+            glyph={
+              <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                ¶↑
+              </span>
+            }
+            ariaLabel="Paragraph space before"
+            value={obj.paragraphSpaceBefore ?? 0}
+            step={1}
+            onChange={(v) =>
+              patch({
+                paragraphSpaceBefore: Math.max(0, v),
+              } as SlideObjectPatch<TextObject>)
+            }
+          />
+          <CompactNumberField
+            id={`inspector-paragraphspaceafter-${obj.id}`}
+            glyph={
+              <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                ¶↓
+              </span>
+            }
+            ariaLabel="Paragraph space after"
+            value={obj.paragraphSpaceAfter ?? 0}
+            step={1}
+            onChange={(v) =>
+              patch({
+                paragraphSpaceAfter: Math.max(0, v),
+              } as SlideObjectPatch<TextObject>)
+            }
           />
         </div>
 
@@ -4152,7 +5294,150 @@ function TextSection({ obj, patch }: TextSectionProps) {
           </div>
         </div>
       </Section>
+
+      {newPresetOpen && (
+        <NewTextStylePresetModal
+          initialName={newPresetName}
+          existingNames={textStylesList.map((s) => s.name)}
+          onCancel={() => setNewPresetOpen(false)}
+          onConfirm={(name) => {
+            const currentColor =
+              typeof obj.color === 'number'
+                ? `#${obj.color.toString(16).padStart(6, '0')}`
+                : '#000000'
+            const newId = addToken('textStyles', {
+              name,
+              family: obj.fontFamily ?? 'Inter, system-ui, sans-serif',
+              weight: typeof obj.fontWeight === 'number' ? obj.fontWeight : 400,
+              size: typeof obj.fontSize === 'number' ? obj.fontSize : 16,
+              lineHeight: typeof obj.lineHeight === 'number' ? obj.lineHeight : 1.5,
+              letterSpacing: typeof obj.letterSpacing === 'number' ? obj.letterSpacing : 0,
+              ...(typeof obj.paragraphSpaceBefore === 'number' && obj.paragraphSpaceBefore > 0
+                ? { paragraphSpaceBefore: obj.paragraphSpaceBefore }
+                : {}),
+              ...(typeof obj.paragraphSpaceAfter === 'number' && obj.paragraphSpaceAfter > 0
+                ? { paragraphSpaceAfter: obj.paragraphSpaceAfter }
+                : {}),
+              color: currentColor,
+              ...(obj.textTransform !== undefined && obj.textTransform !== 'none'
+                ? { textTransform: obj.textTransform }
+                : {}),
+            })
+            patch({ textStyleId: newId } as unknown as SlideObjectPatch<TextObject>)
+            setNewPresetOpen(false)
+          }}
+        />
+      )}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// NewTextStylePresetModal — captures the name for a fresh preset
+// promoted from the current TextObject's typography.
+// ---------------------------------------------------------------------------
+
+interface NewTextStylePresetModalProps {
+  initialName: string
+  existingNames: ReadonlyArray<string>
+  onConfirm: (name: string) => void
+  onCancel: () => void
+}
+
+function NewTextStylePresetModal({
+  initialName,
+  existingNames,
+  onConfirm,
+  onCancel,
+}: NewTextStylePresetModalProps) {
+  const [name, setName] = useState(initialName)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [])
+
+  // Esc closes; the parent provides cancellation logic.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onCancel()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onCancel])
+
+  const trimmed = name.trim()
+  const lower = trimmed.toLowerCase()
+  const collides = existingNames.some((n) => n.toLowerCase() === lower)
+  const valid = trimmed !== '' && !collides
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create new text style"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onMouseDown={(e) => {
+        // Close when clicking the backdrop, not the panel itself.
+        if (e.target === e.currentTarget) onCancel()
+      }}
+    >
+      <div className="w-[360px] rounded-lg border border-border bg-popover p-4 shadow-xl">
+        <h3 className="text-sm font-semibold text-foreground">Create new text style</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Saves the current typography as a folder text style and links this object to it.
+        </p>
+        <label
+          htmlFor="new-preset-name"
+          className="mt-3 block text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70"
+        >
+          Name
+        </label>
+        <input
+          id="new-preset-name"
+          ref={inputRef}
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && valid) {
+              e.preventDefault()
+              onConfirm(trimmed)
+            }
+          }}
+          maxLength={80}
+          className="mt-1 w-full rounded-md border border-input field-surface px-2 py-1.5 text-sm text-foreground focus:border-ring focus:outline-none"
+        />
+        {collides && (
+          <p className="mt-1.5 text-[11px] text-destructive">
+            A text style with this name already exists.
+          </p>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-input px-3 py-1.5 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => valid && onConfirm(trimmed)}
+            disabled={!valid}
+            className="btn-brand rounded-md px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -5121,5 +6406,108 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
         </p>
       </div>
     </Section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// M16 P8 — InstanceLeafInspector
+// ---------------------------------------------------------------------------
+
+/**
+ * Inspector shown when the user has double-clicked a ComponentInstance and
+ * selected one of its master leaves. Renders the same per-object sections
+ * as the normal Inspector, but:
+ *   - The `patch` callback is already pre-wired (by the caller) to route
+ *     mutations through setLeafOverridePatch instead of updateObject.
+ *   - No override badges, no "reset this field" buttons — clean per-object UX.
+ *   - No animations section — leaf animations are not individually overridable.
+ *   - No layers panel — the layer order is fixed to the master's order.
+ *   - A small banner reminds the user they are editing inside a component.
+ */
+interface InstanceLeafInspectorProps {
+  leaf: SlideObject
+  instanceId: string
+  objects: SlideObject[]
+  mutationCtx: ReturnType<typeof useSlideObjects>['objectsCtx']
+  isViewer: boolean
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+}
+
+function InstanceLeafInspector({
+  leaf,
+  instanceId: _instanceId,
+  objects: _objects,
+  isViewer,
+  patch,
+}: InstanceLeafInspectorProps) {
+  return (
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto">
+      {/* Context banner */}
+      <div className="border-b border-[#6366f1]/30 bg-[#6366f1]/8 px-3 py-1.5">
+        <p className="text-[10px] text-[#6366f1]">
+          Editing component leaf — changes are saved as instance overrides.
+        </p>
+      </div>
+
+      {isViewer && (
+        <div className="border-b border-border bg-muted/50 px-3 py-1.5">
+          <p className="text-[10px] text-muted-foreground/80">View only</p>
+        </div>
+      )}
+
+      {/* Position + Size */}
+      <PositionSection obj={leaf} patch={patch} disabled={isViewer} layerMutationCtx={null} />
+
+      {/* Transparency for types that don't have an Appearance section */}
+      {leaf.type !== 'rectangle' &&
+        leaf.type !== 'ellipse' &&
+        leaf.type !== 'triangle' &&
+        leaf.type !== 'polygon' &&
+        leaf.type !== 'path' && (
+          <Section title="Transparency" storageKey="leaf-transparency">
+            <TransparencySlider
+              id={`leaf-opacity-${leaf.id}`}
+              value={leaf.opacity}
+              onChange={(v) => patch({ opacity: Math.min(1, Math.max(0, v)) })}
+              disabled={isViewer}
+            />
+          </Section>
+        )}
+
+      {/* Appearance — filled shapes */}
+      {(leaf.type === 'rectangle' ||
+        leaf.type === 'ellipse' ||
+        leaf.type === 'triangle' ||
+        leaf.type === 'polygon' ||
+        leaf.type === 'path') && (
+        <AppearanceSection
+          obj={
+            leaf as RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
+          }
+          patch={
+            patch as (
+              p: SlideObjectPatch<
+                RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
+              >,
+            ) => void
+          }
+        />
+      )}
+
+      {/* Text */}
+      {leaf.type === 'text' && (
+        <TextSection
+          obj={leaf as TextObject}
+          patch={patch as (p: SlideObjectPatch<TextObject>) => void}
+        />
+      )}
+
+      {/* Effects — shadow, blur, link */}
+      <EffectsSection obj={leaf} patch={patch} />
+
+      {/* Image — suppress crop UI for leaf images (cropping a phantom
+          is not supported; the crop overlay writes to the main objects
+          array). */}
+    </div>
   )
 }

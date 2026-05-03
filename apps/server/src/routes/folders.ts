@@ -28,6 +28,7 @@ import { folders, decks } from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -333,4 +334,51 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
 
     return reply.send({ movedCount: result.length })
   })
+
+  // -------------------------------------------------------------------------
+  // GET /folders/:id/active-editors — who is currently editing each deck
+  //
+  // Returns one entry per deck in this folder that has at least one
+  // active editor connected via Hocuspocus. Polled by the folder view to
+  // render presence bubbles on each tile. Owner-only.
+  //
+  // The caller IS included in the result. We deliberately don't filter
+  // their own userId out: in BYPASS_AUTH dev mode every browser session
+  // is 'dev-user' so filtering would erase all bubbles, and in prod the
+  // owner having the deck open in a second tab is still useful info.
+  // -------------------------------------------------------------------------
+  app.get<{ Params: { id: string } }>(
+    '/folders/:id/active-editors',
+    { preHandler: authPreHandler },
+    async (request, reply) => {
+      const { id: folderId } = request.params
+      const userId = request.user!.sub
+
+      const isBypass =
+        (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts?.bypass === true
+
+      // Verify folder ownership.
+      const [owned] = await db
+        .select({ id: folders.id })
+        .from(folders)
+        .where(
+          and(
+            eq(folders.id, folderId),
+            inArray(folders.ownerUserId, isBypass ? [userId, 'demo-user'] : [userId]),
+          ),
+        )
+        .limit(1)
+      if (!owned) {
+        return reply.status(404).send({ error: 'Folder not found' })
+      }
+
+      const folderDecks = await db
+        .select({ id: decks.id })
+        .from(decks)
+        .where(eq(decks.folderId, folderId))
+
+      const snapshot = activeEditorsByDeck(folderDecks.map((d) => d.id))
+      return reply.send(snapshot)
+    },
+  )
 }

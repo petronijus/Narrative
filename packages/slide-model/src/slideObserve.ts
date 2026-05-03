@@ -17,13 +17,25 @@
 
 import * as Y from 'yjs'
 import type { SlideObject, AnimationStep } from '@narrative/shared'
-import type { ObjectChangeSet } from './observe.js'
 import { yMapToPlainObject } from './bindings.js'
 import { yMapToAnimationStep } from './animationBindings.js'
 import type { SlideMutationContext } from './slides.js'
 
-// Re-export ObjectChangeSet for consumers who only import from slideObserve
-export type { ObjectChangeSet }
+/**
+ * Incremental diff dispatched by `subscribeToSlideObjects` once per rAF tick.
+ *
+ * - `added`    — new objects, plain SlideObject form (already converted from Y.Map).
+ * - `removed`  — ids of objects that disappeared.
+ * - `updated`  — per-object patches; multiple writes within a tick are coalesced.
+ * - `snapshot` — full ordered list after the diff is applied; useful for
+ *   bootstrapping new subscribers without replaying the changelog.
+ */
+export interface ObjectChangeSet {
+  added: SlideObject[]
+  removed: string[]
+  updated: Array<{ id: string; patch: Partial<SlideObject> }>
+  snapshot: SlideObject[]
+}
 
 // ---------------------------------------------------------------------------
 // Slide metadata snapshot (for subscribeToSlides)
@@ -192,9 +204,20 @@ export function subscribeToSlideObjectsWithFlush(
   // see no event and the UI stays stale until refresh.
   let lastEmittedOrder: string[] = []
   for (let i = 0; i < objectsArr.length; i++) {
-    const obj = yMapToPlainObject(objectsArr.get(i))
-    currentSnapshot.set(obj.id, obj)
-    lastEmittedOrder.push(obj.id)
+    // Defensive: a Y.Map missing the discriminator (`type`) — older bug
+    // states or partial writes — must not bring the whole subscription
+    // down. Log + skip the bad entry so the rest of the slide still
+    // loads. yMapToPlainObject throws on missing/non-string `type`.
+    try {
+      const obj = yMapToPlainObject(objectsArr.get(i))
+      currentSnapshot.set(obj.id, obj)
+      lastEmittedOrder.push(obj.id)
+    } catch (err) {
+      console.warn(
+        `[subscribeToSlideObjects] skipping malformed object at index ${i} on slide ${slideId}:`,
+        err,
+      )
+    }
   }
 
   let pending: PendingBatch = createPendingBatch()
@@ -361,10 +384,17 @@ export function subscribeToSlideObjectsWithFlush(
     lastEmittedOrder = []
     const fresh_ordered: SlideObject[] = []
     for (let i = 0; i < objectsArr.length; i++) {
-      const obj = yMapToPlainObject(objectsArr.get(i))
-      currentSnapshot.set(obj.id, obj)
-      lastEmittedOrder.push(obj.id)
-      fresh_ordered.push(obj)
+      try {
+        const obj = yMapToPlainObject(objectsArr.get(i))
+        currentSnapshot.set(obj.id, obj)
+        lastEmittedOrder.push(obj.id)
+        fresh_ordered.push(obj)
+      } catch (err) {
+        console.warn(
+          `[subscribeToSlideObjects] skipping malformed object during rebind at index ${i}:`,
+          err,
+        )
+      }
     }
     callback({
       added: fresh_ordered,
@@ -684,20 +714,65 @@ function processTextEvent(
 function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): void {
   const yMap = event.target as Y.Map<unknown>
   const id = yMap.get('id')
-  if (typeof id !== 'string') return
 
-  const changedKeys = event.keys
-  const patch: Record<string, unknown> = {}
-  for (const [key] of changedKeys) {
-    if (key === 'id' || key === 'type') continue
-    patch[key] = yMap.get(key)
+  const merge = (ownerId: string, patch: Record<string, unknown>): void => {
+    if (Object.keys(patch).length === 0) return
+    const existing = pending.updatedPatches.get(ownerId)
+    if (existing !== undefined) {
+      pending.updatedPatches.set(ownerId, { ...existing, ...patch } as Partial<SlideObject>)
+    } else {
+      pending.updatedPatches.set(ownerId, patch as Partial<SlideObject>)
+    }
   }
-  if (Object.keys(patch).length === 0) return
 
-  const existing = pending.updatedPatches.get(id)
-  if (existing !== undefined) {
-    pending.updatedPatches.set(id, { ...existing, ...patch } as Partial<SlideObject>)
-  } else {
-    pending.updatedPatches.set(id, patch as Partial<SlideObject>)
+  if (typeof id === 'string') {
+    // Direct change on the slide-object Y.Map.
+    const patch: Record<string, unknown> = {}
+    for (const [key] of event.keys) {
+      if (key === 'id' || key === 'type') continue
+      // Value may itself be a Y.Type (e.g. fresh `overrides` Y.Map). Convert
+      // to plain JSON so the renderer's applyPatch path always sees the
+      // same shape regardless of the Yjs storage choice.
+      const v = yMap.get(key)
+      patch[key] = v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
+    }
+    merge(id, patch)
+    return
+  }
+
+  // Nested change — e.g. write into instance.overrides.leaves[leafId]. The
+  // event.target Y.Map has no `id`. Walk up the parent chain to find the
+  // id-bearing slide-object Y.Map, then re-emit the top-level field that
+  // owns the changed subtree as a plain-JSON patch. Without this, the
+  // renderer's applyPatch never sees `'overrides' in patch` and the
+  // canvas stays stale until reload.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type AnyType = Y.AbstractType<any>
+  const getParent = (t: AnyType): AnyType | null => {
+    const p = (t as unknown as { parent: unknown }).parent
+    return p instanceof Y.AbstractType ? (p as AnyType) : null
+  }
+
+  let cur: AnyType = yMap as unknown as AnyType
+  for (let depth = 0; depth < 12; depth++) {
+    const parent = getParent(cur)
+    if (parent === null) return
+    if (parent instanceof Y.Map) {
+      const candidateId = parent.get('id')
+      if (typeof candidateId === 'string') {
+        for (const [k, v] of parent.entries()) {
+          if (v === cur) {
+            if (k !== 'id' && k !== 'type') {
+              const plain =
+                v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
+              merge(candidateId, { [k]: plain })
+            }
+            return
+          }
+        }
+        return
+      }
+    }
+    cur = parent
   }
 }

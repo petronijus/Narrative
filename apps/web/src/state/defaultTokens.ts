@@ -145,9 +145,9 @@ export const DEFAULT_TEXT_STYLES: DefaultTextStyle[] = [
     letterSpacing: 0.01,
     colorKey: 'neutral-500',
   },
-  // Footnote / source / fine print.
+  // Footnote / source / fine print + slide page numbers.
   {
-    name: 'Footnote',
+    name: 'Footnotes and pages',
     family: 'Inter',
     weight: 400,
     size: 11,

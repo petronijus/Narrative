@@ -42,6 +42,7 @@ import {
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { useTextEdit } from '../state/TextEditContext.js'
 
 export interface TextEditOverlayProps {
   obj: TextObject
@@ -225,6 +226,7 @@ function getElementInnerText(el: HTMLElement): string {
 export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const canvas = useCanvasInstance()
+  const { consumeSelectAllOnEnter, clearSelectAllOnEnter } = useTextEdit()
   /**
    * Fade the Pixi text node during inline edit so the contenteditable
    * is the only visible rendering. Keep the node in the render tree
@@ -272,6 +274,9 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       textAlign: obj.align,
       color: hexToCss(obj.color),
       caretColor: hexToCss(obj.color),
+      ...(obj.textTransform !== undefined && obj.textTransform !== 'none'
+        ? { textTransform: obj.textTransform }
+        : {}),
     }),
     [
       obj.color,
@@ -283,6 +288,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       obj.lineHeight,
       obj.letterSpacing,
       obj.align,
+      obj.textTransform,
     ],
   )
 
@@ -293,12 +299,15 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     el.innerHTML = buildOverlayHtml(obj)
     setFaded(true)
     el.focus()
-    // Place caret at end so users continue from where they left off.
+    // For freshly-created text (toolbar drop), select everything so the first
+    // keystroke replaces the placeholder. Otherwise place caret at end so the
+    // user continues from where they left off (double-click-to-edit case).
+    const selectAll = consumeSelectAllOnEnter()
     const sel = window.getSelection()
     if (sel !== null) {
       const r = document.createRange()
       r.selectNodeContents(el)
-      r.collapse(false)
+      if (!selectAll) r.collapse(false)
       sel.removeAllRanges()
       sel.addRange(r)
     }
@@ -427,6 +436,10 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
 
   // ── User input → Y.Text diff/apply ───────────────────────────────────
   const handleInput = (): void => {
+    // The first real input means the user accepted the placeholder
+    // selection (or typed past the initial caret); the select-all-on-enter
+    // intent has been served.
+    clearSelectAllOnEnter()
     const el = editorRef.current
     if (el === null) return
     const yText = obj.text instanceof Y.Text ? obj.text : null
@@ -557,7 +570,12 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
           if (txt === '') return
           document.execCommand('insertText', false, txt)
         }}
-        onPointerDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => {
+          // User chose a caret position manually — drop the auto-select-all
+          // intent so a subsequent re-mount (StrictMode) doesn't reselect.
+          clearSelectAllOnEnter()
+          e.stopPropagation()
+        }}
       />
     </div>
   )
