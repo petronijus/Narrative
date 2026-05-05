@@ -6,8 +6,8 @@
  * UX:
  *   - Right-side overlay panel, ~340 px wide, shadow + backdrop.
  *   - Header: "Components" title + close button.
- *   - Body: list of components in the current folder (thumbnail + name +
- *     usage count). Click a row to instantiate at the slide centre.
+ *   - Body: list of components in the current folder (thumbnail + name).
+ *     Click a row to stamp at the slide centre.
  *   - Drag-out support: each row has draggable=true with a custom payload
  *     that the canvas drop-target reads to insert at the drop point.
  *   - Empty state: directs the user to the editor right-click → promote
@@ -42,12 +42,6 @@ interface ComponentPickerDrawerProps {
   components: ComponentSummary[] | null
   loading: boolean
   /**
-   * Pre-fetched batch usage counts (componentId → count). Caller fetches
-   * once on drawer open via `api.listComponentInstanceCounts(folderId)` so
-   * each row reads its count synchronously.
-   */
-  usageCounts: Record<string, number> | null
-  /**
    * Called when the user clicks a row. Receives the component summary so the
    * caller can resolve master bbox + insert at the slide centre.
    */
@@ -69,7 +63,6 @@ export function ComponentPickerDrawer({
   onClose,
   components,
   loading,
-  usageCounts,
   onPick,
   onDragStartComponent,
 }: ComponentPickerDrawerProps) {
@@ -148,7 +141,6 @@ export function ComponentPickerDrawer({
                 <ComponentRow
                   key={c.id}
                   component={c}
-                  usageCount={usageCounts !== null ? (usageCounts[c.id] ?? 0) : null}
                   onPick={() => onPick(c)}
                   onDragStart={(e) => onDragStartComponent?.(c, e)}
                 />
@@ -168,13 +160,11 @@ export function ComponentPickerDrawer({
 
 interface ComponentRowProps {
   component: ComponentSummary
-  /** Resolved usage count from the batch fetch, or null until it lands. */
-  usageCount: number | null
   onPick: () => void
   onDragStart: (e: React.DragEvent) => void
 }
 
-function ComponentRow({ component, usageCount, onPick, onDragStart }: ComponentRowProps) {
+function ComponentRow({ component, onPick, onDragStart }: ComponentRowProps) {
   return (
     <li role="listitem">
       <button
@@ -203,11 +193,6 @@ function ComponentRow({ component, usageCount, onPick, onDragStart }: ComponentR
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium text-foreground">{component.name}</p>
-          <p className="truncate text-[10px] text-muted-foreground/70">
-            {usageCount === null
-              ? '—'
-              : `Used ${usageCount} ${usageCount === 1 ? 'time' : 'times'}`}
-          </p>
         </div>
       </button>
     </li>

@@ -215,24 +215,11 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   // M16 P6 — Component picker drawer
   const [pickerOpen, setPickerOpen] = useState(false)
   const folderComponents = useFolderComponents(folderId, { eager: true })
-  // Batch-fetched usage counts for the drawer rows. One request on
-  // every open instead of N (one per row) — avoids replaying every
-  // deck doc N times for folders with many components.
-  const [usageCounts, setUsageCounts] = useState<Record<string, number> | null>(null)
   const handleOpenPicker = useCallback(() => {
     setPickerOpen(true)
     // Re-fetch on open — promotions / deletions in another tab should land.
     void folderComponents.invalidate()
-    // Fire one batch usage-count request; rows render synchronously
-    // once the response lands.
-    if (folderId !== null) {
-      setUsageCounts(null)
-      api
-        .listComponentInstanceCounts(folderId)
-        .then((counts) => setUsageCounts(counts))
-        .catch(() => setUsageCounts({}))
-    }
-  }, [api, folderComponents, folderId])
+  }, [folderComponents])
   const handleClosePicker = useCallback(() => setPickerOpen(false), [])
 
   /**
@@ -905,7 +892,6 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           onClose={handleClosePicker}
           components={folderComponents.components}
           loading={folderComponents.loading}
-          usageCounts={usageCounts}
           onPick={handlePickComponent}
           onDragStartComponent={(component, e) => {
             const payload = JSON.stringify({ componentId: component.id })

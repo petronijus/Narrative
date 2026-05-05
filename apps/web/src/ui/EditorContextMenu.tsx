@@ -210,8 +210,20 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         if (selectedIds.has(hitId)) {
           targetIdsRef.current = [...selectedIds]
         } else {
-          selectOne(hitId)
-          targetIdsRef.current = [hitId]
+          // Mirror left-click behavior (EditorLayout.tsx): if the hit
+          // object belongs to a group, promote selection to the whole
+          // group so right-click actions (e.g. Ungroup) operate on it.
+          const hitObj = objects.find((o) => o.id === hitId)
+          const hitGroupId =
+            hitObj?.groupId !== undefined && hitObj.groupId !== '' ? hitObj.groupId : null
+          if (hitGroupId !== null) {
+            const groupIds = objects.filter((o) => o.groupId === hitGroupId).map((o) => o.id)
+            selectMany(groupIds)
+            targetIdsRef.current = groupIds
+          } else {
+            selectOne(hitId)
+            targetIdsRef.current = [hitId]
+          }
         }
         setMode('object')
         // If the right-clicked target is a single component instance, eagerly
@@ -288,6 +300,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     } as SlideObjectPatch<SlideObject>)
   }
 
+  const handleUngroup = (): void => {
+    if (mutationCtx === null) return
+    const ids = targetIdsRef.current
+    if (ids.length === 0) return
+    ungroupObjects(mutationCtx, ids)
+  }
+
   const handleHyperlink = (): void => {
     window.dispatchEvent(new CustomEvent('narrative:focus-link-inspector'))
   }
@@ -352,17 +371,15 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
       void (async () => {
         try {
-          const { instanceId } = await promoteSelectionToComponent({
+          await promoteSelectionToComponent({
             api,
             folderId,
-            mutationCtx,
             deckCtx,
             activeSlideId,
             targetIds: targets.map((t) => t.id),
             name,
           })
 
-          selectOne(instanceId)
           setPromoteStatus('done')
           window.setTimeout(() => setPromoteStatus('idle'), 2000)
         } catch (err) {
@@ -667,17 +684,8 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const target = resolveTargets()[0]
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
-  // Components are flat: disallow promoting a selection that already
-  // contains a componentInstance. Matches the same guard inside
-  // promoteToComponent (slide-model); gating here surfaces it as a
-  // disabled menu item instead of a throw + error toast.
-  const selectionContainsInstance = resolveTargets().some((t) => t.type === 'componentInstance')
   const canPromote =
-    hasObjectTarget &&
-    mutationCtx !== null &&
-    folderId !== null &&
-    promoteStatus === 'idle' &&
-    !selectionContainsInstance
+    hasObjectTarget && mutationCtx !== null && folderId !== null && promoteStatus === 'idle'
 
   return (
     <ContextMenu>
@@ -762,12 +770,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               Hyperlink…
             </ContextMenuItem>
 
-            <ContextMenuItem
-              disabled={mutationCtx === null || resolveMaskPair() === null}
-              onSelect={handleMaskWithShape}
-            >
-              Mask with shape
-            </ContextMenuItem>
+            {resolveMaskPair() !== null && (
+              <ContextMenuItem disabled={mutationCtx === null} onSelect={handleMaskWithShape}>
+                Mask with shape
+              </ContextMenuItem>
+            )}
+
+            {canUngroup && (
+              <ContextMenuItem
+                onSelect={handleUngroup}
+                data-testid="ungroup"
+                title="Ungroup (Shift+Cmd+G)"
+              >
+                Ungroup
+              </ContextMenuItem>
+            )}
 
             {/* M16 P5 — promote selection to a shared component */}
             <ContextMenuItem

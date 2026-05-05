@@ -127,21 +127,6 @@ export interface ApiClient {
    * Server caps the decoded payload at ~1 MB.
    */
   uploadComponentThumbnail(componentId: string, dataUrl: string): Promise<ComponentSummary>
-  /**
-   * M16 P6 — Count how many `componentInstance` nodes (across every deck in
-   * the component's folder) target this master. Used for delete-time warnings
-   * and the "Used N times" badge in the component picker / Components tab.
-   *
-   * Owner-only. May take 1–2 s on folders with many decks (replays each deck
-   * Y.Doc from `deck_updates`). Server caches nothing — call sparingly.
-   */
-  getComponentInstanceCount(componentId: string): Promise<number>
-  /**
-   * Batch instance counts for every component in a folder. Replays each
-   * deck once and returns a `componentId → count` record. Prefer over
-   * many `getComponentInstanceCount` calls when listing a folder.
-   */
-  listComponentInstanceCounts(folderId: string): Promise<Record<string, number>>
 
   // ---------------------------------------------------------------------------
   // M16 P3 — Folder font API
@@ -625,18 +610,6 @@ export function createApiClient(): ApiClient {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataUrl }),
       }),
-
-    getComponentInstanceCount: async (componentId) => {
-      const data = await requestJson<{ count: number }>(`/components/${componentId}/instance-count`)
-      return data.count
-    },
-
-    listComponentInstanceCounts: async (folderId) => {
-      const data = await requestJson<{ counts: Record<string, number> }>(
-        `/folders/${folderId}/component-instance-counts`,
-      )
-      return data.counts
-    },
 
     // -------------------------------------------------------------------------
     // M16 P3 — Folder font methods

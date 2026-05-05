@@ -800,7 +800,6 @@ export function Inspector() {
     void promoteSelectionToComponent({
       api,
       folderId: deckFolderId,
-      mutationCtx,
       deckCtx,
       activeSlideId,
       targetIds: [targetId],

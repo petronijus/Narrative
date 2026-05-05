@@ -1,30 +1,16 @@
 /**
  * state/promoteSelectionToComponent.ts
  *
- * Extracted from EditorContextMenu's `performPromote` so non-menu code
- * paths (e.g. the slide-number recommendation modal) can run the same
- * pipeline without duplicating bookkeeping.
+ * "Promote selection to component" — stamps-only flow.
  *
- * Pipeline (matches the original EditorContextMenu order):
- *   1. Build a serialisable plan via `promoteToComponent` (slide-model).
- *   2. Mint the Postgres row with the plan's `componentId`.
- *   3. Open a transient Hocuspocus connection to the new component doc
- *      and write masterTree + masterAnimations.
- *   4. In one slide-level Yjs transaction, remove the promoted objects
- *      and insert the instance node.
- *   5. Seed instance text copies so master text edits don't propagate.
- *   6. Select the instance.
- *
- * Returns the created instance id so callers can post-process selection.
+ * Reads the selected objects, writes them as a new component master in
+ * the folder, and leaves the originals on the slide untouched. Stamps
+ * are detached: editing the master afterwards never affects already-
+ * placed objects, so there's no reason to delete the originals.
  */
 
-import {
-  promoteToComponent,
-  removeObject,
-  addObject,
-  seedInstanceTextCopy,
-} from '@narrative/slide-model'
-import type { ObjectsMutationContext, DeckMutationContext } from '@narrative/slide-model'
+import { promoteToComponent } from '@narrative/slide-model'
+import type { DeckMutationContext } from '@narrative/slide-model'
 import { writeComponentMasterTree } from './writeComponentMasterTree.js'
 import { invalidateFolderComponentsCache } from './useFolderComponents.js'
 import type { ApiClient } from '../api/client.js'
@@ -32,7 +18,6 @@ import type { ApiClient } from '../api/client.js'
 export interface PromoteSelectionArgs {
   api: ApiClient
   folderId: string
-  mutationCtx: ObjectsMutationContext
   deckCtx: DeckMutationContext
   activeSlideId: string
   targetIds: string[]
@@ -41,8 +26,8 @@ export interface PromoteSelectionArgs {
 
 export async function promoteSelectionToComponent(
   args: PromoteSelectionArgs,
-): Promise<{ instanceId: string }> {
-  const { api, folderId, mutationCtx, deckCtx, activeSlideId, targetIds, name } = args
+): Promise<{ componentId: string }> {
+  const { api, folderId, deckCtx, activeSlideId, targetIds, name } = args
   const plan = promoteToComponent(deckCtx, activeSlideId, targetIds, folderId)
 
   const component = await api.createComponent(folderId, { id: plan.componentId, name })
@@ -53,17 +38,5 @@ export async function promoteSelectionToComponent(
     masterAnimations: plan.masterAnimations,
   })
 
-  mutationCtx.doc.transact(() => {
-    for (const id of plan.removedObjectIds) removeObject(mutationCtx, id)
-    addObject(mutationCtx, plan.instanceObject)
-  })
-
-  const masterTextLeaves = plan.masterTree
-    .filter((obj) => obj.type === 'text' && typeof (obj as { text?: unknown }).text === 'string')
-    .map((obj) => ({ id: obj.id, text: (obj as { text: string }).text }))
-  if (masterTextLeaves.length > 0) {
-    seedInstanceTextCopy(mutationCtx, plan.instanceObject.id, masterTextLeaves)
-  }
-
-  return { instanceId: plan.instanceObject.id }
+  return { componentId: component.id }
 }
