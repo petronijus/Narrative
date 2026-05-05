@@ -115,6 +115,9 @@ export { createUndoManager } from './undo.js'
 export { promoteToComponent, getComponentDocName, pruneAnimationsToScope } from './components.js'
 export type { PromoteToComponentPlan } from './components.js'
 
+// Component stamp helper (refactor: components-as-stamps)
+export { stampComponent } from './stampComponent.js'
+
 // Component instance override resolver (M16 P7)
 export { resolveInstanceTree, resolveInstanceAnimations } from './resolveOverrides.js'
 
