@@ -898,6 +898,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
             e.dataTransfer.setData('application/x-narrative-component', payload)
             e.dataTransfer.effectAllowed = 'copy'
           }}
+          onDropComplete={() => setPickerOpen(false)}
         />
 
         {/* Present button — deck only. */}

@@ -28,7 +28,7 @@
  *   - Tab is constrained to the drawer's interactive elements while open
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Plus, Loader2 } from 'lucide-react'
 import type { ComponentSummary } from '../api/client.js'
@@ -56,6 +56,12 @@ interface ComponentPickerDrawerProps {
    *   value: JSON.stringify({ componentId })
    */
   onDragStartComponent?: (component: ComponentSummary, e: React.DragEvent) => void
+  /**
+   * Fires once a row's drag completes with a successful drop (dropEffect
+   * is 'copy' or 'move'). Cancelled drags ('none') don't fire it. Caller
+   * typically closes the drawer here.
+   */
+  onDropComplete?: () => void
 }
 
 export function ComponentPickerDrawer({
@@ -65,8 +71,14 @@ export function ComponentPickerDrawer({
   loading,
   onPick,
   onDragStartComponent,
+  onDropComplete,
 }: ComponentPickerDrawerProps) {
   const closeBtnRef = useRef<HTMLButtonElement>(null)
+  // While a row is being dragged, suppress the backdrop's pointer-events
+  // so dragover / drop events reach the canvas underneath. The drawer
+  // stays mounted (unmounting the source aborts the drag in some
+  // browsers / contexts) — only the click-eating overlay backs off.
+  const [dragging, setDragging] = useState(false)
 
   // Escape closes; focus close on open.
   useEffect(() => {
@@ -93,9 +105,12 @@ export function ComponentPickerDrawer({
   // beneath the editor's own absolutely-positioned panels).
   return createPortal(
     <>
-      {/* Backdrop — dismisses on click. Subtle (the editor stays visible). */}
+      {/* Backdrop — dismisses on click. Subtle (the editor stays visible).
+          While a component is being dragged out, drop pointer-events so
+          dragover / drop reach the canvas behind. */}
       <div
         className="fixed inset-0 z-[100] bg-black/20 backdrop-blur-[1px]"
+        style={dragging ? { pointerEvents: 'none' } : undefined}
         aria-hidden="true"
         onClick={onClose}
         data-testid="component-picker-backdrop"
@@ -142,7 +157,14 @@ export function ComponentPickerDrawer({
                   key={c.id}
                   component={c}
                   onPick={() => onPick(c)}
-                  onDragStart={(e) => onDragStartComponent?.(c, e)}
+                  onDragStart={(e) => {
+                    setDragging(true)
+                    onDragStartComponent?.(c, e)
+                  }}
+                  onDragEnd={(e) => {
+                    setDragging(false)
+                    if (e.dataTransfer.dropEffect !== 'none') onDropComplete?.()
+                  }}
                 />
               ))}
             </ul>
@@ -162,9 +184,10 @@ interface ComponentRowProps {
   component: ComponentSummary
   onPick: () => void
   onDragStart: (e: React.DragEvent) => void
+  onDragEnd: (e: React.DragEvent) => void
 }
 
-function ComponentRow({ component, onPick, onDragStart }: ComponentRowProps) {
+function ComponentRow({ component, onPick, onDragStart, onDragEnd }: ComponentRowProps) {
   return (
     <li role="listitem">
       <button
@@ -172,6 +195,7 @@ function ComponentRow({ component, onPick, onDragStart }: ComponentRowProps) {
         onClick={onPick}
         draggable
         onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
         data-testid={`component-picker-row-${component.id}`}
         className="group flex w-full items-center gap-3 rounded-md border border-transparent p-2 text-left transition hover:border-border hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
       >

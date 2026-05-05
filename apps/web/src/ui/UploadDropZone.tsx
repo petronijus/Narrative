@@ -27,6 +27,7 @@ import { useSelection } from '../state/SelectionContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { COMPONENT_DRAG_MIME } from './ComponentPickerDrawer.js'
 import { readMasterFullBbox } from '../state/readMasterDoc.js'
+import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import {
   acquireComponentDoc,
   releaseComponentDoc,
@@ -196,8 +197,10 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       pendingDropCoordsRef.current = dropCoords
 
       // Component drag-out from the picker drawer — stamp the master
-      // onto the slide as detached primitives. Center the stamp's bbox
-      // on the drop point.
+      // onto the slide as detached primitives. Drop position is ignored
+      // by design: the stamp lands at the master's authored slide-space
+      // top-left, identical to the click-from-picker path. (Predictable
+      // default placement — users can always nudge afterwards.)
       const componentPayload = e.dataTransfer?.getData(COMPONENT_DRAG_MIME) ?? ''
       if (componentPayload !== '' && objectsCtx !== null) {
         try {
@@ -210,10 +213,10 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
                 const bbox = await readMasterFullBbox(componentId)
                 const masterDoc = getComponentDoc(componentId)
                 if (masterDoc === null || objectsCtx === null) return
-                // Center the master's bbox on the drop point.
-                const w = bbox?.width ?? 0
-                const h = bbox?.height ?? 0
-                const dropPoint = { x: dropCoords.x - w / 2, y: dropCoords.y - h / 2 }
+                const dropPoint =
+                  bbox !== null
+                    ? { x: bbox.x, y: bbox.y }
+                    : { x: SLIDE_WIDTH / 2 - 200, y: SLIDE_HEIGHT / 2 - 150 }
                 const ids = stampComponent(objectsCtx, masterDoc, dropPoint)
                 if (ids.length > 0) selectOne(ids[0]!)
               } finally {
