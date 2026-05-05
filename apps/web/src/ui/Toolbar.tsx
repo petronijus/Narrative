@@ -899,6 +899,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
             e.dataTransfer.effectAllowed = 'copy'
           }}
           onDropComplete={() => setPickerOpen(false)}
+          {...(folderId !== null
+            ? {
+                onOpenSettings: () => {
+                  setPickerOpen(false)
+                  void navigate(`/folder/${folderId}/settings?tab=components`)
+                },
+              }
+            : {})}
         />
 
         {/* Present button — deck only. */}

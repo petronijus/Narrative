@@ -28,9 +28,9 @@
  *   - Tab is constrained to the drawer's interactive elements while open
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Plus, Loader2 } from 'lucide-react'
+import { X, Plus, Loader2, Search, Settings } from 'lucide-react'
 import type { ComponentSummary } from '../api/client.js'
 import { Button } from '@/components/ui/button'
 
@@ -62,6 +62,13 @@ interface ComponentPickerDrawerProps {
    * typically closes the drawer here.
    */
   onDropComplete?: () => void
+  /**
+   * Optional. When provided, a Settings icon is rendered in the header
+   * that opens the folder's component-management UI (typically the
+   * Components tab in folder settings). Caller is responsible for the
+   * navigation; this prop just exposes the action.
+   */
+  onOpenSettings?: () => void
 }
 
 export function ComponentPickerDrawer({
@@ -72,6 +79,7 @@ export function ComponentPickerDrawer({
   onPick,
   onDragStartComponent,
   onDropComplete,
+  onOpenSettings,
 }: ComponentPickerDrawerProps) {
   const closeBtnRef = useRef<HTMLButtonElement>(null)
   // While a row is being dragged, suppress the backdrop's pointer-events
@@ -79,6 +87,13 @@ export function ComponentPickerDrawer({
   // stays mounted (unmounting the source aborts the drag in some
   // browsers / contexts) — only the click-eating overlay backs off.
   const [dragging, setDragging] = useState(false)
+  const [query, setQuery] = useState('')
+
+  // Reset search whenever the drawer is reopened so the user always
+  // starts from the full list.
+  useEffect(() => {
+    if (open) setQuery('')
+  }, [open])
 
   // Escape closes; focus close on open.
   useEffect(() => {
@@ -95,6 +110,15 @@ export function ComponentPickerDrawer({
       document.removeEventListener('keydown', onKey)
     }
   }, [open, onClose])
+
+  // Case-insensitive substring match on the component name. Trim so
+  // trailing whitespace from cut-and-paste doesn't suppress matches.
+  const filteredComponents = useMemo(() => {
+    if (components === null) return null
+    const q = query.trim().toLowerCase()
+    if (q === '') return components
+    return components.filter((c) => c.name.toLowerCase().includes(q))
+  }, [components, query])
 
   if (!open) return null
   if (typeof document === 'undefined') return null
@@ -123,20 +147,52 @@ export function ComponentPickerDrawer({
         data-testid="component-picker-drawer"
         className="fixed right-0 top-0 z-[101] flex h-full w-[340px] flex-col border-l border-border bg-popover shadow-2xl"
       >
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 id="component-picker-title" className="text-sm font-semibold text-foreground">
-            Components
-          </h2>
-          <Button
-            ref={closeBtnRef}
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            aria-label="Close component picker"
-            className="h-7 w-7"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
+        <header className="flex flex-col gap-2 border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between">
+            <h2 id="component-picker-title" className="text-sm font-semibold text-foreground">
+              Components
+            </h2>
+            <div className="flex items-center gap-1">
+              {onOpenSettings !== undefined && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onOpenSettings}
+                  aria-label="Manage components in folder settings"
+                  title="Manage components"
+                  data-testid="component-picker-open-settings"
+                  className="h-7 w-7"
+                >
+                  <Settings className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              )}
+              <Button
+                ref={closeBtnRef}
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                aria-label="Close component picker"
+                className="h-7 w-7"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+          <div className="relative">
+            <Search
+              className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/60"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search components"
+              aria-label="Search components"
+              data-testid="component-picker-search"
+              className="h-7 w-full rounded-md border border-border bg-background pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-ring focus:outline-none"
+            />
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-3">
@@ -150,9 +206,11 @@ export function ComponentPickerDrawer({
             </div>
           ) : components !== null && components.length === 0 ? (
             <EmptyState />
+          ) : filteredComponents !== null && filteredComponents.length === 0 ? (
+            <NoMatchesState query={query} />
           ) : (
             <ul role="list" className="flex flex-col gap-1.5">
-              {(components ?? []).map((c) => (
+              {(filteredComponents ?? []).map((c) => (
                 <ComponentRow
                   key={c.id}
                   component={c}
@@ -226,6 +284,17 @@ function ComponentRow({ component, onPick, onDragStart, onDragEnd }: ComponentRo
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
+
+function NoMatchesState({ query }: { query: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <Search className="mb-2 h-5 w-5 text-muted-foreground/40" aria-hidden="true" />
+      <p className="text-xs text-muted-foreground">
+        No components match <span className="font-medium">&ldquo;{query}&rdquo;</span>.
+      </p>
+    </div>
+  )
+}
 
 function EmptyState() {
   return (
