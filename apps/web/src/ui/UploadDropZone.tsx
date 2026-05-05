@@ -19,8 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createObjectOfType, addObject } from '@narrative/slide-model'
-import { nanoid } from 'nanoid'
+import { createObjectOfType, stampComponent } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -28,6 +27,11 @@ import { useSelection } from '../state/SelectionContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { COMPONENT_DRAG_MIME } from './ComponentPickerDrawer.js'
 import { readMasterFullBbox } from '../state/readMasterDoc.js'
+import {
+  acquireComponentDoc,
+  releaseComponentDoc,
+  getComponentDoc,
+} from '../state/componentDocCache.js'
 
 // ---------------------------------------------------------------------------
 // Coordinate helper (mirrors EditorLayout.clientToCanvasCoords)
@@ -191,41 +195,30 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect)
       pendingDropCoordsRef.current = dropCoords
 
-      // M16 P6 — component drag-out from the picker drawer.
+      // Component drag-out from the picker drawer — stamp the master
+      // onto the slide as detached primitives. Center the stamp's bbox
+      // on the drop point.
       const componentPayload = e.dataTransfer?.getData(COMPONENT_DRAG_MIME) ?? ''
       if (componentPayload !== '' && objectsCtx !== null) {
         try {
           const parsed = JSON.parse(componentPayload) as { componentId: string }
           if (typeof parsed.componentId === 'string' && parsed.componentId !== '') {
-            // M16 P-flatten: components carry their authored slide-space
-            // position. Drag-out from the picker also lands the instance
-            // at the master's bbox 1:1 — the dropCoords are ignored.
-            // The user can drag the instance from there or hit
-            // "Reset position" in the inspector to snap back to the
-            // canonical placement. Matches Figma's "instance position
-            // tracks master".
+            const componentId = parsed.componentId
             void (async (): Promise<void> => {
-              const bbox = await readMasterFullBbox(parsed.componentId)
-              if (objectsCtx === null) return
-              const width = bbox?.width ?? 400
-              const height = bbox?.height ?? 300
-              const x = bbox?.x ?? dropCoords.x - width / 2
-              const y = bbox?.y ?? dropCoords.y - height / 2
-              const newId = nanoid()
-              addObject(objectsCtx, {
-                id: newId,
-                type: 'componentInstance',
-                componentId: parsed.componentId,
-                x,
-                y,
-                width,
-                height,
-                rotation: 0,
-                opacity: 1,
-              })
-              // Replace any prior selection with the freshly-dropped
-              // instance — Figma-style "drop and start manipulating".
-              selectOne(newId)
+              acquireComponentDoc(componentId)
+              try {
+                const bbox = await readMasterFullBbox(componentId)
+                const masterDoc = getComponentDoc(componentId)
+                if (masterDoc === null || objectsCtx === null) return
+                // Center the master's bbox on the drop point.
+                const w = bbox?.width ?? 0
+                const h = bbox?.height ?? 0
+                const dropPoint = { x: dropCoords.x - w / 2, y: dropCoords.y - h / 2 }
+                const ids = stampComponent(objectsCtx, masterDoc, dropPoint)
+                if (ids.length > 0) selectOne(ids[0]!)
+              } finally {
+                releaseComponentDoc(componentId)
+              }
             })()
           }
         } catch {
