@@ -166,18 +166,6 @@ describe('SlidesPanel — rendering', () => {
     expect(screen.getByText('2')).toBeInTheDocument()
   })
 
-  it.skip('active slide item has blue ring class', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: vi.fn(),
-    }
-    renderPanel(activeSlide)
-    // Find the thumbnail card for s1 — it should have the ring-blue-500 class
-    const activeCard = document.querySelector('[data-slide-id="s1"] .ring-blue-500')
-    expect(activeCard).not.toBeNull()
-  })
-
   it('inactive slide does not have blue ring', () => {
     mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
     const activeSlide: ActiveSlideContextValue = {

@@ -1,8 +1,9 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-05-09 after the Tier-1/Tier-2 audit + test-debt cleanup
-> session. Current state: 1051 unit/integration tests pass across 5 packages,
-> 26 e2e specs, 61 web tests `it.skip` pending triage.
+> Last updated 2026-05-09 after Tier A roadmap completion. Current state:
+> 1,217 unit/integration tests pass across 5 packages, 27 e2e specs,
+> 37 web tests `it.skip` pending Tier B triage. Bundle budgets enforced
+> via `size-limit` (`pnpm size`).
 
 ## TL;DR
 
@@ -36,7 +37,7 @@
 
 | Before                                                                                    | After                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Web: 102 failures across 21 files                                                         | Web: 0 failures, 61 skipped (triaged)                                            |
+| Web: 102 failures across 21 files                                                         | Web: 0 failures, 37 skipped (Tier A unblocked 24, deleted 12 dead)               |
 | 6 `objectRenderers/*.test.ts` files asserting Pixi mock-call shapes                       | Deleted; replaced by sampled-thumbnail e2e in `inspector-flows.spec.ts`          |
 | `Inspector.test.tsx`, `Toolbar.test.tsx`, etc. asserting against `getByLabelText('Fill')` | Stale-text assertions marked `it.skip` with `// see e2e/inspector-flows.spec.ts` |
 | Each test file with its own inline `vi.mock('pixi.js', () => ...)`                        | Single `apps/web/src/test/pixiMock.ts` — fixed once, all tests get the fix       |
@@ -95,14 +96,24 @@ real focus / drag / keyboard scope).
 
 ## Roadmap
 
-### Tier A — this week (~4h, biggest leverage)
+### Tier A — completed ✅
 
-1. **Fix 3 `ResourceManager.test.ts` skips** — patch `pixiMock.ts` for `texture.destroy: vi.fn()`. (~30 min)
-2. **Fix `playTransition.test.ts:220`** — magic-move pairing. (~45 min)
-3. **Fix `useMediaUpload.test.tsx:476,552`** — transcode poll lifecycle. (~45 min)
-4. **Fix 5 `Inspector.componentInstance.test.tsx` skips** — copy pattern from working sibling at L337. (~1h)
-5. **Delete the 12 low-value DOM-presence skips**. (~15 min)
-6. **Add `size-limit`** with floor budget (`main < 600 KB gz`). (~30 min)
+All six items landed in commits on `main`:
+
+1. ✅ **3 `ResourceManager.test.ts` skips fixed** — assertions updated to current `Assets.load({src,parser})` + `Assets.unload(url)` API. Texture leak guard restored.
+2. ✅ **`playTransition.test.ts:220` fixed** — added `getMountedIds()` + `getNode()` to the fake SceneGraph. Magic-Move regression guard active.
+3. ✅ **3 `useMediaUpload.test.tsx` skips fixed** — switched mock from `getHeader` to `getBody` (server now returns assetId in JSON body, browser CORS strips custom headers). All transcode-poll lifecycle assertions green.
+4. ✅ **5 `Inspector.componentInstance.test.tsx` skips replaced** — original tests asserted obsolete UX (one row per master leaf). Replaced with 4 tests against current contract (rows only for _modified_ leaves; clear-entry button dispatches mutation).
+5. ✅ **12 dead DOM-presence skips deleted** — Inspector × 8 (label-presence section assertions), Toolbar × 3 (button presence + click), SlidesPanel × 1 (CSS class).
+6. ✅ **`size-limit` wired in** at `apps/web/package.json`. Per-chunk + total-first-paint budgets. Run via `pnpm size`. Current floor:
+   - Main app chunk: ≤ 210 KB gz (currently 188)
+   - Pixi: ≤ 180 KB (currently 162)
+   - React: ≤ 130 KB (currently 118)
+   - Tiptap: ≤ 120 KB (currently 109)
+   - Yjs: ≤ 45 KB (currently 37)
+   - GSAP: ≤ 32 KB (currently 28)
+   - hls.js: ≤ 170 KB (currently 161)
+   - **Total first-paint: ≤ 800 KB** (currently 747)
 
 ### Tier B — next sprint (~2 days)
 

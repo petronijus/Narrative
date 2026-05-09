@@ -126,14 +126,6 @@ beforeEach(() => {
 })
 
 describe('Toolbar', () => {
-  it.skip('renders all tool buttons', () => {
-    render(<TestApp />, { providers: { router: false } })
-    expect(screen.getByRole('button', { name: /select/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /rectangle/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /ellipse/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /text/i })).toBeInTheDocument()
-  })
-
   it('renders Present button', () => {
     render(<TestApp />, { providers: { router: false } })
     expect(screen.getByRole('button', { name: /present/i })).toBeInTheDocument()
@@ -143,27 +135,6 @@ describe('Toolbar', () => {
     render(<TestApp />, { providers: { router: false } })
     expect(screen.getByTestId('active-tool').textContent).toBe('select')
     expect(screen.getByRole('button', { name: /select/i })).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  it.skip('clicking Rectangle switches to rectangle tool', () => {
-    render(<TestApp />, { providers: { router: false } })
-    act(() => {
-      screen.getByRole('button', { name: /rectangle/i }).click()
-    })
-    expect(screen.getByTestId('active-tool').textContent).toBe('rectangle')
-    expect(screen.getByRole('button', { name: /rectangle/i })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    expect(screen.getByRole('button', { name: /select/i })).toHaveAttribute('aria-pressed', 'false')
-  })
-
-  it.skip('clicking Ellipse switches to ellipse tool', () => {
-    render(<TestApp />, { providers: { router: false } })
-    act(() => {
-      screen.getByRole('button', { name: /ellipse/i }).click()
-    })
-    expect(screen.getByTestId('active-tool').textContent).toBe('ellipse')
   })
 
   it('clicking Text switches to text tool', () => {

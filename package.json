@@ -14,6 +14,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
+    "size": "pnpm --filter web build && pnpm --filter web size",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
     "prepare": "husky",
     "load:all": "node tests/load/runAll.mjs",

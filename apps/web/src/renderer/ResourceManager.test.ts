@@ -24,10 +24,16 @@ describe('ResourceManager', () => {
     vi.clearAllMocks()
   })
 
-  it.skip('acquireTexture načte texturu a vrátí ji', async () => {
+  it('acquireTexture načte texturu a vrátí ji', async () => {
     const texture = await rm.acquireTexture('https://example.com/img.png')
     expect(texture).toBeDefined()
-    expect(Assets.load).toHaveBeenCalledWith('https://example.com/img.png')
+    // Pixi v8: Assets.load takes an options object with `src` + `parser`.
+    // The implementation pins parser='loadTextures' to handle imgproxy
+    // URLs that lack a real file extension.
+    expect(Assets.load).toHaveBeenCalledWith({
+      src: 'https://example.com/img.png',
+      parser: 'loadTextures',
+    })
   })
 
   it('acquireTexture vrátí cachouvanou texturu při druhém volání', async () => {
@@ -55,12 +61,15 @@ describe('ResourceManager', () => {
     expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
   })
 
-  it.skip('releaseTexture při refCount=0 zničí texturu', async () => {
-    const texture = await rm.acquireTexture('https://example.com/img.png')
+  it('releaseTexture při refCount=0 unloadne texturu z Assets cache', async () => {
+    await rm.acquireTexture('https://example.com/img.png')
 
     rm.releaseTexture('https://example.com/img.png')
 
-    expect(texture.destroy).toHaveBeenCalledWith(true)
+    // Source delegates teardown to Assets.unload() — that's the leak
+    // guard. The fallback texture.destroy(true) only fires if Assets
+    // rejects (texture wasn't tracked by Assets — img-decoded path).
+    expect(Assets.unload).toHaveBeenCalledWith('https://example.com/img.png')
     expect(rm.textureCount).toBe(0)
   })
 
@@ -76,14 +85,14 @@ describe('ResourceManager', () => {
     expect(() => rm.releaseTexture('https://example.com/nonexistent.png')).not.toThrow()
   })
 
-  it.skip('destroyAll zničí všechny spravované textury', async () => {
-    const t1 = await rm.acquireTexture('https://example.com/a.png')
-    const t2 = await rm.acquireTexture('https://example.com/b.png')
+  it('destroyAll unloadne všechny spravované textury z Assets cache', async () => {
+    await rm.acquireTexture('https://example.com/a.png')
+    await rm.acquireTexture('https://example.com/b.png')
 
     rm.destroyAll()
 
-    expect(t1.destroy).toHaveBeenCalledWith(true)
-    expect(t2.destroy).toHaveBeenCalledWith(true)
+    expect(Assets.unload).toHaveBeenCalledWith('https://example.com/a.png')
+    expect(Assets.unload).toHaveBeenCalledWith('https://example.com/b.png')
     expect(rm.textureCount).toBe(0)
   })
 

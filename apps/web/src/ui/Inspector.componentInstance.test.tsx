@@ -284,29 +284,33 @@ describe('Inspector — ComponentInstance leaves panel (M16 P7)', () => {
     mockInvalidate = vi.fn().mockResolvedValue([])
   })
 
-  it.skip('renders one row per master leaf', () => {
+  // ---------------------------------------------------------------------
+  // Leaf-row rendering — current UX surfaces ONLY rows for leaves that
+  // have at least one meaningful override (Inspector.tsx:1483, the
+  // `modifiedLeaves` filter). Tests below exercise that contract.
+  //
+  // Earlier tests asserted "one row per master leaf" (i.e. every leaf
+  // shows up regardless of override state) — that UX was retired during
+  // M16-P8.
+  // ---------------------------------------------------------------------
+
+  it('shows no leaf rows when the instance has no overrides', () => {
     renderInspectorWith(makeInstance())
-    expect(screen.getByTestId('leaf-override-row-leaf-rect')).toBeInTheDocument()
-    expect(screen.getByTestId('leaf-override-row-leaf-text')).toBeInTheDocument()
+    expect(screen.queryByTestId('leaf-override-row-leaf-rect')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('leaf-override-row-leaf-text')).not.toBeInTheDocument()
   })
 
-  it.skip('starts every row with a "Linked" badge when no overrides', () => {
-    renderInspectorWith(makeInstance())
-    expect(screen.getByTestId('leaf-badge-leaf-rect')).toHaveTextContent('Linked')
-    expect(screen.getByTestId('leaf-badge-leaf-text')).toHaveTextContent('Linked')
-  })
-
-  it.skip('flips badge to "Modified" when an override exists for the leaf', () => {
+  it('renders a leaf row only for the modified leaf', () => {
     renderInspectorWith(
       makeInstance({
         leaves: { 'leaf-rect': { fill: 0x00ff00 } },
       }),
     )
-    expect(screen.getByTestId('leaf-badge-leaf-rect')).toHaveTextContent('Modified')
-    expect(screen.getByTestId('leaf-badge-leaf-text')).toHaveTextContent('Linked')
+    expect(screen.getByTestId('leaf-override-row-leaf-rect')).toBeInTheDocument()
+    expect(screen.queryByTestId('leaf-override-row-leaf-text')).not.toBeInTheDocument()
   })
 
-  it.skip('"Reset to master" calls clearLeafOverride and is disabled when not modified', () => {
+  it('"Reset to master" on a modified leaf dispatches clearLeafOverride for that leaf', () => {
     renderInspectorWith(
       makeInstance({
         leaves: { 'leaf-rect': { fill: 0x00ff00 } },
@@ -316,22 +320,28 @@ describe('Inspector — ComponentInstance leaves panel (M16 P7)', () => {
     expect(reset).toBeEnabled()
     fireEvent.click(reset)
     expect(mockClearLeafOverride).toHaveBeenCalledTimes(1)
+    // Args: (mutationCtx, instanceId, leafId)
     expect(mockClearLeafOverride.mock.calls[0]?.[1]).toBe('inst-1')
     expect(mockClearLeafOverride.mock.calls[0]?.[2]).toBe('leaf-rect')
-
-    // Sibling row's reset stays disabled (no override).
-    expect(screen.getByTestId('leaf-reset-leaf-text')).toBeDisabled()
   })
 
-  it.skip('editing leaf text writes via setLeafOverride', () => {
-    renderInspectorWith(makeInstance())
-    // Expand the text leaf row so its body fields mount.
-    fireEvent.click(screen.getByLabelText('Expand Title'))
-    const input = screen.getByTestId('leaf-text-leaf-text') as HTMLInputElement
-    fireEvent.change(input, { target: { value: 'Edited' } })
-    expect(mockSetLeafOverride).toHaveBeenCalledTimes(1)
-    expect(mockSetLeafOverride.mock.calls[0]?.[2]).toBe('leaf-text')
-    expect(mockSetLeafOverride.mock.calls[0]?.[3]).toEqual({ text: 'Edited' })
+  it('clearing a single override entry dispatches a mutation', () => {
+    // Each LeafOverrideRow renders one entry per overridden field with a
+    // dedicated `leaf-override-clear-{leafId}-{key}` button.
+    renderInspectorWith(
+      makeInstance({
+        leaves: { 'leaf-rect': { fill: 0x00ff00 } },
+      }),
+    )
+    const clearFill = screen.getByTestId('leaf-override-clear-leaf-rect-fill')
+    fireEvent.click(clearFill)
+    // Either clearLeafOverride or setLeafOverride is called (depends on
+    // whether this is the last remaining override on the leaf — both are
+    // valid contracts). Assert at least one of the override-mutation
+    // helpers fired so the panel actually wrote back.
+    const totalCalls =
+      mockClearLeafOverride.mock.calls.length + mockSetLeafOverride.mock.calls.length
+    expect(totalCalls).toBeGreaterThan(0)
   })
 
   it('"Reset overrides" calls resetAllOverrides and is disabled when none', () => {

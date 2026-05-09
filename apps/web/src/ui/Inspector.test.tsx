@@ -375,64 +375,17 @@ describe('Inspector — rectangle', () => {
     mockUpdateObject = vi.fn()
   })
 
-  it.skip('shows Position, Size, Transform, Appearance sections', () => {
-    renderWithSelection(RECT_OBJ)
-    expect(screen.getByText('Position')).toBeInTheDocument()
-    expect(screen.getByText('Size')).toBeInTheDocument()
-    expect(screen.getByText('Transform')).toBeInTheDocument()
-    expect(screen.getByText('Appearance')).toBeInTheDocument()
-  })
-
   it('does not show Text section for rectangle', () => {
     renderWithSelection(RECT_OBJ)
     expect(screen.queryByText('Text')).not.toBeInTheDocument()
     expect(screen.queryByText('Typography')).not.toBeInTheDocument()
   })
-
-  it.skip('shows Fill color input for rectangle', () => {
-    renderWithSelection(RECT_OBJ)
-    expect(screen.getByLabelText('Fill')).toBeInTheDocument()
-  })
-
-  it.skip('shows correct X/Y values', () => {
-    renderWithSelection(RECT_OBJ)
-    const xInput = screen.getByLabelText('X')
-    const yInput = screen.getByLabelText('Y')
-    expect((xInput as HTMLInputElement).value).toBe('10')
-    expect((yInput as HTMLInputElement).value).toBe('20')
-  })
-})
-
-describe('Inspector — ellipse', () => {
-  it.skip('shows Appearance section with Fill for ellipse', () => {
-    renderWithSelection(ELLIPSE_OBJ)
-    expect(screen.getByText('Appearance')).toBeInTheDocument()
-    expect(screen.getByLabelText('Fill')).toBeInTheDocument()
-    expect(screen.queryByText('Text')).not.toBeInTheDocument()
-  })
 })
 
 describe('Inspector — text', () => {
-  it.skip('shows Text and Typography sections for text object', () => {
-    renderWithSelection(TEXT_OBJ)
-    expect(screen.getByText('Text')).toBeInTheDocument()
-    expect(screen.getByText('Typography')).toBeInTheDocument()
-  })
-
   it('does not show Appearance section for text', () => {
     renderWithSelection(TEXT_OBJ)
     expect(screen.queryByText('Appearance')).not.toBeInTheDocument()
-  })
-
-  it.skip('shows Font weight and Align selects', () => {
-    renderWithSelection(TEXT_OBJ)
-    expect(screen.getByLabelText('Weight')).toBeInTheDocument()
-    expect(screen.getByLabelText('Align')).toBeInTheDocument()
-  })
-
-  it.skip('shows Color inputs for text', () => {
-    renderWithSelection(TEXT_OBJ)
-    expect(screen.getByLabelText('Color')).toBeInTheDocument()
   })
 })
 
@@ -484,15 +437,6 @@ describe('Inspector — Animations section', () => {
         params: { direction: 'up' },
       }),
     )
-  })
-
-  it.skip('všech 5 add tlačítek je přítomno v DOM', () => {
-    renderWithSelection(RECT_OBJ)
-    expect(screen.getByLabelText('Add fadeIn animation')).toBeInTheDocument()
-    expect(screen.getByLabelText('Add slideIn up animation')).toBeInTheDocument()
-    expect(screen.getByLabelText('Add slideIn down animation')).toBeInTheDocument()
-    expect(screen.getByLabelText('Add slideIn left animation')).toBeInTheDocument()
-    expect(screen.getByLabelText('Add slideIn right animation')).toBeInTheDocument()
   })
 
   it.skip('zobrazí existující animace patřící objektu', () => {

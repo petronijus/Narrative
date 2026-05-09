@@ -22,7 +22,15 @@ import type { MediaUploadContextValue } from './useMediaUpload'
 
 interface TusUploadCallbacks {
   onProgress?: (bytesSent: number, bytesTotal: number) => void
-  onAfterResponse?: (req: unknown, res: { getHeader: (h: string) => string | undefined }) => void
+  // Response shape mirrors the production hook: server's onUploadFinish
+  // now returns { assetId, width, height, … } in the JSON body, so the
+  // client reads `res.getBody()` instead of custom X-Narrative-* headers
+  // (which the browser strips under CORS — tus's
+  // Access-Control-Expose-Headers list is fixed).
+  onAfterResponse?: (
+    req: unknown,
+    res: { getBody?: () => string; getHeader?: (h: string) => string | undefined },
+  ) => void
   onSuccess?: () => void
   onError?: (err: Error) => void
 }
@@ -175,7 +183,7 @@ describe('useMediaUpload', () => {
     })
   })
 
-  it.skip('onSuccess sets status done and fires onDone callback', async () => {
+  it('onSuccess sets status done and fires onDone callback', async () => {
     let capturedCtx: MediaUploadContextValue | null = null
     const onDone = vi.fn()
 
@@ -195,16 +203,15 @@ describe('useMediaUpload', () => {
 
     const instance = tusInstances[0]!
     act(() => {
-      // Simulate server setting asset id header on final PATCH
+      // Simulate the server's final PATCH response — onUploadFinish on the
+      // server now returns assetId/width/height in the JSON body. Headers
+      // are stripped by the browser CORS layer (tus's
+      // Access-Control-Expose-Headers list is fixed), so the client reads
+      // the body instead.
       instance.callbacks.onAfterResponse?.(
         {},
         {
-          getHeader: (h: string) => {
-            if (h === 'X-Narrative-Asset-Id') return 'asset-abc'
-            if (h === 'X-Narrative-Width') return '800'
-            if (h === 'X-Narrative-Height') return '600'
-            return undefined
-          },
+          getBody: () => JSON.stringify({ assetId: 'asset-abc', width: 800, height: 600 }),
         },
       )
     })
@@ -473,7 +480,7 @@ describe('useMediaUpload — video uploads (M12)', () => {
     expect(entry.status).toBe('uploading')
   })
 
-  it.skip('video with transcodeStatus pending starts poll and stays finalizing', async () => {
+  it('video with transcodeStatus pending starts poll and stays finalizing', async () => {
     let capturedCtx: MediaUploadContextValue | null = null
     const onDone = vi.fn()
 
@@ -493,16 +500,12 @@ describe('useMediaUpload — video uploads (M12)', () => {
 
     const instance = tusInstances[0]!
 
-    // Simulate tus PATCH final response — server sets assetId + transcode status pending
+    // Simulate tus PATCH final response — server returns assetId in the
+    // JSON body (read via res.getBody()).
     act(() => {
       instance.callbacks.onAfterResponse?.(
         {},
-        {
-          getHeader: (h: string) => {
-            if (h === 'X-Narrative-Asset-Id') return 'vid-asset-123'
-            return undefined
-          },
-        },
+        { getBody: () => JSON.stringify({ assetId: 'vid-asset-123' }) },
       )
     })
 
@@ -549,7 +552,7 @@ describe('useMediaUpload — video uploads (M12)', () => {
     expect(tusInstances).toHaveLength(0)
   })
 
-  it.skip('cancelUpload during finalizing clears transcode poll timer', async () => {
+  it('cancelUpload during finalizing clears transcode poll timer', async () => {
     let capturedCtx: MediaUploadContextValue | null = null
 
     render(
@@ -570,7 +573,7 @@ describe('useMediaUpload — video uploads (M12)', () => {
     act(() => {
       instance.callbacks.onAfterResponse?.(
         {},
-        { getHeader: (h: string) => (h === 'X-Narrative-Asset-Id' ? 'vid-abc' : undefined) },
+        { getBody: () => JSON.stringify({ assetId: 'vid-abc' }) },
       )
     })
     act(() => {

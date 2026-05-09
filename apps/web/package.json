@@ -9,8 +9,70 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "size": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "main app chunk (volatile, busts on every deploy)",
+      "path": "dist/assets/index-*.js",
+      "limit": "210 KB",
+      "gzip": true
+    },
+    {
+      "name": "Pixi vendor chunk (cached across deploys)",
+      "path": "dist/assets/vendor-pixi-*.js",
+      "limit": "180 KB",
+      "gzip": true
+    },
+    {
+      "name": "React + router vendor chunk",
+      "path": "dist/assets/vendor-react-*.js",
+      "limit": "130 KB",
+      "gzip": true
+    },
+    {
+      "name": "Tiptap + ProseMirror vendor chunk",
+      "path": "dist/assets/vendor-tiptap-*.js",
+      "limit": "120 KB",
+      "gzip": true
+    },
+    {
+      "name": "Yjs + Hocuspocus + y-prosemirror vendor chunk",
+      "path": "dist/assets/vendor-yjs-*.js",
+      "limit": "45 KB",
+      "gzip": true
+    },
+    {
+      "name": "GSAP vendor chunk",
+      "path": "dist/assets/vendor-gsap-*.js",
+      "limit": "32 KB",
+      "gzip": true
+    },
+    {
+      "name": "hls.js vendor chunk (lazy-loaded if you reintroduce dynamic import)",
+      "path": "dist/assets/vendor-hls-*.js",
+      "limit": "170 KB",
+      "gzip": true
+    },
+    {
+      "name": "Total first-paint payload (excludes vendor-hls — only loads when a video plays)",
+      "path": [
+        "dist/assets/index-*.js",
+        "dist/assets/vendor-pixi-*.js",
+        "dist/assets/vendor-react-*.js",
+        "dist/assets/vendor-tiptap-*.js",
+        "dist/assets/vendor-yjs-*.js",
+        "dist/assets/vendor-gsap-*.js",
+        "dist/assets/vendor-radix-*.js",
+        "dist/assets/vendor-*.js",
+        "!dist/assets/vendor-hls-*.js",
+        "!dist/assets/vendor-sentry-*.js"
+      ],
+      "limit": "800 KB",
+      "gzip": true
+    }
+  ],
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
     "@hocuspocus/provider": "^2.15.0",
@@ -53,6 +115,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
+    "@size-limit/file": "^11.0.0",
+    "size-limit": "^11.0.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",

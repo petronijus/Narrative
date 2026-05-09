@@ -134,6 +134,15 @@ interface FakeSceneGraph {
   getRoot(): MockContainer
   getApp(): { stage: MockContainer }
   getContainer(id: string): MockContainer | undefined
+  // Magic Move pair-matching path in playTransition queries the SceneGraph
+  // for the full set of currently-mounted ids so it can intersect with the
+  // incoming slide's id set in O(n+m).
+  getMountedIds(): string[]
+  // Magic Move ALSO does an explicit name-based pairing pass before the
+  // id-fallback. It reads `node.data.name` to bridge two ids that share
+  // a designer-supplied name across slides. Tests that don't set a name
+  // get undefined → loop falls through to the id-equality path.
+  getNode(id: string): { container: MockContainer; data: { name?: string } } | undefined
   adoptSlideRoot: ReturnType<typeof vi.fn>
 }
 
@@ -155,6 +164,14 @@ function makeSceneGraph(outgoingIds: string[] = []): FakeSceneGraph {
     getRoot: () => root,
     getApp: () => ({ stage }),
     getContainer: (id: string) => outgoingByObjectId.get(id),
+    getMountedIds: () => [...outgoingByObjectId.keys()],
+    getNode: (id: string) => {
+      const container = outgoingByObjectId.get(id)
+      if (container === undefined) return undefined
+      // Empty data → no `name`, so the name-based pass is a no-op and the
+      // test's id-equality assertion is what gets exercised.
+      return { container, data: {} }
+    },
     adoptSlideRoot: vi.fn(),
   }
 }
@@ -217,7 +234,7 @@ describe('playTransition — wiring', () => {
     expect(sg._app.stage.children.length).toBe(2)
   })
 
-  it.skip('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
+  it('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
     const sg = makeSceneGraph(['shared-1', 'only-in-outgoing'])
     const incoming = [rect('shared-1'), rect('only-in-incoming')]
 
