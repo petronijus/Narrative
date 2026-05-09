@@ -1,11 +1,12 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-05-09 after Tier B roadmap completion. Current state:
-> 1,219 unit/integration tests pass across 5 packages, 29 e2e specs,
+> Last updated 2026-05-09 after Tier C roadmap completion. Current state:
+> 1,219 unit/integration tests pass across 5 packages, 31 e2e specs,
 > 23 web tests `it.skip` (all documented). Bundle budgets enforced via
-> `size-limit` (`pnpm size`). Property-based CRDT convergence active.
-> Server lifecycle/leak coverage active. Visual-regression suite has
-> sampled-thumbnail tests in CI + opt-in pixel-perfect baselines.
+> `size-limit` (`pnpm size`). Property-based CRDT convergence,
+> server lifecycle/leak coverage, multi-client e2e collab, destructive-
+> flow coverage, sampled-thumbnail visual regression all active.
+> Lighthouse CI + Stryker mutation testing wired in (opt-in).
 
 ## TL;DR
 
@@ -130,13 +131,13 @@ All six items landed:
 5. ✅ **Performance budget regression tracking** — `tests/load/runAll.mjs` now compares against an optional `tests/load/baselines.json`; emits warnings when latency / size / sync time drifts > 20% even if absolute thresholds still pass. Template at `tests/load/baselines.example.json`. Threshold-breach exit-1 behaviour unchanged.
 6. ✅ **FillTokenTab triage** — the 6 skipped tests asserted retired UX (the dedicated "Token" tab in the fill picker, replaced by token swatches inline in the colour-picker popover during M16-P8). Deleted with explicit comments pointing readers to the tokens unit tests in `slide-model` and the e2e replacement candidate in `inspector-flows.spec.ts`. 2 placeholder skips remain for the Detach-button rebind, clearly marked TODO.
 
-### Tier C — eventual
+### Tier C — completed (5 of 6) ✅
 
-1. Procedural-texture leak test (after shared lifecycle lands).
-2. Two-step destructive-flow e2e — folder/deck/share-link delete confirmations.
-3. Mutation-testing pilot on `packages/slide-model` (Stryker) to find dead unit tests.
-4. Multi-client e2e harness — Playwright with N browser contexts.
-5. Lighthouse / Core Web Vitals budget on the editor route.
+1. **Procedural-texture leak test** — ⏸ deferred. Blocked on the shared procedural-texture lifecycle landing (see memory note `procedural-texture-leak.md`). Add the test in the same PR that fixes the leak so they ship together.
+2. ✅ **Destructive-flow e2e** — `apps/web/e2e/destructive-flows.spec.ts`. Five tests covering deck delete + share-link cascade, share-link revoke happy-path + IDOR-guard regression (Tier 1 fix), folder delete cascade, Drafts-folder protection.
+3. ✅ **Mutation-testing pilot** — Stryker config at `packages/slide-model/stryker.config.json`. Run via `pnpm --filter @narrative/slide-model mutate`. Targets `mutations.ts` + `slides.ts` (highest-stakes files). HTML report → `reports/mutation/`. Threshold guidance: high=80%, low=60%, no break-build (informational; surface dead tests rather than gate).
+4. ✅ **Multi-client e2e harness** — `apps/web/e2e/multi-client-collab.spec.ts`. Two scenarios: three browser contexts each adding slides + objects in parallel converge through real Hocuspocus sync; one context goes offline via `setOffline(true)`, peer makes changes, reconnect triggers Hocuspocus initial-sync handshake. Asserts deep-equal `listSlides()` snapshots across all contexts. The e2e analog to the unit-level CRDT property test from Tier B.1.
+5. ✅ **Lighthouse CI** — `.lighthouserc.json` + `pnpm lighthouse` script. Audits the editor route on a built preview server. Budgets: performance ≥ 0.7, FCP < 2.5s, LCP < 4s, TBT < 600ms, CLS < 0.1, TTI < 5s. Currently `warn`-level (not `error`) so it's informational; promote after one or two PR cycles confirm CI stability.
 
 ## Maintaining this strategy
 

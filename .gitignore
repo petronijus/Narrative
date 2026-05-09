@@ -45,3 +45,10 @@ apps/web/.vite/
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/.playwright/
+
+# Stryker mutation-testing reports — regenerated locally
+**/reports/mutation/
+.stryker-tmp/
+
+# Lighthouse CI artifacts (uploaded to temporary-public-storage)
+.lighthouseci/

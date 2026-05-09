@@ -15,6 +15,7 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "size": "pnpm --filter web build && pnpm --filter web size",
+    "lighthouse": "pnpm --filter web build && lhci autorun --config=.lighthouserc.json",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
     "prepare": "husky",
     "load:all": "node tests/load/runAll.mjs",
@@ -23,6 +24,7 @@
     "load:growth": "node --loader ts-node/esm tests/load/docGrowth.ts"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.14.0",
     "@typescript-eslint/eslint-plugin": "^8.31.0",
     "@typescript-eslint/parser": "^8.31.0",
     "concurrently": "^9.1.2",

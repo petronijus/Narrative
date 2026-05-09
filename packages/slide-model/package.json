@@ -11,7 +11,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "node ../../node_modules/vitest/vitest.mjs run"
+    "test": "node ../../node_modules/vitest/vitest.mjs run",
+    "mutate": "stryker run"
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
@@ -19,6 +20,8 @@
     "nanoid": "^5.0.9"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^8.6.0",
+    "@stryker-mutator/vitest-runner": "^8.6.0",
     "fast-check": "^3.23.0",
     "vitest": "^3.1.2"
   }

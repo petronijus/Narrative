@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment_purpose": "Mutation-testing pilot. Stryker mutates the source under test (e.g. flips < to <=, swaps + with -) and re-runs the test suite; if all tests still pass with the mutation in place, that mutation is considered 'survived' and the unit tests have a hole. The score = killed / (killed + survived). 80%+ is good for pure-logic packages.",
+  "_comment_scope": "Limited to mutations.ts + slides.ts to keep the run < 5 minutes. Expand by adjusting `mutate` once we have a baseline score.",
+  "_comment_run": "From this directory: `pnpm mutate` — outputs an HTML report at reports/mutation/. CI integration is opt-in (don't gate every PR on this; run nightly or before milestone close).",
+  "packageManager": "pnpm",
+  "reporters": ["html", "clear-text", "progress"],
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.ts"
+  },
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/mutations.ts",
+    "src/slides.ts",
+    "!src/**/*.test.ts",
+    "!src/**/*.property.test.ts"
+  ],
+  "ignorePatterns": ["node_modules", "dist", "reports"],
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": null
+  },
+  "timeoutMS": 10000,
+  "concurrency": 4
+}
