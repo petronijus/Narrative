@@ -17,5 +17,9 @@
     "@narrative/shared": "workspace:*",
     "yjs": "^13.6.30",
     "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "fast-check": "^3.23.0",
+    "vitest": "^3.1.2"
   }
 }

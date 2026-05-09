@@ -1,0 +1,21 @@
+{
+  "_comment_baseline_format": "Optional regression-tracking sidecar to absolute thresholds. Each scenario's most recent good run can be committed here; runAll.mjs warns when a metric drifts > 20% from the baseline (still PASS-level, but regressing). Update the file from a run on a representative machine, NOT from CI ephemeral runners.",
+  "_comment_how_to_update": "On a quiet local machine: `pnpm load:all > /tmp/load.json`, then copy the relevant fields from each scenario's parsed result into baselines.json (rename _example to baselines.json).",
+  "_comment_tolerance": "Default ±20% drift allowed silently. Set _toleranceFactor on a per-metric override to tighten/loosen.",
+  "scenarios": {
+    "hotEdit": {
+      "latency_avg_ms": 5,
+      "latency_p95_ms": 12,
+      "ops_per_sec": 80,
+      "doc_size_bytes_after_run": 200000
+    },
+    "awarenessFlood": {
+      "latency_avg_ms": 30,
+      "events_per_sec": 200
+    },
+    "docGrowth": {
+      "initial_sync_ms": 800,
+      "doc_size_bytes": 500000
+    }
+  }
+}

@@ -189,86 +189,20 @@ function renderInspector(objects: SlideObject[]) {
 // Tests — Token tab in fill picker
 // ---------------------------------------------------------------------------
 
-describe('Fill picker — Token tab', () => {
-  beforeEach(() => {
-    mockTokenSnapshot = { colors: {}, textStyles: {}, effectStyles: {} }
-    mockObjects = []
-  })
-
-  const mockRect = (): SlideObject => ({
-    id: 'rect-1',
-    type: 'rectangle',
-    x: 0,
-    y: 0,
-    width: 100,
-    height: 100,
-    rotation: 0,
-    opacity: 1,
-    fill: 0xff0000,
-    fillAlpha: 1,
-    locked: false,
-  })
-
-  it.skip('renders the Token option in the fill type dropdown', async () => {
-    renderInspector([mockRect()])
-    await waitFor(() => {
-      const fillTypeSelect = screen.getByLabelText('Fill type')
-      expect(fillTypeSelect).toBeInTheDocument()
-    })
-    const fillTypeSelect = screen.getByLabelText('Fill type')
-    const options = Array.from(fillTypeSelect.querySelectorAll('option')).map((o) => o.textContent)
-    expect(options).toContain('Token')
-  })
-
-  it.skip('shows empty-state when fill is a TokenRef and no colors defined', async () => {
-    // Pre-set fill to a TokenRef so fillModeOf immediately returns 'token'
-    const tokenRect = { ...mockRect(), fill: { $token: 'colors.c1' } as unknown as number }
-    renderInspector([tokenRect])
-    await waitFor(() => {
-      expect(screen.getByText('Define colors in folder settings')).toBeInTheDocument()
-    })
-  })
-
-  it.skip('shows color swatches in Token panel when colors are defined', async () => {
-    mockTokenSnapshot = {
-      colors: {
-        c1: { id: 'c1', name: 'Brand Blue', value: '#3b82f6' },
-        c2: { id: 'c2', name: 'Accent Red', value: '#ef4444' },
-      },
-      textStyles: {},
-      effectStyles: {},
-    }
-
-    const tokenRect = { ...mockRect(), fill: { $token: 'colors.c1' } as unknown as number }
-    renderInspector([tokenRect])
-    await waitFor(() => {
-      expect(screen.getByLabelText('Apply token: Brand Blue')).toBeInTheDocument()
-      expect(screen.getByLabelText('Apply token: Accent Red')).toBeInTheDocument()
-    })
-  })
-
-  it.skip('calls patch with TokenRef when a token swatch is clicked', async () => {
-    mockTokenSnapshot = {
-      colors: { c1: { id: 'c1', name: 'Brand Blue', value: '#3b82f6' } },
-      textStyles: {},
-      effectStyles: {},
-    }
-
-    const tokenRect = {
-      ...mockRect(),
-      fill: { $token: 'colors.placeholder' } as unknown as number,
-    }
-    renderInspector([tokenRect])
-    await waitFor(() => screen.getByLabelText('Apply token: Brand Blue'))
-    fireEvent.click(screen.getByLabelText('Apply token: Brand Blue'))
-
-    expect(slideModel.updateObject).toHaveBeenCalledWith(
-      expect.anything(),
-      'rect-1',
-      expect.objectContaining({ fill: { $token: 'colors.c1' } }),
-    )
-  })
-})
+// The dedicated "Token" tab in the fill picker was retired during the
+// M16-P8 token-integration work. Tokens are now surfaced as swatches
+// inside the colour picker popover (see Inspector.tsx ~3672, the
+// `tokenColors={...}` prop on TokenColorInput) — no separate dropdown
+// option, no aria-label='Apply token: <name>' button, no empty-state
+// string. The four tests that used to live here asserted the old UX
+// and are gone.
+//
+// Behaviour replacement:
+//   - TokenRef payload writes through onTokenSelect: covered by the
+//     CRDT-mutation unit tests in slide-model/src/tokens.test.ts
+//   - Click-swatch-then-verify-Y.Doc-patch flow: candidate for an
+//     end-to-end spec extension to apps/web/e2e/inspector-flows.spec.ts
+//     once the popover-driven UI has stabilised.
 
 // ---------------------------------------------------------------------------
 // Tests — Style dropdown in TextSection
@@ -366,27 +300,16 @@ describe('TextSection — Style dropdown', () => {
     )
   })
 
-  it.skip('shows Detach button when a style is linked', async () => {
-    const textWithStyle = {
-      ...mockText(),
-      textStyleId: 'ts1', // pre-linked
-    } as unknown as SlideObject
-
-    mockTokenSnapshot = {
-      colors: {},
-      textStyles: {
-        ts1: { id: 'ts1', name: 'Heading 1', family: 'Inter', weight: 700, size: 32 },
-      },
-      effectStyles: {},
-    }
-
-    renderInspector([textWithStyle])
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /detach/i })).toBeInTheDocument()
-    })
+  // The "Detach" button as a separate UI affordance was folded into the
+  // text-style chip's "×" icon during the styles-popover refactor (no
+  // role="button" name=/detach/i any more). The mutation contract
+  // (clearing textStyleId on detach) is covered by the slide-model
+  // mutation tests.
+  it.skip('TODO: rebind Detach to current chip × icon — covers textStyleId-clear mutation', async () => {
+    /* placeholder — see comment above */
   })
 
-  it.skip('detaches text style on Detach button click', async () => {
+  it.skip('TODO: rebind Detach to current chip × icon — same as above', async () => {
     const textWithStyle = {
       ...mockText(),
       textStyleId: 'ts1',
