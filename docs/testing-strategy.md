@@ -149,3 +149,23 @@ All six items landed:
 - New Hocuspocus extensions MUST have a lifecycle test (open/close/leak).
 - When you find yourself writing `getByText('Fill')`, stop. Use a
   `data-testid` AND/OR an e2e instead.
+
+## How Claude uses this suite
+
+Future Claude sessions read [`/CLAUDE.md`](../CLAUDE.md) on every
+conversation. That file maps "files you touched" → "tests to run
+automatically before declaring work complete". It is the operating
+contract for autonomous changes; update it when you add a new test
+target or retire an existing one. Examples of the policy:
+
+- Edit anything → `pnpm typecheck` + `pnpm lint` + `pnpm -r test` (always).
+- Touch the renderer → also run `renderer-visual` + `inspector-flows` e2e.
+- Touch Yjs mutations → also run the property-based CRDT test +
+  `multi-client-collab` e2e.
+- Touch bundle entry points / dynamic imports → also run `pnpm size`.
+- Touch perf-sensitive paths → also run `pnpm load:all` (compares
+  against `tests/load/baselines.json`).
+
+The slow gates (`pnpm lighthouse`, Stryker `mutate`) are NOT auto-run
+per change — they're nightly / pre-release. CI runs the unit + e2e +
+size budgets on every PR.

@@ -4,6 +4,68 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Audit + test debt cleanup (2026-05-09)
+
+Multi-stage codebase audit and test-suite consolidation. Eight commits
+on `main`: `1e53cf5` (Tier 1 security/leaks/bundle), `7081697`
+(Tier 2 render storms / animation lifecycle / observer race), `229658d`
+(centralised Pixi mock), `778bab1` (web suite cleanup + e2e migration),
+`d8ed687` (testing strategy doc), `d026e68` (Tier A), `7edebd9`
+(Tier B), `d504f83` (Tier C).
+
+### Added
+
+- **`/CLAUDE.md`** — project guide telling Claude sessions which test commands to auto-run for which kinds of changes (renderer, mutations, auth, etc.) and the architecture invariants not to violate.
+- **`docs/testing-strategy.md`** — strategy + roadmap doc, all three tiers (A/B/C) marked complete.
+- **`packages/slide-model/src/convergence.property.test.ts`** — fast-check property-based CRDT convergence (3 properties, 400 random op sequences per run): disjoint+sync, three-client star topology, offline-then-reconnect.
+- **`apps/server/src/hocuspocus/lifecycle.test.ts`** — server doc-cache leak guard (cache returns to 0 after debounce, 50× open/close stays bounded, reopen reuses cached entry).
+- **`apps/web/e2e/keyboard-shortcuts.spec.ts`** — replaces 14 jsdom-misplaced unit tests; covers Toolbar (R/O/T/V), input-focus suppression, present-mode entry, slide nav, present-layout exit.
+- **`apps/web/e2e/renderer-visual.spec.ts`** — sampled-thumbnail visual regression (always-on) + opt-in pixel-perfect baselines (`RUN_VISUAL_BASELINES=1`).
+- **`apps/web/e2e/destructive-flows.spec.ts`** — deck delete + cascade, share-link revoke happy + IDOR guard, folder cascade, Drafts protection.
+- **`apps/web/e2e/multi-client-collab.spec.ts`** — three browser contexts converging through real Hocuspocus + offline/online catch-up via `setOffline`.
+- **`apps/web/e2e/inspector-flows.spec.ts`** — full Inspector e2e replacing deleted DOM-presence component tests.
+- **`apps/web/src/test/pixiMock.ts`** + **`apps/web/src/test/renderWithProviders.tsx`** — single-source-of-truth mock factory and provider wrapper (replaces ~20 inline copies).
+- **`tests/load/runAll.mjs`** — load-test harness with absolute thresholds + 20% drift warnings vs `tests/load/baselines.example.json`.
+- **`.lighthouserc.json`** + `pnpm lighthouse` script — Core Web Vitals on the editor route (warn-level FCP/LCP/TBT/CLS/TTI).
+- **`packages/slide-model/stryker.config.json`** + `pnpm --filter @narrative/slide-model mutate` — Stryker mutation-testing pilot targeting `mutations.ts` + `slides.ts`.
+- **`pnpm size`** — size-limit budgets per chunk + total first-paint ≤ 800 KB gz (currently 747).
+- Vite `manualChunks` split — main app chunk down from 836 KB gz to 189 KB gz.
+
+### Fixed
+
+- **Tier 1**: security blockers (auth bypass paths, IDOR on share-link revoke, missing rate-limits on auth endpoints), server resource leaks (Hocuspocus doc-cache eviction with `unloadImmediately:false` + `debounce:2000`), bundle hygiene.
+- **Tier 2-A**: render storms — memoised `SelectionContext`, `SlideDocProvider`, `EditorLayout` array refs.
+- **Tier 2-B**: server-side leaks — Hocuspocus lifecycle settings, doc cache returns to 0 after disconnects.
+- **Tier 2-C**: animation lifecycle — Magic Move `onComplete` chained via `eventCallback('onComplete')` instead of overwriting; `playTransition` snap-final-state guard restored.
+- **Tier 2-E**: `subscribeToSlides` race — `slideObserve` no longer fires partial state during transactions.
+- **`InputBridge`** listener leak — single-overwrite replaced with `Set<cb>` broadcast.
+- **`videoRenderer`** shared `containerRegistry` race — registry keyed by node id, cleared on unmount.
+- **`useMediaUpload` tests** — switched mock from `getHeader` to `getBody` (server moved metadata to JSON body because browser CORS strips custom headers).
+
+### Changed
+
+- **Web test suite**: 102 failures → 0; 61 skipped → 23 (all remaining skips have rationale comments in-file). Total across all packages: 1,219 unit + integration tests pass, 0 fail.
+- **`pnpm dev`** — now starts web + server + video-worker (was only web + server). Added `pnpm dev:no-worker` for the old behaviour.
+- **`hls.js`** — moved back to static import after lazy-import broke video rendering on first play; vendor-hls chunk split kept.
+- **`bullmq` + `ioredis`** — Node 25 ESM compat fix: default-import + destructure named exports.
+
+### Removed
+
+- ~80 DOM-presence component tests (`getByText('Fill')`, `expect(button).toBeInTheDocument()`) — replaced by e2e or deleted as no-signal.
+- 6 `objectRenderers/*.test.ts` files asserting Pixi mock-call shapes — replaced by sampled-thumbnail e2e.
+- 14 jsdom keyboard-shortcut tests — moved to `apps/web/e2e/keyboard-shortcuts.spec.ts` (real focus model required).
+- 6 `FillTokenTab.test.tsx` skips for retired UX (Token tab folded into colour-picker popover during M16-P8).
+- Empty `describe` blocks left over after deletions.
+
+### Technical decisions
+
+- `Y.encodeStateAsUpdate` is **not** canonical (clock entries serialise in insertion order). Property-based convergence asserts structural deep-equality of `listSlides()` output (with `JSON.parse(JSON.stringify(slide))` to strip live `Y.Text` / `Y.XmlFragment` refs).
+- Visual regression is two-tier: sampled-thumbnail tests run always (cross-platform robust); pixel-perfect baselines opt-in via env var (avoid baseline-churn from font-rendering differences).
+- Lighthouse + Stryker are NOT on every PR — `pnpm size` and `pnpm load:all` are. Slow gates run nightly / pre-release.
+- Sub-agents in this repo MUST run on Opus (memory-noted): Sonnet output needed reviewer rework on M16 P5/P6.
+
+---
+
 ## M1 — Scene graph + resource manager (2026-04-19)
 
 ### Added

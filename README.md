@@ -57,12 +57,44 @@ See [docs/agents.md](./docs/agents.md) for the AI agent workflow and ownership m
 ## Development scripts
 
 ```bash
-pnpm dev          # Start web + server in parallel
+pnpm dev          # Start web + server + video-worker in parallel
 pnpm -r build     # Build all workspaces
 pnpm -r typecheck # TypeScript check across all workspaces
 pnpm -r lint      # ESLint across all workspaces
-pnpm -r test      # Tests across all workspaces
+pnpm -r test      # Unit + integration tests across all workspaces
 ```
+
+## Testing
+
+Strategy + roadmap: **[docs/testing-strategy.md](./docs/testing-strategy.md)** —
+read before adding a new test or chasing a failing one. The short version:
+
+- **Pure logic = unit tests** (`packages/slide-model`, `packages/animation`,
+  `apps/server`)
+- **User-visible behaviour = Playwright e2e** (`apps/web/e2e/`) — anything
+  that depends on focus, keyboard scope, drag/drop, multi-window sync,
+  or real rendering
+- **No component tests for "does this label render"** — those break on
+  every UI iteration without catching real bugs. We deleted ~80 of them.
+
+```bash
+pnpm test                                       # unit + integration (~1,219 tests)
+pnpm --filter web test:e2e                      # 31 Playwright specs
+pnpm size                                       # bundle-size budgets (per-chunk + total)
+pnpm load:all                                   # load tests with regression tracking
+pnpm lighthouse                                 # Core Web Vitals on the editor route
+pnpm --filter @narrative/slide-model mutate     # Stryker mutation pilot
+```
+
+Coverage highlights:
+
+- Property-based CRDT convergence (400 random op sequences per run)
+- Server lifecycle/leak regression guard (50× open/close docs)
+- Multi-client e2e collab (3 browser contexts converging through real Hocuspocus)
+- Sampled-thumbnail visual regression (catches "wrong colour", "wrong layer order"
+  without cross-platform pixel-diff fragility)
+- Destructive-flow e2e (deck delete, share-link revoke + IDOR guard, folder cascade)
+- Bundle budgets via size-limit (main app chunk ≤ 210 KB gzipped)
 
 ## CI
 
@@ -70,6 +102,11 @@ GitHub Actions runs on every push and PR to `main`:
 lint → typecheck → build → test + Docker build validation.
 
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+`pnpm size`, `pnpm load:all`, `pnpm lighthouse`, and `pnpm --filter
+@narrative/slide-model mutate` are intentionally NOT on every PR — they
+either need a representative machine (load, lighthouse) or take long
+enough that they're better as nightly / pre-release gates.
 
 ## Authentication
 
