@@ -16,54 +16,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
 
 // Mock pixi.js
-vi.mock('pixi.js', () => {
-  class MockPoint {
-    x: number
-    y: number
-    constructor(x = 0, y = 0) {
-      this.x = x
-      this.y = y
-    }
-  }
-
-  class MockContainer {
-    x = 0
-    y = 0
-    destroyed = false
-    children: MockContainer[] = []
-    pivot = { set: vi.fn() }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-
-    // Simuluje toGlobal: vrátí offset od container.x/y v "fyzických" pixelech
-    toGlobal(point: MockPoint): MockPoint {
-      return new MockPoint(this.x + point.x, this.y + point.y)
-    }
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: vi.fn(),
-    Text: vi.fn(),
-    TextStyle: vi.fn(),
-    Point: MockPoint,
-    Application: vi.fn(),
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { OverlayCompositor } from './OverlayCompositor'
 import { Container } from 'pixi.js'

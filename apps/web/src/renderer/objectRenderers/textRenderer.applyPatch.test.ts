@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
 
 // Mock TextStyle s mutable properties a spy objektem
 const _mockStyleInstance = {
@@ -21,87 +22,7 @@ const _mockStyleInstance = {
   wordWrapWidth: 300,
 }
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    pivot = {
-      x: 0,
-      y: 0,
-      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
-        this.x = x
-        this.y = y
-      }),
-    }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-  }
-
-  class MockText extends MockContainer {
-    text = ''
-    style: Record<string, unknown> = {
-      fontSize: 16,
-      fontWeight: 'normal',
-      fill: '#000000',
-      align: 'left',
-      wordWrapWidth: 300,
-    }
-
-    constructor(opts: { text: string; style: Record<string, unknown> }) {
-      super()
-      this.text = opts.text
-      this.style = { ...opts.style }
-    }
-
-    override destroy(): void {
-      super.destroy()
-    }
-  }
-
-  class MockTextStyle {
-    fontSize = 16
-    fontWeight: 'normal' | 'bold' = 'normal'
-    fill = '#000000'
-    align: 'left' | 'center' | 'right' = 'left'
-    wordWrap = true
-    wordWrapWidth = 300
-    fontFamily = 'system-ui'
-
-    constructor(opts: Record<string, unknown>) {
-      Object.assign(this, opts)
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Text: MockText,
-    TextStyle: MockTextStyle,
-    Application: vi.fn(),
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { textRenderer } from './textRenderer'
 import type { TextObject } from '../types'

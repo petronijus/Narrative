@@ -16,90 +16,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../test/pixiMock'
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    pivot = {
-      x: 0,
-      y: 0,
-      set: vi.fn().mockImplementation(function (
-        this: { x: number; y: number },
-        px: number,
-        py: number,
-      ) {
-        this.x = px
-        this.y = py
-      }),
-    }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-
-    toLocal(
-      worldPoint: { x: number; y: number },
-      _fromContainer?: unknown,
-      outPoint?: { x: number; y: number },
-    ): { x: number; y: number } {
-      const dx = worldPoint.x - this.x
-      const dy = worldPoint.y - this.y
-      const θ = this.rotation
-      const cosθ = Math.cos(-θ)
-      const sinθ = Math.sin(-θ)
-      const localX = dx * cosθ - dy * sinθ + this.pivot.x
-      const localY = dx * sinθ + dy * cosθ + this.pivot.y
-      const result = outPoint ?? { x: 0, y: 0 }
-      result.x = localX
-      result.y = localY
-      return result
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    ellipse = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-  }
-
-  class MockPoint {
-    x = 0
-    y = 0
-    constructor(x = 0, y = 0) {
-      this.x = x
-      this.y = y
-    }
-    set(x: number, y: number): void {
-      this.x = x
-      this.y = y
-    }
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Text: vi.fn().mockImplementation(() => new MockContainer()),
-    TextStyle: vi.fn(),
-    Application: vi.fn(),
-    Point: MockPoint,
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { SceneGraph } from './SceneGraph'
 import type { RectangleObject } from './types'

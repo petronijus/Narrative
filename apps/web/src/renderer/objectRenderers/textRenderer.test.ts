@@ -11,87 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    pivot = { set: vi.fn() }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-  }
-
-  class MockTextStyle {
-    fontFamily: string
-    fontSize: number
-    fontWeight: string
-    fill: string
-    align: string
-    wordWrap: boolean
-    wordWrapWidth: number
-
-    constructor(opts: {
-      fontFamily: string
-      fontSize: number
-      fontWeight: string
-      fill: string
-      align: string
-      wordWrap: boolean
-      wordWrapWidth: number
-    }) {
-      this.fontFamily = opts.fontFamily
-      this.fontSize = opts.fontSize
-      this.fontWeight = opts.fontWeight
-      this.fill = opts.fill
-      this.align = opts.align
-      this.wordWrap = opts.wordWrap
-      this.wordWrapWidth = opts.wordWrapWidth
-    }
-  }
-
-  class MockText extends MockContainer {
-    text: string
-    style: MockTextStyle
-
-    constructor(opts: { text: string; style: MockTextStyle }) {
-      super()
-      this.text = opts.text
-      this.style = opts.style
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    ellipse = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Text: MockText,
-    TextStyle: MockTextStyle,
-    Application: vi.fn(),
-    Point: vi.fn(),
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { textRenderer } from './textRenderer'
 import type { TextObject } from '../types'

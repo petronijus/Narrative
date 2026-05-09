@@ -8,25 +8,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../test/pixiMock'
 
 // Mock pixi.js Assets před importem ResourceManager
-vi.mock('pixi.js', () => {
-  const makeTexture = () => ({
-    destroy: vi.fn(),
-    label: '',
-    // Non-null source so acquireTexture does not fall through to the
-    // HTMLImageElement.decode() fallback (jsdom has no .decode).
-    source: { _mock: true },
-  })
-
-  return {
-    Assets: {
-      load: vi.fn().mockImplementation(async (_url: string) => makeTexture()),
-      unload: vi.fn().mockResolvedValue(undefined),
-    },
-    Texture: { from: vi.fn(() => makeTexture()) },
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { ResourceManager } from './ResourceManager'
 import { Assets } from 'pixi.js'

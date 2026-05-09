@@ -7,55 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    pivot = {
-      x: 0,
-      y: 0,
-      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
-        this.x = x
-        this.y = y
-      }),
-    }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    ellipse = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Application: vi.fn(),
-    Text: vi.fn(),
-    TextStyle: vi.fn(),
-    Point: vi.fn(),
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { ellipseRenderer } from './ellipseRenderer'
 import type { EllipseObject } from '../types'

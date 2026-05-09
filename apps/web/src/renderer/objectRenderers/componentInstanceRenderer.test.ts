@@ -12,89 +12,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
 import * as Y from 'yjs'
 
 // ---------------------------------------------------------------------------
 // Pixi mock — same shape used elsewhere in renderer/objectRenderers tests.
 // ---------------------------------------------------------------------------
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    visible = true
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    scale = {
-      x: 1,
-      y: 1,
-      set: vi.fn(function (this: { x: number; y: number }, x: number, y?: number) {
-        this.x = x
-        this.y = y ?? x
-      }),
-    }
-    pivot = {
-      x: 0,
-      y: 0,
-      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
-        this.x = x
-        this.y = y
-      }),
-    }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-    getChildIndex(child: MockContainer): number {
-      return this.children.indexOf(child)
-    }
-    setChildIndex(child: MockContainer, idx: number): void {
-      const cur = this.children.indexOf(child)
-      if (cur === -1) return
-      this.children.splice(cur, 1)
-      this.children.splice(idx, 0, child)
-    }
-    destroy(): void {
-      this.destroyed = true
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    roundRect = vi.fn().mockReturnThis()
-    ellipse = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-    stroke = vi.fn().mockReturnThis()
-  }
-
-  class MockText extends MockContainer {
-    text = ''
-    style = { wordWrapWidth: 0 }
-    anchor = { set: vi.fn() }
-  }
-  class MockTextStyle {
-    constructor(public opts: Record<string, unknown>) {}
-    wordWrapWidth = 0
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Text: MockText,
-    TextStyle: MockTextStyle,
-    Application: vi.fn(),
-  }
-})
-
-// ---------------------------------------------------------------------------
+vi.mock('pixi.js', () => pixiMock()) // ---------------------------------------------------------------------------
 // Mock the registry: only register a stub "rectangle" renderer so the
 // componentInstanceRenderer can dispatch master-tree expansion through it.
 // ---------------------------------------------------------------------------

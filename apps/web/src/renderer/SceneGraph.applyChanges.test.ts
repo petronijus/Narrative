@@ -8,67 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { pixiMock } from '../test/pixiMock'
 
-vi.mock('pixi.js', () => {
-  class MockContainer {
-    children: MockContainer[] = []
-    destroyed = false
-    x = 0
-    y = 0
-    rotation = 0
-    alpha = 1
-    pivot = {
-      x: 0,
-      y: 0,
-      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
-        this.x = x
-        this.y = y
-      }),
-    }
-
-    addChild(child: MockContainer): MockContainer {
-      this.children.push(child)
-      return child
-    }
-
-    removeChild(child: MockContainer): MockContainer {
-      this.children = this.children.filter((c) => c !== child)
-      return child
-    }
-
-    // P12f: SceneGraph.applyChanges now reorders root children to match
-    // `changes.snapshot` (P12a layer-reorder fix). The stub root needs
-    // these two so the reorder pass doesn't throw.
-    getChildIndex(child: MockContainer): number {
-      return this.children.indexOf(child)
-    }
-    setChildIndex(child: MockContainer, idx: number): void {
-      const cur = this.children.indexOf(child)
-      if (cur === -1) return
-      this.children.splice(cur, 1)
-      this.children.splice(idx, 0, child)
-    }
-
-    destroy(): void {
-      this.destroyed = true
-    }
-  }
-
-  class MockGraphics extends MockContainer {
-    clear = vi.fn().mockReturnThis()
-    rect = vi.fn().mockReturnThis()
-    ellipse = vi.fn().mockReturnThis()
-    fill = vi.fn().mockReturnThis()
-  }
-
-  return {
-    Container: MockContainer,
-    Graphics: MockGraphics,
-    Application: vi.fn(),
-    Text: vi.fn().mockImplementation(() => ({ destroy: vi.fn(), text: '', style: {} })),
-    TextStyle: vi.fn().mockImplementation(() => ({})),
-  }
-})
+vi.mock('pixi.js', () => pixiMock())
 
 import { SceneGraph } from './SceneGraph'
 import type { SlideObject, ObjectChangeSet } from '@narrative/shared'
