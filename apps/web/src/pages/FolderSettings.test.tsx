@@ -52,7 +52,8 @@ vi.mock('../api/client', () => ({
 }))
 
 // Mock auth context
-vi.mock('../state/AuthContext', () => ({
+vi.mock('../state/AuthContext', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../state/AuthContext')>()),
   useAuth: () => ({ user: null, token: null, logout: vi.fn() }),
 }))
 

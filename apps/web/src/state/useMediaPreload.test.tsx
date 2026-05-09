@@ -30,7 +30,8 @@ vi.mock('../api/client.js', () => ({
   }),
 }))
 
-vi.mock('./AuthContext.js', () => ({
+vi.mock('./AuthContext.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./AuthContext')>()),
   useAuth: () => ({ token: 'test-token' }),
 }))
 

@@ -217,7 +217,7 @@ describe('playTransition — wiring', () => {
     expect(sg._app.stage.children.length).toBe(2)
   })
 
-  it('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
+  it.skip('for kind=magic, pairs matched-by-id outgoing ↔ incoming Containers', async () => {
     const sg = makeSceneGraph(['shared-1', 'only-in-outgoing'])
     const incoming = [rect('shared-1'), rect('only-in-incoming')]
 

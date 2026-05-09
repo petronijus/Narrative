@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { screen, act } from '@testing-library/react'
+import { renderWithProviders as render } from '../test/renderWithProviders'
 import { AvatarChips } from './AvatarChips'
 import type { PeerInfo } from '@narrative/shared'
 
