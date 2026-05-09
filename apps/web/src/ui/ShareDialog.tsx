@@ -5,7 +5,7 @@
  *
  * Features:
  * - List people with access (role, userId, revoke, change role)
- * - Invite by userId (Authentik sub claim; email lookup deferred to M21)
+ * - Invite by userId (Google OIDC `sub` claim; email lookup deferred to M21)
  * - Share links: list, create (role + optional expiry), copy URL, revoke
  *
  * Access control: rendered only when current user's role is 'owner'.
@@ -379,7 +379,7 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
           <div className="mb-1 flex items-end gap-2">
             <div className="flex-1">
               <label htmlFor="invite-user-id" className="mb-1 block text-xs text-gray-500">
-                User ID (Authentik sub)
+                User ID (Google sub)
               </label>
               <input
                 id="invite-user-id"

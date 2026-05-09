@@ -308,7 +308,13 @@ export function subscribeToSlideObjectsWithFlush(
     for (let i = 0; !orderChanged && i < currentOrder.length; i++) {
       if (currentOrder[i] !== lastEmittedOrder[i]) orderChanged = true
     }
-    if (orderChanged && netZeroIds.size > 0) {
+    // Drop the `netZeroIds.size > 0` guard — when netZeroIds is empty the
+    // loop is a no-op anyway, and keeping the guard meant a reorder that
+    // landed in the same batch as a genuine add/remove was silently
+    // skipped, leaving the per-id remount data incomplete. The outer
+    // `orderChanged` check at the emit site (below) already gates the
+    // callback so we never fire spuriously.
+    if (orderChanged) {
       for (const id of netZeroIds) {
         netRemoved.push(id)
         const obj = batchToProcess.addedObjects.get(id)
@@ -373,6 +379,20 @@ export function subscribeToSlideObjectsWithFlush(
     if (unsubscribed) return
     const fresh = resolveObjectsArr()
     if (fresh === null || fresh === objectsArr) return
+
+    // The rebind below emits a synthetic remove-all+add-all snapshot
+    // synchronously. Any pending rAF flush queued by the OLD objectsArr's
+    // observer would land AFTER this synchronous emit and deliver patches
+    // from the stale array on top of the fresh state — out-of-order. Cancel
+    // it and drop the queued batch so the rebind is the last word.
+    if (rafHandle !== -1) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const caf = (globalThis as any).cancelAnimationFrame as ((id: number) => void) | undefined
+      if (caf !== undefined && rafHandle !== 0) caf(rafHandle)
+      rafHandle = -1
+    }
+    pending = createPendingBatch()
+
     // Identity of the target slide's objects Y.Array changed.
     objectsArr.unobserveDeep(observer)
     objectsArr = fresh

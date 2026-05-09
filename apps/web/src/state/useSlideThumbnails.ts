@@ -22,7 +22,7 @@
  *   // thumbnails.get(slideId) === 'data:image/png;base64,...' | undefined
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { subscribeToDeckSlideEvents } from '@narrative/slide-model'
 import { yMapToPlainObject } from '@narrative/slide-model'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
@@ -33,6 +33,54 @@ import { computeSlideNumber } from '@narrative/shared'
 import { useDeckCtx } from './useDeckCtx.js'
 import { useSlides } from './useSlides.js'
 import type * as Y from 'yjs'
+
+// ---------------------------------------------------------------------------
+// Cheap structural compare for SlideBackground.
+// Replaces JSON.stringify(prev) === JSON.stringify(next) which ran in the
+// background-watch effect on every awareness/edit tick (60 slides × 2
+// stringifies × ~30 Hz). Discriminated by kind so we only compare fields
+// that exist for that variant.
+// ---------------------------------------------------------------------------
+
+function backgroundsEqual(a: SlideBackground, b: SlideBackground): boolean {
+  if (a.kind !== b.kind) return false
+  switch (a.kind) {
+    case 'color':
+      return a.color === (b as typeof a).color && (a.alpha ?? 1) === ((b as typeof a).alpha ?? 1)
+    case 'image': {
+      const bb = b as typeof a
+      return a.assetId === bb.assetId && a.fit === bb.fit && (a.dim ?? 0) === (bb.dim ?? 0)
+    }
+    case 'linearGradient': {
+      const bb = b as typeof a
+      return a.angleDeg === bb.angleDeg && stopsEqual(a.stops, bb.stops)
+    }
+    case 'radialGradient': {
+      const bb = b as typeof a
+      return (
+        a.centerX === bb.centerX &&
+        a.centerY === bb.centerY &&
+        a.radius === bb.radius &&
+        stopsEqual(a.stops, bb.stops)
+      )
+    }
+  }
+}
+
+function stopsEqual(
+  a: ReadonlyArray<{ offset: number; color: number; alpha?: number }>,
+  b: ReadonlyArray<{ offset: number; color: number; alpha?: number }>,
+): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i]!
+    const bi = b[i]!
+    if (ai.offset !== bi.offset || ai.color !== bi.color || (ai.alpha ?? 1) !== (bi.alpha ?? 1)) {
+      return false
+    }
+  }
+  return true
+}
 
 // ---------------------------------------------------------------------------
 // Debounce helper
@@ -377,14 +425,12 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
       const prev = latestBackgroundRef.current.get(slide.id)
       const next = slide.background
       if (prev === next) continue
-      // Shallow compare kind + common fields to avoid re-render thrash on
-      // identical-but-fresh objects coming out of the Y.Doc binding.
-      if (
-        prev !== undefined &&
-        next !== undefined &&
-        prev.kind === next.kind &&
-        JSON.stringify(prev) === JSON.stringify(next)
-      ) {
+      // Cheap structural compare avoids the JSON.stringify-twice hot path.
+      // Backgrounds are small discriminated unions (≤ ~7 scalar fields plus
+      // an optional `stops` array on gradients) so a kind-aware field check
+      // is dramatically cheaper than two stringifies, especially when the
+      // hook re-runs at awareness rate (~30 Hz) on a 60-slide deck.
+      if (prev !== undefined && next !== undefined && backgroundsEqual(prev, next)) {
         continue
       }
       latestBackgroundRef.current.set(slide.id, next)
@@ -396,19 +442,20 @@ export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
   // flags change, since `computeSlideNumber` reads from that list and
   // any slide may host a `isSlideNumber` text leaf whose displayed
   // number just shifted.
+  // Hoist the order/skipped fingerprint so it isn't recomputed inside the
+  // dep array on every render — the previous shape did a full deck traversal
+  // (60 slides ≈ 60 string concats) per parent render even when nothing
+  // structural changed.
+  const orderFingerprint = useMemo(
+    () => allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|'),
+    [allSlides],
+  )
   useEffect(() => {
-    const fingerprint = allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|')
-    void fingerprint
     for (const id of slideIds) scheduleRender(id)
     // Depend on a stable fingerprint string so unrelated slide-prop
     // edits (background, name) don't double-trigger here — the
     // background-watch effect above already covers those.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|'),
-    slideIds,
-    scheduleRender,
-  ])
+  }, [orderFingerprint, slideIds, scheduleRender])
 
   // ---------------------------------------------------------------------------
   // Cleanup all per-slide state on unmount

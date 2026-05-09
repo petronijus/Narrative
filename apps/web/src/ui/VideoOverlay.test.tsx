@@ -21,25 +21,40 @@ import type { VideoInfoResponse } from '../api/client'
 
 // ---------------------------------------------------------------------------
 // Mock hls.js
+//
+// vi.mock factories are hoisted above ALL imports, including this file's own
+// `import VideoOverlay`. Vitest 3 evaluates the factory before any module-
+// level `let MockHls = …` runs, so referencing such a binding inside the
+// factory throws TDZ ("Cannot access 'MockHls' before initialization").
+// vi.hoisted runs its initializer at the same hoisted moment as vi.mock, so
+// the binding is alive by the time the factory needs it.
 // ---------------------------------------------------------------------------
 
-const mockHlsLoadSource = vi.fn()
-const mockHlsAttachMedia = vi.fn()
-const mockHlsDestroy = vi.fn()
-let mockHlsIsSupported = true
+const hlsMocks = vi.hoisted(() => {
+  const mockHlsLoadSource = vi.fn()
+  const mockHlsAttachMedia = vi.fn()
+  const mockHlsDestroy = vi.fn()
+  const state = { isSupported: true }
 
-const MockHls = vi.fn().mockImplementation(() => ({
-  loadSource: mockHlsLoadSource,
-  attachMedia: mockHlsAttachMedia,
-  destroy: mockHlsDestroy,
-}))
+  const MockHls = vi.fn().mockImplementation(() => ({
+    loadSource: mockHlsLoadSource,
+    attachMedia: mockHlsAttachMedia,
+    destroy: mockHlsDestroy,
+  }))
+  Object.defineProperty(MockHls, 'isSupported', {
+    get: () => () => state.isSupported,
+  })
 
-Object.defineProperty(MockHls, 'isSupported', {
-  get: () => () => mockHlsIsSupported,
+  return { MockHls, mockHlsLoadSource, mockHlsAttachMedia, mockHlsDestroy, state }
 })
 
+const { mockHlsLoadSource, mockHlsAttachMedia, mockHlsDestroy } = hlsMocks
+const setMockHlsIsSupported = (v: boolean): void => {
+  hlsMocks.state.isSupported = v
+}
+
 vi.mock('hls.js', () => ({
-  default: MockHls,
+  default: hlsMocks.MockHls,
 }))
 
 // ---------------------------------------------------------------------------
@@ -147,7 +162,7 @@ function makeVideoInfo(
 beforeEach(() => {
   vi.clearAllMocks()
   mockVideoInfo = null
-  mockHlsIsSupported = true
+  setMockHlsIsSupported(true)
 })
 
 describe('VideoOverlay', () => {
@@ -211,7 +226,7 @@ describe('VideoOverlay', () => {
 
   it('initializes hls.js when Hls.isSupported returns true', async () => {
     mockVideoInfo = makeVideoInfo('done')
-    mockHlsIsSupported = true
+    setMockHlsIsSupported(true)
 
     render(
       <VideoOverlay
@@ -224,7 +239,7 @@ describe('VideoOverlay', () => {
     )
 
     await waitFor(() => {
-      expect(MockHls).toHaveBeenCalledOnce()
+      expect(hlsMocks.MockHls).toHaveBeenCalledOnce()
     })
 
     expect(mockHlsLoadSource).toHaveBeenCalledWith('https://cdn.example.com/manifest.m3u8')

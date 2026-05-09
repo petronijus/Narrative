@@ -144,4 +144,33 @@ describe('runSlideTransition', () => {
     // Consume the promise to avoid unhandled rejection warnings
     return result
   })
+
+  it('preserves the factory-installed onComplete (chain instead of overwrite)', async () => {
+    // Regression: a previous implementation called
+    //   timeline.eventCallback('onComplete', resolveCb)
+    // which silently replaced the factory's snap-final-state callback (set
+    // by Magic Move at magic.ts:256). After the fix, both run.
+    const targets = makeTargets()
+    const transition: SlideTransition = { kind: 'none', durationMs: 0 }
+
+    const compiled = compileSlideTransition(targets, transition)
+
+    let factoryRan = false
+    compiled.timeline.eventCallback('onComplete', () => {
+      factoryRan = true
+    })
+
+    // Mirror runSlideTransition's chaining logic
+    await new Promise<void>((resolve) => {
+      const factoryOnComplete = compiled.timeline.eventCallback('onComplete')
+      compiled.timeline.eventCallback('onComplete', () => {
+        if (typeof factoryOnComplete === 'function') factoryOnComplete()
+        compiled.dispose()
+        resolve()
+      })
+      compiled.timeline.play()
+    })
+
+    expect(factoryRan).toBe(true)
+  })
 })

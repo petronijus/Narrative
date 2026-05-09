@@ -264,6 +264,10 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
     return () => {
       runtime.destroy()
       runtimeRef.current = null
+      // Release the document.body click listener installed by
+      // createClickInputBridge. Without this, every entry into present mode
+      // leaks a click handler that lives until the page reloads.
+      inputBridge.dispose?.()
     }
   }, [canvasInstance, animations])
 

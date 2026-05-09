@@ -55,13 +55,23 @@ const LATEST_DATA_TAG = Symbol('vidLatestData')
 const LIVE_VIDEO_TAG = Symbol('vidLive')
 
 /**
- * Per-deck registry mapping object id → mounted Container so the
+ * Per-deck registry mapping object id → set of mounted Containers so the
  * EditorVideoPreview can hand its hidden <video> element to the renderer
  * once HLS has loaded. The renderer then builds a Pixi VideoSource sprite
  * that lives inside the scene graph — Y.Array layer order naturally
  * applies (no DOM-overlay-on-top-of-canvas problem).
+ *
+ * Why a Set, not a single ref: at any moment more than one Pixi context
+ * may have a container for the same video object id mounted at the same
+ * time — most commonly during the brief overlap when navigating from
+ * editor to present mode (the present canvas mounts its scene graph
+ * before the editor's unmounts), but also for future split-view layouts
+ * or component-master previews. A Map<id, Container> would silently
+ * overwrite earlier entries in those cases and `attachLiveVideo` would
+ * route the videoEl to whichever scene graph won the race. With a Set we
+ * broadcast to every live container.
  */
-const containerRegistry = new Map<string, Container>()
+const containerRegistry = new Map<string, Set<Container>>()
 
 interface LiveVideoState {
   videoEl: HTMLVideoElement
@@ -103,22 +113,28 @@ const pendingVideoEls = new Map<string, HTMLVideoElement>()
  * is buffered and applied on next mount.
  */
 export function attachLiveVideo(id: string, videoEl: HTMLVideoElement): void {
-  const container = containerRegistry.get(id)
-  if (container === undefined) {
+  const set = containerRegistry.get(id)
+  if (set === undefined || set.size === 0) {
     pendingVideoEls.set(id, videoEl)
     return
   }
-  attachLiveVideoToContainer(container, videoEl)
+  // Snapshot before iteration — attachLiveVideoToContainer may mutate the
+  // container's tree but should never mutate this registry directly.
+  for (const container of [...set]) {
+    attachLiveVideoToContainer(container, videoEl)
+  }
 }
 
 export function detachLiveVideo(id: string): void {
   pendingVideoEls.delete(id)
-  const container = containerRegistry.get(id)
-  if (container === undefined) return
-  teardownLiveVideo(container)
-  // Restore the poster path: re-run startLoad so the static sprite returns.
-  const data = getLatestData(container)
-  if (data !== undefined) startLoad(container, data)
+  const set = containerRegistry.get(id)
+  if (set === undefined) return
+  for (const container of [...set]) {
+    teardownLiveVideo(container)
+    // Restore the poster path: re-run startLoad so the static sprite returns.
+    const data = getLatestData(container)
+    if (data !== undefined) startLoad(container, data)
+  }
 }
 
 function attachLiveVideoToContainer(container: Container, videoEl: HTMLVideoElement): void {
@@ -789,7 +805,12 @@ export const videoRenderer = {
     applyObjectTransform(container, data)
     applyFilterEffects(container, data.shadow, data.blur)
     setLatestData(container, data)
-    containerRegistry.set(data.id, container)
+    let set = containerRegistry.get(data.id)
+    if (set === undefined) {
+      set = new Set()
+      containerRegistry.set(data.id, set)
+    }
+    set.add(container)
     startLoad(container, data)
 
     // If a hidden <video> element registered itself BEFORE this mount
@@ -995,8 +1016,11 @@ export const videoRenderer = {
 
     const data = getLatestData(node)
     if (data !== undefined) {
-      const reg = containerRegistry.get(data.id)
-      if (reg === node) containerRegistry.delete(data.id)
+      const set = containerRegistry.get(data.id)
+      if (set !== undefined) {
+        set.delete(node)
+        if (set.size === 0) containerRegistry.delete(data.id)
+      }
     }
 
     node.destroy({ children: true })

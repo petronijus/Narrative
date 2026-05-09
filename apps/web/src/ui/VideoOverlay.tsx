@@ -26,10 +26,9 @@
  */
 
 import { useEffect, useRef } from 'react'
-// hls.js is large and only needed when a video plays. Type-only import here;
-// the real module is fetched dynamically inside attachHls below so it lands
-// in its own chunk and not the editor's initial bundle.
-import type Hls from 'hls.js'
+// Eager import preserves the same sync attach-order the editor relies on.
+// hls.js still lands in its own vendor-hls chunk via vite manualChunks.
+import Hls from 'hls.js'
 import type { Container } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import type { SceneGraph } from '../renderer/SceneGraph.js'

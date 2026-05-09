@@ -69,6 +69,24 @@ vi.mock('../state/useSlides', async (importOriginal) => {
   }
 })
 
+// Inspector calls useAuth() to read the bearer token for slide-number
+// API calls. Tests don't exercise that code path, so a minimal stub
+// avoids needing the full AuthProvider tree in the wrapper.
+vi.mock('../state/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../state/AuthContext')>()
+  return {
+    ...actual,
+    useAuth: () => ({
+      user: { sub: 'test-user', email: 'test@example.com', name: 'Test User' },
+      token: 'test-token',
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+      refreshToken: vi.fn(),
+    }),
+  }
+})
+
 const mockSlides: Slide[] = []
 
 describe('Inspector — no selection shows SlideInspector', () => {

@@ -93,6 +93,10 @@ describe('useAwarenessUpdater', () => {
   })
 
   function flushRaf() {
+    // Legacy helper for tests written against the old rAF-based trailing
+    // flush. The implementation now uses setTimeout for an exact remaining-
+    // window wait, so we drive vitest's fake-timers instead.
+    vi.runAllTimers()
     const cbs = [...rafCallbacks]
     rafCallbacks.length = 0
     for (const cb of cbs) cb()

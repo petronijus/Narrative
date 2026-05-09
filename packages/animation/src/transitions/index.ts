@@ -76,7 +76,22 @@ export function runSlideTransition(
 
     const { timeline, dispose } = compiled
 
+    // Some transition factories (notably Magic Move) install their own
+    // onComplete to snap the final scene state — without chaining we'd
+    // overwrite that callback here and the snap insurance would silently
+    // never run, leaving paired objects in their last-tween-tick state if
+    // sub-pixel rounding diverged from the snapshot.
+    const factoryOnComplete = timeline.eventCallback('onComplete')
     timeline.eventCallback('onComplete', () => {
+      try {
+        if (typeof factoryOnComplete === 'function') {
+          factoryOnComplete()
+        }
+      } catch (err) {
+        // Don't let a buggy factory onComplete prevent dispose/resolve —
+        // the resolve path is what unblocks the slide-swap caller.
+        console.error('[transitions] factory onComplete threw:', err)
+      }
       dispose()
       resolve()
     })

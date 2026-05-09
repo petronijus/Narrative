@@ -12,7 +12,7 @@
  *     SceneGraph.hitTest (rotation-aware), keyboard duplicate + nudge.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Canvas } from '../renderer/Canvas'
 import { Toolbar } from '../ui/Toolbar'
 import { Inspector } from '../ui/Inspector'
@@ -2201,9 +2201,36 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // Other bounds pro snap
   // ---------------------------------------------------------------------------
 
-  const otherBounds = objects
-    .filter((o) => !selectedIds.has(o.id))
-    .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
+  // Memoize the snap-target list — `objects` ref churns on Y.Doc batch
+  // emissions but the filtered/mapped output is what gets passed to
+  // TransformHandles + InstanceEditHandles as a prop. Without memo, every
+  // render produces a fresh array reference and breaks downstream
+  // memoization in TransformHandles (re-runs snap candidate compute on
+  // every parent state tick — zoom, pan, marquee, drag draft).
+  const otherBounds = useMemo(
+    () =>
+      objects
+        .filter((o) => !selectedIds.has(o.id))
+        .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height })),
+    [objects, selectedIds],
+  )
+
+  // Memoize the deck-guides derivation — same rationale as otherBounds.
+  const extraGuides = useMemo(
+    () => deckGuides.map((g) => ({ orientation: g.orientation, position: g.position })),
+    [deckGuides],
+  )
+
+  // id → object lookup. Several JSX expressions below resolve a selected id
+  // back to its object via objects.find(...). With N selected and M total
+  // objects that's O(N·M) per render; the Map is O(M) once and O(1) per
+  // lookup. Used by editableIds filter, aspectLock check, all-components
+  // check, and several IIFE blocks below.
+  const objectsById = useMemo(() => {
+    const map = new Map<string, (typeof objects)[number]>()
+    for (const o of objects) map.set(o.id, o)
+    return map
+  }, [objects])
 
   // Cursor style
   const canvasCursor = middlePanning
@@ -2458,7 +2485,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         // objects that are NOT the active instance still get
                         // normal handles.
                         const editableIds = [...selectedIds].filter((sid) => {
-                          const o = objects.find((x) => x.id === sid)
+                          const o = objectsById.get(sid)
                           if (o === undefined || o.locked === true) return false
                           // While in crop mode, the cropped image is
                           // driven by CropOverlay — suppress the normal
@@ -2478,7 +2505,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
                         if (editableIds.length === 1) {
                           const onlyId = editableIds[0]
-                          const obj = objects.find((o) => o.id === onlyId)
+                          const obj = onlyId !== undefined ? objectsById.get(onlyId) : undefined
                           if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
                             return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
                           }
@@ -2490,7 +2517,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         // locked; Shift inverts the state mid-drag (XOR
                         // applied in TransformHandles).
                         const aspectLock = editableIds.some((sid) => {
-                          const o = objects.find((x) => x.id === sid)
+                          const o = objectsById.get(sid)
                           return o?.aspectLocked === true || o?.type === 'componentInstance'
                         })
                         // Figma-style violet selection chrome when every
@@ -2502,7 +2529,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         const allComponents =
                           editableIds.length > 0 &&
                           editableIds.every((sid) => {
-                            const o = objects.find((x) => x.id === sid)
+                            const o = objectsById.get(sid)
                             return o?.type === 'componentInstance'
                           })
                         return (
@@ -2513,10 +2540,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                             onSnapGuides={handleSnapGuides}
                             otherBounds={otherBounds}
                             forceAspectLock={aspectLock}
-                            extraGuides={deckGuides.map((g) => ({
-                              orientation: g.orientation,
-                              position: g.position,
-                            }))}
+                            extraGuides={extraGuides}
                             objects={objects}
                             accent={allComponents ? 'component' : 'default'}
                           />

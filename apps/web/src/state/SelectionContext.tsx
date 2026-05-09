@@ -8,7 +8,7 @@
  * M7: multi-select — ReadonlySet<string>, shift-click, marquee.
  */
 
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 export interface SelectionContextValue {
   selectedIds: ReadonlySet<string>
@@ -162,26 +162,48 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
   const selectedId: string | null =
     selectedIds.size === 1 ? (selectedIds.values().next().value ?? null) : null
 
-  const value: SelectionContextValue = {
-    selectedIds,
-    selectedId,
-    isSelected,
-    selectOne,
-    selectMany,
-    toggle,
-    clear,
-    selectedAnimationId,
-    setSelectedAnimationId,
-    activeInstanceEditId,
-    activeLeafId,
-    enterInstanceEdit,
-    exitInstanceEdit,
-    selectLeaf,
-    clearLeaf,
-    // Backward-compat aliasy
-    setSelectedId: selectOne,
-    clearSelection: clear,
-  }
+  // Memoize the context value so consumers don't re-render when SelectionProvider's
+  // parent re-renders for unrelated reasons. All callbacks are stable refs already
+  // (useCallback with [] deps); the value reference flips only when one of the
+  // tracked pieces of state actually changes.
+  const value = useMemo<SelectionContextValue>(
+    () => ({
+      selectedIds,
+      selectedId,
+      isSelected,
+      selectOne,
+      selectMany,
+      toggle,
+      clear,
+      selectedAnimationId,
+      setSelectedAnimationId,
+      activeInstanceEditId,
+      activeLeafId,
+      enterInstanceEdit,
+      exitInstanceEdit,
+      selectLeaf,
+      clearLeaf,
+      // Backward-compat aliasy
+      setSelectedId: selectOne,
+      clearSelection: clear,
+    }),
+    [
+      selectedIds,
+      selectedId,
+      isSelected,
+      selectOne,
+      selectMany,
+      toggle,
+      clear,
+      selectedAnimationId,
+      activeInstanceEditId,
+      activeLeafId,
+      enterInstanceEdit,
+      exitInstanceEdit,
+      selectLeaf,
+      clearLeaf,
+    ],
+  )
 
   return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>
 }

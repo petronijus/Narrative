@@ -290,6 +290,69 @@ describe('subscribeToSlideObjects', () => {
     expect(cb).not.toHaveBeenCalled()
     unsubscribe()
   })
+
+  it('rebind cancels pending batch — no stale flush after slide-Y.Map swap', () => {
+    // Regression: when the active slide's Y.Map is replaced (moveSlide,
+    // Hocuspocus initial sync swapping a locally hydrated stub for the
+    // remote one), the slidesObserver synchronously emits a remove-all+
+    // add-all snapshot. Any pending rAF flush queued by the OLD objectsArr
+    // observer would land AFTER that synchronous emit and deliver patches
+    // from the stale array — out-of-order. The rebind branch now cancels
+    // the pending rAF + clears the batch so the rebind is the last word.
+    const ctx = makeCtx()
+    const slideId = ctx.slides.get(0).get('id') as string
+    const objectsCtx = getSlideObjectsCtx(ctx, slideId)!
+    addObject(objectsCtx, makeRect('A'))
+
+    const cb = vi.fn()
+    const { unsubscribe, flush } = subscribeToSlideObjectsWithFlush(ctx, slideId, cb)
+    cb.mockClear()
+
+    // 1) Mutate the OLD array — pushes an update into the pending batch.
+    updateObject(objectsCtx, 'A', { x: 99 })
+
+    // 2) Replace the slide Y.Map at the same index BEFORE flush is called.
+    //    This is the moveSlide / Hocuspocus-rebind shape: same id, fresh
+    //    Y.Map identity. The slidesObserver should detect the swap, cancel
+    //    the queued flush, and emit a single rebind snapshot reflecting
+    //    the FRESH array's state — never the stale {x:99} patch.
+    //
+    //    We mimic moveSlide's delete + clone-insert internally because
+    //    moveSlide itself early-returns when from === to. .clone() yields
+    //    a fresh Y.Map identity with the same id so the slidesObserver
+    //    sees a different `objectsArr` reference and triggers rebind.
+    ctx.doc.transact(() => {
+      const original = ctx.slides.get(0)
+      const cloned = original.clone()
+      ctx.slides.delete(0, 1)
+      ctx.slides.insert(0, [cloned])
+    })
+
+    // 3) flush() is a no-op: the pending batch was already cleared during
+    //    the rebind. The cb has only the rebind emit.
+    flush()
+
+    // Last call must be the rebind. The cloned Y.Map deep-clones every
+    // field, so 'A' (with x=99 already committed pre-clone) survives in
+    // the fresh objects array. What MUST NOT leak through is a stale
+    // `updated` patch entry from the pre-rebind pending batch.
+    const lastCall = cb.mock.calls[cb.mock.calls.length - 1]
+    expect(lastCall).toBeDefined()
+    const change = lastCall![0] as {
+      added: ReadonlyArray<{ id: string }>
+      removed: ReadonlyArray<string>
+      updated: ReadonlyArray<{ id: string; patch: object }>
+      snapshot: ReadonlyArray<{ id: string }>
+    }
+    // Critical: rebind has no carry-over stale patches from before the swap.
+    expect(change.updated).toEqual([])
+    // The rebind emits the synthetic remove-all + add-all so consumers
+    // tear down the old subtree and re-mount the fresh one.
+    expect(change.added.map((o) => o.id)).toEqual(['A'])
+    expect(change.removed).toEqual(['A'])
+
+    unsubscribe()
+  })
 })
 
 // ---------------------------------------------------------------------------

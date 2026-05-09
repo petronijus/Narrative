@@ -105,8 +105,19 @@ export interface InputBridge {
   /**
    * Registruje callback pro příští user-advance akci.
    * Vrací unsubscribe funkci.
+   *
+   * Multiple subscribers are supported — every registered callback receives
+   * the advance event in registration order. Each unsubscribe removes only
+   * its own callback.
    */
   onAdvance(cb: () => void): () => void
+  /**
+   * Optional explicit cleanup — releases any underlying DOM/event resources
+   * held by the bridge implementation. Idempotent. Created bridges that
+   * attach DOM listeners (createClickInputBridge) implement this; manual
+   * test bridges may omit it.
+   */
+  dispose?: () => void
 }
 
 /**

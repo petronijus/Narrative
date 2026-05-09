@@ -28,10 +28,11 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-// `hls.js` is large (~520kB / 161kB gzip) and only needed when a deck
-// actually contains a finished video. Pull it in dynamically so it's split
-// into its own chunk and not part of the initial editor bundle.
-import type Hls from 'hls.js'
+// hls.js stays as a static import here — manual-chunks splits it into its
+// own vendor file (vendor-hls) so it doesn't bloat the main app chunk, but
+// importing eagerly preserves the original sync attach-order that the
+// videoRenderer relies on.
+import Hls from 'hls.js'
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
 import type { VideoObject, SlideObjectPatch } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
@@ -135,21 +136,13 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
     }
 
-    // Track whether the effect was cancelled while the dynamic import
-    // was in flight — without this the late `new HlsCtor()` would leak.
-    let cancelled = false
-    if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari path — native HLS, skip the dynamic import entirely.
+    if (Hls.isSupported()) {
+      const hls = new Hls()
+      hlsRef.current = hls
+      hls.loadSource(hlsUrl)
+      hls.attachMedia(videoEl)
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
       videoEl.src = hlsUrl
-    } else {
-      void import('hls.js').then(({ default: HlsCtor }) => {
-        if (cancelled) return
-        if (!HlsCtor.isSupported()) return
-        const hls = new HlsCtor()
-        hlsRef.current = hls
-        hls.loadSource(hlsUrl)
-        hls.attachMedia(videoEl)
-      })
     }
 
     // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
@@ -247,7 +240,6 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     videoEl.addEventListener('pause', onPauseIcon)
 
     return () => {
-      cancelled = true
       videoEl.removeEventListener('play', onPlay)
       videoEl.removeEventListener('play', onPlayIcon)
       videoEl.removeEventListener('pause', onPauseIcon)

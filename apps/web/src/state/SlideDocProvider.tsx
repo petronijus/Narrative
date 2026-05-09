@@ -238,7 +238,19 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     }
   }, [deckId])
 
-  if (value === null) {
+  // Memoize the merged context value — without this, every parent re-render
+  // creates a fresh `{...value, wsStatus}` object reference, which forces
+  // every `useSlideDoc()` consumer (huge fan-out across the editor) to
+  // re-render even when nothing actually changed.
+  // IMPORTANT: this hook must run unconditionally on every render (Rules of
+  // Hooks). When `value === null` we still call useMemo and just return null
+  // from the provider; the early-return for the loading state happens AFTER.
+  const fullValue = useMemo<SlideDocContextValue | null>(
+    () => (value === null ? null : { ...value, wsStatus }),
+    [value, wsStatus],
+  )
+
+  if (fullValue === null) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-gray-950">
         <p className="text-sm text-gray-400">Connecting…</p>
@@ -246,7 +258,6 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     )
   }
 
-  const fullValue: SlideDocContextValue = { ...value, wsStatus }
   return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
 }
 

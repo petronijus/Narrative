@@ -237,7 +237,19 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     app.stage.addChild(slideContainer)
 
     // Render one frame synchronously — the offscreen app is not running a ticker.
-    app.renderer.render(app.stage)
+    // Wrap in try/catch because Pixi v8's HTMLTextPipe occasionally throws
+    // `_getFinalPadding of null` when a text node was destroyed mid-batch
+    // (we've seen it during SlidesPanel ↔ PresentLayout navigation while
+    // background thumbnail renders are in flight). Treat as a recoverable
+    // "abandon this thumbnail" condition so the queue keeps moving.
+    try {
+      app.renderer.render(app.stage)
+    } catch (err) {
+      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+      throw new Error(
+        `[ThumbnailRenderer] renderer has been destroyed (${err instanceof Error ? err.message : String(err)})`,
+      )
+    }
 
     // Pixi v8's HTMLText rasterizes its SVG asynchronously. The first
     // render() above kicks off that work but the Texture is still EMPTY
@@ -262,7 +274,15 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
         slideContainer.destroy({ children: true })
         throw new Error('[ThumbnailRenderer] renderer has been destroyed')
       }
-      app.renderer.render(app.stage)
+      // Same defensive try/catch as the first render above.
+      try {
+        app.renderer.render(app.stage)
+      } catch (err) {
+        if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+        throw new Error(
+          `[ThumbnailRenderer] renderer has been destroyed (${err instanceof Error ? err.message : String(err)})`,
+        )
+      }
     }
 
     // Extract PNG. Pixi 8.x's extract.base64 returns Promise<string>; the
@@ -273,6 +293,16 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // dropped silently when the GPU resources had been freed mid-extract.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PixiJS v8 extract API type varies by version
     const dataUrl: string = await (app.renderer as any).extract.base64(slideContainer, 'image/png')
+
+    // The renderer can be destroyed mid-await above (user navigated to
+    // present mode or the SlidesPanel unmounted). Pixi nullifies app.stage
+    // and app.renderer on destroy; touching them here would throw
+    // `Cannot read properties of null (reading 'removeChild')`. Bail out
+    // cleanly and let the caller .catch suppress it.
+    if (destroyed || app.stage === null || app.renderer === null) {
+      if (!slideContainer.destroyed) slideContainer.destroy({ children: true })
+      throw new Error('[ThumbnailRenderer] renderer has been destroyed')
+    }
 
     // Cleanup: remove from stage, destroy temp container and all mounted children.
     app.stage.removeChild(slideContainer)

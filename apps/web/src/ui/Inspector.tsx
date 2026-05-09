@@ -2482,6 +2482,17 @@ function LayersPanel({
   )
 }
 
+// Module-const hoisted out of SlideInspector so the joined string isn't
+// rebuilt on every render of the inspector (used in three places below).
+const SELECT_CLASS = [
+  'select-chevron',
+  'flex-1 appearance-none rounded-md border border-input field-surface px-2 py-1 pr-7',
+  'text-xs text-foreground cursor-pointer',
+  'hover:border-border-strong',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-ring',
+  'disabled:opacity-40 disabled:cursor-not-allowed',
+].join(' ')
+
 /**
  * Slide-level inspector: shows transition settings for the active slide.
  * Replaces the "No selection" placeholder when selection is empty.
@@ -2498,10 +2509,19 @@ function SlideInspector() {
   // Magic Move morphs objects that share ids across the previous slide and
   // the active slide. Preview the count here so the user knows whether the
   // transition will actually do anything before entering present mode.
-  const magicMatchedCount =
-    slide !== undefined && prevSlide !== undefined
-      ? slide.objects.filter((o) => prevSlide.objects.some((p) => p.id === o.id)).length
-      : 0
+  // Memoize so we don't re-run an O(n·m) filter+some on every render of the
+  // SlideInspector (it ran on every keystroke-driven slides emission). The
+  // dependencies are the .objects array references — stable until either
+  // slide's object list actually changes structurally.
+  const magicMatchedCount = useMemo(() => {
+    if (slide === undefined || prevSlide === undefined) return 0
+    const prevIds = new Set(prevSlide.objects.map((p) => p.id))
+    let n = 0
+    for (const o of slide.objects) {
+      if (prevIds.has(o.id)) n++
+    }
+    return n
+  }, [slide?.objects, prevSlide?.objects])
 
   if (slide === undefined) {
     return (
@@ -2533,20 +2553,7 @@ function SlideInspector() {
     { value: 'down', label: 'Down' },
   ]
 
-  // Native <select> styled to match our inputs. Chevron icon is drawn by a
-  // dedicated CSS class (`.select-chevron`) because Tailwind's `bg-*`
-  // shorthands share a group — combining `field-surface` (color) with an
-  // inline `bg-[url()]` (image) makes `tailwind-merge` collapse one of
-  // them. Declaring both in raw CSS side-steps that.
-  const SELECT_CLASS = [
-    'select-chevron',
-    'flex-1 appearance-none rounded-md border border-input field-surface px-2 py-1 pr-7',
-    'text-xs text-foreground cursor-pointer',
-    'hover:border-border-strong',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:border-ring',
-    'disabled:opacity-40 disabled:cursor-not-allowed',
-  ].join(' ')
-
+  // SELECT_CLASS hoisted to module scope above (used in three places below).
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {/* Slide ID reference */}
@@ -6212,6 +6219,20 @@ interface LinkSectionProps {
 
 function LinkControls({ obj, patch }: LinkSectionProps) {
   const slides = useSlides()
+  // Only id+name go into the slide dropdown; memoize so unrelated slide
+  // changes (object edits, transition tweaks) don't churn the <option> list.
+  // Keyed on a tiny fingerprint string instead of the slides reference,
+  // because useSlides() returns a fresh array on every observeDeep event.
+  const slideOptionsFingerprint = slides.map((s) => `${s.id}|${s.name ?? ''}`).join('\n')
+  const slideOptions = useMemo(
+    () =>
+      slides.map((s, i) => ({
+        id: s.id,
+        label: s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [slideOptionsFingerprint],
+  )
   const containerRef = useRef<HTMLDivElement>(null)
   const typeSelectRef = useRef<HTMLSelectElement>(null)
 
@@ -6289,9 +6310,9 @@ function LinkControls({ obj, patch }: LinkSectionProps) {
             }}
             className="h-7 w-full rounded-md border border-border bg-input px-2 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
           >
-            {slides.map((s, i) => (
+            {slideOptions.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name && s.name.length > 0 ? s.name : `Slide ${i + 1}`}
+                {s.label}
               </option>
             ))}
           </select>

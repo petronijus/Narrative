@@ -51,6 +51,26 @@ vi.mock('pixi.js', () => {
         this.y = y
       }),
     }
+    // applyFlip / applyObjectTransform / live-video refit all touch
+    // node.scale.set + node.position.set. Pixi exposes these as
+    // ObservablePoint; a plain {x,y,set} mock is enough for our render-path
+    // assertions which only inspect resulting numeric values.
+    scale = {
+      x: 1,
+      y: 1,
+      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
+        this.x = x
+        this.y = y
+      }),
+    }
+    position = {
+      x: 0,
+      y: 0,
+      set: vi.fn(function (this: { x: number; y: number }, x: number, y: number) {
+        this.x = x
+        this.y = y
+      }),
+    }
 
     addChild(child: MockContainer): MockContainer {
       this.children.push(child)
