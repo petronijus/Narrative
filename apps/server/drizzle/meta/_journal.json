@@ -78,6 +78,13 @@
       "when": 1777929833369,
       "tag": "0010_m16_component_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778016233369,
+      "tag": "0011_update_log_composite_index",
+      "breakpoints": true
     }
   ]
 }

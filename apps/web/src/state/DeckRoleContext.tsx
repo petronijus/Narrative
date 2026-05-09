@@ -99,11 +99,13 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
         const deck = decks.find((d) => d.id === deckId)
         if (deck !== undefined && deck.viewerRole !== undefined) {
           setRole(deck.viewerRole)
+        } else if (deck !== undefined) {
+          // Deck visible to caller but server didn't return viewerRole.
+          // Derive from ownerUserId vs current user — without this the Share
+          // button (owner-only) is unreachable for everyone.
+          setRole(deck.ownerUserId === user.sub ? 'owner' : 'editor')
         } else {
-          // Deck not found in list or viewerRole not yet returned by server.
-          // Safe fallback: if user owns or can see the deck at all, treat as owner
-          // until server provides the field. For M10 this is acceptable.
-          setRole(deck !== undefined ? 'editor' : 'viewer')
+          setRole('viewer')
         }
         // M16 P2: expose folderId so DeckShell can open the folder token doc.
         if (deck?.folderId) {

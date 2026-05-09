@@ -22,6 +22,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useApi } from '../api/client.js'
 import type { DeckPermission, ShareLink } from '../api/client.js'
 import type { DeckRole } from '../state/DeckRoleContext.js'
@@ -268,7 +269,10 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
   // Render
   // ---------------------------------------------------------------------------
 
-  return (
+  // Portal to <body> so the dialog escapes any ancestor containing block
+  // (the toolbar uses backdrop-filter which makes `position: fixed` resolve
+  // relative to the toolbar instead of the viewport).
+  return createPortal(
     // Backdrop
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -571,6 +575,7 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
           </div>
         </section>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

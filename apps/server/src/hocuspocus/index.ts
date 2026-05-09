@@ -23,7 +23,6 @@
  */
 
 import { Server } from '@hocuspocus/server'
-import * as Y from 'yjs'
 import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
@@ -49,6 +48,23 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
     port: opts.port,
 
     extensions: [new PostgresPersistence({ db })],
+
+    // Doc lifecycle — Hocuspocus auto-unloads docs when their last connection
+    // drops, so the in-memory `documents` map can't grow unboundedly across
+    // many decks visited in one session. We keep the defaults but make them
+    // explicit so tuning is centralised:
+    //
+    // - `unloadImmediately: false` waits for the pending onStoreDocument
+    //   debounce window to elapse before unloading. Without this a fast
+    //   connect → edit → disconnect can race the persistence write and lose
+    //   the in-flight update (the doc unloads while the debounced flush is
+    //   still queued).
+    // - `debounce`/`maxDebounce` defaults give us up to 2 s coalescing of
+    //   onChange events into a single onStoreDocument flush, capped at 10 s
+    //   so a user typing continuously can't postpone the flush forever.
+    unloadImmediately: false,
+    debounce: 2_000,
+    maxDebounce: 10_000,
 
     async onAuthenticate(data) {
       const { documentName, token, connection, requestParameters } = data
@@ -184,10 +200,12 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       console.log(`[hocuspocus] disconnect → doc=${data.documentName} user=${userId}`)
     },
 
-    async onStoreDocument(data) {
-      // Record metrics — onStoreDocument is per-flush, not per-update.
-      const encoded = Y.encodeStateAsUpdate(data.document)
-      metrics.recordUpdate(encoded.byteLength)
+    async onChange(data) {
+      // Per-update metric — counts each incremental update as the client sends it.
+      // Hocuspocus provides the raw update buffer in `data.update`; previously
+      // we re-encoded the full doc state in onStoreDocument which was O(doc-size)
+      // on every flush and dominated CPU on large decks.
+      metrics.recordUpdate(data.update.byteLength)
     },
   })
 

@@ -374,7 +374,7 @@ export async function registerMediaRoutes(
     Params: { folderId: string }
   }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
     const { folderId } = request.params
-    const userId = (request as FastifyRequest & { user?: { sub: string } }).user?.sub ?? 'dev-user'
+    const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
 
     const ok = await requireFolderOwner(db, folderId, userId, reply)
     if (!ok) return
@@ -499,7 +499,7 @@ export async function registerMediaRoutes(
     Params: { folderId: string }
   }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
     const { folderId } = request.params
-    const userId = (request as FastifyRequest & { user?: { sub: string } }).user?.sub ?? 'dev-user'
+    const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
 
     const ok = await requireFolderOwner(db, folderId, userId, reply)
     if (!ok) return
@@ -523,8 +523,7 @@ export async function registerMediaRoutes(
     { preHandler: authPreHandler },
     async (request, reply) => {
       const { folderId, assetId } = request.params
-      const userId =
-        (request as FastifyRequest & { user?: { sub: string } }).user?.sub ?? 'dev-user'
+      const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
 
       const ok = await requireFolderOwner(db, folderId, userId, reply)
       if (!ok) return

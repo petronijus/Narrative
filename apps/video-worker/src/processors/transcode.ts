@@ -70,8 +70,19 @@ const BUCKET = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
 // Constants
 // ---------------------------------------------------------------------------
 
-const TMP_BASE = '/tmp/narrative-transcode'
+const TMP_BASE = process.env['TRANSCODE_TMP_DIR'] ?? '/tmp/narrative-transcode'
 const HLS_SEGMENT_DURATION = 4 // seconds
+
+// Cap ffmpeg's per-process worker threads. Without -threads, libx264 spawns
+// (cpu_count * 1.5) threads, so two concurrent jobs saturate the box (and
+// slow each other down through context switching). Default to 2; tune via
+// FFMPEG_THREADS to match host CPUs / WORKER_CONCURRENCY.
+const FFMPEG_THREADS = (() => {
+  const raw = process.env['FFMPEG_THREADS']
+  if (!raw) return 2
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : 2
+})()
 
 interface HlsVariant {
   label: string
@@ -318,6 +329,8 @@ export async function transcodeProcessor(
       await run(
         'ffmpeg',
         [
+          '-threads',
+          String(FFMPEG_THREADS),
           '-i',
           inputPath,
           '-vf',
@@ -414,19 +427,20 @@ export async function transcodeProcessor(
     // 8. Upload all outputs to MinIO
     const s3VideoPrefix = `decks/${deckId}/videos/${assetId}`
 
-    // Upload variant dirs (segments + playlists)
-    for (const v of producedVariants) {
-      await uploadDirectory(path.join(outputDir, v.label), `${s3VideoPrefix}/${v.label}`)
-    }
-
+    // Upload variant dirs (segments + playlists), master playlist, poster and
+    // thumbnail in parallel — each variant directory is independent S3 ops.
     const hlsManifestKey = `${s3VideoPrefix}/master.m3u8`
-    await uploadText(masterContent, hlsManifestKey)
-
     const posterKey = `${s3VideoPrefix}/poster.jpg`
-    await uploadFile(posterPath, posterKey, 'image/jpeg')
-
     const thumbnailKey = `${s3VideoPrefix}/thumb.jpg`
-    await uploadFile(thumbPath, thumbnailKey, 'image/jpeg')
+
+    await Promise.all([
+      ...producedVariants.map((v) =>
+        uploadDirectory(path.join(outputDir, v.label), `${s3VideoPrefix}/${v.label}`),
+      ),
+      uploadText(masterContent, hlsManifestKey),
+      uploadFile(posterPath, posterKey, 'image/jpeg'),
+      uploadFile(thumbPath, thumbnailKey, 'image/jpeg'),
+    ])
 
     console.log(`[transcode] uploads complete, assetId=${assetId}`)
 

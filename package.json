@@ -8,7 +8,8 @@
     "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail \"pnpm --filter web dev\" \"pnpm --filter server dev\"",
+    "dev": "concurrently --kill-others-on-fail -n web,server,worker -c blue,green,magenta \"pnpm --filter web dev\" \"pnpm --filter server dev\" \"pnpm --filter @narrative/video-worker dev\"",
+    "dev:no-worker": "concurrently --kill-others-on-fail -n web,server -c blue,green \"pnpm --filter web dev\" \"pnpm --filter server dev\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

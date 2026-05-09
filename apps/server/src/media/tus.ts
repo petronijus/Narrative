@@ -702,17 +702,26 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   app.addContentTypeParser('application/offset+octet-stream', passthroughParser)
   app.addContentTypeParser('application/x-www-form-urlencoded', passthroughParser)
 
-  const corsOrigin = process.env['CORS_ORIGIN'] ?? 'http://localhost:5173'
+  const corsOriginRaw = process.env['CORS_ORIGIN'] ?? 'http://localhost:5173'
+  // Allowlist: comma-separated list of origins. The first is the default
+  // returned when the request lacks an Origin header.
+  const allowedOrigins = corsOriginRaw
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean)
+  const defaultOrigin = allowedOrigins[0] ?? 'http://localhost:5173'
   const exposeHeaders =
     'Location, Upload-Offset, Upload-Length, Upload-Metadata, Tus-Version, Tus-Resumable, Tus-Max-Size, Tus-Extension, X-Narrative-Asset-Id, X-Narrative-Width, X-Narrative-Height'
 
   const applyCorsHeaders = (req: FastifyRequest, reply: FastifyReply) => {
     const origin = req.headers.origin
-    if (origin !== undefined) {
+    // Only echo Origin back if it's in the allowlist — never reflect arbitrary
+    // origins, which would let any cross-origin caller through.
+    if (origin !== undefined && allowedOrigins.includes(origin)) {
       reply.raw.setHeader('Access-Control-Allow-Origin', origin)
       reply.raw.setHeader('Vary', 'Origin')
     } else {
-      reply.raw.setHeader('Access-Control-Allow-Origin', corsOrigin)
+      reply.raw.setHeader('Access-Control-Allow-Origin', defaultOrigin)
     }
     reply.raw.setHeader('Access-Control-Expose-Headers', exposeHeaders)
   }

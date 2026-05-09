@@ -27,7 +27,7 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import {
   folders,
@@ -113,7 +113,8 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
       }
 
       // -----------------------------------------------------------------------
-      // 2. Decks in the folder
+      // 2. Decks in the folder — batch-load all updates in one query, group
+      //    in memory by deckId. Eliminates N+1 (was: 1 query per deck).
       // -----------------------------------------------------------------------
       const deckRows = await db
         .select({ id: decks.id, title: decks.title })
@@ -121,25 +122,35 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
         .where(eq(decks.folderId, folderId))
         .orderBy(decks.createdAt)
 
-      for (const deck of deckRows) {
-        const updateRows = await db
-          .select({ update: deckUpdates.update })
+      if (deckRows.length > 0) {
+        const deckIds = deckRows.map((d) => d.id)
+        const allDeckUpdates = await db
+          .select({ deckId: deckUpdates.deckId, id: deckUpdates.id, update: deckUpdates.update })
           .from(deckUpdates)
-          .where(eq(deckUpdates.deckId, deck.id))
-          .orderBy(deckUpdates.id)
+          .where(inArray(deckUpdates.deckId, deckIds))
+          .orderBy(deckUpdates.deckId, deckUpdates.id)
 
-        if (updateRows.length === 0) continue
+        const updatesByDeck = new Map<string, Array<{ update: Uint8Array }>>()
+        for (const row of allDeckUpdates) {
+          const arr = updatesByDeck.get(row.deckId)
+          if (arr) arr.push({ update: row.update })
+          else updatesByDeck.set(row.deckId, [{ update: row.update }])
+        }
 
-        const deckDoc = replayUpdates(updateRows)
-        try {
-          usages.push(...scanDeckDoc(deckDoc, deck.id, deck.title, tokenKey))
-        } finally {
-          deckDoc.destroy()
+        for (const deck of deckRows) {
+          const updateRows = updatesByDeck.get(deck.id)
+          if (!updateRows || updateRows.length === 0) continue
+          const deckDoc = replayUpdates(updateRows)
+          try {
+            usages.push(...scanDeckDoc(deckDoc, deck.id, deck.title, tokenKey))
+          } finally {
+            deckDoc.destroy()
+          }
         }
       }
 
       // -----------------------------------------------------------------------
-      // 3. Components in the folder
+      // 3. Components in the folder — same batched-load pattern.
       // -----------------------------------------------------------------------
       const componentRows = await db
         .select({ id: components.id, name: components.name })
@@ -147,20 +158,34 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
         .where(eq(components.folderId, folderId))
         .orderBy(components.createdAt)
 
-      for (const component of componentRows) {
-        const updateRows = await db
-          .select({ update: componentUpdates.update })
+      if (componentRows.length > 0) {
+        const componentIds = componentRows.map((c) => c.id)
+        const allComponentUpdates = await db
+          .select({
+            componentId: componentUpdates.componentId,
+            id: componentUpdates.id,
+            update: componentUpdates.update,
+          })
           .from(componentUpdates)
-          .where(eq(componentUpdates.componentId, component.id))
-          .orderBy(componentUpdates.id)
+          .where(inArray(componentUpdates.componentId, componentIds))
+          .orderBy(componentUpdates.componentId, componentUpdates.id)
 
-        if (updateRows.length === 0) continue
+        const updatesByComponent = new Map<string, Array<{ update: Uint8Array }>>()
+        for (const row of allComponentUpdates) {
+          const arr = updatesByComponent.get(row.componentId)
+          if (arr) arr.push({ update: row.update })
+          else updatesByComponent.set(row.componentId, [{ update: row.update }])
+        }
 
-        const componentDoc = replayUpdates(updateRows)
-        try {
-          usages.push(...scanComponentDoc(componentDoc, component.id, component.name, tokenKey))
-        } finally {
-          componentDoc.destroy()
+        for (const component of componentRows) {
+          const updateRows = updatesByComponent.get(component.id)
+          if (!updateRows || updateRows.length === 0) continue
+          const componentDoc = replayUpdates(updateRows)
+          try {
+            usages.push(...scanComponentDoc(componentDoc, component.id, component.name, tokenKey))
+          } finally {
+            componentDoc.destroy()
+          }
         }
       }
 

@@ -1,18 +1,18 @@
 /**
  * auth/jwt.ts
  *
- * Generic OIDC ID-token verification via remote JWKS.
+ * Google OIDC ID-token verification via remote JWKS.
  *
- * Originally written for Authentik; now used with Google OIDC (and could be
- * pointed at any provider that exposes a standard `.well-known/jwks.json`).
+ * The implementation is intentionally generic (driven entirely by the issuer/
+ * jwks/audience triple) so it could be pointed at any provider exposing a
+ * standard `.well-known/jwks.json`, but only Google is supported in production.
  *
  * Token contract: callers send the OIDC **ID token** as `Authorization: Bearer`.
  * (Google access_tokens are opaque, not JWTs — the web client passes id_token.)
  *
  * Since Google's identity layer authenticates *anyone* with a Google account,
  * an explicit allowlist is enforced here (`allowedEmails` / `allowedDomain`)
- * to keep the deployment private. With Authentik this was handled by the
- * `narrative-users` group; with Google we gate by email.
+ * to keep the deployment private — we gate by email.
  *
  * Error messages are intentionally generic — callers always receive
  * "Invalid credentials" regardless of failure reason.
@@ -90,6 +90,13 @@ export function createJwtVerifier(opts: {
       // Allowlist enforcement — only when configured.
       if (allowedEmails.length > 0 || allowedDomain) {
         if (!email) throw new Error('Invalid credentials')
+        // Domain allowlists are vulnerable to unverified-email impersonation:
+        // a misconfigured IdP could mint a token for `evil@yourdomain.com`
+        // without the user actually controlling that mailbox. Exact-email
+        // allowlists do not have this problem (the email is the identity).
+        if (allowedDomain && payload['email_verified'] !== true) {
+          throw new Error('Invalid credentials')
+        }
         const emailOk = allowedEmails.includes(email)
         const domainOk = allowedDomain ? email.endsWith(`@${allowedDomain}`) : false
         if (!emailOk && !domainOk) throw new Error('Invalid credentials')

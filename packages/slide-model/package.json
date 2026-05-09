@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
-    "yjs": "^13.6.27",
+    "yjs": "^13.6.30",
     "nanoid": "^5.0.9"
   }
 }

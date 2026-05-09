@@ -348,7 +348,7 @@ describe('DELETE /decks/:id/share-links/:linkId', () => {
     })
 
     expect(res.statusCode).toBe(204)
-    expect(mockRevokeShareLink).toHaveBeenCalledWith(expect.anything(), 'link-abc')
+    expect(mockRevokeShareLink).toHaveBeenCalledWith(expect.anything(), 'link-abc', 'deck-1')
   })
 })
 

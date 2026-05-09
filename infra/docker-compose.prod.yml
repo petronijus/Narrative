@@ -124,7 +124,12 @@ services:
   # The token contains everything cloudflared needs (tunnel UUID, account, secret),
   # so no extra config file is required.
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pin the cloudflared tag — :latest causes silent breakage on
+    # `docker compose pull`. Find the current stable tag at
+    # https://hub.docker.com/r/cloudflare/cloudflared/tags and bump
+    # deliberately when validating new releases. CLOUDFLARED_VERSION is
+    # set in .env.prod.
+    image: cloudflare/cloudflared:${CLOUDFLARED_VERSION:?Set CLOUDFLARED_VERSION in .env.prod, e.g. 2024.10.1}
     container_name: narrative-cloudflared
     restart: always
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN env var is required}

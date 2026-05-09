@@ -85,6 +85,67 @@ export default defineConfig(({ mode }) => ({
   // top-level await vyžaduje esnext target (Spike A nález: Pixi v8 app.init() je async)
   build: {
     target: 'esnext',
+    // Emit sourcemaps for Sentry uploads but strip the sourceMappingURL comment
+    // from the shipped JS so maps aren't fetched by browsers / scrapers. Sentry
+    // CLI (or release plugin) reads dist/**/*.map directly during deploy.
+    sourcemap: 'hidden',
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, hls.js, Radix,
+        // Sentry, React all into their own chunks so the initial download is
+        // smaller and a change to any one of them doesn't bust the app cache
+        // for the others. Rollup will still hoist common deps out into a
+        // shared chunk where appropriate.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+
+          // Pixi core + filters — large WebGL renderer
+          if (/[\\/]node_modules[\\/](pixi\.js|pixi-filters|@pixi)[\\/]/.test(id)) {
+            return 'vendor-pixi'
+          }
+          // GSAP animation engine
+          if (/[\\/]node_modules[\\/]gsap[\\/]/.test(id)) {
+            return 'vendor-gsap'
+          }
+          // Tiptap + the ProseMirror packages it pulls in transitively
+          if (/[\\/]node_modules[\\/](@tiptap|prosemirror-)/.test(id)) {
+            return 'vendor-tiptap'
+          }
+          // Yjs + Hocuspocus provider + y-prosemirror binding — CRDT layer
+          if (
+            /[\\/]node_modules[\\/](yjs|y-prosemirror|@hocuspocus|y-protocols|lib0)[\\/]/.test(id)
+          ) {
+            return 'vendor-yjs'
+          }
+          // hls.js — only loaded when a video plays, but currently statically
+          // imported. Splitting out keeps the main chunk smaller; consider
+          // converting to dynamic import in a follow-up.
+          if (/[\\/]node_modules[\\/]hls\.js[\\/]/.test(id)) {
+            return 'vendor-hls'
+          }
+          // Radix primitives — many small packages, group as one
+          if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) {
+            return 'vendor-radix'
+          }
+          // Sentry browser SDK
+          if (/[\\/]node_modules[\\/]@sentry[\\/]/.test(id)) {
+            return 'vendor-sentry'
+          }
+          // React + router — kept together so React's many internal chunks
+          // don't fragment into N tiny files.
+          if (
+            /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(
+              id,
+            )
+          ) {
+            return 'vendor-react'
+          }
+          // Everything else from node_modules → shared "vendor" chunk.
+          return 'vendor'
+        },
+      },
+    },
   },
   test: {
     environment: 'jsdom',

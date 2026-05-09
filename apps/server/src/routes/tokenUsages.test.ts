@@ -269,21 +269,40 @@ function makeMockDb(opts: MockDbOpts = {}): Database {
     }
 
     // 3. Deck list
-    callQueue.push(() => Promise.resolve(deckStore.filter((d) => d.folderId === folderId)))
-
-    // 4+. For each deck: deck updates
     const folderDecks = deckStore.filter((d) => d.folderId === folderId)
-    for (const deck of folderDecks) {
-      callQueue.push(() => Promise.resolve(deckUpdatesStore[deck.id] ?? []))
+    callQueue.push(() => Promise.resolve(folderDecks))
+
+    // 4. Single batched deck-updates query (inArray over all deckIds in folder).
+    //    Returns rows shaped like { deckId, id, update }.
+    if (folderDecks.length > 0) {
+      callQueue.push(() => {
+        const rows: Array<{ deckId: string; id: number; update: Uint8Array }> = []
+        let id = 1
+        for (const deck of folderDecks) {
+          for (const u of deckUpdatesStore[deck.id] ?? []) {
+            rows.push({ deckId: deck.id, id: id++, update: u.update })
+          }
+        }
+        return Promise.resolve(rows)
+      })
     }
 
-    // N. Component list
-    callQueue.push(() => Promise.resolve(componentStore.filter((c) => c.folderId === folderId)))
-
-    // N+1. For each component: component updates
+    // 5. Component list
     const folderComponents = componentStore.filter((c) => c.folderId === folderId)
-    for (const comp of folderComponents) {
-      callQueue.push(() => Promise.resolve(componentUpdatesStore[comp.id] ?? []))
+    callQueue.push(() => Promise.resolve(folderComponents))
+
+    // 6. Single batched component-updates query (inArray over all componentIds).
+    if (folderComponents.length > 0) {
+      callQueue.push(() => {
+        const rows: Array<{ componentId: string; id: number; update: Uint8Array }> = []
+        let id = 1
+        for (const comp of folderComponents) {
+          for (const u of componentUpdatesStore[comp.id] ?? []) {
+            rows.push({ componentId: comp.id, id: id++, update: u.update })
+          }
+        }
+        return Promise.resolve(rows)
+      })
     }
   }
 

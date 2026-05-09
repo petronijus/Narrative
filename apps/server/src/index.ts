@@ -113,8 +113,14 @@ const app = Fastify({
   bodyLimit: 4 * 1024 * 1024,
 })
 
+// CORS_ORIGIN may be a single origin or a comma-separated allowlist.
+// fastify/cors accepts string[] for the allowlist case.
+const corsOriginEnv = (process.env['CORS_ORIGIN'] ?? 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
 await app.register(cors, {
-  origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
+  origin: corsOriginEnv.length === 1 ? corsOriginEnv[0]! : corsOriginEnv,
   // PATCH is required by the tus protocol for upload resumption.
   // HEAD is required by tus for upload status checks.
   // PUT is used by deck-thumbnail uploads (idempotent replace).

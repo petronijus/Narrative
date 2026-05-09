@@ -12,7 +12,7 @@
  *   - expires_at is set and is in the past
  */
 
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
 import { shareLinks } from '../db/schema.js'
@@ -65,11 +65,20 @@ export async function createShareLink(
 }
 
 /**
- * Sets revoked = true on a share link. Subsequent findShareLink calls
- * will return null. No-op if the link does not exist.
+ * Sets revoked = true on a share link, scoped to a specific deck so callers
+ * cannot revoke links they don't own (IDOR guard — caller must already pass
+ * ownerGuard for the deck). No-op if the link does not exist or belongs to a
+ * different deck.
  */
-export async function revokeShareLink(db: Database, shareLinkId: string): Promise<void> {
-  await db.update(shareLinks).set({ revoked: true }).where(eq(shareLinks.id, shareLinkId))
+export async function revokeShareLink(
+  db: Database,
+  shareLinkId: string,
+  deckId: string,
+): Promise<void> {
+  await db
+    .update(shareLinks)
+    .set({ revoked: true })
+    .where(and(eq(shareLinks.id, shareLinkId), eq(shareLinks.deckId, deckId)))
 }
 
 /**

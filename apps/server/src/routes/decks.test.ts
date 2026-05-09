@@ -48,10 +48,23 @@ interface MockDeck {
   ownerUserId: string
   createdAt: Date
   updatedAt: Date
+  // Optional fields that the route reads through `withThumbnailUrl`. Tests
+  // that don't care about thumbnails leave these undefined; the mock
+  // factory below normalises them to `null` so the decorator doesn't crash
+  // on `row.thumbnailKey === null` checks.
+  thumbnailKey?: string | null
+  thumbnailUpdatedAt?: Date | null
+  folderId?: string | null
 }
 
 function makeMockDb(initialDecks: MockDeck[] = []) {
-  let deckStore = [...initialDecks]
+  // Normalise so every row has the optional fields the route reads.
+  let deckStore = initialDecks.map((d) => ({
+    thumbnailKey: null,
+    thumbnailUpdatedAt: null,
+    folderId: null,
+    ...d,
+  }))
 
   const db = {
     select: vi.fn().mockReturnValue({

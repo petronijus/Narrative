@@ -141,7 +141,13 @@ export const deckUpdates = pgTable(
     update: bytea('update').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (t) => [index('deck_updates_deck_id_idx').on(t.deckId)],
+  (t) => [
+    index('deck_updates_deck_id_idx').on(t.deckId),
+    // Composite (deckId, id) supports the hot WHERE deckId=? ORDER BY id query
+    // (onLoadDocument). Without it, planner uses the single-column index then
+    // sorts.
+    index('deck_updates_deck_id_id_idx').on(t.deckId, t.id),
+  ],
 )
 
 // ---------------------------------------------------------------------------
@@ -166,7 +172,10 @@ export const folderUpdates = pgTable(
     update: bytea('update').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (t) => [index('folder_updates_folder_id_idx').on(t.folderId)],
+  (t) => [
+    index('folder_updates_folder_id_idx').on(t.folderId),
+    index('folder_updates_folder_id_id_idx').on(t.folderId, t.id),
+  ],
 )
 
 // ---------------------------------------------------------------------------
@@ -187,7 +196,7 @@ export const deckPermissions = pgTable(
     deckId: text('deck_id')
       .notNull()
       .references(() => decks.id, { onDelete: 'cascade' }),
-    userId: text('user_id').notNull(), // Authentik 'sub' claim (or 'demo-user' until phase 2)
+    userId: text('user_id').notNull(), // Google OIDC 'sub' claim (or 'demo-user' when BYPASS_AUTH=true)
     role: deckRoleEnum('role').notNull(),
     grantedAt: timestamp('granted_at').defaultNow().notNull(),
     /** userId of the granter; null when system/migration writes the row */
@@ -353,7 +362,10 @@ export const componentUpdates = pgTable(
     update: bytea('update').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
-  (t) => [index('component_updates_component_id_idx').on(t.componentId)],
+  (t) => [
+    index('component_updates_component_id_idx').on(t.componentId),
+    index('component_updates_component_id_id_idx').on(t.componentId, t.id),
+  ],
 )
 
 // ---------------------------------------------------------------------------

@@ -184,8 +184,8 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/share-links/:linkId',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { linkId } = request.params
-      await revokeShareLink(db, linkId)
+      const { id, linkId } = request.params
+      await revokeShareLink(db, linkId, id)
       return reply.status(204).send()
     },
   )

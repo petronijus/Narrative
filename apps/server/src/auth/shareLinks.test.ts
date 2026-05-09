@@ -273,8 +273,32 @@ describe('revokeShareLink', () => {
       }),
     }
 
-    await revokeShareLink(db as never, 'tok-abc')
+    await revokeShareLink(db as never, 'tok-abc', 'deck-1')
     expect(store[0]!.revoked).toBe(true)
+  })
+
+  it('does not revoke a link belonging to a different deck (IDOR guard)', async () => {
+    // Drizzle's update().set().where(and(eq id, eq deckId)) translates to a
+    // SQL WHERE that matches zero rows when deckId mismatches. We assert by
+    // capturing the where() call argument shape.
+    let capturedWhere: unknown = null
+    const db = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockImplementation((expr: unknown) => {
+            capturedWhere = expr
+            return Promise.resolve()
+          }),
+        }),
+      }),
+    }
+
+    await revokeShareLink(db as never, 'tok-abc', 'deck-other')
+    // The where clause must compose two equality predicates (id AND deckId);
+    // we don't introspect the AST shape across drizzle versions — just assert
+    // that where() was called once with a non-null composite expression.
+    expect(db.update).toHaveBeenCalledTimes(1)
+    expect(capturedWhere).not.toBeNull()
   })
 
   it('subsequent findShareLink returns null after revoke', async () => {

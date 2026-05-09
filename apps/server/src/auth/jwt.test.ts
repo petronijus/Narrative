@@ -174,4 +174,52 @@ describe('createJwtVerifier', () => {
       await expect(verifier.verify('')).rejects.toThrow('Invalid credentials')
     })
   })
+
+  describe('domain allowlist + email_verified', () => {
+    function makeDomainVerifier() {
+      return createJwtVerifier({
+        issuer: ISSUER,
+        jwksUrl: 'https://auth.example.com/jwks',
+        audience: AUDIENCE,
+        allowedDomain: 'example.com',
+      })
+    }
+
+    it('accepts a domain-matched email when email_verified=true', async () => {
+      const v = makeDomainVerifier()
+      const tok = await signToken({
+        sub: 'u1',
+        email: 'a@example.com',
+        email_verified: true,
+      })
+      await expect(v.verify(tok)).resolves.toMatchObject({ email: 'a@example.com' })
+    })
+
+    it('rejects a domain-matched email when email_verified is missing', async () => {
+      const v = makeDomainVerifier()
+      const tok = await signToken({ sub: 'u1', email: 'evil@example.com' })
+      await expect(v.verify(tok)).rejects.toThrow('Invalid credentials')
+    })
+
+    it('rejects a domain-matched email when email_verified=false', async () => {
+      const v = makeDomainVerifier()
+      const tok = await signToken({
+        sub: 'u1',
+        email: 'evil@example.com',
+        email_verified: false,
+      })
+      await expect(v.verify(tok)).rejects.toThrow('Invalid credentials')
+    })
+
+    it('exact-email allowlist does NOT require email_verified', async () => {
+      const v = createJwtVerifier({
+        issuer: ISSUER,
+        jwksUrl: 'https://auth.example.com/jwks',
+        audience: AUDIENCE,
+        allowedEmails: ['known@example.com'],
+      })
+      const tok = await signToken({ sub: 'u1', email: 'known@example.com' })
+      await expect(v.verify(tok)).resolves.toMatchObject({ email: 'known@example.com' })
+    })
+  })
 })

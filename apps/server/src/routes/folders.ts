@@ -241,13 +241,15 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         .filter((k): k is string => k != null && k !== '')
       if (keys.length > 0) {
         const s3 = buildS3Client()
-        for (const key of keys) {
-          try {
-            await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
-          } catch (err) {
-            request.log.warn({ err, key }, 'thumbnail delete failed (orphan left)')
-          }
-        }
+        await Promise.all(
+          keys.map(async (key) => {
+            try {
+              await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
+            } catch (err) {
+              request.log.warn({ err, key }, 'thumbnail delete failed (orphan left)')
+            }
+          }),
+        )
       }
 
       return reply.status(204).send({ deletedDeckCount: containedDecks.length })

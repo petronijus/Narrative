@@ -383,8 +383,12 @@ describe('onUploadFinish hook', () => {
 
     const assetId = 'asset-abc123456'
     const deckId = 'deck-beta'
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.jpg`
-    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+    // tus-server writes the file at the @tus/s3-store-managed key `upload.id`.
+    // onUploadFinish stores `upload.id` directly as `storageKey` so the
+    // record's pointer matches the actual S3 object — see tus.ts:467-476.
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.jpg`
+    const storageKeyB64 = Buffer.from(decodedPath).toString('base64url')
+    const uploadId = `${assetId}:${deckId}:${storageKeyB64}`
 
     const req = buildRequest({
       uploadMetadata: tusMetadata({
@@ -395,7 +399,7 @@ describe('onUploadFinish hook', () => {
     })
 
     const upload = {
-      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      id: uploadId,
       size: 2048,
       offset: 2048,
       metadata: { deckId, 'content-type': 'image/jpeg' },
@@ -409,7 +413,7 @@ describe('onUploadFinish hook', () => {
       expect.objectContaining({
         id: assetId,
         deckId,
-        storageKey,
+        storageKey: uploadId,
         mimeType: 'image/jpeg',
       }),
     )
@@ -421,15 +425,16 @@ describe('onUploadFinish hook', () => {
 
     const assetId = 'asset-xyz789'
     const deckId = 'deck-gamma'
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.png`
-    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.png`
+    const storageKeyB64 = Buffer.from(decodedPath).toString('base64url')
+    const uploadId = `${assetId}:${deckId}:${storageKeyB64}`
 
     const req = buildRequest({
       uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/png' }),
     })
 
     const upload = {
-      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      id: uploadId,
       size: 4096,
       offset: 4096,
       metadata: { deckId },
@@ -441,7 +446,8 @@ describe('onUploadFinish hook', () => {
     expect(result.status_code).toBe(200)
     const body = JSON.parse(result.body) as Record<string, unknown>
     expect(body['assetId']).toBe(assetId)
-    expect(body['storageKey']).toBe(storageKey)
+    // storageKey is the full upload.id — that's what @tus/s3-store wrote to S3.
+    expect(body['storageKey']).toBe(uploadId)
   })
 
   it('throws 500 if upload id is malformed', async () => {
@@ -461,8 +467,9 @@ describe('onUploadFinish hook', () => {
 
     const assetId = 'asset-video01'
     const deckId = 'deck-video'
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.mp4`
-    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.mp4`
+    const storageKeyB64 = Buffer.from(decodedPath).toString('base64url')
+    const uploadId = `${assetId}:${deckId}:${storageKeyB64}`
 
     const req = buildRequest({
       uploadMetadata: tusMetadata({
@@ -473,7 +480,7 @@ describe('onUploadFinish hook', () => {
     })
 
     const upload = {
-      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      id: uploadId,
       size: 10_000_000,
       offset: 10_000_000,
       metadata: { deckId, 'content-type': 'video/mp4' },
@@ -487,7 +494,7 @@ describe('onUploadFinish hook', () => {
       expect.objectContaining({
         id: assetId,
         deckId,
-        storageKey,
+        storageKey: uploadId,
         mimeType: 'video/mp4',
         kind: 'video',
         transcodeStatus: 'pending',
@@ -506,15 +513,16 @@ describe('onUploadFinish hook', () => {
 
     const assetId = 'asset-video02'
     const deckId = 'deck-video2'
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.mp4`
-    const storageKeyB64 = Buffer.from(storageKey).toString('base64url')
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.mp4`
+    const storageKeyB64 = Buffer.from(decodedPath).toString('base64url')
+    const uploadId = `${assetId}:${deckId}:${storageKeyB64}`
 
     const req = buildRequest({
       uploadMetadata: tusMetadata({ deckId, 'content-type': 'video/mp4' }),
     })
 
     const upload = {
-      id: `${assetId}:${deckId}:${storageKeyB64}`,
+      id: uploadId,
       size: 5_000_000,
       offset: 5_000_000,
       metadata: { deckId },
@@ -527,7 +535,7 @@ describe('onUploadFinish hook', () => {
       expect.objectContaining({
         assetId,
         deckId,
-        storageKey,
+        storageKey: uploadId,
         mimeType: 'video/mp4',
       }),
     )
