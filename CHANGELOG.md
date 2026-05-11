@@ -4,6 +4,51 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Google OIDC end-to-end + first production deploy (2026-05-12)
+
+First public deployment of Narrative. Live at
+`https://narrative.example.com` via a Cloudflare Tunnel on the
+home-lab. Auth is real Google OIDC with PKCE; the `client_secret`
+required by Google's "Web application" client type lives only on the
+server, so the SPA bundle stays clean.
+
+### Added
+
+- **`apps/server/src/routes/authProxy.ts`** — `POST /api/auth/google/exchange`. Browser sends `code` + `code_verifier`; server adds `OIDC_CLIENT_SECRET` (env-only) and forwards to Google's token endpoint. The SPA points `oidc-client-ts`'s `token_endpoint` here via `metadataSeed`, declaring `token_endpoint_auth_methods_supported: ['none']` so the library treats the client as public and skips its "client_secret is missing" guard.
+- **`infra/docker-compose.prod.shared-tunnel.yml`** — new prod topology for hosts that share an upstream Cloudflare Tunnel (e.g. the one already routing nextcloud + others on the home-lab docker VM). Caddy publishes on host:80 (so the external tunnel can reach it via LAN IP); the bundled `cloudflared` service is profile-gated out via `profiles: [internal-tunnel]`; internal services drop their `127.0.0.1:` host-port publishes via `ports: !reset []` (sidesteps a Docker 29.4 port-bind race on rapid container recreate); OIDC + media env vars are explicitly piped from `.env.prod` into the server container; `narrative-server` healthcheck overridden to use `127.0.0.1` (BusyBox `wget` resolves `localhost` to IPv6 first, which Fastify doesn't bind).
+- **`apps/web/e2e/prod-oauth-smoke.spec.ts`** — non-destructive smoke test that hits the prod URL, confirms the login redirect, parses the Google OAuth URL, and asserts client_id / redirect_uri / PKCE params without actually completing Google's consent screen.
+- **`docs/handoff/google-auth-handover.md`** — operating notes for the deploy target (VM 103 `narrative` on Proxmox, SSH jump path, architecture diagram).
+- **Server-side `apps/server/src/db/migrate.ts`** rewritten as a custom per-file-transaction migrator (~50 lines). Each migration runs as its own implicit transaction via node-postgres simple query protocol, so `ALTER TYPE ... ADD VALUE 'font'` commits before subsequent migrations reference the new enum value. Drizzle's built-in migrator wraps all pending migrations in one outer transaction, which Postgres rejects with `unsafe use of new value … of enum type` (error 55P04) — this hit `0009_m16_consolidate_fonts` on every fresh deploy. Tracking table layout (`drizzle.__drizzle_migrations`) matches drizzle's so the built-in could resume if needed.
+
+### Fixed
+
+- **`packages/shared`** missing `yjs` declaration — `src/slide.ts` did `import type * as Y from 'yjs'` but `yjs` wasn't in the package's deps. Worked in dev via pnpm hoisting, broke in Docker's isolated `--frozen-lockfile` install. Added as devDependency.
+- **`apps/web`** missing `y-protocols` — same class of bug. Added.
+- **`apps/server/Dockerfile`** runtime `CMD` pointed at `apps/server/dist/index.js`, but tsc emits with workspace-root rootDir (cross-package imports include files outside `apps/server/src/`) so the actual entry is `apps/server/dist/apps/server/src/index.js`. Same path mismatch for `db/migrate.js` (used by deploy.sh). Both paths corrected.
+- **`apps/server/Dockerfile`** workspace package resolution — `pnpm install` symlinks `node_modules/@narrative/*` to `packages/<pkg>/`, where `package.json` says `"main": "./src/index.ts"`. Node can't load `.ts` at runtime. Mirrored the video-worker Dockerfile pattern: copy compiled JS from the builder stage on top of the symlinked source dir, then `sed` `package.json` to point at `./src/index.js`. Applied to `@narrative/shared` and `@narrative/slide-model`.
+- **Drizzle migrations path** — compiled `migrate.js` lives 4 dirs deeper than expected, so `path.resolve(__dirname, '../../drizzle')` resolved wrong. Dockerfile now copies `drizzle/` to BOTH the original `apps/server/drizzle/` and the deeper `apps/server/dist/apps/server/drizzle/` location.
+- **pnpm 10 `[ERR_PNPM_IGNORED_BUILDS]`** in Docker — pnpm 10 fails the install if any package's postinstall script isn't explicitly whitelisted. Web Dockerfile uses `--ignore-scripts` (esbuild's postinstall just verifies a platform binary that's already in `@esbuild/linux-x64`; skipping is safe). Root `package.json` declares `pnpm.onlyBuiltDependencies: [esbuild, @swc/core, msgpackr-extract]` as a longer-term fix.
+- **`apps/web/Dockerfile`** missing `VITE_OIDC_*` build args — Vite bakes `import.meta.env.VITE_*` at build time. Added `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_REDIRECT_URI`, `VITE_IMGPROXY_URL` as ARG + ENV. `deploy.sh` passes them via `--build-arg` derived from `${DOMAIN}` and `.env.prod`.
+- **Auth callback race** — `apps/web/src/pages/AuthCallback.tsx` previously created its own `UserManager` and listened for events that the `AuthProvider`'s separate `UserManager` instance never received. Plus, even when the right instance got the event, `navigate('/')` raced the React state commit so `<ProtectedRoute>` rendered with `user=null` and bounced back to `/auth/login` — requiring a second login attempt. Fixed by routing the callback through `AuthProvider.completeSignin()` (single shared `UserManager`) and using `flushSync` to commit the user state before navigating.
+- **AuthError page** — was hardcoded "session expired" text. Now reads `location.state.error` and renders the actual `signinRedirectCallback` error message in a red pre block, so unknown failures are debuggable without DevTools.
+- **`oidc-client-ts` `loadUserInfo: true`** — was triggering an extra round-trip to Google's userinfo endpoint after the token exchange. The id_token JWT already carries `sub` / `email` / `name`, so the call is redundant — and any failure (CORS, rate limit) was fatal to the whole sign-in. Disabled.
+
+### Changed
+
+- **`infra/scripts/deploy.sh`** — new `USE_SHARED_TUNNEL=1` flag toggles the override compose file, skips the bundled-cloudflared healthcheck, and probes server health via `docker exec` (no host port published in shared-tunnel mode).
+- **Top toolbar** — `apps/web/src/components/EditorLayout.tsx` — the toolbar now spans the full width above the side panels (was previously squeezed between them). Slides + Inspector panels start at `top: topBarH`; toolbar at `z-20` over the panels.
+
+### Infrastructure
+
+- **VM 103 `narrative`** on Proxmox `pve` — Ubuntu 24.04 cloud image provisioned via `qm create` + cloud-init from this machine over SSH (Proxmox MCP can inspect but not create). 4 vCPU / 4 GB RAM / 40 GB disk on the `data` lvmthin pool. `petr` user, ed25519 key auth, NOPASSWD sudo, Docker 29.4.3 + Compose v5.1.3, qemu-guest-agent reporting IP to Proxmox.
+- **OPNsense dnsmasq static reservation** — `BC:24:11:18:A0:ED → 192.0.2.147` so the LAN IP stays put and the Cloudflare Tunnel public-hostname mapping (`narrative.example.com → 192.0.2.147:80`) doesn't break on lease renewal.
+
+### Removed
+
+- Stale Playwright artifact directories at `apps/test-results/` and `test-results/` (also added to `.gitignore`).
+
+---
+
 ## Audit + test debt cleanup (2026-05-09)
 
 Multi-stage codebase audit and test-suite consolidation. Eight commits

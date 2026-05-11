@@ -55,6 +55,13 @@ if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
 fi
 
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
+# Shared-tunnel mode: rely on an external cloudflared running elsewhere on the
+# LAN. Caddy gets exposed on host port 80; the bundled cloudflared service is
+# profile-gated out via docker-compose.prod.shared-tunnel.yml.
+if [[ "${USE_SHARED_TUNNEL:-0}" == "1" ]]; then
+  COMPOSE_FILES="${COMPOSE_FILES} -f docker-compose.prod.shared-tunnel.yml"
+  log "Shared-tunnel mode aktivní — bundled cloudflared se nespustí, Caddy publikuje 80:80"
+fi
 COMPOSE="docker compose ${COMPOSE_FILES} --env-file .env.prod"
 
 log "Deploy prostředí: ${ENV}"
@@ -86,6 +93,10 @@ docker build \
   --target runtime \
   --build-arg VITE_API_URL="https://${DOMAIN}/api" \
   --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
+  --build-arg VITE_OIDC_ISSUER="${VITE_OIDC_ISSUER:-https://accounts.google.com}" \
+  --build-arg VITE_OIDC_CLIENT_ID="${VITE_OIDC_CLIENT_ID}" \
+  --build-arg VITE_OIDC_REDIRECT_URI="${VITE_OIDC_REDIRECT_URI:-https://${DOMAIN}/auth/callback}" \
+  --build-arg VITE_IMGPROXY_URL="${VITE_IMGPROXY_URL:-https://${DOMAIN}/imgproxy}" \
   --tag "${WEB_IMAGE}:latest" \
   --file "${REPO_DIR}/apps/web/Dockerfile" \
   "${REPO_DIR}"
@@ -108,7 +119,7 @@ log "Spouštíme DB migrace..."
 ${COMPOSE} run --rm \
   --entrypoint "" \
   server \
-  node apps/server/dist/db/migrate.js
+  node apps/server/dist/apps/server/src/db/migrate.js
 
 log "Migrace hotovy"
 
@@ -121,12 +132,25 @@ log "Čekám na start (15s)..."
 sleep 15
 
 log "Healthcheck API..."
-if curl -fsS --max-time 10 "http://127.0.0.1:${API_PORT:-3001}/health" > /dev/null; then
-  log "API healthcheck OK"
+# In shared-tunnel mode the server's host port is NOT published (avoids
+# Docker 29.4 port-bind bug). Probe via Caddy's internal `caddy` alias on
+# the narrative_default network, or via `docker exec` inside server.
+if [[ "${USE_SHARED_TUNNEL:-0}" == "1" ]]; then
+  if docker exec narrative-server wget -qO- --timeout=10 http://localhost:3001/health > /dev/null 2>&1; then
+    log "API healthcheck OK (via docker exec)"
+  else
+    err "API neodpovídá na /health (uvnitř kontejneru)"
+    ${COMPOSE} logs --tail=50 server
+    exit 1
+  fi
 else
-  err "API neodpovídá na /health"
-  ${COMPOSE} logs --tail=50 server
-  exit 1
+  if curl -fsS --max-time 10 "http://127.0.0.1:${API_PORT:-3001}/health" > /dev/null; then
+    log "API healthcheck OK"
+  else
+    err "API neodpovídá na /health"
+    ${COMPOSE} logs --tail=50 server
+    exit 1
+  fi
 fi
 
 log "Healthcheck Caddy (internal Docker network)..."
@@ -140,11 +164,15 @@ else
   warn "Caddy /health did not respond on the internal network — check 'docker logs narrative-caddy'"
 fi
 
-log "Healthcheck cloudflared tunnel..."
-if docker logs narrative-cloudflared 2>&1 | tail -50 | grep -q "Registered tunnel connection"; then
-  log "cloudflared connected to Cloudflare edge"
+if [[ "${USE_SHARED_TUNNEL:-0}" == "1" ]]; then
+  log "Skipping cloudflared healthcheck — using external tunnel"
 else
-  warn "cloudflared has no registered tunnel connection yet — check 'docker logs narrative-cloudflared'"
+  log "Healthcheck cloudflared tunnel..."
+  if docker logs narrative-cloudflared 2>&1 | tail -50 | grep -q "Registered tunnel connection"; then
+    log "cloudflared connected to Cloudflare edge"
+  else
+    warn "cloudflared has no registered tunnel connection yet — check 'docker logs narrative-cloudflared'"
+  fi
 fi
 
 # ── Done ───────────────────────────────────────────────────────────────────────

@@ -81,6 +81,7 @@ function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCon
     login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn().mockResolvedValue(undefined),
     refreshToken: vi.fn().mockResolvedValue(undefined),
+    completeSignin: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }
@@ -159,7 +160,7 @@ describe('ShareDialog', () => {
   it.skip('calls grantPermission when invite submitted', async () => {
     renderDialog()
 
-    const input = screen.getByLabelText('User ID (Authentik sub)')
+    const input = screen.getByLabelText('User ID (Google sub)')
     const inviteButton = screen.getByRole('button', { name: 'Invite' })
 
     fireEvent.change(input, { target: { value: 'user-charlie' } })

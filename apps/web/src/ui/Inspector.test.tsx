@@ -83,6 +83,7 @@ vi.mock('../state/AuthContext', async (importOriginal) => {
       login: vi.fn(),
       logout: vi.fn(),
       refreshToken: vi.fn(),
+      completeSignin: vi.fn(),
     }),
   }
 })

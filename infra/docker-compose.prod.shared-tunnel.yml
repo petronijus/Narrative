@@ -1,0 +1,92 @@
+# Narrative — prod override for "shared external Cloudflare Tunnel" topology
+#
+# Use when a SINGLE cloudflared instance running ELSEWHERE on the LAN
+# (e.g. on a sibling docker host) handles ingress for narrative.example.com
+# and routes the public hostname to this VM's port 80 over the LAN.
+#
+# Usage:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.prod.yml \
+#     -f docker-compose.prod.shared-tunnel.yml \
+#     --env-file .env.prod up -d
+#
+# Compared to docker-compose.prod.yml:
+#   - Caddy publishes port 80 on the host (so the external cloudflared can
+#     reach http://<this-vm-LAN-IP>:80 — by default prod.yml only `expose`s
+#     it on the internal Docker network).
+#   - The local cloudflared service is moved to profile "internal-tunnel",
+#     which is NEVER activated by this override, so it does not start.
+#     (You can re-enable it by running with --profile internal-tunnel.)
+#
+# Cloudflare dashboard side: in the existing tunnel, add a Public Hostname
+# pointing narrative.example.com → http://<this-vm-LAN-IP>:80
+# (no TLS verification needed — Cloudflare terminates TLS at the edge).
+
+services:
+  caddy:
+    # Bind Caddy on the host so the external cloudflared can reach it.
+    # 0.0.0.0:80 — restricted by upstream firewall / Docker NAT.
+    ports:
+      - '80:80'
+
+  # Strip ALL 127.0.0.1: host-port bindings on internal services. They are
+  # reachable from sibling containers via Docker's internal `narrative_default`
+  # network using service names (postgres:5432, minio:9000, etc) — the host
+  # publishes were only for "SSH tunnel admin access" which we don't need
+  # right now AND trigger a Docker 29.4 bug where 127.0.0.1: binds report
+  # "address already in use" despite the kernel showing the port free.
+  # Empty `ports: []` replaces the parent's list (Compose v2.30+).
+  # !reset clears the inherited list (Compose v2.24+). Without it, Compose
+  # MERGES port lists across overrides so an empty array has no effect.
+  postgres:
+    ports: !reset []
+  minio:
+    ports: !reset []
+  media-redis:
+    ports: !reset []
+  imgproxy:
+    ports: !reset []
+  server:
+    ports: !reset []
+    # OIDC + auth env passthrough. The base compose's `environment` block
+    # only lists POSTGRES_URL / NODE_ENV / etc — without these explicit
+    # references the container starts with no OIDC config and crashes in
+    # createJwtVerifier (Invalid URL on undefined OIDC_JWKS_URL).
+    environment:
+      OIDC_ISSUER: ${OIDC_ISSUER:-https://accounts.google.com}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-https://www.googleapis.com/oauth2/v3/certs}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      # client_secret required by Google for "Web application" OAuth client type
+      # token-exchange. Kept server-side only; never reaches the SPA bundle.
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_ALLOWED_EMAILS: ${OIDC_ALLOWED_EMAILS:-}
+      OIDC_ALLOWED_DOMAIN: ${OIDC_ALLOWED_DOMAIN:-}
+      BYPASS_AUTH: ${BYPASS_AUTH:-false}
+      # Media pipeline env that other services already consume — server
+      # uses them to sign imgproxy URLs and talk to MinIO.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-narrative-media}
+      IMGPROXY_KEY: ${IMGPROXY_KEY}
+      IMGPROXY_SALT: ${IMGPROXY_SALT}
+      IMGPROXY_ENDPOINT: ${IMGPROXY_ENDPOINT:-https://${DOMAIN}/imgproxy}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-https://${DOMAIN}/storage}
+      MEDIA_REDIS_URL: ${MEDIA_REDIS_URL:-redis://media-redis:6379}
+      PUBLIC_URL: https://${DOMAIN}
+    # BusyBox wget resolves `localhost` to ::1 first, but Fastify only
+    # binds IPv4. Override to use 127.0.0.1 explicitly so the healthcheck
+    # reflects actual server state.
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3001/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  cloudflared:
+    # Gate the bundled cloudflared behind a profile that is never activated
+    # by default. The external tunnel handles ingress instead.
+    profiles:
+      - internal-tunnel

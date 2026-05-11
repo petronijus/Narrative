@@ -31,6 +31,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { flushSync } from 'react-dom'
 import { UserManager, type User } from 'oidc-client-ts'
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,14 @@ export interface AuthContextValue {
   login(): Promise<void>
   logout(): Promise<void>
   refreshToken(): Promise<void>
+  /**
+   * Completes the OIDC PKCE callback after Google redirects back to
+   * `/auth/callback`. Drives the SAME `UserManager` that AuthProvider
+   * owns, so React state is updated by the time the promise resolves
+   * (synchronous flush). Returns the OIDC `state` payload set during
+   * `signinRedirect`, which carries `returnTo`.
+   */
+  completeSignin(): Promise<{ returnTo?: string } | undefined>
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +67,15 @@ export interface AuthContextValue {
 // ---------------------------------------------------------------------------
 
 export function createUserManager(): UserManager {
+  // metadataSeed: replaces specific endpoints in the discovered OIDC metadata.
+  // We re-point token_endpoint at our own server route, which holds the Google
+  // `client_secret` and forwards the exchange. That keeps the secret out of
+  // the SPA bundle (Google's "Web application" client type requires the secret
+  // on every code → token exchange even when PKCE is used).
+  // token_endpoint_auth_methods_supported: ['none'] tells oidc-client-ts the
+  // client is public, so it skips its "client_secret is missing" guard.
+  const tokenEndpoint = `${window.location.origin}/api/auth/google/exchange`
+
   return new UserManager({
     authority: import.meta.env['VITE_OIDC_ISSUER'] ?? '',
     client_id: import.meta.env['VITE_OIDC_CLIENT_ID'] ?? '',
@@ -66,7 +84,16 @@ export function createUserManager(): UserManager {
     response_type: 'code',
     scope: 'openid profile email',
     post_logout_redirect_uri: window.location.origin,
-    loadUserInfo: true,
+    metadataSeed: {
+      token_endpoint: tokenEndpoint,
+      token_endpoint_auth_methods_supported: ['none'],
+    },
+    // The id_token JWT already carries `sub` / `email` / `name`, so the
+    // separate userinfo round-trip is redundant. Disabling it also avoids
+    // a failure mode where Google's userinfo endpoint rejects the request
+    // and the whole sign-in flow fails (oidc-client-ts treats userinfo
+    // errors as fatal).
+    loadUserInfo: false,
     // Google's OIDC discovery doc does not advertise refresh tokens for the
     // browser PKCE flow; silent renew uses the iframe-based prompt=none path.
     automaticSilentRenew: true,
@@ -216,13 +243,25 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     applyUser(refreshed)
   }, [userManager, applyUser])
 
+  const completeSignin = useCallback(async (): Promise<{ returnTo?: string } | undefined> => {
+    const oidcUser = await userManager.signinRedirectCallback()
+    // flushSync forces React to commit the user state synchronously so the
+    // navigate() that follows in AuthCallback doesn't see a stale `user=null`
+    // in <ProtectedRoute />. Without this the post-callback redirect to "/"
+    // races the React state update and bounces back to /auth/login.
+    flushSync(() => {
+      applyUser(oidcUser)
+    })
+    return oidcUser.state as { returnTo?: string } | undefined
+  }, [userManager, applyUser])
+
   // ---------------------------------------------------------------------------
   // Context value
   // ---------------------------------------------------------------------------
 
   const value: AuthContextValue = useMemo(
-    () => ({ user, token, isLoading, login, logout, refreshToken }),
-    [user, token, isLoading, login, logout, refreshToken],
+    () => ({ user, token, isLoading, login, logout, refreshToken, completeSignin }),
+    [user, token, isLoading, login, logout, refreshToken, completeSignin],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -11,7 +11,7 @@ Self-hosted collaborative presentation tool with Keynote-level animations, real-
 ## Setup
 
 See **[SETUP.md](./SETUP.md)** for the complete first-run guide — env vars, Docker
-services, MinIO bucket, migrations, optional video pipeline / Authentik, and a
+services, MinIO bucket, migrations, optional video pipeline, Google OIDC, and a
 troubleshooting list for the failures that actually bite on a fresh machine.
 
 TL;DR for an experienced setup:
@@ -343,7 +343,7 @@ DNS: `minio.${DOMAIN}` must resolve to the server (wildcard `*.${DOMAIN}` covers
 
 ## Deployment
 
-> **Security note (M10):** Authentik is now deployed. The system can be exposed to the public internet after M10 phase 2 (server JWT validation) is complete. Phase 1a (this milestone) deploys Authentik but the API is still open until the server middleware is wired in phase 2. During phase 1a, keep the server ports on 127.0.0.1 (prod compose does this) and use a firewall to block direct access.
+> **Security note:** Auth is Google OIDC (ID-token validation against Google's JWKS, gated by an email/domain allowlist — see `OIDC_ALLOWED_EMAILS` / `OIDC_ALLOWED_DOMAIN`). The system can be exposed to the public internet only with the allowlist set; otherwise _any_ Google account can sign in. When `BYPASS_AUTH=true` (dev only), keep server ports bound to `127.0.0.1` and block external access at the firewall.
 
 ### Architecture
 

@@ -64,6 +64,7 @@ function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCon
     login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn().mockResolvedValue(undefined),
     refreshToken: vi.fn().mockResolvedValue(undefined),
+    completeSignin: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }

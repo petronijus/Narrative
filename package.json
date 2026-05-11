@@ -45,5 +45,12 @@
     "*.{js,cjs,mjs,json,md,yaml,yml}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@swc/core",
+      "msgpackr-extract"
+    ]
   }
 }

@@ -125,7 +125,7 @@ export async function listPermissions(db: Database, deckId: string): Promise<Per
  *   3. If shareToken is provided, delegate to findShareLink. Return the link's role.
  *   4. Return null — no access.
  *
- * @param args.userId     Authentik 'sub' claim, or null for unauthenticated access via share link.
+ * @param args.userId     Google OIDC 'sub' claim, or null for unauthenticated access via share link.
  * @param args.shareToken Optional share link token from query string.
  */
 export async function resolveDeckAccess(

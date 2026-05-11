@@ -52,3 +52,5 @@ apps/web/.playwright/
 
 # Lighthouse CI artifacts (uploaded to temporary-public-storage)
 .lighthouseci/
+test-results/
+apps/test-results/

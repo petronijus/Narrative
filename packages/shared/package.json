@@ -12,5 +12,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node ../../node_modules/vitest/vitest.mjs run"
+  },
+  "devDependencies": {
+    "yjs": "^13.6.30"
   }
 }

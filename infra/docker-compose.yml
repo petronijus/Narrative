@@ -108,11 +108,9 @@ services:
       "
     restart: 'no'
 
-  # ─── Media queue Redis (M12) — separate from Authentik's Redis ──────────────
-  # Operational isolation rationale: auth Redis needs strict availability (sessions,
-  # cache); media-redis can be wiped without user-visible impact and has a more
-  # relaxed SLA. Keeping them separate also prevents queue traffic from affecting
-  # auth latency. See ADR in docs/adr/.
+  # ─── Media queue Redis (M12) ─────────────────────────────────────────────────
+  # Dedicated Redis for the BullMQ media queue. Can be wiped without user-visible
+  # impact (jobs are recoverable on retry). Auth is Google OIDC — no auth Redis.
   media-redis:
     image: redis:7-alpine
     container_name: narrative-media-redis

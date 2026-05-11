@@ -159,7 +159,6 @@ below if you're actively testing the real OIDC flow.
 | 9100 | MinIO S3 API                       |
 | 9101 | MinIO console                      |
 | 6380 | media-redis (BullMQ queue)         |
-| 9000 | Authentik (only if you booted it)  |
 
 ## Tearing it down
 

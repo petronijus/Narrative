@@ -37,7 +37,7 @@ export function AuthLogin() {
           disabled={isLoading}
           className="w-full rounded-md bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
         >
-          Sign in with Authentik
+          Sign in with Google
         </button>
       </div>
     </div>

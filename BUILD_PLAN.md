@@ -21,7 +21,7 @@ Self-hosted collaborative presentation tool with Keynote-level animations, heavy
 - **Database**: Postgres (metadata + Yjs persistence via Hocuspocus extension)
 - **Object storage**: MinIO (S3-compatible)
 - **Media pipeline**: tus.io uploads, ffmpeg workers via BullMQ + Redis, imgproxy
-- **Auth**: Authentik (OIDC) — added in M10
+- **Auth**: Google OIDC (ID-token validation against Google's JWKS, email/domain allowlist) — added in M10
 - **AI**: Anthropic API (Claude Sonnet for generation, tool use for structured output)
 - **Reverse proxy**: Caddy (automatic TLS)
 - **Deploy**: Docker Compose on Proxmox LXC/VM, ZFS for storage
@@ -174,7 +174,7 @@ Deck = Y.Array of slide Y.Maps. Sidebar with thumbnails (PixiJS renderToCanvas a
 
 ### M10 — Auth + permissions
 
-Authentik in docker-compose. OIDC in the server (JWT validation on WebSocket connect). Per-deck permissions table (owner, editor, viewer). Sharing dialog (invite by email). Public view-only share link with token.
+Google OIDC sign-in (no self-hosted IdP). Server validates Google ID tokens via JWKS on WebSocket connect, gated by an email/domain allowlist. Per-deck permissions table (owner, editor, viewer). Sharing dialog (invite by email). Public view-only share link with token.
 
 **Deliverable**: multi-user system with permissions.
 

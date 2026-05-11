@@ -2260,7 +2260,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
           the slides-panel affordances (add / reorder / delete) don't
           apply. */}
       {!masterMode && (
-        <div data-shortcut-scope="slidePanel" className="absolute inset-y-0 left-0 z-10 flex">
+        <div
+          data-shortcut-scope="slidePanel"
+          className="absolute bottom-0 left-0 z-10 flex"
+          style={{ top: topBarH }}
+        >
           <ResizableSidebar
             storageKey="narrative:sidebarWidth"
             minWidth={180}
@@ -2288,15 +2292,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         </div>
       )}
 
-      {/* Toolbar — absolute layer at the top of the inner channel
-          between the side panels. Sits above the canvas with the
+      {/* Toolbar — full-width strip across the top of the editor,
+          above the side panels. Sits above the canvas with the
           same frosted-glass `.panel` effect, so the artboard is
-          visible behind it just like the side panels. */}
-      <div
-        ref={topBarRef}
-        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex"
-        style={{ paddingLeft: slidesInset, paddingRight: inspectorInset }}
-      >
+          visible behind it just like the side panels. z-20 so it
+          covers the side panels (z-10) at their top edge. */}
+      <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-20 flex">
         <div className="pointer-events-auto w-full">
           <Toolbar masterMode={masterMode} />
         </div>
@@ -2743,7 +2744,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
           collapse animation comes for free. Sits over the canvas
           main column for the frosted-glass backdrop to read the
           artboard behind it. */}
-      <div className="absolute inset-y-0 right-0 z-10 flex">
+      <div className="absolute bottom-0 right-0 z-10 flex" style={{ top: topBarH }}>
         <ResizableSidebar
           storageKey="narrative:inspectorWidth"
           minWidth={256}

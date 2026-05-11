@@ -63,6 +63,7 @@ function buildAuthValue(user: AuthUser | null = DEFAULT_AUTH_USER): AuthContextV
     login: vi.fn().mockResolvedValue(undefined),
     logout: vi.fn().mockResolvedValue(undefined),
     refreshToken: vi.fn().mockResolvedValue(undefined),
+    completeSignin: vi.fn().mockResolvedValue(undefined),
   }
 }
 

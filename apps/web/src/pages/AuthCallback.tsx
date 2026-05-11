@@ -1,33 +1,35 @@
 /**
  * pages/AuthCallback.tsx
  *
- * M10: Handles the OIDC redirect from Authentik after login.
+ * M10: Handles the OIDC redirect from Google after login.
  * Route: /auth/callback
  *
- * Completes the PKCE code exchange, extracts the return path from OIDC
- * state (set during login()), and navigates there.
+ * Delegates the PKCE code exchange to AuthProvider's `completeSignin()` so
+ * the same `UserManager` instance that drives React state finishes the flow.
+ * `completeSignin()` uses `flushSync` to commit the user into context before
+ * resolving — so the subsequent `navigate(returnTo)` doesn't race the
+ * <ProtectedRoute /> render and bounce back to /auth/login.
  */
 
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createUserManager } from '../state/AuthContext.js'
+import { useAuth } from '../state/AuthContext.js'
 
 export function AuthCallback() {
   const navigate = useNavigate()
-  const userManager = useMemo(() => createUserManager(), [])
+  const { completeSignin } = useAuth()
 
   useEffect(() => {
-    userManager
-      .signinRedirectCallback()
-      .then((user) => {
-        const state = user.state as { returnTo?: string } | undefined
+    completeSignin()
+      .then((state) => {
         navigate(state?.returnTo ?? '/', { replace: true })
       })
       .catch((err: unknown) => {
-        console.error('[auth] callback failed', err instanceof Error ? err.message : String(err))
-        navigate('/auth/error', { replace: true })
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[auth] callback failed', msg, err)
+        navigate('/auth/error', { replace: true, state: { error: msg } })
       })
-  }, [userManager, navigate])
+  }, [completeSignin, navigate])
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-950 text-gray-400">

@@ -33,6 +33,7 @@ import { registerFolderRoutes } from './routes/folders.js'
 import { registerComponentRoutes } from './routes/components.js'
 import { registerTokenUsageRoutes } from './routes/tokenUsages.js'
 import { registerSharingRoutes } from './routes/sharing.js'
+import { registerAuthProxyRoutes } from './routes/authProxy.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
 import { closeQueueConnection } from './media/enqueue.js'
@@ -174,6 +175,10 @@ await registerTokenUsageRoutes(app, db)
 
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)
+
+// OAuth token-exchange proxy — server-side code → tokens (keeps Google
+// client_secret out of the SPA bundle). Public endpoint by design.
+registerAuthProxyRoutes(app)
 
 // Media routes: tus upload + signed URL + delete
 registerTusPlugin(app, { db })
