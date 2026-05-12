@@ -35,14 +35,15 @@ http://{$DOMAIN:localhost} {
   }
 
   # ── WebSocket (Hocuspocus) ──────────────────────────────────────────────────
-  # Hocuspocus accepts WebSocket upgrades on /
-  # Client connects via wss://DOMAIN/ws
-  handle /ws* {
-    reverse_proxy server:3002 {
-      # WebSocket upgrade headers
-      header_up Connection {>Connection}
-      header_up Upgrade {>Upgrade}
-    }
+  # Client connects via wss://DOMAIN/ws. `handle_path` strips the /ws prefix
+  # so the upstream sees `/` (Hocuspocus does the WebSocket upgrade dance at
+  # root; anything else falls through to its default HTTP handler which
+  # returns 200 "OK" without upgrading).
+  # Caddy v2's reverse_proxy auto-detects Upgrade: websocket and switches to
+  # bidirectional bytestream mode — no header_up overrides needed (those
+  # were in fact preventing the upgrade from being recognised).
+  handle_path /ws* {
+    reverse_proxy server:3002
   }
 
   # ── MinIO S3 API passthrough (M11) ─────────────────────────────────────────
