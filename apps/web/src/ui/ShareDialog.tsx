@@ -27,6 +27,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useApi } from '../api/client.js'
+import { useAuth } from '../state/AuthContext.js'
 import type { DeckInvite, DeckPermission, ShareLink } from '../api/client.js'
 import type { DeckRole } from '../state/DeckRoleContext.js'
 
@@ -108,6 +109,8 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
 
 export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
   const api = useApi()
+  const { user: currentUser } = useAuth()
+  const currentUserSub = currentUser?.sub ?? null
 
   // Permissions state
   const [permissions, setPermissions] = useState<DeckPermission[]>([])
@@ -426,43 +429,66 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
             <p className="text-xs text-gray-500">No explicit permissions yet.</p>
           ) : (
             <ul className="mb-3 space-y-2" role="list">
-              {sortedPermissions.map((perm) => (
-                <li key={perm.userId} className="flex items-center gap-2">
-                  <div
-                    aria-hidden="true"
-                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-700 text-xs font-medium text-gray-200"
-                  >
-                    {initialsFor(perm)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-gray-200">{primaryLabel(perm)}</p>
-                    {perm.email && perm.name && (
-                      <p className="truncate text-[11px] text-gray-500">{perm.email}</p>
-                    )}
-                  </div>
-                  <RoleSelect value={perm.role} onChange={(r) => void handleChangeRole(perm, r)} />
-                  <button
-                    onClick={() => void handleRevokePermission(perm.userId)}
-                    aria-label={`Remove ${primaryLabel(perm)}`}
-                    className="ml-1 rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+              {sortedPermissions.map((perm) => {
+                // You cannot change or remove your own role — only another
+                // owner can. Server enforces this with a 409; the dialog
+                // disables the controls so the rule is visible up front.
+                const isSelf = currentUserSub !== null && perm.userId === currentUserSub
+                return (
+                  <li key={perm.userId} className="flex items-center gap-2">
+                    <div
                       aria-hidden="true"
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-700 text-xs font-medium text-gray-200"
                     >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                </li>
-              ))}
+                      {initialsFor(perm)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-gray-200">
+                        {primaryLabel(perm)}
+                        {isSelf && (
+                          <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                            you
+                          </span>
+                        )}
+                      </p>
+                      {perm.email && perm.name && (
+                        <p className="truncate text-[11px] text-gray-500">{perm.email}</p>
+                      )}
+                    </div>
+                    <RoleSelect
+                      value={perm.role}
+                      disabled={isSelf}
+                      onChange={(r) => void handleChangeRole(perm, r)}
+                    />
+                    <button
+                      onClick={() => void handleRevokePermission(perm.userId)}
+                      disabled={isSelf}
+                      aria-label={
+                        isSelf ? 'You cannot remove yourself' : `Remove ${primaryLabel(perm)}`
+                      }
+                      title={
+                        isSelf ? 'Only another owner can remove you from this deck.' : undefined
+                      }
+                      className="ml-1 rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 disabled:cursor-not-allowed"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           )}
 

@@ -335,6 +335,31 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
     })
     expect(res.statusCode).toBe(400)
   })
+
+  it('rejects self-role-change with 409 (only another owner can change you)', async () => {
+    // The caller is `dev-user` (bypass mode). If the resolved user for the
+    // posted email has the SAME sub, the server must refuse.
+    const now = new Date()
+    mockGetUserByEmail.mockResolvedValue({
+      sub: 'dev-user',
+      email: 'me@example.com',
+      name: 'Me',
+      pictureUrl: null,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    })
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/decks/deck-1/permissions',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'me@example.com', role: 'viewer' }),
+    })
+
+    expect(res.statusCode).toBe(409)
+    expect(mockGrantPermission).not.toHaveBeenCalled()
+  })
 })
 
 describe('GET /decks/:id/invites', () => {
@@ -434,14 +459,15 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
   })
 
   it('returns 409 when revoking the last owner', async () => {
-    const now = new Date()
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
 
-    // Only one owner row — revoking would leave deck ownerless
+    // Only one owner row (alice) — revoking would leave deck ownerless.
+    // Caller is `dev-user`, target is `alice` so the self-revoke guard
+    // does NOT fire and we exercise the last-owner branch.
     const db = {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ userId: 'dev-user' }]),
+          where: vi.fn().mockResolvedValue([{ userId: 'alice' }]),
         }),
       }),
     } as unknown as Database
@@ -454,12 +480,29 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
 
     const res = await app.inject({
       method: 'DELETE',
-      url: '/decks/deck-1/permissions/dev-user',
+      url: '/decks/deck-1/permissions/alice',
     })
 
     expect(res.statusCode).toBe(409)
     const body = JSON.parse(res.body) as { error: string }
     expect(body.error).toContain('last owner')
+  })
+
+  it('returns 409 when caller tries to remove themselves', async () => {
+    mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
+    const app = await buildApp()
+
+    // The caller is `dev-user` (bypass mode). Targeting the same id
+    // triggers the self-revoke guard before the last-owner branch.
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/decks/deck-1/permissions/dev-user',
+    })
+
+    expect(res.statusCode).toBe(409)
+    const body = JSON.parse(res.body) as { error: string }
+    expect(body.error).toContain('cannot remove yourself')
+    expect(mockRevokePermission).not.toHaveBeenCalled()
   })
 })
 

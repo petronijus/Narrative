@@ -142,6 +142,14 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
       const existingUser = await getUserByEmail(db, email)
 
       if (existingUser) {
+        // Self-change guard: only another owner can change your role. This
+        // prevents the foot-gun where you click your own dropdown, pick a
+        // lower role, and lock yourself out of the dialog you're standing in.
+        if (existingUser.sub === inviterSub) {
+          return reply.status(409).send({
+            error: 'You cannot change your own role. Ask another owner to change it for you.',
+          })
+        }
         await grantPermission(db, {
           deckId: id,
           userId: existingUser.sub,
@@ -220,6 +228,16 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     { preHandler: ownerGuard },
     async (request, reply) => {
       const { id, userId } = request.params
+      const callerSub = request.user!.sub
+
+      // Self-revoke is forbidden: removing your own permission while
+      // standing in a dialog that requires it is a lockout.  Ask another
+      // owner to do it.
+      if (userId === callerSub) {
+        return reply.status(409).send({
+          error: 'You cannot remove yourself from a deck. Ask another owner to remove you.',
+        })
+      }
 
       // Safeguard: refuse to revoke the last owner.
       const owners = await db
