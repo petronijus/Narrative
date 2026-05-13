@@ -1,17 +1,29 @@
 /**
  * email/templates/deckInvite.ts
  *
- * "You've been invited to a deck" email. Sent on:
- *   1. New pending invite (invitee has never logged in).
- *   2. Re-invite (role change on an existing pending invite) — same template,
- *      the row's id stays stable so old links still work.
+ * "You've been invited to a deck" email.
  *
- * Design constraints:
- *   - Inline-styled HTML only — most mail clients strip <style> blocks.
- *   - Mirror every link with a plaintext URL for clients that drop HTML.
- *   - Keep subject + opening line specific (deck title + inviter name) so
- *     it reads like a personal note, not a marketing blast → better
- *     inbox placement.
+ * Design notes
+ * ------------
+ * Email rendering is the wild west. Constraints we honour here:
+ *   - **Tables for layout**. Outlook still routes HTML through the Word
+ *     engine (no flex / grid / margin-on-block). Every column is a `<td>`.
+ *   - **Inline styles only**. Most clients (Gmail, Yahoo) strip <style>
+ *     tags from the email body before render.
+ *   - **System font stack**. Custom @font-face works in ~half of clients
+ *     and looks visibly broken in the rest, so we use the SF/Segoe stack
+ *     that every OS already has.
+ *   - **No background-image**. Outlook needs a VML fallback for these;
+ *     we use solid background-color + table cells to fake a gradient
+ *     hero band.
+ *   - **Width 600 px**. Standard mobile-friendly upper bound.
+ *   - **Light mode primary**. Dark-mode-aware emails need a brittle
+ *     `@media (prefers-color-scheme: dark)` block that several clients
+ *     handle inconsistently — we accept light-mode-only for v1.
+ *   - **Plaintext fallback** mirrors the HTML's structure for clients
+ *     that drop HTML.
+ *
+ * Every dynamic field is `escapeHtml`-encoded before substitution.
  */
 
 import type { DeckRole } from '../../auth/permissions.js'
@@ -26,7 +38,7 @@ export interface DeckInviteEmailInput {
   role: DeckRole
   /**
    * URL that lands the recipient at the right deck after sign-in. The
-   * caller builds it as `${SPA_ORIGIN}/auth/start?returnTo=/deck/<id>`.
+   * caller builds it as `${SPA_ORIGIN}/api/auth/start?returnTo=/deck/<id>`.
    */
   signInUrl: string
 }
@@ -37,6 +49,10 @@ export interface RenderedEmail {
   text: string
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -46,67 +62,200 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function roleLabel(role: DeckRole): string {
-  return role === 'owner' ? 'co-owner' : role
+/** Inviter avatar initials. Two-character cap, uppercase. */
+function inviterInitials(name: string, email: string): string {
+  const source = name.trim().length > 0 ? name : email
+  const parts = source.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '·'
+  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase()
+  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
 }
+
+/** Deterministic, calm avatar colour from a string. */
+function avatarColour(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0
+  const hue = Math.abs(h) % 360
+  // Constant S+L so the colour is brand-coherent, not chaotic.
+  return `hsl(${hue}, 55%, 55%)`
+}
+
+function roleLabel(role: DeckRole): string {
+  return role === 'owner' ? 'Co-owner' : role[0]!.toUpperCase() + role.slice(1)
+}
+
+/** Deterministic gradient stops for the deck-card preview, hashed off the title. */
+function deckPreviewGradient(seed: string): { from: string; to: string } {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0
+  const hue1 = Math.abs(h) % 360
+  const hue2 = (hue1 + 40) % 360
+  return {
+    from: `hsl(${hue1}, 70%, 55%)`,
+    to: `hsl(${hue2}, 75%, 45%)`,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
 
 export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmail {
   const safeDeck = escapeHtml(input.deckTitle)
   const safeInviter = escapeHtml(input.inviterName)
   const safeInviterEmail = escapeHtml(input.inviterEmail)
+  const safeRecipient = escapeHtml(input.recipientEmail)
   const safeRole = escapeHtml(roleLabel(input.role))
   const safeUrl = escapeHtml(input.signInUrl)
+  const initials = escapeHtml(inviterInitials(input.inviterName, input.inviterEmail))
+  const inviterColour = avatarColour(input.inviterEmail)
+  const gradient = deckPreviewGradient(input.deckTitle)
 
-  const subject = `${input.inviterName} invited you to "${input.deckTitle}" on Narrative`
+  const subject = `${input.inviterName} shared "${input.deckTitle}" with you on Narrative`
 
+  // -------------------------------------------------------------------------
+  // Plaintext
+  // -------------------------------------------------------------------------
   const text = [
-    `${input.inviterName} (${input.inviterEmail}) invited you as ${roleLabel(input.role)} on the Narrative deck "${input.deckTitle}".`,
+    `${input.inviterName} (${input.inviterEmail}) shared a Narrative deck with you.`,
+    '',
+    `  Deck:  ${input.deckTitle}`,
+    `  Role:  ${roleLabel(input.role)}`,
     '',
     `Open the deck:`,
     `  ${input.signInUrl}`,
     '',
-    `Sign in with the Google account ${input.recipientEmail} — your access is bound to that address.`,
+    `Sign in with ${input.recipientEmail} — your access is bound to that Google account.`,
+    `The invite expires in 30 days.`,
     '',
-    `If you didn't expect this invite, you can ignore this email. The invite expires in 30 days.`,
+    `—`,
+    `Narrative · a presentation tool for people who don't want PowerPoint.`,
   ].join('\n')
+
+  // -------------------------------------------------------------------------
+  // HTML
+  // -------------------------------------------------------------------------
+  // Common style fragments — inlined per element to survive client strippers.
+  const fontStack =
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
 
   const html = `<!doctype html>
 <html lang="en">
-<body style="margin:0;padding:0;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2937;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f6f7f9;padding:24px 0;">
-    <tr><td align="center">
-      <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:32px;">
-        <tr><td>
-          <h1 style="margin:0 0 16px 0;font-size:20px;font-weight:600;color:#111827;line-height:1.3;">
-            ${safeInviter} invited you to a Narrative deck
-          </h1>
-          <p style="margin:0 0 12px 0;font-size:14px;line-height:1.6;color:#374151;">
-            <strong style="color:#111827;">${safeInviter}</strong>
-            (<a href="mailto:${safeInviterEmail}" style="color:#2563eb;text-decoration:none;">${safeInviterEmail}</a>)
-            invited you as <strong>${safeRole}</strong> on:
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>${subject}</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:${fontStack};color:#0f172a;-webkit-font-smoothing:antialiased;">
+  <!-- Preheader — hidden in-body, shown in the inbox preview line. -->
+  <div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#f4f4f5;opacity:0;">
+    ${safeInviter} shared "${safeDeck}" with you · open with one click
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;">
+    <tr><td align="center" style="padding:32px 16px;">
+
+      <!-- Card -->
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06),0 8px 24px rgba(15,23,42,0.08);">
+
+        <!-- Hero band -->
+        <tr><td style="background:#0f172a;padding:24px 32px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td align="left" style="vertical-align:middle;">
+                <span style="display:inline-block;font-size:18px;font-weight:700;letter-spacing:-0.01em;color:#ffffff;line-height:1;">
+                  Narrative
+                </span>
+              </td>
+              <td align="right" style="vertical-align:middle;font-size:12px;font-weight:500;color:#94a3b8;letter-spacing:0.04em;text-transform:uppercase;">
+                Shared with you
+              </td>
+            </tr>
+          </table>
+        </td></tr>
+
+        <!-- Body -->
+        <tr><td style="padding:36px 36px 8px 36px;">
+
+          <!-- Inviter row -->
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+            <tr>
+              <td style="vertical-align:middle;padding-right:12px;">
+                <div style="width:44px;height:44px;border-radius:50%;background:${inviterColour};color:#ffffff;font-size:14px;font-weight:600;line-height:44px;text-align:center;">
+                  ${initials}
+                </div>
+              </td>
+              <td style="vertical-align:middle;">
+                <div style="font-size:14px;color:#475569;line-height:1.4;">
+                  <strong style="color:#0f172a;font-weight:600;">${safeInviter}</strong>
+                  invited you to a deck
+                </div>
+                <div style="font-size:12px;color:#94a3b8;line-height:1.4;margin-top:2px;">
+                  ${safeInviterEmail}
+                </div>
+              </td>
+            </tr>
+          </table>
+
+          <!-- Deck preview card -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 28px 0;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+            <tr><td style="background:linear-gradient(135deg,${gradient.from},${gradient.to});background-color:${gradient.from};padding:48px 24px;text-align:center;">
+              <div style="font-size:22px;font-weight:700;color:#ffffff;line-height:1.3;letter-spacing:-0.015em;text-shadow:0 1px 2px rgba(0,0,0,0.18);">
+                ${safeDeck}
+              </div>
+            </td></tr>
+            <tr><td style="background:#ffffff;padding:14px 20px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="vertical-align:middle;font-size:12px;color:#64748b;letter-spacing:0.02em;">
+                    Your role
+                  </td>
+                  <td align="right" style="vertical-align:middle;">
+                    <span style="display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;font-weight:600;letter-spacing:0.02em;padding:4px 10px;border-radius:9999px;">
+                      ${safeRole}
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>
+
+          <!-- CTA -->
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 28px auto;">
+            <tr><td align="center" style="border-radius:10px;background:#2563eb;">
+              <a href="${safeUrl}"
+                 style="display:inline-block;padding:13px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;letter-spacing:-0.005em;">
+                Open the deck &rarr;
+              </a>
+            </td></tr>
+          </table>
+
+          <p style="margin:0 0 12px 0;font-size:13px;line-height:1.6;color:#475569;text-align:center;">
+            Sign in with <strong style="color:#0f172a;">${safeRecipient}</strong> —
+            your access is bound to that Google account.
           </p>
-          <p style="margin:0 0 24px 0;font-size:16px;font-weight:600;color:#111827;line-height:1.4;">
-            ${safeDeck}
+          <p style="margin:0 0 8px 0;font-size:12px;line-height:1.6;color:#94a3b8;text-align:center;">
+            This invite expires in 30 days. If you weren't expecting it, you can ignore this email.
           </p>
-          <p style="margin:0 0 24px 0;">
-            <a href="${safeUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:600;font-size:14px;text-decoration:none;padding:10px 20px;border-radius:8px;">
-              Open the deck
-            </a>
-          </p>
-          <p style="margin:0 0 16px 0;font-size:13px;line-height:1.6;color:#6b7280;">
-            Sign in with the Google account
-            <strong style="color:#374151;">${escapeHtml(input.recipientEmail)}</strong> —
-            your access is bound to that address. The invite expires in 30 days.
-          </p>
-          <p style="margin:16px 0 0 0;font-size:12px;color:#9ca3af;">
-            If the button doesn't work, paste this URL into your browser:<br>
-            <a href="${safeUrl}" style="color:#6b7280;word-break:break-all;">${safeUrl}</a>
+
+        </td></tr>
+
+        <!-- Plain-text URL fallback (for clients that don't render the CTA) -->
+        <tr><td style="padding:0 36px 24px 36px;">
+          <hr style="border:0;border-top:1px solid #f1f5f9;margin:0 0 16px 0;">
+          <p style="margin:0;font-size:11px;line-height:1.6;color:#94a3b8;">
+            Trouble with the button? Paste this URL into your browser:<br>
+            <a href="${safeUrl}" style="color:#64748b;text-decoration:underline;word-break:break-all;">${safeUrl}</a>
           </p>
         </td></tr>
       </table>
-      <p style="margin:16px 0 0 0;font-size:11px;color:#9ca3af;">
-        Sent by Narrative · ignore if unexpected
+
+      <!-- Footer outside the card -->
+      <p style="margin:16px 0 0 0;font-size:11px;line-height:1.5;color:#94a3b8;text-align:center;">
+        Sent by Narrative · a presentation tool for people who don't want PowerPoint.
       </p>
+
     </td></tr>
   </table>
 </body>
