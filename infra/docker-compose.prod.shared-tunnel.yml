@@ -65,6 +65,11 @@ services:
       # Signs the short-lived OAuth state cookie. REQUIRED in prod (server
       # throws on boot otherwise). Generate: openssl rand -hex 32
       SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET:?SESSION_COOKIE_SECRET env var is required}
+      # Transactional email (Resend). Optional — without RESEND_API_KEY
+      # the invite email is logged to the container console instead of
+      # being sent. The pending invite row is still created in either case.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Narrative <onboarding@resend.dev>}
       # Where the SPA is reachable from the browser; used as the post-login
       # redirect destination.
       SPA_ORIGIN: https://${DOMAIN}

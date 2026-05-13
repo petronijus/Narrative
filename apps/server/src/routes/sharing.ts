@@ -33,9 +33,11 @@ import {
 } from '../auth/permissions.js'
 import { createShareLink, revokeShareLink, listShareLinks } from '../auth/shareLinks.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
-import { getUserByEmail, listUsersBySubs } from '../auth/users.js'
+import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
+import { sendEmail } from '../email/client.js'
+import { renderDeckInviteEmail } from '../email/templates/deckInvite.js'
 import { and, eq } from 'drizzle-orm'
-import { deckPermissions } from '../db/schema.js'
+import { decks, deckPermissions } from '../db/schema.js'
 
 // ---------------------------------------------------------------------------
 // JSON schema helpers
@@ -163,6 +165,39 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
         role,
         invitedBySub: inviterSub,
       })
+
+      // Fire-and-forget invite email. The DB row is already created, so
+      // the invitee can still be onboarded by hand even if delivery fails.
+      // We resolve deck title + inviter display name here so the template
+      // reads like a personal note rather than a system blast.
+      void (async () => {
+        try {
+          const [deckRow] = await db
+            .select({ title: decks.title })
+            .from(decks)
+            .where(eq(decks.id, id))
+            .limit(1)
+          const inviter = await getUserBySub(db, inviterSub)
+          if (!deckRow || !inviter) return
+          const spaOrigin =
+            process.env['SPA_ORIGIN'] ??
+            process.env['PUBLIC_URL'] ??
+            `https://${process.env['DOMAIN'] ?? 'localhost'}`
+          const returnTo = encodeURIComponent(`/deck/${id}`)
+          const signInUrl = `${spaOrigin}/api/auth/start?returnTo=${returnTo}`
+          const { subject, html, text } = renderDeckInviteEmail({
+            recipientEmail: email.toLowerCase(),
+            deckTitle: deckRow.title,
+            inviterName: inviter.name ?? inviter.email,
+            inviterEmail: inviter.email,
+            role,
+            signInUrl,
+          })
+          await sendEmail({ to: email.toLowerCase(), subject, html, text })
+        } catch (err) {
+          request.log.warn({ err, deckId: id, email }, '[invite] email send failed')
+        }
+      })()
 
       return reply.status(201).send({
         kind: 'pending',

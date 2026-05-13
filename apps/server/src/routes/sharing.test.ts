@@ -65,11 +65,16 @@ vi.mock('../auth/invites.js', () => ({
   consumePendingInvitesForEmail: vi.fn(),
 }))
 
+vi.mock('../email/client.js', () => ({
+  sendEmail: vi.fn(),
+}))
+
 // Import after mocking to get mock fn references
 const permissions = await import('../auth/permissions.js')
 const shareLinksModule = await import('../auth/shareLinks.js')
 const usersModule = await import('../auth/users.js')
 const invitesModule = await import('../auth/invites.js')
+const emailModule = await import('../email/client.js')
 const { registerSharingRoutes } = await import('./sharing.js')
 
 const mockResolveDeckAccess = permissions.resolveDeckAccess as ReturnType<typeof vi.fn>
@@ -80,10 +85,12 @@ const mockListShareLinks = shareLinksModule.listShareLinks as ReturnType<typeof 
 const mockCreateShareLink = shareLinksModule.createShareLink as ReturnType<typeof vi.fn>
 const mockRevokeShareLink = shareLinksModule.revokeShareLink as ReturnType<typeof vi.fn>
 const mockGetUserByEmail = usersModule.getUserByEmail as ReturnType<typeof vi.fn>
+const mockGetUserBySub = usersModule.getUserBySub as ReturnType<typeof vi.fn>
 const mockListUsersBySubs = usersModule.listUsersBySubs as ReturnType<typeof vi.fn>
 const mockCreateInvite = invitesModule.createInvite as ReturnType<typeof vi.fn>
 const mockListPendingInvites = invitesModule.listPendingInvitesForDeck as ReturnType<typeof vi.fn>
 const mockRevokeInvite = invitesModule.revokeInvite as ReturnType<typeof vi.fn>
+const mockSendEmail = emailModule.sendEmail as ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // App builder
@@ -189,6 +196,10 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
       expect.objectContaining({ userId: 'sub-bob', role: 'editor', grantedBy: 'dev-user' }),
     )
     expect(mockCreateInvite).not.toHaveBeenCalled()
+    // Instant-grant path does NOT send an invite email — the collaborator
+    // already has an account, the dialog already shows them in the list.
+    await new Promise((r) => setImmediate(r))
+    expect(mockSendEmail).not.toHaveBeenCalled()
   })
 
   it('creates a pending invite with kind=pending when the email is unknown', async () => {
@@ -224,6 +235,72 @@ describe('POST /decks/:id/permissions (invite by email)', () => {
       }),
     )
     expect(mockGrantPermission).not.toHaveBeenCalled()
+  })
+
+  it('fires invite email after creating a pending invite', async () => {
+    mockGetUserByEmail.mockResolvedValue(null)
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    mockCreateInvite.mockResolvedValue({ id: 'inv-mail', expiresAt, replaced: false })
+
+    const now = new Date()
+    mockGetUserBySub.mockResolvedValue({
+      sub: 'dev-user',
+      email: 'inviter@example.com',
+      name: 'Inviter Name',
+      pictureUrl: null,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    })
+
+    // Per-test app with a db.select stub that returns the deck row used in
+    // the email subject. Built inline (not via buildApp) because the
+    // shared helper passes an empty object as db.
+    const localApp = Fastify({ logger: false })
+    const db = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ title: 'Quarterly Update' }]),
+          }),
+        }),
+      }),
+    } as unknown as Database
+    mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
+    registerAuthPlugin(localApp, { bypass: true, db })
+    await registerSharingRoutes(localApp, db)
+    await localApp.ready()
+
+    const prevSpa = process.env['SPA_ORIGIN']
+    process.env['SPA_ORIGIN'] = 'https://narrative.test'
+
+    const res = await localApp.inject({
+      method: 'POST',
+      url: '/decks/deck-1/permissions',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'pending@example.com', role: 'editor' }),
+    })
+
+    expect(res.statusCode).toBe(201)
+    // Let the fire-and-forget background work flush.
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    expect(mockSendEmail).toHaveBeenCalledTimes(1)
+    const arg = mockSendEmail.mock.calls[0]![0] as {
+      to: string
+      subject: string
+      html: string
+      text: string
+    }
+    expect(arg.to).toBe('pending@example.com')
+    expect(arg.subject).toContain('Quarterly Update')
+    expect(arg.subject).toContain('Inviter Name')
+    expect(arg.text).toContain('https://narrative.test/api/auth/start?returnTo=')
+    expect(arg.text).toContain(encodeURIComponent('/deck/deck-1'))
+    expect(arg.html).toContain('Quarterly Update')
+
+    if (prevSpa === undefined) delete process.env['SPA_ORIGIN']
+    else process.env['SPA_ORIGIN'] = prevSpa
   })
 
   it('returns 400 on missing email', async () => {

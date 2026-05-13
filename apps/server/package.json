@@ -1,6 +1,6 @@
 {
   "name": "@narrative/server",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -37,6 +37,7 @@
     "pg": "^8.14.1",
     "pino": "^9.6.0",
     "probe-image-size": "^7.2.3",
+    "resend": "^6.12.3",
     "yjs": "^13.6.30"
   },
   "devDependencies": {
