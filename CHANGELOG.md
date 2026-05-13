@@ -4,6 +4,62 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.6.0 — Server-driven session cookies (2026-05-13)
+
+Replaces the browser-PKCE flow that put the Google `id_token` into
+`localStorage` (and only kept users signed in for ~1 h until the
+hidden-iframe silent renew failed on Safari / privacy-strict Firefox)
+with a proper server-driven OAuth + opaque session cookie flow. The
+browser now only holds an opaque session id; the actual tokens never
+leave the server.
+
+User-visible: sessions last 30 days with sliding expiry, work in every
+browser identically, and survive reboots without re-prompting.
+
+### Added
+
+- **`apps/server/drizzle/0012_sessions.sql`** + **`sessions` table in the Drizzle schema** — `id_hash` (SHA-256 of the cookie value), `user_sub`, `user_email`, `user_name`, `created_at`, `last_used_at`, `expires_at`, `revoked_at`, `user_agent`, `ip`. Indexed on `user_sub` and `expires_at`. A read-only DB compromise can't be used to impersonate active users because the raw cookie value never lands in the DB.
+- **`apps/server/src/auth/session.ts`** — `createSession`, `lookupSession`, `revokeSession`, `revokeAllSessionsForUser`, `sweepExpiredSessions`. Every `lookupSession` touches `last_used_at` and slides `expires_at` forward by 30 d in one round-trip via Drizzle's `update().returning()`.
+- **`apps/server/src/routes/auth.ts`** — server-driven OAuth: `GET /auth/start` (mints PKCE state + 302 to Google), `GET /auth/callback` (exchanges code → id_token → verifies via existing `JwtVerifier` → INSERTs session + Set-Cookie + 302 to returnTo), `GET /auth/me` (returns session user or 401), `POST /auth/logout` (revokes + clears cookie). State cookie is HMAC-signed via `@fastify/cookie`'s built-in signing.
+- **`@fastify/cookie`** plugin registered in `apps/server/src/index.ts` with `SESSION_COOKIE_SECRET` env. CORS gets `credentials: true` so dev cross-origin (5173 → 3001) carries the cookie.
+- **`SESSION_COOKIE_SECRET`** required env var (server throws on boot in prod without it). Documented in `.env.example` and `infra/.env.prod.example`.
+
+### Changed
+
+- **`apps/server/src/auth/fastifyAuth.ts`** — `authPreHandler` now reads the `narrative_session` cookie and looks up the session row instead of decoding a Bearer JWT. `AuthPluginOpts` drops the `verifier` field. Same `request.user` shape on the way out so route handlers don't change.
+- **`apps/server/src/hocuspocus/index.ts`** — `onAuthenticate` parses the `Cookie:` header from the WS upgrade request instead of consuming a `token` arg from the client. Same-origin (prod) and same-site (dev) automatically carry the cookie on WS upgrade — no client-side token plumbing required.
+- **`apps/web/src/state/AuthContext.tsx`** — rewritten. `login()` is a top-level navigation to `${API_URL}/auth/start`. `logout()` POSTs `/auth/logout` then bounces to `/auth/login`. On mount fetches `/auth/me`. `token` is gone from the context value — all API calls use `credentials: 'include'`.
+- **`apps/web/src/api/client.ts`** — drops the Authorization header path; all requests now go out with `credentials: 'include'`. `createApiClient()` is a no-arg factory.
+- **`apps/web/src/state/{Slide,Folder}DocProvider.tsx`, `state/componentDocCache.ts`, `state/writeComponentMasterTree.ts`** — drop the `token` arg passed to `HocuspocusProvider`. Cookie-based same-origin/same-site auth replaces it.
+- **`apps/web/src/renderer/{imageUrl,videoInfo}.ts`** — fetch with `credentials: 'include'`; token-getter args removed.
+- **`apps/web/src/state/useMediaUpload.tsx`** — `tus.Upload` now runs with `withCredentials: true`; no more Bearer header on PATCH.
+- **CORS** in `apps/server/src/index.ts` gets `credentials: true` so dev cross-origin fetches carry the cookie.
+
+### Removed
+
+- **`oidc-client-ts`** dependency.
+- **`apps/server/src/routes/authProxy.ts`** — replaced by the new `/auth/start` + `/auth/callback` routes.
+- **`apps/web/src/pages/AuthCallback.tsx`** — the server handles the callback now and 302's straight back to the SPA's `returnTo`. The React Router route for `/auth/callback` is also removed.
+- **`VITE_OIDC_*` build-time env vars** (`VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID`, `VITE_OIDC_REDIRECT_URI`) — no longer needed; the SPA does not configure any OIDC client. Removed from `.env.example`, `infra/.env.prod.example`, `apps/web/Dockerfile`, and `infra/scripts/deploy.sh`.
+- **`registerComponentDocTokenGetter` / `setComponentDocTokenGetter`** and the cache's `tokenGetters` registry — the WS upgrade carries the cookie automatically.
+- **`useAuth().token`** — gone from the public context shape; tests that referenced it have been updated.
+
+### Operational notes
+
+- **Google Cloud Console redirect URIs** must be updated before deploying:
+  - Add: `https://narrative.example.com/api/auth/callback` (prod) and `http://localhost:3001/auth/callback` (dev).
+  - Remove: the old `https://narrative.example.com/auth/callback` once prod redeploys.
+- **`OIDC_CLIENT_SECRET`** must be set on the prod VM (`/home/user/narrative/infra/.env.prod`). Already there from 0.5.x; no change needed.
+- **`SESSION_COOKIE_SECRET`** must be added to `.env.prod`: `openssl rand -hex 32`.
+- Migration `0012_sessions.sql` runs automatically on next prod deploy via `migrate.js`.
+- All existing sessions invalidate at cutover: users will need to log in once more. Subsequent logins last 30 days sliding.
+
+### Why
+
+The browser-PKCE flow needed third-party cookies + a hidden iframe to refresh the id_token, which is increasingly broken (Safari since 2020, Firefox ETP-strict, eventually Chrome). Sessions effectively maxed out at 1 h. The id_token also sat in localStorage which is XSS-readable. The server-driven session cookie addresses all of that and is the pattern every grown-up SaaS uses (Linear, Notion, GitHub, Vercel…).
+
+---
+
 ## Google OIDC end-to-end + first production deploy (2026-05-12)
 
 First public deployment of Narrative. Live at

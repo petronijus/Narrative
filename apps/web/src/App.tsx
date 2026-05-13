@@ -6,7 +6,8 @@
  * M10: Auth layer added.
  *   - AuthProvider wraps the entire tree.
  *   - ProtectedRoute guards landing + deck routes.
- *   - /auth/login, /auth/callback, /auth/error are public.
+ *   - /auth/login + /auth/error are public. /auth/callback is handled
+ *     entirely server-side (post-2026-05 OAuth flow).
  *   - share_token query param bypasses auth (anonymous viewer path).
  */
 
@@ -22,7 +23,6 @@ import { DeckEditor } from './pages/DeckEditor.js'
 import { DeckPresent } from './pages/DeckPresent.js'
 import { DeckShell } from './components/DeckShell.js'
 import { ProtectedRoute } from './components/ProtectedRoute.js'
-import { AuthCallback } from './pages/AuthCallback.js'
 import { AuthLogin } from './pages/AuthLogin.js'
 import { AuthError } from './pages/AuthError.js'
 import { VersionChip } from './ui/VersionChip.js'
@@ -37,9 +37,8 @@ export function App() {
         <PerfHudProvider>
           <AuthProvider>
             <Routes>
-              {/* Public auth routes */}
+              {/* Public auth routes (callback is handled server-side). */}
               <Route path="/auth/login" element={<AuthLogin />} />
-              <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/auth/error" element={<AuthError />} />
 
               {/* Protected routes — require session or share_token */}

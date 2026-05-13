@@ -52,6 +52,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1040.0
         version: 3.1040.0
+      '@fastify/cookie':
+        specifier: ^11.0.2
+        version: 11.0.2
       '@fastify/cors':
         specifier: ^10.0.2
         version: 10.1.0
@@ -249,9 +252,6 @@ importers:
       nanoid:
         specifier: ^5.0.7
         version: 5.1.9
-      oidc-client-ts:
-        specifier: ^3.1.0
-        version: 3.5.0
       pixi-filters:
         specifier: ^6.1.5
         version: 6.1.5(pixi.js@8.18.1)
@@ -1841,6 +1841,12 @@ packages:
     resolution:
       {
         integrity: sha512-KoWKW+MhvfTRWL4qrhUwAAZoaChluo0m0vbiJlGMt2GXvL4LVPQEjt8kSpHI3IBq5Rez8fg+XeH3cneztq+C7A==,
+      }
+
+  '@fastify/cookie@11.0.2':
+    resolution:
+      {
+        integrity: sha512-GWdwdGlgJxyvNv+QcKiGNevSspMQXncjMZ1J8IvuDQk0jvkzgWWZFNC2En3s+nHndZBGV8IbLwOI/sxCZw/mzA==,
       }
 
   '@fastify/cors@10.1.0':
@@ -7092,13 +7098,6 @@ packages:
     engines: { node: '>=6' }
     hasBin: true
 
-  jwt-decode@4.0.0:
-    resolution:
-      {
-        integrity: sha512-+KJGIyHgkGuIq3IEBNftfhW/LfWhXUIY6OmyVWjliu5KH1y0fw7VQ8YndE2O4qZdMSd9SqbnC8GOcZEy0Om7sA==,
-      }
-    engines: { node: '>=18' }
-
   keyv@4.5.4:
     resolution:
       {
@@ -7753,13 +7752,6 @@ packages:
       {
         integrity: sha512-42CPE9AhahZRsMNslczq0ctAEtqk8Eka26QofnqC346BZdHDySk3LWka23LI7ULIw11NmltpiLagIq8gBozxTw==,
       }
-
-  oidc-client-ts@3.5.0:
-    resolution:
-      {
-        integrity: sha512-l2q8l9CTCTOlbX+AnK4p3M+4CEpKpyQhle6blQkdFhm0IsBqsxm15bYaSa11G7pWdsYr6epdsRZxJpCyCRbT8A==,
-      }
-    engines: { node: '>=18' }
 
   on-exit-leak-free@2.1.2:
     resolution:
@@ -11245,6 +11237,11 @@ snapshots:
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       fast-uri: 3.1.0
+
+  '@fastify/cookie@11.0.2':
+    dependencies:
+      cookie: 1.1.1
+      fastify-plugin: 5.1.0
 
   '@fastify/cors@10.1.0':
     dependencies:
@@ -14901,8 +14898,6 @@ snapshots:
 
   json5@2.2.3: {}
 
-  jwt-decode@4.0.0: {}
-
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
@@ -15261,10 +15256,6 @@ snapshots:
   object-inspect@1.13.4: {}
 
   obliterator@2.0.5: {}
-
-  oidc-client-ts@3.5.0:
-    dependencies:
-      jwt-decode: 4.0.0
 
   on-exit-leak-free@2.1.2: {}
 

@@ -26,23 +26,39 @@ import { Server } from '@hocuspocus/server'
 import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
-import type { JwtVerifier } from '../auth/jwt.js'
 import {
   resolveDeckAccess,
   resolveFolderAccess,
   resolveComponentAccess,
 } from '../auth/permissions.js'
+import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { setHocuspocusInstance } from './presence.js'
 
 export interface HocuspocusServerOptions {
   port: number
   db: Database
-  verifier: JwtVerifier | null
   bypass?: boolean
 }
 
+/**
+ * Parse a single cookie value out of a raw `Cookie:` header. Returns
+ * undefined if the cookie isn't present. Tolerates leading/trailing
+ * whitespace and re-uses the standard split-by-"; " convention.
+ */
+function readCookie(rawHeader: string | undefined, name: string): string | undefined {
+  if (!rawHeader) return undefined
+  for (const part of rawHeader.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    const k = part.slice(0, eq).trim()
+    if (k !== name) continue
+    return decodeURIComponent(part.slice(eq + 1).trim())
+  }
+  return undefined
+}
+
 export function createHocuspocusServer(opts: HocuspocusServerOptions) {
-  const { db, verifier, bypass = false } = opts
+  const { db, bypass = false } = opts
 
   const server = Server.configure({
     port: opts.port,
@@ -67,7 +83,7 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
     maxDebounce: 10_000,
 
     async onAuthenticate(data) {
-      const { documentName, token, connection, requestParameters } = data
+      const { documentName, connection, requestParameters, requestHeaders } = data
 
       // Share token may arrive as a query param in the WS upgrade URL.
       // e.g. ws://host:3002?share_token=<id>
@@ -78,25 +94,24 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       let userId: string | null = null
 
       if (shareToken) {
-        // Share-token access — skip JWT validation entirely.
+        // Share-token access — skip session validation entirely.
         // resolveDeckAccess will validate the token below.
         // Note: folder docs do NOT support share-token access.
       } else if (bypass) {
         userId = 'dev-user'
-      } else if (token) {
-        if (!verifier) {
-          // Should never happen: verifier is null only in bypass mode.
-          throw new Error('Invalid credentials')
-        }
-        try {
-          const payload = await verifier.verify(token)
-          userId = payload.sub
-        } catch {
-          throw new Error('Invalid credentials')
-        }
       } else {
-        // No token and no share_token → deny
-        throw new Error('Invalid credentials')
+        // Authenticated path: read the narrative_session cookie from the WS
+        // upgrade request. Browsers send same-origin cookies on WebSocket
+        // upgrades automatically — no token argument needed from the client.
+        const rawCookieHeader = requestHeaders['cookie']
+        const rawId = readCookie(
+          Array.isArray(rawCookieHeader) ? rawCookieHeader.join('; ') : rawCookieHeader,
+          SESSION_COOKIE_NAME,
+        )
+        if (!rawId) throw new Error('Invalid credentials')
+        const session = await lookupSession(db, rawId)
+        if (!session) throw new Error('Invalid credentials')
+        userId = session.userSub
       }
 
       // ---------------------------------------------------------------------------

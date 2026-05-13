@@ -89,13 +89,11 @@ ${COMPOSE} build --pull
 log "Extrakce statických souborů web..."
 
 WEB_IMAGE="narrative-web-static"
+# Note: VITE_OIDC_* args removed in 2026-05 cutover to server-driven auth.
 docker build \
   --target runtime \
   --build-arg VITE_API_URL="https://${DOMAIN}/api" \
   --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
-  --build-arg VITE_OIDC_ISSUER="${VITE_OIDC_ISSUER:-https://accounts.google.com}" \
-  --build-arg VITE_OIDC_CLIENT_ID="${VITE_OIDC_CLIENT_ID}" \
-  --build-arg VITE_OIDC_REDIRECT_URI="${VITE_OIDC_REDIRECT_URI:-https://${DOMAIN}/auth/callback}" \
   --build-arg VITE_IMGPROXY_URL="${VITE_IMGPROXY_URL:-https://${DOMAIN}/imgproxy}" \
   --tag "${WEB_IMAGE}:latest" \
   --file "${REPO_DIR}/apps/web/Dockerfile" \

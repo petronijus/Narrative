@@ -74,7 +74,7 @@ async function buildApp(
   const app = Fastify({ logger: false })
   const db = {} as Database // unused — all db calls are mocked at function level
 
-  registerAuthPlugin(app, { verifier: null, bypass: true, db })
+  registerAuthPlugin(app, { bypass: true, db })
 
   // Default: dev-user has specified access on any deck
   mockResolveDeckAccess.mockResolvedValue(ownerAccess)
@@ -190,7 +190,7 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
     } as unknown as Database
 
     const app = Fastify({ logger: false })
-    registerAuthPlugin(app, { verifier: null, bypass: true, db })
+    registerAuthPlugin(app, { bypass: true, db })
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
     await registerSharingRoutes(app, db)
     await app.ready()
@@ -217,7 +217,7 @@ describe('DELETE /decks/:id/permissions/:userId', () => {
     } as unknown as Database
 
     const app = Fastify({ logger: false })
-    registerAuthPlugin(app, { verifier: null, bypass: true, db })
+    registerAuthPlugin(app, { bypass: true, db })
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
     await registerSharingRoutes(app, db)
     await app.ready()

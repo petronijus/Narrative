@@ -133,7 +133,7 @@ function makeMockDb(
 
 async function buildApp(db: Database): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  registerAuthPlugin(app, { verifier: null, bypass: true, db })
+  registerAuthPlugin(app, { bypass: true, db })
   await registerComponentRoutes(app, db)
   return app
 }

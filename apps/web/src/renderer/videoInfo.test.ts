@@ -176,24 +176,14 @@ describe('createVideoInfoResolver', () => {
     vi.useRealTimers()
   })
 
-  it('attaches Authorization header when token getter returns a value', async () => {
+  it('sends fetch with credentials:include so the session cookie travels', async () => {
     vi.stubGlobal('fetch', makeFetch(makeResult()))
 
-    const resolver = createVideoInfoResolver('', () => 'my-jwt-token')
+    const resolver = createVideoInfoResolver('')
     await resolver({ assetId: 'asset-auth' })
 
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer my-jwt-token')
-  })
-
-  it('does NOT attach Authorization header when token getter returns null', async () => {
-    vi.stubGlobal('fetch', makeFetch(makeResult()))
-
-    const resolver = createVideoInfoResolver('', () => null)
-    await resolver({ assetId: 'asset-noauth' })
-
-    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect((init.headers as Record<string, string>)['Authorization']).toBeUndefined()
+    expect(init.credentials).toBe('include')
   })
 
   it('rejects and clears cache on non-ok HTTP status (retry possible)', async () => {

@@ -121,7 +121,7 @@ async function buildApp(
   const app = Fastify({ logger: false })
 
   // Bypass auth → dev-user
-  registerAuthPlugin(app, { verifier: null, bypass: true, db })
+  registerAuthPlugin(app, { bypass: true, db })
 
   // Default mock: dev-user has the specified role on any deck
   resolveMock.mockResolvedValue(accessResult)

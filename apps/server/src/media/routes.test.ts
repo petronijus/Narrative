@@ -118,7 +118,7 @@ async function buildApp(): Promise<FastifyInstance> {
   const mockDb = {} as unknown as Database
 
   // bypass=true → every request becomes dev-user
-  registerAuthPlugin(app, { verifier: null, bypass: true, db: mockDb })
+  registerAuthPlugin(app, { bypass: true, db: mockDb })
 
   await registerMediaRoutes(app, { db: mockDb })
 

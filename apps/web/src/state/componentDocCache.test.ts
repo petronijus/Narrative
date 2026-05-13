@@ -62,23 +62,18 @@ import {
   getComponentDocSyncStatus,
   subscribeToComponentDoc,
   disposeComponentDocCache,
-  registerComponentDocTokenGetter,
   __getComponentDocCacheSizeForTests,
   __getComponentDocRefCountForTests,
   __flushComponentDocListenersForTests,
-  __resetComponentDocTokenGettersForTests,
-  __resolveComponentDocTokenForTests,
 } from './componentDocCache'
 
 beforeEach(() => {
   providers.length = 0
-  __resetComponentDocTokenGettersForTests()
   vi.useFakeTimers()
 })
 
 afterEach(() => {
   disposeComponentDocCache()
-  __resetComponentDocTokenGettersForTests()
   vi.useRealTimers()
 })
 
@@ -160,37 +155,6 @@ describe('componentDocCache', () => {
     providers[0]!.emit('synced')
     __flushComponentDocListenersForTests('a')
     expect(listener).not.toHaveBeenCalled()
-  })
-
-  describe('token getter registration', () => {
-    it('a single registered getter resolves to its value', () => {
-      registerComponentDocTokenGetter(() => 'token-A')
-      expect(__resolveComponentDocTokenForTests()).toBe('token-A')
-    })
-
-    it('register×2 + unregister-first walks remaining getters in order', () => {
-      const unregisterA = registerComponentDocTokenGetter(() => 'token-A')
-      registerComponentDocTokenGetter(() => 'token-B')
-      // First non-null wins → A.
-      expect(__resolveComponentDocTokenForTests()).toBe('token-A')
-
-      unregisterA()
-      expect(__resolveComponentDocTokenForTests()).toBe('token-B')
-    })
-
-    it('falls through null getters to the next registered one', () => {
-      registerComponentDocTokenGetter(() => null)
-      registerComponentDocTokenGetter(() => 'token-late')
-      expect(__resolveComponentDocTokenForTests()).toBe('token-late')
-    })
-
-    it('returns null when every getter has been unregistered', () => {
-      const unregisterA = registerComponentDocTokenGetter(() => 'token-A')
-      const unregisterB = registerComponentDocTokenGetter(() => 'token-B')
-      unregisterA()
-      unregisterB()
-      expect(__resolveComponentDocTokenForTests()).toBeNull()
-    })
   })
 
   it('disposeComponentDocCache destroys every entry regardless of refcount', () => {

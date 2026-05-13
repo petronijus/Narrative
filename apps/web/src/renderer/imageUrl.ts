@@ -12,7 +12,11 @@
  *   setDefaultImageUrlResolver(). Renderer code calls getDefaultImageUrlResolver().
  *
  * Bootstrap (Canvas.tsx / App.tsx):
- *   setDefaultImageUrlResolver(createImageUrlResolver(import.meta.env.VITE_API_URL, () => token))
+ *   setDefaultImageUrlResolver(createImageUrlResolver(import.meta.env.VITE_API_URL))
+ *
+ * Auth: this module fetches `${api}/media/:id/url` with `credentials: 'include'`,
+ * so the narrative_session cookie travels automatically on same-origin (prod)
+ * and same-site cross-origin (dev). No Bearer token needed any more.
  */
 
 // ---------------------------------------------------------------------------
@@ -23,11 +27,6 @@ export interface ResolveImageUrlOpts {
   assetId: string
   /** Defaults to 'display'. */
   variant?: 'thumb' | 'display' | 'original'
-  /**
-   * Optional auth token getter. If provided and returns a non-empty string,
-   * the value is sent as `Authorization: Bearer <token>`.
-   */
-  getAuthToken?: () => string | null
 }
 
 /**
@@ -45,13 +44,8 @@ export type ImageUrlResolver = (opts: ResolveImageUrlOpts) => Promise<string>
  *
  * @param apiBaseUrl  Base URL without trailing slash, e.g. 'https://api.example.com'.
  *                    Pass '' to use relative paths (same-origin).
- * @param getAuthToken  Optional getter for the current JWT access token.
- *                      Called on every fetch — captures token changes across re-auths.
  */
-export function createImageUrlResolver(
-  apiBaseUrl: string,
-  getAuthToken?: () => string | null,
-): ImageUrlResolver {
+export function createImageUrlResolver(apiBaseUrl: string): ImageUrlResolver {
   // Cache: key → Promise<url>
   // Promise caching means concurrent callers for same key share one in-flight fetch.
   const cache = new Map<string, Promise<string>>()
@@ -65,19 +59,9 @@ export function createImageUrlResolver(
       return cached
     }
 
-    // Prefer per-call getAuthToken, fall back to factory-level getter.
-    const tokenGetter = opts.getAuthToken ?? getAuthToken
-
     const fetchPromise: Promise<string> = (async () => {
       const url = `${apiBaseUrl}/api/media/${opts.assetId}/url?variant=${variant}`
-
-      const headers: Record<string, string> = {}
-      const token = tokenGetter?.()
-      if (token != null && token !== '') {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const res = await fetch(url, { headers })
+      const res = await fetch(url, { credentials: 'include' })
 
       if (!res.ok) {
         // Remove from cache to allow retry.

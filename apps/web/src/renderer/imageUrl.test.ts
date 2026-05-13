@@ -105,22 +105,13 @@ describe('createImageUrlResolver', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
-  it('attaches Authorization header when token getter returns a value', async () => {
+  it('sends fetch with credentials:include so the session cookie travels', async () => {
     vi.stubGlobal('fetch', makeFetch({ url: 'https://imgproxy.example.com/auth.jpg' }))
-    const resolver = createImageUrlResolver('', () => 'my-jwt-token')
+    const resolver = createImageUrlResolver('')
     await resolver({ assetId: 'asset-5', variant: 'display' })
 
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer my-jwt-token')
-  })
-
-  it('does NOT attach Authorization header when token getter returns null', async () => {
-    vi.stubGlobal('fetch', makeFetch({ url: 'https://imgproxy.example.com/noauth.jpg' }))
-    const resolver = createImageUrlResolver('', () => null)
-    await resolver({ assetId: 'asset-6', variant: 'display' })
-
-    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit]
-    expect((init.headers as Record<string, string>)['Authorization']).toBeUndefined()
+    expect(init.credentials).toBe('include')
   })
 
   it('rejects and removes cache entry on non-ok HTTP status', async () => {

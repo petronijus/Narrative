@@ -21,7 +21,6 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import type * as Y from 'yjs'
-import { useAuth } from '../state/AuthContext.js'
 import { useApi } from '../api/client.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
 import {
@@ -29,7 +28,6 @@ import {
   releaseComponentDoc,
   getComponentDoc,
   getComponentDocSyncStatus,
-  registerComponentDocTokenGetter,
 } from '../state/componentDocCache.js'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
@@ -48,7 +46,6 @@ import { FolderDocProvider } from '../state/FolderDocProvider.js'
 
 export function ComponentMasterEditor() {
   const { folderId, componentId } = useParams<{ folderId: string; componentId: string }>()
-  const { token } = useAuth()
   const [synced, setSynced] = useState(false)
   const [doc, setDoc] = useState<Y.Doc | null>(null)
   const [canvasInstance, setCanvasInstance] = useState<CanvasInstance | null>(null)
@@ -56,13 +53,6 @@ export function ComponentMasterEditor() {
   const handleCanvasReady = useCallback((instance: CanvasInstance | null) => {
     setCanvasInstance(instance)
   }, [])
-
-  // Install + tear down the auth-token getter for the cache so its WS
-  // handshake uses the live token. Using the registry-style API avoids
-  // clobbering a sibling-mounted Canvas's getter.
-  useEffect(() => {
-    return registerComponentDocTokenGetter(() => token)
-  }, [token])
 
   useEffect(() => {
     if (componentId === undefined || componentId === '') return

@@ -58,12 +58,9 @@ export const DEFAULT_AUTH_USER: AuthUser = {
 function buildAuthValue(user: AuthUser | null = DEFAULT_AUTH_USER): AuthContextValue {
   return {
     user,
-    token: user !== null ? 'test-token' : null,
     isLoading: false,
-    login: vi.fn().mockResolvedValue(undefined),
+    login: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
-    refreshToken: vi.fn().mockResolvedValue(undefined),
-    completeSignin: vi.fn().mockResolvedValue(undefined),
   }
 }
 

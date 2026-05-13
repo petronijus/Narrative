@@ -49,11 +49,7 @@ import { computeSlideNumber } from '@narrative/shared'
 import { setRenderingSlideNumber } from './slideNumberContext.js'
 import { applyBackground } from './ArtboardBackground.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
-import { useAuth } from '../state/AuthContext.js'
-import {
-  registerComponentDocTokenGetter,
-  disposeComponentDocCache,
-} from '../state/componentDocCache.js'
+import { disposeComponentDocCache } from '../state/componentDocCache.js'
 import { markFirstPaint, markPixiReady } from '../state/loadTimings.js'
 import type { ObjectChangeSet } from '@narrative/slide-model'
 import type { CanvasInstance } from './CanvasInstanceContext.js'
@@ -83,12 +79,6 @@ export interface CanvasProps {
 export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
-  const { token } = useAuth()
-
-  // Stable ref so the image URL resolver always reads the current token
-  // even if the user re-authenticates mid-session.
-  const tokenRef = useRef<string | null>(token)
-  tokenRef.current = token
 
   /** Pending changes from before Pixi is ready. Buffer and flush once instance exists. */
   const pendingChangesRef = useRef<ObjectChangeSet[]>([])
@@ -130,19 +120,12 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     // StrictMode guard: pokud instance již existuje, skip
     if (instanceRef.current !== null) return
 
-    // Install default image URL resolver bound to this Canvas's token ref.
-    // Done once at mount time. The token getter is a stable closure over tokenRef
-    // so it always returns the latest token even after re-auth.
+    // Install default image / video URL resolvers. Auth is carried by the
+    // narrative_session HttpOnly cookie via fetch credentials, no token
+    // plumbing needed.
     const apiBase = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
-    setDefaultImageUrlResolver(createImageUrlResolver(apiBase, () => tokenRef.current))
-    setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase, () => tokenRef.current))
-    // M16 P6: install token getter for the component-doc cache so renderer
-    // nodes (which don't sit inside a React provider) can open authenticated
-    // Hocuspocus connections to `component:<id>` masters. Registered (not
-    // set) so it coexists with ComponentDocProvider's getter in the master
-    // editor — both push into the same registry and the cache picks the
-    // first non-null result.
-    const unregisterTokenGetter = registerComponentDocTokenGetter(() => tokenRef.current)
+    setDefaultImageUrlResolver(createImageUrlResolver(apiBase))
+    setDefaultVideoInfoResolver(createVideoInfoResolver(apiBase))
 
     let cancelled = false
     let app: Application | null = null
@@ -283,7 +266,6 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
 
     return () => {
       cancelled = true
-      unregisterTokenGetter()
 
       if (instanceRef.current !== null) {
         const {

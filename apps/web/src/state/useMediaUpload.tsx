@@ -28,7 +28,8 @@
  * Retry: re-creates tus.Upload from stored File reference
  * Dismiss: removes entry from list (only if done/error/cancelled)
  *
- * Auth: Bearer token from useAuth().token in tus request headers.
+ * Auth: tus.Upload runs with `withCredentials: true` so the
+ *   narrative_session HttpOnly cookie is carried on every PATCH.
  * Endpoint: VITE_API_URL/api/uploads (tus protocol)
  * Metadata: deckId, filename, mimetype, width?, height? (tus-js-client encodes as base64)
  *
@@ -47,7 +48,6 @@ import {
 } from 'react'
 import * as tus from 'tus-js-client'
 import { nanoid } from 'nanoid'
-import { useAuth } from './AuthContext.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,8 +110,6 @@ interface MediaUploadProviderProps {
 }
 
 export function MediaUploadProvider({ deckId, children }: MediaUploadProviderProps) {
-  const { token } = useAuth()
-
   const [uploads, setUploads] = useState<UploadEntry[]>([])
   // Synchronous mirror of `uploads` — needed because setUploads runs its updater
   // asynchronously (and twice in Strict Mode). Consumers that need a definitive
@@ -166,16 +164,10 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
    * Polling stops when entry is cancelled externally (timer cleared in cancelUpload).
    */
   function startTranscodePoll(id: string, assetId: string) {
-    const getToken = () => token
-
     async function poll() {
       try {
         const url = `${API_URL}/api/media/${assetId}/video-info`
-        const headers: Record<string, string> = {}
-        const tok = getToken()
-        if (tok !== null) headers['Authorization'] = `Bearer ${tok}`
-
-        const res = await fetch(url, { headers })
+        const res = await fetch(url, { credentials: 'include' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON shape unknown at compile time
         const data = (await res.json()) as any
@@ -246,11 +238,6 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     if (dims.width !== undefined) metadata['width'] = String(dims.width)
     if (dims.height !== undefined) metadata['height'] = String(dims.height)
 
-    const headers: Record<string, string> = {}
-    if (token !== null) {
-      headers['Authorization'] = `Bearer ${token}`
-    }
-
     const isVideo = file.type.startsWith('video/')
 
     // Capture values from the final PATCH response body — needed to build the
@@ -268,9 +255,14 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     const upload = new tus.Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
       retryDelays: [0, 1000, 3000, 5000],
-      chunkSize: 5 * 1024 * 1024, // 5 MB chunks
+      chunkSize: 5 * 1024 * 1024, // 5 MB chunks,
+      // Send the narrative_session cookie on every PATCH/POST so the tus
+      // server-side handler (which goes through Fastify auth) can identify
+      // the uploader. Cross-origin in dev → cookie is sent only with
+      // withCredentials:true.
+
+      ...({ withCredentials: true } as Record<string, unknown>),
       metadata,
-      headers,
       onProgress(bytesSent: number, bytesTotal: number) {
         const progress = bytesTotal > 0 ? bytesSent / bytesTotal : 0
         upsertEntry(id, { status: 'uploading', progress })
@@ -493,7 +485,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
       return id
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- createAndStartTusUpload stable via closure over refs
-    [deckId, token],
+    [deckId],
   )
 
   const cancelUpload = useCallback((id: string) => {
@@ -548,7 +540,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deckId, token],
+    [deckId],
   )
 
   const dismissUpload = useCallback((id: string) => {

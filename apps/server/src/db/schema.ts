@@ -369,6 +369,31 @@ export const componentUpdates = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// sessions — server-side opaque session rows (replaces browser-PKCE flow).
+// ---------------------------------------------------------------------------
+
+export const sessions = pgTable(
+  'sessions',
+  {
+    /** SHA-256 hex of the raw cookie value; the raw value never lands in the DB. */
+    idHash: text('id_hash').primaryKey(),
+    userSub: text('user_sub').notNull(),
+    userEmail: text('user_email').notNull(),
+    userName: text('user_name'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    userAgent: text('user_agent'),
+    ip: text('ip'),
+  },
+  (t) => [
+    index('sessions_user_sub_idx').on(t.userSub),
+    index('sessions_expires_at_idx').on(t.expiresAt),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -390,3 +415,5 @@ export type Component = typeof components.$inferSelect
 export type NewComponent = typeof components.$inferInsert
 export type ComponentUpdate = typeof componentUpdates.$inferSelect
 export type NewComponentUpdate = typeof componentUpdates.$inferInsert
+export type Session = typeof sessions.$inferSelect
+export type NewSession = typeof sessions.$inferInsert

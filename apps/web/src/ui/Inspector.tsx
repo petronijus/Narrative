@@ -169,7 +169,6 @@ import { extractComponentSnapshot } from '../state/extractComponentSnapshot.js'
 import type { ComponentSnapshot } from '../state/extractComponentSnapshot.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
 import { useApi, type ComponentSummary } from '../api/client.js'
-import { useAuth } from '../state/AuthContext.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import { SlideNumberPromptDialog } from './SlideNumberPromptDialog.js'
 import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
@@ -736,7 +735,6 @@ export function Inspector() {
   // declared here so hook-order stays stable regardless of which
   // sub-inspector renders.
   const api = useApi()
-  const { token } = useAuth()
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
   // Use the optional variant so the Inspector can render during the
@@ -807,22 +805,12 @@ export function Inspector() {
       activeSlideId,
       targetIds: [targetId],
       name: 'Page number',
-      token,
     })
       .then(({ instanceId }) => selectOne(instanceId))
       .catch((err: unknown) => {
         console.warn('[Inspector] slide-number → component promote failed', err)
       })
-  }, [
-    activeSlideId,
-    api,
-    closeSlideNumberPrompt,
-    deckCtx,
-    deckFolderId,
-    mutationCtx,
-    selectOne,
-    token,
-  ])
+  }, [activeSlideId, api, closeSlideNumberPrompt, deckCtx, deckFolderId, mutationCtx, selectOne])
   const handleLeaveAsIs = useCallback(() => {
     const targetId = slideNumberPromptTargetIdRef.current
     closeSlideNumberPrompt()

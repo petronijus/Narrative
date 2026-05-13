@@ -63,63 +63,6 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>()
 
 // ---------------------------------------------------------------------------
-// Auth token plumbing
-// ---------------------------------------------------------------------------
-
-/**
- * Auth token getter registry. Multiple callers (Canvas in the deck editor,
- * ComponentDocProvider in the master editor) may be mounted simultaneously.
- * Originally the cache held a single getter slot which whichever component
- * mounted last clobbered — a stale provider could shadow the active one,
- * dropping authenticated WS connections.
- *
- * Callers `register(getter)` on mount and call the returned unregister hook
- * on unmount. To resolve a token the cache walks the registered set in
- * registration order and returns the first non-null result. When the set
- * is empty (or every registered getter returns null) we fall back to null
- * — Hocuspocus will reject persistence-enabled docs in that state, which
- * is the right signal: there's no auth context to attach.
- */
-const tokenGetters: Set<() => string | null> = new Set()
-
-/**
- * Register an auth token getter. Returns an unregister function that the
- * caller MUST invoke on unmount (typically inside a `useEffect` cleanup).
- * Tokens are resolved by iterating the registered getters in insertion
- * order and returning the first non-null value.
- */
-export function registerComponentDocTokenGetter(getter: () => string | null): () => void {
-  tokenGetters.add(getter)
-  return () => {
-    tokenGetters.delete(getter)
-  }
-}
-
-/**
- * @deprecated Use {@link registerComponentDocTokenGetter} instead — the
- * setter form clobbers any previously installed getter and races between
- * concurrently-mounted Canvas and ComponentDocProvider components.
- *
- * Kept as a thin shim that registers without ever unregistering, so any
- * stragglers still calling it don't break. New code MUST migrate.
- */
-export function setComponentDocTokenGetter(getter: () => string | null): void {
-  tokenGetters.add(getter)
-}
-
-function resolveToken(): string | null {
-  for (const getter of tokenGetters) {
-    try {
-      const t = getter()
-      if (t !== null) return t
-    } catch {
-      // ignore — broken getter shouldn't block the next one
-    }
-  }
-  return null
-}
-
-// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -141,12 +84,12 @@ export function acquireComponentDoc(componentId: string): void {
 
   const doc = new Y.Doc()
   bumpDebugCounter(1)
-  const token = resolveToken()
+  // 2026-05: auth carried by the narrative_session HttpOnly cookie on the
+  // WS upgrade. No `token` arg needed.
   const provider = new HocuspocusProvider({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    ...(token !== null ? { token } : { token: null }),
   })
 
   const entry: CacheEntry = {
@@ -276,18 +219,6 @@ export function __getComponentDocCacheSizeForTests(): number {
 /** @internal */
 export function __getComponentDocRefCountForTests(componentId: string): number {
   return cache.get(componentId)?.refCount ?? 0
-}
-
-/** @internal — Reset every registered token getter. Used between tests
- *  so leakage from one case doesn't leak into the next. */
-export function __resetComponentDocTokenGettersForTests(): void {
-  tokenGetters.clear()
-}
-
-/** @internal — Resolve a token through the registered getters. Exposed
- *  for whitebox tests of the registration / fallback logic. */
-export function __resolveComponentDocTokenForTests(): string | null {
-  return resolveToken()
 }
 
 // ---------------------------------------------------------------------------

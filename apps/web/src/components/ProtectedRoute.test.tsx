@@ -18,12 +18,9 @@ import type { AuthContextValue, AuthUser } from '../state/AuthContext'
 function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
     user: null,
-    token: null,
     isLoading: false,
-    login: vi.fn().mockResolvedValue(undefined),
+    login: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
-    refreshToken: vi.fn().mockResolvedValue(undefined),
-    completeSignin: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }

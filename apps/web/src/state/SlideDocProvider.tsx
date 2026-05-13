@@ -13,9 +13,12 @@
  *   - Per-slide scoped contexts obtained via getSlideObjectsCtx / getSlideAnimationsCtx.
  *
  * M10: Auth integration.
- *   - JWT access token passed as `token` to HocuspocusProvider (server validates).
- *   - share_token from URL query params passed as WS URL parameter for anonymous viewer path.
- *   - When BYPASS_AUTH=true on server (dev), missing token is fine.
+ *   - The WebSocket upgrade carries the `narrative_session` HttpOnly cookie
+ *     automatically (same-site with the SPA), so Hocuspocus' onAuthenticate
+ *     can resolve the user without a `token` arg from the client.
+ *   - share_token from URL query params is passed as a WS URL parameter for
+ *     the anonymous viewer path (no session cookie required).
+ *   - When BYPASS_AUTH=true on server (dev), missing auth is fine.
  *
  * Lifecycle:
  *   mount   → HocuspocusProvider.connect() (WS handshake, server hydrates Y.Doc)
@@ -114,7 +117,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
   const [value, setValue] = useState<Omit<SlideDocContextValue, 'wsStatus'> | null>(null)
   const [wsStatus, setWsStatus] = useState<WsStatus>('connecting')
   const location = useLocation()
-  const { token, user } = useAuth()
+  const { user } = useAuth()
 
   // Ref for StrictMode double-mount guard
   const providerRef = useRef<HocuspocusProvider | null>(null)
@@ -134,15 +137,14 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       color: peerColorFromId(peerId),
     }
 
-    // M10: share_token from URL query params — passed as WS parameter for anonymous viewer path
+    // M10: share_token from URL query params — passed as WS parameter for anonymous viewer path.
+    // 2026-05: regular auth no longer ships a `token` — the WS upgrade carries
+    // the `narrative_session` cookie (set during /auth/callback) automatically
+    // because the WS host is same-site with the SPA host.
     const searchParams = new URLSearchParams(location.search)
     const shareToken = searchParams.get('share_token')
 
-    // M10: Build auth options separately to avoid exactOptionalPropertyTypes conflicts
-    const authOptions = {
-      ...(token !== null ? { token } : { token: null }),
-      ...(shareToken !== null ? { parameters: { share_token: shareToken } } : {}),
-    }
+    const authOptions = shareToken !== null ? { parameters: { share_token: shareToken } } : {}
 
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,

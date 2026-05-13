@@ -1,20 +1,29 @@
 /**
  * auth/fastifyAuth.ts
  *
- * Fastify auth plugin + pre-handler hooks for JWT validation and deck access enforcement.
+ * Fastify auth plugin + pre-handler hooks for session-cookie validation and
+ * deck access enforcement.
  *
  * Usage in index.ts:
- *   registerAuthPlugin(app, { verifier, bypass: bypassAuth })
+ *   registerAuthPlugin(app, { bypass: bypassAuth, db })
  *
  * Usage on routes:
  *   { preHandler: [authPreHandler, requireDeckRole('owner')] }
  *
  * In BYPASS_AUTH=true mode the plugin synthesizes a 'dev-user' principal.
  * This mode must NEVER be enabled in production.
+ *
+ * Auth mechanism (post-2026-05):
+ *   - HTTP API: the SPA carries a `narrative_session` HttpOnly cookie set
+ *     by /auth/callback after a successful Google OAuth exchange. The
+ *     cookie value is opaque and resolved via auth/session.ts → DB row.
+ *   - The previous Bearer-id_token path is gone — id_tokens never leave
+ *     the server now.
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { JwtPayload, JwtVerifier } from './jwt.js'
+import type { JwtPayload } from './jwt.js'
+import { lookupSession, SESSION_COOKIE_NAME } from './session.js'
 import { resolveDeckAccess, roleAtLeast, type DeckRole } from './permissions.js'
 import type { Database } from '../db/client.js'
 
@@ -34,7 +43,6 @@ declare module 'fastify' {
 // ---------------------------------------------------------------------------
 
 export interface AuthPluginOpts {
-  verifier: JwtVerifier | null
   bypass?: boolean
   db: Database
 }
@@ -76,15 +84,15 @@ function getOpts(req: FastifyRequest): AuthPluginOpts {
 // ---------------------------------------------------------------------------
 
 /**
- * Pre-handler hook: extracts Bearer token, verifies with JwtVerifier, attaches request.user.
+ * Pre-handler hook: reads the `narrative_session` cookie, resolves it to a
+ * session row, attaches the user to `request.user`.
  *
  * On failure → 401.
- * In bypass mode → synthesizes { sub: 'dev-user' } without network call.
+ * In bypass mode → synthesizes { sub: 'dev-user' } without DB lookup.
  *
- * This is the ONLY route that supports unauthenticated access — via share token on
- * GET /decks/:id. Those routes handle auth themselves by calling resolveDeckAccess
- * with share_token from query params. authPreHandler sets request.user = undefined
- * in that case and the route must handle the null user itself.
+ * Share-link access is handled by routes themselves via `share_token` query
+ * param + resolveDeckAccess; we leave request.user undefined in that case
+ * and the route must handle the null user.
  */
 export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const opts = getOpts(req)
@@ -94,18 +102,22 @@ export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): 
     return
   }
 
-  const authHeader = req.headers['authorization']
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const rawId = req.cookies?.[SESSION_COOKIE_NAME]
+  if (!rawId) {
     await reply.status(401).send({ error: 'Unauthorized' })
     return
   }
 
-  const token = authHeader.slice(7)
-
-  try {
-    req.user = await opts.verifier!.verify(token)
-  } catch {
+  const session = await lookupSession(opts.db, rawId)
+  if (!session) {
     await reply.status(401).send({ error: 'Unauthorized' })
+    return
+  }
+
+  req.user = {
+    sub: session.userSub,
+    email: session.userEmail,
+    ...(session.userName ? { name: session.userName } : {}),
   }
 }
 

@@ -31,7 +31,6 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, us
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { nanoid } from 'nanoid'
-import { useAuth } from './AuthContext.js'
 import { useApi } from '../api/client.js'
 import type { TokenUsage } from '../api/client.js'
 import { FolderDocContext, emptyTokensSnapshot } from './FolderDocContext.js'
@@ -326,7 +325,6 @@ interface FolderDocProviderProps {
 }
 
 export function FolderDocProvider({ folderId, children }: FolderDocProviderProps) {
-  const { token } = useAuth()
   const [value, setValue] = useState<FolderDocContextValue | null>(null)
   const providerRef = useRef<HocuspocusProvider | null>(null)
   const docRef = useRef<Y.Doc | null>(null)
@@ -344,7 +342,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
       url: HOCUSPOCUS_URL,
       name: `folder:${folderId}`,
       document: doc,
-      ...(token !== null ? { token } : { token: null }),
+      // Auth carried by the narrative_session cookie on WS upgrade.
       onSynced() {
         // First sync after server roundtrip — if the doc is brand new
         // (colors AND textStyles both empty), seed the design-system
@@ -391,7 +389,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
       docRef.current = null
       setValue(null)
     }
-  }, [folderId, token])
+  }, [folderId])
 
   // ---------------------------------------------------------------------------
   // Mutation helpers

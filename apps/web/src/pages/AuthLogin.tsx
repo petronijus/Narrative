@@ -1,30 +1,21 @@
 /**
  * pages/AuthLogin.tsx
  *
- * M10: Login page shown when a protected route is accessed without a session.
+ * Login page shown when a protected route is accessed without a session.
  * Route: /auth/login
  *
- * Reads returnTo from query params (set by ProtectedRoute) and passes it
- * through the OIDC redirect cycle via UserManager state so the callback
- * can navigate back to the original destination.
+ * The button triggers a top-level navigation to the server's /auth/start
+ * endpoint, which runs the Google OAuth dance and sets the session cookie
+ * before redirecting back to `returnTo`.
  */
 
-import { useAuth } from '../state/AuthContext.js'
 import { useSearchParams } from 'react-router-dom'
+import { useAuth } from '../state/AuthContext.js'
 
 export function AuthLogin() {
-  const { isLoading } = useAuth()
+  const { isLoading, login } = useAuth()
   const [searchParams] = useSearchParams()
   const returnTo = searchParams.get('returnTo') ?? '/'
-
-  const handleLogin = () => {
-    void (async () => {
-      // Store returnTo in OIDC state so AuthCallback can redirect there
-      const { createUserManager } = await import('../state/AuthContext.js')
-      const um = createUserManager()
-      await um.signinRedirect({ state: { returnTo } })
-    })()
-  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-950 text-gray-100">
@@ -33,7 +24,7 @@ export function AuthLogin() {
         <p className="mb-6 text-sm text-gray-400">Sign in to continue.</p>
 
         <button
-          onClick={handleLogin}
+          onClick={() => login(returnTo)}
           disabled={isLoading}
           className="w-full rounded-md bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
         >

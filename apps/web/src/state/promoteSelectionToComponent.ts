@@ -37,13 +37,12 @@ export interface PromoteSelectionArgs {
   activeSlideId: string
   targetIds: string[]
   name: string
-  token: string | null
 }
 
 export async function promoteSelectionToComponent(
   args: PromoteSelectionArgs,
 ): Promise<{ instanceId: string }> {
-  const { api, folderId, mutationCtx, deckCtx, activeSlideId, targetIds, name, token } = args
+  const { api, folderId, mutationCtx, deckCtx, activeSlideId, targetIds, name } = args
   const plan = promoteToComponent(deckCtx, activeSlideId, targetIds, folderId)
 
   const component = await api.createComponent(folderId, { id: plan.componentId, name })
@@ -52,7 +51,6 @@ export async function promoteSelectionToComponent(
     componentId: component.id,
     masterTree: plan.masterTree,
     masterAnimations: plan.masterAnimations,
-    token,
   })
 
   mutationCtx.doc.transact(() => {

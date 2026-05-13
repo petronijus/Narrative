@@ -24,19 +24,15 @@ COPY apps/web/    apps/web/
 COPY packages/    packages/
 COPY tsconfig.base.json ./
 
-# Vite build — VITE_* env vars musí být přítomny při build time
+# Vite build — VITE_* env vars musí být přítomny při build time.
+# Note: VITE_OIDC_* args removed in 2026-05 — auth is now server-driven
+# via /api/auth/{start,callback,me,logout} and an opaque session cookie.
 ARG VITE_API_URL=http://localhost:3001
 ARG VITE_HOCUSPOCUS_URL=ws://localhost:3002
-ARG VITE_OIDC_ISSUER=https://accounts.google.com
-ARG VITE_OIDC_CLIENT_ID=
-ARG VITE_OIDC_REDIRECT_URI=
 ARG VITE_IMGPROXY_URL=
 
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_HOCUSPOCUS_URL=$VITE_HOCUSPOCUS_URL
-ENV VITE_OIDC_ISSUER=$VITE_OIDC_ISSUER
-ENV VITE_OIDC_CLIENT_ID=$VITE_OIDC_CLIENT_ID
-ENV VITE_OIDC_REDIRECT_URI=$VITE_OIDC_REDIRECT_URI
 ENV VITE_IMGPROXY_URL=$VITE_IMGPROXY_URL
 
 RUN pnpm --filter @narrative/web build

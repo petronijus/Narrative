@@ -23,6 +23,7 @@
 
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
+import cookie from '@fastify/cookie'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { fileURLToPath } from 'url'
 import path from 'path'
@@ -33,7 +34,7 @@ import { registerFolderRoutes } from './routes/folders.js'
 import { registerComponentRoutes } from './routes/components.js'
 import { registerTokenUsageRoutes } from './routes/tokenUsages.js'
 import { registerSharingRoutes } from './routes/sharing.js'
-import { registerAuthProxyRoutes } from './routes/authProxy.js'
+import { registerAuthRoutes } from './routes/auth.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
 import { closeQueueConnection } from './media/enqueue.js'
@@ -122,6 +123,10 @@ const corsOriginEnv = (process.env['CORS_ORIGIN'] ?? 'http://localhost:5173')
   .filter(Boolean)
 await app.register(cors, {
   origin: corsOriginEnv.length === 1 ? corsOriginEnv[0]! : corsOriginEnv,
+  // credentials:true tells the browser to send cookies on cross-origin XHR
+  // (dev: localhost:5173 → localhost:3001). In prod everything is same-origin
+  // through Caddy so this is a no-op there.
+  credentials: true,
   // PATCH is required by the tus protocol for upload resumption.
   // HEAD is required by tus for upload status checks.
   // PUT is used by deck-thumbnail uploads (idempotent replace).
@@ -143,6 +148,17 @@ await app.register(cors, {
   ],
 })
 
+// Cookie parser. The secret is used to sign the short-lived OAuth state
+// cookie that carries the PKCE verifier between /auth/start and /auth/callback.
+// In dev a default keeps things working; prod MUST set SESSION_COOKIE_SECRET.
+const cookieSecret = process.env['SESSION_COOKIE_SECRET']
+if (!cookieSecret && !isDev) {
+  throw new Error('SESSION_COOKIE_SECRET must be set in production')
+}
+await app.register(cookie, {
+  secret: cookieSecret ?? 'dev-only-do-not-deploy-this-cookie-secret',
+})
+
 // Sentry — init before routes, dev-gated (silent without SENTRY_DSN)
 await initSentry(app)
 
@@ -150,7 +166,7 @@ await initSentry(app)
 if (bypassAuth) {
   app.log.warn('BYPASS_AUTH=true — all requests run as dev-user. DO NOT USE IN PRODUCTION.')
 }
-registerAuthPlugin(app, { verifier, bypass: bypassAuth, db })
+registerAuthPlugin(app, { bypass: bypassAuth, db })
 
 // Health endpoint
 app.get('/health', async (_request, _reply) => {
@@ -176,9 +192,26 @@ await registerTokenUsageRoutes(app, db)
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)
 
-// OAuth token-exchange proxy — server-side code → tokens (keeps Google
-// client_secret out of the SPA bundle). Public endpoint by design.
-registerAuthProxyRoutes(app)
+// Server-driven OAuth flow + session cookie minting (replaces the old
+// browser-PKCE + Bearer-id_token path). Public endpoints by design.
+{
+  const spaOrigin =
+    process.env['SPA_ORIGIN'] ??
+    (isDev ? 'http://localhost:5173' : `https://${process.env['DOMAIN'] ?? 'localhost'}`)
+  const redirectUri =
+    process.env['OIDC_REDIRECT_URI'] ??
+    (isDev
+      ? `http://localhost:${API_PORT}/auth/callback`
+      : `https://${process.env['DOMAIN'] ?? 'localhost'}/api/auth/callback`)
+
+  registerAuthRoutes(app, {
+    db,
+    verifier,
+    spaOrigin,
+    redirectUri,
+    isProd: !isDev,
+  })
+}
 
 // Media routes: tus upload + signed URL + delete
 registerTusPlugin(app, { db })
@@ -191,7 +224,6 @@ await registerMediaRoutes(app, { db })
 const hocuspocus = createHocuspocusServer({
   port: HOCUSPOCUS_PORT,
   db,
-  verifier,
   bypass: bypassAuth,
 })
 

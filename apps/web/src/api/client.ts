@@ -1,21 +1,21 @@
 /**
  * api/client.ts
  *
- * M10: Centralized API client with automatic Bearer token injection.
+ * Centralised API client. Auth is carried by the `narrative_session` HttpOnly
+ * cookie set during the server-driven OAuth flow, so every fetch goes out
+ * with `credentials: 'include'` — there is no Bearer header path any more.
  *
  * Usage:
- *   const api = useApi()          // inside React tree (reads AuthContext)
+ *   const api = useApi()      // inside React tree
  *   api.listDecks()
  *
- * Outside React (e.g. tests) use createApiClient(() => token) directly.
+ * Outside React (e.g. tests) use createApiClient() directly.
  *
- * Responds to 401 by logging a warning — the consumer or AuthProvider's
- * silent renew handles re-auth. We never retry automatically here to
- * avoid infinite loops.
+ * 401 → log a warning; callers / AuthProvider re-fetch /auth/me to surface
+ * the logged-out state. We never retry automatically here to avoid loops.
  */
 
-import { useCallback, useMemo } from 'react'
-import { useAuth } from '../state/AuthContext.js'
+import { useMemo } from 'react'
 
 const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
 
@@ -301,17 +301,17 @@ export interface VideoInfoResponse {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createApiClient(getToken: () => string | null): ApiClient {
+export function createApiClient(): ApiClient {
   async function request(path: string, init?: RequestInit): Promise<Response> {
-    const tok = getToken()
-    const headers = new Headers(init?.headers)
-    if (tok !== null && tok.length > 0) {
-      headers.set('Authorization', `Bearer ${tok}`)
-    }
-    const res = await fetch(`${API_URL}${path}`, { ...init, headers })
+    const res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      // Sends the narrative_session cookie. In prod everything is same-origin
+      // through Caddy so this is a no-op there; in dev (5173 → 3001) it
+      // promotes the request to a same-site cross-origin fetch with cookies.
+      credentials: 'include',
+    })
     if (res.status === 401) {
-      // Token may be expired or missing; caller should re-auth
-      console.warn('[api] 401 — re-authentication needed')
+      console.warn('[api] 401 — session missing or expired')
     }
     return res
   }
@@ -556,8 +556,6 @@ export function createApiClient(getToken: () => string | null): ApiClient {
 // ---------------------------------------------------------------------------
 
 export function useApi(): ApiClient {
-  const { token } = useAuth()
-  // Stable getToken reference so the client instance stays stable while token changes
-  const getToken = useCallback(() => token, [token])
-  return useMemo(() => createApiClient(getToken), [getToken])
+  // The client is stateless now — same instance for the app's lifetime.
+  return useMemo(() => createApiClient(), [])
 }

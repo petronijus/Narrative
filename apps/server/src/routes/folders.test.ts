@@ -217,7 +217,7 @@ function makeFolderSelectMock(folder: MockFolder | null, deckCount = 0, decks: M
 
 async function buildApp(db: Database): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  registerAuthPlugin(app, { verifier: null, bypass: true, db })
+  registerAuthPlugin(app, { bypass: true, db })
   await registerFolderRoutes(app, db)
   await registerDeckRoutes(app, db)
   await app.ready()

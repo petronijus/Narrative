@@ -14,7 +14,10 @@
  * follow-up milestone (Yjs-driven refresh).
  *
  * Bootstrap (Canvas.tsx):
- *   setDefaultVideoInfoResolver(createVideoInfoResolver(import.meta.env.VITE_API_URL, () => token))
+ *   setDefaultVideoInfoResolver(createVideoInfoResolver(import.meta.env.VITE_API_URL))
+ *
+ * Auth: fetch with `credentials: 'include'` so the narrative_session cookie
+ * travels automatically.
  */
 
 // ---------------------------------------------------------------------------
@@ -50,12 +53,8 @@ const VIDEO_INFO_PENDING_TTL_MS = 5_000
  * Builds a VideoInfoResolver bound to a given API base URL.
  *
  * @param apiBaseUrl  Base URL without trailing slash. Pass '' for same-origin.
- * @param getAuthToken  Optional getter for the current JWT access token.
  */
-export function createVideoInfoResolver(
-  apiBaseUrl: string,
-  getAuthToken?: () => string | null,
-): VideoInfoResolver {
+export function createVideoInfoResolver(apiBaseUrl: string): VideoInfoResolver {
   interface CacheEntry {
     promise: Promise<VideoInfoResult>
     /** Timestamp (Date.now()) when this entry was created. Undefined = permanent (done/failed). */
@@ -83,14 +82,7 @@ export function createVideoInfoResolver(
 
     const fetchPromise: Promise<VideoInfoResult> = (async () => {
       const url = `${apiBaseUrl}/api/media/${opts.assetId}/video-info`
-
-      const headers: Record<string, string> = {}
-      const token = getAuthToken?.()
-      if (token != null && token !== '') {
-        headers['Authorization'] = `Bearer ${token}`
-      }
-
-      const res = await fetch(url, { headers })
+      const res = await fetch(url, { credentials: 'include' })
 
       if (!res.ok) {
         cache.delete(cacheKey)

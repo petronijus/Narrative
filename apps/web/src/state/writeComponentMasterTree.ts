@@ -24,7 +24,6 @@ interface WriteArgs {
   componentId: string
   masterTree: SlideObject[]
   masterAnimations: AnimationStep[]
-  token: string | null
   /** How long to wait for the first sync before bailing. */
   timeoutMs?: number
 }
@@ -33,7 +32,6 @@ export async function writeComponentMasterTree({
   componentId,
   masterTree,
   masterAnimations,
-  token,
   timeoutMs = 10_000,
 }: WriteArgs): Promise<void> {
   const doc = new Y.Doc()
@@ -41,7 +39,7 @@ export async function writeComponentMasterTree({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    ...(token !== null ? { token } : { token: null }),
+    // Auth via narrative_session cookie on WS upgrade.
     connect: true,
   })
 

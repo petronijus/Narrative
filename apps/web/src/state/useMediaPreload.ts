@@ -27,7 +27,6 @@ import type { ImageObject, VideoObject } from '@narrative/shared'
 import { openMediaCache } from './mediaCache.js'
 import type { MediaCacheKind } from './mediaCache.js'
 import { useApi } from '../api/client.js'
-import { useAuth } from './AuthContext.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,7 +49,6 @@ export function useMediaPreload(): {
   isPreloading: boolean
 } {
   const api = useApi()
-  const { token } = useAuth()
 
   const [isPreloading, setIsPreloading] = useState(false)
   const [progress, setProgress] = useState<PreloadProgress>({
@@ -133,12 +131,6 @@ export function useMediaPreload(): {
         let completed = 0
         let errored = 0
 
-        // Build auth headers for direct fetches (bypasses the api client — we need raw Blob)
-        const fetchHeaders: Record<string, string> = {}
-        if (token !== null) {
-          fetchHeaders['Authorization'] = `Bearer ${token}`
-        }
-
         await Promise.all(
           items.map(async (item) => {
             try {
@@ -154,14 +146,17 @@ export function useMediaPreload(): {
                 return
               }
 
-              // Fetch the resource
+              // Fetch the resource. `credentials: 'include'` carries the
+              // narrative_session cookie when the URL is on our origin (or
+              // same-site in dev). For MinIO presigned URLs the credentials
+              // header is ignored — the URL signature is the auth.
               if (item.kind === 'hls-manifest') {
-                const res = await fetch(item.url, { headers: fetchHeaders })
+                const res = await fetch(item.url, { credentials: 'include' })
                 if (!res.ok) throw new Error(`HTTP ${res.status}`)
                 const text = await res.text()
                 await cache.put(item.url, text, 'hls-manifest')
               } else {
-                const res = await fetch(item.url, { headers: fetchHeaders })
+                const res = await fetch(item.url, { credentials: 'include' })
                 if (!res.ok) throw new Error(`HTTP ${res.status}`)
                 const blob = await res.blob()
                 await cache.put(item.url, blob, item.kind)
@@ -189,7 +184,7 @@ export function useMediaPreload(): {
         runningRef.current = false
       }
     },
-    [api, token],
+    [api],
   )
 
   return { start, progress, isPreloading }

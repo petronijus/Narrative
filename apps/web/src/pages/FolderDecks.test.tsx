@@ -92,12 +92,9 @@ const MOCK_USER: AuthUser = { sub: 'user-1', email: 'test@example.com', name: 'T
 function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthContextValue {
   return {
     user: MOCK_USER,
-    token: 'mock-token',
     isLoading: false,
-    login: vi.fn().mockResolvedValue(undefined),
+    login: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
-    refreshToken: vi.fn().mockResolvedValue(undefined),
-    completeSignin: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   }
 }

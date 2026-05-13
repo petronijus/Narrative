@@ -1,72 +1,44 @@
 /**
  * state/AuthContext.test.tsx
  *
- * M10: Tests for AuthContext / AuthProvider / useAuth.
+ * Tests for the session-cookie AuthProvider (post-2026-05 cutover from
+ * the browser-PKCE flow). Covers:
+ *   - On mount: /auth/me OK → user populated, isLoading → false.
+ *   - On mount: /auth/me 401 → user=null, isLoading → false.
+ *   - On mount: /auth/me network error → user=null, isLoading → false.
+ *   - login() triggers a top-level navigation to /auth/start?returnTo=...
+ *   - logout() POSTs /auth/logout, then navigates to /auth/login.
+ *   - Bypass mode synthesises dev-user without any fetch.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, act, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { AuthProvider, useAuth } from './AuthContext'
 
-// ---------------------------------------------------------------------------
-// Mock oidc-client-ts UserManager
-// ---------------------------------------------------------------------------
-
-const mockGetUser = vi.fn()
-const mockSigninRedirect = vi.fn()
-const mockSignoutRedirect = vi.fn()
-const mockSigninSilent = vi.fn()
-const mockEventsAddUserLoaded = vi.fn()
-const mockEventsAddUserUnloaded = vi.fn()
-const mockEventsAddSilentRenewError = vi.fn()
-const mockEventsRemoveUserLoaded = vi.fn()
-const mockEventsRemoveUserUnloaded = vi.fn()
-const mockEventsRemoveSilentRenewError = vi.fn()
-
-const mockUserManager = {
-  getUser: mockGetUser,
-  signinRedirect: mockSigninRedirect,
-  signoutRedirect: mockSignoutRedirect,
-  signinSilent: mockSigninSilent,
-  events: {
-    addUserLoaded: mockEventsAddUserLoaded,
-    addUserUnloaded: mockEventsAddUserUnloaded,
-    addSilentRenewError: mockEventsAddSilentRenewError,
-    removeUserLoaded: mockEventsRemoveUserLoaded,
-    removeUserUnloaded: mockEventsRemoveUserUnloaded,
-    removeSilentRenewError: mockEventsRemoveSilentRenewError,
-  },
-}
-
-vi.mock('oidc-client-ts', () => ({
-  UserManager: vi.fn(() => mockUserManager),
-}))
-
-// Disable dev bypass for these tests — they exercise the real OIDC code path.
-// The .env may have VITE_BYPASS_AUTH=true for local dev; vi.stubEnv overrides it.
 beforeEach(() => {
+  vi.unstubAllEnvs()
   vi.stubEnv('VITE_BYPASS_AUTH', 'false')
+  vi.stubEnv('VITE_API_URL', 'http://api.test')
 })
 
 // ---------------------------------------------------------------------------
-// Test component
+// Test components
 // ---------------------------------------------------------------------------
 
 function AuthReadout() {
-  const { user, token, isLoading } = useAuth()
+  const { user, isLoading } = useAuth()
   return (
     <div>
       <span data-testid="loading">{String(isLoading)}</span>
       <span data-testid="user-sub">{user?.sub ?? 'null'}</span>
-      <span data-testid="token">{token !== null ? 'has-token' : 'no-token'}</span>
+      <span data-testid="user-email">{user?.email ?? 'null'}</span>
     </div>
   )
 }
 
 function LoginButton() {
   const { login } = useAuth()
-  return <button onClick={() => void login()}>Login</button>
+  return <button onClick={() => login('/dest')}>Login</button>
 }
 
 function LogoutButton() {
@@ -75,31 +47,38 @@ function LogoutButton() {
 }
 
 // ---------------------------------------------------------------------------
-// Setup
+// fetch + window.location stubs
 // ---------------------------------------------------------------------------
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  // Default: no user in storage
-  mockGetUser.mockResolvedValue(null)
-  mockSigninRedirect.mockResolvedValue(undefined)
-  mockSignoutRedirect.mockResolvedValue(undefined)
-  mockSigninSilent.mockResolvedValue(null)
-  // Events are fire-and-forget in tests
-  mockEventsAddUserLoaded.mockImplementation(() => {})
-  mockEventsAddUserUnloaded.mockImplementation(() => {})
-  mockEventsAddSilentRenewError.mockImplementation(() => {})
-  mockEventsRemoveUserLoaded.mockImplementation(() => {})
-  mockEventsRemoveUserUnloaded.mockImplementation(() => {})
-  mockEventsRemoveSilentRenewError.mockImplementation(() => {})
-})
+function stubFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
+  vi.stubGlobal('fetch', vi.fn(impl as unknown as typeof fetch))
+}
+
+function stubLocationAssign(): ReturnType<typeof vi.fn> {
+  const assign = vi.fn()
+  // jsdom's window.location is mostly read-only; replace it wholesale.
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { assign, pathname: '/', search: '' },
+  })
+  return assign
+}
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
 
 // ---------------------------------------------------------------------------
-// Tests
+// Mount-time /auth/me
 // ---------------------------------------------------------------------------
 
-describe('AuthProvider', () => {
-  it('resolves to user=null, isLoading=false when no session exists', async () => {
+describe('AuthProvider — /auth/me on mount', () => {
+  it('populates the user when /auth/me returns 200', async () => {
+    stubFetch(async () => jsonResponse(200, { sub: 'user-1', email: 'a@b.c', name: 'Alice' }))
+
     render(
       <AuthProvider>
         <AuthReadout />
@@ -109,38 +88,12 @@ describe('AuthProvider', () => {
     await waitFor(() => {
       expect(screen.getByTestId('loading').textContent).toBe('false')
     })
-    expect(screen.getByTestId('user-sub').textContent).toBe('null')
-    expect(screen.getByTestId('token').textContent).toBe('no-token')
+    expect(screen.getByTestId('user-sub').textContent).toBe('user-1')
+    expect(screen.getByTestId('user-email').textContent).toBe('a@b.c')
   })
 
-  it('restores user from existing session on mount', async () => {
-    mockGetUser.mockResolvedValue({
-      profile: { sub: 'user-123', email: 'test@example.com', name: 'Test User' },
-      access_token: 'access-token-abc',
-      id_token: 'id-token-abc',
-      expired: false,
-    })
-
-    render(
-      <AuthProvider>
-        <AuthReadout />
-      </AuthProvider>,
-    )
-
-    await waitFor(() => {
-      expect(screen.getByTestId('user-sub').textContent).toBe('user-123')
-    })
-    expect(screen.getByTestId('token').textContent).toBe('has-token')
-    expect(screen.getByTestId('loading').textContent).toBe('false')
-  })
-
-  it('treats expired session as no user', async () => {
-    mockGetUser.mockResolvedValue({
-      profile: { sub: 'user-123' },
-      access_token: 'old-token',
-      id_token: 'old-id-token',
-      expired: true,
-    })
+  it('treats 401 as logged-out', async () => {
+    stubFetch(async () => jsonResponse(401, { error: 'unauthenticated' }))
 
     render(
       <AuthProvider>
@@ -154,8 +107,10 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('user-sub').textContent).toBe('null')
   })
 
-  it('handles getUser error gracefully — user=null, isLoading=false', async () => {
-    mockGetUser.mockRejectedValue(new Error('storage error'))
+  it('treats a network error as logged-out', async () => {
+    stubFetch(async () => {
+      throw new Error('network')
+    })
 
     render(
       <AuthProvider>
@@ -170,49 +125,105 @@ describe('AuthProvider', () => {
   })
 })
 
-describe('useAuth actions', () => {
-  it('login() calls signinRedirect', async () => {
-    const user = userEvent.setup()
-    mockGetUser.mockResolvedValue(null)
+// ---------------------------------------------------------------------------
+// login()
+// ---------------------------------------------------------------------------
+
+describe('AuthProvider — login()', () => {
+  it('navigates to /auth/start with the returnTo query param', async () => {
+    stubFetch(async () => jsonResponse(401, {}))
+    const assign = stubLocationAssign()
 
     render(
       <AuthProvider>
         <LoginButton />
+        <AuthReadout />
       </AuthProvider>,
     )
 
-    await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Login' }))
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'))
+
+    act(() => {
+      screen.getByText('Login').click()
     })
 
-    expect(mockSigninRedirect).toHaveBeenCalledOnce()
+    expect(assign).toHaveBeenCalledTimes(1)
+    const url = new URL(assign.mock.calls[0]![0] as string)
+    expect(url.pathname).toBe('/auth/start')
+    expect(url.searchParams.get('returnTo')).toBe('/dest')
   })
+})
 
-  it('logout() calls signoutRedirect', async () => {
-    const user = userEvent.setup()
-    mockGetUser.mockResolvedValue(null)
+// ---------------------------------------------------------------------------
+// logout()
+// ---------------------------------------------------------------------------
+
+describe('AuthProvider — logout()', () => {
+  it('POSTs /auth/logout and navigates to /auth/login', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith('/auth/me')) return jsonResponse(200, { sub: 'x', email: 'x@y.z' })
+      if (url.endsWith('/auth/logout')) return new Response(null, { status: 204 })
+      return new Response(null, { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+    const assign = stubLocationAssign()
 
     render(
       <AuthProvider>
         <LogoutButton />
+        <AuthReadout />
       </AuthProvider>,
     )
 
+    await waitFor(() => expect(screen.getByTestId('user-sub').textContent).toBe('x'))
+
     await act(async () => {
-      await user.click(screen.getByRole('button', { name: 'Logout' }))
+      screen.getByText('Logout').click()
+      await new Promise((r) => setTimeout(r, 0))
     })
 
-    expect(mockSignoutRedirect).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/logout'),
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
+    )
+    expect(assign).toHaveBeenCalledWith('/auth/login')
   })
 })
 
-describe('useAuth outside provider', () => {
-  it('throws when called outside AuthProvider', () => {
-    // Suppress console.error for this expected throw
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    expect(() => {
-      render(<AuthReadout />)
-    }).toThrow('useAuth must be used inside <AuthProvider>')
-    consoleSpy.mockRestore()
+// ---------------------------------------------------------------------------
+// Bypass mode
+// ---------------------------------------------------------------------------
+
+describe('AuthProvider — bypass mode', () => {
+  it('synthesises dev-user without any fetch', async () => {
+    vi.stubEnv('VITE_BYPASS_AUTH', 'true')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch)
+
+    render(
+      <AuthProvider>
+        <AuthReadout />
+      </AuthProvider>,
+    )
+
+    expect(screen.getByTestId('user-sub').textContent).toBe('dev-user')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// useAuth outside provider
+// ---------------------------------------------------------------------------
+
+describe('useAuth', () => {
+  it('throws when called outside <AuthProvider>', () => {
+    function Bare() {
+      useAuth()
+      return null
+    }
+    // suppress React's console.error noise for the expected throw
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    expect(() => render(<Bare />)).toThrow(/useAuth must be used inside/)
+    spy.mockRestore()
   })
 })

@@ -62,6 +62,15 @@ services:
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
       OIDC_ALLOWED_EMAILS: ${OIDC_ALLOWED_EMAILS:-}
       OIDC_ALLOWED_DOMAIN: ${OIDC_ALLOWED_DOMAIN:-}
+      # Signs the short-lived OAuth state cookie. REQUIRED in prod (server
+      # throws on boot otherwise). Generate: openssl rand -hex 32
+      SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET:?SESSION_COOKIE_SECRET env var is required}
+      # Where the SPA is reachable from the browser; used as the post-login
+      # redirect destination.
+      SPA_ORIGIN: https://${DOMAIN}
+      # Where Google's OAuth callback lands. Caddy strips /api/ before
+      # forwarding so the server actually serves /auth/callback.
+      OIDC_REDIRECT_URI: https://${DOMAIN}/api/auth/callback
       BYPASS_AUTH: ${BYPASS_AUTH:-false}
       # Media pipeline env that other services already consume — server
       # uses them to sign imgproxy URLs and talk to MinIO.

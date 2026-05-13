@@ -27,14 +27,12 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import * as Y from 'yjs'
-import { useAuth } from './AuthContext.js'
 import {
   acquireComponentDoc,
   releaseComponentDoc,
   getComponentDoc,
   getComponentDocSyncStatus,
   subscribeToComponentDoc,
-  registerComponentDocTokenGetter,
 } from './componentDocCache.js'
 
 // ---------------------------------------------------------------------------
@@ -60,10 +58,6 @@ interface ComponentDocProviderProps {
 }
 
 export function ComponentDocProvider({ componentId, children }: ComponentDocProviderProps) {
-  const { token } = useAuth()
-  const tokenRef = useRef<string | null>(token)
-  tokenRef.current = token
-
   // Stable placeholder doc — handed out before the cache hands us a real
   // one so consumers always have a valid Y.Doc reference (just empty).
   const placeholderRef = useRef<Y.Doc | null>(null)
@@ -76,15 +70,6 @@ export function ComponentDocProvider({ componentId, children }: ComponentDocProv
     doc: placeholderRef.current as Y.Doc,
     synced: false,
   }))
-
-  // Token getter registration — separate effect from componentId so the
-  // getter stays installed for the full provider lifetime regardless of
-  // componentId churn. Coexists with Canvas's getter via the cache's
-  // registration set (first non-null wins).
-  useEffect(() => {
-    const unregister = registerComponentDocTokenGetter(() => tokenRef.current)
-    return unregister
-  }, [])
 
   useEffect(() => {
     acquireComponentDoc(componentId)

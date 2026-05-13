@@ -1,16 +1,44 @@
 /**
  * pages/AuthError.tsx
  *
- * M10: Error page for OIDC failures (e.g. callback error, state mismatch).
+ * Error page for OIDC failures (e.g. callback error, state mismatch).
  * Route: /auth/error
+ *
+ * The server redirects here with a `?reason=<code>` query param when the
+ * OAuth callback fails (state mismatch, allowlist denial, network blip…).
  */
 
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+
+function humaniseReason(code: string): string {
+  switch (code) {
+    case 'not_allowed':
+      return 'Your Google account is not on the allowlist for this Narrative deployment.'
+    case 'state_mismatch':
+    case 'missing_state_cookie':
+    case 'bad_state_signature':
+    case 'bad_state_json':
+      return 'The sign-in request was tampered with or expired. Please try again.'
+    case 'token_exchange_failed':
+    case 'token_endpoint_unreachable':
+    case 'no_id_token':
+      return 'Google rejected the sign-in. Please try again — if it keeps failing, contact the deployer.'
+    case 'invalid_callback':
+      return 'The Google callback was malformed. Please start sign-in again.'
+    case 'auth_not_configured':
+      return 'The server is missing OAuth configuration.'
+    default:
+      if (code.startsWith('google_')) {
+        return `Google returned an error: ${code.slice('google_'.length)}.`
+      }
+      return code
+  }
+}
 
 export function AuthError() {
-  const location = useLocation()
-  const state = location.state as { error?: string } | null
-  const detail = state?.error
+  const [searchParams] = useSearchParams()
+  const reason = searchParams.get('reason')
+  const detail = reason ? humaniseReason(reason) : null
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-950 text-gray-100">

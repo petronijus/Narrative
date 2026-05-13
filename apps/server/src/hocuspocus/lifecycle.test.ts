@@ -57,7 +57,6 @@ describe('Hocuspocus lifecycle', () => {
     server = createHocuspocusServer({
       port: 0, // not used — we only exercise direct connections
       db: makeMockDb(),
-      verifier: null,
       bypass: true, // dev-mode auth path; dev-user is auto-authenticated
     })
   })

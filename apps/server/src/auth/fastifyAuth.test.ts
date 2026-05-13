@@ -1,14 +1,15 @@
 /**
  * auth/fastifyAuth.test.ts
  *
- * Tests for Fastify auth plugin and pre-handler hooks.
+ * Tests for Fastify auth plugin and pre-handler hooks (cookie-based, since
+ * the 2026-05 cutover from browser-PKCE + Bearer to server-side sessions).
  *
  * Coverage:
  *   authPreHandler:
- *     - valid Bearer token → request.user set
- *     - missing Authorization header → 401
- *     - invalid token → 401
- *     - bypass mode → dev-user synthesized
+ *     - valid session cookie → request.user populated from session row
+ *     - missing cookie → 401
+ *     - cookie present but no matching session row → 401
+ *     - bypass mode → dev-user synthesised
  *   requireDeckRole:
  *     - user with required role → passes, request.deckAccess set
  *     - insufficient role → 403
@@ -17,8 +18,9 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
+import cookie from '@fastify/cookie'
 import { registerAuthPlugin, authPreHandler, requireDeckRole } from './fastifyAuth.js'
-import type { JwtVerifier, JwtPayload } from './jwt.js'
+import { SESSION_COOKIE_NAME } from './session.js'
 import type { Database } from '../db/client.js'
 import type { DeckRole, DeckAccessResult } from './permissions.js'
 
@@ -26,25 +28,32 @@ import type { DeckRole, DeckAccessResult } from './permissions.js'
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeVerifier(result: JwtPayload | 'throw'): JwtVerifier {
-  return {
-    verify: vi.fn(async (token: string) => {
-      if (result === 'throw') throw new Error('Invalid credentials')
-      if (token === 'valid') return result
-      throw new Error('Invalid credentials')
-    }),
-  }
+interface FakeSession {
+  userSub: string
+  userEmail: string
+  userName: string | null
 }
 
-/** Minimal mock db for resolveDeckAccess inside requireDeckRole */
-function makeMockDb(accessResult: DeckAccessResult | null) {
-  // resolveDeckAccess queries deckPermissions + decks; mock chainable builder
-  const chainable = {
+/**
+ * Mock db that satisfies both `lookupSession()` (db.update().set().where().returning())
+ * and `resolveDeckAccess()` (db.select().from().where().limit()).
+ *
+ * - `session`: the row `lookupSession` should return for a "valid" cookie, or
+ *   null to simulate no row found.
+ * - `accessResult`: the role row `resolveDeckAccess` should return; null = none.
+ */
+function makeMockDb(session: FakeSession | null, accessResult: DeckAccessResult | null) {
+  const updateBuilder = {
+    set: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    returning: vi.fn().mockImplementation(() => Promise.resolve(session ? [session] : [])),
+  }
+
+  const selectBuilder = {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     limit: vi.fn().mockImplementation(() => {
       if (accessResult) {
-        // Return a mock permissions row
         return Promise.resolve([
           {
             deckId: 'deck-1',
@@ -60,30 +69,48 @@ function makeMockDb(accessResult: DeckAccessResult | null) {
   }
 
   return {
-    select: vi.fn().mockReturnValue(chainable),
+    update: vi.fn().mockReturnValue(updateBuilder),
+    select: vi.fn().mockReturnValue(selectBuilder),
   } as unknown as Database
 }
 
-async function buildApp(
-  verifier: JwtVerifier | null,
-  bypass: boolean,
-  db: Database,
-): Promise<FastifyInstance> {
+async function buildApp(session: FakeSession | null, bypass: boolean): Promise<FastifyInstance> {
   const app = Fastify({ logger: false })
-  registerAuthPlugin(app, { verifier, bypass, db })
+  await app.register(cookie, { secret: 'test-secret' })
 
-  // Route: tests authPreHandler
-  app.get('/test-auth', { preHandler: authPreHandler }, async (req) => {
-    return { sub: req.user?.sub ?? null }
-  })
+  // resolveDeckAccess: tests below pass different roles via the test-specific
+  // arg. We default to editor here; tests that need a different role build
+  // their own app.
+  const db = makeMockDb(session, { role: 'editor', reason: 'direct' })
+  registerAuthPlugin(app, { bypass, db })
 
-  // Route: tests requireDeckRole
+  app.get('/test-auth', { preHandler: authPreHandler }, async (req) => ({
+    sub: req.user?.sub ?? null,
+  }))
+
   app.get<{ Params: { id: string } }>(
     '/decks/:id/test-role',
     { preHandler: [authPreHandler, requireDeckRole('editor')] },
-    async (req) => {
-      return { role: req.deckAccess?.role ?? null }
-    },
+    async (req) => ({ role: req.deckAccess?.role ?? null }),
+  )
+
+  await app.ready()
+  return app
+}
+
+async function buildAppForRole(
+  session: FakeSession,
+  accessResult: DeckAccessResult | null,
+): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false })
+  await app.register(cookie, { secret: 'test-secret' })
+  const db = makeMockDb(session, accessResult)
+  registerAuthPlugin(app, { bypass: false, db })
+
+  app.get<{ Params: { id: string } }>(
+    '/decks/:id/test-role',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (req) => ({ role: req.deckAccess?.role ?? null }),
   )
 
   await app.ready()
@@ -94,18 +121,19 @@ async function buildApp(
 // authPreHandler tests
 // ---------------------------------------------------------------------------
 
-describe('authPreHandler', () => {
+describe('authPreHandler (cookie-based)', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('sets request.user when Bearer token is valid', async () => {
-    const user: JwtPayload = { sub: 'user-abc', email: 'alice@example.com' }
-    const db = makeMockDb({ role: 'editor', reason: 'direct' })
-    const app = await buildApp(makeVerifier(user), false, db)
+  it('populates request.user when the session cookie resolves', async () => {
+    const app = await buildApp(
+      { userSub: 'user-abc', userEmail: 'alice@example.com', userName: 'Alice' },
+      false,
+    )
 
     const res = await app.inject({
       method: 'GET',
       url: '/test-auth',
-      headers: { authorization: 'Bearer valid' },
+      cookies: { [SESSION_COOKIE_NAME]: 'any-opaque-id' },
     })
 
     expect(res.statusCode).toBe(200)
@@ -113,48 +141,31 @@ describe('authPreHandler', () => {
     expect(body.sub).toBe('user-abc')
   })
 
-  it('returns 401 when Authorization header is missing', async () => {
-    const db = makeMockDb(null)
-    const app = await buildApp(makeVerifier('throw'), false, db)
+  it('returns 401 when the session cookie is missing', async () => {
+    const app = await buildApp(null, false)
 
     const res = await app.inject({ method: 'GET', url: '/test-auth' })
     expect(res.statusCode).toBe(401)
   })
 
-  it('returns 401 when Bearer token is invalid', async () => {
-    const db = makeMockDb(null)
-    const app = await buildApp(makeVerifier('throw'), false, db)
+  it('returns 401 when the cookie is present but no matching session row exists', async () => {
+    const app = await buildApp(null, false)
 
     const res = await app.inject({
       method: 'GET',
       url: '/test-auth',
-      headers: { authorization: 'Bearer bad-token' },
+      cookies: { [SESSION_COOKIE_NAME]: 'stale-cookie' },
     })
     expect(res.statusCode).toBe(401)
   })
 
-  it('returns 401 when header uses wrong scheme', async () => {
-    const db = makeMockDb(null)
-    const app = await buildApp(makeVerifier('throw'), false, db)
-
-    const res = await app.inject({
-      method: 'GET',
-      url: '/test-auth',
-      headers: { authorization: 'Basic dXNlcjpwYXNz' },
-    })
-    expect(res.statusCode).toBe(401)
-  })
-
-  it('synthesizes dev-user in bypass mode without calling verifier', async () => {
-    const verifier = makeVerifier('throw')
-    const db = makeMockDb({ role: 'owner', reason: 'direct' })
-    const app = await buildApp(verifier, true, db)
+  it('synthesises dev-user in bypass mode without touching the DB', async () => {
+    const app = await buildApp(null, true)
 
     const res = await app.inject({ method: 'GET', url: '/test-auth' })
     expect(res.statusCode).toBe(200)
     const body = JSON.parse(res.body) as { sub: string }
     expect(body.sub).toBe('dev-user')
-    expect(verifier.verify).not.toHaveBeenCalled()
   })
 })
 
@@ -162,18 +173,19 @@ describe('authPreHandler', () => {
 // requireDeckRole tests
 // ---------------------------------------------------------------------------
 
-describe('requireDeckRole', () => {
+describe('requireDeckRole (cookie-based)', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('allows access when user has required role', async () => {
-    const user: JwtPayload = { sub: 'user-1' }
-    const db = makeMockDb({ role: 'editor', reason: 'direct' })
-    const app = await buildApp(makeVerifier(user), false, db)
+  it('allows access when the user has the required role', async () => {
+    const app = await buildAppForRole(
+      { userSub: 'user-1', userEmail: 'a@b.c', userName: null },
+      { role: 'editor', reason: 'direct' },
+    )
 
     const res = await app.inject({
       method: 'GET',
       url: '/decks/deck-1/test-role',
-      headers: { authorization: 'Bearer valid' },
+      cookies: { [SESSION_COOKIE_NAME]: 'any' },
     })
 
     expect(res.statusCode).toBe(200)
@@ -181,55 +193,56 @@ describe('requireDeckRole', () => {
     expect(body.role).toBe('editor')
   })
 
-  it('allows access when user has higher role than required', async () => {
-    const user: JwtPayload = { sub: 'user-1' }
-    const db = makeMockDb({ role: 'owner', reason: 'direct' })
-    const app = await buildApp(makeVerifier(user), false, db)
+  it('allows access when the user has a higher role than required', async () => {
+    const app = await buildAppForRole(
+      { userSub: 'user-1', userEmail: 'a@b.c', userName: null },
+      { role: 'owner', reason: 'direct' },
+    )
 
     const res = await app.inject({
       method: 'GET',
       url: '/decks/deck-1/test-role',
-      headers: { authorization: 'Bearer valid' },
+      cookies: { [SESSION_COOKIE_NAME]: 'any' },
     })
 
     expect(res.statusCode).toBe(200)
   })
 
-  it('returns 403 when user has insufficient role (viewer < editor)', async () => {
-    const user: JwtPayload = { sub: 'user-1' }
-    const db = makeMockDb({ role: 'viewer', reason: 'direct' })
-    // Override mock: role is viewer so roleAtLeast('viewer', 'editor') = false
-    // But our mock db returns 'viewer' from permissions query — need a custom mock
-    // that actually calls roleAtLeast logic in the real resolveDeckAccess path.
-    // For this test, mock db returns a viewer row.
-    const app = await buildApp(makeVerifier(user), false, db)
+  it('returns 403 when role is insufficient (viewer < editor)', async () => {
+    const app = await buildAppForRole(
+      { userSub: 'user-1', userEmail: 'a@b.c', userName: null },
+      { role: 'viewer', reason: 'direct' },
+    )
 
     const res = await app.inject({
       method: 'GET',
       url: '/decks/deck-1/test-role',
-      headers: { authorization: 'Bearer valid' },
+      cookies: { [SESSION_COOKIE_NAME]: 'any' },
     })
 
     expect(res.statusCode).toBe(403)
   })
 
-  it('returns 403 when resolveDeckAccess returns null (no access)', async () => {
-    const user: JwtPayload = { sub: 'user-no-access' }
-    const db = makeMockDb(null)
-    const app = await buildApp(makeVerifier(user), false, db)
+  it('returns 403 when resolveDeckAccess returns null', async () => {
+    const app = await buildAppForRole(
+      { userSub: 'user-no-access', userEmail: 'a@b.c', userName: null },
+      null,
+    )
 
     const res = await app.inject({
       method: 'GET',
       url: '/decks/deck-1/test-role',
-      headers: { authorization: 'Bearer valid' },
+      cookies: { [SESSION_COOKIE_NAME]: 'any' },
     })
 
     expect(res.statusCode).toBe(403)
   })
 
-  it('returns 401 when no token provided (authPreHandler blocks before requireDeckRole)', async () => {
-    const db = makeMockDb(null)
-    const app = await buildApp(makeVerifier('throw'), false, db)
+  it('returns 401 when no cookie is sent (authPreHandler blocks before requireDeckRole)', async () => {
+    const app = await buildAppForRole(
+      { userSub: 'user-1', userEmail: 'a@b.c', userName: null },
+      { role: 'editor', reason: 'direct' },
+    )
 
     const res = await app.inject({
       method: 'GET',

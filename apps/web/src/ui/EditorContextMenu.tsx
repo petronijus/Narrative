@@ -69,7 +69,6 @@ import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useAuth } from '../state/AuthContext.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
 import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
@@ -120,7 +119,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const { folderId } = useDeckRole()
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
-  const { token } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -362,7 +360,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
             activeSlideId,
             targetIds: targets.map((t) => t.id),
             name,
-            token,
           })
 
           selectOne(instanceId)
@@ -381,7 +378,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         }
       })()
     },
-    [api, folderId, mutationCtx, deckCtx, activeSlideId, selectOne, token],
+    [api, folderId, mutationCtx, deckCtx, activeSlideId, selectOne],
   )
 
   const handlePromoteToComponent = useCallback((): void => {
