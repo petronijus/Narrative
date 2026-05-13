@@ -131,6 +131,27 @@ export async function lookupSession(db: Database, rawId: string): Promise<Sessio
   return rows[0] ?? null
 }
 
+/**
+ * Parse a single cookie value out of a raw `Cookie:` header. Returns
+ * undefined if absent. Used by code paths that don't have Fastify's
+ * cookie parser available (tus's raw IncomingMessage hooks, the WS
+ * upgrade payload, etc).
+ */
+export function readCookieFromHeader(
+  header: string | string[] | undefined,
+  name: string,
+): string | undefined {
+  if (!header) return undefined
+  const raw = Array.isArray(header) ? header.join('; ') : header
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq === -1) continue
+    if (part.slice(0, eq).trim() !== name) continue
+    return decodeURIComponent(part.slice(eq + 1).trim())
+  }
+  return undefined
+}
+
 /** Mark a session revoked (logout). Idempotent. */
 export async function revokeSession(db: Database, rawId: string): Promise<void> {
   if (!rawId) return

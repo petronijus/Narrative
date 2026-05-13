@@ -31,6 +31,7 @@ import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
 import { decks, deckPermissions, folders } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
+import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
@@ -171,27 +172,19 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     const query = request.query as Record<string, string>
     const shareToken = query['share_token'] ?? null
 
-    // Try JWT auth first (optional on this route).
+    // Auth is optional on this route — falls through to the share-token
+    // check below if no session cookie. authPreHandler isn't listed in
+    // preHandler because we want the share-token path to work for
+    // unauthenticated viewers.
     let userId: string | null = null
-    const authHeader = request.headers['authorization']
-    if (authHeader?.startsWith('Bearer ')) {
-      const opts = (
-        app as FastifyInstance & {
-          _authOpts?: {
-            verifier?: { verify: (t: string) => Promise<{ sub: string }> } | null
-            bypass?: boolean
-          }
-        }
-      )._authOpts
-      if (opts?.bypass) {
-        userId = 'dev-user'
-      } else if (opts?.verifier) {
-        try {
-          const payload = await opts.verifier.verify(authHeader.slice(7))
-          userId = payload.sub
-        } catch {
-          // Invalid token — fall through to share_token check
-        }
+    const opts = (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts
+    if (opts?.bypass) {
+      userId = 'dev-user'
+    } else {
+      const rawSessionId = request.cookies?.[SESSION_COOKIE_NAME]
+      if (rawSessionId) {
+        const session = await lookupSession(db, rawSessionId)
+        if (session) userId = session.userSub
       }
     }
 

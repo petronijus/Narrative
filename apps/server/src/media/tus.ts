@@ -46,7 +46,7 @@ import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { parseFontMetadata } from './fontMetadata.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
-import type { createJwtVerifier } from '../auth/jwt.js'
+import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 
 // probe-image-size is CommonJS — import via createRequire so ESM build works
 const require = createRequire(import.meta.url)
@@ -253,31 +253,25 @@ async function probeImageDimensions(
 
 type AppWithAuthOpts = FastifyInstance & {
   _authOpts?: {
-    verifier?: ReturnType<typeof createJwtVerifier> | null
     bypass?: boolean
   }
 }
 
 async function resolveUserIdFromReq(
   req: IncomingMessage,
+  db: Database,
   app: AppWithAuthOpts,
 ): Promise<string | null> {
   const bypassAuth = app._authOpts?.bypass === true
   if (bypassAuth) return 'dev-user'
 
-  const authHeader = req.headers['authorization']
-  const authStr = Array.isArray(authHeader) ? authHeader[0] : authHeader
-  if (!authStr?.startsWith('Bearer ')) return null
-
-  const token = authStr.slice(7)
-  try {
-    const verifier = app._authOpts?.verifier
-    if (!verifier) return null
-    const payload = await verifier.verify(token)
-    return payload.sub
-  } catch {
-    return null
-  }
+  // tus hooks receive the raw IncomingMessage, so Fastify's cookie parser
+  // isn't on it. Pull the narrative_session cookie out of the Cookie header
+  // manually and resolve it the same way authPreHandler does.
+  const rawId = readCookieFromHeader(req.headers['cookie'], SESSION_COOKIE_NAME)
+  if (!rawId) return null
+  const session = await lookupSession(db, rawId)
+  return session?.userSub ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +345,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       upload: Upload,
     ): Promise<{ res: ServerResponse; metadata?: Upload['metadata'] }> => {
       // 1. Auth
-      const userId = await resolveUserIdFromReq(req, appWithAuth)
+      const userId = await resolveUserIdFromReq(req, db, appWithAuth)
       if (!userId) {
         throw { status_code: 401, body: 'Unauthorized' }
       }
@@ -442,7 +436,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // Only enforce on PATCH (data chunks) and DELETE (termination)
       if (method !== 'PATCH' && method !== 'DELETE') return
 
-      const userId = await resolveUserIdFromReq(req, appWithAuth)
+      const userId = await resolveUserIdFromReq(req, db, appWithAuth)
       if (!userId) {
         throw { status_code: 401, body: 'Unauthorized' }
       }
@@ -476,7 +470,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       const storageKey = upload.id
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
-      const userId = (await resolveUserIdFromReq(req, appWithAuth)) ?? 'unknown'
+      const userId = (await resolveUserIdFromReq(req, db, appWithAuth)) ?? 'unknown'
 
       // Parse metadata for filename + mime
       const meta = parseMetadata(req.headers['upload-metadata'])

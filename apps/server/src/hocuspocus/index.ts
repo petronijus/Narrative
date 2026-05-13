@@ -31,30 +31,13 @@ import {
   resolveFolderAccess,
   resolveComponentAccess,
 } from '../auth/permissions.js'
-import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
+import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { setHocuspocusInstance } from './presence.js'
 
 export interface HocuspocusServerOptions {
   port: number
   db: Database
   bypass?: boolean
-}
-
-/**
- * Parse a single cookie value out of a raw `Cookie:` header. Returns
- * undefined if the cookie isn't present. Tolerates leading/trailing
- * whitespace and re-uses the standard split-by-"; " convention.
- */
-function readCookie(rawHeader: string | undefined, name: string): string | undefined {
-  if (!rawHeader) return undefined
-  for (const part of rawHeader.split(';')) {
-    const eq = part.indexOf('=')
-    if (eq === -1) continue
-    const k = part.slice(0, eq).trim()
-    if (k !== name) continue
-    return decodeURIComponent(part.slice(eq + 1).trim())
-  }
-  return undefined
 }
 
 export function createHocuspocusServer(opts: HocuspocusServerOptions) {
@@ -103,11 +86,7 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
         // Authenticated path: read the narrative_session cookie from the WS
         // upgrade request. Browsers send same-origin cookies on WebSocket
         // upgrades automatically — no token argument needed from the client.
-        const rawCookieHeader = requestHeaders['cookie']
-        const rawId = readCookie(
-          Array.isArray(rawCookieHeader) ? rawCookieHeader.join('; ') : rawCookieHeader,
-          SESSION_COOKIE_NAME,
-        )
+        const rawId = readCookieFromHeader(requestHeaders['cookie'], SESSION_COOKIE_NAME)
         if (!rawId) throw new Error('Invalid credentials')
         const session = await lookupSession(db, rawId)
         if (!session) throw new Error('Invalid credentials')
