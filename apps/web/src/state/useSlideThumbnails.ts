@@ -152,10 +152,23 @@ const DEBOUNCE_MS = 500
  * @param slideIds Ordered list of slide IDs to track.
  * @returns Map<string, string> — entries for slides that have been rendered at least once.
  */
-export function useSlideThumbnails(slideIds: string[]): Map<string, string> {
+export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string> {
   const deckCtx = useDeckCtx()
   const allSlides = useSlides()
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map())
+
+  // Stabilise the caller-provided slideIds against identity churn. Call
+  // sites build this array with `slides.map(s => s.id)` inline, producing
+  // a fresh reference every parent render. That ref change cascaded into
+  // the deps of the effects below, retriggering `scheduleRender(id)` for
+  // every tracked slide ~16 Hz while idle — each render bottoms out in
+  // `gl.readPixels` (extract.base64) and the nvidia driver flags it as
+  // "GPU stall due to ReadPixels", visible as steady GPU usage on an
+  // otherwise idle deck. useMemo over a string key gives us a stable
+  // array reference whenever the *content* is unchanged.
+  const slideIdsKey = slideIdsInput.join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: depend on content key, not array identity.
+  const slideIds = useMemo(() => slideIdsInput, [slideIdsKey])
 
   // Stable ref to the renderer instance (async init, may be null briefly).
   const rendererRef = useRef<ThumbnailRenderer | null>(null)
