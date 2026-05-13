@@ -24,6 +24,10 @@ export interface JwtPayload {
   /** Stable per-user identifier from the IdP ('sub' claim). */
   sub: string
   email?: string | undefined
+  /** Google's `email_verified` claim. Required when matching the allowlist
+   *  by domain — without it a misconfigured IdP could mint a token for
+   *  `evil@yourdomain.com` without the user controlling that mailbox. */
+  emailVerified?: boolean | undefined
   name?: string | undefined
   groups?: string[] | undefined
 }
@@ -35,25 +39,21 @@ export interface JwtVerifier {
 /**
  * Creates a JWT verifier backed by a remote JWKS endpoint.
  *
- * @param opts.issuer          Expected 'iss' claim. For Google: `https://accounts.google.com`.
- * @param opts.jwksUrl         JWKS endpoint URL. For Google: `https://www.googleapis.com/oauth2/v3/certs`.
- * @param opts.audience        Expected 'aud' claim. For Google: the OAuth client_id ending in `.apps.googleusercontent.com`.
- * @param opts.allowedEmails   Optional exact-match email allowlist.
- * @param opts.allowedDomain   Optional email-domain allowlist (e.g. `example.com`).
- *                             At least one of allowedEmails / allowedDomain SHOULD be set when using Google.
+ * Only validates signature + iss + aud + sub presence. Authorization
+ * (allowlist / invite / existing-permission) is the caller's
+ * responsibility — see `isAllowedByEnv` + the DB-based fallback in
+ * `routes/auth.ts`.
+ *
+ * @param opts.issuer    Expected 'iss' claim. For Google: `https://accounts.google.com`.
+ * @param opts.jwksUrl   JWKS endpoint URL. For Google: `https://www.googleapis.com/oauth2/v3/certs`.
+ * @param opts.audience  Expected 'aud' claim. For Google: the OAuth client_id ending in `.apps.googleusercontent.com`.
  */
 export function createJwtVerifier(opts: {
   issuer: string
   jwksUrl: string
   audience: string
-  allowedEmails?: string[]
-  allowedDomain?: string
 }): JwtVerifier {
   const { issuer, jwksUrl, audience } = opts
-  const allowedEmails = (opts.allowedEmails ?? [])
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
-  const allowedDomain = opts.allowedDomain?.trim().toLowerCase()
 
   // jose handles caching + JWKS refresh internally.
   // cacheMaxAge default = 600_000ms (10min), cooldownDuration default = 30_000ms (30s).
@@ -87,23 +87,11 @@ export function createJwtVerifier(opts: {
       const email =
         typeof payload['email'] === 'string' ? payload['email'].toLowerCase() : undefined
 
-      // Allowlist enforcement — only when configured.
-      if (allowedEmails.length > 0 || allowedDomain) {
-        if (!email) throw new Error('Invalid credentials')
-        // Domain allowlists are vulnerable to unverified-email impersonation:
-        // a misconfigured IdP could mint a token for `evil@yourdomain.com`
-        // without the user actually controlling that mailbox. Exact-email
-        // allowlists do not have this problem (the email is the identity).
-        if (allowedDomain && payload['email_verified'] !== true) {
-          throw new Error('Invalid credentials')
-        }
-        const emailOk = allowedEmails.includes(email)
-        const domainOk = allowedDomain ? email.endsWith(`@${allowedDomain}`) : false
-        if (!emailOk && !domainOk) throw new Error('Invalid credentials')
-      }
-
       const result: JwtPayload = { sub: payload['sub'] }
       if (email) result.email = email
+      if (typeof payload['email_verified'] === 'boolean') {
+        result.emailVerified = payload['email_verified']
+      }
       if (typeof payload['name'] === 'string') result.name = payload['name']
       if (Array.isArray(payload['groups'])) {
         result.groups = (payload['groups'] as unknown[]).filter(
@@ -113,4 +101,34 @@ export function createJwtVerifier(opts: {
       return result
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// Allowlist (env-based) — first gate. The /auth/callback handler combines
+// this with a DB-based fallback (pending invite or existing permission)
+// before rejecting a sign-in. See `routes/auth.ts`.
+// ---------------------------------------------------------------------------
+
+export interface AllowlistConfig {
+  allowedEmails: string[]
+  allowedDomain?: string | undefined
+}
+
+/**
+ * Returns true when the JWT's email satisfies the env-configured allowlist:
+ *   - exact match in `allowedEmails`, or
+ *   - ends with `@${allowedDomain}` AND `email_verified` is true.
+ *
+ * When neither `allowedEmails` nor `allowedDomain` is configured, returns
+ * true unconditionally (open-deployment mode — only sensible in dev).
+ */
+export function isAllowedByEnv(payload: JwtPayload, config: AllowlistConfig): boolean {
+  const emails = config.allowedEmails.map((e) => e.trim().toLowerCase()).filter(Boolean)
+  const domain = config.allowedDomain?.trim().toLowerCase() || undefined
+  if (emails.length === 0 && !domain) return true
+  const email = payload.email?.toLowerCase()
+  if (!email) return false
+  if (emails.includes(email)) return true
+  if (domain && payload.emailVerified === true && email.endsWith(`@${domain}`)) return true
+  return false
 }

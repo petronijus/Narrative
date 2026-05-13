@@ -35,8 +35,11 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
+import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import type { JwtVerifier } from '../auth/jwt.js'
+import type { AllowlistConfig, JwtVerifier } from '../auth/jwt.js'
+import { isAllowedByEnv } from '../auth/jwt.js'
+import { deckInvites, deckPermissions, users } from '../db/schema.js'
 import {
   createSession,
   lookupSession,
@@ -64,13 +67,16 @@ const OAUTH_STATE_MAX_AGE_S = 10 * 60 // 10 minutes
 
 export interface AuthRoutesOpts {
   db: Database
-  /** Verifies Google id_tokens. Reused — same instance as authPreHandler. */
+  /** Verifies Google id_tokens (signature + iss + aud + sub only). */
   verifier: JwtVerifier | null
   /** Public origin the browser sees (`https://narrative.example.com` or `http://localhost:5173`). Used for post-login redirect. */
   spaOrigin: string
   /** Where the server is reachable from Google for the redirect URI registered in GCP. */
   redirectUri: string
   isProd: boolean
+  /** Env-configured allowlist. The DB-based implicit allowlist (pending
+   *  invite or existing permission) extends this — see `isAllowedToSignIn`. */
+  allowlist: AllowlistConfig
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +158,7 @@ function clearSessionCookie(reply: FastifyReply, isProd: boolean): void {
 // ---------------------------------------------------------------------------
 
 export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): void {
-  const { db, verifier, spaOrigin, redirectUri, isProd } = opts
+  const { db, verifier, spaOrigin, redirectUri, isProd, allowlist } = opts
   const clientId = process.env['OIDC_CLIENT_ID']
   const clientSecret = process.env['OIDC_CLIENT_SECRET']
 
@@ -287,7 +293,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       return
     }
 
-    // Verify id_token signature + claims + allowlist
+    // Verify id_token signature + claims (NOT allowlist — that's separate).
     let userPayload
     try {
       userPayload = await verifier.verify(tokenJson.id_token)
@@ -299,6 +305,21 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
     if (!userPayload.email) {
       // We require an email to populate the session row + the SPA's user chip
       await redirectWithError(reply, spaOrigin, 'no_email_claim')
+      return
+    }
+
+    // Authorization — env-configured allowlist OR DB-based implicit
+    // allowlist (pending invite or existing deck permission). This is the
+    // gate that lets an `bela@example.com` log in when she was
+    // invited to a deck, even though she's not in OIDC_ALLOWED_EMAILS.
+    const envOk = isAllowedByEnv(userPayload, allowlist)
+    const dbOk = envOk ? false : await isAllowedByDb(db, userPayload.email)
+    if (!envOk && !dbOk) {
+      request.log.info(
+        { email: userPayload.email },
+        '[auth] sign-in denied — not on env allowlist and no invite/permission',
+      )
+      await redirectWithError(reply, spaOrigin, 'not_allowed')
       return
     }
 
@@ -379,4 +400,45 @@ async function redirectWithError(
   const url = new URL('/auth/error', spaOrigin)
   url.searchParams.set('reason', code)
   await reply.redirect(url.toString(), 302)
+}
+
+// ---------------------------------------------------------------------------
+// Implicit DB-based allowlist
+//
+// An email is implicitly allowed to sign in if either:
+//   (a) it has a non-expired, non-accepted invite in `deck_invites`, or
+//   (b) it has an existing `deck_permissions` row (via `users.email` join).
+//
+// Case (a) is the new-collaborator flow — owner sends invite, invitee
+// signs in, /auth/callback consumes the invite into a permission.
+// Case (b) is the returning-collaborator flow — already accepted, has
+// ongoing access. Without this they'd be locked out the first time their
+// session cookie expired if they aren't on the env allowlist.
+// ---------------------------------------------------------------------------
+
+async function isAllowedByDb(db: Database, email: string): Promise<boolean> {
+  const lower = email.toLowerCase()
+
+  const [pending] = await db
+    .select({ id: deckInvites.id })
+    .from(deckInvites)
+    .where(
+      and(
+        sql`LOWER(${deckInvites.email}) = ${lower}`,
+        isNull(deckInvites.acceptedAt),
+        gt(deckInvites.expiresAt, new Date()),
+      ),
+    )
+    .limit(1)
+  if (pending) return true
+
+  const [perm] = await db
+    .select({ deckId: deckPermissions.deckId })
+    .from(deckPermissions)
+    .innerJoin(users, eq(users.sub, deckPermissions.userId))
+    .where(sql`LOWER(${users.email}) = ${lower}`)
+    .limit(1)
+  if (perm) return true
+
+  return false
 }

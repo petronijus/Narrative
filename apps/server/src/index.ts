@@ -66,9 +66,11 @@ const verifier = bypassAuth
       issuer: process.env['OIDC_ISSUER']!,
       jwksUrl: process.env['OIDC_JWKS_URL']!,
       audience: process.env['OIDC_CLIENT_ID']!,
-      allowedEmails,
-      ...(allowedDomain ? { allowedDomain } : {}),
     })
+
+// Allowlist config — applied in /auth/callback alongside the DB-based
+// implicit-allowlist check (pending invite or existing permission).
+const allowlistConfig = { allowedEmails, allowedDomain }
 
 if (!bypassAuth && allowedEmails.length === 0 && !allowedDomain) {
   console.warn(
@@ -210,6 +212,7 @@ await registerSharingRoutes(app, db)
     spaOrigin,
     redirectUri,
     isProd: !isDev,
+    allowlist: allowlistConfig,
   })
 }
 
