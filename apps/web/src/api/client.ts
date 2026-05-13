@@ -39,8 +39,15 @@ export interface ApiClient {
    */
   uploadDeckThumbnail(id: string, dataUrl: string): Promise<DeckSummary>
   listPermissions(deckId: string): Promise<DeckPermission[]>
-  grantPermission(deckId: string, body: GrantPermissionBody): Promise<void>
+  /** Invite by email. If the email belongs to a known user → instant grant.
+   *  Otherwise → pending invite (the invitee gets a real permission row
+   *  the next time they log in with this email). */
+  inviteByEmail(deckId: string, body: InviteByEmailBody): Promise<InviteByEmailResult>
   revokePermission(deckId: string, userId: string): Promise<void>
+  /** List pending email invites for a deck (owner only). */
+  listInvites(deckId: string): Promise<DeckInvite[]>
+  /** Cancel a pending email invite. Idempotent. */
+  revokeInvite(deckId: string, inviteId: string): Promise<void>
   listShareLinks(deckId: string): Promise<ShareLink[]>
   createShareLink(deckId: string, body: CreateShareLinkBody): Promise<ShareLinkCreated>
   revokeShareLink(deckId: string, linkId: string): Promise<void>
@@ -182,10 +189,19 @@ export interface FolderSummary {
   createdAt: string
 }
 
-/** Snapshot of users actively editing a single deck (excludes caller). */
+/** A user actively editing a deck. `email`/`name` are best-effort display
+ *  fields (null when the directory hasn't seen this sub yet, e.g. share-link
+ *  viewers — though those are excluded server-side). */
+export interface ActiveEditorUser {
+  userId: string
+  email: string | null
+  name: string | null
+}
+
+/** Snapshot of users actively editing a single deck. */
 export interface ActiveEditorsEntry {
   deckId: string
-  userIds: string[]
+  users: ActiveEditorUser[]
 }
 
 // ---------------------------------------------------------------------------
@@ -256,12 +272,47 @@ export interface DeckPermission {
   userId: string
   role: 'owner' | 'editor' | 'viewer'
   grantedAt: string
+  /** Resolved via the `users` directory on the server. Null only on legacy
+   *  rows where the user hasn't logged in since the 0.7.0 migration. */
+  email: string | null
+  name: string | null
 }
 
-export interface GrantPermissionBody {
-  userId: string
+/** A pending invite by email — the invitee hasn't logged into Narrative yet. */
+export interface DeckInvite {
+  id: string
+  email: string
+  role: 'owner' | 'editor' | 'viewer'
+  invitedAt: string
+  expiresAt: string
+}
+
+export interface InviteByEmailBody {
+  email: string
   role: 'owner' | 'editor' | 'viewer'
 }
+
+/** Server response on POST /decks/:id/permissions. */
+export type InviteByEmailResult =
+  | {
+      kind: 'granted'
+      user: {
+        userId: string
+        email: string
+        name: string | null
+        role: 'owner' | 'editor' | 'viewer'
+      }
+    }
+  | {
+      kind: 'pending'
+      invite: {
+        id: string
+        email: string
+        role: 'owner' | 'editor' | 'viewer'
+        expiresAt: string
+        replaced: boolean
+      }
+    }
 
 export interface ShareLink {
   id: string
@@ -358,17 +409,33 @@ export function createApiClient(): ApiClient {
 
     listPermissions: (deckId) => requestJson<DeckPermission[]>(`/decks/${deckId}/permissions`),
 
-    grantPermission: async (deckId, body) => {
+    inviteByEmail: async (deckId, body) => {
       const res = await request(`/decks/${deckId}/permissions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        let detail: unknown
+        try {
+          detail = await res.json()
+        } catch {
+          /* ignore */
+        }
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body: detail })
+      }
+      return (await res.json()) as InviteByEmailResult
     },
 
     revokePermission: async (deckId, userId) => {
       const res = await request(`/decks/${deckId}/permissions/${userId}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    listInvites: (deckId) => requestJson<DeckInvite[]>(`/decks/${deckId}/invites`),
+
+    revokeInvite: async (deckId, inviteId) => {
+      const res = await request(`/decks/${deckId}/invites/${inviteId}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
     },
 

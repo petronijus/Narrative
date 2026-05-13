@@ -51,9 +51,25 @@ vi.mock('../auth/shareLinks.js', async (importOriginal) => {
   }
 })
 
+vi.mock('../auth/users.js', () => ({
+  getUserByEmail: vi.fn(),
+  listUsersBySubs: vi.fn(),
+  upsertUser: vi.fn(),
+  getUserBySub: vi.fn(),
+}))
+
+vi.mock('../auth/invites.js', () => ({
+  createInvite: vi.fn(),
+  listPendingInvitesForDeck: vi.fn(),
+  revokeInvite: vi.fn(),
+  consumePendingInvitesForEmail: vi.fn(),
+}))
+
 // Import after mocking to get mock fn references
 const permissions = await import('../auth/permissions.js')
 const shareLinksModule = await import('../auth/shareLinks.js')
+const usersModule = await import('../auth/users.js')
+const invitesModule = await import('../auth/invites.js')
 const { registerSharingRoutes } = await import('./sharing.js')
 
 const mockResolveDeckAccess = permissions.resolveDeckAccess as ReturnType<typeof vi.fn>
@@ -63,6 +79,11 @@ const mockRevokePermission = permissions.revokePermission as ReturnType<typeof v
 const mockListShareLinks = shareLinksModule.listShareLinks as ReturnType<typeof vi.fn>
 const mockCreateShareLink = shareLinksModule.createShareLink as ReturnType<typeof vi.fn>
 const mockRevokeShareLink = shareLinksModule.revokeShareLink as ReturnType<typeof vi.fn>
+const mockGetUserByEmail = usersModule.getUserByEmail as ReturnType<typeof vi.fn>
+const mockListUsersBySubs = usersModule.listUsersBySubs as ReturnType<typeof vi.fn>
+const mockCreateInvite = invitesModule.createInvite as ReturnType<typeof vi.fn>
+const mockListPendingInvites = invitesModule.listPendingInvitesForDeck as ReturnType<typeof vi.fn>
+const mockRevokeInvite = invitesModule.revokeInvite as ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // App builder
@@ -88,76 +109,208 @@ async function buildApp(
 // Tests — permissions
 // ---------------------------------------------------------------------------
 
-describe('GET /decks/:id/permissions', () => {
+describe('GET /decks/:id/permissions (enriched with users)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
   })
 
-  it('returns array of permissions', async () => {
+  it('enriches each permission row with email + name from users directory', async () => {
     const now = new Date()
     mockListPermissions.mockResolvedValue([
-      { userId: 'dev-user', role: 'owner', grantedAt: now, grantedBy: null },
-      { userId: 'alice', role: 'editor', grantedAt: now, grantedBy: 'dev-user' },
+      { userId: 'sub-dev', role: 'owner', grantedAt: now, grantedBy: null },
+      { userId: 'sub-alice', role: 'editor', grantedAt: now, grantedBy: 'sub-dev' },
     ])
-    const app = await buildApp()
+    mockListUsersBySubs.mockResolvedValue([
+      {
+        sub: 'sub-alice',
+        email: 'alice@example.com',
+        name: 'Alice',
+        pictureUrl: null,
+        firstSeenAt: now,
+        lastSeenAt: now,
+      },
+    ])
 
+    const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/decks/deck-1/permissions' })
+
     expect(res.statusCode).toBe(200)
-    const body = JSON.parse(res.body) as unknown[]
-    expect(Array.isArray(body)).toBe(true)
+    const body = JSON.parse(res.body) as Array<{
+      userId: string
+      email: string | null
+      name: string | null
+    }>
     expect(body).toHaveLength(2)
+    const alice = body.find((r) => r.userId === 'sub-alice')!
+    expect(alice.email).toBe('alice@example.com')
+    expect(alice.name).toBe('Alice')
+    // dev-user has no directory row — should still appear, with null fields
+    const dev = body.find((r) => r.userId === 'sub-dev')!
+    expect(dev.email).toBeNull()
+    expect(dev.name).toBeNull()
   })
 })
 
-describe('POST /decks/:id/permissions', () => {
+describe('POST /decks/:id/permissions (invite by email)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
     mockGrantPermission.mockResolvedValue(undefined)
   })
 
-  it('grants permission and returns 204', async () => {
+  it('grants directly with kind=granted when the email already has a user row', async () => {
+    const now = new Date()
+    mockGetUserByEmail.mockResolvedValue({
+      sub: 'sub-bob',
+      email: 'bob@example.com',
+      name: 'Bob',
+      pictureUrl: null,
+      firstSeenAt: now,
+      lastSeenAt: now,
+    })
     const app = await buildApp()
 
     const res = await app.inject({
       method: 'POST',
       url: '/decks/deck-1/permissions',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ userId: 'bob', role: 'editor' }),
+      body: JSON.stringify({ email: 'bob@example.com', role: 'editor' }),
     })
 
-    expect(res.statusCode).toBe(204)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body) as { kind: string; user: { userId: string; role: string } }
+    expect(body.kind).toBe('granted')
+    expect(body.user.userId).toBe('sub-bob')
+    expect(body.user.role).toBe('editor')
+
     expect(mockGrantPermission).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: 'bob', role: 'editor', grantedBy: 'dev-user' }),
+      expect.objectContaining({ userId: 'sub-bob', role: 'editor', grantedBy: 'dev-user' }),
     )
+    expect(mockCreateInvite).not.toHaveBeenCalled()
   })
 
-  it('returns 400 on missing userId', async () => {
+  it('creates a pending invite with kind=pending when the email is unknown', async () => {
+    mockGetUserByEmail.mockResolvedValue(null)
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    mockCreateInvite.mockResolvedValue({ id: 'inv-xyz', expiresAt, replaced: false })
     const app = await buildApp()
 
+    const res = await app.inject({
+      method: 'POST',
+      url: '/decks/deck-1/permissions',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'newcomer@example.com', role: 'viewer' }),
+    })
+
+    expect(res.statusCode).toBe(201)
+    const body = JSON.parse(res.body) as {
+      kind: string
+      invite: { id: string; email: string; role: string }
+    }
+    expect(body.kind).toBe('pending')
+    expect(body.invite.email).toBe('newcomer@example.com')
+    expect(body.invite.role).toBe('viewer')
+    expect(body.invite.id).toBe('inv-xyz')
+
+    expect(mockCreateInvite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        deckId: 'deck-1',
+        email: 'newcomer@example.com',
+        role: 'viewer',
+        invitedBySub: 'dev-user',
+      }),
+    )
+    expect(mockGrantPermission).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 on missing email', async () => {
+    const app = await buildApp()
     const res = await app.inject({
       method: 'POST',
       url: '/decks/deck-1/permissions',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ role: 'editor' }),
     })
+    expect(res.statusCode).toBe(400)
+  })
 
+  it('returns 400 on malformed email', async () => {
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/decks/deck-1/permissions',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'not-an-email', role: 'editor' }),
+    })
     expect(res.statusCode).toBe(400)
   })
 
   it('returns 400 on invalid role', async () => {
     const app = await buildApp()
-
     const res = await app.inject({
       method: 'POST',
       url: '/decks/deck-1/permissions',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ userId: 'bob', role: 'superadmin' }),
+      body: JSON.stringify({ email: 'x@y.z', role: 'superadmin' }),
     })
-
     expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('GET /decks/:id/invites', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
+  })
+
+  it('returns pending invites for the deck', async () => {
+    const now = new Date()
+    const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    mockListPendingInvites.mockResolvedValue([
+      {
+        id: 'inv-1',
+        deckId: 'deck-1',
+        email: 'pending@example.com',
+        role: 'editor',
+        invitedBySub: 'dev-user',
+        invitedAt: now,
+        expiresAt: expiry,
+        acceptedAt: null,
+        acceptedBySub: null,
+      },
+    ])
+    const app = await buildApp()
+
+    const res = await app.inject({ method: 'GET', url: '/decks/deck-1/invites' })
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body) as Array<{ id: string; email: string; role: string }>
+    expect(body).toHaveLength(1)
+    expect(body[0]!.email).toBe('pending@example.com')
+    expect(body[0]!.role).toBe('editor')
+  })
+})
+
+describe('DELETE /decks/:id/invites/:inviteId', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockResolveDeckAccess.mockResolvedValue({ role: 'owner', reason: 'direct' })
+    mockRevokeInvite.mockResolvedValue(undefined)
+  })
+
+  it('cancels a pending invite and returns 204', async () => {
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/decks/deck-1/invites/inv-1',
+    })
+    expect(res.statusCode).toBe(204)
+    expect(mockRevokeInvite).toHaveBeenCalledWith(expect.anything(), {
+      deckId: 'deck-1',
+      inviteId: 'inv-1',
+    })
   })
 })
 

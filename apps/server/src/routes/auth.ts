@@ -44,6 +44,8 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_LIFETIME_MS,
 } from '../auth/session.js'
+import { upsertUser } from '../auth/users.js'
+import { consumePendingInvitesForEmail } from '../auth/invites.js'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -298,6 +300,25 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       // We require an email to populate the session row + the SPA's user chip
       await redirectWithError(reply, spaOrigin, 'no_email_claim')
       return
+    }
+
+    // Directory upsert — must run BEFORE invite consumption (the invitee's
+    // permissions row references their sub, which is established here).
+    await upsertUser(db, {
+      sub: userPayload.sub,
+      email: userPayload.email,
+      name: userPayload.name ?? null,
+    })
+
+    // Convert any pending deck invites for this email into real permissions.
+    // Non-fatal — failure here doesn't block login.
+    try {
+      await consumePendingInvitesForEmail(db, {
+        email: userPayload.email,
+        sub: userPayload.sub,
+      })
+    } catch (err) {
+      request.log.warn({ err }, '[auth] invite consumption failed')
     }
 
     // Create session

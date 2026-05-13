@@ -1,22 +1,25 @@
 /**
  * routes/sharing.ts
  *
- * Sharing management endpoints — permissions and share links for a deck.
- *
- * All endpoints require:
- *   1. authPreHandler — valid JWT (or dev bypass)
- *   2. requireDeckRole('owner') — only deck owners can manage sharing
+ * Sharing management endpoints — permissions, pending email invites,
+ * and share links for a deck. All endpoints require owner role.
  *
  * Endpoints:
- *   GET    /decks/:id/permissions         → list users + roles
- *   POST   /decks/:id/permissions         → grant { userId, role }
+ *   GET    /decks/:id/permissions         → list collaborators (enriched email+name)
+ *   POST   /decks/:id/permissions         → invite { email, role }
+ *                                             - if email belongs to a known user,
+ *                                               grants directly (returns 200 {kind:'granted', user})
+ *                                             - otherwise creates a pending invite
+ *                                               (returns 201 {kind:'pending', invite})
  *   DELETE /decks/:id/permissions/:userId → revoke user (409 if last owner)
+ *   GET    /decks/:id/invites             → list pending email invites
+ *   DELETE /decks/:id/invites/:inviteId   → cancel pending invite
  *   GET    /decks/:id/share-links         → list active share links
  *   POST   /decks/:id/share-links         → create share link → { id, url }
  *   DELETE /decks/:id/share-links/:linkId → revoke share link
  *
  * Share link URL format: ${PUBLIC_URL}/deck/<deckId>?share_token=<id>
- * PUBLIC_URL env var must be set in production. Falls back to a relative-style path.
+ * PUBLIC_URL env var must be set in production.
  */
 
 import type { FastifyInstance } from 'fastify'
@@ -29,6 +32,8 @@ import {
   type DeckRole,
 } from '../auth/permissions.js'
 import { createShareLink, revokeShareLink, listShareLinks } from '../auth/shareLinks.js'
+import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
+import { getUserByEmail, listUsersBySubs } from '../auth/users.js'
 import { and, eq } from 'drizzle-orm'
 import { deckPermissions } from '../db/schema.js'
 
@@ -38,13 +43,17 @@ import { deckPermissions } from '../db/schema.js'
 
 const DECK_ROLE_VALUES = ['owner', 'editor', 'viewer'] as const
 
-const grantPermissionSchema = {
+// RFC-5322-lite — good enough for an invite input. Real validation happens
+// when the invitee successfully signs in via Google.
+const EMAIL_PATTERN = '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'
+
+const invitePermissionSchema = {
   body: {
     type: 'object',
-    required: ['userId', 'role'],
+    required: ['email', 'role'],
     additionalProperties: false,
     properties: {
-      userId: { type: 'string', minLength: 1 },
+      email: { type: 'string', minLength: 3, maxLength: 320, pattern: EMAIL_PATTERN },
       role: { type: 'string', enum: DECK_ROLE_VALUES },
     },
   },
@@ -70,7 +79,7 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
   const ownerGuard = [authPreHandler, requireDeckRole('owner')]
 
   // -------------------------------------------------------------------------
-  // GET /decks/:id/permissions
+  // GET /decks/:id/permissions — enriched with email + name
   // -------------------------------------------------------------------------
   app.get<{ Params: { id: string } }>(
     '/decks/:id/permissions',
@@ -78,31 +87,93 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     async (request, reply) => {
       const { id } = request.params
       const permissions = await listPermissions(db, id)
-      return reply.send(permissions)
+
+      // Enrich each row with display fields from `users`. One round-trip via
+      // an IN list — typically <10 collaborators per deck.
+      const subs = permissions.map((p) => p.userId)
+      const usersList = await listUsersBySubs(db, subs)
+      const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
+
+      const enriched = permissions.map((p) => {
+        const u = usersBySub.get(p.userId)
+        return {
+          userId: p.userId,
+          role: p.role,
+          grantedAt: p.grantedAt,
+          grantedBy: p.grantedBy,
+          // Fall back to sub if the directory row is missing (shouldn't
+          // happen post-migration, but defensive).
+          email: u?.email ?? null,
+          name: u?.name ?? null,
+        }
+      })
+
+      return reply.send(enriched)
     },
   )
 
   // -------------------------------------------------------------------------
-  // POST /decks/:id/permissions
+  // POST /decks/:id/permissions — invite by email
+  //
+  // Behavior:
+  //   - email is a registered user → grant immediately, return 200 with
+  //     {kind:'granted', user:{userId,email,name,role}}.
+  //   - email is unknown → create a pending invite, return 201 with
+  //     {kind:'pending', invite:{id,email,role,expiresAt}}.
+  //
+  // Idempotency: re-inviting the same email replaces the existing pending
+  // invite's role (handled inside `createInvite`); inviting an already-
+  // granted user upserts the permission row (handled inside grantPermission
+  // — it does an INSERT with ON CONFLICT DO UPDATE).
   // -------------------------------------------------------------------------
   app.post<{
     Params: { id: string }
-    Body: { userId: string; role: DeckRole }
+    Body: { email: string; role: DeckRole }
   }>(
     '/decks/:id/permissions',
-    { schema: grantPermissionSchema, preHandler: ownerGuard },
+    { schema: invitePermissionSchema, preHandler: ownerGuard },
     async (request, reply) => {
       const { id } = request.params
-      const { userId, role } = request.body
+      const { email, role } = request.body
+      const inviterSub = request.user!.sub
 
-      await grantPermission(db, {
+      const existingUser = await getUserByEmail(db, email)
+
+      if (existingUser) {
+        await grantPermission(db, {
+          deckId: id,
+          userId: existingUser.sub,
+          role,
+          grantedBy: inviterSub,
+        })
+        return reply.status(200).send({
+          kind: 'granted',
+          user: {
+            userId: existingUser.sub,
+            email: existingUser.email,
+            name: existingUser.name,
+            role,
+          },
+        })
+      }
+
+      const invite = await createInvite(db, {
         deckId: id,
-        userId,
+        email,
         role,
-        grantedBy: request.user!.sub,
+        invitedBySub: inviterSub,
       })
 
-      return reply.status(204).send()
+      return reply.status(201).send({
+        kind: 'pending',
+        invite: {
+          id: invite.id,
+          email: email.toLowerCase(),
+          role,
+          expiresAt: invite.expiresAt,
+          replaced: invite.replaced,
+        },
+      })
     },
   )
 
@@ -116,7 +187,6 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
       const { id, userId } = request.params
 
       // Safeguard: refuse to revoke the last owner.
-      // Count remaining owners after hypothetical revoke.
       const owners = await db
         .select({ userId: deckPermissions.userId })
         .from(deckPermissions)
@@ -135,6 +205,40 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
   )
 
   // -------------------------------------------------------------------------
+  // GET /decks/:id/invites — pending email invites
+  // -------------------------------------------------------------------------
+  app.get<{ Params: { id: string } }>(
+    '/decks/:id/invites',
+    { preHandler: ownerGuard },
+    async (request, reply) => {
+      const { id } = request.params
+      const pending = await listPendingInvitesForDeck(db, id)
+      return reply.send(
+        pending.map((p) => ({
+          id: p.id,
+          email: p.email,
+          role: p.role,
+          invitedAt: p.invitedAt,
+          expiresAt: p.expiresAt,
+        })),
+      )
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // DELETE /decks/:id/invites/:inviteId — cancel pending invite
+  // -------------------------------------------------------------------------
+  app.delete<{ Params: { id: string; inviteId: string } }>(
+    '/decks/:id/invites/:inviteId',
+    { preHandler: ownerGuard },
+    async (request, reply) => {
+      const { id, inviteId } = request.params
+      await revokeInvite(db, { deckId: id, inviteId })
+      return reply.status(204).send()
+    },
+  )
+
+  // -------------------------------------------------------------------------
   // GET /decks/:id/share-links
   // -------------------------------------------------------------------------
   app.get<{ Params: { id: string } }>(
@@ -143,7 +247,6 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     async (request, reply) => {
       const { id } = request.params
       const links = await listShareLinks(db, id)
-      // Return only non-revoked links to reduce noise; callers can request all if needed.
       return reply.send(links.filter((l) => !l.revoked))
     },
   )

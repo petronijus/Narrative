@@ -4,6 +4,39 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.7.0 — Sharing rework: invite by email + pending invites (2026-05-13)
+
+Closes the usability gap from M10: invite collaborators by email instead
+of by opaque Google `sub`, list pending invites, and show real
+names/initials throughout the sharing UI.
+
+### Added
+
+- **`apps/server/drizzle/0013_users_and_invites.sql`** + Drizzle schema entries:
+  - `users` table — directory keyed by Google `sub`, with email/name/picture_url. Populated on every `/auth/callback`. Backfilled from existing `sessions` rows on migration so the dialog renders correctly immediately after deploy.
+  - `deck_invites` table — pending email invites with 30-day expiry, partial-unique on `(deck_id, LOWER(email))` for non-accepted rows.
+- **`apps/server/src/auth/users.ts`** — `upsertUser`, `getUserBySub`, `getUserByEmail`, `listUsersBySubs`.
+- **`apps/server/src/auth/invites.ts`** — `createInvite`, `listPendingInvitesForDeck`, `revokeInvite`, `consumePendingInvitesForEmail` (called from `/auth/callback`, converts pending invites to permission rows on first login).
+- **`/auth/callback`** now upserts the user directory and consumes pending invites for that email before issuing the session cookie.
+- **`POST /decks/:id/permissions`** rewritten to accept `{ email, role }`. Returns `200 { kind: 'granted', user }` when the email matches an existing user, or `201 { kind: 'pending', invite }` when the invitee hasn't signed in yet.
+- **`GET /decks/:id/permissions`** enriched with `email` + `name` per row via a single IN-list join.
+- **`GET /decks/:id/invites`** + **`DELETE /decks/:id/invites/:inviteId`** for listing and cancelling pending invites.
+- **`GET /folders/:id/active-editors`** response shape changed from `{deckId, userIds:[sub]}` to `{deckId, users:[{userId,email,name}]}` so presence bubbles can render real initials.
+- **`apps/web/src/ui/ShareDialog.tsx`** rewritten: invite by email with client-side validation, displays name + email per collaborator (with email subtitle when a display name is set), pending-invites section with cancel button, role-change uses the upsert-by-email path.
+- **`apps/web/src/pages/FolderDecks.tsx`** `ActiveEditorsBubbles` rewritten to take enriched user objects; tooltip shows `Name (email) is editing`.
+- **Tests**: 4 new server route tests covering enriched listPermissions + the granted/pending invite split + invite list/revoke. ShareDialog test rewritten for the email-input + name display + pending-invites flow (11/11).
+- **`docs/handoff/0.7.0-sharing-rework.md`** — deploy + verification runbook.
+
+### Changed
+
+- `BUILD_PLAN.md` — M10 split: M10.1 is the server-session cutover (0.6.x), M10.2 is the sharing rework (0.7.0). Original M10 deliverable wording trimmed to match what actually shipped first.
+
+### Why
+
+The 0.6.x server-session migration exposed a UX cliff: every sharing surface displayed the Google `sub` (a 21-digit number) because nothing in the schema tied that sub to a human-readable identifier. Inviting a collaborator required them to send you their `sub`, which they can't even find. 0.7.0 makes the feature actually usable.
+
+---
+
 ## 0.6.0 — Server-driven session cookies (2026-05-13)
 
 Replaces the browser-PKCE flow that put the Google `id_token` into

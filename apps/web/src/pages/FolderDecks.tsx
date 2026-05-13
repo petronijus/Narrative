@@ -21,7 +21,7 @@ import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
 import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
-import type { DeckSummary, FolderSummary } from '../api/client.js'
+import type { ActiveEditorUser, DeckSummary, FolderSummary } from '../api/client.js'
 import { peerColorFromId } from '@narrative/shared'
 import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
@@ -74,10 +74,12 @@ function FolderDecksInner() {
   const [thumbnails] = useState<Record<string, string>>(() => getAllDeckThumbnails())
   // id of deck for which the Move modal is open
   const [moveDeckId, setMoveDeckId] = useState<string | null>(null)
-  // deckId → list of other userIds currently editing it (caller filtered
-  // out server-side). Polled separately from the deck list so a slow
-  // active-editors response doesn't delay first paint.
-  const [activeEditors, setActiveEditors] = useState<Record<string, string[]>>({})
+  // deckId → list of users currently editing it. Each entry includes the
+  // user's email + name (server enriches via the `users` directory) so the
+  // bubble can show real initials instead of the opaque Google sub. Polled
+  // separately from the deck list so a slow active-editors response doesn't
+  // delay first paint.
+  const [activeEditors, setActiveEditors] = useState<Record<string, ActiveEditorUser[]>>({})
 
   const fetchData = useCallback(async () => {
     if (folderId === undefined) return
@@ -118,8 +120,8 @@ function FolderDecksInner() {
       try {
         const entries = await api.listFolderActiveEditors(folderId)
         if (cancelled) return
-        const next: Record<string, string[]> = {}
-        for (const e of entries) next[e.deckId] = e.userIds
+        const next: Record<string, ActiveEditorUser[]> = {}
+        for (const e of entries) next[e.deckId] = e.users
         setActiveEditors(next)
       } catch {
         // Best-effort UX — silent on failure.
@@ -363,8 +365,8 @@ function FolderDecksInner() {
 interface DeckCardProps {
   deck: DeckSummary
   thumbnail?: string | undefined
-  /** Other users currently editing this deck (caller filtered out). */
-  activeEditors: string[]
+  /** Users currently editing this deck (server-enriched with email + name). */
+  activeEditors: ActiveEditorUser[]
   onOpen: () => void
   onDelete: () => void
   onRename: (title: string) => void
@@ -373,7 +375,7 @@ interface DeckCardProps {
 
 // Stable empty-array reference so DeckCard's prop identity doesn't flip
 // every render when nobody is editing the deck.
-const EMPTY_EDITORS: string[] = []
+const EMPTY_EDITORS: ActiveEditorUser[] = []
 
 function DeckCard({
   deck,
@@ -491,7 +493,7 @@ function DeckCard({
                 user can spot collaborators without rolling over each
                 tile. */}
             {activeEditors.length > 0 && (
-              <ActiveEditorsBubbles userIds={activeEditors} className="shrink-0" />
+              <ActiveEditorsBubbles users={activeEditors} className="shrink-0" />
             )}
             {/* Kebab menu */}
             <div className="relative shrink-0 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
@@ -594,42 +596,54 @@ function DeckCard({
 
 // ---------------------------------------------------------------------------
 // ActiveEditorsBubbles — small avatar bubbles overlaid on the deck
-// thumbnail, one per other user currently editing the deck. Driven by
-// the parent's 5s poll of /folders/:id/active-editors.
-//
-// We don't have user names/pics in this surface (the API only returns
-// raw user ids), so the bubble is a deterministic colour swatch + the
-// first character of the id. The id is also the tooltip so hovering
-// gives the operator something to verify against.
+// thumbnail, one per user currently editing the deck. Driven by the
+// parent's 5s poll of /folders/:id/active-editors which since 0.7.0
+// returns email + name (resolved via the `users` directory) so initials
+// reflect the actual identity, not the opaque Google sub.
 // ---------------------------------------------------------------------------
 
 interface ActiveEditorsBubblesProps {
-  userIds: string[]
+  users: ActiveEditorUser[]
   className?: string
 }
 
-function ActiveEditorsBubbles({ userIds, className = '' }: ActiveEditorsBubblesProps) {
+function bubbleInitial(u: ActiveEditorUser): string {
+  if (u.name) {
+    return u.name.trim().charAt(0).toUpperCase() || '?'
+  }
+  if (u.email) {
+    return u.email.charAt(0).toUpperCase() || '?'
+  }
+  // Share-token connections show up as `share:abc12345` — the user-facing
+  // letter should still be a letter, not a digit.
+  if (u.userId.startsWith('share:')) return '?'
+  return u.userId.charAt(0).toUpperCase() || '?'
+}
+
+function bubbleTooltip(u: ActiveEditorUser): string {
+  if (u.name && u.email) return `${u.name} (${u.email}) is editing`
+  if (u.email) return `${u.email} is editing`
+  if (u.name) return `${u.name} is editing`
+  return 'A collaborator is editing'
+}
+
+function ActiveEditorsBubbles({ users, className = '' }: ActiveEditorsBubblesProps) {
   const MAX = 3
-  const visible = userIds.slice(0, MAX)
-  const overflow = userIds.length - visible.length
+  const visible = users.slice(0, MAX)
+  const overflow = users.length - visible.length
   return (
     <div className={`flex -space-x-1.5 ${className}`}>
-      {visible.map((uid) => {
-        const colour = peerColorFromId(uid)
-        const initial =
-          uid
-            .replace(/^share:/, '')
-            .charAt(0)
-            .toUpperCase() || '?'
+      {visible.map((u) => {
+        const colour = peerColorFromId(u.userId)
         return (
           <span
-            key={uid}
-            title={`Editing: ${uid}`}
+            key={u.userId}
+            title={bubbleTooltip(u)}
             className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-background text-[10px] font-semibold leading-none text-white shadow-sm"
             style={{ backgroundColor: colour }}
-            aria-label={`User ${uid} is editing`}
+            aria-label={bubbleTooltip(u)}
           >
-            {initial}
+            {bubbleInitial(u)}
           </span>
         )
       })}

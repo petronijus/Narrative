@@ -369,6 +369,55 @@ export const componentUpdates = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// users — directory of every Google account that has signed in. Keyed by
+// `sub` so it can join `deck_permissions.user_id`, `decks.owner_user_id`,
+// `folders.owner_user_id`, etc. Outlives `sessions` (which get
+// sweep-deleted).
+// ---------------------------------------------------------------------------
+
+export const users = pgTable(
+  'users',
+  {
+    /** Google OIDC `sub` claim — also the value stored in `*.user_id` columns. */
+    sub: text('sub').primaryKey(),
+    email: text('email').notNull(),
+    name: text('name'),
+    pictureUrl: text('picture_url'),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  // Case-insensitive email uniqueness — see migration 0013 for the actual
+  // `LOWER(email)` unique index (drizzle's plain unique() doesn't support
+  // expressions). The index is enforced at the DB layer; ORM-side type only.
+  () => [],
+)
+
+// ---------------------------------------------------------------------------
+// deck_invites — pending invites by email. Converted to deck_permissions
+// rows on the invitee's first /auth/callback.
+// ---------------------------------------------------------------------------
+
+export const deckInvites = pgTable(
+  'deck_invites',
+  {
+    /** nanoid(12) — also forms the invite URL token. */
+    id: text('id').primaryKey(),
+    deckId: text('deck_id')
+      .notNull()
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    /** Stored lower-case on insert. */
+    email: text('email').notNull(),
+    role: deckRoleEnum('role').notNull(),
+    invitedBySub: text('invited_by_sub').notNull(),
+    invitedAt: timestamp('invited_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+    acceptedBySub: text('accepted_by_sub'),
+  },
+  (t) => [index('deck_invites_deck_id_idx').on(t.deckId)],
+)
+
+// ---------------------------------------------------------------------------
 // sessions — server-side opaque session rows (replaces browser-PKCE flow).
 // ---------------------------------------------------------------------------
 
@@ -417,3 +466,7 @@ export type ComponentUpdate = typeof componentUpdates.$inferSelect
 export type NewComponentUpdate = typeof componentUpdates.$inferInsert
 export type Session = typeof sessions.$inferSelect
 export type NewSession = typeof sessions.$inferInsert
+export type User = typeof users.$inferSelect
+export type NewUser = typeof users.$inferInsert
+export type DeckInvite = typeof deckInvites.$inferSelect
+export type NewDeckInvite = typeof deckInvites.$inferInsert

@@ -29,6 +29,7 @@ import { authPreHandler } from '../auth/fastifyAuth.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
+import { listUsersBySubs } from '../auth/users.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -380,7 +381,27 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         .where(eq(decks.folderId, folderId))
 
       const snapshot = activeEditorsByDeck(folderDecks.map((d) => d.id))
-      return reply.send(snapshot)
+
+      // Enrich each user id with display fields so the SPA can render
+      // initials from email rather than from the opaque Google sub.
+      // One IN-list lookup across the union of all subs.
+      const uniqueSubs = Array.from(new Set(snapshot.flatMap((s) => s.userIds)))
+      const usersList = await listUsersBySubs(db, uniqueSubs)
+      const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
+
+      const enriched = snapshot.map((s) => ({
+        deckId: s.deckId,
+        users: s.userIds.map((sub) => {
+          const u = usersBySub.get(sub)
+          return {
+            userId: sub,
+            email: u?.email ?? null,
+            name: u?.name ?? null,
+          }
+        }),
+      }))
+
+      return reply.send(enriched)
     },
   )
 }

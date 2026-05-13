@@ -1,12 +1,14 @@
 /**
  * ui/ShareDialog.tsx
  *
- * M10: Share dialog — manage deck permissions and share links.
+ * Share dialog — manage deck collaborators and share links.
  *
- * Features:
- * - List people with access (role, userId, revoke, change role)
- * - Invite by userId (Google OIDC `sub` claim; email lookup deferred to M21)
- * - Share links: list, create (role + optional expiry), copy URL, revoke
+ * Features (0.7.0):
+ * - List collaborators (name + email + role; revoke, change role).
+ * - Invite by email. If the email is already a Narrative user → instant grant.
+ *   Otherwise → pending invite; the user gets the deck after their first login.
+ * - List + cancel pending email invites.
+ * - Share links: list, create (role + optional expiry), copy URL, revoke.
  *
  * Access control: rendered only when current user's role is 'owner'.
  * The parent (Toolbar) controls visibility; this dialog does not self-guard.
@@ -18,13 +20,14 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useApi } from '../api/client.js'
-import type { DeckPermission, ShareLink } from '../api/client.js'
+import type { DeckInvite, DeckPermission, ShareLink } from '../api/client.js'
 import type { DeckRole } from '../state/DeckRoleContext.js'
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,30 @@ function formatDate(iso: string | null): string {
   })
 }
 
+/** Display initials for the avatar chip. Prefers name → email local-part →
+ *  the first two chars of the sub (which we display only as a last resort). */
+function initialsFor(perm: { name: string | null; email: string | null; userId: string }): string {
+  if (perm.name && perm.name.length > 0) {
+    const parts = perm.name.trim().split(/\s+/).slice(0, 2)
+    return parts
+      .map((p) => p[0]!)
+      .join('')
+      .toUpperCase()
+  }
+  if (perm.email) {
+    const local = perm.email.split('@')[0] ?? perm.email
+    return local.slice(0, 2).toUpperCase()
+  }
+  return perm.userId.slice(0, 2).toUpperCase()
+}
+
+/** Top label shown for a collaborator. */
+function primaryLabel(perm: { name: string | null; email: string | null; userId: string }): string {
+  return perm.name ?? perm.email ?? perm.userId
+}
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
 // ---------------------------------------------------------------------------
 // ShareDialog
 // ---------------------------------------------------------------------------
@@ -87,11 +114,16 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
   const [permLoading, setPermLoading] = useState(true)
   const [permError, setPermError] = useState<string | null>(null)
 
+  // Pending invites state
+  const [invites, setInvites] = useState<DeckInvite[]>([])
+  const [invitesLoading, setInvitesLoading] = useState(true)
+
   // Invite form
-  const [inviteUserId, setInviteUserId] = useState('')
+  const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<DeckRole>('viewer')
   const [inviting, setInviting] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [inviteHint, setInviteHint] = useState<string | null>(null)
 
   // Share links state
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([])
@@ -120,9 +152,22 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
       setPermissions(data)
       setPermError(null)
     } catch {
-      setPermError('Failed to load permissions.')
+      setPermError('Failed to load people with access.')
     } finally {
       setPermLoading(false)
+    }
+  }, [api, deckId])
+
+  const loadInvites = useCallback(async () => {
+    setInvitesLoading(true)
+    try {
+      const data = await api.listInvites(deckId)
+      setInvites(data)
+    } catch {
+      // Non-fatal — pending invites are a secondary concern; the
+      // permissions list is the main source of truth.
+    } finally {
+      setInvitesLoading(false)
     }
   }, [api, deckId])
 
@@ -141,8 +186,9 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
 
   useEffect(() => {
     void loadPermissions()
+    void loadInvites()
     void loadShareLinks()
-  }, [loadPermissions, loadShareLinks])
+  }, [loadPermissions, loadInvites, loadShareLinks])
 
   // Focus initial element on open
   useEffect(() => {
@@ -187,7 +233,7 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
   )
 
   // ---------------------------------------------------------------------------
-  // Permission actions
+  // Permission + invite actions
   // ---------------------------------------------------------------------------
 
   const handleRevokePermission = async (userId: string) => {
@@ -199,30 +245,68 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
     }
   }
 
-  const handleChangeRole = async (userId: string, newRole: DeckRole) => {
+  const handleChangeRole = async (perm: DeckPermission, newRole: DeckRole) => {
+    // Need an email to drive the upsert by-email path. Should always exist
+    // for post-migration rows; fall back gracefully when it doesn't.
+    if (!perm.email) {
+      setPermError(
+        "Can't change this user's role — they pre-date the directory. Revoke + re-invite by email.",
+      )
+      return
+    }
     try {
-      // Revoke existing then grant with new role (server API design)
-      await api.revokePermission(deckId, userId)
-      await api.grantPermission(deckId, { userId, role: newRole })
-      setPermissions((prev) => prev.map((p) => (p.userId === userId ? { ...p, role: newRole } : p)))
+      const result = await api.inviteByEmail(deckId, { email: perm.email, role: newRole })
+      if (result.kind === 'granted') {
+        setPermissions((prev) =>
+          prev.map((p) => (p.userId === perm.userId ? { ...p, role: newRole } : p)),
+        )
+      }
     } catch {
       setPermError('Failed to change role.')
     }
   }
 
   const handleInvite = async () => {
-    const trimmed = inviteUserId.trim()
+    const trimmed = inviteEmail.trim().toLowerCase()
     if (trimmed === '') return
+    if (!EMAIL_RE.test(trimmed)) {
+      setInviteError('Please enter a valid email address.')
+      return
+    }
     setInviting(true)
     setInviteError(null)
+    setInviteHint(null)
     try {
-      await api.grantPermission(deckId, { userId: trimmed, role: inviteRole })
-      setInviteUserId('')
-      await loadPermissions()
-    } catch {
-      setInviteError('Failed to invite user. Make sure the user ID is correct.')
+      const result = await api.inviteByEmail(deckId, { email: trimmed, role: inviteRole })
+      setInviteEmail('')
+      if (result.kind === 'granted') {
+        setInviteHint(`Granted ${result.user.email} ${result.user.role} access.`)
+        await loadPermissions()
+      } else {
+        setInviteHint(
+          result.invite.replaced
+            ? `Updated pending invite for ${result.invite.email}.`
+            : `Invited ${result.invite.email}. They'll get access after their first Google sign-in.`,
+        )
+        await loadInvites()
+      }
+    } catch (err) {
+      const msg =
+        err instanceof Error && 'status' in err && (err as { status?: number }).status === 400
+          ? 'That email looks invalid.'
+          : 'Failed to invite — please retry.'
+      setInviteError(msg)
     } finally {
       setInviting(false)
+    }
+  }
+
+  const handleRevokeInvite = async (inviteId: string) => {
+    try {
+      await api.revokeInvite(deckId, inviteId)
+      setInvites((prev) => prev.filter((i) => i.id !== inviteId))
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -266,14 +350,26 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
   }
 
   // ---------------------------------------------------------------------------
+  // Derived
+  // ---------------------------------------------------------------------------
+
+  const sortedPermissions = useMemo(
+    () =>
+      [...permissions].sort((a, b) => {
+        // Owners first, then editors, then viewers. Within a group, by name/email.
+        const rolePriority = { owner: 0, editor: 1, viewer: 2 } as const
+        const r = rolePriority[a.role] - rolePriority[b.role]
+        if (r !== 0) return r
+        return primaryLabel(a).localeCompare(primaryLabel(b))
+      }),
+    [permissions],
+  )
+
+  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
-  // Portal to <body> so the dialog escapes any ancestor containing block
-  // (the toolbar uses backdrop-filter which makes `position: fixed` resolve
-  // relative to the toolbar instead of the viewport).
   return createPortal(
-    // Backdrop
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
       onClick={onClose}
@@ -282,7 +378,6 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
       role="dialog"
       aria-label="Share this deck"
     >
-      {/* Dialog panel */}
       <div
         ref={dialogRef}
         className="relative w-full max-w-lg rounded-xl border border-gray-700 bg-gray-900 p-6 shadow-2xl"
@@ -327,32 +422,28 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
 
           {permLoading ? (
             <p className="text-xs text-gray-500">Loading…</p>
-          ) : permissions.length === 0 ? (
+          ) : sortedPermissions.length === 0 ? (
             <p className="text-xs text-gray-500">No explicit permissions yet.</p>
           ) : (
             <ul className="mb-3 space-y-2" role="list">
-              {permissions.map((perm) => (
+              {sortedPermissions.map((perm) => (
                 <li key={perm.userId} className="flex items-center gap-2">
-                  {/* Avatar chip */}
                   <div
                     aria-hidden="true"
-                    className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gray-700 text-xs font-medium text-gray-300"
+                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-700 text-xs font-medium text-gray-200"
                   >
-                    {perm.userId.slice(0, 2).toUpperCase()}
+                    {initialsFor(perm)}
                   </div>
-                  <span
-                    className="flex-1 truncate text-xs text-gray-300 font-mono"
-                    title={perm.userId}
-                  >
-                    {perm.userId}
-                  </span>
-                  <RoleSelect
-                    value={perm.role}
-                    onChange={(r) => void handleChangeRole(perm.userId, r)}
-                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-gray-200">{primaryLabel(perm)}</p>
+                    {perm.email && perm.name && (
+                      <p className="truncate text-[11px] text-gray-500">{perm.email}</p>
+                    )}
+                  </div>
+                  <RoleSelect value={perm.role} onChange={(r) => void handleChangeRole(perm, r)} />
                   <button
                     onClick={() => void handleRevokePermission(perm.userId)}
-                    aria-label={`Remove ${perm.userId}`}
+                    aria-label={`Remove ${primaryLabel(perm)}`}
                     className="ml-1 rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
                   >
                     <svg
@@ -375,34 +466,89 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
             </ul>
           )}
 
-          {/* Invite row */}
+          {/* Pending invites */}
+          {!invitesLoading && invites.length > 0 && (
+            <>
+              <h3 className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                Pending invites
+              </h3>
+              <ul className="mb-3 space-y-2" role="list">
+                {invites.map((inv) => (
+                  <li key={inv.id} className="flex items-center gap-2">
+                    <div
+                      aria-hidden="true"
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-dashed border-gray-600 text-xs font-medium text-gray-400"
+                    >
+                      {inv.email.slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-gray-300">{inv.email}</p>
+                      <p className="truncate text-[11px] text-gray-500">
+                        Invited {formatDate(inv.invitedAt)} · expires {formatDate(inv.expiresAt)}
+                      </p>
+                    </div>
+                    <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] font-medium capitalize text-gray-400">
+                      {inv.role}
+                    </span>
+                    <button
+                      onClick={() => void handleRevokeInvite(inv.id)}
+                      aria-label={`Cancel invite for ${inv.email}`}
+                      className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* Invite by email row */}
           <div className="mb-1 flex items-end gap-2">
             <div className="flex-1">
-              <label htmlFor="invite-user-id" className="mb-1 block text-xs text-gray-500">
-                User ID (Google sub)
+              <label htmlFor="invite-email" className="mb-1 block text-xs text-gray-500">
+                Invite by email
               </label>
               <input
-                id="invite-user-id"
-                type="text"
-                value={inviteUserId}
-                onChange={(e) => setInviteUserId(e.target.value)}
+                id="invite-email"
+                type="email"
+                autoComplete="email"
+                value={inviteEmail}
+                onChange={(e) => {
+                  setInviteEmail(e.target.value)
+                  setInviteError(null)
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') void handleInvite()
                 }}
-                placeholder="Paste user sub…"
+                placeholder="name@example.com"
                 className="w-full rounded border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
             <RoleSelect id="invite-role" value={inviteRole} onChange={setInviteRole} />
             <button
               onClick={() => void handleInvite()}
-              disabled={inviting || inviteUserId.trim() === ''}
+              disabled={inviting || inviteEmail.trim() === ''}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
             >
               {inviting ? 'Inviting…' : 'Invite'}
             </button>
           </div>
-          {inviteError !== null && <p className="text-xs text-red-400">{inviteError}</p>}
+          {inviteError !== null && <p className="mt-1 text-xs text-red-400">{inviteError}</p>}
+          {inviteHint !== null && <p className="mt-1 text-xs text-green-400">{inviteHint}</p>}
         </section>
 
         <hr className="my-5 border-gray-800" />
@@ -502,7 +648,6 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
             </ul>
           )}
 
-          {/* New share link created — show URL */}
           {newLinkUrl !== null && (
             <div className="mb-3 flex items-center gap-2 rounded border border-green-800 bg-green-900/20 px-3 py-2">
               <p className="flex-1 truncate text-xs font-mono text-green-300">{newLinkUrl}</p>
@@ -545,7 +690,6 @@ export function ShareDialog({ deckId, onClose }: ShareDialogProps) {
             </div>
           )}
 
-          {/* Create link form */}
           <div className="flex items-end gap-2">
             <div>
               <label htmlFor="new-link-role" className="mb-1 block text-xs text-gray-500">

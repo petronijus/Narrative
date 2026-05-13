@@ -174,9 +174,36 @@ Deck = Y.Array of slide Y.Maps. Sidebar with thumbnails (PixiJS renderToCanvas a
 
 ### M10 — Auth + permissions
 
-Google OIDC sign-in (no self-hosted IdP). Server validates Google ID tokens via JWKS on WebSocket connect, gated by an email/domain allowlist. Per-deck permissions table (owner, editor, viewer). Sharing dialog (invite by email). Public view-only share link with token.
+Google OIDC sign-in (no self-hosted IdP). Per-deck permissions table (owner, editor, viewer). Sharing dialog. Public view-only share link with token.
 
 **Deliverable**: multi-user system with permissions.
+
+Two follow-up milestones below close gaps left from M10's first ship:
+
+#### M10.1 — Server-driven session cookies (shipped 0.6.0–0.6.4)
+
+Originally M10 used the browser-PKCE pattern from `oidc-client-ts`: SPA ran the full OAuth dance, held the Google `id_token` in `localStorage`, sent it as `Authorization: Bearer`, and refreshed via a hidden `prompt=none` iframe. That broke on Safari (third-party cookies blocked since 2020), Firefox strict ETP, and was on Chrome's deprecation roadmap. Sessions effectively capped at 1 hour.
+
+Replaced with a server-driven OAuth + opaque session cookie:
+
+- Server runs the OAuth dance (`/auth/start` → Google → `/auth/callback`).
+- Session row in Postgres keyed by `SHA-256(cookie_value)`; raw id never lands in the DB.
+- Browser holds only the `narrative_session` HttpOnly cookie.
+- Sliding 30-day expiry; works in every browser identically.
+- WebSocket auth via the same cookie on upgrade (Hocuspocus' `onAuthenticate` reads the cookie; client sends a sentinel `token: 'cookie'` to trigger the auth-frame). See ADR 0005.
+
+#### M10.2 — Sharing rework (shipped 0.7.0)
+
+M10 shipped the dialog with "invite by Google `sub`" — practically unusable because a `sub` is an opaque 21-digit number. M10.2 closes that gap:
+
+- New `users` table: directory of every account that has logged in (sub, email, name). Populated on every `/auth/callback`.
+- New `deck_invites` table: pending invites by email for users who haven't logged in yet. On their first OAuth callback the invite is consumed → permission row + invite marked accepted.
+- Server: `POST /decks/:id/permissions` accepts `{ email, role }` and returns either `{kind:'granted'}` (existing user) or `{kind:'pending'}` (invite created).
+- Server: `GET /decks/:id/permissions` enriched with `email`+`name` per row via a single IN-list join.
+- Server: new `GET /decks/:id/invites` + `DELETE /decks/:id/invites/:inviteId`.
+- Server: `/folders/:id/active-editors` enriched with the same `email`+`name` per editor.
+- SPA: ShareDialog rewrites — invite by email with client-side validation, displays name+email, pending-invites section with cancel.
+- SPA: ActiveEditorsBubbles uses initials from email/name, no more "1" for everyone.
 
 ### M11 — Image uploads
 
