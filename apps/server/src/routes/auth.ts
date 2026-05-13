@@ -172,11 +172,17 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
     const { verifier: codeVerifier, challenge } = pkcePair()
 
     const statePayload: OauthStatePayload = { state, verifier: codeVerifier, returnTo }
+    // Path=/ is intentional. In prod the browser sees the routes as
+    // /api/auth/start and /api/auth/callback (Caddy adds the /api/ prefix
+    // from the browser's perspective; the server side only sees /auth/*).
+    // Scoping to /auth or /api/auth would mismatch one of the two and the
+    // browser would drop the cookie on the callback. The cookie is HttpOnly,
+    // Secure, signed, and lives 10 min — Path=/ adds no risk.
     reply.setCookie(OAUTH_STATE_COOKIE, JSON.stringify(statePayload), {
       httpOnly: true,
       secure: isProd,
       sameSite: 'lax',
-      path: '/auth',
+      path: '/',
       maxAge: OAUTH_STATE_MAX_AGE_S,
       signed: true,
     })
@@ -241,8 +247,9 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
       return
     }
 
-    // Clear the one-shot state cookie
-    reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/auth' })
+    // Clear the one-shot state cookie. Path must match what setCookie used
+    // above or the browser will ignore the clear.
+    reply.clearCookie(OAUTH_STATE_COOKIE, { path: '/' })
 
     // Exchange code → tokens
     let tokenResponse: Response

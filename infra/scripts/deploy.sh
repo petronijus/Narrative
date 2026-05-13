@@ -134,7 +134,11 @@ log "Healthcheck API..."
 # Docker 29.4 port-bind bug). Probe via Caddy's internal `caddy` alias on
 # the narrative_default network, or via `docker exec` inside server.
 if [[ "${USE_SHARED_TUNNEL:-0}" == "1" ]]; then
-  if docker exec narrative-server wget -qO- --timeout=10 http://localhost:3001/health > /dev/null 2>&1; then
+  # BusyBox wget inside the alpine image resolves `localhost` to ::1 first,
+  # but Fastify only binds IPv4 → wget exits with EAI_AGAIN even though the
+  # server is healthy. Use 127.0.0.1 explicitly (matches the compose
+  # healthcheck override in docker-compose.prod.shared-tunnel.yml).
+  if docker exec narrative-server wget -qO- --timeout=10 http://127.0.0.1:3001/health > /dev/null 2>&1; then
     log "API healthcheck OK (via docker exec)"
   else
     err "API neodpovídá na /health (uvnitř kontejneru)"
