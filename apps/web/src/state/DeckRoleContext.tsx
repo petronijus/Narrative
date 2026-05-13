@@ -98,13 +98,19 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
         if (cancelled) return
         const deck = decks.find((d) => d.id === deckId)
         if (deck !== undefined && deck.viewerRole !== undefined) {
+          // Authoritative — server computed this from deck_permissions.
           setRole(deck.viewerRole)
-        } else if (deck !== undefined) {
-          // Deck visible to caller but server didn't return viewerRole.
-          // Derive from ownerUserId vs current user — without this the Share
-          // button (owner-only) is unreachable for everyone.
-          setRole(deck.ownerUserId === user.sub ? 'owner' : 'editor')
+        } else if (deck !== undefined && deck.ownerUserId === user.sub) {
+          // Server returned the deck but no viewerRole AND the caller owns
+          // the deck row. Safe to treat as owner — the only path that drops
+          // viewerRole is the dev-mode bypass shape, which only the deck
+          // owner can reach.
+          setRole('owner')
         } else {
+          // No deck row, or non-owner with missing viewerRole — fall back to
+          // viewer. Better to deny writes than grant them by mistake; a
+          // viewer who legitimately has editor rights will see UI-only
+          // restrictions but the server still enforces the real role.
           setRole('viewer')
         }
         // M16 P2: expose folderId so DeckShell can open the folder token doc.

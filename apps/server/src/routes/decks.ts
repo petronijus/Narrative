@@ -140,7 +140,8 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
           : ownerCondition
 
       const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-      return reply.send(rows.map(withThumbnailUrl))
+      // In bypass mode dev-user always has owner role on their own decks.
+      return reply.send(rows.map((r) => ({ ...withThumbnailUrl(r), viewerRole: 'owner' as const })))
     }
 
     // Production: return decks where user has any explicit permission row.
@@ -158,7 +159,36 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
         : accessCondition
 
     const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-    return reply.send(rows.map(withThumbnailUrl))
+
+    // Stamp each row with the caller's effective role on that deck. One
+    // small follow-up query — typically <50 decks — much cheaper than the
+    // alternative (a CTE + window function in the main query) and easier
+    // to read.
+    const rolesByDeck = new Map<string, 'owner' | 'editor' | 'viewer'>()
+    if (rows.length > 0) {
+      const permRows = await db
+        .select({ deckId: deckPermissions.deckId, role: deckPermissions.role })
+        .from(deckPermissions)
+        .where(
+          and(
+            eq(deckPermissions.userId, userId),
+            inArray(
+              deckPermissions.deckId,
+              rows.map((r) => r.id),
+            ),
+          ),
+        )
+      for (const p of permRows) rolesByDeck.set(p.deckId, p.role as 'owner' | 'editor' | 'viewer')
+    }
+
+    return reply.send(
+      rows.map((r) => ({
+        ...withThumbnailUrl(r),
+        // Default to viewer if no permission row was found (shouldn't happen
+        // — the IN clause guarantees one exists — but defensive).
+        viewerRole: rolesByDeck.get(r.id) ?? 'viewer',
+      })),
+    )
   })
 
   // ---------------------------------------------------------------------------
@@ -199,7 +229,7 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       return reply.status(404).send({ error: 'Deck not found' })
     }
 
-    return reply.send(withThumbnailUrl(deck))
+    return reply.send({ ...withThumbnailUrl(deck), viewerRole: access.role })
   })
 
   // ---------------------------------------------------------------------------
