@@ -137,14 +137,19 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       color: peerColorFromId(peerId),
     }
 
-    // M10: share_token from URL query params — passed as WS parameter for anonymous viewer path.
-    // 2026-05: regular auth no longer ships a `token` — the WS upgrade carries
-    // the `narrative_session` cookie (set during /auth/callback) automatically
-    // because the WS host is same-site with the SPA host.
+    // M10: share_token from URL query params — passed as WS parameter for the
+    // anonymous viewer path.
+    // 2026-05: cookie-based auth. Real credentials travel in the same-origin
+    // `narrative_session` cookie on the WS upgrade. We still need a non-null
+    // `token` here so HocuspocusProvider sends its auth frame and the server's
+    // `onAuthenticate` hook runs (where it ignores `token` and reads the cookie
+    // instead). Without this, `requiresAuthentication` keeps the connection in
+    // limbo forever and the client just reconnects in a loop.
     const searchParams = new URLSearchParams(location.search)
     const shareToken = searchParams.get('share_token')
 
-    const authOptions = shareToken !== null ? { parameters: { share_token: shareToken } } : {}
+    const authOptions =
+      shareToken !== null ? { parameters: { share_token: shareToken } } : { token: 'cookie' }
 
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,

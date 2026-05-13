@@ -39,7 +39,9 @@ export async function writeComponentMasterTree({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    // Auth via narrative_session cookie on WS upgrade.
+    // Real auth in the narrative_session cookie; sentinel `token` triggers
+    // the client's auth-frame so the server hook runs.
+    token: 'cookie',
     connect: true,
   })
 

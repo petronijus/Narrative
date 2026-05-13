@@ -83,9 +83,13 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       } else if (bypass) {
         userId = 'dev-user'
       } else {
-        // Authenticated path: read the narrative_session cookie from the WS
-        // upgrade request. Browsers send same-origin cookies on WebSocket
-        // upgrades automatically — no token argument needed from the client.
+        // Authenticated path. The Hocuspocus client sends a sentinel `token`
+        // value purely to trigger this hook (Hocuspocus runs onAuthenticate
+        // only when an auth frame arrives, and the client only sends one
+        // when configured with `token`). The actual identity comes from the
+        // `narrative_session` HttpOnly cookie carried on the WS upgrade,
+        // which is same-origin with the SPA so the browser sends it
+        // automatically. We ignore the `token` value entirely.
         const rawId = readCookieFromHeader(requestHeaders['cookie'], SESSION_COOKIE_NAME)
         if (!rawId) throw new Error('Invalid credentials')
         const session = await lookupSession(db, rawId)

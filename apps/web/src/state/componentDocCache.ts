@@ -84,12 +84,14 @@ export function acquireComponentDoc(componentId: string): void {
 
   const doc = new Y.Doc()
   bumpDebugCounter(1)
-  // 2026-05: auth carried by the narrative_session HttpOnly cookie on the
-  // WS upgrade. No `token` arg needed.
+  // 2026-05: real auth in the narrative_session cookie on the WS upgrade;
+  // sentinel `token` triggers the auth-frame so the server's
+  // `onAuthenticate` hook runs (it reads the cookie, ignores `token`).
   const provider = new HocuspocusProvider({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
+    token: 'cookie',
   })
 
   const entry: CacheEntry = {

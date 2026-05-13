@@ -342,7 +342,10 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
       url: HOCUSPOCUS_URL,
       name: `folder:${folderId}`,
       document: doc,
-      // Auth carried by the narrative_session cookie on WS upgrade.
+      // Real auth travels in the narrative_session cookie on WS upgrade.
+      // Sentinel `token` triggers HocuspocusProvider's auth-frame so the
+      // server's `onAuthenticate` hook runs (where it reads the cookie).
+      token: 'cookie',
       onSynced() {
         // First sync after server roundtrip — if the doc is brand new
         // (colors AND textStyles both empty), seed the design-system
