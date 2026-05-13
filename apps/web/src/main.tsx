@@ -15,6 +15,13 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
 import { registerBundledFonts } from './state/bundledFonts.js'
+import { installHocuspocusWarningFilter } from './state/installHocuspocusWarningFilter.js'
+
+// Drop a single cosmetic warning fired by @hocuspocus/provider when the
+// server's WS idle-connect timeout (4401) races a shared-WS attach. See
+// the helper file for details. Must run before any HocuspocusProvider
+// instantiates.
+installHocuspocusWarningFilter()
 
 // Self-hosted webfonts the picker advertises (Inter). Fire-and-forget
 // — the FolderFontLoader for folder-uploaded fonts uses the same Pixi

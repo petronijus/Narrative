@@ -39,8 +39,9 @@ export async function writeComponentMasterTree({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
     document: doc,
-    // Real auth in the narrative_session cookie; sentinel `token` triggers
-    // the client's auth-frame so the server hook runs.
+    // Sentinel triggers HocuspocusProvider's auth-frame; server reads the
+    // real session from the `narrative_session` cookie on the WS upgrade.
+    // See `docs/adr/0005-server-side-session-cookies.md`.
     token: 'cookie',
     connect: true,
   })

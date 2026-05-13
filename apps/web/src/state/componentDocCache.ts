@@ -84,9 +84,9 @@ export function acquireComponentDoc(componentId: string): void {
 
   const doc = new Y.Doc()
   bumpDebugCounter(1)
-  // 2026-05: real auth in the narrative_session cookie on the WS upgrade;
-  // sentinel `token` triggers the auth-frame so the server's
-  // `onAuthenticate` hook runs (it reads the cookie, ignores `token`).
+  // Sentinel triggers HocuspocusProvider's auth-frame; server reads the
+  // real session from the `narrative_session` cookie on the WS upgrade.
+  // See `docs/adr/0005-server-side-session-cookies.md`.
   const provider = new HocuspocusProvider({
     url: HOCUSPOCUS_URL,
     name: `component:${componentId}`,
