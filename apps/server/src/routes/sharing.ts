@@ -201,7 +201,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
             role,
             signInUrl,
           })
-          await sendEmail({ to: email.toLowerCase(), subject, html, text })
+          await sendEmail({
+            to: email.toLowerCase(),
+            subject,
+            html,
+            text,
+            // Reply lands at the actual inviter rather than a noreply
+            // mailbox — both better UX and a transactional-email signal.
+            replyTo: inviter.email,
+          })
         } catch (err) {
           request.log.warn({ err, deckId: id, email }, '[invite] email send failed')
         }

@@ -30,6 +30,13 @@ export interface SendEmailInput {
   html: string
   /** Plain-text fallback. Required by most spam filters. */
   text: string
+  /**
+   * Optional Reply-To address. For invite emails we set this to the
+   * inviter's email so "Reply" reaches the actual human — a strong
+   * "real transactional, not bulk" signal to spam filters and useful
+   * UX on its own. Omit for noreply-style sends.
+   */
+  replyTo?: string
 }
 
 /**
@@ -77,6 +84,7 @@ export async function sendEmail(input: SendEmailInput): Promise<string | null> {
       subject: input.subject,
       html: input.html,
       text: input.text,
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     })
     if (error) {
       console.warn('[email] resend rejected', { to: input.to, error })
