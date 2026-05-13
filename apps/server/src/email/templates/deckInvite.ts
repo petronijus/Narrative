@@ -129,7 +129,7 @@ export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmai
     `The invite expires in 30 days.`,
     '',
     `—`,
-    `Narrative · a presentation tool for people who don't want PowerPoint.`,
+    `Narrative — pro tool for keynote masters.`,
   ].join('\n')
 
   // -------------------------------------------------------------------------
@@ -253,7 +253,8 @@ export function renderDeckInviteEmail(input: DeckInviteEmailInput): RenderedEmai
 
       <!-- Footer outside the card -->
       <p style="margin:16px 0 0 0;font-size:11px;line-height:1.5;color:#94a3b8;text-align:center;">
-        Sent by Narrative · a presentation tool for people who don't want PowerPoint.
+        <strong style="color:#64748b;font-weight:600;">Narrative</strong>
+        &nbsp;·&nbsp; pro tool for keynote masters
       </p>
 
     </td></tr>
