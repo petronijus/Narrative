@@ -465,6 +465,103 @@ describe('exportDeckToPptx', () => {
     expect(spCount).toBeGreaterThanOrEqual(2)
   })
 
+  it('emits a triangle prstGeom for a TriangleObject', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        {
+          id: 'tri',
+          type: 'triangle',
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          rotation: 0,
+          opacity: 1,
+          fill: 0xff0000,
+        } as unknown as Slide['objects'][number],
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('prst="triangle"')
+  })
+
+  it('emits a hexagon prstGeom for a PolygonObject with sides=6', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        {
+          id: 'p',
+          type: 'polygon',
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          rotation: 0,
+          opacity: 1,
+          fill: 0x00ff00,
+          sides: 6,
+        } as unknown as Slide['objects'][number],
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('prst="hexagon"')
+  })
+
+  it('emits `triangle` end arrow type for an ArrowObject with endCap="arrow"', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        {
+          id: 'a',
+          type: 'arrow',
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 0,
+          rotation: 0,
+          opacity: 1,
+          stroke: 0x000000,
+          strokeWidth: 2,
+          p1: { x: 0, y: 0 },
+          p2: { x: 100, y: 0 },
+          startCap: 'none',
+          endCap: 'arrow',
+        } as unknown as Slide['objects'][number],
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:tailEnd')
+    expect(xml).toContain('triangle')
+  })
+
+  it('emits a `<a:custGeom>` with cubicBezTo for a PathObject', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        {
+          id: 'path1',
+          type: 'path',
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          rotation: 0,
+          opacity: 1,
+          anchors: [
+            { x: 0, y: 0 },
+            { x: 50, y: 0, cpIn: { x: -10, y: 10 } },
+            { x: 100, y: 100 },
+          ],
+          stroke: 0x000000,
+          strokeWidth: 2,
+          fill: 0xff0000,
+          closed: true,
+        } as unknown as Slide['objects'][number],
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:custGeom>')
+    expect(xml).toContain('<a:cubicBezTo>')
+    expect(/\<a:close\s*\/>/i.test(xml)).toBe(true)
+  })
+
   it('drops images silently when no asset loader is provided', async () => {
     const slides: Slide[] = [
       {

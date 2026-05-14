@@ -21,7 +21,18 @@ import { XMLParser } from 'fast-xml-parser'
 // Output types
 // ---------------------------------------------------------------------------
 
-export type ParsedShapeKind = 'text' | 'rectangle' | 'ellipse' | 'line' | 'image' | 'unknown'
+export type ParsedShapeKind =
+  | 'text'
+  | 'rectangle'
+  | 'ellipse'
+  | 'line'
+  | 'arrow'
+  | 'triangle'
+  | 'polygon'
+  | 'path'
+  | 'image'
+  | 'video'
+  | 'unknown'
 
 /**
  * Stop on a parsed gradient. `offset` is normalised 0..1 (PPTX uses 0..100000
@@ -48,6 +59,19 @@ export interface ParsedRadialGradient {
 export type ParsedGradient = ParsedLinearGradient | ParsedRadialGradient
 
 /**
+ * Path-object anchor — same schema as Narrative's PathAnchor, but in
+ * PPTX EMU before the writer scales to canvas pixels. cpIn / cpOut are
+ * the cubic-bezier control handles relative to the anchor; missing on
+ * both sides of a segment means the segment is a straight line.
+ */
+export interface ParsedPathAnchor {
+  x: number
+  y: number
+  cpIn?: { x: number; y: number }
+  cpOut?: { x: number; y: number }
+}
+
+/**
  * A single styled run inside a text frame. Mirrors PPTX's `<a:r>` shape
  * exactly: a contiguous slice of text that shares one set of formatting
  * attributes. The writer turns a sequence of these into a Y.Text with
@@ -70,6 +94,10 @@ export interface ParsedTextRun {
   /** Resolved URL when the run carried `<a:rPr>/<a:hlinkClick r:id>` and
    *  that rel id mapped to a hyperlink Target. */
   hyperlinkHref?: string
+  /** Font family from `<a:rPr>/<a:latin typeface="…">`. */
+  fontFamily?: string
+  /** Letter spacing in px (PPTX `<a:rPr spc>` is 100ths of a point). */
+  letterSpacing?: number
 }
 
 export interface ParsedShape {
@@ -140,6 +168,73 @@ export interface ParsedShape {
    *  the user can move/duplicate/delete the table as a unit. Other shape
    *  kinds leave this undefined. */
   groupId?: string
+  /** Regular-polygon side count for `kind === 'polygon'`. Derived from
+   *  PPTX preset name: pentagon=5, hexagon=6, heptagon=7, octagon=8,
+   *  decagon=10, dodecagon=12. */
+  sides?: number
+  /** Line/arrow endpoint caps — set when `kind === 'line'` or 'arrow'.
+   *  PPTX uses `<a:headEnd type="…">` / `<a:tailEnd type="…">` on the
+   *  line's `<a:ln>`; any non-"none" head/tail upgrades the shape to
+   *  `kind: 'arrow'` so the writer routes it correctly. */
+  startCap?: 'none' | 'arrow' | 'round' | 'square'
+  endCap?: 'none' | 'arrow' | 'round' | 'square'
+  /** Connector flip flags from `<a:xfrm flipH="1" flipV="1">`. Combined
+   *  with the connector's bbox to derive p1/p2 endpoints in the writer. */
+  flipH?: boolean
+  flipV?: boolean
+  /** Path anchors for `kind === 'path'` — extracted from `<a:custGeom>`.
+   *  Coordinates are in slide-local px (post emuToPx), same coordinate
+   *  space as `x` / `y`. The writer translates them into Narrative's
+   *  PathAnchor schema (which positions anchors relative to the object's
+   *  `(x, y)` origin). */
+  pathAnchors?: ParsedPathAnchor[]
+  /** True when the path's source `<a:path>` ended with `<a:close/>`. */
+  pathClosed?: boolean
+  /** Zip-internal path of the embedded video file (e.g.
+   *  `ppt/media/media1.mp4`). Set when the shape is a `<p:pic>` with a
+   *  `<a:videoFile>` rel inside its `<p:nvPr>`. The route handler uploads
+   *  the bytes to MinIO and patches `assetId` for the writer. */
+  videoPath?: string
+  /** Sniffed MIME type of the embedded video bytes (e.g. `video/mp4`). */
+  videoMimeType?: string
+  /** Drop shadow extracted from `<a:effectLst>/<a:outerShdw>`. PPTX stores
+   *  the shadow in polar coords (dist + dir); we convert to Narrative's
+   *  cartesian (offsetX/Y) at parse time. */
+  shadow?: {
+    color: number
+    blur: number
+    offsetX: number
+    offsetY: number
+    opacity: number
+  }
+  /** Gaussian blur radius in px from `<a:effectLst>/<a:blur rad>`. */
+  blur?: number
+  /** Image crop window in slide-local px, derived from `<a:blipFill>/<a:srcRect>`.
+   *  Same coordinate space as the shape's `x` / `y` / `width` / `height`. The
+   *  writer translates to Narrative's `imageRect` (which is also slide-local). */
+  imageRect?: { x: number; y: number; width: number; height: number }
+  /** PPTX `<p:cNvPr id="N">` integer id. Used by the writer to resolve
+   *  animation `<p:spTgt spid="N">` references to the SlideObject.id the
+   *  writer assigned to this shape. */
+  spId?: number
+  /** `<p:cNvPr name="…">` author-visible name. Capture so re-export emits
+   *  back the same name attr. */
+  cnvName?: string
+  /** Frame-level text properties — captured during text-frame parsing and
+   *  laid onto the TextObject root by the writer. Per-run values would be
+   *  captured under `textRuns[i]` instead; these fields hold the values
+   *  Narrative models at the frame level (no per-run variant). */
+  fontFamily?: string
+  letterSpacing?: number
+  lineHeight?: number
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Text-shape stroke ("text outline") — `<a:rPr><a:ln>` solidFill +
+   *  width. Captured from the first run; collapsed onto TextObject root. */
+  textStrokeColor?: number
+  textStrokeAlpha?: number
+  textStrokeWidth?: number
 }
 
 export interface ParsedBackground {
@@ -173,6 +268,36 @@ export interface ParsedSlide {
    *  `ppt/notesSlides/notesSlideN.xml`. Missing or empty array ⇒ slide
    *  has no notes. v1 is plain-text only (no formatting). */
   notes?: string[]
+  /** Slide title from `<p:cSld name="…">`. Optional. */
+  name?: string
+  /** True when the source `<p:sld show="0">` — slide hidden in presenter. */
+  skipped?: boolean
+  /** Parsed transition kind + duration from `<p:transition>`. */
+  transition?: {
+    kind: 'none' | 'fade' | 'push' | 'cube' | 'magic'
+    durationMs: number
+    direction?: 'l' | 'r' | 'u' | 'd'
+  }
+  /** Imported animation steps (lossy mapping from PPTX `<p:timing>`). */
+  animations?: ParsedAnimationStep[]
+}
+
+/**
+ * One animation step extracted from a slide's `<p:timing>` tree. PPTX
+ * timing is fundamentally lossier than Narrative's DSL (it's a nested
+ * click/withEffect/afterEffect tree with discrete preset IDs); we map
+ * each effect to the closest Narrative AnimationPreset + duration +
+ * trigger. The target shape's resolved id needs separate plumbing on
+ * the writer side because PPTX targets via `spid` (the cNvPr id, an
+ * integer) and Narrative targets via the SlideObject.id (nanoid).
+ */
+export interface ParsedAnimationStep {
+  /** PPTX `spid` reference — the integer `<p:cNvPr id>` of the target. */
+  spId: number
+  preset: string
+  trigger: 'onEnter' | 'onClick' | 'withPrevious' | 'afterPrevious'
+  durationMs: number
+  delayMs: number
 }
 
 export interface ParsedEmbeddedImage {
@@ -315,6 +440,65 @@ const MVP_ELEMENTS = new Set<string>([
   'a:buAutoNum',
   'a:buNone',
   'a:hlinkClick',
+  // Line/arrow endpoint markers.
+  'a:headEnd',
+  'a:tailEnd',
+  // Custom path geometry — `<a:custGeom>` and its segments.
+  'a:videoFile',
+  'a:audioFile',
+  // Effects.
+  'a:effectLst',
+  'a:outerShdw',
+  'a:innerShdw',
+  'a:blur',
+  'a:srcRect',
+  // Slide-level: transitions + animations.
+  'p:transition',
+  'p:fade',
+  'p:push',
+  'p:cover',
+  'p:wipe',
+  'p:cube',
+  'p:flythrough',
+  'p:doors',
+  'p:morph',
+  'p:none',
+  'p:timing',
+  'p:tnLst',
+  'p:par',
+  'p:cTn',
+  'p:childTnLst',
+  'p:stCondLst',
+  'p:cond',
+  'p:tgtEl',
+  'p:spTgt',
+  'p:bldP',
+  'p:bldLst',
+  'p:set',
+  'p:to',
+  'p:strVal',
+  'p:attrNameLst',
+  'p:attrName',
+  'p:anim',
+  'p:animEffect',
+  // Text frame fine-grained attrs.
+  'a:latin',
+  'a:ea',
+  'a:cs',
+  'a:lnSpc',
+  'a:spcBef',
+  'a:spcAft',
+  'a:spcPct',
+  'a:spcPts',
+  'a:custGeom',
+  'a:pathLst',
+  'a:path',
+  'a:moveTo',
+  'a:lnTo',
+  'a:cubicBezTo',
+  'a:quadBezTo',
+  'a:close',
+  'a:pt',
   // Tables — exploded into per-cell rect + text shapes by `parseTable`.
   'p:graphicFrame',
   'p:nvGraphicFramePr',
@@ -721,6 +905,144 @@ function mapAlgn(raw: string): 'left' | 'center' | 'right' | 'justify' {
 }
 
 /**
+ * Parse a `<a:custGeom>/<a:pathLst>/<a:path>` into an array of anchors
+ * matching Narrative's PathAnchor schema (with cubic-bezier handles when
+ * the source used `<a:cubicBezTo>` segments).
+ *
+ * PPTX path coordinate model: `<a:path w="EMU" h="EMU">` declares a path
+ * coordinate space that maps onto the shape's `<a:xfrm>/<a:ext>` bbox.
+ * Children are `<a:moveTo>`, `<a:lnTo>`, `<a:cubicBezTo>`, `<a:quadBezTo>`,
+ * `<a:arcTo>`, and `<a:close>`. Each `<a:pt x="..." y="..."/>` is a
+ * coordinate in that EMU space. We:
+ *   1. Convert each PPTX point from path-space EMU → slide-local px
+ *      using `(emuToPx(coord) * shapeExtPx / emuToPx(pathW))` so the
+ *      anchors map directly into the shape's bbox.
+ *   2. For cubicBezTo: PPTX gives three points (cp1, cp2, end). cp1
+ *      becomes the previous anchor's cpOut, cp2 becomes the new
+ *      anchor's cpIn.
+ *   3. quadBezTo gets converted to a cubic by the standard
+ *      `1/3, 2/3` interpolation between the start, control, and end
+ *      points. arcTo is not currently supported (drops the segment).
+ *
+ * Returns `{ anchors, closed }`. Anchor coordinates are slide-local px,
+ * NOT yet relative to the shape's `(x, y)` — that conversion happens in
+ * the writer's mapShape so the parser stays coordinate-system-agnostic.
+ */
+function parseCustGeomAnchors(
+  custGeom: XmlNode,
+  shapeWidthPx: number,
+  shapeHeightPx: number,
+  shapeXPx: number,
+  shapeYPx: number,
+): { anchors: ParsedPathAnchor[]; closed: boolean } {
+  const cgChildren = getChildren(custGeom, 'a:custGeom')
+  const pathLst = findFirst(cgChildren, 'a:pathLst')
+  if (!pathLst) return { anchors: [], closed: false }
+  const path = findFirst(getChildren(pathLst, 'a:pathLst'), 'a:path')
+  if (!path) return { anchors: [], closed: false }
+
+  const pathAttrs = getAttrs(path)
+  const pathW = Number(pathAttrs['@w'] ?? 0) || 1
+  const pathH = Number(pathAttrs['@h'] ?? 0) || 1
+  const scaleX = shapeWidthPx / pathW
+  const scaleY = shapeHeightPx / pathH
+  // Convert a `<a:pt>` (EMU in path-space) to slide-local px.
+  const toPx = (ptNode: XmlNode | undefined): { x: number; y: number } | undefined => {
+    if (!ptNode) return undefined
+    const a = getAttrs(ptNode)
+    const px = Number(a['@x'] ?? 0)
+    const py = Number(a['@y'] ?? 0)
+    return { x: shapeXPx + px * scaleX, y: shapeYPx + py * scaleY }
+  }
+
+  const anchors: ParsedPathAnchor[] = []
+  let closed = false
+  const pathChildren = getChildren(path, 'a:path')
+  let cursor: { x: number; y: number } | undefined
+
+  for (const cmd of pathChildren) {
+    const tag = getTag(cmd)
+    if (tag === null) continue
+    const ptNodes = getChildren(cmd, tag).filter((n) => getTag(n) === 'a:pt')
+    if (tag === 'a:moveTo') {
+      const p = toPx(ptNodes[0])
+      if (p !== undefined) {
+        anchors.push({ x: p.x, y: p.y })
+        cursor = p
+      }
+    } else if (tag === 'a:lnTo') {
+      const p = toPx(ptNodes[0])
+      if (p !== undefined) {
+        anchors.push({ x: p.x, y: p.y })
+        cursor = p
+      }
+    } else if (tag === 'a:cubicBezTo') {
+      // cubicBezTo carries three `<a:pt>` children: cp1, cp2, end.
+      const cp1 = toPx(ptNodes[0])
+      const cp2 = toPx(ptNodes[1])
+      const end = toPx(ptNodes[2])
+      if (cp1 !== undefined && anchors.length > 0 && cursor !== undefined) {
+        const prev = anchors[anchors.length - 1]!
+        prev.cpOut = { x: cp1.x - prev.x, y: cp1.y - prev.y }
+      }
+      if (end !== undefined) {
+        const next: ParsedPathAnchor = { x: end.x, y: end.y }
+        if (cp2 !== undefined) {
+          next.cpIn = { x: cp2.x - end.x, y: cp2.y - end.y }
+        }
+        anchors.push(next)
+        cursor = end
+      }
+    } else if (tag === 'a:quadBezTo') {
+      // Quad → cubic conversion. Quad has cp + end; cubic equivalent:
+      // cp1 = start + 2/3 (cp - start), cp2 = end + 2/3 (cp - end).
+      const cp = toPx(ptNodes[0])
+      const end = toPx(ptNodes[1])
+      if (cp !== undefined && end !== undefined && cursor !== undefined) {
+        const start = cursor
+        const cp1 = {
+          x: start.x + (2 / 3) * (cp.x - start.x),
+          y: start.y + (2 / 3) * (cp.y - start.y),
+        }
+        const cp2 = {
+          x: end.x + (2 / 3) * (cp.x - end.x),
+          y: end.y + (2 / 3) * (cp.y - end.y),
+        }
+        if (anchors.length > 0) {
+          const prev = anchors[anchors.length - 1]!
+          prev.cpOut = { x: cp1.x - prev.x, y: cp1.y - prev.y }
+        }
+        anchors.push({
+          x: end.x,
+          y: end.y,
+          cpIn: { x: cp2.x - end.x, y: cp2.y - end.y },
+        })
+        cursor = end
+      }
+    } else if (tag === 'a:close') {
+      closed = true
+    }
+    // arcTo intentionally not handled — out of v1 scope; PowerPoint's
+    // arcTo is rare on user-drawn paths (pen tool uses cubic).
+  }
+
+  return { anchors, closed }
+}
+
+/**
+ * Map PPTX line-end type to Narrative's LineCap. PPTX values include
+ * 'none' / 'triangle' / 'stealth' / 'arrow' / 'diamond' / 'oval'. We
+ * collapse pointy variants to `'arrow'` (Narrative has just one arrow
+ * cap kind) and treat decorative round/diamond/oval as `'round'` so the
+ * stroke endpoint stays visibly capped on round-trip.
+ */
+function mapLineEndCap(raw: string): ParsedShape['startCap'] {
+  if (raw === 'triangle' || raw === 'stealth' || raw === 'arrow') return 'arrow'
+  if (raw === 'oval' || raw === 'diamond') return 'round'
+  return 'none'
+}
+
+/**
  * Detect a bullet declaration inside a `<a:pPr>` / `<a:lvl1pPr>` node.
  * Returns 'bullet' for `<a:buChar>`, 'numbered' for `<a:buAutoNum>`, 'none'
  * for explicit `<a:buNone>`, undefined when no declaration is present. The
@@ -1098,7 +1420,13 @@ async function loadImageRels(zip: JSZip, xmlPath: string): Promise<ImageRelMap> 
       typeof id === 'string' &&
       typeof target === 'string' &&
       typeof type === 'string' &&
-      type.endsWith('/image')
+      // Same rel map carries image + video + audio refs since each shape
+      // references rel ids by their schema-typed parent element
+      // (`<a:blip r:embed>` only sees image rels, `<a:videoFile r:embed>`
+      // only sees video rels in practice). Cross-type collisions don't
+      // happen — pptxgenjs / PowerPoint never re-use a rel id across
+      // types in the same .rels file.
+      (type.endsWith('/image') || type.endsWith('/video') || type.endsWith('/audio'))
     ) {
       rels.set(id, resolveRelPath(dir, target))
     }
@@ -1350,6 +1678,34 @@ function parseShape(
 
   const spPrChildren = getChildren(spPr, 'p:spPr')
 
+  // ─── `<p:cNvPr>` non-visual props: integer spId + author name ──────────
+  // The id integer is what `<p:spTgt spid>` animation targets reference;
+  // the name (e.g. "Title 1") surfaces in PowerPoint's selection pane.
+  let parsedSpId: number | undefined
+  let parsedCnvName: string | undefined
+  {
+    // `<p:cNvPr>` lives inside `<p:nvSpPr>` / `<p:nvPicPr>` / `<p:nvCxnSpPr>`
+    // depending on shape source tag. Walk all candidates.
+    const nvSpPr = findFirst(children, 'p:nvSpPr')
+    const nvPicPr = findFirst(children, 'p:nvPicPr')
+    const nvCxnSpPr = findFirst(children, 'p:nvCxnSpPr')
+    const nvHolder = nvSpPr ?? nvPicPr ?? nvCxnSpPr
+    if (nvHolder) {
+      const nvTag = getTag(nvHolder) ?? 'p:nvSpPr'
+      const cNvPr = findFirst(getChildren(nvHolder, nvTag), 'p:cNvPr')
+      if (cNvPr) {
+        const a = getAttrs(cNvPr)
+        const idStr = a['@id']
+        if (typeof idStr === 'string') {
+          const n = Number(idStr)
+          if (Number.isFinite(n)) parsedSpId = n
+        }
+        const nm = a['@name']
+        if (typeof nm === 'string' && nm.length > 0) parsedCnvName = nm
+      }
+    }
+  }
+
   // ─── Transform ─────────────────────────────────────────────────────────
   const xfrm = findFirst(spPrChildren, 'a:xfrm')
   let x = 0,
@@ -1431,13 +1787,33 @@ function parseShape(
   // ─── Geometry → tentative kind (text overrides this below) ─────────────
   const prstGeom = findFirst(spPrChildren, 'a:prstGeom')
   const prst = prstGeom ? String(getAttrs(prstGeom)['@prst'] ?? '') : undefined
+  const custGeom = findFirst(spPrChildren, 'a:custGeom')
+
+  // Regular-polygon preset → sides count. PPTX's "diamond" is conceptually
+  // a 4-sided polygon but its bounding-box geometry differs from the
+  // generic regular polygon we'd emit on round-trip, so we keep it as
+  // 'unknown' for now (the importer leaves it on the ignored list).
+  const POLYGON_SIDES: Record<string, number> = {
+    pentagon: 5,
+    hexagon: 6,
+    heptagon: 7,
+    octagon: 8,
+    decagon: 10,
+    dodecagon: 12,
+  }
 
   let kind: ParsedShapeKind = 'unknown'
+  let sides: number | undefined
   if (sourceTag === 'p:pic') kind = 'image'
   else if (sourceTag === 'p:cxnSp') kind = 'line'
   else if (prst === 'rect' || prst === 'roundRect') kind = 'rectangle'
   else if (prst === 'ellipse') kind = 'ellipse'
-  else if (prst === 'line' || prst === 'straightConnector1') kind = 'line'
+  else if (prst === 'triangle' || prst === 'isoscelesTriangle') kind = 'triangle'
+  else if (prst !== undefined && POLYGON_SIDES[prst] !== undefined) {
+    kind = 'polygon'
+    sides = POLYGON_SIDES[prst]
+  } else if (prst === 'line' || prst === 'straightConnector1') kind = 'line'
+  else if (custGeom !== undefined) kind = 'path'
 
   // ─── Fill ──────────────────────────────────────────────────────────────
   let fillColor: number | undefined
@@ -1485,10 +1861,42 @@ function parseShape(
     }
   }
 
+  // Videos live as `<p:pic>` with `<p:nvPicPr>/<p:nvPr>/<a:videoFile>`.
+  // The `<p:blipFill>` underneath is a poster frame — we keep its
+  // `imagePath` around but flip `kind` to 'video' and capture the video
+  // file's own embed rel into `videoPath`. Same rels map carries both.
+  let videoPath: string | undefined
+  if (sourceTag === 'p:pic') {
+    const nvPicPr = findFirst(children, 'p:nvPicPr')
+    if (nvPicPr) {
+      const nvPr = findFirst(getChildren(nvPicPr, 'p:nvPicPr'), 'p:nvPr')
+      if (nvPr) {
+        const videoFile = findFirst(getChildren(nvPr, 'p:nvPr'), 'a:videoFile')
+        if (videoFile) {
+          const va = getAttrs(videoFile)
+          const rid = (va['@r:embed'] ?? va['@r:link']) as string | undefined
+          if (typeof rid === 'string') {
+            const path = imageRels.get(rid)
+            if (path !== undefined) {
+              videoPath = path
+              kind = 'video'
+            }
+          }
+        }
+      }
+    }
+  }
+
   // ─── Stroke ────────────────────────────────────────────────────────────
   let strokeColor: number | undefined
   let strokeAlpha: number | undefined
   let strokeWidth: number | undefined
+  // Endpoint caps for lines/arrows — read from `<a:ln>/<a:headEnd>` and
+  // `<a:tailEnd>`. PPTX cap types: 'none' / 'triangle' / 'stealth' /
+  // 'diamond' / 'oval' / 'arrow'. We collapse all "non-none, pointy"
+  // variants to Narrative's `'arrow'` cap; the rest map to `'none'`.
+  let startCap: ParsedShape['startCap']
+  let endCap: ParsedShape['endCap']
   const ln = findFirst(spPrChildren, 'a:ln')
   if (ln) {
     const wAttr = getAttrs(ln)['@w']
@@ -1500,6 +1908,99 @@ function parseShape(
       if (c !== undefined) {
         strokeColor = c.color
         if (c.alpha !== undefined) strokeAlpha = c.alpha
+      }
+    }
+    const head = findFirst(lnChildren, 'a:headEnd')
+    const tail = findFirst(lnChildren, 'a:tailEnd')
+    if (head) startCap = mapLineEndCap(String(getAttrs(head)['@type'] ?? 'none'))
+    if (tail) endCap = mapLineEndCap(String(getAttrs(tail)['@type'] ?? 'none'))
+  }
+  // A line with any arrow cap is logically an ArrowObject, not a LineObject.
+  if (kind === 'line' && (startCap === 'arrow' || endCap === 'arrow')) {
+    kind = 'arrow'
+  }
+
+  // Connector flips from `<a:xfrm flipH="1" flipV="1">` — the writer needs
+  // these to derive p1/p2 (PPTX draws the line from the bbox corner pair
+  // indicated by the flip flags).
+  let flipH: boolean | undefined
+  let flipV: boolean | undefined
+  if (xfrm) {
+    const a = getAttrs(xfrm)
+    if (a['@flipH'] === '1' || a['@flipH'] === 'true') flipH = true
+    if (a['@flipV'] === '1' || a['@flipV'] === 'true') flipV = true
+  }
+
+  // ─── Effects: drop shadow + gaussian blur ──────────────────────────────
+  let shadow: ParsedShape['shadow']
+  let blurRadius: number | undefined
+  const effectLst = findFirst(spPrChildren, 'a:effectLst')
+  if (effectLst) {
+    const effects = getChildren(effectLst, 'a:effectLst')
+    const outerShdw = findFirst(effects, 'a:outerShdw')
+    if (outerShdw) {
+      // PPTX shadow attrs:
+      //   blurRad   — EMU; convert to px @ 96 DPI.
+      //   dist      — EMU offset distance.
+      //   dir       — 60000ths of a degree (PPTX angle convention, 0 = right,
+      //               clockwise). Combined with `dist` to derive offsetX/Y.
+      //   <a:srgbClr val="…"><a:alpha val="N"/></a:srgbClr> — colour + opacity
+      //   (alpha is 1/100000ths so 50000 = 0.5).
+      const a = getAttrs(outerShdw)
+      const blurRad = Number(a['@blurRad'] ?? 0)
+      const dist = Number(a['@dist'] ?? 0)
+      const dirRaw = Number(a['@dir'] ?? 0)
+      const dirRad = (dirRaw / 60000) * (Math.PI / 180)
+      const offX = emuToPx(dist) * Math.cos(dirRad)
+      const offY = emuToPx(dist) * Math.sin(dirRad)
+      const c = parseColourAndAlphaFrom(outerShdw, theme)
+      shadow = {
+        color: c?.color ?? 0x000000,
+        blur: emuToPx(blurRad),
+        offsetX: offX,
+        offsetY: offY,
+        opacity: c?.alpha ?? 1,
+      }
+    }
+    const blurEffect = findFirst(effects, 'a:blur')
+    if (blurEffect) {
+      const rad = Number(getAttrs(blurEffect)['@rad'] ?? 0)
+      blurRadius = emuToPx(rad)
+    }
+  }
+
+  // ─── Image crop: <a:blipFill>/<a:srcRect l t r b> → imageRect ──────────
+  // PPTX `srcRect` is per-side percentage × 1000 of the SOURCE bitmap. The
+  // remaining (uncropped) source region is then scaled to fill the frame.
+  // Narrative's imageRect describes where the UNCROPPED source would land
+  // on the slide; the frame's bounding box clips visible pixels. We solve
+  // for that imageRect from `frame + srcRect` here.
+  let imageRect: ParsedShape['imageRect']
+  if (sourceTag === 'p:pic') {
+    const picBlipFill = findFirst(children, 'p:blipFill')
+    if (picBlipFill) {
+      const bfChildren = getChildren(picBlipFill, 'p:blipFill')
+      const srcRect = findFirst(bfChildren, 'a:srcRect')
+      if (srcRect) {
+        const sa = getAttrs(srcRect)
+        const l = Number(sa['@l'] ?? 0) / 100000
+        const t = Number(sa['@t'] ?? 0) / 100000
+        const r = Number(sa['@r'] ?? 0) / 100000
+        const b = Number(sa['@b'] ?? 0) / 100000
+        // Skip the no-op case (all sides zero) so we don't emit a
+        // redundant imageRect that just equals the frame.
+        if (l !== 0 || t !== 0 || r !== 0 || b !== 0) {
+          const visibleFracW = Math.max(0.001, 1 - l - r)
+          const visibleFracH = Math.max(0.001, 1 - t - b)
+          const imgW = width / visibleFracW
+          const imgH = height / visibleFracH
+          imageRect = {
+            x: x - l * imgW,
+            y: y - t * imgH,
+            width: imgW,
+            height: imgH,
+          }
+        }
       }
     }
   }
@@ -1568,6 +2069,20 @@ function parseShape(
   /** First hyperlink seen during run walk — surfaces as the TextObject's
    *  collapsed `hyperlink` (Narrative models one hyperlink per object). */
   let firstHyperlinkHref: string | undefined
+  /** Frame-level text properties captured during the run / paragraph walk.
+   *  These collapse from PPTX's per-run / per-paragraph schema onto
+   *  TextObject's single-value root fields — the FIRST run / paragraph
+   *  with each property wins, matching the rest of the parser's
+   *  first-occurrence convention. */
+  let frameFontFamily: string | undefined
+  let frameLetterSpacing: number | undefined
+  let frameLineHeight: number | undefined
+  let frameSpaceBefore: number | undefined
+  let frameSpaceAfter: number | undefined
+  let frameTextTransform: ParsedShape['textTransform']
+  let frameTextStrokeColor: number | undefined
+  let frameTextStrokeAlpha: number | undefined
+  let frameTextStrokeWidth: number | undefined
   const txBody = findFirst(children, 'p:txBody')
   if (txBody) {
     const txBodyChildren = getChildren(txBody, 'p:txBody')
@@ -1588,7 +2103,15 @@ function parseShape(
       const pChildren = getChildren(p, 'a:p')
       // First-paragraph explicit `<a:pPr algn="..">` wins over layout defaults.
       // Bullet decl on first paragraph likewise wins over any inherited default.
-      if (textAlign === undefined || listStyleResolved === undefined) {
+      // Line height + paragraph space are also paragraph-level; we capture
+      // them from the first paragraph (Narrative models them frame-wide).
+      if (
+        textAlign === undefined ||
+        listStyleResolved === undefined ||
+        frameLineHeight === undefined ||
+        frameSpaceBefore === undefined ||
+        frameSpaceAfter === undefined
+      ) {
         const pPr = findFirst(pChildren, 'a:pPr')
         if (pPr) {
           if (textAlign === undefined) {
@@ -1598,6 +2121,55 @@ function parseShape(
           if (listStyleResolved === undefined) {
             const bullet = detectBulletDecl(pPr, 'a:pPr')
             if (bullet !== undefined) listStyleResolved = bullet
+          }
+          const pPrChildren = getChildren(pPr, 'a:pPr')
+          // <a:lnSpc>/<a:spcPct val=N> — N is 100000ths of a multiplier
+          //   (100000 = 1.0x). Narrative's lineHeight is the same multiplier.
+          // <a:lnSpc>/<a:spcPts val=N> — N is 100ths of a point (absolute).
+          //   Convert to a multiplier against the resolved fontSize when
+          //   possible, otherwise leave undefined and skip.
+          if (frameLineHeight === undefined) {
+            const lnSpc = findFirst(pPrChildren, 'a:lnSpc')
+            if (lnSpc) {
+              const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
+              const pct = findFirst(lnSpcChildren, 'a:spcPct')
+              if (pct) {
+                const v = Number(getAttrs(pct)['@val'])
+                if (Number.isFinite(v)) frameLineHeight = v / 100000
+              } else {
+                const pts = findFirst(lnSpcChildren, 'a:spcPts')
+                if (pts && fontSize !== undefined && fontSize > 0) {
+                  const v = Number(getAttrs(pts)['@val'])
+                  if (Number.isFinite(v)) {
+                    // PPTX value is 100ths of a point → px @ 96 DPI.
+                    const lineHeightPx = v * PPTX_FONT_TO_PX
+                    frameLineHeight = lineHeightPx / fontSize
+                  }
+                }
+              }
+            }
+          }
+          // <a:spcBef>/<a:spcAft> use the same <a:spcPts val="100ths of pt">
+          //  format. Narrative paragraphSpaceBefore/After is in px.
+          if (frameSpaceBefore === undefined) {
+            const spcBef = findFirst(pPrChildren, 'a:spcBef')
+            if (spcBef) {
+              const pts = findFirst(getChildren(spcBef, 'a:spcBef'), 'a:spcPts')
+              if (pts) {
+                const v = Number(getAttrs(pts)['@val'])
+                if (Number.isFinite(v)) frameSpaceBefore = v * PPTX_FONT_TO_PX
+              }
+            }
+          }
+          if (frameSpaceAfter === undefined) {
+            const spcAft = findFirst(pPrChildren, 'a:spcAft')
+            if (spcAft) {
+              const pts = findFirst(getChildren(spcAft, 'a:spcAft'), 'a:spcPts')
+              if (pts) {
+                const v = Number(getAttrs(pts)['@val'])
+                if (Number.isFinite(v)) frameSpaceAfter = v * PPTX_FONT_TO_PX
+              }
+            }
           }
         }
       }
@@ -1622,6 +2194,17 @@ function parseShape(
           if (typeof a['@u'] === 'string' && a['@u'] !== 'none') runAttrs.underline = true
           const sz = a['@sz']
           if (typeof sz === 'string') runAttrs.fontSize = Number(sz) * PPTX_FONT_TO_PX
+          // Letter spacing — PPTX `spc` is 100ths of a point (signed).
+          const spc = a['@spc']
+          if (typeof spc === 'string') {
+            const v = Number(spc)
+            if (Number.isFinite(v)) runAttrs.letterSpacing = v * PPTX_FONT_TO_PX
+          }
+          // Text case — `cap="all"|"small"|"none"` maps to textTransform.
+          let runTextTransform: ParsedShape['textTransform']
+          const cap = a['@cap']
+          if (cap === 'all') runTextTransform = 'uppercase'
+          else if (cap === 'small') runTextTransform = 'lowercase'
           const rPrChildren = getChildren(rPr, 'a:rPr')
           const rSolid = findFirst(rPrChildren, 'a:solidFill')
           if (rSolid) {
@@ -1631,6 +2214,19 @@ function parseShape(
               if (c.alpha !== undefined) runAttrs.colorAlpha = c.alpha
             }
           }
+          // Font family — `<a:latin typeface="…">` carries the run's
+          // typeface. Eastern/Asian variants (`<a:ea>` / `<a:cs>`) are
+          // ignored for v1; PowerPoint falls back to `a:latin` when an
+          // east-asian font isn't installed anyway.
+          const latin = findFirst(rPrChildren, 'a:latin')
+          if (latin) {
+            const tf = getAttrs(latin)['@typeface']
+            if (typeof tf === 'string' && tf.length > 0) runAttrs.fontFamily = tf
+          }
+          // Text stroke — `<a:rPr><a:ln w>` with a `<a:solidFill>` inside.
+          // Captured as frame-level on the first run; per-run text stroke
+          // doesn't survive into Narrative's TextObject model.
+          const rPrLn = findFirst(rPrChildren, 'a:ln')
           // Hyperlink rel id → resolved URL via slide rels. PPTX stamps
           // `<a:hlinkClick r:id="rIdN"/>` on the run; the rId maps to a
           // `…/hyperlink` Relationship with the actual URL as Target.
@@ -1649,6 +2245,26 @@ function parseShape(
             if (runAttrs.color !== undefined) {
               textColor = runAttrs.color
               if (runAttrs.colorAlpha !== undefined) textColorAlpha = runAttrs.colorAlpha
+            }
+            // Frame-level fields from the first run only.
+            if (runAttrs.fontFamily !== undefined) frameFontFamily = runAttrs.fontFamily
+            if (runAttrs.letterSpacing !== undefined) {
+              frameLetterSpacing = runAttrs.letterSpacing
+            }
+            if (runTextTransform !== undefined) frameTextTransform = runTextTransform
+            if (rPrLn) {
+              const lnAttrs = getAttrs(rPrLn)
+              const lnW = lnAttrs['@w']
+              if (typeof lnW === 'string') frameTextStrokeWidth = emuToPx(Number(lnW))
+              const lnChildren = getChildren(rPrLn, 'a:ln')
+              const lnSolid = findFirst(lnChildren, 'a:solidFill')
+              if (lnSolid) {
+                const c = parseColourAndAlphaFrom(lnSolid, theme)
+                if (c !== undefined) {
+                  frameTextStrokeColor = c.color
+                  if (c.alpha !== undefined) frameTextStrokeAlpha = c.alpha
+                }
+              }
             }
             firstRunStyled = true
           }
@@ -1760,12 +2376,45 @@ function parseShape(
   if (prst !== undefined) shape.prstGeom = prst
   if (blipRelId !== undefined) shape.blipRelId = blipRelId
   if (imagePath !== undefined) shape.imagePath = imagePath
+  if (videoPath !== undefined) shape.videoPath = videoPath
+  if (shadow !== undefined) shape.shadow = shadow
+  if (blurRadius !== undefined && blurRadius > 0) shape.blur = blurRadius
+  if (imageRect !== undefined) shape.imageRect = imageRect
+  if (parsedSpId !== undefined) shape.spId = parsedSpId
+  if (parsedCnvName !== undefined) shape.cnvName = parsedCnvName
+  if (sides !== undefined) shape.sides = sides
+  // Custom path geometry — only emitted when the shape is a path; we
+  // parse anchors lazily here so non-path shapes don't pay the cost.
+  if (kind === 'path' && custGeom !== undefined && width > 0 && height > 0) {
+    const { anchors, closed } = parseCustGeomAnchors(custGeom, width, height, x, y)
+    if (anchors.length > 0) {
+      shape.pathAnchors = anchors
+      if (closed) shape.pathClosed = true
+    }
+  }
+  // Line/arrow caps + flips — needed by the writer to construct
+  // ArrowObject / LineObject endpoints correctly.
+  if (kind === 'line' || kind === 'arrow') {
+    if (startCap !== undefined) shape.startCap = startCap
+    if (endCap !== undefined) shape.endCap = endCap
+    if (flipH !== undefined) shape.flipH = flipH
+    if (flipV !== undefined) shape.flipV = flipV
+  }
   // Rich runs + collapsed hyperlink — only attached for text-kind shapes
   // since they're meaningless on rect/ellipse/image/line outputs and would
   // just bloat the parser JSON in debug dumps.
   if (kind === 'text') {
     if (allRuns.length > 0) shape.textRuns = allRuns
     if (firstHyperlinkHref !== undefined) shape.hyperlink = { href: firstHyperlinkHref }
+    if (frameFontFamily !== undefined) shape.fontFamily = frameFontFamily
+    if (frameLetterSpacing !== undefined) shape.letterSpacing = frameLetterSpacing
+    if (frameLineHeight !== undefined) shape.lineHeight = frameLineHeight
+    if (frameSpaceBefore !== undefined) shape.paragraphSpaceBefore = frameSpaceBefore
+    if (frameSpaceAfter !== undefined) shape.paragraphSpaceAfter = frameSpaceAfter
+    if (frameTextTransform !== undefined) shape.textTransform = frameTextTransform
+    if (frameTextStrokeColor !== undefined) shape.textStrokeColor = frameTextStrokeColor
+    if (frameTextStrokeAlpha !== undefined) shape.textStrokeAlpha = frameTextStrokeAlpha
+    if (frameTextStrokeWidth !== undefined) shape.textStrokeWidth = frameTextStrokeWidth
   }
   return shape
 }
@@ -2517,7 +3166,220 @@ function parseSlide(
     }
   }
 
-  return { source: sourceName, background, shapes }
+  // ─── Slide name + skipped flag ─────────────────────────────────────────
+  // `<p:cSld name="…">` carries an optional slide title. `<p:sld show="0">`
+  // marks the slide as hidden in presenter mode (PowerPoint draws a
+  // diagonal line over hidden slides in the slide-sorter view).
+  let slideName: string | undefined
+  if (cSld) {
+    const v = getAttrs(cSld)['@name']
+    if (typeof v === 'string' && v.length > 0) slideName = v
+  }
+  const showAttr = getAttrs(sld)['@show']
+  const skipped = showAttr === '0' || showAttr === 'false'
+
+  // ─── Slide transition ──────────────────────────────────────────────────
+  const transition = parseSlideTransition(sldChildren)
+
+  // ─── Animations (from `<p:timing>`) ────────────────────────────────────
+  // We extract entrance / exit / emphasis presets keyed by their PPTX
+  // presetID and presetClass. Each effect carries a target spId (the
+  // integer `<p:cNvPr id>` of the shape it animates) which the writer
+  // then resolves to the SlideObject.id assigned when shapes were
+  // mapped. Lossy: the PPTX timing tree's nested click/withEffect
+  // semantics collapse to Narrative's flat {trigger, delay} fields.
+  const animations = parseSlideAnimations(sldChildren)
+
+  const out: ParsedSlide = { source: sourceName, background, shapes }
+  if (slideName !== undefined) out.name = slideName
+  if (skipped) out.skipped = true
+  if (transition !== undefined) out.transition = transition
+  if (animations.length > 0) out.animations = animations
+  return out
+}
+
+/**
+ * Parse `<p:transition>` into Narrative's SlideTransition shape. PPTX
+ * transition children correspond to kinds:
+ *   <p:fade/>       → 'fade'
+ *   <p:push dir>   → 'push' with direction
+ *   <p:cube dir>   → 'cube'
+ *   <p:morph/>     → 'magic' (PPT 2019+ "morph" — Narrative's Magic Move)
+ *   <p:none/>      → 'none' (default; we omit the field if encountered)
+ *   anything else  → 'fade' (best-effort default)
+ *
+ * Duration: `<p:transition spd="med">` is the legacy speed enum; newer
+ * decks use the milliseconds attribute on individual transition kinds.
+ * We honor both and default to 500 ms.
+ */
+function parseSlideTransition(sldChildren: XmlNode[]): ParsedSlide['transition'] | undefined {
+  const trans = findFirst(sldChildren, 'p:transition')
+  if (!trans) return undefined
+  const transAttrs = getAttrs(trans)
+  const spd = String(transAttrs['@spd'] ?? '')
+  const dur = Number(transAttrs['@p14:dur'] ?? transAttrs['@dur'] ?? 0)
+  let durationMs = 500
+  if (Number.isFinite(dur) && dur > 0) durationMs = dur
+  else if (spd === 'fast') durationMs = 250
+  else if (spd === 'slow') durationMs = 1000
+
+  const transChildren = getChildren(trans, 'p:transition')
+  for (const ch of transChildren) {
+    const tag = getTag(ch)
+    if (tag === 'p:fade') return { kind: 'fade', durationMs }
+    if (tag === 'p:morph') return { kind: 'magic', durationMs }
+    if (tag === 'p:push' || tag === 'p:cover' || tag === 'p:wipe') {
+      const dir = String(getAttrs(ch)['@dir'] ?? 'l')
+      const direction: 'l' | 'r' | 'u' | 'd' =
+        dir === 'r' || dir === 'd' || dir === 'u' || dir === 'l' ? (dir as 'l') : 'l'
+      return { kind: 'push', durationMs, direction }
+    }
+    if (tag === 'p:cube' || tag === 'p:flythrough' || tag === 'p:doors') {
+      const dir = String(getAttrs(ch)['@dir'] ?? 'l')
+      const direction: 'l' | 'r' | 'u' | 'd' =
+        dir === 'r' || dir === 'd' || dir === 'u' || dir === 'l' ? (dir as 'l') : 'l'
+      return { kind: 'cube', durationMs, direction }
+    }
+    if (tag === 'p:none') return undefined
+  }
+  // Unknown transition kind → fall back to fade.
+  return { kind: 'fade', durationMs }
+}
+
+/**
+ * Walk `<p:timing>` looking for entrance/exit/emphasis effects. PPTX's
+ * timing schema is a nested click/withEffect/afterEffect tree; we
+ * flatten it by walking depth-first and recording each `<p:cTn
+ * presetClass="entr|exit|emph" presetID="N">` encountered, paired with
+ * the shape it targets via `<p:spTgt spid="N">`.
+ *
+ * Lossy by design — PPTX's nested timing tree is far richer than
+ * Narrative's flat AnimationStep list. Per the M28 plan we document
+ * this limitation: a deck with complex sequencing will re-import with
+ * the right effects but a simplified timing.
+ */
+function parseSlideAnimations(sldChildren: XmlNode[]): ParsedAnimationStep[] {
+  const timing = findFirst(sldChildren, 'p:timing')
+  if (!timing) return []
+  const out: ParsedAnimationStep[] = []
+
+  // PPTX timing nodes we care about:
+  //   <p:par>            paragraph (sequential or click container)
+  //   <p:cTn>            common-timing-node — carries `presetClass`,
+  //                      `presetID`, `dur` (milliseconds OR 'indefinite'),
+  //                      `nodeType` ('clickEffect' | 'withEffect' | 'afterEffect')
+  //   <p:tgtEl>/<p:spTgt> target shape, attr `spid`
+  //
+  // Walk depth-first collecting any cTn with a usable presetClass.
+  for (const node of walk([timing])) {
+    if (getTag(node) !== 'p:cTn') continue
+    const a = getAttrs(node)
+    const presetClass = String(a['@presetClass'] ?? '')
+    if (presetClass !== 'entr' && presetClass !== 'exit' && presetClass !== 'emph') continue
+    const presetID = Number(a['@presetID'] ?? 0)
+    const durRaw = a['@dur']
+    let durationMs = 500
+    if (typeof durRaw === 'string') {
+      const n = Number(durRaw)
+      if (Number.isFinite(n) && n > 0) durationMs = n
+    }
+    const nodeType = String(a['@nodeType'] ?? '')
+    let trigger: ParsedAnimationStep['trigger'] = 'onEnter'
+    if (nodeType === 'clickEffect') trigger = 'onClick'
+    else if (nodeType === 'withEffect') trigger = 'withPrevious'
+    else if (nodeType === 'afterEffect') trigger = 'afterPrevious'
+
+    // Find target spid by walking this cTn's subtree for <p:spTgt spid>.
+    let spId = -1
+    for (const desc of walk([node])) {
+      if (getTag(desc) !== 'p:spTgt') continue
+      const sid = getAttrs(desc)['@spid']
+      if (typeof sid === 'string') {
+        const n = Number(sid)
+        if (Number.isFinite(n)) {
+          spId = n
+          break
+        }
+      }
+    }
+    if (spId < 0) continue
+
+    out.push({
+      spId,
+      preset:
+        presetClass === 'entr'
+          ? pptxEntrancePresetIdToNarrative(presetID)
+          : presetClass === 'exit'
+            ? pptxExitPresetIdToNarrative(presetID)
+            : pptxEmphasisPresetIdToNarrative(presetID),
+      trigger,
+      durationMs,
+      delayMs: 0,
+    })
+  }
+  return out
+}
+
+/**
+ * Map common PPTX entrance preset IDs to Narrative's AnimationPreset
+ * names. The table covers the user-visible "Basic" + "Subtle" categories
+ * — uncommon presets fall through to 'fadeIn' as the safe visual default.
+ */
+function pptxEntrancePresetIdToNarrative(presetID: number): string {
+  // Sourced from `presetID` enumerations in PPTX schema docs:
+  //   1=Appear, 2=Fly In, 3=Blinds, 4=Box, 5=Checkerboard, 6=Circle,
+  //   10=Fade, 11=Dissolve, 21=Spinner, 22=Wipe, 23=Zoom, 39=Bounce,
+  //   42=Float, 50=Float, 53=Compress, 54=Rise Up, 55=Sink Down
+  switch (presetID) {
+    case 1:
+    case 10:
+      return 'fadeIn'
+    case 2:
+      return 'slideIn'
+    case 6:
+    case 23:
+    case 42:
+    case 50:
+      return 'zoomIn'
+    case 11:
+      return 'dissolveIn'
+    case 21:
+      return 'rotateIn'
+    case 22:
+      return 'wipeIn'
+    case 39:
+      return 'bounceIn'
+    default:
+      return 'fadeIn'
+  }
+}
+
+function pptxExitPresetIdToNarrative(presetID: number): string {
+  // Exit-class presets — Narrative's exit-side coverage is smaller.
+  switch (presetID) {
+    case 10:
+      return 'fadeOut'
+    case 2:
+      return 'slideOut'
+    case 6:
+    case 23:
+      return 'scaleOut'
+    default:
+      return 'fadeOut'
+  }
+}
+
+function pptxEmphasisPresetIdToNarrative(presetID: number): string {
+  // Emphasis effects don't have many direct Narrative analogues — most
+  // collapse to scaleIn (a soft "pop"). presetID=5 spin maps to rotateIn.
+  switch (presetID) {
+    case 5:
+      return 'rotateIn'
+    case 1:
+      return 'popIn'
+    default:
+      return 'popIn'
+  }
 }
 
 /**
@@ -2736,6 +3598,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     }
     for (const sh of slide.shapes) {
       if (sh.imagePath !== undefined) referencedImagePaths.add(sh.imagePath)
+      if (sh.videoPath !== undefined) referencedImagePaths.add(sh.videoPath)
     }
     // Track distinct tags across the whole deck for the report metric.
     const xmlParser = new XMLParser({
@@ -2811,7 +3674,7 @@ async function buildSlideImageRels(
           typeof id === 'string' &&
           typeof target === 'string' &&
           typeof type === 'string' &&
-          type.endsWith('/image')
+          (type.endsWith('/image') || type.endsWith('/video') || type.endsWith('/audio'))
         ) {
           rels.set(id, resolveRelPath(dir, target))
         }
@@ -2830,7 +3693,7 @@ async function buildSlideImageRels(
  * importer can decide whether to drop them.
  */
 function sniffImageType(bytes: Buffer, zipPath: string): { mimeType: string; ext: string } {
-  if (bytes.length >= 8) {
+  if (bytes.length >= 12) {
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
       return { mimeType: 'image/png', ext: 'png' }
@@ -2856,6 +3719,14 @@ function sniffImageType(bytes: Buffer, zipPath: string): { mimeType: string; ext
     ) {
       return { mimeType: 'image/webp', ext: 'webp' }
     }
+    // MP4 / MOV: bytes 4-7 = 'ftyp'
+    if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+      return { mimeType: 'video/mp4', ext: 'mp4' }
+    }
+    // WebM: 1A 45 DF A3 (EBML header)
+    if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      return { mimeType: 'video/webm', ext: 'webm' }
+    }
   }
   // Extension fallback.
   const extFromPath = zipPath.split('.').pop()?.toLowerCase() ?? 'bin'
@@ -2870,6 +3741,10 @@ function sniffImageType(bytes: Buffer, zipPath: string): { mimeType: string; ext
     tiff: 'image/tiff',
     emf: 'image/x-emf',
     wmf: 'image/x-wmf',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+    m4v: 'video/mp4',
   }
   return {
     mimeType: mimeByExt[extFromPath] ?? 'application/octet-stream',

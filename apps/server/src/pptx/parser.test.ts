@@ -766,6 +766,486 @@ describe('parsePptx', () => {
     expect(out.slides[0]!.shapes[0]!.fillColor).toBe(0x00ff00)
   })
 
+  // ─── Parametric shapes (triangle, polygon, arrow) ────────────────────────
+
+  it('parses `<a:prstGeom prst="triangle">` as kind=triangle', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="triangle"><a:avLst/></a:prstGeom>
+            <a:solidFill><a:srgbClr val="FF8800"/></a:solidFill>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.kind).toBe('triangle')
+    expect(out.slides[0]!.shapes[0]!.fillColor).toBe(0xff8800)
+  })
+
+  it('parses `<a:prstGeom prst="hexagon">` as kind=polygon with sides=6', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="hexagon"><a:avLst/></a:prstGeom>
+            <a:solidFill><a:srgbClr val="44AAFF"/></a:solidFill>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('polygon')
+    expect(shape.sides).toBe(6)
+  })
+
+  it('upgrades a line with `<a:tailEnd type="triangle">` to kind=arrow', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:cxnSp>
+          <p:nvCxnSpPr><p:cNvPr id="2" name="c"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="0"/></a:xfrm>
+            <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+            <a:ln w="19050">
+              <a:solidFill><a:srgbClr val="000000"/></a:solidFill>
+              <a:tailEnd type="triangle"/>
+            </a:ln>
+          </p:spPr>
+        </p:cxnSp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('arrow')
+    expect(shape.endCap).toBe('arrow')
+    expect(shape.startCap).toBeUndefined()
+  })
+
+  it('parses `<a:custGeom>` with line + cubic segments → kind=path with anchors', async () => {
+    // Custom path: moveTo (0,0) → lnTo (100,0) → cubicBezTo (cp1=(120,0),
+    // cp2=(180,100), end=(200,100)) → close. Path-space EMU 200×100 mapped
+    // to a shape of 914400×457200 EMU (= 96×48 px) becomes anchors at
+    // (0,0), (48,0), (96,48) in slide-local px (shape at 0,0).
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="p"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+            <a:custGeom>
+              <a:pathLst>
+                <a:path w="200" h="100">
+                  <a:moveTo><a:pt x="0" y="0"/></a:moveTo>
+                  <a:lnTo><a:pt x="100" y="0"/></a:lnTo>
+                  <a:cubicBezTo>
+                    <a:pt x="120" y="0"/>
+                    <a:pt x="180" y="100"/>
+                    <a:pt x="200" y="100"/>
+                  </a:cubicBezTo>
+                  <a:close/>
+                </a:path>
+              </a:pathLst>
+            </a:custGeom>
+            <a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('path')
+    expect(shape.pathClosed).toBe(true)
+    expect(shape.pathAnchors).toBeDefined()
+    expect(shape.pathAnchors).toHaveLength(3)
+    // First anchor at (0, 0); last at (96, 48) within the 96×48 px shape.
+    expect(shape.pathAnchors![0]).toEqual({ x: 0, y: 0 })
+    expect(shape.pathAnchors![2]!.x).toBeCloseTo(96, 1)
+    expect(shape.pathAnchors![2]!.y).toBeCloseTo(48, 1)
+    // Cubic handles attached: previous-anchor cpOut + this-anchor cpIn.
+    expect(shape.pathAnchors![1]!.cpOut).toBeDefined()
+    expect(shape.pathAnchors![2]!.cpIn).toBeDefined()
+  })
+
+  it('parses a `<p:pic>` with `<a:videoFile r:embed>` as kind=video with videoPath', async () => {
+    // 12-byte stub bytes that start with `ftyp` at offset 4 so sniffImageType
+    // detects `video/mp4`. Real MP4 atoms would be much longer; we just need
+    // the magic to flip the MIME on the embedded media probe.
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/poster.png"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/video" Target="../media/clip.mp4"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `${SLIDE_OPEN}
+        <p:pic>
+          <p:nvPicPr>
+            <p:cNvPr id="2" name="v"/>
+            <p:cNvPicPr/>
+            <p:nvPr><a:videoFile r:embed="rId3"/></p:nvPr>
+          </p:nvPicPr>
+          <p:blipFill>
+            <a:blip r:embed="rId2"/>
+            <a:stretch><a:fillRect/></a:stretch>
+          </p:blipFill>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="2438400" cy="1828800"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+        </p:pic>
+      ${SLIDE_CLOSE}`,
+    )
+    // 16-byte MP4 stub: ftyp box at offset 4 ('ftyp' = 66 74 79 70).
+    const mp4Bytes = Buffer.from([
+      0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02,
+      0x00,
+    ])
+    zip.file('ppt/media/clip.mp4', mp4Bytes)
+    // Valid 1×1 PNG poster.
+    zip.file(
+      'ppt/media/poster.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('video')
+    expect(shape.videoPath).toBe('ppt/media/clip.mp4')
+    // Embedded media was sniffed as video/mp4.
+    const media = out.embeddedImages.get('ppt/media/clip.mp4')
+    expect(media?.mimeType).toBe('video/mp4')
+  })
+
+  it('captures fontFamily + letterSpacing + cap from `<a:rPr>` on the first run', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/><a:lstStyle/>
+            <a:p>
+              <a:r>
+                <a:rPr lang="en-US" sz="1800" spc="200" cap="all">
+                  <a:latin typeface="Inter"/>
+                </a:rPr>
+                <a:t>Spaced</a:t>
+              </a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.fontFamily).toBe('Inter')
+    // 200 PPTX units = 2pt = ~2.67 px @ 96 DPI
+    expect(shape.letterSpacing).toBeCloseTo(200 * (1 / 100) * (96 / 72), 2)
+    expect(shape.textTransform).toBe('uppercase')
+  })
+
+  it('captures lineHeight (lnSpc spcPct) + paragraphSpace on the first <a:pPr>', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/><a:lstStyle/>
+            <a:p>
+              <a:pPr>
+                <a:lnSpc><a:spcPct val="150000"/></a:lnSpc>
+                <a:spcBef><a:spcPts val="1200"/></a:spcBef>
+                <a:spcAft><a:spcPts val="600"/></a:spcAft>
+              </a:pPr>
+              <a:r><a:rPr lang="en-US" sz="1800"/><a:t>X</a:t></a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.lineHeight).toBeCloseTo(1.5, 3)
+    // 1200 PPTX units = 12pt = 16 px @ 96 DPI
+    expect(shape.paragraphSpaceBefore).toBeCloseTo(16, 1)
+    expect(shape.paragraphSpaceAfter).toBeCloseTo(8, 1)
+  })
+
+  it('captures text stroke from `<a:rPr><a:ln>` on the first run', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/><a:lstStyle/>
+            <a:p>
+              <a:r>
+                <a:rPr lang="en-US" sz="3600">
+                  <a:ln w="9525"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln>
+                </a:rPr>
+                <a:t>Outlined</a:t>
+              </a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.textStrokeColor).toBe(0xff0000)
+    // 9525 EMU = 1 px @ 96 DPI
+    expect(shape.textStrokeWidth).toBeCloseTo(1, 1)
+  })
+
+  it('captures `<a:effectLst>/<a:outerShdw>` as shadow{color,offsetX/Y,blur,opacity}', async () => {
+    // PPTX shadow: dist=190500 EMU (20px), dir=0 (right), blurRad=38100 EMU (4px),
+    // colour 0x808080 @ alpha 50% → offsetX = 20, offsetY = 0.
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="r"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:solidFill><a:srgbClr val="00AAFF"/></a:solidFill>
+            <a:effectLst>
+              <a:outerShdw blurRad="38100" dist="190500" dir="0">
+                <a:srgbClr val="808080"><a:alpha val="50000"/></a:srgbClr>
+              </a:outerShdw>
+            </a:effectLst>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.shadow).toBeDefined()
+    expect(shape.shadow!.color).toBe(0x808080)
+    expect(shape.shadow!.offsetX).toBeCloseTo(20, 1)
+    expect(Math.abs(shape.shadow!.offsetY)).toBeLessThan(0.5)
+    expect(shape.shadow!.blur).toBeCloseTo(4, 1)
+    expect(shape.shadow!.opacity).toBeCloseTo(0.5, 2)
+  })
+
+  it("captures `<a:effectLst>/<a:blur rad>` as the shape's gaussian blur", async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="r"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:solidFill><a:srgbClr val="00AAFF"/></a:solidFill>
+            <a:effectLst><a:blur rad="76200" grow="0"/></a:effectLst>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    // 76200 EMU = 8 px @ 96 DPI
+    expect(out.slides[0]!.shapes[0]!.blur).toBeCloseTo(8, 1)
+  })
+
+  it('captures `<a:blipFill>/<a:srcRect>` on a `<p:pic>` as ImageObject.imageRect', async () => {
+    // 25% crop from the left + 10% from the bottom; everything else 0.
+    // Frame at 0,0 with 100x100 in slide px. Visible w = 0.75, h = 0.9.
+    // imageRect.width = 100 / 0.75 = 133.33; imageRect.x = -0.25 * 133.33 = -33.33
+    // imageRect.height = 100 / 0.9 = 111.11; imageRect.y = 0
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `${SLIDE_OPEN}
+        <p:pic>
+          <p:nvPicPr><p:cNvPr id="2" name="i"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+          <p:blipFill>
+            <a:blip r:embed="rId2"/>
+            <a:srcRect l="25000" t="0" r="0" b="10000"/>
+            <a:stretch><a:fillRect/></a:stretch>
+          </p:blipFill>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+        </p:pic>
+      ${SLIDE_CLOSE}`,
+    )
+    zip.file(
+      'ppt/media/image1.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('image')
+    expect(shape.imageRect).toBeDefined()
+    // 952500 EMU = 100 px frame; imageRect.width = 100 / 0.75 ≈ 133.33
+    expect(shape.imageRect!.width).toBeCloseTo(133.33, 1)
+    expect(shape.imageRect!.x).toBeCloseTo(-33.33, 1)
+    expect(shape.imageRect!.height).toBeCloseTo(111.11, 1)
+    expect(shape.imageRect!.y).toBeCloseTo(0, 1)
+  })
+
+  it('captures slide name + skipped flag', async () => {
+    const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" show="0">
+  <p:cSld name="Cover Slide"><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+  </p:spTree></p:cSld>
+</p:sld>`
+    const buf = await makeFixture({ slideXml })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.name).toBe('Cover Slide')
+    expect(out.slides[0]!.skipped).toBe(true)
+  })
+
+  it('captures a `<p:transition><p:push dir="r"/>` as a push transition', async () => {
+    const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+  </p:spTree></p:cSld>
+  <p:transition spd="med"><p:push dir="r"/></p:transition>
+</p:sld>`
+    const buf = await makeFixture({ slideXml })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.transition).toEqual({ kind: 'push', durationMs: 500, direction: 'r' })
+  })
+
+  it('extracts an entrance animation step from `<p:timing>` and maps presetID 10 → fadeIn', async () => {
+    const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="5" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="00AAFF"/></a:solidFill>
+      </p:spPr>
+    </p:sp>
+  </p:spTree></p:cSld>
+  <p:timing>
+    <p:tnLst>
+      <p:par>
+        <p:cTn id="2" presetID="10" presetClass="entr" nodeType="clickEffect" dur="500">
+          <p:tgtEl><p:spTgt spid="5"/></p:tgtEl>
+        </p:cTn>
+      </p:par>
+    </p:tnLst>
+  </p:timing>
+</p:sld>`
+    const buf = await makeFixture({ slideXml })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.animations).toBeDefined()
+    expect(out.slides[0]!.animations).toHaveLength(1)
+    expect(out.slides[0]!.animations![0]).toEqual({
+      spId: 5,
+      preset: 'fadeIn',
+      trigger: 'onClick',
+      durationMs: 500,
+      delayMs: 0,
+    })
+  })
+
+  it('captures flipH on a connector line', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:cxnSp>
+          <p:nvCxnSpPr><p:cNvPr id="2" name="c"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>
+          <p:spPr>
+            <a:xfrm flipH="1"><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>
+            <a:ln w="19050"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>
+          </p:spPr>
+        </p:cxnSp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.flipH).toBe(true)
+  })
+
   it('rejects a buffer that is not a ZIP', async () => {
     await expect(parsePptx(Buffer.from('not a zip'))).rejects.toThrow(/ZIP/i)
   })

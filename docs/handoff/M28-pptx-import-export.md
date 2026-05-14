@@ -95,7 +95,7 @@ number sliding — see plan doc for the rationale).
   - `<p:style>` theme references (`<a:fillRef>` / `<a:lnRef>` /
     `<a:fontRef>`) — picks up the embedded scheme colour as the resolved
     fill / stroke / text colour
-- **Tests**: 58 unit (`apps/server/src/pptx/*.test.ts`) + 2 Playwright e2e
+- **Tests**: 77 unit (`apps/server/src/pptx/*.test.ts`) + 2 Playwright e2e
   (`apps/web/e2e/pptx-roundtrip.spec.ts`), all green.
 
 ## Where everything lives
@@ -324,13 +324,57 @@ Prints both the parser JSON and the resulting Y.Doc shape tree. Add
 fixtures to `tests/fixtures/pptx/` — gitignored so binaries don't bloat
 the repo.
 
-## Known gaps
+## Full coverage matrix (M28 round 2)
 
-| Gap                                              | Effort                                                                                                                                                                                                                                                        | Visible?                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| **Full `ppt/tableStyles.xml` resolution**        | ~2 hours — resolve `<a:tableStyleId>` GUIDs against `ppt/tableStyles.xml`'s per-slot `<a:fill>` blocks instead of the current accent1 heuristic. Matters only when the deck uses a non-default theme table style; heuristic visually matches Office defaults. | Niche                      |
-| **Charts / SmartArt / animations / transitions** | Out of scope (plan doc).                                                                                                                                                                                                                                      | Marketing-grade decks only |
-| **BullMQ worker**                                | Not needed at current scale — typical import is ~200 ms. Plan calls for it once latency hurts.                                                                                                                                                                | Op visibility, eventually  |
+After the coverage-completion round, every Narrative slide-model
+feature with a reasonable PPTX equivalent round-trips. The list:
+
+| Category    | Feature                                            | Import |                   Export                   |
+| ----------- | -------------------------------------------------- | :----: | :----------------------------------------: |
+| **Objects** | Rectangle, ellipse, line                           |   ✓    |                     ✓                      |
+|             | Triangle (`prst="triangle"`)                       |   ✓    |                     ✓                      |
+|             | Polygon (pentagon … dodecagon)                     |   ✓    |                     ✓                      |
+|             | Arrow (line + `<a:headEnd>` / `<a:tailEnd>`)       |   ✓    |                     ✓                      |
+|             | Path object (`<a:custGeom>` cubic + line segments) |   ✓    |                     ✓                      |
+|             | Image (PNG / JPEG / GIF / WebP via MinIO)          |   ✓    |                     ✓                      |
+|             | Video (MP4 / WebM, `<a:videoFile>` embedded)       |   ✓    |                     ✓                      |
+|             | ComponentInstance → flattened to baked shapes      | (n/a)  |                     ✓                      |
+|             | Table (`<a:tbl>`) — exploded + reconstructed       |   ✓    |                     ✓                      |
+| **Text**    | Color, fontSize, bold, italic, underline, align    |   ✓    |                     ✓                      |
+|             | Per-run rich text via Y.Text (Quill attrs)         |   ✓    |                     ✓                      |
+|             | Bullet / numbered list marker                      |   ✓    |                     ✓                      |
+|             | Hyperlinks on text runs                            |   ✓    |                     ✓                      |
+|             | fontFamily, letterSpacing, lineHeight              |   ✓    |                     ✓                      |
+|             | paragraphSpaceBefore / After                       |   ✓    |                     ✓                      |
+|             | textTransform (cap=all / small)                    |   ✓    |                     ✓                      |
+|             | Text stroke (`<a:rPr><a:ln>`)                      |   ✓    |                     ✓                      |
+| **Effects** | Drop shadow (`<a:outerShdw>`)                      |   ✓    |                     ✓                      |
+|             | Gaussian blur (`<a:blur>`)                         |   ✓    | (one-way; pptxgenjs has no shape-blur opt) |
+|             | Image crop (`<a:srcRect>` ↔ `imageRect`)           |   ✓    |                     ✓                      |
+|             | Multi-stop gradient on shapes (zip post-process)   |   ✓    |                     ✓                      |
+|             | Theme `<a:schemeClr>` + modifiers (lumMod, etc.)   |   ✓    |                     ✓                      |
+| **Slide**   | Background (solid / gradient / image)              |   ✓    |                     ✓                      |
+|             | Master/layout flattened into each slide            |   ✓    |                   (n/a)                    |
+|             | `<p:bgRef>` themed-master background               |   ✓    |                   (n/a)                    |
+|             | Speaker notes                                      |   ✓    |                     ✓                      |
+|             | Slide `name`                                       |   ✓    |                     ✓                      |
+|             | Slide `skipped` (PPTX `<p:sld show="0">`)          |   ✓    |                     ✓                      |
+|             | Transitions (fade / push / cube / magic)           |   ✓    |                     ✓                      |
+|             | Animations (14 presets, lossy timing tree mapping) |   ✓    |                     ✓                      |
+| **Deck**    | Deck title                                         |   ✓    |                     ✓                      |
+|             | Folder color tokens resolved to concrete hex       | (n/a)  |                     ✓                      |
+|             | Append .pptx into existing deck                    |   ✓    |                   (n/a)                    |
+
+## Remaining known gaps
+
+| Gap                                               | Effort                                                                                                                                                                                                                                                         | Visible?                   |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| **Custom font embedding** (`<p:embeddedFontLst>`) | ~3 hours — would splice TTF/OTF bytes from MinIO into `ppt/embeddings/*.ttf` + manifest + content-types. Currently text frames using custom fonts fall back to the system font in viewers without the font installed (same behaviour Office shows by default). | Branded decks              |
+| **Full `ppt/tableStyles.xml` resolution**         | ~2 hours — resolve `<a:tableStyleId>` GUIDs against per-slot `<a:fill>` blocks instead of the current accent1 heuristic. Matters only when the deck uses a non-default theme table style.                                                                      | Niche                      |
+| **Charts / SmartArt**                             | Out of scope per the M28 plan (charts are bound to embedded XLSX data; SmartArt is generated from a small graph + rules).                                                                                                                                      | Marketing-grade decks only |
+| **`<a:innerShdw>`, reflection, glow effects**     | Out of scope — Narrative has only `outer` shadow + uniform blur.                                                                                                                                                                                               | Rare                       |
+| **Image rotation independent of frame** + masks   | Out of scope — Narrative's `imageRotation` / `mask` fields have no clean PPTX schema mapping.                                                                                                                                                                  | Rare                       |
+| **BullMQ worker**                                 | Not needed at current scale — typical import is ~200 ms.                                                                                                                                                                                                       | Op visibility, eventually  |
 
 ## Quick smoke after pulling on a fresh machine
 

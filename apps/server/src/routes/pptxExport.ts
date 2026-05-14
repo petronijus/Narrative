@@ -27,9 +27,18 @@ import type { Readable } from 'node:stream'
 import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
-import { hydrateSlideDoc, listSlides, getSlideNotes } from '@narrative/slide-model'
+import {
+  hydrateSlideDoc,
+  listSlides,
+  getSlideNotes,
+  resolveInstanceTree,
+  resolveTokenValue,
+  isTokenRef,
+} from '@narrative/slide-model'
+import type { Slide, SlideObject, TokenRef } from '@narrative/shared'
+import type { FolderTokensSnapshot } from '@narrative/slide-model'
 import type { Database } from '../db/client.js'
-import { decks, deckUpdates, mediaAssets } from '../db/schema.js'
+import { decks, deckUpdates, mediaAssets, componentUpdates, folderUpdates } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { exportDeckToPptx, type AssetLoader } from '../pptx/export.js'
@@ -41,9 +50,9 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
     async (request, reply) => {
       const { id } = request.params
 
-      // ─── Load deck row for title + sanity check ──────────────────────────
+      // ─── Load deck row for title + folder + sanity check ────────────────
       const [deck] = await db
-        .select({ id: decks.id, title: decks.title })
+        .select({ id: decks.id, title: decks.title, folderId: decks.folderId })
         .from(decks)
         .where(eq(decks.id, id))
         .limit(1)
@@ -68,10 +77,29 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
 
       // ─── Slides → snapshots → .pptx ──────────────────────────────────────
       const handles = hydrateSlideDoc(doc)
-      const slides = listSlides(handles)
-      if (slides.length === 0) {
+      const rawSlides = listSlides(handles)
+      if (rawSlides.length === 0) {
         return reply.status(400).send({ error: 'Deck has no slides to export' })
       }
+
+      // ─── Flatten ComponentInstance objects to baked shapes ───────────────
+      // PPTX has no master-component-instance concept (its slide layouts are
+      // top-down templates, not bottom-up component re-use). For round-trip
+      // parity we resolve each instance against its component master,
+      // apply per-leaf overrides, translate to the instance's (x, y), and
+      // emit the resulting shapes through the standard export pipeline.
+      const flatSlides = await flattenComponentInstances(rawSlides, db, request)
+
+      // ─── Resolve folder color tokens to concrete hex values ─────────────
+      // TokenRef references on objects (e.g. `color: { $token: 'colors.brand' }`)
+      // arrive on the export side as plain JSON; resolve each via the deck's
+      // folder Y.Doc tokens so the .pptx carries final colour numbers instead
+      // of falling back to the exporter's grey default.
+      const folderTokens = await loadFolderTokens(deck.folderId, db, request)
+      const slides =
+        folderTokens === null
+          ? flatSlides
+          : flatSlides.map((s) => resolveSlideTokens(s, folderTokens))
 
       // ─── Asset loader for image objects + image backgrounds ──────────────
       // Memoised so repeated references (e.g. the same logo on every slide)
@@ -170,6 +198,238 @@ function flattenNotesFragment(frag: Y.XmlFragment): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/**
+ * Load a folder's tokens snapshot by replaying `folder_updates` rows.
+ * Mirrors the Hocuspocus persistence path: same `folder:<id>` Y.Doc
+ * shape, same `getMap('tokens')` walk. Returns null when the deck has
+ * no folder (legacy decks) or the folder has no tokens persisted yet.
+ *
+ * The snapshot conforms to `FolderTokensSnapshot` from slide-model so
+ * `resolveTokenValue` works directly.
+ */
+async function loadFolderTokens(
+  folderId: string | null,
+  db: Database,
+  request: { log: { warn: (...args: unknown[]) => void } },
+): Promise<FolderTokensSnapshot | null> {
+  if (folderId === null) return null
+  const rows = await db
+    .select({ update: folderUpdates.update })
+    .from(folderUpdates)
+    .where(eq(folderUpdates.folderId, folderId))
+    .orderBy(folderUpdates.id)
+  if (rows.length === 0) return null
+
+  const doc = new Y.Doc()
+  for (const row of rows) {
+    try {
+      Y.applyUpdate(doc, row.update)
+    } catch (err) {
+      request.log.warn({ err, folderId }, 'pptx-export: skipping corrupt folder_updates row')
+    }
+  }
+
+  const tokensMap = doc.getMap<unknown>('tokens')
+  const out: FolderTokensSnapshot = { colors: {}, textStyles: {}, effectStyles: {} }
+
+  // Each category is a Y.Map<tokenId, Y.Map<field, value>>. Walk and
+  // unwrap to plain JSON.
+  const categories: Array<keyof FolderTokensSnapshot> = ['colors', 'textStyles', 'effectStyles']
+  for (const cat of categories) {
+    const catMap = tokensMap.get(cat)
+    if (!(catMap instanceof Y.Map)) continue
+    for (const [tokenId, tokenY] of catMap as Y.Map<unknown>) {
+      if (!(tokenY instanceof Y.Map)) continue
+      const plain: Record<string, unknown> = {}
+      for (const [k, v] of tokenY as Y.Map<unknown>) {
+        plain[k] = v
+      }
+      ;(out[cat] as Record<string, unknown>)[tokenId] = plain
+    }
+  }
+  return out
+}
+
+/**
+ * Walk every object on a slide and replace TokenRef references with their
+ * concrete colour values. Idempotent — concrete numbers pass through
+ * unchanged. Resolution failure (unknown token id) leaves the ref in
+ * place; the export's `resolveColor` fallback then drops it to grey,
+ * matching the pre-token-resolution behaviour.
+ */
+function resolveSlideTokens(slide: Slide, tokens: FolderTokensSnapshot): Slide {
+  const objects = slide.objects.map((obj) => {
+    const next: Record<string, unknown> = { ...(obj as unknown as Record<string, unknown>) }
+    let touched = false
+    for (const key of Object.keys(next)) {
+      const v = next[key]
+      if (isTokenRef(v as TokenRef)) {
+        const resolved = resolveTokenValue(v as TokenRef, tokens)
+        if (resolved !== null) {
+          // resolveTokenValue returns a hex string like '#ff0000'; convert
+          // to the 0xRRGGBB number every SlideObject color field expects.
+          const hex = resolved.replace(/^#/, '')
+          if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
+            next[key] = parseInt(hex, 16)
+            touched = true
+          }
+        }
+      }
+    }
+    return touched ? (next as unknown as SlideObject) : obj
+  })
+  return { ...slide, objects }
+}
+
+/**
+ * Replace every ComponentInstance in the deck's slides with its flattened
+ * master tree. PPTX has no analogue for Narrative's master-component-
+ * instance pattern, so we resolve each instance against its component's
+ * master doc, apply per-leaf overrides, and translate the resulting
+ * shapes by `(instance.x - masterBboxMin.x, instance.y - masterBboxMin.y)`
+ * so they land in slide-space at the instance's position.
+ *
+ * Behaviour:
+ *   - Dangling componentIds (master not found) → drop the instance silently.
+ *     The exporter would have dropped it anyway, but logging here gives a
+ *     clearer audit trail in `pptx-export` logs.
+ *   - Nested ComponentInstance refs inside a master are intentionally
+ *     NOT recursively expanded (rare; would risk infinite loops if the
+ *     master accidentally cycles). They get dropped by the standard
+ *     export pipeline downstream.
+ *   - Master object identity is preserved when no override applies, so
+ *     repeated instances of the same component share JSON references —
+ *     downstream emit-time fixups (gradient post-process, etc.) handle
+ *     this fine because they key by EMU position, not object identity.
+ */
+async function flattenComponentInstances(
+  rawSlides: Slide[],
+  db: Database,
+  request: { log: { warn: (...args: unknown[]) => void } },
+): Promise<Slide[]> {
+  // First pass: collect every unique componentId referenced anywhere.
+  const referencedIds = new Set<string>()
+  for (const slide of rawSlides) {
+    for (const obj of slide.objects) {
+      if (obj.type === 'componentInstance') {
+        referencedIds.add(obj.componentId)
+      }
+    }
+  }
+  if (referencedIds.size === 0) return rawSlides
+
+  // Second pass: load each component master from `component_updates` and
+  // extract its master tree + bbox. Cached so repeated instances reuse
+  // the same expansion.
+  interface ComponentMaster {
+    objects: SlideObject[]
+    bbox: { x: number; y: number; width: number; height: number }
+  }
+  const masters = new Map<string, ComponentMaster | null>()
+  for (const componentId of referencedIds) {
+    const rows = await db
+      .select({ update: componentUpdates.update })
+      .from(componentUpdates)
+      .where(eq(componentUpdates.componentId, componentId))
+      .orderBy(componentUpdates.id)
+    if (rows.length === 0) {
+      masters.set(componentId, null)
+      continue
+    }
+    const cmpDoc = new Y.Doc()
+    for (const row of rows) {
+      try {
+        Y.applyUpdate(cmpDoc, row.update)
+      } catch (err) {
+        request.log.warn(
+          { err, componentId },
+          'pptx-export: skipping corrupt component_updates row',
+        )
+      }
+    }
+    const cmpHandles = hydrateSlideDoc(cmpDoc)
+    const cmpSlides = listSlides(cmpHandles)
+    if (cmpSlides.length === 0 || cmpSlides[0]!.objects.length === 0) {
+      masters.set(componentId, null)
+      continue
+    }
+    const objects = cmpSlides[0]!.objects
+    masters.set(componentId, { objects, bbox: computeBbox(objects) })
+  }
+
+  // Third pass: rewrite each slide's object list with ComponentInstances
+  // replaced by their resolved + translated children.
+  return rawSlides.map((slide) => {
+    const flatObjects: SlideObject[] = []
+    for (const obj of slide.objects) {
+      if (obj.type !== 'componentInstance') {
+        flatObjects.push(obj)
+        continue
+      }
+      const master = masters.get(obj.componentId)
+      if (master === null || master === undefined) {
+        request.log.warn(
+          { componentId: obj.componentId, slideId: slide.id },
+          'pptx-export: component master missing — dropping instance',
+        )
+        continue
+      }
+      // Resolve overrides against the master, then translate.
+      const resolved = resolveInstanceTree(master.objects, obj.overrides)
+      const dx = obj.x - master.bbox.x
+      const dy = obj.y - master.bbox.y
+      for (const child of resolved) {
+        flatObjects.push(translateObject(child, dx, dy))
+      }
+    }
+    return { ...slide, objects: flatObjects }
+  })
+}
+
+/**
+ * Bounding box of a list of objects. Used to derive a master-relative
+ * origin so the translation `(instance.x - bbox.x, instance.y - bbox.y)`
+ * lines the resolved children up with the instance's anchor.
+ */
+function computeBbox(objects: readonly SlideObject[]): {
+  x: number
+  y: number
+  width: number
+  height: number
+} {
+  if (objects.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const o of objects) {
+    if (typeof o.x === 'number') minX = Math.min(minX, o.x)
+    if (typeof o.y === 'number') minY = Math.min(minY, o.y)
+    if (typeof o.x === 'number' && typeof o.width === 'number') {
+      maxX = Math.max(maxX, o.x + o.width)
+    }
+    if (typeof o.y === 'number' && typeof o.height === 'number') {
+      maxY = Math.max(maxY, o.y + o.height)
+    }
+  }
+  if (!isFinite(minX) || !isFinite(minY)) return { x: 0, y: 0, width: 0, height: 0 }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/**
+ * Shallow-translate an object's `(x, y)` by `(dx, dy)`. Returns a fresh
+ * object whenever the position changes (so the caller can safely mutate
+ * the result). Other fields are copied by reference — they're plain JSON
+ * from `listSlides`, no nested Y types to worry about here.
+ */
+function translateObject(obj: SlideObject, dx: number, dy: number): SlideObject {
+  if (dx === 0 && dy === 0) return obj
+  const next: Record<string, unknown> = { ...(obj as unknown as Record<string, unknown>) }
+  if (typeof obj.x === 'number') next['x'] = obj.x + dx
+  if (typeof obj.y === 'number') next['y'] = obj.y + dy
+  return next as unknown as SlideObject
 }
 
 /** Drain a Readable into a Buffer. AWS SDK v3 returns Body as a Readable

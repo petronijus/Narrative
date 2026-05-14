@@ -33,9 +33,14 @@ import {
   addSlide,
   removeSlide,
   getSlideObjectsCtx,
+  getSlideAnimationsCtx,
   getSlideNotes,
   addObject,
+  addAnimation,
+  setSlideName,
+  setSlideSkipped,
   updateSlideBackground,
+  updateSlideTransition,
   listSlides,
 } from '@narrative/slide-model'
 import type {
@@ -43,8 +48,14 @@ import type {
   TextObject,
   RectangleObject,
   EllipseObject,
+  TriangleObject,
+  PolygonObject,
   LineObject,
+  ArrowObject,
+  PathObject,
+  PathAnchor,
   ImageObject,
+  VideoObject,
   ColorBackground,
   ImageBackground,
   LinearGradientBackground,
@@ -176,6 +187,29 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
   return yt
 }
 
+/**
+ * Derive a `LineEndpoints` pair from a connector's bbox + flipH/flipV. PPTX
+ * connector geometry uses the bbox alone to describe direction: the
+ * default line goes from top-left to bottom-right; `flipH` swaps left↔right,
+ * `flipV` swaps top↔bottom. Combined, the four corner pairs give the
+ * four possible directions of a connector that occupies the same bbox.
+ */
+function endpointsFromBbox(
+  width: number,
+  height: number,
+  flipH?: boolean,
+  flipV?: boolean,
+): { p1: { x: number; y: number }; p2: { x: number; y: number } } {
+  const left = 0
+  const right = width
+  const top = 0
+  const bottom = height
+  if (flipH && flipV) return { p1: { x: right, y: bottom }, p2: { x: left, y: top } }
+  if (flipH) return { p1: { x: right, y: top }, p2: { x: left, y: bottom } }
+  if (flipV) return { p1: { x: left, y: bottom }, p2: { x: right, y: top } }
+  return { p1: { x: left, y: top }, p2: { x: right, y: bottom } }
+}
+
 function mapShape(s: ParsedShape, scale: number): SlideObject | null {
   const base: {
     id: string
@@ -186,6 +220,14 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     rotation: number
     opacity: number
     groupId?: string
+    shadow?: {
+      color: number
+      blur: number
+      offsetX: number
+      offsetY: number
+      opacity: number
+    }
+    blur?: number
   } = {
     id: nanoid(),
     x: round(s.x * scale),
@@ -196,6 +238,16 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     opacity: 1,
   }
   if (s.groupId !== undefined) base.groupId = s.groupId
+  if (s.shadow !== undefined) {
+    base.shadow = {
+      color: s.shadow.color,
+      blur: round(s.shadow.blur * scale),
+      offsetX: round(s.shadow.offsetX * scale),
+      offsetY: round(s.shadow.offsetY * scale),
+      opacity: s.shadow.opacity,
+    }
+  }
+  if (s.blur !== undefined && s.blur > 0) base.blur = round(s.blur * scale)
 
   // Text takes precedence — a `p:sp` with a `<p:txBody>` that has runs is
   // imported as a text frame regardless of its preset geometry.
@@ -232,6 +284,26 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.hyperlink !== undefined) {
       obj.hyperlink = { kind: 'url', href: s.hyperlink.href, target: '_blank' }
     }
+    // Frame-level text fine attrs.
+    if (s.fontFamily !== undefined) obj.fontFamily = s.fontFamily
+    if (s.letterSpacing !== undefined) obj.letterSpacing = round(s.letterSpacing * scale)
+    if (s.lineHeight !== undefined && s.lineHeight > 0) obj.lineHeight = s.lineHeight
+    if (s.paragraphSpaceBefore !== undefined && s.paragraphSpaceBefore > 0) {
+      obj.paragraphSpaceBefore = round(s.paragraphSpaceBefore * scale)
+    }
+    if (s.paragraphSpaceAfter !== undefined && s.paragraphSpaceAfter > 0) {
+      obj.paragraphSpaceAfter = round(s.paragraphSpaceAfter * scale)
+    }
+    if (s.textTransform !== undefined && s.textTransform !== 'none') {
+      obj.textTransform = s.textTransform
+    }
+    if (s.textStrokeColor !== undefined) obj.stroke = s.textStrokeColor
+    if (s.textStrokeAlpha !== undefined && s.textStrokeAlpha < 1) {
+      obj.strokeAlpha = s.textStrokeAlpha
+    }
+    if (s.textStrokeWidth !== undefined && s.textStrokeWidth > 0) {
+      obj.strokeWidth = round(s.textStrokeWidth * scale)
+    }
     return obj
   }
 
@@ -267,6 +339,93 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     return obj
   }
 
+  if (s.kind === 'triangle') {
+    const obj: TriangleObject = {
+      ...base,
+      type: 'triangle',
+      fill: s.fillColor ?? DEFAULT_FILL,
+    }
+    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
+      obj.strokeWidth = round(s.strokeWidth * scale)
+    }
+    return obj
+  }
+
+  if (s.kind === 'polygon') {
+    const obj: PolygonObject = {
+      ...base,
+      type: 'polygon',
+      fill: s.fillColor ?? DEFAULT_FILL,
+      sides: s.sides ?? 6, // hexagon fallback — polygon detection always sets sides
+    }
+    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
+      obj.strokeWidth = round(s.strokeWidth * scale)
+    }
+    return obj
+  }
+
+  if (s.kind === 'path') {
+    if (s.pathAnchors === undefined || s.pathAnchors.length === 0) return null
+    // Path anchors come from the parser in slide-local px (post emuToPx)
+    // but Narrative's PathAnchor schema positions anchors RELATIVE to the
+    // object's `(x, y)` origin. Subtract the shape's anchor and scale to
+    // the deck canvas.
+    const anchors: PathAnchor[] = s.pathAnchors.map((a) => {
+      const ax = round((a.x - s.x) * scale)
+      const ay = round((a.y - s.y) * scale)
+      const out: PathAnchor = { x: ax, y: ay }
+      if (a.cpIn !== undefined) {
+        out.cpIn = { x: round(a.cpIn.x * scale), y: round(a.cpIn.y * scale) }
+      }
+      if (a.cpOut !== undefined) {
+        out.cpOut = { x: round(a.cpOut.x * scale), y: round(a.cpOut.y * scale) }
+      }
+      return out
+    })
+    const obj: PathObject = {
+      ...base,
+      type: 'path',
+      anchors,
+      stroke: s.strokeColor ?? 0x111111,
+      strokeWidth:
+        s.strokeWidth !== undefined && s.strokeWidth > 0 ? round(s.strokeWidth * scale) : 2,
+    }
+    if (s.fillColor !== undefined) obj.fill = s.fillColor
+    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.pathClosed === true) obj.closed = true
+    return obj
+  }
+
+  if (s.kind === 'arrow') {
+    // ArrowObject + LineObject share the same LineEndpoints schema —
+    // p1/p2 are relative to (x, y), so the bbox flips handled below
+    // determine which corner each endpoint lands at.
+    const { p1, p2 } = endpointsFromBbox(base.width, base.height, s.flipH, s.flipV)
+    const obj: ArrowObject = {
+      ...base,
+      type: 'arrow',
+      stroke: s.strokeColor ?? 0x111111,
+      strokeWidth:
+        s.strokeWidth !== undefined && s.strokeWidth > 0 ? round(s.strokeWidth * scale) : 2,
+      p1,
+      p2,
+      startCap: s.startCap ?? 'none',
+      endCap: s.endCap ?? 'arrow',
+    }
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    return obj
+  }
+
   if (s.kind === 'image') {
     // Only emit the ImageObject if the importer set `assetId` (i.e. the
     // image bytes were successfully uploaded to MinIO). Without an assetId
@@ -279,20 +438,47 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       variant: 'display',
       fit: 'cover',
     }
+    if (s.imageRect !== undefined) {
+      obj.imageRect = {
+        x: round(s.imageRect.x * scale),
+        y: round(s.imageRect.y * scale),
+        width: round(s.imageRect.width * scale),
+        height: round(s.imageRect.height * scale),
+      }
+    }
+    return obj
+  }
+
+  if (s.kind === 'video') {
+    if (s.assetId === undefined || s.assetId === '') return null
+    // Imported videos default to muted + click-to-play — same convention
+    // a user gets when uploading a video through the editor's tus flow.
+    // The HLS transcode kicks in async post-import, so the renderer will
+    // initially show a poster (which we leave to its asset-resolved poster
+    // logic) and then switch to playback when the master.m3u8 is ready.
+    const obj: VideoObject = {
+      ...base,
+      type: 'video',
+      assetId: s.assetId,
+      fit: 'contain',
+      muted: true,
+      autoplay: false,
+    }
     return obj
   }
 
   if (s.kind === 'line') {
+    const { p1, p2 } = endpointsFromBbox(base.width, base.height, s.flipH, s.flipV)
     const obj: LineObject = {
       ...base,
       type: 'line',
       stroke: s.strokeColor ?? 0x111111,
       strokeWidth:
         s.strokeWidth !== undefined && s.strokeWidth > 0 ? round(s.strokeWidth * scale) : 2,
-      p1: { x: 0, y: 0 },
-      p2: { x: base.width, y: base.height },
-      startCap: 'none',
-      endCap: 'none',
+      p1,
+      p2,
+      startCap: s.startCap ?? 'none',
+      endCap: s.endCap ?? 'none',
     }
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
     return obj
@@ -345,6 +531,11 @@ function writeSlideShapes(
     return { objectsCreated, skippedImages, skippedUnknown }
   }
 
+  // spId → SlideObject.id map. Populated as we emit each shape so the
+  // animation pass (below) can resolve `<p:spTgt spid="N">` references
+  // back to the nanoid the writer assigned.
+  const spIdToObjectId = new Map<number, string>()
+
   for (const shape of parsedSlide.shapes) {
     // Images with no assetId were not (or could not be) uploaded — count
     // them as skipped. mapShape returns null for those.
@@ -360,6 +551,7 @@ function writeSlideShapes(
     }
     try {
       addObject(objCtx, obj)
+      if (shape.spId !== undefined) spIdToObjectId.set(shape.spId, obj.id)
       objectsCreated++
     } catch (err) {
       console.warn(
@@ -380,6 +572,61 @@ function writeSlideShapes(
   // user sees the imported notes immediately on first open.
   if (parsedSlide.notes !== undefined && parsedSlide.notes.length > 0) {
     seedSlideNotes(ctx, slideId, parsedSlide.notes)
+  }
+
+  // Slide name + skipped flag.
+  if (parsedSlide.name !== undefined && parsedSlide.name.length > 0) {
+    setSlideName(ctx, slideId, parsedSlide.name)
+  }
+  if (parsedSlide.skipped === true) {
+    setSlideSkipped(ctx, slideId, true)
+  }
+
+  // Slide transition. Parser uses short PPTX direction codes ('l' / 'r'
+  // / 'u' / 'd'); Narrative's SlidePushDirection uses the long form.
+  if (parsedSlide.transition !== undefined) {
+    const longDirection: 'left' | 'right' | 'up' | 'down' | undefined =
+      parsedSlide.transition.direction === 'l'
+        ? 'left'
+        : parsedSlide.transition.direction === 'r'
+          ? 'right'
+          : parsedSlide.transition.direction === 'u'
+            ? 'up'
+            : parsedSlide.transition.direction === 'd'
+              ? 'down'
+              : undefined
+    const patch: {
+      kind: NonNullable<ParsedSlide['transition']>['kind']
+      durationMs: number
+      direction?: 'left' | 'right' | 'up' | 'down'
+    } = {
+      kind: parsedSlide.transition.kind,
+      durationMs: parsedSlide.transition.durationMs,
+    }
+    if (longDirection !== undefined) patch.direction = longDirection
+    updateSlideTransition(ctx, slideId, patch)
+  }
+
+  // Animations — resolve each step's target spId against the map we just
+  // built, then add to the slide's animations Y.Array via the
+  // animationMutations API. Steps that target an unknown spId (e.g. the
+  // shape was dropped during the shapes pass) are skipped silently.
+  if (parsedSlide.animations !== undefined && parsedSlide.animations.length > 0) {
+    const animCtx = getSlideAnimationsCtx(ctx, slideId)
+    if (animCtx !== null) {
+      for (const step of parsedSlide.animations) {
+        const targetObjId = spIdToObjectId.get(step.spId)
+        if (targetObjId === undefined) continue
+        addAnimation(animCtx, {
+          objectId: targetObjId,
+          preset: step.preset as never,
+          trigger: step.trigger,
+          duration: Math.max(0.05, step.durationMs / 1000),
+          delay: Math.max(0, step.delayMs / 1000),
+          easing: 'power2.out',
+        })
+      }
+    }
   }
 
   return { objectsCreated, skippedImages, skippedUnknown }

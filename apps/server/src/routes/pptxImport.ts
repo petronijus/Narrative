@@ -338,59 +338,75 @@ async function uploadEmbeddedImagesAndPatchAssetIds(
   skippedUnsupportedImages: number
 }> {
   const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+  const SUPPORTED_VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
   const s3 = buildS3Client()
-  const imagePathToAssetId = new Map<string, string>()
+  // Same map carries asset ids for image + video paths — the rels lookup
+  // on the parser side already shares the namespace; collisions are
+  // impossible because each zip path is unique.
+  const mediaPathToAssetId = new Map<string, string>()
   const mediaAssetRows: Array<typeof mediaAssets.$inferInsert> = []
   let uploadedImageCount = 0
   let skippedUnsupportedImages = 0
 
-  for (const [zipPath, img] of parsed.embeddedImages) {
-    if (!SUPPORTED_IMAGE_MIME.has(img.mimeType)) {
+  for (const [zipPath, media] of parsed.embeddedImages) {
+    const isImage = SUPPORTED_IMAGE_MIME.has(media.mimeType)
+    const isVideo = SUPPORTED_VIDEO_MIME.has(media.mimeType)
+    if (!isImage && !isVideo) {
       skippedUnsupportedImages++
       continue
     }
     const assetId = nanoid(12)
-    const storageKey = `decks/${deckId}/uploads/${assetId}/original.${img.ext}`
+    const storageKey = `decks/${deckId}/uploads/${assetId}/original.${media.ext}`
     try {
       await s3.send(
         new PutObjectCommand({
           Bucket: MEDIA_BUCKET,
           Key: storageKey,
-          Body: img.bytes,
-          ContentType: img.mimeType,
+          Body: media.bytes,
+          ContentType: media.mimeType,
           CacheControl: 'public, max-age=31536000, immutable',
         }),
       )
     } catch (err) {
-      request.log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping image')
+      request.log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping asset')
       continue
     }
-    const dims = await probeImageDims(img)
-    imagePathToAssetId.set(zipPath, assetId)
+    // Probe dimensions only for images — video probing requires
+    // ffmpeg and lives on the BullMQ worker path. Width/height stay
+    // null in media_assets; the renderer falls back to the object's
+    // declared width/height while the transcoder backfills.
+    const dims = isImage ? await probeImageDims(media) : null
+    mediaPathToAssetId.set(zipPath, assetId)
     mediaAssetRows.push({
       id: assetId,
       deckId,
       uploaderUserId: ownerUserId,
-      mimeType: img.mimeType,
-      sizeBytes: img.bytes.byteLength,
+      mimeType: media.mimeType,
+      sizeBytes: media.bytes.byteLength,
       storageKey,
       originalFilename: zipPath.split('/').pop() ?? null,
       width: dims?.width ?? null,
       height: dims?.height ?? null,
-      kind: 'image',
+      kind: isVideo ? 'video' : 'image',
     })
     uploadedImageCount++
   }
 
   // Patch parsed shapes + backgrounds with their resolved assetIds.
+  // `videoPath` follows the same lookup as `imagePath` — different
+  // shape kind, same MinIO storage key namespace.
   for (const slide of parsed.slides) {
     if (slide.background.imagePath !== undefined) {
-      const aid = imagePathToAssetId.get(slide.background.imagePath)
+      const aid = mediaPathToAssetId.get(slide.background.imagePath)
       if (aid !== undefined) slide.background.assetId = aid
     }
     for (const sh of slide.shapes) {
       if (sh.imagePath !== undefined) {
-        const aid = imagePathToAssetId.get(sh.imagePath)
+        const aid = mediaPathToAssetId.get(sh.imagePath)
+        if (aid !== undefined) sh.assetId = aid
+      }
+      if (sh.videoPath !== undefined) {
+        const aid = mediaPathToAssetId.get(sh.videoPath)
         if (aid !== undefined) sh.assetId = aid
       }
     }
