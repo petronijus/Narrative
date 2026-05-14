@@ -481,6 +481,14 @@ const MVP_ELEMENTS = new Set<string>([
   'p:attrName',
   'p:anim',
   'p:animEffect',
+  // Charts — graphic frame envelope + AlternateContent fallback path.
+  // The `<c:*>` chart spec itself is not parsed (we use the fallback
+  // image instead), but the wrappers should not pollute `ignoredElements`.
+  'mc:AlternateContent',
+  'mc:Choice',
+  'mc:Fallback',
+  'c:chart',
+  'c:externalData',
   // Text frame fine-grained attrs.
   'a:latin',
   'a:ea',
@@ -2610,6 +2618,81 @@ async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<string[] 
  *   - No `<a:tblPr>` styling (banded rows, header row, etc.).
  *   - No header-style fall-through to placeholder defaults.
  */
+/**
+ * Resolve a chart `<p:graphicFrame>` to an image. PPTX charts are pure
+ * vector content (`<c:chart>`) referencing a separate `ppt/charts/chartN.xml`
+ * file that PowerPoint renders on display — Narrative has no chart renderer,
+ * so we fall back to a poster image when one exists in the source file.
+ *
+ * Where pptx exporters typically stash the poster:
+ *   1. Inside `<a:graphicData>` next to the `<c:chart>` element — some
+ *      Google Slides exports embed a `<p:blipFill>` sibling carrying the
+ *      pre-rendered PNG.
+ *   2. As an `<mc:Fallback>` adjacent block under a parent
+ *      `<mc:AlternateContent>` (handled by the parseSlide caller). When
+ *      THIS function is reached without that route, we still scan the
+ *      chart graphicFrame's subtree for any `<a:blip r:embed>` reference.
+ *
+ * Returns a ParsedShape of kind 'image' with the resolved imagePath, or
+ * `null` when no fallback image can be located. The caller then either
+ * gets an importable image at the chart's bbox or — if null — falls
+ * through to a "Chart" placeholder rectangle.
+ */
+function parseChartFallback(graphicFrame: XmlNode, imageRels: ImageRelMap): ParsedShape | null {
+  const gfChildren = getChildren(graphicFrame, 'p:graphicFrame')
+
+  // Chart position + size from `<p:xfrm>` (same shape as parseTable).
+  let xEmu = 0,
+    yEmu = 0,
+    wEmu = 0,
+    hEmu = 0
+  const xfrm = findFirst(gfChildren, 'p:xfrm')
+  if (xfrm) {
+    const xc = getChildren(xfrm, 'p:xfrm')
+    const off = findFirst(xc, 'a:off')
+    if (off) {
+      const a = getAttrs(off)
+      xEmu = Number(a['@x'] ?? 0)
+      yEmu = Number(a['@y'] ?? 0)
+    }
+    const ext = findFirst(xc, 'a:ext')
+    if (ext) {
+      const a = getAttrs(ext)
+      wEmu = Number(a['@cx'] ?? 0)
+      hEmu = Number(a['@cy'] ?? 0)
+    }
+  }
+
+  // Walk the whole graphicFrame subtree for ANY `<a:blip r:embed>` —
+  // some exporters tuck the poster inside `<a:graphicData>`, others
+  // inside `<c:chart>/<c:externalData>`, neither location is guaranteed.
+  let blipRelId: string | undefined
+  let imagePath: string | undefined
+  for (const desc of walk([graphicFrame])) {
+    if (getTag(desc) !== 'a:blip') continue
+    const embed = getAttrs(desc)['@r:embed']
+    if (typeof embed === 'string') {
+      blipRelId = embed
+      imagePath = imageRels.get(embed)
+      if (imagePath !== undefined) break // first hit wins
+    }
+  }
+  if (imagePath === undefined) return null
+
+  const shape: ParsedShape = {
+    kind: 'image',
+    x: emuToPx(xEmu),
+    y: emuToPx(yEmu),
+    width: emuToPx(wEmu),
+    height: emuToPx(hEmu),
+    rotation: 0,
+    sourceTag: 'p:graphicFrame',
+    imagePath,
+  }
+  if (blipRelId !== undefined) shape.blipRelId = blipRelId
+  return shape
+}
+
 function parseTable(
   graphicFrame: XmlNode,
   theme: ThemeColourMap,
@@ -3150,18 +3233,56 @@ function parseSlide(
       )
       if (shape !== null) shapes.push(shape)
     } else if (tag === 'p:graphicFrame') {
-      // Tables nest inside graphicFrame → graphicData → tbl. Other graphic
-      // frame contents (charts, diagrams, embedded OLE) sit on the gaps
-      // list — we let `parseTable` return [] when graphicData isn't a table.
+      // Tables nest inside graphicFrame → graphicData → tbl. Charts use
+      // the same graphicFrame envelope but with a `/chart` URI; we route
+      // those to `parseChartFallback`, which looks for a poster image
+      // adjacent to the chart spec. SmartArt + embedded OLE fall to the
+      // ignored list with no shape emitted.
       const gfChildren = getChildren(node, 'p:graphicFrame')
       const graphic = findFirst(gfChildren, 'a:graphic')
       const gd = graphic ? findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData') : undefined
-      const isTable =
-        gd !== undefined &&
-        typeof getAttrs(gd)['@uri'] === 'string' &&
-        (getAttrs(gd)['@uri'] as string).endsWith('/table')
-      if (isTable) {
+      const uri = gd !== undefined ? String(getAttrs(gd)['@uri'] ?? '') : ''
+      if (uri.endsWith('/table')) {
         shapes.push(...parseTable(node, theme, hyperlinkRels))
+      } else if (uri.endsWith('/chart')) {
+        const chartShape = parseChartFallback(node, imageRels)
+        if (chartShape !== null) shapes.push(chartShape)
+      }
+    } else if (tag === 'mc:AlternateContent') {
+      // `<mc:AlternateContent>` wraps modern-format content (charts,
+      // SmartArt) with a legacy `<mc:Fallback>` image. We always take the
+      // fallback path — that's a pixel-perfect snapshot of the rendered
+      // chart Office captured at save time. Modern viewers reopen the
+      // chart spec instead, but our import doesn't currently render charts.
+      const acChildren = getChildren(node, 'mc:AlternateContent')
+      const fallback = findFirst(acChildren, 'mc:Fallback')
+      if (fallback) {
+        for (const fbChild of getChildren(fallback, 'mc:Fallback')) {
+          const fbTag = getTag(fbChild)
+          if (fbTag === 'p:pic') {
+            const shape = parseShape(
+              fbChild,
+              'p:pic',
+              theme,
+              context.placeholders,
+              imageRels,
+              context.txStyles,
+              hyperlinkRels,
+            )
+            if (shape !== null) shapes.push(shape)
+          } else if (fbTag === 'p:sp') {
+            const shape = parseShape(
+              fbChild,
+              'p:sp',
+              theme,
+              context.placeholders,
+              imageRels,
+              context.txStyles,
+              hyperlinkRels,
+            )
+            if (shape !== null) shapes.push(shape)
+          }
+        }
       }
     }
   }

@@ -1228,6 +1228,143 @@ describe('parsePptx', () => {
     })
   })
 
+  // ─── Charts (fallback-image import) ──────────────────────────────────────
+
+  it('imports a chart `<p:graphicFrame>` as an image via the `<a:blip>` poster', async () => {
+    // Chart shape with the poster image embedded inside `<a:graphicData>`
+    // — Google Slides + some Office variants emit this shape. We expect
+    // the parser to surface a kind=image shape with the chart's bbox and
+    // the resolved imagePath.
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/chart-poster.png"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `${SLIDE_OPEN}
+        <p:graphicFrame>
+          <p:nvGraphicFramePr><p:cNvPr id="2" name="Chart"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+          <p:xfrm><a:off x="914400" y="457200"/><a:ext cx="4572000" cy="3429000"/></p:xfrm>
+          <a:graphic>
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+              <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId2"/>
+              <a:blip r:embed="rId2"/>
+            </a:graphicData>
+          </a:graphic>
+        </p:graphicFrame>
+      ${SLIDE_CLOSE}`,
+    )
+    zip.file(
+      'ppt/media/chart-poster.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('image')
+    expect(shape.sourceTag).toBe('p:graphicFrame')
+    expect(shape.imagePath).toBe('ppt/media/chart-poster.png')
+    // Geometry from the graphicFrame's xfrm: 914400 EMU = 96 px.
+    expect(shape.x).toBeCloseTo(96, 1)
+    expect(shape.y).toBeCloseTo(48, 1)
+    expect(shape.width).toBeCloseTo(480, 1)
+    expect(shape.height).toBeCloseTo(360, 1)
+  })
+
+  it('imports an `<mc:AlternateContent>` wrapped chart via the `<mc:Fallback>` `<p:pic>`', async () => {
+    // Modern Office structure: chart in `<mc:Choice>`, poster image as a
+    // `<p:pic>` inside `<mc:Fallback>`. The parser should take the
+    // fallback path and emit the picture's normal image shape.
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/fallback-poster.png"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `${SLIDE_OPEN}
+        <mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+          <mc:Choice xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart" Requires="c14">
+            <p:graphicFrame>
+              <p:nvGraphicFramePr><p:cNvPr id="2" name="Chart"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+              <p:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="3429000"/></p:xfrm>
+              <a:graphic>
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+                  <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId2"/>
+                </a:graphicData>
+              </a:graphic>
+            </p:graphicFrame>
+          </mc:Choice>
+          <mc:Fallback>
+            <p:pic>
+              <p:nvPicPr><p:cNvPr id="3" name="ChartFallback"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+              <p:blipFill>
+                <a:blip r:embed="rId3"/>
+                <a:stretch><a:fillRect/></a:stretch>
+              </p:blipFill>
+              <p:spPr>
+                <a:xfrm><a:off x="0" y="0"/><a:ext cx="4572000" cy="3429000"/></a:xfrm>
+                <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+              </p:spPr>
+            </p:pic>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      ${SLIDE_CLOSE}`,
+    )
+    zip.file(
+      'ppt/media/fallback-poster.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('image')
+    expect(shape.imagePath).toBe('ppt/media/fallback-poster.png')
+  })
+
   it('captures flipH on a connector line', async () => {
     const buf = await makeFixture({
       themeXml: OFFICE_THEME,
