@@ -84,10 +84,31 @@ const FIXTURES_DIR = join(REPO_ROOT, 'tests', 'fixtures', 'pptx')
 const OUT_DIR = join(tmpdir(), 'narrative-pptx-spike')
 mkdirSync(OUT_DIR, { recursive: true })
 
-/** 100x60 solid-red PNG, hand-crafted so the spike has no I/O dependencies. */
+/**
+ * 100×60 solid-red PNG, zlib-deflated so the IDAT stream is well-formed.
+ * The previous hand-crafted constant emitted only a 94-byte IDAT — enough
+ * for a parser to accept the PNG (the fixture imported correctly) but
+ * libvips / imgproxy rejected the truncated stream with
+ * `pngload_buffer: IDAT stream error`, so the imported deck's thumbnail
+ * never rendered. Regenerated via:
+ *
+ *   node -e "
+ *     const z = require('node:zlib'); const W=100, H=60;
+ *     const raw = Buffer.alloc((1+W*3)*H);
+ *     for (let y=0, p=0; y<H; y++) {
+ *       raw[p++] = 0;
+ *       for (let x=0; x<W; x++) { raw[p++]=0xFF; raw[p++]=0; raw[p++]=0; }
+ *     }
+ *     const idat = z.deflateSync(raw);
+ *     … (assemble PNG sig + IHDR + IDAT + IEND chunks; print base64)
+ *   "
+ */
 const RED_PNG_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAGQAAAA8CAYAAACVcF/9AAAAJUlEQVR42u3OAQ0AAAjDsH/QkfgI' +
-  'g1S2dW0lqpQpU6ZMmTL1aQUe9wAB6aJBpwAAAABJRU5ErkJggg=='
+  'iVBORw0KGgoAAAANSUhEUgAAAGQAAAA8CAIAAAAfXYiZAAAAsUlEQVR4nO3OUQkAIABEsetfWiv4' +
+  'Nx4IC7Cd7XvkByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDiByF+' +
+  'EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDi' +
+  'ByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchfhDiByF+EOIHIX4Q4gchF8sHWepWYTlwAAAAAElF' +
+  'TkSuQmCC'
 
 // ---------------------------------------------------------------------------
 // Mapping table — keep in sync with docs/plans/m28-pptx-import-export.md

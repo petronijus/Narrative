@@ -44,15 +44,16 @@ test.describe('M28 pptx round-trip', () => {
     page.on('console', (msg) => {
       if (msg.type() !== 'error') return
       const text = msg.text()
-      // Filter dev-only / fixture-only noise unrelated to import/export
-      // functional behaviour:
-      //   - favicon.ico 404 — Vite dev server doesn't serve one.
-      //   - imgproxy 422 / image load failures — the spike-generated fixture
-      //     `import-test.pptx` embeds a hand-rolled PNG whose IDAT stream
-      //     libvips rejects. The deck still imports correctly; only the
-      //     thumbnail can't render.
-      if (/favicon\.ico/i.test(text)) return
-      if (/Failed to load resource/i.test(text)) return
+      const url = msg.location().url
+      // Browser-level resource fetch errors arrive as a generic
+      // "Failed to load resource: …status (…)" text with the actual URL
+      // on `msg.location().url`. They're never functional-test signals —
+      // typical cases are the Vite dev server not serving a favicon, or
+      // an imgproxy variant that hasn't been generated yet. Real
+      // functional errors come through as `pageerror` or as console.error
+      // with a non-resource message.
+      if (/^Failed to load resource:/i.test(text)) return
+      if (/favicon\.ico/i.test(url)) return
       errors.push(`console.error: ${text}`)
     })
 
@@ -97,7 +98,6 @@ test.describe('M28 pptx round-trip', () => {
       const text = msg.text()
       // Same dev-noise filter as the import test — see above for rationale.
       if (/favicon\.ico/i.test(text)) return
-      if (/Failed to load resource/i.test(text)) return
       errors.push(`console.error: ${text}`)
     })
 
