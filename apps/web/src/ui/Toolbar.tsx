@@ -24,7 +24,9 @@ import {
   Film,
   ImagePlus,
   Share2,
-  LogOut,
+  FileDown,
+  FilePlus,
+  Loader2,
   Play,
   Eye,
   Home,
@@ -56,7 +58,6 @@ import type { ActiveTool } from '../state/ToolContext.js'
 import { useUndoManager } from '../state/useUndoManager.js'
 import { useDeckFontsOptional } from '../state/useDeckFonts.js'
 import { AvatarChips } from './AvatarChips.js'
-import { useAuth } from '../state/AuthContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { ShareDialog } from './ShareDialog.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
@@ -130,8 +131,22 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
       ? (location.state as { from: string }).from
       : null
   const { id } = useParams<{ id: string }>()
-  const { user, logout } = useAuth()
   const api = useApi()
+  // M28: in-flight state for the Export button. We use fetch+blob (not a
+  // plain location nav) so the user gets a spinner during the ~1-2 s pptx
+  // build and any server error surfaces as a transient banner instead of a
+  // confusing empty download.
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [appending, setAppending] = useState(false)
+  const appendInputRef = useRef<HTMLInputElement | null>(null)
+  // Auto-dismiss the export-error banner after a few seconds — feels nicer
+  // than leaving a stale message lying around.
+  useEffect(() => {
+    if (exportError === null) return
+    const t = setTimeout(() => setExportError(null), 5_000)
+    return () => clearTimeout(t)
+  }, [exportError])
   // Read the deck's folderId from the shared DeckRoleContext rather
   // than firing another `getDeck` from the toolbar — the provider
   // already fetched it. This lets the "+ Add component" button appear
@@ -749,24 +764,142 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           </>
         )}
 
-        {/* M10: Signed-in user + sign-out */}
-        {user !== null && (
-          <div className="flex items-center gap-2 ml-1">
+        {/* M28: Append .pptx to current deck — hidden file input + button.
+            Owner-gated (same auth as Export). Server route requires editor+
+            so this matches when the role hierarchy widens. */}
+        {isOwner && id !== undefined && (
+          <>
+            <input
+              ref={appendInputRef}
+              type="file"
+              accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                e.target.value = '' // reset so re-picking the same file fires onChange
+                if (file === undefined) return
+                void (async () => {
+                  setAppending(true)
+                  setExportError(null)
+                  try {
+                    await api.appendPptx(file, id)
+                    // Hocuspocus picks up the new slides via the deck_updates
+                    // delta within a few hundred ms — no client-side reload.
+                  } catch (err) {
+                    const status = (err as { status?: number }).status
+                    const body = (err as { body?: { error?: string } }).body
+                    const msg =
+                      typeof body?.error === 'string'
+                        ? body.error
+                        : `Append failed${status !== undefined ? ` (HTTP ${status})` : ''}`
+                    setExportError(msg)
+                  } finally {
+                    setAppending(false)
+                  }
+                })()
+              }}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  onClick={() => void logout()}
-                  aria-label="Sign out"
-                  className="h-7 w-7"
+                  size="sm"
+                  disabled={appending}
+                  onClick={() => appendInputRef.current?.click()}
+                  aria-label="Append .pptx slides to this deck"
+                  className="gap-1.5"
                 >
-                  <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+                  {appending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <FilePlus className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  <span className="hidden sm:inline-block min-w-[4.75rem] text-left">
+                    {appending ? 'Appending…' : 'Append'}
+                  </span>
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="bottom">Sign out</TooltipContent>
+              <TooltipContent side="bottom">Append slides from a .pptx</TooltipContent>
             </Tooltip>
-          </div>
+          </>
+        )}
+
+        {/* M28: Export to PowerPoint — editor+ role (covered by isOwner since
+            we don't expose a non-owner role here yet; the server route enforces
+            editor+ regardless). Uses fetch + blob URL instead of a plain
+            navigation so we can show a spinner during the ~1-2 s pptx build
+            and surface server errors as a banner. */}
+        {isOwner && id !== undefined && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={exporting}
+                onClick={() => {
+                  void (async () => {
+                    setExporting(true)
+                    setExportError(null)
+                    const apiUrl =
+                      (import.meta.env['VITE_API_URL'] as string | undefined) ??
+                      'http://localhost:3001'
+                    try {
+                      const res = await fetch(`${apiUrl}/decks/${id}/export.pptx`, {
+                        credentials: 'include',
+                      })
+                      if (!res.ok) {
+                        let msg = `Export failed (HTTP ${res.status})`
+                        try {
+                          const body = (await res.json()) as { error?: string }
+                          if (typeof body.error === 'string') msg = body.error
+                        } catch {
+                          /* non-JSON body */
+                        }
+                        setExportError(msg)
+                        return
+                      }
+                      // Stream the body into a blob, then click a hidden anchor
+                      // to trigger the browser's "Save as" with the right
+                      // filename. URL.revokeObjectURL releases the blob memory
+                      // once the click completes.
+                      const filenameMatch = /filename="([^"]+)"/.exec(
+                        res.headers.get('content-disposition') ?? '',
+                      )
+                      const filename = filenameMatch?.[1] ?? 'deck.pptx'
+                      const blob = await res.blob()
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = filename
+                      document.body.appendChild(a)
+                      a.click()
+                      document.body.removeChild(a)
+                      // Defer revoke a tick so the browser commits the download.
+                      setTimeout(() => URL.revokeObjectURL(url), 1_000)
+                    } catch (err) {
+                      setExportError(err instanceof Error ? err.message : 'Network error')
+                    } finally {
+                      setExporting(false)
+                    }
+                  })()
+                }}
+                aria-label="Export to PowerPoint"
+                className="gap-1.5"
+              >
+                {exporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileDown className="h-4 w-4" aria-hidden="true" />
+                )}
+                {/* Reserve the wider "Exporting…" width so the toolbar
+                    doesn't jiggle when the label swaps. */}
+                <span className="hidden sm:inline-block min-w-[4.75rem] text-left">
+                  {exporting ? 'Exporting…' : 'Export'}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Download as .pptx</TooltipContent>
+          </Tooltip>
         )}
 
         {/* Preview animations — deck only; masters have no presentation. */}
@@ -823,6 +956,15 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           </Tooltip>
         )}
       </div>
+      {exportError !== null && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-14 right-4 z-50 max-w-sm rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground shadow-lg"
+        >
+          {exportError}
+        </div>
+      )}
     </TooltipProvider>
   )
 }

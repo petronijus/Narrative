@@ -307,11 +307,15 @@ Object type SDK as the public form of the registry that has existed since M2. `r
 
 **Deliverable**: extensible object system + 3 example plugins.
 
-### M28 — Export (parked for now)
+### M28 — PowerPoint import & export (next to ship — 2026-05-14)
 
-PDF export via Playwright headless rendering of present mode. PNG per slide via PixiJS `renderToCanvas`. View-only share link (separate viewer route with a token). **PPTX export: parked.** **Video export: parked (explicit decision).**
+Round-trip a deck between Narrative and Microsoft PowerPoint with acceptable fidelity for content-focused decks. Both flows run server-side: import via a tus upload + BullMQ worker that parses `.pptx` with `jszip` + `fast-xml-parser` and writes Yjs updates; export via a route that uses `pptxgenjs` and streams the result. **In MVP**: plain text frames, images, rect/ellipse/line shapes, slide backgrounds, position/size/rotation. **Deferred to follow-ups**: per-run text formatting, layouts/masters, theme tokens, tables, charts, SmartArt, animations, transitions, video.
 
-**Deliverable**: basic export pipeline. Skip unless needed.
+PDF / PNG export and view-only share link (the original M28 scope) move to their own follow-up milestone or stay parked. Video export remains parked.
+
+**Plan**: `docs/plans/m28-pptx-import-export.md` — covers scope, library choices, data-model mapping, phases (spike → export MVP → import MVP → fidelity passes), and a Phase-1 spike that gates GO/NO-GO on the custom-parser approach.
+
+**Deliverable**: drag-a-pptx-to-import + click-to-export. 80% fidelity for content decks.
 
 ### M29 — Performance + observability + polish
 

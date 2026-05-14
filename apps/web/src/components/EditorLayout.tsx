@@ -580,6 +580,50 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
    * outside the group's members exits isolation.
    */
   const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null)
+  /**
+   * Spacebar-hold pan flag — Figma/Photoshop convention. While held (and no
+   * input has focus), the canvas behaves like the hand tool: cursor → grab,
+   * left-click + drag pans the artboard.
+   */
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  const spaceHeldRef = useRef(false)
+  useEffect(() => {
+    spaceHeldRef.current = spaceHeld
+  }, [spaceHeld])
+
+  useEffect(() => {
+    const isEditable = (target: EventTarget | null): boolean => {
+      const el = target as HTMLElement | null
+      if (el === null) return false
+      const tag = el.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      return el.isContentEditable === true
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' && e.key !== ' ') return
+      if (e.repeat) {
+        // Still suppress page-scroll while held, but don't re-toggle state.
+        if (spaceHeldRef.current) e.preventDefault()
+        return
+      }
+      if (isEditable(e.target)) return
+      e.preventDefault()
+      setSpaceHeld(true)
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' && e.key !== ' ') return
+      setSpaceHeld(false)
+    }
+    const onBlur = () => setSpaceHeld(false)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Drag state — ephemeral, neukládá se do Y.Doc
@@ -901,6 +945,21 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       }
 
       if (e.button !== 0) return
+
+      // Spacebar held — left-click drags the artboard (Figma/Photoshop
+      // convention). Reuses the hand-tool pan path.
+      if (spaceHeldRef.current) {
+        const scroller = stageScrollRef.current
+        if (scroller === null) return
+        ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+        panRef.current = {
+          startX: e.clientX,
+          startY: e.clientY,
+          scrollLeft: scroller.scrollLeft,
+          scrollTop: scroller.scrollTop,
+        }
+        return
+      }
 
       // P15: if a text overlay is in inline-edit mode, any pointerdown
       // that reaches the canvas (overlay stops propagation for clicks
@@ -2235,13 +2294,17 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // Cursor style
   const canvasCursor = middlePanning
     ? 'grabbing'
-    : activeTool === 'hand'
+    : spaceHeld
       ? panRef.current !== null
         ? 'grabbing'
         : 'grab'
-      : activeTool === 'select'
-        ? 'default'
-        : 'crosshair'
+      : activeTool === 'hand'
+        ? panRef.current !== null
+          ? 'grabbing'
+          : 'grab'
+        : activeTool === 'select'
+          ? 'default'
+          : 'crosshair'
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">

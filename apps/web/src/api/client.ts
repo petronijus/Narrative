@@ -87,6 +87,22 @@ export interface ApiClient {
    */
   listFolderActiveEditors(folderId: string): Promise<ActiveEditorsEntry[]>
 
+  /**
+   * M28 — PowerPoint import. POSTs the raw .pptx bytes; server parses,
+   * builds a Y.Doc, and creates a deck in the target folder. Returns the
+   * new deckId and a brief import summary the UI can surface as a toast.
+   */
+  importPptx(file: File, folderId: string): Promise<ImportPptxResult>
+
+  /**
+   * M28 — Append a .pptx into an existing deck. Server appends the parsed
+   * slides at the end of the current slide list via a differential Y.Doc
+   * update; the caller's open Hocuspocus connection picks up the new slides
+   * within seconds (no client-side refresh needed). Caller must already
+   * have editor+ role on the deck.
+   */
+  appendPptx(file: File, deckId: string): Promise<AppendPptxResult>
+
   // ---------------------------------------------------------------------------
   // M16 P5 — Component API
   // ---------------------------------------------------------------------------
@@ -202,6 +218,29 @@ export interface ActiveEditorUser {
 export interface ActiveEditorsEntry {
   deckId: string
   users: ActiveEditorUser[]
+}
+
+/** Summary returned by the .pptx import endpoint — drives the success toast. */
+export interface ImportPptxResult {
+  deckId: string
+  slideCount: number
+  objectsCreated: number
+  skipped: { images: number; unknownShapes: number }
+  ignoredElements: string[]
+  slideWidth: number
+  slideHeight: number
+}
+
+/** Summary returned by the append endpoint — same shape minus the deck-creation
+ *  fields. `appendedSlides` is the number of slides added, not the deck total. */
+export interface AppendPptxResult {
+  deckId: string
+  appendedSlides: number
+  objectsCreated: number
+  skipped: { images: number; unknownShapes: number }
+  ignoredElements: string[]
+  slideWidth: number
+  slideHeight: number
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +544,54 @@ export function createApiClient(): ApiClient {
 
     listFolderActiveEditors: (folderId) =>
       requestJson<ActiveEditorsEntry[]>(`/folders/${folderId}/active-editors`),
+
+    importPptx: async (file, folderId) => {
+      const res = await request(`/folders/${folderId}/import-pptx`, {
+        method: 'POST',
+        // Raw .pptx body — server's content-type parser pipes it straight to a
+        // Buffer. Filename is forwarded so the new deck inherits it as title.
+        headers: {
+          'Content-Type':
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'X-Narrative-Filename': file.name,
+        },
+        body: file,
+      })
+      if (!res.ok) {
+        // Surface server error text in the toast — it's the most useful thing
+        // the UI can show (e.g. "Could not parse .pptx — not a ZIP archive").
+        let body: unknown
+        try {
+          body = await res.json()
+        } catch {
+          body = {}
+        }
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
+      }
+      return (await res.json()) as ImportPptxResult
+    },
+
+    appendPptx: async (file, deckId) => {
+      const res = await request(`/decks/${deckId}/append-pptx`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'X-Narrative-Filename': file.name,
+        },
+        body: file,
+      })
+      if (!res.ok) {
+        let body: unknown
+        try {
+          body = await res.json()
+        } catch {
+          body = {}
+        }
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
+      }
+      return (await res.json()) as AppendPptxResult
+    },
 
     // -------------------------------------------------------------------------
     // M16 P5 — Component methods

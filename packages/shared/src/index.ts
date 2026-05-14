@@ -1,6 +1,8 @@
 // @narrative/shared — shared types across apps and packages
 // Pure TypeScript — no runtime dependencies.
 
+export { SLIDE_WIDTH, SLIDE_HEIGHT, PPTX_WIDE_EMU_WIDTH, PPTX_WIDE_EMU_HEIGHT } from './canvas.js'
+
 export type { TokenRef } from './slide.js'
 export { isTokenRef } from './slide.js'
 

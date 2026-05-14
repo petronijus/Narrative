@@ -1,15 +1,14 @@
 /**
  * renderer/constants.ts
  *
- * Shared renderer constants.
+ * Renderer-local re-exports of the canonical canvas dimensions.
+ * The actual values live in `@narrative/shared` (canvas.ts) so server-side
+ * code (pptx import/export, AI generation, headless thumbnail render) reads
+ * the same numbers — keeps the artboard size in one place, forever.
  *
- * M5: SLIDE_WIDTH / SLIDE_HEIGHT definují kanonický "world size" slide plochy
- * v CSS logical pixels (1:1 s Pixi world coords). Použito v PresentLayout
- * pro scale-to-fit výpočet a v editoru jako referenční rozměr.
- *
- * Hodnota 1920×1080 odpovídá 16:9 Full HD — standard pro prezentace.
- * Deck-level aspect ratio override přijde v M20 (themes).
+ * Use these everywhere SLIDE_WIDTH / SLIDE_HEIGHT are needed inside the web
+ * app. Importing directly from `@narrative/shared` works too; this file
+ * stays as a stable name for the renderer's many existing imports.
  */
 
-export const SLIDE_WIDTH = 1920
-export const SLIDE_HEIGHT = 1080
+export { SLIDE_WIDTH, SLIDE_HEIGHT } from '@narrative/shared'

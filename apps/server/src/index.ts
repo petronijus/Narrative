@@ -34,6 +34,8 @@ import { registerFolderRoutes } from './routes/folders.js'
 import { registerComponentRoutes } from './routes/components.js'
 import { registerTokenUsageRoutes } from './routes/tokenUsages.js'
 import { registerSharingRoutes } from './routes/sharing.js'
+import { registerPptxImportRoutes } from './routes/pptxImport.js'
+import { registerPptxExportRoutes } from './routes/pptxExport.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
@@ -193,6 +195,12 @@ await registerTokenUsageRoutes(app, db)
 
 // Sharing routes (permissions + share links)
 await registerSharingRoutes(app, db)
+
+// PowerPoint import — synchronous parse + Y.Doc write (M28 phase 3 MVP)
+await registerPptxImportRoutes(app, db)
+
+// PowerPoint export — synchronous Y.Doc → pptxgenjs Buffer (M28 phase 2 MVP)
+await registerPptxExportRoutes(app, db)
 
 // Server-driven OAuth flow + session cookie minting (replaces the old
 // browser-PKCE + Bearer-id_token path). Public endpoints by design.

@@ -1,0 +1,517 @@
+/**
+ * pptx/writer.ts
+ *
+ * Takes a `ParsedPptx` (from `./parser`) and produces a Y.Doc state buffer
+ * suitable for insertion into the `deck_updates` table. The resulting buffer
+ * is what Hocuspocus's `onLoadDocument` will replay when a client first
+ * connects to the new deck.
+ *
+ * Strategy:
+ *   1. `createSlideDoc()` → fresh doc with one default empty slide.
+ *   2. For each parsed source slide, `addSlide()` and populate it with the
+ *      mapped objects + background.
+ *   3. Remove the default slide at index 0 so the deck starts at the first
+ *      imported slide.
+ *   4. `Y.encodeStateAsUpdate(doc)` → Buffer.
+ *
+ * v1 mapping coverage (intentionally minimal — refine per real-world fixtures):
+ *   - text frame  → TextObject (concatenated paragraphs, first-run style)
+ *   - rectangle   → RectangleObject (solid fill + optional stroke)
+ *   - ellipse     → EllipseObject  (solid fill + optional stroke)
+ *   - line        → LineObject     (stroke only)
+ *   - image       → SKIPPED in v1 (needs MinIO upload pipeline; tracked as
+ *                  a logged "ignored: image" entry on the result for now)
+ *   - solid bg    → ColorBackground
+ *   - image bg    → SKIPPED (same reason as images)
+ */
+
+import * as Y from 'yjs'
+import { nanoid } from 'nanoid'
+import {
+  createSlideDoc,
+  hydrateSlideDoc,
+  addSlide,
+  removeSlide,
+  getSlideObjectsCtx,
+  getSlideNotes,
+  addObject,
+  updateSlideBackground,
+  listSlides,
+} from '@narrative/slide-model'
+import type {
+  SlideObject,
+  TextObject,
+  RectangleObject,
+  EllipseObject,
+  LineObject,
+  ImageObject,
+  ColorBackground,
+  ImageBackground,
+  LinearGradientBackground,
+  RadialGradientBackground,
+  GradientStop,
+  LinearGradientFill,
+  RadialGradientFill,
+  FillStyle,
+} from '@narrative/shared'
+import { SLIDE_WIDTH, SLIDE_HEIGHT } from '@narrative/shared'
+import type {
+  ParsedPptx,
+  ParsedShape,
+  ParsedSlide,
+  ParsedGradient,
+  ParsedBackground,
+} from './parser.js'
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+export interface WriteResult {
+  /** `Y.encodeStateAsUpdate(doc)` — store as a single row in `deck_updates`. */
+  state: Buffer
+  /** Slide count in the resulting deck (matches the parsed input). */
+  slideCount: number
+  /** Number of source shapes successfully mapped to Narrative objects. */
+  objectsCreated: number
+  /** Per-kind tally of shapes we skipped (mostly images in v1). */
+  skipped: { images: number; unknownShapes: number }
+}
+
+// ---------------------------------------------------------------------------
+// Shape mapper — ParsedShape → SlideObject | null
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TEXT_COLOR = 0x0f172a
+const DEFAULT_FILL = 0x4060e0
+const DEFAULT_TEXT_SIZE = 18
+
+function round(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+function gradientStops(g: ParsedGradient): GradientStop[] {
+  return g.stops.map((s) => {
+    const stop: GradientStop = { color: s.color, offset: s.offset }
+    if (s.alpha !== undefined) stop.alpha = s.alpha
+    return stop
+  })
+}
+
+function gradientToFillStyle(g: ParsedGradient): FillStyle {
+  if (g.kind === 'linearGradient') {
+    const fill: LinearGradientFill = {
+      kind: 'linearGradient',
+      stops: gradientStops(g),
+      angleDeg: g.angleDeg,
+    }
+    return fill
+  }
+  // Radial — Narrative requires centerX/Y on the fill style.
+  const fill: RadialGradientFill = {
+    kind: 'radialGradient',
+    stops: gradientStops(g),
+    centerX: 0.5,
+    centerY: 0.5,
+  }
+  return fill
+}
+
+/**
+ * Build a Y.Text body for a parsed text shape when the runs carry per-run
+ * formatting worth preserving. Returns null when the runs are empty or
+ * uniformly match the shape-level defaults — in that case the caller falls
+ * back to the plain `s.text` string and addObject seeds a default Y.Text.
+ *
+ * Run attrs map to Quill-style format keys (Narrative's `richText.ts`):
+ *   italic / underline → boolean
+ *   fontWeight         → 700 for bold runs, omitted otherwise
+ *   color              → number 0xRRGGBB
+ *   fontSize           → px (already scaled here)
+ *
+ * Hyperlinks on individual runs are NOT serialised as Quill attrs in v1 —
+ * Narrative's model attaches one hyperlink per TextObject, not per run.
+ * The first-run hyperlink is captured upstream and lands on the shape's
+ * `hyperlink` field, which `mapShape` copies onto the TextObject.
+ */
+function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
+  const runs = s.textRuns
+  if (runs === undefined || runs.length === 0) return null
+
+  // Test: does any run carry formatting (other than the run's own text)?
+  // If every run is "plain text only", the existing string path suffices.
+  const hasRichRun = runs.some(
+    (r) =>
+      r.text !== '\n' &&
+      (r.bold === true ||
+        r.italic === true ||
+        r.underline === true ||
+        r.color !== undefined ||
+        r.fontSize !== undefined),
+  )
+  if (!hasRichRun) return null
+
+  const yt = new Y.Text()
+  let cursor = 0
+  for (const r of runs) {
+    if (r.text.length === 0) continue
+    yt.insert(cursor, r.text)
+    // Paragraph-break synthetic runs have text === '\n' and no formatting —
+    // skip the format pass entirely.
+    if (r.text === '\n') {
+      cursor += 1
+      continue
+    }
+    const attrs: Record<string, unknown> = {}
+    if (r.bold === true) attrs['fontWeight'] = 700
+    if (r.italic === true) attrs['italic'] = true
+    if (r.underline === true) attrs['underline'] = true
+    if (r.color !== undefined) attrs['color'] = r.color
+    if (r.fontSize !== undefined) attrs['fontSize'] = round(r.fontSize * scale)
+    if (Object.keys(attrs).length > 0) {
+      yt.format(cursor, r.text.length, attrs)
+    }
+    cursor += r.text.length
+  }
+  return yt
+}
+
+function mapShape(s: ParsedShape, scale: number): SlideObject | null {
+  const base: {
+    id: string
+    x: number
+    y: number
+    width: number
+    height: number
+    rotation: number
+    opacity: number
+    groupId?: string
+  } = {
+    id: nanoid(),
+    x: round(s.x * scale),
+    y: round(s.y * scale),
+    width: round(Math.max(1, s.width * scale)),
+    height: round(Math.max(1, s.height * scale)),
+    rotation: round(s.rotation),
+    opacity: 1,
+  }
+  if (s.groupId !== undefined) base.groupId = s.groupId
+
+  // Text takes precedence — a `p:sp` with a `<p:txBody>` that has runs is
+  // imported as a text frame regardless of its preset geometry.
+  if (s.kind === 'text' && s.text !== undefined && s.text.length > 0) {
+    // Narrative TextObject only models 'left' | 'center' | 'right'; coerce
+    // PPTX 'justify' to 'left' since we don't render justified text yet.
+    const align: 'left' | 'center' | 'right' =
+      s.textAlign === 'center' || s.textAlign === 'right' ? s.textAlign : 'left'
+    // Build a Y.Text body when the parsed runs carry per-run formatting
+    // that diverges from the frame-wide defaults. Single-style frames stay
+    // on the existing string path — `addObject` seeds a Y.Text from the
+    // string automatically (mutations.richtext.test covers that path).
+    const richBody = buildRichTextBody(s, scale)
+    const obj: TextObject = {
+      ...base,
+      type: 'text',
+      text: richBody ?? s.text,
+      fontSize: round((s.fontSize ?? DEFAULT_TEXT_SIZE) * scale),
+      fontWeight: s.bold === true ? 'bold' : 'normal',
+      color: s.textColor ?? DEFAULT_TEXT_COLOR,
+      align,
+    }
+    if (s.textColorAlpha !== undefined && s.textColorAlpha < 1) {
+      obj.colorAlpha = s.textColorAlpha
+    }
+    // Default vAlign is 'top' — only set when the source explicitly anchors
+    // middle/bottom, so we don't bloat the doc with redundant fields.
+    if (s.textVerticalAlign === 'middle' || s.textVerticalAlign === 'bottom') {
+      obj.vAlign = s.textVerticalAlign
+    }
+    if (s.listStyle === 'bullet' || s.listStyle === 'numbered') {
+      obj.listStyle = s.listStyle
+    }
+    if (s.hyperlink !== undefined) {
+      obj.hyperlink = { kind: 'url', href: s.hyperlink.href, target: '_blank' }
+    }
+    return obj
+  }
+
+  if (s.kind === 'rectangle') {
+    const obj: RectangleObject = {
+      ...base,
+      type: 'rectangle',
+      fill: s.fillColor ?? DEFAULT_FILL,
+    }
+    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
+      obj.strokeWidth = round(s.strokeWidth * scale)
+    }
+    return obj
+  }
+
+  if (s.kind === 'ellipse') {
+    const obj: EllipseObject = {
+      ...base,
+      type: 'ellipse',
+      fill: s.fillColor ?? DEFAULT_FILL,
+    }
+    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
+      obj.strokeWidth = round(s.strokeWidth * scale)
+    }
+    return obj
+  }
+
+  if (s.kind === 'image') {
+    // Only emit the ImageObject if the importer set `assetId` (i.e. the
+    // image bytes were successfully uploaded to MinIO). Without an assetId
+    // there's nothing for the renderer to draw, so we drop silently.
+    if (s.assetId === undefined || s.assetId === '') return null
+    const obj: ImageObject = {
+      ...base,
+      type: 'image',
+      assetId: s.assetId,
+      variant: 'display',
+      fit: 'cover',
+    }
+    return obj
+  }
+
+  if (s.kind === 'line') {
+    const obj: LineObject = {
+      ...base,
+      type: 'line',
+      stroke: s.strokeColor ?? 0x111111,
+      strokeWidth:
+        s.strokeWidth !== undefined && s.strokeWidth > 0 ? round(s.strokeWidth * scale) : 2,
+      p1: { x: 0, y: 0 },
+      p2: { x: base.width, y: base.height },
+      startCap: 'none',
+      endCap: 'none',
+    }
+    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    return obj
+  }
+
+  return null
+}
+
+function backgroundForSlide(
+  parsedBg: ParsedBackground,
+): ColorBackground | LinearGradientBackground | RadialGradientBackground | ImageBackground | null {
+  if (parsedBg.kind === 'solid' && parsedBg.color !== undefined) {
+    return { kind: 'color', color: parsedBg.color, alpha: 1 }
+  }
+  if (parsedBg.kind === 'gradient' && parsedBg.gradient !== undefined) {
+    const g = parsedBg.gradient
+    if (g.kind === 'linearGradient') {
+      return { kind: 'linearGradient', angleDeg: g.angleDeg, stops: gradientStops(g) }
+    }
+    return {
+      kind: 'radialGradient',
+      centerX: 0.5,
+      centerY: 0.5,
+      radius: 0.5,
+      stops: gradientStops(g),
+    }
+  }
+  if (parsedBg.kind === 'image' && parsedBg.assetId !== undefined) {
+    return { kind: 'image', assetId: parsedBg.assetId, fit: 'cover' }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Slide writer
+// ---------------------------------------------------------------------------
+
+function writeSlideShapes(
+  ctx: ReturnType<typeof createSlideDoc>,
+  slideId: string,
+  parsedSlide: ParsedSlide,
+  scale: number,
+): { objectsCreated: number; skippedImages: number; skippedUnknown: number } {
+  const objCtx = getSlideObjectsCtx(ctx, slideId)
+  let objectsCreated = 0
+  let skippedImages = 0
+  let skippedUnknown = 0
+
+  if (objCtx === null) {
+    return { objectsCreated, skippedImages, skippedUnknown }
+  }
+
+  for (const shape of parsedSlide.shapes) {
+    // Images with no assetId were not (or could not be) uploaded — count
+    // them as skipped. mapShape returns null for those.
+    if (shape.kind === 'image' && (shape.assetId === undefined || shape.assetId === '')) {
+      skippedImages++
+      continue
+    }
+    const obj = mapShape(shape, scale)
+    if (obj === null) {
+      if (shape.kind === 'image') skippedImages++
+      else skippedUnknown++
+      continue
+    }
+    try {
+      addObject(objCtx, obj)
+      objectsCreated++
+    } catch (err) {
+      console.warn(
+        `[pptx-import] addObject failed for ${shape.sourceTag} (${shape.kind}): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      )
+      skippedUnknown++
+    }
+  }
+
+  // Solid / gradient backgrounds — image bgs skipped in v1.
+  const bg = backgroundForSlide(parsedSlide.background)
+  if (bg !== null) updateSlideBackground(ctx, slideId, bg)
+
+  // Speaker notes — seed the slide's Y.XmlFragment with ProseMirror
+  // `<paragraph>` elements containing each parsed paragraph as plain text.
+  // Tiptap/y-prosemirror binds to this same fragment in the editor so the
+  // user sees the imported notes immediately on first open.
+  if (parsedSlide.notes !== undefined && parsedSlide.notes.length > 0) {
+    seedSlideNotes(ctx, slideId, parsedSlide.notes)
+  }
+
+  return { objectsCreated, skippedImages, skippedUnknown }
+}
+
+/**
+ * Lazily populate a slide's notes Y.XmlFragment from parsed plain-text
+ * paragraphs. ProseMirror's default schema treats each block as a
+ * `paragraph` node containing zero or more text children, so we mirror
+ * that shape: one Y.XmlElement('paragraph') per source paragraph, each
+ * holding a Y.XmlText with the line's plain content.
+ *
+ * Empty paragraphs come through as empty `<paragraph/>` so the editor
+ * preserves blank-line spacing from the source.
+ */
+function seedSlideNotes(
+  ctx: ReturnType<typeof createSlideDoc>,
+  slideId: string,
+  paragraphs: string[],
+): void {
+  const fragment = getSlideNotes(ctx, slideId)
+  if (fragment === null) return
+  ctx.doc.transact(() => {
+    for (const para of paragraphs) {
+      const block = new Y.XmlElement('paragraph')
+      if (para.length > 0) {
+        const text = new Y.XmlText()
+        text.insert(0, para)
+        block.insert(0, [text])
+      }
+      fragment.insert(fragment.length, [block])
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Top-level
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn a parsed `.pptx` into a Y.Doc state buffer + summary stats. Pure —
+ * no DB or filesystem side-effects. Caller is responsible for inserting
+ * the resulting `state` into `deck_updates`.
+ */
+export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
+  const ctx = createSlideDoc()
+
+  // Capture the default empty slide id so we can remove it after import.
+  const defaultSlides = listSlides(ctx)
+  const defaultSlideId = defaultSlides[0]?.id
+
+  let objectsCreated = 0
+  let skippedImages = 0
+  let skippedUnknown = 0
+
+  // PPTX widescreen is 1280×720 @ 96 DPI; we target a 1920×1080 canvas. The
+  // scale factor is uniform — width and height ratios are identical for
+  // standard 16:9 inputs. For non-standard aspect ratios we pick the smaller
+  // ratio so content fits inside the target canvas (letterboxing) instead of
+  // spilling off the edge.
+  const scaleX = SLIDE_WIDTH / Math.max(1, parsed.slideWidth)
+  const scaleY = SLIDE_HEIGHT / Math.max(1, parsed.slideHeight)
+  const scale = Math.min(scaleX, scaleY)
+
+  for (const slide of parsed.slides) {
+    const created = addSlide(ctx)
+    const stats = writeSlideShapes(ctx, created.id, slide, scale)
+    objectsCreated += stats.objectsCreated
+    skippedImages += stats.skippedImages
+    skippedUnknown += stats.skippedUnknown
+  }
+
+  // Remove the default empty slide so the deck starts on the first imported
+  // slide. If for some reason we have zero parsed slides, leave the empty
+  // default behind — `removeSlide` would just re-create it anyway.
+  if (defaultSlideId !== undefined && parsed.slides.length > 0) {
+    removeSlide(ctx, defaultSlideId)
+  }
+
+  const state = Buffer.from(Y.encodeStateAsUpdate(ctx.doc))
+  return {
+    state,
+    slideCount: listSlides(ctx).length,
+    objectsCreated,
+    skipped: { images: skippedImages, unknownShapes: skippedUnknown },
+  }
+}
+
+/**
+ * Append parsed slides at the end of an existing deck's Y.Doc and return
+ * the differential update — the caller stores this as a new `deck_updates`
+ * row, so Hocuspocus's next replay produces the existing deck PLUS the
+ * appended slides.
+ *
+ * The `existingDoc` MUST already be hydrated from prior `deck_updates`
+ * rows; this function does not re-fetch anything from storage. The
+ * caller (route handler) replays the deck history and hands the resulting
+ * Y.Doc here.
+ *
+ * Returned `slideCount` is the number of slides APPENDED, not the deck's
+ * new total — matches the import route's response shape for symmetry.
+ */
+export function buildDeckAppendUpdate(parsed: ParsedPptx, existingDoc: Y.Doc): WriteResult {
+  const ctx = hydrateSlideDoc(existingDoc)
+  // Snapshot of the doc's state BEFORE we append. `encodeStateAsUpdate(doc,
+  // sv)` returns only the operations missing from `sv` — exactly the diff
+  // our mutations are about to introduce.
+  const sv = Y.encodeStateVector(existingDoc)
+
+  let objectsCreated = 0
+  let skippedImages = 0
+  let skippedUnknown = 0
+
+  const scaleX = SLIDE_WIDTH / Math.max(1, parsed.slideWidth)
+  const scaleY = SLIDE_HEIGHT / Math.max(1, parsed.slideHeight)
+  const scale = Math.min(scaleX, scaleY)
+
+  for (const slide of parsed.slides) {
+    // addSlide() with no index argument appends at the end of the slides
+    // array — exactly what we want for "import → append".
+    const created = addSlide(ctx)
+    const stats = writeSlideShapes(ctx, created.id, slide, scale)
+    objectsCreated += stats.objectsCreated
+    skippedImages += stats.skippedImages
+    skippedUnknown += stats.skippedUnknown
+  }
+
+  const state = Buffer.from(Y.encodeStateAsUpdate(existingDoc, sv))
+  return {
+    state,
+    slideCount: parsed.slides.length,
+    objectsCreated,
+    skipped: { images: skippedImages, unknownShapes: skippedUnknown },
+  }
+}

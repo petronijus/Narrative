@@ -1,0 +1,468 @@
+/**
+ * pptx/writer.test.ts
+ *
+ * Verifies that a `ParsedPptx` lowers into a Y.Doc state buffer whose decoded
+ * slides match the parser's intermediate form. The interesting bits:
+ *   - canvas-space scaling (PPTX 1280×720 → Narrative 1920×1080 is 1.5×)
+ *   - text frames get the right align + colour
+ *   - rect / ellipse pull fill + stroke + alpha through
+ *   - linear gradient becomes a `fillStyle` on the shape
+ *   - the default empty slide created by `createSlideDoc` is dropped
+ */
+
+import { describe, it, expect } from 'vitest'
+import * as Y from 'yjs'
+import { buildDeckUpdate, buildDeckAppendUpdate } from './writer.js'
+import type { ParsedPptx, ParsedSlide } from './parser.js'
+
+function emptySlide(overrides: Partial<ParsedSlide> = {}): ParsedSlide {
+  return {
+    source: 'slide1.xml',
+    background: { kind: 'none' },
+    shapes: [],
+    ...overrides,
+  }
+}
+
+function applyToFreshDoc(state: Buffer): {
+  slides: Array<{
+    background: unknown
+    objects: Array<Record<string, unknown>>
+  }>
+} {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, new Uint8Array(state))
+  const yslides = doc.getArray<Y.Map<unknown>>('slides')
+  const out: Array<{ background: unknown; objects: Array<Record<string, unknown>> }> = []
+  for (let i = 0; i < yslides.length; i++) {
+    const s = yslides.get(i)
+    const objects = s.get('objects') as Y.Array<Y.Map<unknown>> | undefined
+    const bg = s.get('background') as Y.Map<unknown> | undefined
+    const objSnapshots: Array<Record<string, unknown>> = []
+    if (objects !== undefined) {
+      for (let j = 0; j < objects.length; j++) {
+        objSnapshots.push(objects.get(j).toJSON() as Record<string, unknown>)
+      }
+    }
+    out.push({ background: bg?.toJSON(), objects: objSnapshots })
+  }
+  return { slides: out }
+}
+
+const BASE: Omit<ParsedPptx, 'slides'> = {
+  slideWidth: 1280,
+  slideHeight: 720,
+  ignoredElements: [],
+  distinctElementCount: 0,
+  embeddedImages: new Map(),
+}
+
+describe('buildDeckUpdate', () => {
+  it('produces a Y.Doc with one slide per parsed slide, default slide dropped', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [emptySlide({ source: 'slide1.xml' }), emptySlide({ source: 'slide2.xml' })],
+    }
+    const { state, slideCount } = buildDeckUpdate(parsed)
+    expect(slideCount).toBe(2)
+    const doc = applyToFreshDoc(state)
+    expect(doc.slides).toHaveLength(2)
+  })
+
+  it('scales coordinates from 1280×720 source to 1920×1080 target', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'rectangle',
+              x: 100,
+              y: 200,
+              width: 300,
+              height: 150,
+              rotation: 0,
+              fillColor: 0xff0000,
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const rect = doc.slides[0]!.objects[0]!
+    // 1920/1280 = 1.5 → 100 * 1.5 = 150, 200 * 1.5 = 300, etc.
+    expect(rect['x']).toBe(150)
+    expect(rect['y']).toBe(300)
+    expect(rect['width']).toBe(450)
+    expect(rect['height']).toBe(225)
+    expect(rect['fill']).toBe(0xff0000)
+  })
+
+  it('maps a text-kind ParsedShape to a TextObject with correct align + vAlign', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 50,
+              rotation: 0,
+              text: 'Hi',
+              fontSize: 24, // px
+              textColor: 0x123456,
+              textAlign: 'center',
+              textVerticalAlign: 'middle',
+              bold: true,
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const t = doc.slides[0]!.objects[0]!
+    expect(t['type']).toBe('text')
+    expect(t['text']).toBe('Hi')
+    expect(t['align']).toBe('center')
+    expect(t['vAlign']).toBe('middle')
+    expect(t['color']).toBe(0x123456)
+    expect(t['fontWeight']).toBe('bold')
+    expect(t['fontSize']).toBe(36) // 24 px × 1.5 scale
+  })
+
+  it('emits fillStyle for a linear gradient + carries fillAlpha through', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'rectangle',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 100,
+              rotation: 0,
+              fillColor: 0x4060e0,
+              fillAlpha: 0.5,
+              fillGradient: {
+                kind: 'linearGradient',
+                angleDeg: 90,
+                stops: [
+                  { offset: 0, color: 0xff0000 },
+                  { offset: 1, color: 0x0000ff },
+                ],
+              },
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const r = doc.slides[0]!.objects[0]!
+    expect(r['fillAlpha']).toBe(0.5)
+    const fillStyle = r['fillStyle'] as Record<string, unknown>
+    expect(fillStyle['kind']).toBe('linearGradient')
+    expect(fillStyle['angleDeg']).toBe(90)
+    const stops = fillStyle['stops'] as Array<Record<string, unknown>>
+    expect(stops).toHaveLength(2)
+    expect(stops[0]!['color']).toBe(0xff0000)
+  })
+
+  it('applies a solid background to the slide', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [emptySlide({ background: { kind: 'solid', color: 0xabcdef } })],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const bg = doc.slides[0]!.background as Record<string, unknown>
+    expect(bg['kind']).toBe('color')
+    expect(bg['color']).toBe(0xabcdef)
+  })
+
+  it('copies listStyle="bullet" through to the emitted TextObject', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 100,
+              rotation: 0,
+              text: 'Item',
+              listStyle: 'bullet',
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    expect(doc.slides[0]!.objects[0]!['listStyle']).toBe('bullet')
+  })
+
+  it('preserves master → layout → slide paint order in the resulting object list', async () => {
+    // Mirrors the production parser's bake order: master shapes come first
+    // in `ParsedSlide.shapes`, then layout shapes, then slide-native shapes.
+    // The writer iterates in array order and `addObject` appends, so the
+    // resulting object array should match that order — guaranteeing master
+    // content paints UNDER slide content.
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            // Master rect — emits FIRST
+            {
+              kind: 'rectangle',
+              x: 0,
+              y: 0,
+              width: 50,
+              height: 50,
+              rotation: 0,
+              fillColor: 0xff0000,
+              sourceTag: 'p:sp',
+            },
+            // Layout rect — emits SECOND
+            {
+              kind: 'rectangle',
+              x: 60,
+              y: 0,
+              width: 50,
+              height: 50,
+              rotation: 0,
+              fillColor: 0x00ff00,
+              sourceTag: 'p:sp',
+            },
+            // Slide-native text — emits LAST (on top)
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 50,
+              rotation: 0,
+              text: 'On top',
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state, objectsCreated } = buildDeckUpdate(parsed)
+    expect(objectsCreated).toBe(3)
+    const doc = applyToFreshDoc(state)
+    const objs = doc.slides[0]!.objects
+    expect(objs).toHaveLength(3)
+    expect(objs[0]!['fill']).toBe(0xff0000)
+    expect(objs[1]!['fill']).toBe(0x00ff00)
+    expect(objs[2]!['type']).toBe('text')
+    expect(objs[2]!['text']).toBe('On top')
+  })
+
+  it('copies hyperlink from ParsedShape onto the TextObject', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 50,
+              rotation: 0,
+              text: 'Click',
+              hyperlink: { href: 'https://example.com/' },
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const t = doc.slides[0]!.objects[0]!
+    const link = t['hyperlink'] as Record<string, unknown>
+    expect(link['kind']).toBe('url')
+    expect(link['href']).toBe('https://example.com/')
+    expect(link['target']).toBe('_blank')
+  })
+
+  it('builds a Y.Text body from rich textRuns and preserves the plain string round-trip', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 50,
+              rotation: 0,
+              text: 'AB',
+              textRuns: [
+                { text: 'A', bold: true, color: 0xff0000 },
+                { text: 'B', italic: true, color: 0x00ff00 },
+              ],
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    // Re-apply to a fresh doc and inspect the Y.Text directly so we can
+    // confirm per-character formatting attributes survived the encode.
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, new Uint8Array(state))
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    const objects = slides.get(0).get('objects') as Y.Array<Y.Map<unknown>>
+    const yText = objects.get(0).get('text') as Y.Text
+    expect(yText).toBeInstanceOf(Y.Text)
+    expect(yText.toString()).toBe('AB')
+    const delta = yText.toDelta() as Array<{ insert: string; attributes?: Record<string, unknown> }>
+    expect(delta).toHaveLength(2)
+    expect(delta[0]!.insert).toBe('A')
+    expect(delta[0]!.attributes?.['fontWeight']).toBe(700)
+    expect(delta[0]!.attributes?.['color']).toBe(0xff0000)
+    expect(delta[1]!.insert).toBe('B')
+    expect(delta[1]!.attributes?.['italic']).toBe(true)
+    expect(delta[1]!.attributes?.['color']).toBe(0x00ff00)
+  })
+
+  it('seeds slide notes Y.XmlFragment when ParsedSlide.notes is set', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          notes: ['First paragraph', 'Second paragraph'],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, new Uint8Array(state))
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    const notes = slides.get(0).get('notes') as Y.XmlFragment
+    expect(notes).toBeInstanceOf(Y.XmlFragment)
+    expect(notes.length).toBe(2)
+    const paragraphs = notes.toArray() as Y.XmlElement[]
+    expect(paragraphs[0]!.nodeName).toBe('paragraph')
+    expect(paragraphs[0]!.toString()).toContain('First paragraph')
+    expect(paragraphs[1]!.toString()).toContain('Second paragraph')
+  })
+
+  it('buildDeckAppendUpdate appends parsed slides at the end of an existing Y.Doc', async () => {
+    // Phase 1: build an initial deck via buildDeckUpdate and apply to a doc.
+    const initial: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          source: 'slide1.xml',
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 50,
+              rotation: 0,
+              text: 'Original',
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, new Uint8Array(buildDeckUpdate(initial).state))
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    expect(slides.length).toBe(1)
+
+    // Phase 2: build an append update for 2 more slides and apply to the
+    // same doc. The append update is a DIFF — applying it on top of the
+    // existing state extends the slides array without touching slide 0.
+    const appendParsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          source: 'slide2.xml',
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 50,
+              rotation: 0,
+              text: 'Appended A',
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+        emptySlide({
+          source: 'slide3.xml',
+          shapes: [
+            {
+              kind: 'text',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 50,
+              rotation: 0,
+              text: 'Appended B',
+              sourceTag: 'p:sp',
+            },
+          ],
+        }),
+      ],
+    }
+    const result = buildDeckAppendUpdate(appendParsed, doc)
+    expect(result.slideCount).toBe(2) // 2 slides APPENDED, not total
+    Y.applyUpdate(doc, new Uint8Array(result.state))
+
+    // Deck now has all three slides in order: original → A → B.
+    expect(slides.length).toBe(3)
+    const originalObjects = slides.get(0).get('objects') as Y.Array<Y.Map<unknown>>
+    expect(originalObjects.get(0).get('text')?.toString()).toBe('Original')
+    const slideAObjects = slides.get(1).get('objects') as Y.Array<Y.Map<unknown>>
+    expect(slideAObjects.get(0).get('text')?.toString()).toBe('Appended A')
+    const slideBObjects = slides.get(2).get('objects') as Y.Array<Y.Map<unknown>>
+    expect(slideBObjects.get(0).get('text')?.toString()).toBe('Appended B')
+  })
+
+  it('skips image-kind shapes in v1 and counts them in `skipped.images`', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            { kind: 'image', x: 0, y: 0, width: 100, height: 100, rotation: 0, sourceTag: 'p:pic' },
+          ],
+        }),
+      ],
+    }
+    const { skipped, objectsCreated } = buildDeckUpdate(parsed)
+    expect(objectsCreated).toBe(0)
+    expect(skipped.images).toBe(1)
+  })
+})

@@ -54,3 +54,6 @@ apps/web/.playwright/
 .lighthouseci/
 test-results/
 apps/test-results/
+
+# PPTX fixtures — local, developer-supplied (see tests/fixtures/pptx/README.md)
+tests/fixtures/pptx/*.pptx
