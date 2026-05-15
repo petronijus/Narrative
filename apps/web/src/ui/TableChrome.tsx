@@ -287,27 +287,88 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
     window.addEventListener('pointerup', onUp)
   }
 
-  /** Click a column letter → select the whole column as a range. */
-  const onColLetterClick = (c: number): void => {
-    setRange({
-      tableId: table.id,
-      r0: 0,
-      c0: c,
-      r1: table.rows.length - 1,
-      c1: c,
-    })
-  }
+  /**
+   * Pointer-down on a column letter → select that column; dragging
+   * across other letters extends the range to cover every column from
+   * the anchor to the cursor. Mirrors Keynote / Excel's "click + drag
+   * across the column headers" pattern.
+   *
+   * We resolve the drag target via `document.elementFromPoint` on each
+   * pointermove — that lets us walk to whichever letter the cursor is
+   * currently over, even when pointer events have been captured
+   * elsewhere.
+   */
+  const onColLetterPointerDown =
+    (startCol: number) =>
+    (e: React.PointerEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      setRange({
+        tableId: tableRef.current.id,
+        r0: 0,
+        c0: startCol,
+        r1: tableRef.current.rows.length - 1,
+        c1: startCol,
+      })
+      const onMove = (ev: PointerEvent): void => {
+        const target = document.elementFromPoint(ev.clientX, ev.clientY)
+        if (target === null) return
+        const letter = (target as Element).closest('[data-col-letter]') as HTMLElement | null
+        if (letter === null) return
+        const c = Number(letter.dataset['colLetter'])
+        if (!Number.isInteger(c)) return
+        setRange({
+          tableId: tableRef.current.id,
+          r0: 0,
+          c0: startCol,
+          r1: tableRef.current.rows.length - 1,
+          c1: c,
+        })
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    }
 
-  /** Click a row number → select the whole row. */
-  const onRowNumberClick = (r: number): void => {
-    setRange({
-      tableId: table.id,
-      r0: r,
-      c0: 0,
-      r1: r,
-      c1: table.colWidths.length - 1,
-    })
-  }
+  /** Same pattern for row numbers — drag down across numbers to
+   *  extend the row range. */
+  const onRowNumberPointerDown =
+    (startRow: number) =>
+    (e: React.PointerEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      setRange({
+        tableId: tableRef.current.id,
+        r0: startRow,
+        c0: 0,
+        r1: startRow,
+        c1: tableRef.current.colWidths.length - 1,
+      })
+      const onMove = (ev: PointerEvent): void => {
+        const target = document.elementFromPoint(ev.clientX, ev.clientY)
+        if (target === null) return
+        const num = (target as Element).closest('[data-row-number]') as HTMLElement | null
+        if (num === null) return
+        const r = Number(num.dataset['rowNumber'])
+        if (!Number.isInteger(r)) return
+        setRange({
+          tableId: tableRef.current.id,
+          r0: startRow,
+          c0: 0,
+          r1: r,
+          c1: tableRef.current.colWidths.length - 1,
+        })
+      }
+      const onUp = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    }
 
   // -------------------------------------------------------------------
   // Layout in world coords
@@ -351,7 +412,8 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
             <button
               key={c}
               type="button"
-              onClick={() => onColLetterClick(c)}
+              data-col-letter={c}
+              onPointerDown={onColLetterPointerDown(c)}
               style={{
                 position: 'absolute',
                 left: colX[c],
@@ -415,7 +477,8 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
             <button
               key={r}
               type="button"
-              onClick={() => onRowNumberClick(r)}
+              data-row-number={r}
+              onPointerDown={onRowNumberPointerDown(r)}
               style={{
                 position: 'absolute',
                 left: 0,

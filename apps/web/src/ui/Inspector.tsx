@@ -72,6 +72,7 @@ import {
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { TokenColorInput } from './TokenColorInput.js'
 import { TableInspector } from './TableInspector.js'
+import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
@@ -249,54 +250,9 @@ interface NumberFieldProps {
   onChange: (value: number) => void
 }
 
-interface AlignButtonGroupProps<V extends string> {
-  value: V
-  onChange: (value: V) => void
-  ariaLabel: string
-  options: ReadonlyArray<{
-    value: V
-    label: string
-    Icon: LucideIcon
-  }>
-}
-
-function AlignButtonGroup<V extends string>({
-  value,
-  onChange,
-  ariaLabel,
-  options,
-}: AlignButtonGroupProps<V>) {
-  return (
-    <div
-      role="group"
-      aria-label={ariaLabel}
-      className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
-    >
-      {options.map(({ value: v, label, Icon }, idx) => {
-        const active = v === value
-        return (
-          <button
-            key={v}
-            type="button"
-            aria-label={label}
-            aria-pressed={active}
-            title={label}
-            onClick={() => onChange(v)}
-            className={[
-              'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
-              idx > 0 ? 'border-l border-input' : '',
-              active
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-            ].join(' ')}
-          >
-            <Icon className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+// AlignButtonGroup lives in its own module so the table inspector can
+// import the same component without circular dependencies. Keep the
+// import here colocated with the rest of the ui imports above.
 
 /**
  * Slider + numeric % field for whole-object transparency. Wired to

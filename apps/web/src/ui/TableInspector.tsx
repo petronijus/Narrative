@@ -42,8 +42,17 @@ import {
   splitTableCell,
 } from '@narrative/slide-model'
 import { isTokenRef, type TableObject } from '@narrative/shared'
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
+} from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { TokenColorInput } from './TokenColorInput.js'
+import { AlignButtonGroup } from './AlignButtonGroup.js'
 import {
   applyInlineFormatIfSelected,
   getActiveTextSelection,
@@ -174,6 +183,35 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     splitTableCell(mutationCtx, obj.id, active.r, active.c)
   }
 
+  /**
+   * Set the table to exactly `n` rows. Larger N appends blank rows at
+   * the end; smaller N deletes from the end. Bounded at ≥1 so the
+   * table never collapses to zero rows. Same logic for columns.
+   */
+  const setRowCount = (n: number): void => {
+    const target = Math.max(1, Math.floor(n))
+    const cur = obj.rows.length
+    if (target === cur) return
+    if (target > cur) {
+      for (let i = 0; i < target - cur; i++) insertTableRow(mutationCtx, obj.id, -1)
+    } else {
+      // Delete from the bottom up until we reach `target`. The mutation
+      // refuses to drop below 1 anyway; the explicit min above keeps
+      // the loop bound safe.
+      for (let i = cur - 1; i >= target; i--) deleteTableRow(mutationCtx, obj.id, i)
+    }
+  }
+  const setColCount = (n: number): void => {
+    const target = Math.max(1, Math.floor(n))
+    const cur = obj.colWidths.length
+    if (target === cur) return
+    if (target > cur) {
+      for (let i = 0; i < target - cur; i++) insertTableCol(mutationCtx, obj.id, -1)
+    } else {
+      for (let i = cur - 1; i >= target; i--) deleteTableCol(mutationCtx, obj.id, i)
+    }
+  }
+
   const applyAndRefocus = (attrs: Parameters<typeof applyInlineFormatIfSelected>[1]): void => {
     if (editingObjectId === null) return
     // Try the inline-format path first (user has highlighted text);
@@ -258,6 +296,26 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Structure
         </div>
+        {/* Total-count fields. Setting Rows / Columns to a higher number
+            appends from the end; setting to a lower number deletes from
+            the end (Keynote behaviour). Always at least 1; clamped at
+            both ends. */}
+        <Row label="Rows">
+          <CountStepper
+            value={obj.rows.length}
+            min={1}
+            disabled={isViewer}
+            onSet={(n) => setRowCount(n)}
+          />
+        </Row>
+        <Row label="Columns">
+          <CountStepper
+            value={obj.colWidths.length}
+            min={1}
+            disabled={isViewer}
+            onSet={(n) => setColCount(n)}
+          />
+        </Row>
         <div className="grid grid-cols-2 gap-1.5">
           <BtnRow
             label={`+ Row above (r=${target.r})`}
@@ -330,27 +388,29 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           />
         </Row>
         <Row label="Align">
-          <SegBtns
+          <AlignButtonGroup
             value={d.align}
-            options={[
-              { v: 'left', label: 'L' },
-              { v: 'center', label: 'C' },
-              { v: 'right', label: 'R' },
-            ]}
+            ariaLabel="Default horizontal alignment"
             disabled={isViewer}
-            onChange={(v) => patchDefault({ align: v as 'left' | 'center' | 'right' })}
+            onChange={(v) => patchDefault({ align: v })}
+            options={[
+              { value: 'left', label: 'Left', Icon: AlignLeft },
+              { value: 'center', label: 'Center', Icon: AlignCenter },
+              { value: 'right', label: 'Right', Icon: AlignRight },
+            ]}
           />
         </Row>
         <Row label="V-Align">
-          <SegBtns
+          <AlignButtonGroup
             value={d.vAlign}
-            options={[
-              { v: 'top', label: 'T' },
-              { v: 'middle', label: 'M' },
-              { v: 'bottom', label: 'B' },
-            ]}
+            ariaLabel="Default vertical alignment"
             disabled={isViewer}
-            onChange={(v) => patchDefault({ vAlign: v as 'top' | 'middle' | 'bottom' })}
+            onChange={(v) => patchDefault({ vAlign: v })}
+            options={[
+              { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
+              { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
+              { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
+            ]}
           />
         </Row>
         <Row label="Border color">
@@ -430,15 +490,16 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             />
           </Row>
           <Row label="Align">
-            <SegBtns
+            <AlignButtonGroup
               value={'left'}
-              options={[
-                { v: 'left', label: 'L' },
-                { v: 'center', label: 'C' },
-                { v: 'right', label: 'R' },
-              ]}
+              ariaLabel="Range horizontal alignment"
               disabled={isViewer}
-              onChange={(v) => patchRange({ align: v as 'left' | 'center' | 'right' })}
+              onChange={(v) => patchRange({ align: v })}
+              options={[
+                { value: 'left', label: 'Left', Icon: AlignLeft },
+                { value: 'center', label: 'Center', Icon: AlignCenter },
+                { value: 'right', label: 'Right', Icon: AlignRight },
+              ]}
             />
           </Row>
           {/* Per-edge border editor — seeded from the range's top-left
@@ -516,27 +577,29 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             />
           </Row>
           <Row label="Align">
-            <SegBtns
+            <AlignButtonGroup
               value={activeCell.align ?? d.align}
-              options={[
-                { v: 'left', label: 'L' },
-                { v: 'center', label: 'C' },
-                { v: 'right', label: 'R' },
-              ]}
+              ariaLabel="Cell horizontal alignment"
               disabled={isViewer}
-              onChange={(v) => patchCell({ align: v as 'left' | 'center' | 'right' })}
+              onChange={(v) => patchCell({ align: v })}
+              options={[
+                { value: 'left', label: 'Left', Icon: AlignLeft },
+                { value: 'center', label: 'Center', Icon: AlignCenter },
+                { value: 'right', label: 'Right', Icon: AlignRight },
+              ]}
             />
           </Row>
           <Row label="V-Align">
-            <SegBtns
+            <AlignButtonGroup
               value={activeCell.vAlign ?? d.vAlign}
-              options={[
-                { v: 'top', label: 'T' },
-                { v: 'middle', label: 'M' },
-                { v: 'bottom', label: 'B' },
-              ]}
+              ariaLabel="Cell vertical alignment"
               disabled={isViewer}
-              onChange={(v) => patchCell({ vAlign: v as 'top' | 'middle' | 'bottom' })}
+              onChange={(v) => patchCell({ vAlign: v })}
+              options={[
+                { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
+                { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
+                { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
+              ]}
             />
           </Row>
           <BorderEditor
@@ -745,6 +808,52 @@ function NumInput({
   )
 }
 
+/**
+ * Numeric stepper — `−` and `+` buttons flanking a small read-only
+ * value display, used for Rows / Columns count. Click `−` decrements,
+ * `+` increments, with the same min-clamp as the underlying setter.
+ * Editing the value directly is intentionally NOT supported here —
+ * stepping is the safer interaction since each ± click maps to one
+ * insertRow/deleteRow mutation and one undo step.
+ */
+function CountStepper({
+  value,
+  min,
+  disabled,
+  onSet,
+}: {
+  value: number
+  min: number
+  disabled?: boolean
+  onSet: (n: number) => void
+}) {
+  return (
+    <div className="flex h-6 items-center overflow-hidden rounded-md border border-input field-surface">
+      <button
+        type="button"
+        aria-label="Decrease"
+        disabled={disabled || value <= min}
+        onClick={() => onSet(value - 1)}
+        className="flex h-full w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        −
+      </button>
+      <div className="flex h-full min-w-[2rem] flex-1 items-center justify-center border-x border-input bg-background px-2 text-xs font-medium">
+        {value}
+      </div>
+      <button
+        type="button"
+        aria-label="Increase"
+        disabled={disabled}
+        onClick={() => onSet(value + 1)}
+        className="flex h-full w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+      >
+        +
+      </button>
+    </div>
+  )
+}
+
 function ColorCell({
   value,
   onChange,
@@ -775,41 +884,6 @@ function ColorCell({
         inputClassName="!h-4 !w-5"
         hexClassName="!h-4 !border-0 !bg-transparent !px-1 !py-0 !text-[10px] uppercase"
       />
-    </div>
-  )
-}
-
-function SegBtns<T extends string>({
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  value: T
-  options: { v: T; label: string }[]
-  disabled?: boolean
-  onChange: (v: T) => void
-}) {
-  return (
-    <div className="flex h-6 overflow-hidden rounded-md border border-input">
-      {options.map((opt) => (
-        <button
-          key={opt.v}
-          type="button"
-          aria-pressed={value === opt.v}
-          disabled={disabled}
-          onClick={() => onChange(opt.v)}
-          className={[
-            'flex-1 px-1.5 text-[10px] font-medium transition-colors',
-            value === opt.v
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-background text-muted-foreground hover:bg-accent/40',
-            'disabled:opacity-40',
-          ].join(' ')}
-        >
-          {opt.label}
-        </button>
-      ))}
     </div>
   )
 }
