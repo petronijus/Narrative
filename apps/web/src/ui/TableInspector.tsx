@@ -87,7 +87,7 @@ export interface TableInspectorProps {
 }
 
 export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorProps) {
-  const { active, range } = useTableEdit()
+  const { active, range, activeBorderPreset, setActiveBorderPreset } = useTableEdit()
 
   // Re-render when the active text selection (cell editor publishes
   // here) changes so the toolbar's pressed state stays accurate as
@@ -158,34 +158,35 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   }
 
   // --- Keynote-style border preset + style state ------------------------
-  // `activePreset` tracks which preset icon the user has selected so
-  // that changes to the line style/width/color below restamp the same
-  // preset over the current target — exactly how Keynote's border
-  // inspector works. The style controls always carry a value (seeded
-  // from defaults.border) so the next preset click uses sensible
-  // defaults even before the user touches them.
+  // `activeBorderPreset` (from TableEditContext) tracks which preset
+  // icon the user has selected so changes to the line style/width/
+  // color below restamp the same preset over the current target.
+  // Hoisting it to the context also lets the canvas overlay highlight
+  // the very edges the user is about to modify — exactly how Keynote
+  // shows a thin blue indicator on the currently-selected border.
+  // Local state for the next-stamp style. Seeds from defaults.border
+  // so the first preset click uses sensible values.
   const defaultsBorder = obj.defaults.border
   const seedColor =
     typeof defaultsBorder?.color === 'number' ? (defaultsBorder.color as number) : 0xcccccc
   const seedWidth = defaultsBorder?.width ?? 1
   const seedDash: 'solid' | 'dash' | 'dot' = defaultsBorder?.dash ?? 'solid'
-  const [activePreset, setActivePreset] = useState<TableBorderPreset | null>(null)
   const [edgeColor, setEdgeColor] = useState<number>(seedColor)
   const [edgeWidth, setEdgeWidth] = useState<number>(seedWidth)
   const [edgeDash, setEdgeDash] = useState<'solid' | 'dash' | 'dot'>(seedDash)
-  // Clear the active preset whenever the user moves selection to a
-  // different table — sticky state across tables would let style edits
-  // leak onto an unrelated table on the next style change.
+  // Clear preset + reseed style whenever the user moves to a different
+  // table — sticky state across tables would let style edits leak onto
+  // an unrelated table on the next style change.
   const lastTableIdRef = useRef(obj.id)
   useEffect(() => {
     if (lastTableIdRef.current !== obj.id) {
       lastTableIdRef.current = obj.id
-      setActivePreset(null)
+      setActiveBorderPreset(null)
       setEdgeColor(seedColor)
       setEdgeWidth(seedWidth)
       setEdgeDash(seedDash)
     }
-  }, [obj.id, seedColor, seedWidth, seedDash])
+  }, [obj.id, seedColor, seedWidth, seedDash, setActiveBorderPreset])
 
   /**
    * Target range for border presets: an explicit drag-selected range
@@ -220,7 +221,14 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   }
 
   const applyBorderPreset = (preset: TableBorderPreset): void => {
-    setActivePreset(preset)
+    // Clicking the already-active icon toggles it off — same Keynote
+    // affordance, lets the user dismiss the blue selection indicator
+    // without picking a different preset.
+    if (activeBorderPreset === preset) {
+      setActiveBorderPreset(null)
+      return
+    }
+    setActiveBorderPreset(preset)
     stampBorderPreset(preset, { color: edgeColor, width: edgeWidth, dash: edgeDash })
   }
 
@@ -239,7 +247,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     if (next.color !== undefined) setEdgeColor(next.color)
     if (next.width !== undefined) setEdgeWidth(next.width)
     if (next.dash !== undefined) setEdgeDash(next.dash)
-    if (activePreset !== null) stampBorderPreset(activePreset, merged)
+    if (activeBorderPreset !== null) stampBorderPreset(activeBorderPreset, merged)
   }
 
   const rangeInfo = useMemo(() => {
@@ -526,7 +534,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           Border
         </div>
         <BorderPresetGrid
-          activePreset={activePreset}
+          activePreset={activeBorderPreset}
           disabled={isViewer}
           onApply={applyBorderPreset}
         />

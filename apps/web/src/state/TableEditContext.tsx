@@ -21,6 +21,7 @@
  */
 
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import type { TableBorderPreset } from '@narrative/slide-model'
 
 export interface ActiveCell {
   tableId: string
@@ -41,12 +42,19 @@ export interface CellRange {
 export interface TableEditContextValue {
   active: ActiveCell | null
   range: CellRange | null
+  /** Which border-preset icon (if any) is currently selected in the
+   *  inspector. Hoisted into the context so the canvas overlay can
+   *  draw the blue selection lines on the same edges the inspector is
+   *  going to stamp — wires the inspector's "which edges am I editing?"
+   *  affordance through to the table on the artboard. */
+  activeBorderPreset: TableBorderPreset | null
   setActive: (cell: { tableId: string; r: number; c: number }) => void
   beginEdit: (cell?: { tableId: string; r: number; c: number }) => void
   endEdit: () => void
   setRange: (range: CellRange) => void
   clearRange: () => void
   clear: () => void
+  setActiveBorderPreset: (preset: TableBorderPreset | null) => void
 }
 
 const TableEditContext = createContext<TableEditContextValue | null>(null)
@@ -54,6 +62,7 @@ const TableEditContext = createContext<TableEditContextValue | null>(null)
 export function TableEditProvider({ children }: { children: React.ReactNode }) {
   const [active, setActiveState] = useState<ActiveCell | null>(null)
   const [range, setRangeState] = useState<CellRange | null>(null)
+  const [activeBorderPreset, setActiveBorderPresetState] = useState<TableBorderPreset | null>(null)
 
   const setActive = useCallback((cell: { tableId: string; r: number; c: number }) => {
     setActiveState({ tableId: cell.tableId, r: cell.r, c: cell.c, editing: false })
@@ -92,11 +101,39 @@ export function TableEditProvider({ children }: { children: React.ReactNode }) {
   const clear = useCallback(() => {
     setActiveState(null)
     setRangeState(null)
+    setActiveBorderPresetState(null)
   }, [])
 
+  const setActiveBorderPreset = useCallback(
+    (preset: TableBorderPreset | null) => setActiveBorderPresetState(preset),
+    [],
+  )
+
   const value = useMemo(
-    () => ({ active, range, setActive, beginEdit, endEdit, setRange, clearRange, clear }),
-    [active, range, setActive, beginEdit, endEdit, setRange, clearRange, clear],
+    () => ({
+      active,
+      range,
+      activeBorderPreset,
+      setActive,
+      beginEdit,
+      endEdit,
+      setRange,
+      clearRange,
+      clear,
+      setActiveBorderPreset,
+    }),
+    [
+      active,
+      range,
+      activeBorderPreset,
+      setActive,
+      beginEdit,
+      endEdit,
+      setRange,
+      clearRange,
+      clear,
+      setActiveBorderPreset,
+    ],
   )
 
   return <TableEditContext.Provider value={value}>{children}</TableEditContext.Provider>

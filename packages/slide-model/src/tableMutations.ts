@@ -682,11 +682,18 @@ function edgesForPreset(
 /**
  * Apply a Keynote-style border preset to every cell in a range.
  * `edgeSpec` is the {color, width, dash?} stamped on each ENABLED edge.
- * DISABLED edges are written as width-0 entries so the renderer's
- * `border.width <= 0 → skip` guard suppresses them — crucial when a
- * preset is applied to a sub-range while `defaults.border` is set,
- * because otherwise interior cells of the range would fall back to the
- * default grid even when the preset says "no border here".
+ *
+ * Semantics: stamping a preset ONLY touches the edges that the preset
+ * activates on a given cell — other edges are left untouched (their
+ * existing per-edge override stays, or they continue to fall back to
+ * `defaults.border`). This matches Keynote's "selecting Bottom means
+ * I'm going to edit the bottom edge, not erase the rest" affordance.
+ *
+ * The one exception is `preset === 'none'`, which is explicitly the
+ * "clear everything in this range" operation: every edge of every
+ * cell is written with width 0 so the renderer's `width <= 0 → skip`
+ * guard suppresses both per-edge overrides and any `defaults.border`
+ * fallback. Use this when the caller wants a truly borderless region.
  *
  * Merge-continuation pointer cells are skipped (the origin sits within
  * the range anyway and gets the patch on its own iteration).
@@ -711,26 +718,43 @@ export function setRangeBorderPreset(
         if (cell.get('mergeOriginR') !== undefined || cell.get('mergeOriginC') !== undefined) {
           continue
         }
-        const active = new Set(edgesForPreset(preset, r, c, { r0, c0, r1, c1 }))
-        // Mirror the per-edge shape used by setRangeCellStyle: a Y.Map at
-        // the `border` slot whose values are plain JS objects (NOT Y.Maps).
-        // Every edge gets an entry — active edges carry the spec, inactive
-        // edges carry width: 0 so the renderer skips them even when
-        // `defaults.border` would otherwise fill in.
-        const borderMap = new Y.Map<unknown>()
-        for (const edge of ['top', 'right', 'bottom', 'left'] as CellEdge[]) {
-          if (active.has(edge)) {
-            const value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } = {
-              color: edgeSpec.color,
-              width: edgeSpec.width,
-            }
-            if (edgeSpec.dash !== undefined) value.dash = edgeSpec.dash
-            borderMap.set(edge, value)
-          } else {
-            borderMap.set(edge, { color: edgeSpec.color, width: 0 })
-          }
+
+        const active =
+          preset === 'none'
+            ? (['top', 'right', 'bottom', 'left'] as CellEdge[])
+            : edgesForPreset(preset, r, c, { r0, c0, r1, c1 })
+        if (active.length === 0) {
+          // This cell has no edges in this preset — leave it alone so
+          // existing borders / defaults stay visible.
+          continue
         }
-        cell.set('border', borderMap)
+
+        // Reuse the existing border Y.Map so the edges we don't touch
+        // keep their identity (and stay visible). Only create one if
+        // the cell didn't have a border map yet.
+        const existing = cell.get('border')
+        let borderMap: Y.Map<unknown>
+        if (existing instanceof Y.Map) {
+          borderMap = existing
+        } else {
+          borderMap = new Y.Map<unknown>()
+          cell.set('border', borderMap)
+        }
+
+        for (const edge of active) {
+          if (preset === 'none') {
+            // Force-clear: width 0 so the renderer skips this edge
+            // even when `defaults.border` would otherwise fill in.
+            borderMap.set(edge, { color: edgeSpec.color, width: 0 })
+            continue
+          }
+          const value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } = {
+            color: edgeSpec.color,
+            width: edgeSpec.width,
+          }
+          if (edgeSpec.dash !== undefined) value.dash = edgeSpec.dash
+          borderMap.set(edge, value)
+        }
       }
     }
   }, LOCAL_ORIGIN)
