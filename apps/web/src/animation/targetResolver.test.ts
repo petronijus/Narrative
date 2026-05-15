@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { createPixiTargetResolver, makeInstanceLeafTargetId } from './targetResolver.js'
+import { createPixiTargetResolver } from './targetResolver.js'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 
 // ---------------------------------------------------------------------------
@@ -150,32 +150,6 @@ describe('createPixiTargetResolver', () => {
 
     expect(handle1).not.toBeNull()
     expect(handle1).toBe(handle2)
-  })
-
-  // M16 P8 — synthetic instance-leaf target ids
-  it('P8: instance:<i>:<l> resolves to the leaf container in the instance childMap', () => {
-    const leaf = createMockContainer({ x: 7, y: 11 })
-    // Mock instance container that exposes the same childMap shape as
-    // componentInstanceRenderer (Symbol-keyed slot). Easiest: import the
-    // helper transitively through the public makeInstanceLeafTargetId
-    // path — the helper reads the childMap symbol off the container.
-    // For the unit test we only need the resolver to find SOMETHING for
-    // the synthetic id; the renderer-side child lookup is exercised via
-    // the renderer's own tests. Here we just verify the routing works:
-    // an unknown instance id returns null.
-    const sceneGraph = createMockSceneGraph(new Map())
-    const resolver = createPixiTargetResolver(sceneGraph)
-    expect(resolver.resolve(makeInstanceLeafTargetId('missing-inst', 'leaf-1'))).toBeNull()
-    void leaf
-  })
-
-  it('P8: malformed synthetic ids fall back to plain SceneGraph lookup', () => {
-    // `instance:` with no leaf id is malformed → parse fails → resolver
-    // tries SceneGraph.getNode('instance:'), which returns null.
-    const sceneGraph = createMockSceneGraph(new Map())
-    const resolver = createPixiTargetResolver(sceneGraph)
-    expect(resolver.resolve('instance:onlyone')).toBeNull()
-    expect(resolver.resolve('instance::leaf')).toBeNull()
   })
 
   // M29 Phase 5 — animations on TableObject reuse the standard

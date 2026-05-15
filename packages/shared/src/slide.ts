@@ -614,201 +614,18 @@ export interface VideoObject extends BaseSlideObject {
 }
 
 // ---------------------------------------------------------------------------
-// M16 P5 — Component instance
+// (Removed) Component instance
+//
+// Components used to be a "live" SlideObject (`componentInstance`) that
+// resolved a master at render time and merged per-leaf overrides. The
+// editor now stamps masters onto the slide as plain primitives — see
+// `packages/slide-model/src/stampComponent.ts`. The `componentInstance`
+// SlideObject type and its override payloads are gone; existing decks
+// that still carry `componentInstance` entries are no-ops at the
+// renderer (unknown types are skipped).
 // ---------------------------------------------------------------------------
 
 /**
- * Per-leaf override patch for a ComponentInstanceObject.
- *
- * This is a flat bag of optional fields covering all overridable properties
- * across all concrete leaf types (text, shapes, images, etc.). The type is
- * intentionally wide (not narrowed per leaf type) so the override storage can
- * accept any field without knowing the master leaf's type at write time.
- *
- * Structural fields (`id`, `type`, `groupId`) are intentionally absent —
- * they are always master-controlled.
- *
- * Special fields:
- *   `transform` — ADDITIVE delta on master x/y (see `ComponentInstanceOverrides`
- *                 leaves docs for the override semantics).
- *   `text`      — String value only. Y.Text is never stored in an override;
- *                 the seed is captured as a plain string at instance creation.
- */
-export interface LeafOverridePayload {
-  // --- BaseSlideObject fields ---
-  x?: number
-  y?: number
-  width?: number
-  height?: number
-  rotation?: number
-  opacity?: number
-  name?: string
-  locked?: boolean
-  shadow?: ShadowStyle
-  blur?: number
-  hyperlink?: ObjectHyperlink
-  aspectLocked?: boolean
-  flipH?: boolean
-  flipV?: boolean
-
-  // --- Fill / stroke (shared across shape types) ---
-  fill?: number | TokenRef
-  fillAlpha?: number
-  fillStyle?: FillStyle
-  stroke?: number | TokenRef
-  strokeWidth?: number
-  strokeDash?: boolean
-  strokeAlpha?: number
-  cornerRadius?: CornerRadius
-
-  // --- Text fields ---
-  text?: string
-  fontSize?: number
-  fontWeight?: FontWeight
-  color?: number | TokenRef
-  colorAlpha?: number
-  align?: 'left' | 'center' | 'right'
-  fontFamily?: string
-  vAlign?: TextVerticalAlign
-  lineHeight?: number
-  letterSpacing?: number
-  paragraphSpaceBefore?: number
-  paragraphSpaceAfter?: number
-  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
-  textStyleOverrides?: Array<TextStyleOverrideKey>
-  italic?: boolean
-
-  // --- Image fields ---
-  assetId?: string
-  imageRect?: { x: number; y: number; width: number; height: number }
-  fit?: 'cover' | 'contain' | 'fill' | 'none'
-  mask?: { type: string; [key: string]: unknown }
-
-  // --- Additive nudge (not from SlideObject — override-only concept) ---
-  /**
-   * Additive x/y delta applied on top of master position.
-   * Stored as a nested Y.Map for per-axis CRDT merge.
-   * If the same patch also contains an absolute `x` or `y`, those win.
-   */
-  transform?: { x?: number; y?: number }
-}
-
-/**
- * Override payload carried by a ComponentInstanceObject.
- * All fields are optional — an empty overrides object means "use master".
- *
- * The schema is intentionally sparse for P5; P7 fills the leaf and animation
- * override slots when override editing lands. Storing the struct here
- * reserves the Yjs map keys so future writes don't require doc migration.
- */
-export interface ComponentInstanceOverrides {
-  /**
-   * P7: instance-level inner-content offset, applied on top of the
-   * letterbox fit math. Lets the user nudge the master subtree inside
-   * the instance bbox without moving the instance itself (which would
-   * shift its anchor on the slide). Values in instance-space pixels.
-   */
-  transform?: { x?: number; y?: number }
-  /**
-   * Instance-level "virtual master bbox". When set, replaces the master
-   * snapshot's bbox in the renderer's letterbox-fit math
-   * (`applyInnerFit`). Used by the auto-fit pass that grows the
-   * instance bounding box to enclose moved/resized leaves WITHOUT
-   * changing the inner content scale: scale =
-   * min(data.w / bbox.w, data.h / bbox.h), so growing data.w in
-   * lock-step with bbox.w keeps the scale identical.
-   *
-   * Coordinates are in master-space. Cleared by Reset.
-   */
-  masterBboxOverride?: { x: number; y: number; width: number; height: number }
-  /**
-   * Per-leaf overrides keyed by the original leaf object id (preserved from
-   * the promoted subtree so they are stable across master edits).
-   *
-   * Each entry is a `Partial<SlideObject>` patch (minus `id`, `type`,
-   * `groupId` which are structural and always master-controlled). The
-   * resolver merges the patch on top of the master leaf, field by field.
-   *
-   * Special-case semantics:
-   *
-   *   `text`          — replaces master copy entirely. Text copy is seeded
-   *                     from the master at instance-creation time and is
-   *                     never re-propagated; only style fields (fontSize,
-   *                     fontWeight, color, etc.) continue to propagate.
-   *
-   *   `transform.x` / `transform.y` — ADDITIVE delta on master x/y.
-   *                     The resolver computes: finalX = master.x + override.transform.x.
-   *                     Used when the user nudges a leaf via canvas drag.
-   *
-   *   `x` / `y` (direct) — ABSOLUTE override, replaces master x/y entirely.
-   *                     Used when the user sets position via the inspector.
-   *                     If both `x` and `transform.x` are present in the
-   *                     same patch, the absolute `x` wins (additive transform
-   *                     is ignored for that axis).
-   *
-   *   All other fields (`fill`, `stroke`, `opacity`, `rotation`, `fontSize`,
-   *   `fontWeight`, `color`, `cornerRadius`, `assetId`, `shadow`, `fillStyle`,
-   *   `imageRect`, `mask`, etc.) — replace the master value wholesale.
-   *   Nested sub-objects (shadow, fillStyle, imageRect, mask) are stored as
-   *   plain JSON and replaced atomically (not deep-merged).
-   */
-  leaves?: Record<string, LeafOverridePayload>
-  /**
-   * Per-animation-step overrides keyed by AnimationStep.id.
-   * P5 reserves the slot; P7/P8 populate it.
-   *
-   * P8 — `order` field. The slide-level animation panel surfaces every
-   * master step as a row inside a per-instance group. The user can drag
-   * those rows to re-order the playback sequence WITHOUT mutating the
-   * master. Instead, each touched step records its desired index in
-   * `order`. The resolver honours `order` when at least one step in the
-   * group has it set: steps with explicit `order` sort first by that
-   * value, then unordered steps follow in their master order. Removing
-   * the override (drag back to "natural" position) writes
-   * `{ order: undefined }` so the slot is cleared and the master order
-   * resumes.
-   */
-  animations?: Record<
-    string,
-    {
-      trigger?: string
-      delay?: number
-      duration?: number
-      ease?: string
-      disabled?: true
-      order?: number
-    }
-  >
-}
-
-/**
- * M16 P5 — A placed instance of a shared component master.
- *
- * The renderer (P6/P7) resolves this node by:
- *   1. Subscribing to the component Y.Doc via `component:<componentId>`.
- *   2. Rendering the master subtree at position (x, y).
- *   3. Applying overrides field-by-field over the master values.
- *
- * For P5 only position + bounding-box geometry are placed; overrides is an
- * empty placeholder so P7 can write into the slot without touching Y.Doc
- * layout. The renderer shows a labeled placeholder box for now (P6 expands).
- *
- * Extends BaseSlideObject so it participates in the standard transform /
- * selection / layer pipeline without special-casing.
- */
-export interface ComponentInstanceObject extends BaseSlideObject {
-  type: 'componentInstance'
-  /** Reference to the master component (Y.Doc name: `component:<componentId>`). */
-  componentId: string
-  /**
-   * Denormalized display name — copied from the master at promotion time and
-   * refreshed by the editor whenever the master is renamed (P7+).
-   * Used for the P5 placeholder label. Falls back to "Component" when missing.
-   */
-  componentName?: string
-  /** Sparse per-leaf / per-animation overrides. Empty for P5 — reserved for P7. */
-  overrides?: ComponentInstanceOverrides
-}
 
 /**
  * M29 — first-class table object. Live alongside RectangleObject as a
@@ -916,7 +733,6 @@ export type SlideObject =
   | ImageObject
   | VideoObject
   | TableObject
-  | ComponentInstanceObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']

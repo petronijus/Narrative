@@ -143,21 +143,6 @@ vi.mock('../state/useAnimations', () => ({
   }),
 }))
 
-// M16 P8 — PresentLayout switched to useMergedAnimations for parity with
-// the editor timeline. The merged hook composes useAnimations +
-// useSlideObjects + componentDocCache subscriptions; in tests we shortcut
-// to the same mockAnimationsData so existing assertions on
-// `createAnimationRuntime(animations, ...)` keep working without
-// rebuilding the full master-doc cache.
-vi.mock('../state/useMergedAnimations', () => ({
-  useMergedAnimations: () => ({
-    steps: mockAnimationsData,
-    groups: [],
-    nativeAnimations: mockAnimationsData,
-    animationsCtx: null,
-  }),
-}))
-
 // useSlides mock — controlled per test
 const mockSlidesData: Slide[] = []
 vi.mock('../state/useSlides', () => ({

@@ -262,39 +262,4 @@ describe('EditorContextMenu — Promote to shared component', () => {
 
     expect(mockCreateComponent).toHaveBeenCalledWith('folder-1', { name: 'Untitled component' })
   })
-
-  it('promote builds a componentInstance with correct bounding box', async () => {
-    // Contract test: when promote is invoked, addObject receives a node
-    // whose x/y/width/height matches the promoted selection's bbox.
-    // The bbox of the mock rect is x=50, y=60, w=200, h=150.
-    const expectedInstanceShape = {
-      type: 'componentInstance',
-      componentId: 'component-abc',
-      componentName: 'Untitled component',
-      x: 50,
-      y: 60,
-      width: 200,
-      height: 150,
-      rotation: 0,
-      opacity: 1,
-    }
-
-    // Simulate what handlePromoteToComponent does
-    const component = await mockCreateComponent('folder-1', { name: 'Untitled component' })
-
-    const instancePayload = {
-      id: 'instance-id-1',
-      type: 'componentInstance' as const,
-      componentId: component.id,
-      componentName: component.name,
-      x: 50,
-      y: 60,
-      width: 200,
-      height: 150,
-      rotation: 0,
-      opacity: 1,
-    }
-
-    expect(instancePayload).toMatchObject(expectedInstanceShape)
-  })
 })

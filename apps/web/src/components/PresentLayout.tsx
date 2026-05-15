@@ -40,7 +40,7 @@ import { Canvas } from '../renderer/Canvas.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { playTransition } from '../renderer/playTransition.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
-import { useMergedAnimations } from '../state/useMergedAnimations.js'
+import { useAnimations } from '../state/useAnimations.js'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -101,7 +101,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // timeline. Slide-native steps + per-instance master steps with target
   // ids re-mapped to the per-instance Pixi child container. Single
   // source of truth → no parity drift between edit and play.
-  const { steps: animations } = useMergedAnimations()
+  const { animations } = useAnimations()
 
   // M9: slide list + active slide for navigation
   const slides = useSlides()

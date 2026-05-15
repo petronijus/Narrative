@@ -27,7 +27,6 @@
  */
 
 import { useEffect, useRef, useState, useCallback, type RefObject } from 'react'
-import { nanoid } from 'nanoid'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -45,8 +44,7 @@ import {
   addObjects,
   updateObject,
   createObjectOfType,
-  addAnimation,
-  getSlideAnimationsCtx,
+  ungroupObjects,
   insertTableRow,
   insertTableCol,
   deleteTableRow,
@@ -56,14 +54,6 @@ import {
   getTableMergeInfo,
 } from '@narrative/slide-model'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
-import {
-  acquireComponentDoc,
-  releaseComponentDoc,
-  getComponentDoc,
-  getComponentDocSyncStatus,
-  subscribeToComponentDoc,
-} from '../state/componentDocCache.js'
-import { readMasterDoc } from '../state/readMasterDoc.js'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -73,24 +63,12 @@ import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
-// useApi imported below alongside ComponentSummary
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useFolderComponents } from '../state/useFolderComponents.js'
-import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
-import { extractComponentSnapshot } from '../state/extractComponentSnapshot.js'
-import { useApi, type ComponentSummary } from '../api/client.js'
-import type {
-  SlideObject,
-  SlideObjectPatch,
-  SlideObjectType,
-  ComponentInstanceObject,
-  AnimationStep,
-  TableObject,
-} from '@narrative/shared'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useApi } from '../api/client.js'
+import type { SlideObject, SlideObjectPatch, SlideObjectType, TableObject } from '@narrative/shared'
 
 /**
  * Hit-test a world (slide-space) point against a TableObject's cell
@@ -175,8 +153,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const { folderId } = useDeckRole()
   const { deckCtx } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
-  const navigate = useNavigate()
-  const location = useLocation()
 
   // Promote status — used to show a brief feedback toast text
   const [promoteStatus, setPromoteStatus] = useState<'idle' | 'promoting' | 'done' | 'error'>(
@@ -185,11 +161,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
   // Promote-to-component dialog open state.
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
-
-  /** Tracks whether each known instance's master is loaded. Drives the
-   * detach menu item's enabled state without re-rendering on every cache
-   * pulse. */
-  const [, forceMenuRerender] = useState(0)
 
   /** Mode flips on contextmenu and is read at render time to choose items. */
   const [mode, setMode] = useState<Mode>('canvas')
@@ -205,47 +176,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
    *  specific menu items. `null` when the right-click missed a table or
    *  the table's cell math couldn't resolve a cell at the click point. */
   const tableCellHitRef = useRef<{ tableId: string; r: number; c: number } | null>(null)
-
-  /**
-   * Currently-held master doc cache reference (one per menu instance).
-   * Tracked so we can release on unmount or when the targeted instance
-   * changes — keeps the cache's linger window honest under rapid
-   * right-click churn.
-   */
-  const heldComponentIdRef = useRef<string | null>(null)
-  // Release the held master ref on unmount so the cache's ref-count
-  // settles to zero and the linger-destroy timer can fire.
-  /** Active subscription to the held master doc — cleaned up on swap / unmount. */
-  const masterSubRef = useRef<(() => void) | null>(null)
-  // Release the held master ref + subscription on unmount so the cache's
-  // ref-count settles to zero and the linger-destroy timer can fire.
-  useEffect(() => {
-    return () => {
-      masterSubRef.current?.()
-      masterSubRef.current = null
-      if (heldComponentIdRef.current !== null) {
-        releaseComponentDoc(heldComponentIdRef.current)
-        heldComponentIdRef.current = null
-      }
-    }
-  }, [])
-  const acquireMasterFor = (componentId: string): void => {
-    if (heldComponentIdRef.current === componentId) return
-    if (heldComponentIdRef.current !== null) {
-      releaseComponentDoc(heldComponentIdRef.current)
-    }
-    masterSubRef.current?.()
-    masterSubRef.current = null
-    acquireComponentDoc(componentId)
-    heldComponentIdRef.current = componentId
-    // Re-render once the master doc syncs so the "Detach" item flips
-    // from disabled → enabled. Subscribing instead of rAF-polling keeps
-    // CPU at zero when the menu sits idle.
-    masterSubRef.current = subscribeToComponentDoc(componentId, () => {
-      if (heldComponentIdRef.current !== componentId) return
-      forceMenuRerender((n) => n + 1)
-    })
-  }
 
   // ---------------------------------------------------------------------------
   // Right-click hit-test — runs synchronously during the contextmenu event
@@ -271,19 +201,25 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         if (selectedIds.has(hitId)) {
           targetIdsRef.current = [...selectedIds]
         } else {
-          selectOne(hitId)
-          targetIdsRef.current = [hitId]
+          // Mirror left-click behavior (EditorLayout.tsx): if the hit
+          // object belongs to a group, promote selection to the whole
+          // group so right-click actions (e.g. Ungroup) operate on it.
+          const hitObj = objects.find((o) => o.id === hitId)
+          const hitGroupId =
+            hitObj?.groupId !== undefined && hitObj.groupId !== '' ? hitObj.groupId : null
+          if (hitGroupId !== null) {
+            const groupIds = objects.filter((o) => o.groupId === hitGroupId).map((o) => o.id)
+            selectMany(groupIds)
+            targetIdsRef.current = groupIds
+          } else {
+            selectOne(hitId)
+            targetIdsRef.current = [hitId]
+          }
         }
         setMode('object')
-        // If the right-clicked target is a single component instance, eagerly
-        // acquire its master doc so detach + edit-master are ready by the
-        // time the user picks the menu item.
-        const hitObj = objects.find((o) => o.id === hitId)
-        if (hitObj !== undefined && hitObj.type === 'componentInstance') {
-          acquireMasterFor(hitObj.componentId)
-        }
         // Capture the table cell under the cursor so the table-specific
         // menu items (insert/delete row + col) target the right slot.
+        const hitObj = objects.find((o) => o.id === hitId)
         if (hitObj !== undefined && hitObj.type === 'table') {
           const cell = hitTestTableCell(hitObj, slideX, slideY)
           tableCellHitRef.current =
@@ -419,6 +355,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     } as SlideObjectPatch<SlideObject>)
   }
 
+  const handleUngroup = (): void => {
+    if (mutationCtx === null) return
+    const ids = targetIdsRef.current
+    if (ids.length === 0) return
+    ungroupObjects(mutationCtx, ids)
+  }
+
   const handleHyperlink = (): void => {
     window.dispatchEvent(new CustomEvent('narrative:focus-link-inspector'))
   }
@@ -483,17 +426,15 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
       void (async () => {
         try {
-          const { instanceId } = await promoteSelectionToComponent({
+          await promoteSelectionToComponent({
             api,
             folderId,
-            mutationCtx,
             deckCtx,
             activeSlideId,
             targetIds: targets.map((t) => t.id),
             name,
           })
 
-          selectOne(instanceId)
           setPromoteStatus('done')
           window.setTimeout(() => setPromoteStatus('idle'), 2000)
         } catch (err) {
@@ -509,7 +450,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         }
       })()
     },
-    [api, folderId, mutationCtx, deckCtx, activeSlideId, selectOne],
+    [api, folderId, mutationCtx, deckCtx, activeSlideId],
   )
 
   const handlePromoteToComponent = useCallback((): void => {
@@ -536,141 +477,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     return () => window.removeEventListener('narrative:create-component-template', handler)
   }, [])
 
-  // ---------------------------------------------------------------------------
-  // Component-instance specific handlers (M16 P6)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Resolves the single ComponentInstance target for the right-click menu, or
-   * null when the selection isn't a single instance. Group-selecting multiple
-   * instances → null (detach + edit-master are single-target operations).
-   */
-  const resolveSingleInstanceTarget = (): ComponentInstanceObject | null => {
-    const targets = resolveTargets()
-    if (targets.length !== 1) return null
-    const t = targets[0]
-    if (t === undefined || t.type !== 'componentInstance') return null
-    return t
-  }
-
-  /** True if the master doc for this instance has finished its first sync. */
-  const isMasterSynced = (componentId: string): boolean => {
-    return getComponentDocSyncStatus(componentId) === 'synced'
-  }
-
-  const handleEditMaster = useCallback(
-    (instance: ComponentInstanceObject): void => {
-      if (folderId === null) return
-      navigate(`/folder/${folderId}/component/${instance.componentId}`, {
-        state: { from: location.pathname + location.search },
-      })
-    },
-    [folderId, location.pathname, location.search, navigate],
-  )
-
-  /**
-   * Detach a component instance:
-   *   - Read the master snapshot from `componentDocCache`.
-   *   - In ONE Yjs transaction on the slide doc:
-   *     1. Remove the instance node.
-   *     2. Insert each master object, fresh-ID-mapped, translated + scaled
-   *        to fit the instance's bbox (uniform scale, "fit" placement).
-   *     3. Insert master animations onto the slide's animations array, with
-   *        objectId remapped to the new copies and animation ids regenerated
-   *        so the slide can carry many detached instances independently.
-   *   - Single transaction → single undo step.
-   *
-   * If the master snapshot isn't loaded, the menu item is disabled and we
-   * never reach this path. The acquire/release dance ensures the WS is
-   * spinning up the moment the user opens the menu, so by the time they
-   * try again the doc is usually ready.
-   */
-  const handleDetachInstance = (instance: ComponentInstanceObject): void => {
-    if (mutationCtx === null || deckCtx === null || activeSlideId === null) return
-
-    const masterDoc = getComponentDoc(instance.componentId)
-    if (masterDoc === null) return // disabled in render — defensive
-    const snapshot = readMasterDoc(masterDoc)
-    if (snapshot === null || snapshot.objects.length === 0) return
-
-    const bbox = snapshot.bbox
-    const scaleX = bbox.width > 0 ? instance.width / bbox.width : 1
-    const scaleY = bbox.height > 0 ? instance.height / bbox.height : 1
-    // "Fit" — uniform scale, min of x/y so nothing overflows the bbox.
-    const scale = Math.min(scaleX, scaleY)
-
-    // Stable id remap: master object ids → fresh slide ids. Used by group-
-    // member references (groupId field) and animation targets.
-    const idMap = new Map<string, string>()
-    for (const obj of snapshot.objects) {
-      idMap.set(obj.id, nanoid())
-    }
-
-    // Renderer letterboxes the master content inside the instance bbox —
-    // centred on whichever axis has spare room. Detach must apply the
-    // same offset so the visual position is a true no-op:
-    //   offsetX = (instance.width  - bbox.width  * scale) / 2
-    //   offsetY = (instance.height - bbox.height * scale) / 2
-    // Without this, instances whose aspect ratio doesn't match the
-    // master jump to the top-left after detach.
-    const offsetX = (instance.width - bbox.width * scale) / 2
-    const offsetY = (instance.height - bbox.height * scale) / 2
-    const newObjects: SlideObject[] = snapshot.objects.map((obj) => {
-      // Spread to a mutable copy; rewrite id, x, y, width, height, groupId.
-      const next = { ...(obj as unknown as Record<string, unknown>) } as Record<string, unknown>
-      next.id = idMap.get(obj.id) ?? nanoid()
-      next.x = (obj.x - bbox.x) * scale + instance.x + offsetX
-      next.y = (obj.y - bbox.y) * scale + instance.y + offsetY
-      next.width = obj.width * scale
-      next.height = obj.height * scale
-      // Remap groupId if it points at one of the promoted root groups.
-      if (typeof next.groupId === 'string') {
-        const remapped = idMap.get(next.groupId as string)
-        if (remapped !== undefined) next.groupId = remapped
-      }
-      return next as unknown as SlideObject
-    })
-
-    // Build remapped animations: regenerate animation step ids and rewrite
-    // objectId to the new slide-side copy. Steps targeting an unmapped id
-    // (shouldn't happen — master only contains in-scope objects) are dropped.
-    const newAnimations: AnimationStep[] = []
-    for (const step of snapshot.animations) {
-      const remappedTarget = idMap.get(step.objectId)
-      if (remappedTarget === undefined) continue
-      newAnimations.push({
-        ...step,
-        id: nanoid(),
-        objectId: remappedTarget,
-      })
-    }
-
-    const animationsCtx = getSlideAnimationsCtx(deckCtx, activeSlideId)
-
-    // ONE transaction on the deck doc — covers the slide objects array AND
-    // the slide animations array, both of which live under the same Y.Doc.
-    // The undo manager (created from the deck context) treats the whole
-    // batch as a single step.
-    deckCtx.doc.transact(() => {
-      removeObject(mutationCtx, instance.id)
-      addObjects(mutationCtx, newObjects)
-      if (animationsCtx !== null) {
-        for (const step of newAnimations) {
-          // We're inside a transact already — addAnimation will open a nested
-          // transact, which Yjs flattens into the outer one. The id we
-          // generated above is overwritten by addAnimation's own nanoid;
-          // that's fine, animation ids are slide-local and we don't reference
-          // them anywhere after detach.
-          const { id: _unused, ...rest } = step
-          void _unused
-          addAnimation(animationsCtx, rest)
-        }
-      }
-    })
-
-    selectMany(newObjects.map((o) => o.id))
-  }
-
   const handleDelete = (): void => {
     if (mutationCtx === null) return
     const targets = resolveTargets()
@@ -680,70 +486,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
       removeObject(mutationCtx, obj.id)
     }
     clear()
-  }
-
-  // ---------------------------------------------------------------------------
-  // M16 P7 — Missing-master flow
-  // ---------------------------------------------------------------------------
-
-  /**
-   * True when the right-clicked instance's master is unrecoverable: cache
-   * has finished its first sync round-trip but the doc carries no slide /
-   * objects (i.e. server-side delete). Mirrors the renderer's
-   * pickPlaceholderVariant rule so menu + canvas placeholder agree.
-   */
-  const isMasterMissing = (componentId: string): boolean => {
-    if (getComponentDocSyncStatus(componentId) !== 'synced') return false
-    const doc = getComponentDoc(componentId)
-    if (doc === null) return true
-    return extractComponentSnapshot(doc) === null
-  }
-
-  /**
-   * Detach (preserve nothing) — used when the master is gone and there's
-   * no snapshot to expand. Just removes the instance node; undo restores
-   * it including its overrides slot.
-   */
-  const handleDetachOrphan = (instance: ComponentInstanceObject): void => {
-    if (mutationCtx === null) return
-    removeObject(mutationCtx, instance.id)
-    clear()
-  }
-
-  /**
-   * Replace the missing master with another component. Single
-   * updateObject call → single transaction, single undo step. Existing
-   * overrides slot is left intact (resolveInstanceTree skips dangling
-   * leaf ids); the user can hit Reset overrides afterwards if they want
-   * a clean slate.
-   */
-  const handlePickReplacement = (instanceId: string, component: ComponentSummary): void => {
-    if (mutationCtx === null) return
-    updateObject(mutationCtx, instanceId, {
-      componentId: component.id,
-      componentName: component.name,
-    } as SlideObjectPatch<ComponentInstanceObject>)
-    setReplaceTargetId(null)
-  }
-
-  // Replace…-flow state. Lives at the menu root so the picker drawer
-  // outlives the (transient) Radix portal — picking a row dispatches
-  // mutate + close.
-  const [replaceTargetId, setReplaceTargetId] = useState<string | null>(null)
-  const folderComponents = useFolderComponents(folderId, { eager: false })
-  const [replaceUsageCounts, setReplaceUsageCounts] = useState<Record<string, number> | null>(null)
-  const handleOpenReplace = (instance: ComponentInstanceObject): void => {
-    setReplaceTargetId(instance.id)
-    void folderComponents.invalidate()
-    if (folderId !== null) {
-      setReplaceUsageCounts(null)
-      api
-        .listComponentInstanceCounts(folderId)
-        .then((counts) => setReplaceUsageCounts(counts))
-        .catch(() => setReplaceUsageCounts({}))
-    } else {
-      setReplaceUsageCounts({})
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -798,17 +540,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const target = resolveTargets()[0]
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
-  // Components are flat: disallow promoting a selection that already
-  // contains a componentInstance. Matches the same guard inside
-  // promoteToComponent (slide-model); gating here surfaces it as a
-  // disabled menu item instead of a throw + error toast.
-  const selectionContainsInstance = resolveTargets().some((t) => t.type === 'componentInstance')
   const canPromote =
+    hasObjectTarget && mutationCtx !== null && folderId !== null && promoteStatus === 'idle'
+  // Ungroup is visible when any right-click target carries a groupId.
+  const canUngroup =
     hasObjectTarget &&
     mutationCtx !== null &&
-    folderId !== null &&
-    promoteStatus === 'idle' &&
-    !selectionContainsInstance
+    resolveTargets().some((o) => o.groupId !== undefined && o.groupId !== '')
 
   return (
     <ContextMenu>
@@ -971,12 +709,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               Hyperlink…
             </ContextMenuItem>
 
-            <ContextMenuItem
-              disabled={mutationCtx === null || resolveMaskPair() === null}
-              onSelect={handleMaskWithShape}
-            >
-              Mask with shape
-            </ContextMenuItem>
+            {resolveMaskPair() !== null && (
+              <ContextMenuItem disabled={mutationCtx === null} onSelect={handleMaskWithShape}>
+                Mask with shape
+              </ContextMenuItem>
+            )}
+
+            {canUngroup && (
+              <ContextMenuItem
+                onSelect={handleUngroup}
+                data-testid="ungroup"
+                title="Ungroup (Shift+Cmd+G)"
+              >
+                Ungroup
+              </ContextMenuItem>
+            )}
 
             {/* M16 P5 — promote selection to a shared component */}
             <ContextMenuItem
@@ -992,56 +739,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                     ? 'Failed to create component template'
                     : 'Create component template'}
             </ContextMenuItem>
-
-            {/* M16 P6 / P7 — component instance specific actions.
-                When the master is missing (synced + null snapshot) the
-                detach-via-master-snapshot path is impossible; surface
-                the orphan-flow items instead. */}
-            {(() => {
-              const inst = resolveSingleInstanceTarget()
-              if (inst === null) return null
-              const masterReady = isMasterSynced(inst.componentId)
-              const masterMissing = isMasterMissing(inst.componentId)
-              if (masterMissing) {
-                return (
-                  <>
-                    <ContextMenuItem
-                      disabled={mutationCtx === null}
-                      onSelect={() => handleDetachOrphan(inst)}
-                      data-testid="detach-orphan-instance"
-                    >
-                      Detach (preserve nothing)
-                    </ContextMenuItem>
-                    <ContextMenuItem
-                      disabled={mutationCtx === null || folderId === null}
-                      onSelect={() => handleOpenReplace(inst)}
-                      data-testid="replace-orphan-instance"
-                    >
-                      Replace…
-                    </ContextMenuItem>
-                  </>
-                )
-              }
-              return (
-                <>
-                  <ContextMenuItem
-                    disabled={folderId === null}
-                    onSelect={() => handleEditMaster(inst)}
-                    data-testid="edit-master-instance"
-                  >
-                    Edit master
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    disabled={!masterReady || mutationCtx === null}
-                    onSelect={() => handleDetachInstance(inst)}
-                    data-testid="detach-instance"
-                    title={masterReady ? undefined : 'Loading master…'}
-                  >
-                    {masterReady ? 'Detach instance' : 'Detach instance (loading master…)'}
-                  </ContextMenuItem>
-                </>
-              )
-            })()}
 
             <ContextMenuSeparator />
 
@@ -1083,22 +780,6 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
           </>
         )}
       </ContextMenuContent>
-      {/* M16 P7 — Replace…-flow picker. Mounted at the menu root so it
-          survives the Radix portal close that happens on item select.
-          Open state lives in `replaceTargetId`. */}
-      <ComponentPickerDrawer
-        open={replaceTargetId !== null}
-        onClose={() => setReplaceTargetId(null)}
-        components={folderComponents.components}
-        loading={folderComponents.loading}
-        usageCounts={replaceUsageCounts}
-        onPick={(component) => {
-          if (replaceTargetId !== null) {
-            handlePickReplacement(replaceTargetId, component)
-          }
-        }}
-      />
-
       <PromoteComponentDialog
         open={promoteDialogOpen}
         onCancel={() => setPromoteDialogOpen(false)}

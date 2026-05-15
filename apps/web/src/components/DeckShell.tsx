@@ -46,7 +46,6 @@ import {
   updateObject,
   isTokenRef,
   resolveTokenValue,
-  removeComponentInstancesFromDoc,
 } from '@narrative/slide-model'
 import type { TextObject, SlideObjectPatch, TextStyleOverrideKey } from '@narrative/shared'
 import type { TextStyleTokenSnapshot, FolderTokensSnapshot } from '@narrative/slide-model'
@@ -323,64 +322,9 @@ function TextStylePropagator() {
   return null
 }
 
-// ---------------------------------------------------------------------------
-// ComponentDeleteCascadeEffect
-//
-// Two complementary paths — both call removeComponentInstancesFromDoc
-// when a master is deleted:
-//
-//   1. CRDT path (authoritative, cross-peer): watches the folder Y.Doc's
-//      `deletedComponentIds` array via the FolderTokensSnapshot. Every
-//      client that has the folder doc open (i.e. every editor in this
-//      folder) reacts when a peer writes the deletion signal, regardless
-//      of whether they also received the window event.
-//
-//   2. Window event path (fast-path, same-tab only): the originating
-//      client sees the deletion synchronously before the CRDT observer
-//      round-trip. Kept so the editor that performed the delete feels
-//      instant.
-//
-// Idempotency: removeComponentInstancesFromDoc is safe to call twice for
-// the same componentId — the second pass finds no matching objects and
-// is a no-op, so both paths firing on the same client is harmless.
-// ---------------------------------------------------------------------------
-
-function ComponentDeleteCascadeEffect() {
-  const { deckCtx } = useSlideDoc()
-  const folderTokens = useFolderTokensOptional()
-  // Track which componentIds we have already swept so the CRDT observer
-  // doesn't re-sweep on every unrelated folder doc change.
-  const sweptRef = useRef<Set<string>>(new Set())
-
-  // CRDT path — react to the folder Y.Doc's deletedComponentIds array.
-  useEffect(() => {
-    if (folderTokens === null || deckCtx === null) return
-    const deletedIds = folderTokens.deletedComponentIds
-    deletedIds.forEach((componentId) => {
-      if (sweptRef.current.has(componentId)) return
-      sweptRef.current.add(componentId)
-      removeComponentInstancesFromDoc(deckCtx, componentId)
-    })
-  }, [folderTokens, deckCtx])
-
-  // Window event path — fast-path for the originating client.
-  useEffect(() => {
-    function handler(e: Event) {
-      const componentId = (e as CustomEvent<{ componentId: string }>).detail?.componentId
-      if (typeof componentId !== 'string' || componentId === '') return
-      if (deckCtx === null) return
-      // Mark as swept so the CRDT observer doesn't duplicate the work.
-      sweptRef.current.add(componentId)
-      removeComponentInstancesFromDoc(deckCtx, componentId)
-    }
-    window.addEventListener('narrative:component-deleted', handler)
-    return () => {
-      window.removeEventListener('narrative:component-deleted', handler)
-    }
-  }, [deckCtx])
-
-  return null
-}
+// (removed) ComponentDeleteCascadeEffect — components are now stamps,
+// so deleting a master never needs to remove "instances" from decks
+// (there are no instances). Stamped primitives stay on the slide.
 
 export function DeckShell() {
   const { id } = useParams<{ id: string }>()
@@ -418,9 +362,6 @@ export function DeckShell() {
                         every linked TextObject in this deck, skipping
                         per-object override fields. */}
                       <TextStylePropagator />
-                      {/* Removes ComponentInstance objects from the open deck
-                        when their master is deleted from the folder. */}
-                      <ComponentDeleteCascadeEffect />
                       <Outlet
                         context={
                           { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue

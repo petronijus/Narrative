@@ -15,7 +15,6 @@
  *   - Text object color + stroke
  *   - Text Y.Text run attributes (color)
  *   - Animation step params: to.color, to.fill, to.stroke
- *   - ComponentInstance overrides: leaves.<leafId>.fill / .stroke
  *   - Groups: recursed via groupId membership on the flat objects array
  *
  * textStyle token refs (folder doc) are scanned separately by the route
@@ -96,23 +95,6 @@ function scanObjectMap(objectMap: Y.Map<unknown>, tokenKey: string): string[] {
           matches.push('text.color')
         }
       }
-    }
-  }
-
-  // ComponentInstance overrides — leaves.<leafId>.fill / .stroke
-  const overrides = objectMap.get('overrides')
-  if (overrides instanceof Y.Map) {
-    const leaves = overrides.get('leaves')
-    if (leaves instanceof Y.Map) {
-      leaves.forEach((leafMap, leafId) => {
-        if (!(leafMap instanceof Y.Map)) return
-        for (const f of ['fill', 'stroke']) {
-          const v = leafMap.get(f)
-          if (isTargetRef(v, tokenKey)) {
-            matches.push(`overrides.leaves.${leafId}.${f}`)
-          }
-        }
-      })
     }
   }
 

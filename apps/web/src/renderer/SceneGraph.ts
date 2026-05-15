@@ -27,7 +27,6 @@ import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
-import { getInstanceLeafContainer } from './objectRenderers/componentInstanceRenderer.js'
 
 interface SceneNode {
   container: Container
@@ -996,68 +995,6 @@ export class SceneGraph {
       center: { x: centreX, y: centreY },
       rotation,
     }
-  }
-
-  /**
-   * DEV-only helper for E2E specs.
-   *
-   * Given an instanceId and a leafId (master-object id), resolve the leaf
-   * container from the instance's childMap and return its slide-space corners
-   * + center as computed by getContainerBoundsFromData.
-   *
-   * Uses the leaf container's actual Pixi world transform — no SlideObject
-   * data is needed here because we derive width/height from the container's
-   * Pixi bounds (getBounds().width/height) which correctly reflects the
-   * innerContainer scale.
-   *
-   * Returns null if the instance or leaf is not yet mounted.
-   */
-  getInstanceLeafBounds(
-    instanceId: string,
-    leafId: string,
-  ): { corners: Array<{ x: number; y: number }>; center: { x: number; y: number } } | null {
-    const node = this.nodes.get(instanceId)
-    if (node === undefined) return null
-    const leafContainer = getInstanceLeafContainer(node.container, leafId)
-    if (leafContainer === null) return null
-    if (leafContainer.destroyed) return null
-
-    // Derive width/height from the Pixi bounds to avoid needing a SlideObject.
-    // getBounds() returns the AABB in world space; we need the LOCAL dimensions
-    // (before outer instance transform). Use the container's own rotation +
-    // scale to un-rotate the world AABB — simpler: read from the worldTransform
-    // directly. The leaf's localTransform encodes scale implicitly via the inner
-    // container's scale; the leaf's own scale is always 1. We can recover the
-    // local dimensions from worldTransform by looking at the column lengths
-    // (which give the scale × 1 == scale), but that's fragile.
-    //
-    // Safest: use getLocalBounds() which returns bounds in LOCAL space,
-    // unaffected by parent transforms. width/height are what the Graphics drew.
-    const lb = leafContainer.getLocalBounds()
-    const w = lb.width
-    const h = lb.height
-
-    // Reuse the same math as getContainerBoundsFromData but inline (we can't
-    // call it because we don't have a SlideObject at hand here).
-    const cx = this.slideOriginX
-    const cy = this.slideOriginY
-
-    const localCorners = [
-      { x: lb.x, y: lb.y },
-      { x: lb.x + w, y: lb.y },
-      { x: lb.x + w, y: lb.y + h },
-      { x: lb.x, y: lb.y + h },
-    ]
-    const scratch = new Point()
-    const corners = localCorners.map((lc) => {
-      leafContainer.toGlobal({ x: lc.x, y: lc.y }, scratch)
-      return { x: scratch.x - cx, y: scratch.y - cy }
-    })
-
-    leafContainer.toGlobal({ x: lb.x + w / 2, y: lb.y + h / 2 }, scratch)
-    const center = { x: scratch.x - cx, y: scratch.y - cy }
-
-    return { corners, center }
   }
 }
 

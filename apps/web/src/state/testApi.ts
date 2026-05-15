@@ -133,19 +133,6 @@ export interface TestApi {
    * fontSize, height) to compare rendered vs editing layouts.
    */
   getObject(objectId: string, slideId?: string): Record<string, unknown> | null
-  /**
-   * M16 P8 — Return the slide-space corners of a leaf container inside
-   * a componentInstance, as computed by SceneGraph.getContainerBoundsFromData.
-   * Returns null if the instance or leaf is not mounted yet.
-   *
-   * Used by E2E specs to compare the Pixi-derived corners against the SVG
-   * polygon rendered by InstanceEditHandles — any mismatch is the
-   * "handles at wrong position" bug.
-   */
-  getInstanceLeafBoundsData(
-    instanceId: string,
-    leafId: string,
-  ): { corners: Array<{ x: number; y: number }>; center: { x: number; y: number } } | null
 }
 
 declare global {
@@ -420,27 +407,6 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         return null
       }
       return null
-    },
-    getInstanceLeafBoundsData(instanceId, leafId) {
-      // Delegate to the SceneGraph method installed by Canvas.tsx in DEV mode.
-      // SceneGraph.getInstanceLeafBounds wraps getInstanceLeafContainer +
-      // getContainerBoundsFromData so the caller doesn't need to thread the
-      // resolved SlideObject through the page.evaluate boundary.
-      const sg = (
-        window as unknown as {
-          __narrative_scene_graph?: {
-            getInstanceLeafBounds: (
-              instanceId: string,
-              leafId: string,
-            ) => {
-              corners: Array<{ x: number; y: number }>
-              center: { x: number; y: number }
-            } | null
-          }
-        }
-      ).__narrative_scene_graph
-      if (sg === undefined) return null
-      return sg.getInstanceLeafBounds(instanceId, leafId)
     },
   }
 

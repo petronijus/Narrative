@@ -44,13 +44,15 @@ import {
   Table2,
   Component as ComponentIcon,
 } from 'lucide-react'
-import { nanoid } from 'nanoid'
 import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
-import { readMasterFullBbox, readMasterDoc } from '../state/readMasterDoc.js'
-import { getComponentDoc } from '../state/componentDocCache.js'
-import { addObject, seedInstanceTextCopy } from '@narrative/slide-model'
-import type { ComponentInstanceObject } from '@narrative/shared'
+import { readMasterFullBbox } from '../state/readMasterDoc.js'
+import {
+  acquireComponentDoc,
+  releaseComponentDoc,
+  getComponentDoc,
+} from '../state/componentDocCache.js'
+import { stampComponent } from '@narrative/slide-model'
 import type { ComponentSummary } from '../api/client.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
@@ -215,99 +217,61 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   // M16 P6 — Component picker drawer
   const [pickerOpen, setPickerOpen] = useState(false)
   const folderComponents = useFolderComponents(folderId, { eager: true })
-  // Batch-fetched usage counts for the drawer rows. One request on
-  // every open instead of N (one per row) — avoids replaying every
-  // deck doc N times for folders with many components.
-  const [usageCounts, setUsageCounts] = useState<Record<string, number> | null>(null)
   const handleOpenPicker = useCallback(() => {
     setPickerOpen(true)
     // Re-fetch on open — promotions / deletions in another tab should land.
     void folderComponents.invalidate()
-    // Fire one batch usage-count request; rows render synchronously
-    // once the response lands.
-    if (folderId !== null) {
-      setUsageCounts(null)
-      api
-        .listComponentInstanceCounts(folderId)
-        .then((counts) => setUsageCounts(counts))
-        .catch(() => setUsageCounts({}))
-    }
-  }, [api, folderComponents, folderId])
+  }, [folderComponents])
   const handleClosePicker = useCallback(() => setPickerOpen(false), [])
 
   /**
-   * Insert a component instance at (x, y), with size derived from the
-   * master's bbox if the master doc is already cached. Falls back to
-   * 400×300; the renderer (or a later cache-sync) will resize once the
-   * doc syncs.
+   * Stamp a component master onto the active slide as detached primitives.
+   * Acquires the component doc, awaits its first sync (so the master is
+   * populated), reads the bbox to compute a slide-centred drop point, then
+   * delegates to `stampComponent` which clones every master object with a
+   * fresh id and pushes the cluster into the slide. After this the result
+   * has no link to the master — edits to the master never touch the stamp.
    */
-  const insertComponentInstance = useCallback(
-    async (component: ComponentSummary, _x: number, _y: number): Promise<void> => {
+  const stampPickedComponent = useCallback(
+    async (component: ComponentSummary): Promise<void> => {
       if (objectsCtx === null) return
-      void _x
-      void _y
-      // Await the master doc's first sync so the inserted instance lands
-      // at the master's authored bbox on the *first* click (cold cache).
-      // M16 P-flatten: components carry their canonical slide-space
-      // position from the master. The instance lands at (bbox.x, bbox.y)
-      // 1:1 with how the user authored the master — moving / resetting
-      // is an explicit user action thereafter.
-      const bbox = await readMasterFullBbox(component.id)
-      const width = bbox !== null ? bbox.width : 400
-      const height = bbox !== null ? bbox.height : 300
-      const x = bbox !== null ? bbox.x : SLIDE_WIDTH / 2 - width / 2
-      const y = bbox !== null ? bbox.y : SLIDE_HEIGHT / 2 - height / 2
-
-      const instance: ComponentInstanceObject = {
-        id: nanoid(),
-        type: 'componentInstance',
-        componentId: component.id,
-        componentName: component.name,
-        x,
-        y,
-        width,
-        height,
-        rotation: 0,
-        opacity: 1,
-      }
-      addObject(objectsCtx, instance)
-
-      // Seed text copy from the master at insert time so subsequent master
-      // copy edits do NOT propagate to this instance's text leaves.
-      // The master doc is already in the cache (we just awaited readMasterFullBbox).
-      const masterDoc = getComponentDoc(component.id)
-      if (masterDoc !== null) {
-        const snap = readMasterDoc(masterDoc)
-        if (snap !== null) {
-          const masterTextLeaves = snap.objects
-            .filter(
-              (obj) => obj.type === 'text' && typeof (obj as { text?: unknown }).text === 'string',
-            )
-            .map((obj) => ({ id: obj.id, text: (obj as { text: string }).text }))
-          if (masterTextLeaves.length > 0) {
-            seedInstanceTextCopy(objectsCtx, instance.id, masterTextLeaves)
-          }
+      // Warm the master doc cache + await first sync so the master is
+      // populated before we read it. readMasterFullBbox does this and
+      // returns once the bbox is non-empty; we discard the bbox value
+      // because we want the master's authored position 1:1.
+      acquireComponentDoc(component.id)
+      try {
+        const bbox = await readMasterFullBbox(component.id)
+        const masterDoc = getComponentDoc(component.id)
+        if (masterDoc === null || objectsCtx === null) return
+        // Land the stamp at the master's authored slide-space top-left
+        // (bbox.x, bbox.y) when known, else slide-centred fallback.
+        const dropPoint =
+          bbox !== null
+            ? { x: bbox.x, y: bbox.y }
+            : { x: SLIDE_WIDTH / 2 - 200, y: SLIDE_HEIGHT / 2 - 150 }
+        const ids = stampComponent(objectsCtx, masterDoc, dropPoint)
+        if (ids.length > 0) {
+          // Select the first stamped object — replaces prior selection so
+          // the user can immediately move/edit the result.
+          selectOne(ids[0]!)
         }
+      } finally {
+        releaseComponentDoc(component.id)
       }
-
-      // Replace any prior selection with the freshly-inserted instance.
-      // Matches Figma: dropping a component from the picker drops the
-      // user straight into "edit transform of the new instance" rather
-      // than leaving stale selection chrome on whatever was selected.
-      selectOne(instance.id)
     },
     [objectsCtx, selectOne],
   )
 
   const handlePickComponent = useCallback(
     (component: ComponentSummary) => {
-      // Close the drawer immediately — the master-bbox await happens
-      // in the background and would otherwise hold the picker open
-      // for the duration of the WS sync round-trip.
+      // Close the drawer immediately — the master-doc await happens in the
+      // background and would otherwise hold the picker open for the WS
+      // sync round-trip.
       setPickerOpen(false)
-      void insertComponentInstance(component, SLIDE_WIDTH / 2, SLIDE_HEIGHT / 2)
+      void stampPickedComponent(component)
     },
-    [insertComponentInstance],
+    [stampPickedComponent],
   )
 
   function handleMediaUploadDone(entry: UploadEntry) {
@@ -938,13 +902,21 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
           onClose={handleClosePicker}
           components={folderComponents.components}
           loading={folderComponents.loading}
-          usageCounts={usageCounts}
           onPick={handlePickComponent}
           onDragStartComponent={(component, e) => {
             const payload = JSON.stringify({ componentId: component.id })
             e.dataTransfer.setData('application/x-narrative-component', payload)
             e.dataTransfer.effectAllowed = 'copy'
           }}
+          onDropComplete={() => setPickerOpen(false)}
+          {...(folderId !== null
+            ? {
+                onOpenSettings: () => {
+                  setPickerOpen(false)
+                  void navigate(`/folder/${folderId}/settings?tab=components`)
+                },
+              }
+            : {})}
         />
 
         {/* Present button — deck only. */}

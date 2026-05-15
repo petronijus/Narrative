@@ -1,38 +1,29 @@
 /**
  * state/promoteSelectionToComponent.ts
  *
- * Extracted from EditorContextMenu's `performPromote` so non-menu code
- * paths (e.g. the slide-number recommendation modal) can run the same
- * pipeline without duplicating bookkeeping.
+ * "Promote selection to component" — stamps-only flow.
  *
- * Pipeline (matches the original EditorContextMenu order):
- *   1. Build a serialisable plan via `promoteToComponent` (slide-model).
- *   2. Mint the Postgres row with the plan's `componentId`.
- *   3. Open a transient Hocuspocus connection to the new component doc
- *      and write masterTree + masterAnimations.
- *   4. In one slide-level Yjs transaction, remove the promoted objects
- *      and insert the instance node.
- *   5. Seed instance text copies so master text edits don't propagate.
- *   6. Select the instance.
+ * Reads the selected objects, writes them as a new component master in
+ * the folder, and leaves the originals on the slide untouched. Stamps
+ * are detached: editing the master afterwards never affects already-
+ * placed objects, so there's no reason to delete the originals.
  *
- * Returns the created instance id so callers can post-process selection.
+ * Also fires a one-shot offscreen thumbnail render so the picker drawer
+ * + Components tab show the new master immediately. Done here instead
+ * of in the master editor route because the user may never navigate to
+ * the master editor.
  */
 
-import {
-  promoteToComponent,
-  removeObject,
-  addObject,
-  seedInstanceTextCopy,
-} from '@narrative/slide-model'
-import type { ObjectsMutationContext, DeckMutationContext } from '@narrative/slide-model'
+import { promoteToComponent } from '@narrative/slide-model'
+import type { DeckMutationContext } from '@narrative/slide-model'
 import { writeComponentMasterTree } from './writeComponentMasterTree.js'
 import { invalidateFolderComponentsCache } from './useFolderComponents.js'
+import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ApiClient } from '../api/client.js'
 
 export interface PromoteSelectionArgs {
   api: ApiClient
   folderId: string
-  mutationCtx: ObjectsMutationContext
   deckCtx: DeckMutationContext
   activeSlideId: string
   targetIds: string[]
@@ -41,8 +32,8 @@ export interface PromoteSelectionArgs {
 
 export async function promoteSelectionToComponent(
   args: PromoteSelectionArgs,
-): Promise<{ instanceId: string }> {
-  const { api, folderId, mutationCtx, deckCtx, activeSlideId, targetIds, name } = args
+): Promise<{ componentId: string }> {
+  const { api, folderId, deckCtx, activeSlideId, targetIds, name } = args
   const plan = promoteToComponent(deckCtx, activeSlideId, targetIds, folderId)
 
   const component = await api.createComponent(folderId, { id: plan.componentId, name })
@@ -53,17 +44,29 @@ export async function promoteSelectionToComponent(
     masterAnimations: plan.masterAnimations,
   })
 
-  mutationCtx.doc.transact(() => {
-    for (const id of plan.removedObjectIds) removeObject(mutationCtx, id)
-    addObject(mutationCtx, plan.instanceObject)
-  })
+  // Fire-and-forget initial thumbnail. Failures are swallowed: the
+  // master editor would re-upload on next render, and a missing
+  // thumbnail just shows the ⌘ placeholder.
+  void renderAndUploadInitialThumbnail(api, component.id, folderId, plan.masterTree)
 
-  const masterTextLeaves = plan.masterTree
-    .filter((obj) => obj.type === 'text' && typeof (obj as { text?: unknown }).text === 'string')
-    .map((obj) => ({ id: obj.id, text: (obj as { text: string }).text }))
-  if (masterTextLeaves.length > 0) {
-    seedInstanceTextCopy(mutationCtx, plan.instanceObject.id, masterTextLeaves)
+  return { componentId: component.id }
+}
+
+async function renderAndUploadInitialThumbnail(
+  api: ApiClient,
+  componentId: string,
+  folderId: string,
+  masterTree: ReturnType<typeof promoteToComponent>['masterTree'],
+): Promise<void> {
+  let renderer: Awaited<ReturnType<typeof createThumbnailRenderer>> | null = null
+  try {
+    renderer = await createThumbnailRenderer({ width: 200, resolution: 1 })
+    const dataUrl = await renderer.renderSlide(masterTree)
+    await api.uploadComponentThumbnail(componentId, dataUrl)
+    invalidateFolderComponentsCache(folderId)
+  } catch (err) {
+    console.warn('[promote] initial component thumbnail failed', err)
+  } finally {
+    renderer?.destroy()
   }
-
-  return { instanceId: plan.instanceObject.id }
 }

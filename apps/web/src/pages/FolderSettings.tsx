@@ -605,18 +605,11 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
   const [components, setComponents] = useState<ComponentSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [usageCounts, setUsageCounts] = useState<Record<string, number> | null>(null)
 
   const refresh = useCallback(async () => {
     try {
       const list = await api.listComponents(folderId)
       setComponents(list)
-      // Fire one batch usage-count request alongside the list. Cards
-      // render the count synchronously instead of N+1 fetches.
-      api
-        .listComponentInstanceCounts(folderId)
-        .then((counts) => setUsageCounts(counts))
-        .catch(() => setUsageCounts({}))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load components')
     } finally {
@@ -684,7 +677,6 @@ function ComponentsTab({ folderId }: ComponentsTabProps) {
                 invalidateFolderComponentsCache(folderId)
                 await refresh()
               }}
-              usageCount={usageCounts !== null ? (usageCounts[component.id] ?? 0) : null}
             />
           ))}
         </div>
@@ -698,27 +690,15 @@ interface ComponentCardProps {
   onOpen: () => void
   onRename: (name: string) => Promise<void>
   onDelete: () => Promise<void>
-  /**
-   * M16 P6 — pre-fetched "Used N times" count from the parent's batch
-   * `listComponentInstanceCounts(folderId)` call. `null` while the batch
-   * is in flight; a number once it lands.
-   */
-  usageCount: number | null
 }
 
-function ComponentCard({ component, onOpen, onRename, onDelete, usageCount }: ComponentCardProps) {
+function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardProps) {
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(component.name)
   const [confirming, setConfirming] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Confirm-flow uses the same parent-fetched count. The count is
-  // batch-fetched at tab mount; if a stale read is a concern we'd
-  // re-fire the batch on confirm — for now the parent re-fetches on
-  // refresh() (delete completion).
-  const confirmCount = usageCount
-  const confirmCountLoading = usageCount === null
   const beginConfirm = useCallback(() => {
     setConfirming(true)
   }, [])
@@ -811,30 +791,14 @@ function ComponentCard({ component, onOpen, onRename, onDelete, usageCount }: Co
 
       {renameError !== null && <p className="text-[10px] text-destructive">{renameError}</p>}
 
-      {/* M16 P6 — usage count (real) */}
-      <p
-        className="text-center text-[10px] text-muted-foreground/60"
-        data-testid="component-usage-count"
-      >
-        {usageCount === null
-          ? 'Used — times'
-          : `Used in ${usageCount} ${usageCount === 1 ? 'place' : 'places'}`}
-      </p>
-
-      {/* Delete with usage warning */}
+      {/* Delete confirmation */}
       {confirming ? (
         <div className="flex flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2">
           <p
             className="text-[10px] leading-tight text-foreground"
             data-testid="component-delete-warning"
           >
-            {confirmCountLoading
-              ? 'Checking usage…'
-              : confirmCount === null
-                ? 'Could not load usage count.'
-                : confirmCount === 0
-                  ? 'Not used anywhere. Delete?'
-                  : `Used in ${confirmCount} ${confirmCount === 1 ? 'place' : 'places'}. Deleting will leave them as broken instances. Delete anyway?`}
+            Delete this component?
           </p>
           <div className="flex items-center justify-end gap-1">
             <button
@@ -847,13 +811,12 @@ function ComponentCard({ component, onOpen, onRename, onDelete, usageCount }: Co
             </button>
             <button
               type="button"
-              disabled={confirmCountLoading}
               onClick={() => {
                 setConfirming(false)
                 void onDelete()
               }}
               data-testid="component-delete-confirm"
-              className="rounded-md px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+              className="rounded-md px-2 py-0.5 text-[10px] text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
               aria-label={`Confirm delete ${component.name}`}
             >
               Delete
