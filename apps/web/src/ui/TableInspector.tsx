@@ -441,6 +441,20 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               onChange={(v) => patchRange({ align: v as 'left' | 'center' | 'right' })}
             />
           </Row>
+          {/* Per-edge border editor — seeded from the range's top-left
+              cell's border (if any), but every toggle stamps the same
+              shape onto every non-continuation cell in the range via
+              patchRange. Lets a user select a whole row and stamp a
+              single "bottom border under header" with one click. */}
+          <BorderEditor
+            border={(() => {
+              const seed = obj.rows[rangeInfo.r0]?.[rangeInfo.c0]
+              return seed?.border
+            })()}
+            defaults={d}
+            disabled={isViewer}
+            onPatch={(border) => patchRange({ border })}
+          />
         </div>
       )}
 
@@ -525,8 +539,8 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               onChange={(v) => patchCell({ vAlign: v as 'top' | 'middle' | 'bottom' })}
             />
           </Row>
-          <CellBorderEditor
-            cell={activeCell}
+          <BorderEditor
+            border={activeCell.border}
             defaults={d}
             disabled={isViewer}
             onPatch={(border) => patchCell({ border })}
@@ -538,21 +552,20 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 }
 
 /**
- * Per-edge border editor for one cell. Each edge is toggleable (button)
- * + its own colour swatch + width input. "Clear" returns the cell to
- * inheriting the table's uniform default border on every edge.
+ * Per-edge border editor. The `border` prop is the current TRBL
+ * override (one cell's or, for a multi-cell selection, the "shared"
+ * shape — usually undefined when cells disagree). `onPatch` receives
+ * the next override value or `undefined` to clear it. Used inside
+ * both the single-cell section and the multi-cell range section so
+ * users can stamp a per-edge border across many cells at once.
  */
-function CellBorderEditor({
-  cell,
+function BorderEditor({
+  border,
   defaults,
   disabled,
   onPatch,
 }: {
-  cell: ReturnType<TableObject['rows'][number]['at']> extends infer T
-    ? T extends TableObject['rows'][number][number]
-      ? T
-      : never
-    : never
+  border: TableObject['rows'][number][number]['border'] | undefined
   defaults: TableObject['defaults']
   disabled: boolean
   onPatch: (border: TableObject['rows'][number][number]['border']) => void
@@ -567,10 +580,9 @@ function CellBorderEditor({
       typeof defaults.border?.color === 'number' ? (defaults.border.color as number) : 0xcccccc,
     width: defaults.border?.width ?? 1,
   })
-  // Returns the per-edge spec the inspector is rendering for: cell
-  // override > undefined (i.e. inheriting default).
+  // Read the per-edge spec already on the cell/range.
   const edgeOverride = (edge: Edge): { color: number; width: number } | undefined => {
-    const v = cell.border?.[edge]
+    const v = border?.[edge]
     if (v === undefined) return undefined
     return {
       color: typeof v.color === 'number' ? (v.color as number) : 0xcccccc,
@@ -578,10 +590,10 @@ function CellBorderEditor({
     }
   }
   const setEdge = (edge: Edge, spec: { color: number; width: number } | undefined): void => {
-    const next: NonNullable<typeof cell.border> = { ...(cell.border ?? {}) }
+    const next: NonNullable<typeof border> = { ...(border ?? {}) }
     if (spec === undefined) delete (next as Record<string, unknown>)[edge]
     else next[edge] = spec
-    // Empty record collapses to undefined so the cell goes back to
+    // Empty record collapses to undefined so the cells go back to
     // inheriting defaults on every edge.
     const hasAny = (Object.keys(next) as Edge[]).some((k) => next[k] !== undefined)
     onPatch(hasAny ? next : undefined)
@@ -640,7 +652,7 @@ function CellBorderEditor({
           </div>
         )
       })}
-      {cell.border !== undefined && (
+      {border !== undefined && (
         <button
           type="button"
           onClick={() => onPatch(undefined)}
