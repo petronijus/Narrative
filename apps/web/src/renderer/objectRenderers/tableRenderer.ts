@@ -54,6 +54,10 @@ const DEFAULT_FONT_STACK = 'system-ui, -apple-system, sans-serif'
 const GRID_TAG = Symbol('tableGrid')
 const CELLS_TAG = Symbol('tableCellNodes')
 const FADED_TAG = Symbol('tableFadedCell')
+/** Last-applied data snapshot. applyPatch merges against this to
+ *  decide whether the fast (transform-only) path or the full rebuild
+ *  is required. */
+const DATA_TAG = Symbol('tableData')
 
 /**
  * One rendered cell — kept alive across rebuilds so Pixi's HTMLText
@@ -459,6 +463,7 @@ function rebuild(container: Container, data: TableObject): void {
   tagged[CELLS_TAG] = nextCells
 
   applyObjectTransform(container, data)
+  tagged[DATA_TAG] = data
 }
 
 /**
@@ -483,6 +488,26 @@ export function setTableCellFaded(node: Container, yText: Y.Text | null, faded: 
   return any
 }
 
+/**
+ * Fields whose change forces a full per-cell rebuild. Anything outside
+ * this set hits the fast path in `applyPatch` (transform / filter
+ * effects only — touches the outer Container without iterating cells).
+ *
+ * Dragging a table updates `x` / `y` 60 times a second; at N×M cells
+ * the rebuild path's per-cell `htmlText.style = new HTMLTextStyle(...)`
+ * + `applyHorizontalAlign` + `applyVerticalAlign` is what was making
+ * the drag visibly stutter. Filtering to the cheap path keeps the
+ * cells untouched and the drag responsive.
+ */
+const STRUCTURAL_KEYS: ReadonlyArray<keyof TableObject> = [
+  'width',
+  'height',
+  'rows',
+  'colWidths',
+  'rowHeights',
+  'defaults',
+]
+
 export const tableRenderer: ObjectRenderer<TableObject> = {
   type: 'table',
   mount(data) {
@@ -494,6 +519,31 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
   update(node, _prev, next) {
     rebuild(node, next)
     applyFilterEffects(node, next.shadow, next.blur)
+  },
+  applyPatch(node, patch) {
+    const tagged = node as Container & { [k: symbol]: unknown }
+    const prev = tagged[DATA_TAG] as TableObject | undefined
+    if (prev === undefined) return // shouldn't happen — mount stores DATA_TAG
+    const structural = STRUCTURAL_KEYS.some((k) => k in patch)
+    if (!structural) {
+      // Fast path — transform / opacity / filter only. Move the outer
+      // container; cells stay put in container-local coords.
+      if (patch.x !== undefined) node.x = patch.x + node.pivot.x
+      if (patch.y !== undefined) node.y = patch.y + node.pivot.y
+      if (patch.rotation !== undefined) node.rotation = patch.rotation
+      if (patch.opacity !== undefined) node.alpha = patch.opacity
+      if ('shadow' in patch || 'blur' in patch) {
+        applyFilterEffects(node, patch.shadow ?? prev.shadow, patch.blur ?? prev.blur)
+      }
+      tagged[DATA_TAG] = { ...prev, ...patch } as TableObject
+      return
+    }
+    // Structural change — fall back to the full rebuild path. width/
+    // height changes recompute cell bboxes; rows/colWidths/rowHeights/
+    // defaults restructure the cell map.
+    const merged = { ...prev, ...patch } as TableObject
+    rebuild(node, merged)
+    applyFilterEffects(node, merged.shadow, merged.blur)
   },
   destroy(node) {
     const tagged = node as Container & { [k: symbol]: unknown }
