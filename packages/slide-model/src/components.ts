@@ -24,9 +24,19 @@
 
 import { nanoid } from 'nanoid'
 import type * as Y from 'yjs'
-import type { SlideObject, AnimationStep } from '@narrative/shared'
+import type { SlideObject, AnimationStep, TableCell } from '@narrative/shared'
 import { yMapToPlainObject } from './bindings.js'
 import { yMapToAnimationStep } from './animationBindings.js'
+
+/**
+ * Duck-type detect a Y.Text without importing yjs at runtime. We can't use
+ * `instanceof Y.Text` here because we'd pull in the deck doc's yjs binding,
+ * and the master tree may be built in the server-side Yjs client where the
+ * canonical Y module is registered under a different identity.
+ */
+function isYTextLike(v: unknown): boolean {
+  return v !== null && typeof v === 'object' && 'toString' in v && 'insert' in v
+}
 
 // ---------------------------------------------------------------------------
 // getComponentDocName
@@ -230,15 +240,37 @@ export function promoteToComponent(
   // Plain objects are already detached from Yjs — we can spread them safely.
   // Y.Text values (text object bodies) are serialized to string for the master
   // doc — the component's Yjs client will promote them back to Y.Text on insert.
+  // Tables need a deeper walk because their cell `text` Y.Texts live inside
+  // rows[r][c].text and would otherwise leak references to the source deck doc
+  // (causing Yjs writeAny stack overflows when the plan gets encoded into the
+  // component doc).
   const masterTree: SlideObject[] = promotedObjects.map((obj) => {
     const clone: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(obj as unknown as Record<string, unknown>)) {
-      // Y.Text → plain string so the plan is JSON-serializable
-      if (v !== null && typeof v === 'object' && 'toString' in v && 'insert' in v) {
+      if (isYTextLike(v)) {
         clone[k] = (v as { toString(): string }).toString()
       } else {
         clone[k] = v
       }
+    }
+    if (clone['type'] === 'table' && Array.isArray(clone['rows'])) {
+      clone['rows'] = (clone['rows'] as TableCell[][]).map((row) =>
+        row.map((cell) => {
+          const cellOut: Record<string, unknown> = {}
+          for (const [k, v] of Object.entries(cell as unknown as Record<string, unknown>)) {
+            if (isYTextLike(v)) {
+              cellOut[k] = (v as { toString(): string }).toString()
+            } else if (v !== null && typeof v === 'object') {
+              // border / padding sub-objects — shallow clone is enough.
+              cellOut[k] = { ...(v as Record<string, unknown>) }
+            } else {
+              cellOut[k] = v
+            }
+          }
+          if (typeof cellOut['text'] !== 'string') cellOut['text'] = ''
+          return cellOut as unknown as TableCell
+        }),
+      )
     }
     return clone as unknown as SlideObject
   })

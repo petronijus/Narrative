@@ -88,7 +88,8 @@ export {
 export type { DeckGuidesContext } from './deckGuides.js'
 
 // Bindings — objects
-export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
+export { yMapToPlainObject, plainObjectToYMap, collectPendingCellTextInserts } from './bindings.js'
+export type { PendingCellTextInsert } from './bindings.js'
 
 // M29 table mutations
 export {
