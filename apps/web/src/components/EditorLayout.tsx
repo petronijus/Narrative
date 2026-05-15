@@ -39,6 +39,7 @@ import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { TableCellEditor } from '../ui/TableCellEditor'
+import { TableRangeHighlight } from '../ui/TableRangeHighlight'
 import { InstanceLeafTextEditor } from '../ui/InstanceLeafTextEditor'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
@@ -520,8 +521,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const {
     active: activeTableCell,
+    setActive: setTableCellActive,
     beginEdit: beginTableCellEdit,
     endEdit: endTableCellEdit,
+    setRange: setTableCellRange,
     clear: clearTableCellEdit,
   } = useTableEdit()
   // Inline text-edit state for component-instance leaves. Lives separate
@@ -739,6 +742,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   }
   const [draft, setDraft] = useState<DraftState | null>(null)
   const draftRef = useRef<DraftState | null>(null)
+
+  /**
+   * M29 Phase 3 — drag-select state for cells inside a TableObject.
+   * Set when the user pointerdowns on an already-selected table; cleared
+   * on pointerup. `startR/C` is the anchor cell (where the drag began);
+   * the resulting `CellRange` in TableEditContext uses (startR, startC)
+   * as one corner and the cell under the latest pointer as the other.
+   */
+  const cellSelectionDragRef = useRef<{
+    tableId: string
+    startR: number
+    startC: number
+  } | null>(null)
 
   /**
    * Pen-tool session — accumulates anchor points while the user is
@@ -1232,6 +1248,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         // Klik na prázdnou plochu
         if (!e.shiftKey) {
           clear()
+          // Drop any cell-edit / drag-range state so the highlight
+          // disappears and the inspector reverts to the slide-default
+          // panel — leaving a stale range on an unselected table is
+          // confusing.
+          clearTableCellEdit()
           // Empty-canvas click also exits group isolation, mirroring
           // Figma's behaviour.
           if (enteredGroupId !== null) setEnteredGroupId(null)
@@ -1295,6 +1316,43 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         if (!allInSelection) selectMany(groupMembers)
       } else if (!selectedIds.has(hitId)) {
         selectOne(hitId)
+      }
+
+      // M29 Phase 3: when a table is already selected and the user
+      // clicks inside its body, start a cell-drag-select gesture
+      // instead of an object drag. Sets the anchor cell + pointer
+      // capture; handlePointerMove updates the range, handlePointerUp
+      // finalises. First click on a table still flows through the
+      // normal selection path above — the cell-drag only kicks in on
+      // the *second* click while the table is already selected.
+      if (
+        hitObj !== undefined &&
+        hitObj.type === 'table' &&
+        !inIsolation &&
+        selectedIds.has(hitId)
+      ) {
+        const raw = hitTestTableCell(hitObj, x, y)
+        if (raw !== null) {
+          // Resolve merge continuation → origin so the drag anchor
+          // lands on the visible (origin) cell.
+          const target = hitObj.rows[raw.r]?.[raw.c]
+          const r =
+            target !== undefined && typeof target.mergeOriginR === 'number'
+              ? target.mergeOriginR
+              : raw.r
+          const c =
+            target !== undefined && typeof target.mergeOriginC === 'number'
+              ? target.mergeOriginC
+              : raw.c
+          cellSelectionDragRef.current = {
+            tableId: hitObj.id,
+            startR: r,
+            startC: c,
+          }
+          setTableCellActive({ tableId: hitObj.id, r, c })
+          ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+          return
+        }
       }
 
       // P5a: locked objects can be selected but not moved — filter them out
@@ -1394,6 +1452,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       endEdit,
       activeTableCell,
       endTableCellEdit,
+      setTableCellActive,
+      clearTableCellEdit,
       activeInstanceEditId,
       exitInstanceEdit,
       selectLeaf,
@@ -1488,6 +1548,29 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
           }
           marqueeRef.current = updated
           setMarquee({ ...updated })
+        }
+        return
+      }
+
+      // M29 Phase 3 — cell-drag-select update. Hit-test the current
+      // pointer position against the table's cell grid and write a
+      // normalised range covering (startR/C) → (currentR/C). The
+      // range setter collapses single-cell ranges to active-only so
+      // a click without drag doesn't leave a stale 1×1 range.
+      const cellDrag = cellSelectionDragRef.current
+      if (cellDrag !== null && canvasCoords !== null) {
+        const tableObj = objects.find((o) => o.id === cellDrag.tableId)
+        if (tableObj !== undefined && tableObj.type === 'table') {
+          const cell = hitTestTableCell(tableObj, canvasCoords.x, canvasCoords.y)
+          if (cell !== null) {
+            setTableCellRange({
+              tableId: cellDrag.tableId,
+              r0: cellDrag.startR,
+              c0: cellDrag.startC,
+              r1: cell.r,
+              c1: cell.c,
+            })
+          }
         }
         return
       }
@@ -1641,7 +1724,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         }),
       )
     },
-    [mutationCtx, objects, setCursor],
+    [mutationCtx, objects, setCursor, setTableCellRange],
   )
 
   const handlePointerUp = useCallback(
@@ -1659,6 +1742,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         const { instanceId, moved } = leafDragRef.current
         leafDragRef.current = null
         if (moved) fitInstanceBoundsRef.current(instanceId)
+        return
+      }
+
+      // M29 Phase 3 — cell-drag-select teardown. setTableCellRange
+      // already collapsed single-cell ranges down to active-only, so
+      // here we just clear the gesture state.
+      if (cellSelectionDragRef.current !== null) {
+        cellSelectionDragRef.current = null
         return
       }
 
@@ -1887,9 +1978,22 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       if (hit.type === 'table') {
         if (isViewer) return
         selectOne(hitId)
-        const cell = hitTestTableCell(hit, x, y)
-        if (cell === null) return
-        beginTableCellEdit({ tableId: hitId, r: cell.r, c: cell.c })
+        const raw = hitTestTableCell(hit, x, y)
+        if (raw === null) return
+        // Walk to the merge origin so a double-click anywhere inside
+        // a merged cell opens the editor at the origin (where the
+        // visible text lives), not on the now-hidden continuation
+        // pointer cell.
+        const target = hit.rows[raw.r]?.[raw.c]
+        const r =
+          target !== undefined && typeof target.mergeOriginR === 'number'
+            ? target.mergeOriginR
+            : raw.r
+        const c =
+          target !== undefined && typeof target.mergeOriginC === 'number'
+            ? target.mergeOriginC
+            : raw.c
+        beginTableCellEdit({ tableId: hitId, r, c })
         return
       }
       if (hit.type === 'image') {
@@ -2758,6 +2862,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         if (obj === undefined || obj.type !== 'table') return null
                         return <TableCellEditor table={obj} mutationCtx={mutationCtx} />
                       })()}
+
+                    {/* M29 Phase 3: drag-selected cell range highlight. */}
+                    <TableRangeHighlight />
 
                     {/* M16 P8: inline editor for a TextObject leaf inside
                       an active component-instance edit session. Writes

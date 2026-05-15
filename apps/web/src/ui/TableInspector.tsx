@@ -23,19 +23,34 @@
  * state.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import * as Y from 'yjs'
 import {
   type ObjectsMutationContext,
+  type CellStylePatch,
+  applyFormat,
   deleteTableCol,
   deleteTableRow,
+  getTableCellYMap,
   insertTableCol,
   insertTableRow,
+  LOCAL_ORIGIN,
+  mergeTableCells,
+  setRangeCellStyle,
   setTableCellStyle,
   setTableDefaultsPatch,
+  splitTableCell,
 } from '@narrative/slide-model'
 import { isTokenRef, type TableObject } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { TokenColorInput } from './TokenColorInput.js'
+import {
+  applyInlineFormatIfSelected,
+  getActiveTextSelection,
+  readActiveSelectionAttrs,
+  refocusActiveTextEdit,
+  subscribeActiveTextSelection,
+} from './textEditSelection.js'
 
 function numberToHex(value: number): string {
   return '#' + value.toString(16).padStart(6, '0')
@@ -61,7 +76,21 @@ export interface TableInspectorProps {
 }
 
 export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorProps) {
-  const { active } = useTableEdit()
+  const { active, range } = useTableEdit()
+
+  // Re-render when the active text selection (cell editor publishes
+  // here) changes so the toolbar's pressed state stays accurate as
+  // the user moves the caret across runs of varying format.
+  useSyncExternalStore(subscribeActiveTextSelection, getActiveTextSelection, getActiveTextSelection)
+  // Cell editor publishes objectId in the form `${tableId}#${r},${c}`;
+  // matches the same template used by `TableCellEditor`. Anything
+  // outside this prefix is ignored — the inspector targets only the
+  // currently-edited cell, never some other text object.
+  const editingObjectId =
+    active !== null && active.editing && active.tableId === obj.id
+      ? `${obj.id}#${active.r},${active.c}`
+      : null
+  const selectionAttrs = editingObjectId === null ? null : readActiveSelectionAttrs(editingObjectId)
 
   // The (r, c) that structural mutations and cell-override edits target.
   // When the editor isn't tracking an active cell (user clicked the table
@@ -100,8 +129,128 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     setTableCellStyle(mutationCtx, obj.id, active.r, active.c, patch)
   }
 
+  // --- Range patches (M29 Phase 3) — applied to every non-continuation
+  //     cell in the drag-selected rectangle. Falls back to per-cell when
+  //     no range is set so the same callback shape can drive both
+  //     single-cell and multi-cell controls.
+  const patchRange = (patch: CellStylePatch): void => {
+    if (range !== null && range.tableId === obj.id) {
+      setRangeCellStyle(
+        mutationCtx,
+        obj.id,
+        { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 },
+        patch,
+      )
+      return
+    }
+    patchCell(patch as Parameters<typeof setTableCellStyle>[4])
+  }
+
+  const rangeInfo = useMemo(() => {
+    if (range === null || range.tableId !== obj.id) return null
+    const r0 = Math.min(range.r0, range.r1)
+    const r1 = Math.max(range.r0, range.r1)
+    const c0 = Math.min(range.c0, range.c1)
+    const c1 = Math.max(range.c0, range.c1)
+    const count = (r1 - r0 + 1) * (c1 - c0 + 1)
+    const origin = obj.rows[r0]?.[c0]
+    const originIsMerge =
+      origin !== undefined && ((origin.gridSpan ?? 1) > 1 || (origin.rowSpan ?? 1) > 1)
+    return { r0, c0, r1, c1, count, originIsMerge }
+  }, [range, obj])
+
+  const handleMerge = (): void => {
+    if (rangeInfo === null) return
+    mergeTableCells(mutationCtx, obj.id, {
+      r0: rangeInfo.r0,
+      c0: rangeInfo.c0,
+      r1: rangeInfo.r1,
+      c1: rangeInfo.c1,
+    })
+  }
+
+  const handleSplit = (): void => {
+    if (active === null || active.tableId !== obj.id) return
+    splitTableCell(mutationCtx, obj.id, active.r, active.c)
+  }
+
+  const applyAndRefocus = (attrs: Parameters<typeof applyInlineFormatIfSelected>[1]): void => {
+    if (editingObjectId === null) return
+    // Try the inline-format path first (user has highlighted text);
+    // if that returns false (collapsed caret), fall back to formatting
+    // the entire cell text so the picker / toggle still has visible
+    // effect — matches the "you can color a cell without selecting"
+    // expectation users have from Excel / Numbers.
+    const ok = applyInlineFormatIfSelected(editingObjectId, attrs)
+    if (!ok && active !== null && active.tableId === obj.id) {
+      const cellY = getTableCellYMap(mutationCtx, obj.id, active.r, active.c)
+      const yText = cellY?.get('text')
+      if (yText instanceof Y.Text && yText.length > 0) {
+        // Wrap in a transact with LOCAL_ORIGIN so the undo manager
+        // captures the format change. Without the origin, the Y.Text
+        // mutation runs in an implicit transact whose origin is
+        // undefined, which the UndoManager filters out.
+        mutationCtx.doc.transact(() => {
+          applyFormat(yText, 0, yText.length, attrs)
+        }, LOCAL_ORIGIN)
+      }
+    }
+    refocusActiveTextEdit(editingObjectId)
+  }
+
   return (
     <div className="flex flex-col gap-3 px-3 py-2 text-xs">
+      {/* ────────────────────────────────────────────────────────────── */}
+      {/* TEXT FORMAT (Phase 5 / advanced typing)                        */}
+      {/* Only renders while a cell is in edit mode and there is a       */}
+      {/* non-collapsed selection in that cell.                           */}
+      {/* ────────────────────────────────────────────────────────────── */}
+      {editingObjectId !== null && (
+        <div className="flex flex-col gap-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Text format
+          </div>
+          <div className="flex items-center gap-1.5">
+            <FormatToggle
+              label="B"
+              pressed={(selectionAttrs?.fontWeight ?? 400) >= 600}
+              disabled={isViewer || selectionAttrs === null}
+              onClick={() => {
+                const isBold = (selectionAttrs?.fontWeight ?? 400) >= 600
+                applyAndRefocus({ fontWeight: isBold ? 400 : 700 })
+              }}
+              bold
+            />
+            <FormatToggle
+              label="I"
+              pressed={selectionAttrs?.italic === true}
+              disabled={isViewer || selectionAttrs === null}
+              onClick={() => applyAndRefocus({ italic: selectionAttrs?.italic !== true })}
+              italic
+            />
+            <FormatToggle
+              label="U"
+              pressed={selectionAttrs?.underline === true}
+              disabled={isViewer || selectionAttrs === null}
+              onClick={() => applyAndRefocus({ underline: selectionAttrs?.underline !== true })}
+              underline
+            />
+            <div className="ml-2 flex flex-1 items-center gap-1.5">
+              <ColorCell
+                value={resolveHex(selectionAttrs?.color, '#111111')}
+                disabled={isViewer || selectionAttrs === null}
+                onChange={(hex) => applyAndRefocus({ color: hexToNumber(hex) })}
+              />
+            </div>
+          </div>
+          <div className="text-[10px] text-muted-foreground/70">
+            {selectionAttrs === null
+              ? 'Select text inside the cell to format it'
+              : 'Toggles apply to the highlighted range'}
+          </div>
+        </div>
+      )}
+
       {/* ────────────────────────────────────────────────────────────── */}
       {/* STRUCTURE                                                      */}
       {/* ────────────────────────────────────────────────────────────── */}
@@ -116,8 +265,8 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             onClick={handleAddRowAbove}
           />
           <BtnRow label={`+ Row below`} disabled={isViewer} onClick={handleAddRowBelow} />
-          <BtnRow label="+ Col before" disabled={isViewer} onClick={handleAddColBefore} />
-          <BtnRow label="+ Col after" disabled={isViewer} onClick={handleAddColAfter} />
+          <BtnRow label="+ Col left" disabled={isViewer} onClick={handleAddColBefore} />
+          <BtnRow label="+ Col right" disabled={isViewer} onClick={handleAddColAfter} />
           <BtnRow
             label="− Delete row"
             danger
@@ -251,9 +400,54 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       </div>
 
       {/* ────────────────────────────────────────────────────────────── */}
+      {/* RANGE (Phase 3 — multi-cell drag selection)                    */}
+      {/* ────────────────────────────────────────────────────────────── */}
+      {rangeInfo !== null && (
+        <div className="flex flex-col gap-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Selection ({rangeInfo.count} cells)
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <BtnRow label="Merge cells" disabled={isViewer} onClick={handleMerge} />
+            <BtnRow
+              label="Split"
+              disabled={isViewer || !rangeInfo.originIsMerge}
+              onClick={handleSplit}
+            />
+          </div>
+          <Row label="Fill all">
+            <ColorCell
+              value="#ffffff"
+              disabled={isViewer}
+              onChange={(hex) => patchRange({ fill: hexToNumber(hex) })}
+            />
+          </Row>
+          <Row label="Text color">
+            <ColorCell
+              value={resolveHex(d.color, '#111111')}
+              disabled={isViewer}
+              onChange={(hex) => patchRange({ color: hexToNumber(hex) })}
+            />
+          </Row>
+          <Row label="Align">
+            <SegBtns
+              value={'left'}
+              options={[
+                { v: 'left', label: 'L' },
+                { v: 'center', label: 'C' },
+                { v: 'right', label: 'R' },
+              ]}
+              disabled={isViewer}
+              onChange={(v) => patchRange({ align: v as 'left' | 'center' | 'right' })}
+            />
+          </Row>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────────────────────── */}
       {/* ACTIVE CELL                                                    */}
       {/* ────────────────────────────────────────────────────────────── */}
-      {activeCell !== null && active !== null && (
+      {rangeInfo === null && activeCell !== null && active !== null && (
         <div className="flex flex-col gap-1.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             Cell ({active.r}, {active.c})
@@ -482,5 +676,51 @@ function SegBtns<T extends string>({
         </button>
       ))}
     </div>
+  )
+}
+
+function FormatToggle({
+  label,
+  pressed,
+  disabled,
+  onClick,
+  bold,
+  italic,
+  underline,
+}: {
+  label: string
+  pressed: boolean
+  disabled?: boolean
+  onClick: () => void
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      disabled={disabled}
+      data-text-edit-keep-focus
+      // Stops the editor's onBlur from firing when we click the button.
+      // TextEditOverlay's blur-closes-edit-mode logic uses this same
+      // data attribute to identify safe focus targets — we honour it
+      // for the table editor too (it shares the same global selection
+      // slot).
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      className={[
+        'flex h-6 w-6 items-center justify-center rounded-md border text-[12px] transition-colors',
+        pressed
+          ? 'border-primary bg-primary/15 text-primary'
+          : 'border-input text-muted-foreground hover:bg-accent/40',
+        'disabled:opacity-40',
+        bold ? 'font-bold' : '',
+        italic ? 'italic' : '',
+        underline ? 'underline' : '',
+      ].join(' ')}
+    >
+      {label}
+    </button>
   )
 }

@@ -51,6 +51,9 @@ import {
   insertTableCol,
   deleteTableRow,
   deleteTableCol,
+  mergeTableCells,
+  splitTableCell,
+  getTableMergeInfo,
 } from '@narrative/slide-model'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import {
@@ -65,6 +68,7 @@ import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clip
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
+import { useTableEdit } from '../state/TableEditContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -163,6 +167,7 @@ type Mode = 'object' | 'canvas'
 export function EditorContextMenu({ canvasContainerRef, children }: EditorContextMenuProps) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
+  const { range: tableRange } = useTableEdit()
   const canvasInstance = useCanvasInstance()
   const { zoom, setZoom } = useZoomLevel()
   const defaults = useDefaultObjectFill()
@@ -376,6 +381,32 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const handleTableDeleteCol = (): void => {
     const t = tableTarget()
     if (t !== null && mutationCtx !== null) deleteTableCol(mutationCtx, t.table.id, t.c)
+  }
+  /** Phase 3 — Merge / split helpers driven by the table-edit range or
+   *  the cell under the cursor. Read fresh on each invocation so the
+   *  menu always acts on the latest state. */
+  const handleTableMerge = (): void => {
+    if (mutationCtx === null) return
+    if (tableRange !== null && targetIdsRef.current.includes(tableRange.tableId)) {
+      mergeTableCells(mutationCtx, tableRange.tableId, {
+        r0: tableRange.r0,
+        c0: tableRange.c0,
+        r1: tableRange.r1,
+        c1: tableRange.c1,
+      })
+    }
+  }
+  const handleTableSplit = (): void => {
+    if (mutationCtx === null) return
+    const hit = tableCellHitRef.current
+    if (hit !== null) splitTableCell(mutationCtx, hit.tableId, hit.r, hit.c)
+  }
+  const mergeInfoAtClickedCell = (): { kind: 'origin' | 'continuation' } | null => {
+    if (mutationCtx === null) return null
+    const hit = tableCellHitRef.current
+    if (hit === null) return null
+    const info = getTableMergeInfo(mutationCtx, hit.tableId, hit.r, hit.c)
+    return info === null ? null : { kind: info.kind }
   }
 
   const handleToggleLock = (): void => {
@@ -871,13 +902,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertColBefore}
                   >
-                    Insert column before
+                    Insert column left
                   </ContextMenuItem>
                   <ContextMenuItem
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertColAfter}
                   >
-                    Insert column after
+                    Insert column right
                   </ContextMenuItem>
                   <ContextMenuItem
                     disabled={
@@ -902,6 +933,23 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                     onSelect={handleTableDeleteCol}
                   >
                     Delete column
+                  </ContextMenuItem>
+                  {/* M29 Phase 3 — Merge / Split */}
+                  <ContextMenuItem
+                    disabled={
+                      mutationCtx === null ||
+                      tableRange === null ||
+                      tableRange.tableId !== tableCellHitRef.current.tableId
+                    }
+                    onSelect={handleTableMerge}
+                  >
+                    Merge cells
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null || mergeInfoAtClickedCell() === null}
+                    onSelect={handleTableSplit}
+                  >
+                    Split cell
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                 </>

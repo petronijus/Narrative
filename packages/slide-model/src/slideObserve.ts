@@ -717,25 +717,23 @@ function emitOwningFieldPatch(target: Y.AbstractType<unknown>, pending: PendingB
     if (parent instanceof Y.Map) {
       const candidateId = parent.get('id')
       if (typeof candidateId === 'string') {
+        const ownerType =
+          typeof parent.get('type') === 'string' ? (parent.get('type') as string) : ''
         // Found the slide-object Y.Map. Emit a patch on the field
         // that owns `cur`. Fast path for Y.Text (parentSub gives the
         // key directly); slow path iterates entries.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const directKey = (cur as any)._item?.parentSub as string | undefined
         if (typeof directKey === 'string' && directKey !== 'id' && directKey !== 'type') {
-          const plain = parent.get(directKey)
           mergePatch(pending, candidateId, {
-            [directKey]:
-              plain instanceof Y.AbstractType ? (plain as Y.AbstractType<unknown>).toJSON() : plain,
+            [directKey]: snapshotField(parent, directKey, ownerType),
           })
           return
         }
         for (const [k, v] of parent.entries()) {
           if (v === cur) {
             if (k !== 'id' && k !== 'type') {
-              mergePatch(pending, candidateId, {
-                [k]: v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v,
-              })
+              mergePatch(pending, candidateId, { [k]: snapshotField(parent, k, ownerType) })
             }
             return
           }
@@ -745,6 +743,100 @@ function emitOwningFieldPatch(target: Y.AbstractType<unknown>, pending: PendingB
     }
     cur = parent
   }
+}
+
+/**
+ * Read field `key` off a slide-object's id-bearing Y.Map and project
+ * it to the plain shape the renderer consumes.
+ *
+ * Critical invariant: `Y.Text` instances are NEVER flattened to plain
+ * strings. The renderer (textRenderer.buildHtml, table cell paint) keys
+ * its async HTMLText rasterisation off Y.Text identity and reads
+ * per-run formatting via `toDelta()` — flattening here would replace
+ * the live Y.Text reference with a snapshot string, and the next user
+ * keystroke would then diff against that snapshot instead of against
+ * the live Y.Text, producing only the most-recent character ever
+ * making it to the canvas.
+ *
+ * Other AbstractType fields (e.g. componentInstance.overrides Y.Map)
+ * are projected with `toJSON()` because the reconciler reads them
+ * as plain JSON. Y.Array of numbers / nested maps inside tables get
+ * structural unwrapping that preserves the Y.Text body of each cell.
+ */
+function snapshotField(yMap: Y.Map<unknown>, key: string, ownerType: string): unknown {
+  const v = yMap.get(key)
+  if (ownerType === 'table') {
+    if (key === 'rows' && v instanceof Y.Array) {
+      return unwrapTableRowsPreservingYText(v as Y.Array<Y.Array<Y.Map<unknown>>>)
+    }
+    if (key === 'colWidths' || key === 'rowHeights') {
+      if (!(v instanceof Y.Array)) return v
+      const out: number[] = []
+      for (let i = 0; i < v.length; i++) {
+        const n = v.get(i)
+        if (typeof n === 'number') out.push(n)
+      }
+      return out
+    }
+    if (key === 'defaults' && v instanceof Y.Map) {
+      return unwrapTableDefaults(v as Y.Map<unknown>)
+    }
+  }
+  // Preserve Y.Text references — see the docstring above. Only Y.Map
+  // and Y.Array values go through toJSON.
+  if (v instanceof Y.Text) return v
+  return v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
+}
+
+function unwrapTableRowsPreservingYText(
+  rowsY: Y.Array<Y.Array<Y.Map<unknown>>>,
+): Array<Array<Record<string, unknown>>> {
+  const out: Array<Array<Record<string, unknown>>> = []
+  for (let r = 0; r < rowsY.length; r++) {
+    const rowY = rowsY.get(r)
+    if (!(rowY instanceof Y.Array)) {
+      out.push([])
+      continue
+    }
+    const row: Array<Record<string, unknown>> = []
+    for (let c = 0; c < rowY.length; c++) {
+      const cellY = rowY.get(c)
+      if (cellY instanceof Y.Map) {
+        row.push(unwrapCellPreservingYText(cellY))
+      } else {
+        row.push({ text: '' })
+      }
+    }
+    out.push(row)
+  }
+  return out
+}
+
+function unwrapCellPreservingYText(cellY: Y.Map<unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  cellY.forEach((value, key) => {
+    if ((key === 'border' || key === 'padding') && value instanceof Y.Map) {
+      out[key] = Object.fromEntries(value.entries())
+      return
+    }
+    // Y.Text refs survive intact — renderer keys per-cell HTMLText
+    // sub-nodes by this identity for cross-update reuse.
+    out[key] = value
+  })
+  if (!('text' in out)) out['text'] = ''
+  return out
+}
+
+function unwrapTableDefaults(defaultsY: Y.Map<unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  defaultsY.forEach((value, key) => {
+    if ((key === 'border' || key === 'padding') && value instanceof Y.Map) {
+      out[key] = Object.fromEntries(value.entries())
+      return
+    }
+    out[key] = value
+  })
+  return out
 }
 
 function mergePatch(pending: PendingBatch, id: string, patch: Record<string, unknown>): void {
@@ -763,11 +855,11 @@ function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): vo
   const id = yMap.get('id')
   if (typeof id === 'string') {
     // Direct change on the slide-object Y.Map.
+    const ownerType = typeof yMap.get('type') === 'string' ? (yMap.get('type') as string) : ''
     const patch: Record<string, unknown> = {}
     for (const [key] of event.keys) {
       if (key === 'id' || key === 'type') continue
-      const v = yMap.get(key)
-      patch[key] = v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
+      patch[key] = snapshotField(yMap, key, ownerType)
     }
     mergePatch(pending, id, patch)
     return

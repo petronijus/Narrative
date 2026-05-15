@@ -16,7 +16,7 @@
 import { nanoid } from 'nanoid'
 import * as Y from 'yjs'
 import type { SlideObject, TableCell, TableDefaults, TableObject } from '@narrative/shared'
-import { addObject, type ObjectsMutationContext } from './mutations.js'
+import { addObject, LOCAL_ORIGIN, type ObjectsMutationContext } from './mutations.js'
 
 /**
  * Default styling baked into a fresh table. Mirrors the renderer's
@@ -193,7 +193,7 @@ export function insertTableRow(
     newRow.push(cells)
     rowsY.insert(insertAt, [newRow])
     rowHeights.insert(insertAt, [avgOf(rowHeights, 40)])
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -220,7 +220,7 @@ export function insertTableCol(
       row.insert(insertAt, [buildEmptyCellYMap()])
     }
     colWidths.insert(insertAt, [avgOf(colWidths, 60)])
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -243,7 +243,7 @@ export function deleteTableRow(
   ctx.doc.transact(() => {
     rowsY.delete(atIndex, 1)
     if (atIndex < rowHeights.length) rowHeights.delete(atIndex, 1)
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -269,7 +269,7 @@ export function deleteTableCol(
       if (atIndex < row.length) row.delete(atIndex, 1)
     }
     colWidths.delete(atIndex, 1)
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -337,7 +337,7 @@ export function setTableCellStyle(
       }
       cellY.set(k, v)
     }
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -371,7 +371,7 @@ export function setTableDefaultsPatch(
       }
       defaultsY.set(k, v)
     }
-  })
+  }, LOCAL_ORIGIN)
 }
 
 /**
@@ -393,7 +393,7 @@ export function setTableColWidth(
   ctx.doc.transact(() => {
     colWidths.delete(colIndex, 1)
     colWidths.insert(colIndex, [Math.max(1, width)])
-  })
+  }, LOCAL_ORIGIN)
 }
 
 export function setTableRowHeight(
@@ -410,5 +410,215 @@ export function setTableRowHeight(
   ctx.doc.transact(() => {
     rowHeights.delete(rowIndex, 1)
     rowHeights.insert(rowIndex, [Math.max(1, height)])
-  })
+  }, LOCAL_ORIGIN)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Merge / unmerge + range-wide style apply
+// ---------------------------------------------------------------------------
+
+/** Normalise an (r0, c0, r1, c1) rectangle so lo ≤ hi on each axis. */
+function normRange(
+  r0: number,
+  c0: number,
+  r1: number,
+  c1: number,
+): { r0: number; c0: number; r1: number; c1: number } {
+  return {
+    r0: Math.min(r0, r1),
+    c0: Math.min(c0, c1),
+    r1: Math.max(r0, r1),
+    c1: Math.max(c0, c1),
+  }
+}
+
+/**
+ * Read the rows Y.Array helper — handles the cell lookup boilerplate.
+ * Returns null when the table doesn't exist or the structure is broken.
+ */
+function getRowsArr(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+): Y.Array<Y.Array<Y.Map<unknown>>> | null {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return null
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  return rowsY ?? null
+}
+
+/**
+ * Merge a rectangular range of cells. The top-left cell becomes the
+ * origin, receives `gridSpan`/`rowSpan` for the merge extent; every
+ * other cell in the range is stamped with `mergeOriginR`/`mergeOriginC`
+ * pointers so the renderer can skip them and the origin can paint
+ * their area. Existing merges that the range partially overlaps with
+ * are first unmerged so the result is a clean rectangular merge.
+ *
+ * Cell text on the continuation cells is preserved (a future "split"
+ * surfaces it again) — destructive truncation would surprise users
+ * who merge by mistake and split right after.
+ */
+export function mergeTableCells(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  range: { r0: number; c0: number; r1: number; c1: number },
+): void {
+  const rowsY = getRowsArr(ctx, tableId)
+  if (rowsY === null) return
+  const { r0, c0, r1, c1 } = normRange(range.r0, range.c0, range.r1, range.c1)
+  if (r0 === r1 && c0 === c1) return // single-cell merge is a no-op
+  if (r0 < 0 || c0 < 0 || r1 >= rowsY.length) return
+  ctx.doc.transact(() => {
+    // Clear any prior merge pointers within the new range so we don't
+    // leave stale references to old origins.
+    for (let r = r0; r <= r1; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      for (let c = c0; c <= c1 && c < row.length; c++) {
+        const cell = row.get(c)
+        if (cell === undefined) continue
+        cell.delete('mergeOriginR')
+        cell.delete('mergeOriginC')
+        if (r !== r0 || c !== c0) {
+          cell.delete('gridSpan')
+          cell.delete('rowSpan')
+        }
+      }
+    }
+    // Stamp the origin with the merge extent.
+    const origin = rowsY.get(r0)?.get(c0)
+    if (origin === undefined) return
+    origin.set('gridSpan', c1 - c0 + 1)
+    origin.set('rowSpan', r1 - r0 + 1)
+    // Stamp every continuation cell with pointers back to the origin.
+    for (let r = r0; r <= r1; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      for (let c = c0; c <= c1 && c < row.length; c++) {
+        if (r === r0 && c === c0) continue
+        const cell = row.get(c)
+        if (cell === undefined) continue
+        cell.set('mergeOriginR', r0)
+        cell.set('mergeOriginC', c0)
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Split a merged cell back into individual cells. Targets the merge
+ * origin at `(r, c)` — if the supplied cell is a continuation (has
+ * `mergeOriginR/C`), we walk to its origin first. No-op when the
+ * targeted cell isn't part of a merge.
+ */
+export function splitTableCell(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  r: number,
+  c: number,
+): void {
+  const rowsY = getRowsArr(ctx, tableId)
+  if (rowsY === null) return
+  const cell = rowsY.get(r)?.get(c)
+  if (cell === undefined) return
+  const ptrR = cell.get('mergeOriginR')
+  const ptrC = cell.get('mergeOriginC')
+  const originR = typeof ptrR === 'number' ? ptrR : r
+  const originC = typeof ptrC === 'number' ? ptrC : c
+  const origin = rowsY.get(originR)?.get(originC)
+  if (origin === undefined) return
+  const span = (origin.get('gridSpan') as number | undefined) ?? 1
+  const rowSpan = (origin.get('rowSpan') as number | undefined) ?? 1
+  if (span <= 1 && rowSpan <= 1) return
+  ctx.doc.transact(() => {
+    origin.delete('gridSpan')
+    origin.delete('rowSpan')
+    for (let rr = originR; rr < originR + rowSpan; rr++) {
+      const row = rowsY.get(rr)
+      if (row === undefined) continue
+      for (let cc = originC; cc < originC + span && cc < row.length; cc++) {
+        if (rr === originR && cc === originC) continue
+        const continuation = row.get(cc)
+        if (continuation === undefined) continue
+        continuation.delete('mergeOriginR')
+        continuation.delete('mergeOriginC')
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Apply a style patch to every cell in a rectangular range. Skips merge
+ * continuation pointers so the patch lands on visible cells only — the
+ * origin still gets the patch even when the merge covers the whole
+ * range, which is what callers expect from "select rows + recolor".
+ */
+export function setRangeCellStyle(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  range: { r0: number; c0: number; r1: number; c1: number },
+  patch: CellStylePatch,
+): void {
+  const rowsY = getRowsArr(ctx, tableId)
+  if (rowsY === null) return
+  const { r0, c0, r1, c1 } = normRange(range.r0, range.c0, range.r1, range.c1)
+  ctx.doc.transact(() => {
+    for (let r = r0; r <= r1; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      for (let c = c0; c <= c1 && c < row.length; c++) {
+        const cell = row.get(c)
+        if (cell === undefined) continue
+        // Skip continuation pointers — the origin sits within the range
+        // anyway and will pick up the patch on its own iteration.
+        if (cell.get('mergeOriginR') !== undefined || cell.get('mergeOriginC') !== undefined) {
+          continue
+        }
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === undefined) {
+            cell.delete(k)
+            continue
+          }
+          if ((k === 'border' || k === 'padding') && v !== null && typeof v === 'object') {
+            const sub = new Y.Map<unknown>()
+            for (const [sk, sv] of Object.entries(v as unknown as Record<string, unknown>)) {
+              sub.set(sk, sv)
+            }
+            cell.set(k, sub)
+            continue
+          }
+          cell.set(k, v)
+        }
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Read whether the cell at (r, c) is the origin of a merge (returns its
+ * extent), a continuation (returns the origin coords), or neither.
+ * Used by UI to decide whether to render "Merge" vs "Split" in menus.
+ */
+export function getTableMergeInfo(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  r: number,
+  c: number,
+):
+  | { kind: 'origin'; rowSpan: number; colSpan: number }
+  | { kind: 'continuation'; originR: number; originC: number }
+  | null {
+  const rowsY = getRowsArr(ctx, tableId)
+  if (rowsY === null) return null
+  const cell = rowsY.get(r)?.get(c)
+  if (cell === undefined) return null
+  const ptrR = cell.get('mergeOriginR')
+  const ptrC = cell.get('mergeOriginC')
+  if (typeof ptrR === 'number' && typeof ptrC === 'number') {
+    return { kind: 'continuation', originR: ptrR, originC: ptrC }
+  }
+  const colSpan = (cell.get('gridSpan') as number | undefined) ?? 1
+  const rowSpan = (cell.get('rowSpan') as number | undefined) ?? 1
+  if (colSpan > 1 || rowSpan > 1) return { kind: 'origin', rowSpan, colSpan }
+  return null
 }

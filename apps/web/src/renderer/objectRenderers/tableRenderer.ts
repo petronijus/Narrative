@@ -1,38 +1,71 @@
 /**
  * renderer/objectRenderers/tableRenderer.ts
  *
- * M29 Phase 1 — read-only Pixi renderer for the first-class TableObject.
+ * M29 Phase 3 — Pixi renderer for the first-class TableObject.
+ *
+ * Each cell hosts a `Pixi.HTMLText` rendered through the SAME pipeline
+ * the TextObject renderer uses (`buildHtml` / `buildStyleOpts` /
+ * `wireRedrawOnAsyncTextureUpdate` / `scheduleAsyncTextureCatchup` /
+ * `applyHorizontalAlign` / `applyVerticalAlign`). Per-cell HTMLText
+ * sub-nodes are kept alive across rebuilds (keyed by the cell's Y.Text
+ * identity) so:
+ *   - Custom fonts, italic/underline/per-run color survive (HTMLText
+ *     renders SVG).
+ *   - Async rasterisation never collides with a synchronous destroy
+ *     (the old "Cannot read properties of null (_getFinalPadding)"
+ *     crash).
  *
  * Layout:
- *   Container (positioned at table.x/table.y, rotated, opacity)
- *   ├── Graphics  (cell fills + grid lines + borders)
- *   └── Text × (rows × cols)  (per-cell text, single style per cell)
- *
- * Cell text uses Pixi.Text — Phase 2 swaps in HTMLText for per-run rich
- * formatting. Pointer cells (mergeOriginR/C set) skip drawing so the
- * origin cell can paint over the full merged area.
- *
- * Diffing is whole-table for Phase 1: any change to the table triggers
- * a full re-mount of the cells. Per-cell diff (Phase 5 polish) keeps the
- * existing children alive when only one cell changed.
+ *   Container (positioned/rotated as the TableObject)
+ *   ├── Graphics  (cell fills + grid lines)
+ *   └── per cell:
+ *        Container (clip)  — positioned at cell bbox, masks overflow
+ *           ├── Graphics  (mask)
+ *           └── HTMLText  (anchored by `applyHorizontalAlign` /
+ *                          `applyVerticalAlign` within the inner pad box)
  */
 
-import { Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
+import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
-import type { TableObject, TableCell, TableBorderStyle } from '@narrative/shared'
+import type {
+  TableObject,
+  TableCell,
+  TableBorderStyle,
+  TextObject,
+  FontWeight,
+} from '@narrative/shared'
+import {
+  buildHtml,
+  buildStyleOpts,
+  applyHorizontalAlign,
+  applyVerticalAlign,
+  scheduleAsyncTextureCatchup,
+  wireRedrawOnAsyncTextureUpdate,
+} from './textRenderer.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { resolveColour } from '../colourResolver.js'
 
+/** Default font stack — kept in lockstep with TextEditOverlay so cell
+ *  text glyphs sit on the same baselines between edit and render. */
+const DEFAULT_FONT_STACK = 'system-ui, -apple-system, sans-serif'
+
 const GRID_TAG = Symbol('tableGrid')
-const TEXTS_TAG = Symbol('tableTexts')
-const CLIPS_TAG = Symbol('tableClips')
-const DATA_TAG = Symbol('tableData')
+const CELLS_TAG = Symbol('tableCellNodes')
+const FADED_TAG = Symbol('tableFadedCell')
 
 /**
- * Convert a TableBorderStyle's color slot (may be a TokenRef) to a
- * concrete hex number. Falls back to the default border colour when
- * the resolution fails — keeps the grid visible during token loading.
+ * One rendered cell — kept alive across rebuilds so Pixi's HTMLText
+ * async rasterisation isn't torn down underneath itself. Keyed by the
+ * cell's Y.Text identity in the parent map.
  */
+interface CellNode {
+  yText: Y.Text
+  clip: Container
+  mask: Graphics
+  htmlText: HTMLText
+}
+
 function resolveBorderColour(b: TableBorderStyle | undefined, fallback: number): number {
   if (b === undefined) return fallback
   const resolved = resolveColour(b.color)
@@ -40,9 +73,6 @@ function resolveBorderColour(b: TableBorderStyle | undefined, fallback: number):
 }
 
 function applyObjectTransform(container: Container, data: TableObject): void {
-  // Pivot at centre for natural rotation; compensate position so that
-  // data.x/data.y remain the table's top-left in world space (matches
-  // rectangle / ellipse renderer convention — see rectangleRenderer.ts).
   container.pivot.set(data.width / 2, data.height / 2)
   container.x = data.x + data.width / 2
   container.y = data.y + data.height / 2
@@ -51,17 +81,10 @@ function applyObjectTransform(container: Container, data: TableObject): void {
 }
 
 /**
- * Compute cumulative x offsets for column boundaries. Returns an array
- * of length `colWidths.length + 1`, where `[i]` is the left edge of
- * column `i` (and `[length-1]` is the right edge of the table). Same
- * scheme for row Y offsets via `cumulativeRows`.
- */
-/**
- * Cumulative column edges scaled to fit `table.width`. `colWidths` is
- * treated as a proportion vector — its sum may not match `table.width`
- * after a bbox resize, so we rescale uniformly. Phase 2 column drag
- * handles will mutate the entries directly; this scaling keeps things
- * consistent until then. `cumulativeRows` does the same for height.
+ * Cumulative column edges scaled to fit `table.width`. The CRDT stores
+ * `colWidths` as a proportion vector; the renderer rescales uniformly
+ * so the user's bbox resize (Phase 1 transform handles) updates the
+ * cell layout without mutating the proportions.
  */
 function cumulativeCols(table: TableObject): number[] {
   const out: number[] = [0]
@@ -87,11 +110,6 @@ function cumulativeRows(table: TableObject): number[] {
   return out
 }
 
-/**
- * Compute the (x, y, w, h) bbox of one cell, accounting for merge spans.
- * Pointer cells (mergeOrigin set) return `null` so the renderer can skip
- * them — the origin draws their area instead.
- */
 function cellBbox(
   table: TableObject,
   r: number,
@@ -111,17 +129,13 @@ function cellBbox(
   return { x, y, w: right - x, h: bottom - y }
 }
 
-/**
- * Resolve a cell's effective styling — falls through cell override →
- * table default → built-in safe value.
- */
 interface ResolvedCellStyle {
   fontSize: number
-  fontWeight: string | number
+  fontWeight: FontWeight
   color: number
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'
-  fontFamily: string | undefined
+  fontFamily: string
   fill: number | undefined
   fillAlpha: number
   padding: { top: number; right: number; bottom: number; left: number }
@@ -130,7 +144,7 @@ interface ResolvedCellStyle {
 function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyle {
   const d = table.defaults
   const padding = cell.padding ?? d.padding
-  const fontWeight = cell.fontWeight ?? d.fontWeight
+  const fontWeight = (cell.fontWeight ?? d.fontWeight) as FontWeight
   const colorRaw = resolveColour(cell.color ?? d.color)
   return {
     fontSize: cell.fontSize ?? d.fontSize,
@@ -138,16 +152,51 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
     color: colorRaw === 0 ? 0x111111 : colorRaw,
     align: cell.align ?? d.align,
     vAlign: cell.vAlign ?? d.vAlign,
-    fontFamily: d.fontFamily,
+    fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
     fill: cell.fill !== undefined ? resolveColour(cell.fill) || 0xffffff : undefined,
     fillAlpha: cell.fillAlpha ?? 1,
     padding,
   }
 }
 
+/**
+ * Synthesize a TextObject snapshot from a cell so the shared text
+ * pipeline (buildHtml / buildStyleOpts / applyVerticalAlign / …) can
+ * paint it. `x`/`y` are 0 here — the parent clip Container handles
+ * cell positioning. `width`/`height` are the cell's *inner* box
+ * (bbox minus padding) so wordWrap and vertical alignment respect the
+ * pad.
+ */
+function syntheticCellTextObject(
+  cellId: string,
+  cell: TableCell,
+  style: ResolvedCellStyle,
+  innerW: number,
+  innerH: number,
+): TextObject {
+  const text = cell.text instanceof Y.Text ? cell.text : (cell.text ?? '')
+  return {
+    id: cellId,
+    type: 'text',
+    x: 0,
+    y: 0,
+    width: innerW,
+    height: innerH,
+    rotation: 0,
+    opacity: 1,
+    text,
+    fontFamily: style.fontFamily,
+    fontSize: style.fontSize,
+    fontWeight: style.fontWeight,
+    color: style.color,
+    align: style.align,
+    vAlign: style.vAlign,
+    lineHeight: 1.2,
+  }
+}
+
 function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: number[]): void {
   grid.clear()
-  // 1) Per-cell fills first — drawn under the borders.
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
@@ -160,8 +209,6 @@ function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: num
       }
     }
   }
-  // 2) Per-cell borders — single uniform stroke per cell for Phase 1.
-  //    Phase 2 expands to honour per-edge cell.border overrides.
   const defaultBorder = table.defaults.border
   const defaultColor = resolveBorderColour(defaultBorder, 0xcccccc)
   const defaultWidth = defaultBorder?.width ?? 1
@@ -177,102 +224,176 @@ function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: num
 }
 
 /**
- * For each cell, mount a sub-Container holding the Pixi.Text + a
- * Graphics mask that clips text to the cell's inner padding box.
- * Without the mask, a long string would draw past the cell border —
- * the user sees this as text "overflowing the cell" the moment the
- * inline editor closes. We return the masks alongside the texts so
- * `rebuild()` can destroy them on update.
+ * Mount a fresh HTMLText subtree for one cell. Returns the CellNode
+ * so the caller can store it for cross-update reuse.
  */
-function paintTexts(
+function mountCellNode(
+  parent: Container,
+  cellId: string,
+  cell: TableCell,
+  table: TableObject,
+  bbox: { x: number; y: number; w: number; h: number },
+): CellNode | null {
+  if (!(cell.text instanceof Y.Text)) return null
+  const style = resolveCellStyle(table, cell)
+  const innerW = Math.max(1, bbox.w - style.padding.left - style.padding.right)
+  const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
+  const syn = syntheticCellTextObject(cellId, cell, style, innerW, innerH)
+
+  const htmlText = new HTMLText({ text: '', style: new HTMLTextStyle(buildStyleOpts(syn)) })
+  // Per-cell uid prefix avoids Pixi's HTMLText global texture cache
+  // collision when two cells happen to carry byte-identical content
+  // (same comment as in textRenderer.buildHtmlForNode).
+  htmlText.text = `<!--n:${htmlText.uid}-->${buildHtml(syn)}`
+  wireRedrawOnAsyncTextureUpdate(htmlText)
+  scheduleAsyncTextureCatchup(
+    htmlText as unknown as { __narrativeCatchupActive?: boolean; destroyed?: boolean },
+  )
+  applyHorizontalAlign(htmlText, syn)
+  applyVerticalAlign(htmlText, syn)
+  // Shift into the inner-padding box.
+  htmlText.x += style.padding.left
+  htmlText.y += style.padding.top
+
+  const clip = new Container()
+  clip.x = bbox.x
+  clip.y = bbox.y
+  const mask = new Graphics()
+  mask.rect(0, 0, bbox.w, bbox.h).fill({ color: 0xffffff })
+  clip.addChild(mask)
+  clip.addChild(htmlText)
+  clip.mask = mask
+  parent.addChild(clip)
+
+  return { yText: cell.text, clip, mask, htmlText }
+}
+
+/**
+ * Reposition / restyle an existing cell node when the cell's style or
+ * containing bbox changed. Reuses the HTMLText so its async raster
+ * lifecycle isn't disrupted — Pixi's HTMLText only re-rasterises when
+ * the `text` string actually differs.
+ */
+function updateCellNode(
+  node: CellNode,
+  cellId: string,
+  cell: TableCell,
+  table: TableObject,
+  bbox: { x: number; y: number; w: number; h: number },
+): void {
+  const style = resolveCellStyle(table, cell)
+  const innerW = Math.max(1, bbox.w - style.padding.left - style.padding.right)
+  const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
+  const syn = syntheticCellTextObject(cellId, cell, style, innerW, innerH)
+
+  node.htmlText.text = `<!--n:${node.htmlText.uid}-->${buildHtml(syn)}`
+  node.htmlText.style = new HTMLTextStyle(buildStyleOpts(syn))
+  applyHorizontalAlign(node.htmlText, syn)
+  applyVerticalAlign(node.htmlText, syn)
+  node.htmlText.x += style.padding.left
+  node.htmlText.y += style.padding.top
+
+  node.clip.x = bbox.x
+  node.clip.y = bbox.y
+  node.mask.clear()
+  node.mask.rect(0, 0, bbox.w, bbox.h).fill({ color: 0xffffff })
+}
+
+/**
+ * Per-cell diff: reuse HTMLText subtrees keyed by the cell's Y.Text
+ * identity. Cells that disappear get destroyed; new cells get freshly
+ * mounted. Crucially, an unchanged cell keeps its same HTMLText node
+ * across the whole rebuild, so the async rasterisation pipeline is
+ * never torn down underneath itself.
+ *
+ * Returns the new map; the caller stores it on the container.
+ */
+function reconcileCells(
   parent: Container,
   table: TableObject,
   colX: number[],
   rowY: number[],
-): { texts: Text[]; clips: Container[] } {
-  const texts: Text[] = []
-  const clips: Container[] = []
+  prevCells: Map<Y.Text, CellNode>,
+  fadedYText: Y.Text | null,
+): Map<Y.Text, CellNode> {
+  const next = new Map<Y.Text, CellNode>()
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
       const bbox = cellBbox(table, r, c, colX, rowY)
       if (bbox === null) continue
       const cell = row[c]!
-      const style = resolveCellStyle(table, cell)
-      const textValue = typeof cell.text === 'string' ? cell.text : (cell.text?.toString() ?? '')
-      if (textValue.length === 0) continue
-      const innerW = Math.max(1, bbox.w - style.padding.left - style.padding.right)
-      const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
-      const styleObj: ConstructorParameters<typeof TextStyle>[0] = {
-        fontSize: style.fontSize,
-        fontWeight: style.fontWeight as TextStyle['fontWeight'],
-        fill: style.color,
-        align: style.align,
-        wordWrap: true,
-        wordWrapWidth: innerW,
-        // Break mid-word too — without this, a long unbroken string
-        // ("aaaaaaaaaaaaaaa") would only wrap on whitespace, blowing
-        // past the cell border and getting clipped to a single line.
-        breakWords: true,
+      const yText = cell.text instanceof Y.Text ? cell.text : null
+      if (yText === null) continue
+      const cellId = `${table.id}#${r},${c}`
+      let cn = prevCells.get(yText)
+      if (cn === undefined) {
+        const mounted = mountCellNode(parent, cellId, cell, table, bbox)
+        if (mounted === null) continue
+        cn = mounted
+      } else {
+        updateCellNode(cn, cellId, cell, table, bbox)
+        // Re-attach to ensure z-order is post-grid.
+        parent.addChild(cn.clip)
       }
-      if (style.fontFamily !== undefined) styleObj.fontFamily = style.fontFamily
-      const t = new Text({ text: textValue, style: new TextStyle(styleObj) })
-      t.anchor.set(0, 0)
-      // Horizontal align inside the inner box.
-      let tx = style.padding.left
-      if (style.align === 'center') tx = style.padding.left + (innerW - t.width) / 2
-      else if (style.align === 'right') tx = bbox.w - style.padding.right - t.width
-      // Vertical align inside the inner box.
-      let ty = style.padding.top
-      if (style.vAlign === 'middle') ty = style.padding.top + (innerH - t.height) / 2
-      else if (style.vAlign === 'bottom') ty = bbox.h - style.padding.bottom - t.height
-      t.x = tx
-      t.y = ty
-      // Wrap the Text in a clip Container so overflowing glyphs don't
-      // leak past the cell boundary (long words, multi-line text in a
-      // short row, etc.). The mask Graphics covers exactly the cell
-      // bbox; both are positioned at (bbox.x, bbox.y) so children draw
-      // in local coords relative to the cell's top-left.
-      const clip = new Container()
-      clip.x = bbox.x
-      clip.y = bbox.y
-      const mask = new Graphics()
-      mask.rect(0, 0, bbox.w, bbox.h).fill({ color: 0xffffff })
-      clip.addChild(mask)
-      clip.addChild(t)
-      clip.mask = mask
-      parent.addChild(clip)
-      texts.push(t)
-      clips.push(clip)
+      cn.htmlText.alpha = fadedYText !== null && fadedYText === yText ? 0 : 1
+      next.set(yText, cn)
     }
   }
-  return { texts, clips }
+  // Destroy nodes whose Y.Text no longer appears.
+  for (const [yText, cn] of prevCells) {
+    if (!next.has(yText)) cn.clip.destroy({ children: true, texture: true, textureSource: true })
+  }
+  return next
 }
 
 function rebuild(container: Container, data: TableObject): void {
   const colX = cumulativeCols(data)
   const rowY = cumulativeRows(data)
   const tagged = container as Container & { [k: symbol]: unknown }
-  // Wipe previous state. Clip Containers own both their mask Graphics
-  // and the Pixi.Text child, so destroying them with `children:true`
-  // tears the whole sub-tree down in one call.
-  const prevGrid = tagged[GRID_TAG] as Graphics | undefined
-  const prevClips = tagged[CLIPS_TAG] as Container[] | undefined
-  if (prevGrid !== undefined) prevGrid.destroy({ children: false, texture: false })
-  if (prevClips !== undefined) {
-    for (const clip of prevClips)
-      clip.destroy({ children: true, texture: true, textureSource: true })
+
+  // Grid Graphics — single one, reused across updates.
+  let grid = tagged[GRID_TAG] as Graphics | undefined
+  if (grid === undefined) {
+    grid = new Graphics()
+    container.addChild(grid)
+    tagged[GRID_TAG] = grid
+  } else {
+    // Re-attach to keep the grid behind the per-cell text containers.
+    container.addChildAt(grid, 0)
   }
-  container.removeChildren()
-  const grid = new Graphics()
   paintGrid(grid, data, colX, rowY)
-  container.addChild(grid)
-  const { texts, clips } = paintTexts(container, data, colX, rowY)
-  tagged[GRID_TAG] = grid
-  tagged[TEXTS_TAG] = texts
-  tagged[CLIPS_TAG] = clips
-  tagged[DATA_TAG] = data
+
+  // Per-cell HTMLText sub-trees.
+  const prevCells =
+    (tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined) ?? new Map<Y.Text, CellNode>()
+  const fadedYText = tagged[FADED_TAG] as Y.Text | null | undefined
+  const nextCells = reconcileCells(container, data, colX, rowY, prevCells, fadedYText ?? null)
+  tagged[CELLS_TAG] = nextCells
+
   applyObjectTransform(container, data)
+}
+
+/**
+ * Public hook — fades the HTMLText backing a specific cell so the
+ * inline editor overlay can render in front without double-drawing.
+ * Returns true when the cell was found and fading applied (false when
+ * the cell isn't currently mounted, e.g. its Y.Text isn't in the map).
+ */
+export function setTableCellFaded(node: Container, yText: Y.Text | null, faded: boolean): boolean {
+  const tagged = node as Container & { [k: symbol]: unknown }
+  tagged[FADED_TAG] = faded && yText !== null ? yText : null
+  const cells = tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined
+  if (cells === undefined) return false
+  let any = false
+  for (const [k, cn] of cells) {
+    const alpha = faded && yText !== null && yText === k ? 0 : 1
+    if (cn.htmlText.alpha !== alpha) {
+      cn.htmlText.alpha = alpha
+      any = true
+    }
+  }
+  return any
 }
 
 export const tableRenderer: ObjectRenderer<TableObject> = {
@@ -291,9 +412,11 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     const tagged = node as Container & { [k: symbol]: unknown }
     const grid = tagged[GRID_TAG] as Graphics | undefined
     if (grid !== undefined) grid.destroy({ children: false, texture: false })
-    const clips = tagged[CLIPS_TAG] as Container[] | undefined
-    if (clips !== undefined) {
-      for (const clip of clips) clip.destroy({ children: true, texture: true, textureSource: true })
+    const cells = tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined
+    if (cells !== undefined) {
+      for (const cn of cells.values()) {
+        cn.clip.destroy({ children: true, texture: true, textureSource: true })
+      }
     }
     destroyFilterEffects(node)
     node.destroy({ children: true })

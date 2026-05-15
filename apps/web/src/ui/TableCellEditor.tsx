@@ -1,51 +1,76 @@
 /**
  * ui/TableCellEditor.tsx
  *
- * M29 Phase 2 — inline cell editor for the first-class TableObject.
+ * M29 Phase 3 — inline cell editor for the first-class TableObject.
  *
- * Plain-text contenteditable over the active cell, two-way bound to
- * the cell's Y.Text via the same diff-on-input pattern as
- * `TextEditOverlay`. Publishes its selection to the global
- * `textEditSelection` slot so the Inspector's existing inline-format
- * toolbar lights up against the cell text (font weight / italic /
- * underline / color → run-level Y.Text format).
+ * This is a thin wrapper around `TextEditOverlay` — the SAME editor
+ * used by `TextObject` — so cells inherit every typography feature
+ * we've already polished (custom fonts, B/I/U/color via Inspector,
+ * inline-format Cmd+B/I/U, Y.Text two-way binding, peer-edit observer,
+ * selection-publish for the inspector format toolbar, etc.).
  *
- * Keyboard:
- *   Tab / Shift+Tab → next / prev cell (Tab past last appends a row)
- *   Enter           → next row, same col (appends row if at bottom)
- *   Shift+Enter     → newline within the cell
- *   Escape          → exit edit mode, keep cell selected
+ * The trick: synthesize a `TextObject`-shaped value from the cell —
+ * `obj.text` IS the cell's Y.Text reference, so all of TextEditOverlay's
+ * diff/format pipeline operates directly on the same CRDT body the
+ * renderer reads. `obj.id` follows the convention `${tableId}#${r},${c}`
+ * which `SceneGraph.setTextNodeFaded` knows how to walk back to the
+ * table's per-cell HTMLText.
+ *
+ * Cell-only keyboard nav (Tab / Shift+Tab / Enter → next-row) is
+ * intercepted on `onKeyDownCapture` of the wrapper div *before* the
+ * contenteditable inside TextEditOverlay sees the key. Shift+Enter
+ * still inserts a soft line break inside the cell.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useMemo, useRef } from 'react'
 import * as Y from 'yjs'
-import {
-  type ObjectsMutationContext,
-  getTableCellYMap,
-  insertTableRow,
-} from '@narrative/slide-model'
-import { isTokenRef, type TableObject } from '@narrative/shared'
+import { type ObjectsMutationContext, insertTableRow } from '@narrative/slide-model'
+import { isTokenRef, type TableObject, type TextObject } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
-import { setActiveTextSelection } from './textEditSelection.js'
+import { TextEditOverlay } from './TextEditOverlay.js'
 
 export interface TableCellEditorProps {
   table: TableObject
   mutationCtx: ObjectsMutationContext
 }
 
-const hexToCss = (n: number | TokenRef | undefined, fallback: string): string =>
-  n === undefined || (typeof n === 'object' && isTokenRef(n))
-    ? fallback
-    : '#' + (n as number).toString(16).padStart(6, '0')
+function hexResolve(n: number | TokenRef | undefined, fallback: number): number {
+  if (n === undefined) return fallback
+  if (typeof n === 'object' && isTokenRef(n)) return fallback
+  return n as number
+}
 
-/** Renderer's exact bbox math — keep in sync with `tableRenderer.cellBbox`. */
-function cellBbox(
+/**
+ * Resolve the merge-origin coords for a cell. The continuation cells
+ * carry pointers back to where the visible text lives; we always edit
+ * the origin so a click anywhere in a merged area opens the right
+ * editor.
+ */
+function resolveOrigin(table: TableObject, r: number, c: number): { r: number; c: number } {
+  const cell = table.rows[r]?.[c]
+  if (
+    cell !== undefined &&
+    typeof cell.mergeOriginR === 'number' &&
+    typeof cell.mergeOriginC === 'number'
+  ) {
+    return { r: cell.mergeOriginR, c: cell.mergeOriginC }
+  }
+  return { r, c }
+}
+
+/**
+ * Cell bbox in TABLE-LOCAL coords (top-left at the cell's origin in the
+ * un-rotated table frame). Honours gridSpan/rowSpan so merged origins
+ * cover the full merge area.
+ */
+function cellLocalBbox(
   table: TableObject,
   r: number,
   c: number,
 ): { x: number; y: number; w: number; h: number } | null {
-  if (table.rows[r]?.[c] === undefined) return null
+  const cell = table.rows[r]?.[c]
+  if (cell === undefined) return null
   const colSum = table.colWidths.reduce((a, b) => a + b, 0) || 1
   const rowSum = table.rowHeights.reduce((a, b) => a + b, 0) || 1
   const sx = table.width / colSum
@@ -54,260 +79,100 @@ function cellBbox(
   for (let i = 0; i < c; i++) lx += (table.colWidths[i] ?? 0) * sx
   let ty = 0
   for (let i = 0; i < r; i++) ty += (table.rowHeights[i] ?? 0) * sy
-  return {
-    x: table.x + lx,
-    y: table.y + ty,
-    w: (table.colWidths[c] ?? 0) * sx,
-    h: (table.rowHeights[r] ?? 0) * sy,
+  const colSpan = Math.max(1, cell.gridSpan ?? 1)
+  const rowSpan = Math.max(1, cell.rowSpan ?? 1)
+  let w = 0
+  for (let i = c; i < c + colSpan && i < table.colWidths.length; i++) {
+    w += (table.colWidths[i] ?? 0) * sx
   }
+  let h = 0
+  for (let i = r; i < r + rowSpan && i < table.rowHeights.length; i++) {
+    h += (table.rowHeights[i] ?? 0) * sy
+  }
+  return { x: lx, y: ty, w, h }
 }
 
-function readDomText(el: HTMLElement): string {
-  let out = ''
-  const walk = (n: Node): void => {
-    if (n.nodeType === Node.TEXT_NODE) out += n.nodeValue ?? ''
-    else if (n.nodeName === 'BR') out += '\n'
-    else for (let i = 0; i < n.childNodes.length; i++) walk(n.childNodes[i]!)
-  }
-  walk(el)
-  return out
-}
-
-const escapeHtml = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').split('\n').join('<br>')
-
-/** Char-offset → DOM (node, offset) pair, mirroring TextEditOverlay's
- *  `charIndexToDomPosition`. Returns the offset past the last child
- *  when index runs off the end so the caret still lands somewhere. */
-function caretAt(root: Node, idx: number): { node: Node; offset: number } {
-  let remaining = idx
-  let res: { node: Node; offset: number } = { node: root, offset: 0 }
-  let done = false
-  const walk = (n: Node): void => {
-    if (done) return
-    if (n.nodeType === Node.TEXT_NODE) {
-      const len = (n.nodeValue ?? '').length
-      if (remaining <= len) {
-        res = { node: n, offset: remaining }
-        done = true
-        return
-      }
-      remaining -= len
-      return
-    }
-    if (n.nodeName === 'BR') {
-      if (remaining === 0) {
-        const p = n.parentNode
-        if (p !== null) {
-          res = { node: p, offset: Array.prototype.indexOf.call(p.childNodes, n) }
-          done = true
-        }
-        return
-      }
-      remaining -= 1
-      return
-    }
-    for (let i = 0; i < n.childNodes.length; i++) {
-      walk(n.childNodes[i]!)
-      if (done) return
-    }
-  }
-  walk(root)
-  if (!done) res = { node: root, offset: root.childNodes.length }
-  return res
-}
-
-function countCharsUpTo(root: Node, container: Node, offset: number): number {
-  let count = 0
-  let found = false
-  const walk = (n: Node): boolean => {
-    if (found) return true
-    if (n === container) {
-      if (n.nodeType === Node.TEXT_NODE) count += offset
-      else for (let i = 0; i < offset && i < n.childNodes.length; i++) walk(n.childNodes[i]!)
-      found = true
-      return true
-    }
-    if (n.nodeType === Node.TEXT_NODE) {
-      count += (n.nodeValue ?? '').length
-      return false
-    }
-    if (n.nodeName === 'BR') {
-      count += 1
-      return false
-    }
-    for (let i = 0; i < n.childNodes.length; i++) if (walk(n.childNodes[i]!)) return true
-    return false
-  }
-  walk(root)
-  return count
+/**
+ * Rotate a local-frame point around the table's centre into world
+ * coords. The TextEditOverlay positions itself at world (obj.x, obj.y)
+ * and applies `transform: rotate(obj.rotation)` with `transformOrigin:
+ * top-left`, so we feed it the cell's INNER top-left in world space.
+ * The overlay's transform then rotates the cell-content frame by the
+ * same angle, producing the same visual orientation as the rotated
+ * Pixi cells underneath.
+ */
+function localToWorld(table: TableObject, lx: number, ly: number): { x: number; y: number } {
+  const cx = table.x + table.width / 2
+  const cy = table.y + table.height / 2
+  const dx = lx - table.width / 2
+  const dy = ly - table.height / 2
+  const cos = Math.cos(table.rotation)
+  const sin = Math.sin(table.rotation)
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos }
 }
 
 export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
-  const editorRef = useRef<HTMLDivElement>(null)
   const { active, setActive, beginEdit, endEdit } = useTableEdit()
-  const lastPlainRef = useRef<string>('')
-  const localEditRef = useRef<boolean>(false)
   const mutationCtxRef = useRef(mutationCtx)
   mutationCtxRef.current = mutationCtx
 
+  // Resolve the target cell + its Y.Text body + bounding box. Returns
+  // null when the editor shouldn't mount (no active cell, wrong table,
+  // editing flag off, cell missing).
   const binding = useMemo(() => {
     if (active === null || !active.editing || active.tableId !== table.id) return null
-    const cellY = getTableCellYMap(mutationCtxRef.current, active.tableId, active.r, active.c)
-    if (cellY === null) return null
-    const yt = cellY.get('text')
-    return yt instanceof Y.Text ? { yText: yt, r: active.r, c: active.c } : null
-  }, [active, table.id])
-
-  const bbox = useMemo(
-    () => (binding === null ? null : cellBbox(table, binding.r, binding.c)),
-    [binding, table],
-  )
-
-  const styleForCell = useMemo(() => {
-    if (binding === null) return null
-    const cell = table.rows[binding.r]?.[binding.c]
+    const origin = resolveOrigin(table, active.r, active.c)
+    const cell = table.rows[origin.r]?.[origin.c]
     if (cell === undefined) return null
+    if (!(cell.text instanceof Y.Text)) return null
+    const local = cellLocalBbox(table, origin.r, origin.c)
+    if (local === null) return null
+    return { r: origin.r, c: origin.c, cell, yText: cell.text, local }
+  }, [active, table])
+
+  // Synthetic TextObject driving TextEditOverlay. `obj.id` is the
+  // `${tableId}#${r},${c}` form SceneGraph.setTextNodeFaded walks back
+  // to the per-cell HTMLText.
+  const synthetic = useMemo<TextObject | null>(() => {
+    if (binding === null) return null
     const d = table.defaults
-    return {
+    const cell = binding.cell
+    const padding = cell.padding ?? d.padding
+    const innerX = binding.local.x + padding.left
+    const innerY = binding.local.y + padding.top
+    const innerW = Math.max(1, binding.local.w - padding.left - padding.right)
+    const innerH = Math.max(1, binding.local.h - padding.top - padding.bottom)
+    const world = localToWorld(table, innerX, innerY)
+    const obj: TextObject = {
+      id: `${table.id}#${binding.r},${binding.c}`,
+      type: 'text',
+      x: world.x,
+      y: world.y,
+      width: innerW,
+      height: innerH,
+      rotation: table.rotation,
+      opacity: 1,
+      text: binding.yText,
       fontSize: cell.fontSize ?? d.fontSize,
       fontWeight: cell.fontWeight ?? d.fontWeight,
-      color: hexToCss(cell.color ?? d.color, '#111111'),
+      color: hexResolve(cell.color ?? d.color, 0x111111),
       align: cell.align ?? d.align,
       vAlign: cell.vAlign ?? d.vAlign,
-      padding: cell.padding ?? d.padding,
-      fontFamily: d.fontFamily,
+      lineHeight: 1.2,
     }
+    if (d.fontFamily !== undefined) obj.fontFamily = d.fontFamily
+    return obj
   }, [binding, table])
 
-  // Mount: render initial text, focus, select all so first keystroke
-  // replaces the placeholder.
-  useLayoutEffect(() => {
-    if (binding === null) return
-    const el = editorRef.current
-    if (el === null) return
-    const initial = binding.yText.toString()
-    lastPlainRef.current = initial
-    el.innerHTML = escapeHtml(initial)
-    el.focus()
-    const sel = window.getSelection()
-    if (sel !== null) {
-      const r = document.createRange()
-      r.selectNodeContents(el)
-      sel.removeAllRanges()
-      sel.addRange(r)
-    }
-  }, [binding])
+  if (binding === null || synthetic === null) return null
 
-  // Peer-edit observer.
-  useEffect(() => {
-    if (binding === null) return
-    const yText = binding.yText
-    const onChange = (): void => {
-      if (localEditRef.current) return
-      const el = editorRef.current
-      if (el === null) return
-      const next = yText.toString()
-      if (readDomText(el) === next) return
-      const sel = window.getSelection()
-      let savedIdx = -1
-      if (sel !== null && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-        const r = sel.getRangeAt(0)
-        savedIdx = countCharsUpTo(el, r.startContainer, r.startOffset)
-      }
-      el.innerHTML = escapeHtml(next)
-      lastPlainRef.current = next
-      if (savedIdx >= 0 && sel !== null) {
-        const t = caretAt(el, savedIdx)
-        const r = document.createRange()
-        try {
-          r.setStart(t.node, t.offset)
-          r.collapse(true)
-          sel.removeAllRanges()
-          sel.addRange(r)
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    yText.observe(onChange)
-    return () => yText.unobserve(onChange)
-  }, [binding])
-
-  // Publish selection to the global slot so Inspector's inline-format
-  // toolbar binds to this cell's Y.Text (font weight / italic / etc.).
-  useEffect(() => {
-    if (binding === null) return
-    const el = editorRef.current
-    if (el === null) return
-    // A stable id for the cell so the Inspector can scope inline-
-    // format actions to this edit session. Includes (r,c) so peer
-    // row inserts don't accidentally re-target a different cell.
-    const objectId = `${table.id}#${binding.r},${binding.c}`
-    const refocus = (): void => {
-      el.focus()
-    }
-    const publish = (): void => {
-      const sel = window.getSelection()
-      if (sel === null || sel.rangeCount === 0) return
-      if (!el.contains(sel.anchorNode)) return
-      const r = sel.getRangeAt(0)
-      const a = countCharsUpTo(el, r.startContainer, r.startOffset)
-      const b = countCharsUpTo(el, r.endContainer, r.endOffset)
-      setActiveTextSelection({
-        objectId,
-        yText: binding.yText,
-        start: Math.min(a, b),
-        end: Math.max(a, b),
-        refocus,
-      })
-    }
-    publish()
-    document.addEventListener('selectionchange', publish)
-    return () => {
-      document.removeEventListener('selectionchange', publish)
-      setActiveTextSelection(null)
-    }
-  }, [binding, table.id])
-
-  if (binding === null || bbox === null || styleForCell === null) return null
-
-  const handleInput = (): void => {
-    const el = editorRef.current
-    if (el === null) return
-    const next = readDomText(el)
-    const prev = lastPlainRef.current
-    if (next === prev) return
-    let pStart = 0
-    const minLen = Math.min(prev.length, next.length)
-    while (pStart < minLen && prev[pStart] === next[pStart]) pStart += 1
-    let pSuffix = 0
-    while (
-      pSuffix < minLen - pStart &&
-      prev[prev.length - 1 - pSuffix] === next[next.length - 1 - pSuffix]
-    ) {
-      pSuffix += 1
-    }
-    const removeLen = prev.length - pStart - pSuffix
-    const insertText = next.slice(pStart, next.length - pSuffix)
-    if (removeLen === 0 && insertText.length === 0) return
-    localEditRef.current = true
-    try {
-      mutationCtxRef.current.doc.transact(() => {
-        if (removeLen > 0) binding.yText.delete(pStart, removeLen)
-        if (insertText.length > 0) binding.yText.insert(pStart, insertText)
-      })
-    } finally {
-      localEditRef.current = false
-    }
-    lastPlainRef.current = next
+  // Cell nav — intercept Tab / Shift+Tab / plain Enter BEFORE
+  // TextEditOverlay's onKeyDown sees them. `onKeyDownCapture` fires
+  // on the wrapper before the contenteditable inside.
+  const moveTo = (nr: number, nc: number): void => {
+    setActive({ tableId: table.id, r: nr, c: nc })
+    beginEdit({ tableId: table.id, r: nr, c: nc })
   }
-
-  const moveTo = (r: number, c: number): void => {
-    setActive({ tableId: table.id, r, c })
-    beginEdit({ tableId: table.id, r, c })
-  }
-
   const tabNext = (): void => {
     const cols = table.colWidths.length
     const rows = table.rows.length
@@ -323,7 +188,6 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
     }
     moveTo(nr, nc)
   }
-
   const tabPrev = (): void => {
     const cols = table.colWidths.length
     let nr = binding.r
@@ -335,7 +199,6 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
     }
     moveTo(nr, nc)
   }
-
   const enterRow = (): void => {
     const rows = table.rows.length
     let nr = binding.r + 1
@@ -346,91 +209,29 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
     moveTo(nr, binding.c)
   }
 
-  // Wrapper covers the cell bbox in world coords. Flex column with
-  // justifyContent driven by vAlign keeps the contenteditable's vertical
-  // anchor matching what the Pixi renderer draws — without this, top/
-  // middle/bottom cells always rendered the editor at the top.
-  const wrapperStyle: React.CSSProperties = {
-    position: 'absolute',
-    left: bbox.x,
-    top: bbox.y,
-    width: bbox.w,
-    height: bbox.h,
-    transform: `rotate(${table.rotation}rad)`,
-    transformOrigin: `${table.width / 2 - (bbox.x - table.x)}px ${table.height / 2 - (bbox.y - table.y)}px`,
-    boxSizing: 'border-box',
-    padding: `${styleForCell.padding.top}px ${styleForCell.padding.right}px ${styleForCell.padding.bottom}px ${styleForCell.padding.left}px`,
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent:
-      styleForCell.vAlign === 'middle'
-        ? 'center'
-        : styleForCell.vAlign === 'bottom'
-          ? 'flex-end'
-          : 'flex-start',
-    background: 'rgba(255,255,255,0.95)',
-    outline: '2px solid rgba(59, 130, 246, 0.9)',
-    outlineOffset: '-1px',
-    overflow: 'hidden',
-    zIndex: 30,
-  }
-
-  const editorStyle: React.CSSProperties = {
-    width: '100%',
-    border: 'none',
-    outline: 'none',
-    background: 'transparent',
-    padding: 0,
-    margin: 0,
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word',
-    fontFamily: styleForCell.fontFamily ?? 'system-ui, -apple-system, sans-serif',
-    fontSize: `${styleForCell.fontSize}px`,
-    fontWeight: styleForCell.fontWeight as React.CSSProperties['fontWeight'],
-    color: styleForCell.color,
-    textAlign: styleForCell.align,
-    caretColor: styleForCell.color,
-  }
-
   return (
-    <div style={wrapperStyle} data-testid="table-cell-editor">
-      <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        spellCheck={false}
-        style={editorStyle}
-        onInput={handleInput}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            endEdit()
-            return
-          }
-          if (e.key === 'Tab') {
-            e.preventDefault()
-            if (e.shiftKey) tabPrev()
-            else tabNext()
-            return
-          }
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            enterRow()
-            return
-          }
-          if (e.key === 'Enter' && e.shiftKey) {
-            e.preventDefault()
-            document.execCommand('insertLineBreak')
-          }
-        }}
-        onPaste={(e) => {
+    <div
+      data-testid="table-cell-editor"
+      onKeyDownCapture={(e) => {
+        if (e.key === 'Tab') {
           e.preventDefault()
-          const txt = e.clipboardData.getData('text/plain')
-          if (txt !== '') document.execCommand('insertText', false, txt)
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      />
+          e.stopPropagation()
+          if (e.shiftKey) tabPrev()
+          else tabNext()
+          return
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          enterRow()
+          return
+        }
+        // Shift+Enter falls through to TextEditOverlay's contenteditable,
+        // which inserts a soft line break inside the cell. Esc is
+        // handled by TextEditOverlay itself (calls onEnd → endEdit).
+      }}
+    >
+      <TextEditOverlay obj={synthetic} mutationCtx={mutationCtx} onEnd={endEdit} />
     </div>
   )
 }

@@ -15,12 +15,16 @@ import {
   deleteTableCol,
   deleteTableRow,
   getTableCellYMap,
+  getTableMergeInfo,
   insertTableCol,
   insertTableRow,
+  mergeTableCells,
+  setRangeCellStyle,
   setTableCellStyle,
   setTableColWidth,
   setTableDefaultsPatch,
   setTableRowHeight,
+  splitTableCell,
 } from './tableMutations.js'
 import type { TableObject } from '@narrative/shared'
 
@@ -216,6 +220,103 @@ describe('setTableColWidth / setTableRowHeight', () => {
     const t = readTable(ctx.objects, id)
     expect(t.colWidths[0]).toBe(1)
     expect(t.rowHeights[0]).toBe(1)
+  })
+})
+
+describe('mergeTableCells / splitTableCell', () => {
+  it('stamps origin with gridSpan/rowSpan and continuation cells with pointers', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 })
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[0]![0]!.gridSpan).toBe(2)
+    expect(t.rows[0]![0]!.rowSpan).toBe(2)
+    expect(t.rows[0]![1]!.mergeOriginR).toBe(0)
+    expect(t.rows[0]![1]!.mergeOriginC).toBe(0)
+    expect(t.rows[1]![0]!.mergeOriginR).toBe(0)
+    expect(t.rows[1]![1]!.mergeOriginC).toBe(0)
+    // Untouched cells stay clean.
+    expect(t.rows[2]![2]!.mergeOriginR).toBeUndefined()
+    expect(t.rows[2]![2]!.gridSpan).toBeUndefined()
+  })
+
+  it('single-cell range is a no-op', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 1, c0: 1, r1: 1, c1: 1 })
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[1]![1]!.gridSpan).toBeUndefined()
+    expect(t.rows[1]![1]!.rowSpan).toBeUndefined()
+  })
+
+  it('split clears gridSpan/rowSpan and removes pointers', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 2 })
+    splitTableCell(ctx, id, 0, 0)
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[0]![0]!.gridSpan).toBeUndefined()
+    expect(t.rows[0]![0]!.rowSpan).toBeUndefined()
+    for (let r = 0; r <= 1; r++) {
+      for (let c = 0; c <= 2; c++) {
+        expect(t.rows[r]![c]!.mergeOriginR).toBeUndefined()
+        expect(t.rows[r]![c]!.mergeOriginC).toBeUndefined()
+      }
+    }
+  })
+
+  it('split walks from a continuation pointer back to the origin', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 })
+    splitTableCell(ctx, id, 1, 1) // continuation cell
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[0]![0]!.gridSpan).toBeUndefined()
+    expect(t.rows[1]![1]!.mergeOriginR).toBeUndefined()
+  })
+
+  it('getTableMergeInfo distinguishes origin, continuation, and plain cells', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 })
+    expect(getTableMergeInfo(ctx, id, 0, 0)).toEqual({
+      kind: 'origin',
+      rowSpan: 2,
+      colSpan: 2,
+    })
+    expect(getTableMergeInfo(ctx, id, 1, 1)).toEqual({
+      kind: 'continuation',
+      originR: 0,
+      originC: 0,
+    })
+    expect(getTableMergeInfo(ctx, id, 2, 2)).toBeNull()
+  })
+})
+
+describe('setRangeCellStyle', () => {
+  it('applies the patch to every non-continuation cell in the range', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    setRangeCellStyle(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 2 }, { fill: 0x123456 })
+    const t = readTable(ctx.objects, id)
+    for (let r = 0; r <= 1; r++) {
+      for (let c = 0; c <= 2; c++) {
+        expect(t.rows[r]![c]!.fill).toBe(0x123456)
+      }
+    }
+    // Out of range
+    expect(t.rows[2]![0]!.fill).toBeUndefined()
+  })
+
+  it('skips merge continuation cells (origin still gets patched)', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 0, c1: 1 })
+    setRangeCellStyle(ctx, id, { r0: 0, c0: 0, r1: 0, c1: 2 }, { color: 0x111111 })
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[0]![0]!.color).toBe(0x111111) // origin patched
+    expect(t.rows[0]![1]!.color).toBeUndefined() // continuation skipped
+    expect(t.rows[0]![2]!.color).toBe(0x111111) // unmerged cell patched
   })
 })
 
