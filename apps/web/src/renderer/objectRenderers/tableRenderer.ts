@@ -431,11 +431,53 @@ function reconcileCells(
       next.set(yText, cn)
     }
   }
-  // Destroy nodes whose Y.Text no longer appears.
+  // Destroy nodes whose Y.Text no longer appears. We MUST NOT destroy
+  // the HTMLText synchronously here: Pixi's `addRenderable` returns a
+  // Promise.catch chain that can fire on a later render frame. If we
+  // destroy the node before that catch runs, `updateTextBounds` reads
+  // `htmlText._view` (now null) and crashes with the classic
+  // `_getFinalPadding` of null trace.
+  //
+  // The two-step dance: detach from parent immediately (so Pixi's
+  // next collectRenderables pass doesn't see it and re-queue work),
+  // then queue the actual destroy for after the current render tick
+  // has settled — `requestIdleCallback`-or-rAF-pair is enough
+  // because Pixi's SVG→texture promise resolves within at most one
+  // microtask + one rAF after the imageBitmap loads.
   for (const [yText, cn] of prevCells) {
-    if (!next.has(yText)) cn.clip.destroy({ children: true, texture: true, textureSource: true })
+    if (next.has(yText)) continue
+    if (cn.clip.parent !== null) cn.clip.parent.removeChild(cn.clip)
+    queueDeferredDestroy(cn.clip)
   }
   return next
+}
+
+/**
+ * Tear an orphaned cell subtree down off the render path. We wait a
+ * few rAFs so Pixi's HTMLTextPipe has finished its async SVG raster +
+ * texture upload + Promise.catch chain BEFORE we null the node's view
+ * (destroy sets `_view = null` and any in-flight `updateTextBounds`
+ * would NPE otherwise). A `setTimeout` would do, but rAFs keep the
+ * delay tied to actual paint cycles instead of wall-clock — quicker
+ * on idle, longer when the tab is throttled.
+ */
+function queueDeferredDestroy(clip: Container): void {
+  const tick = (n: number): void => {
+    if (n <= 0) {
+      try {
+        clip.destroy({ children: true, texture: true, textureSource: true })
+      } catch {
+        // Pixi internals may throw if we lost a race with a peer
+        // destroying the same subtree — already gone, no-op.
+      }
+      return
+    }
+    requestAnimationFrame(() => tick(n - 1))
+  }
+  // Three frames covers the worst-case Pixi.HTMLText catchup window
+  // (see `scheduleAsyncTextureCatchup` in textRenderer for the same
+  // empirical bound).
+  requestAnimationFrame(() => tick(2))
 }
 
 function rebuild(container: Container, data: TableObject): void {
@@ -551,11 +593,16 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     if (grid !== undefined) grid.destroy({ children: false, texture: false })
     const cells = tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined
     if (cells !== undefined) {
+      // Same deferred-destroy reasoning as `reconcileCells`: detach
+      // each cell now so Pixi's next render frame doesn't try to draw
+      // it, then queue the real destroy a few frames later so any
+      // in-flight HTMLText async work resolves before we null _view.
       for (const cn of cells.values()) {
-        cn.clip.destroy({ children: true, texture: true, textureSource: true })
+        if (cn.clip.parent !== null) cn.clip.parent.removeChild(cn.clip)
+        queueDeferredDestroy(cn.clip)
       }
     }
     destroyFilterEffects(node)
-    node.destroy({ children: true })
+    node.destroy({ children: false })
   },
 }
