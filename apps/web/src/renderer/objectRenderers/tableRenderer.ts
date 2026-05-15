@@ -229,23 +229,34 @@ function syntheticCellTextObject(
   }
 }
 
+type EdgeStroke = {
+  color: number
+  width: number
+  dash: 'solid' | 'dash' | 'dot'
+}
+
 /**
  * Resolve the effective border for one edge of a cell: the cell's
  * per-edge override (when set), otherwise the table-wide default. A
  * cell with `cell.border = { top: ..., bottom: ... }` lets the user
  * draw e.g. just a top + bottom border with no sides, which is the
  * classic "ledger row" look.
+ *
+ * Carries the dash style through so the renderer can draw solid /
+ * dashed / dotted strokes per edge — same affordance Keynote offers
+ * in its Border > Style dropdown.
  */
 function resolveCellEdgeBorder(
   cell: TableCell,
   edge: 'top' | 'right' | 'bottom' | 'left',
   defaults: TableObject['defaults'],
-): { color: number; width: number } | null {
+): EdgeStroke | null {
   const edgeOverride = cell.border?.[edge]
   if (edgeOverride !== undefined) {
     return {
       color: resolveBorderColour(edgeOverride, 0xcccccc),
       width: edgeOverride.width,
+      dash: edgeOverride.dash ?? 'solid',
     }
   }
   // No per-edge override on this cell — fall back to the table default.
@@ -253,6 +264,7 @@ function resolveCellEdgeBorder(
   return {
     color: resolveBorderColour(defaults.border, 0xcccccc),
     width: defaults.border.width,
+    dash: defaults.border.dash ?? 'solid',
   }
 }
 
@@ -286,32 +298,78 @@ function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: num
   }
 }
 
+/**
+ * Dash pattern (on, off) in MULTIPLES of the stroke width, so the
+ * pattern keeps its visual proportions as the user scales border
+ * thickness. Matches the spacing the regular line-renderer uses.
+ */
+function dashPattern(style: 'dash' | 'dot'): [number, number] {
+  if (style === 'dot') return [1, 2]
+  return [4, 2.5]
+}
+
+function strokeEdge(
+  grid: Graphics,
+  border: EdgeStroke,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): void {
+  if (border.width <= 0) return
+  if (border.dash === 'solid') {
+    grid.moveTo(x1, y1)
+    grid.lineTo(x2, y2)
+    grid.stroke({ color: border.color, width: border.width, alpha: 1 })
+    return
+  }
+  // Dashed / dotted: emit a series of short solid segments. Pixi v8's
+  // Graphics has no native dash, so the cheapest approach is one
+  // moveTo+lineTo+stroke per dash. Tables aren't dense enough for the
+  // per-segment overhead to matter visually.
+  const [onMul, offMul] = dashPattern(border.dash)
+  const onLen = Math.max(border.width * onMul, 0.5)
+  const offLen = Math.max(border.width * offMul, 0.5)
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len = Math.hypot(dx, dy)
+  if (len === 0) return
+  const ux = dx / len
+  const uy = dy / len
+  let consumed = 0
+  let drawing = true
+  while (consumed < len) {
+    const segLen = Math.min(drawing ? onLen : offLen, len - consumed)
+    if (drawing) {
+      const sx = x1 + ux * consumed
+      const sy = y1 + uy * consumed
+      const ex = x1 + ux * (consumed + segLen)
+      const ey = y1 + uy * (consumed + segLen)
+      grid.moveTo(sx, sy)
+      grid.lineTo(ex, ey)
+      grid.stroke({ color: border.color, width: border.width, alpha: 1 })
+    }
+    consumed += segLen
+    drawing = !drawing
+  }
+}
+
 function drawCellEdges(
   grid: Graphics,
   cell: TableCell,
   bbox: { x: number; y: number; w: number; h: number },
   defaults: TableObject['defaults'],
 ): void {
-  const stroke = (
-    border: { color: number; width: number },
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number,
-  ): void => {
-    if (border.width <= 0) return
-    grid.moveTo(x1, y1)
-    grid.lineTo(x2, y2)
-    grid.stroke({ color: border.color, width: border.width, alpha: 1 })
-  }
   const top = resolveCellEdgeBorder(cell, 'top', defaults)
-  if (top !== null) stroke(top, bbox.x, bbox.y, bbox.x + bbox.w, bbox.y)
+  if (top !== null) strokeEdge(grid, top, bbox.x, bbox.y, bbox.x + bbox.w, bbox.y)
   const right = resolveCellEdgeBorder(cell, 'right', defaults)
-  if (right !== null) stroke(right, bbox.x + bbox.w, bbox.y, bbox.x + bbox.w, bbox.y + bbox.h)
+  if (right !== null)
+    strokeEdge(grid, right, bbox.x + bbox.w, bbox.y, bbox.x + bbox.w, bbox.y + bbox.h)
   const bottom = resolveCellEdgeBorder(cell, 'bottom', defaults)
-  if (bottom !== null) stroke(bottom, bbox.x, bbox.y + bbox.h, bbox.x + bbox.w, bbox.y + bbox.h)
+  if (bottom !== null)
+    strokeEdge(grid, bottom, bbox.x, bbox.y + bbox.h, bbox.x + bbox.w, bbox.y + bbox.h)
   const left = resolveCellEdgeBorder(cell, 'left', defaults)
-  if (left !== null) stroke(left, bbox.x, bbox.y, bbox.x, bbox.y + bbox.h)
+  if (left !== null) strokeEdge(grid, left, bbox.x, bbox.y, bbox.x, bbox.y + bbox.h)
 }
 
 /**

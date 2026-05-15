@@ -123,17 +123,113 @@ export function TableBorderSelectionOverlay({ table }: TableBorderSelectionOverl
   const colX = useMemo(() => cumulativeCols(table), [table])
   const rowY = useMemo(() => cumulativeRows(table), [table])
 
-  // Always-on grid guides — N+1 horizontals + M+1 verticals.
+  // Always-on grid guides. The perimeter is drawn as full-length lines;
+  // interior boundaries get split into per-column / per-row segments so
+  // we can skip any segment that falls INSIDE a merged-cell area —
+  // otherwise the guides would visually divide a merged cell, which is
+  // exactly what merging is supposed to hide.
   const gridSegments = useMemo<Segment[]>(() => {
     const out: Segment[] = []
-    for (const y of rowY) {
-      out.push({ x1: 0, y1: y, x2: table.width, y2: y })
+    const rowCount = table.rows.length
+    const colCount = table.colWidths.length
+
+    /**
+     * True when the cell at (r, c) is a merge continuation whose origin
+     * sits in an earlier row — i.e., the horizontal boundary at
+     * `rowY[r]` cuts THROUGH a merged area for this column and we
+     * should skip its segment there.
+     */
+    const horizontalBoundaryInsideMerge = (r: number, c: number): boolean => {
+      const cell = table.rows[r]?.[c]
+      if (cell === undefined) return false
+      const origR = cell.mergeOriginR
+      if (typeof origR !== 'number') return false
+      return origR < r
     }
-    for (const x of colX) {
-      out.push({ x1: x, y1: 0, x2: x, y2: table.height })
+
+    /** Mirror of the above for vertical boundaries. */
+    const verticalBoundaryInsideMerge = (r: number, c: number): boolean => {
+      const cell = table.rows[r]?.[c]
+      if (cell === undefined) return false
+      const origC = cell.mergeOriginC
+      if (typeof origC !== 'number') return false
+      return origC < c
+    }
+
+    // Horizontal lines — one for every row boundary, including the
+    // perimeter (r=0 and r=rowCount).
+    for (let r = 0; r <= rowCount; r++) {
+      const y = rowY[r] ?? 0
+      const isInterior = r > 0 && r < rowCount
+      if (!isInterior) {
+        out.push({ x1: 0, y1: y, x2: table.width, y2: y })
+        continue
+      }
+      // Walk columns and emit consecutive non-merged segments as a
+      // single line each so the SVG node count stays modest.
+      let segStartCol: number | null = null
+      for (let c = 0; c <= colCount; c++) {
+        const skip = c < colCount && horizontalBoundaryInsideMerge(r, c)
+        if (skip) {
+          if (segStartCol !== null) {
+            out.push({
+              x1: colX[segStartCol] ?? 0,
+              y1: y,
+              x2: colX[c] ?? table.width,
+              y2: y,
+            })
+            segStartCol = null
+          }
+        } else if (segStartCol === null) {
+          segStartCol = c
+        }
+      }
+      if (segStartCol !== null) {
+        out.push({
+          x1: colX[segStartCol] ?? 0,
+          y1: y,
+          x2: colX[colCount] ?? table.width,
+          y2: y,
+        })
+      }
+    }
+
+    // Vertical lines — mirror of the above.
+    for (let c = 0; c <= colCount; c++) {
+      const x = colX[c] ?? 0
+      const isInterior = c > 0 && c < colCount
+      if (!isInterior) {
+        out.push({ x1: x, y1: 0, x2: x, y2: table.height })
+        continue
+      }
+      let segStartRow: number | null = null
+      for (let r = 0; r <= rowCount; r++) {
+        const skip = r < rowCount && verticalBoundaryInsideMerge(r, c)
+        if (skip) {
+          if (segStartRow !== null) {
+            out.push({
+              x1: x,
+              y1: rowY[segStartRow] ?? 0,
+              x2: x,
+              y2: rowY[r] ?? table.height,
+            })
+            segStartRow = null
+          }
+        } else if (segStartRow === null) {
+          segStartRow = r
+        }
+      }
+      if (segStartRow !== null) {
+        out.push({
+          x1: x,
+          y1: rowY[segStartRow] ?? 0,
+          x2: x,
+          y2: rowY[rowCount] ?? table.height,
+        })
+      }
     }
     return out
-  }, [colX, rowY, table.width, table.height])
+  }, [colX, rowY, table.width, table.height, table.rows, table.colWidths])
 
   // Brighter overlay for the edges the active preset will stamp.
   const presetSegments = useMemo<Segment[]>(() => {
