@@ -27,8 +27,11 @@
  *     contenteditable overlay's focus model),
  *   - role isn't viewer.
  *
- * Lives in slide-world coords so it scales with zoom alongside the
- * rest of the canvas overlays. The chrome rotates with the table.
+ * Lives in slide-world coords so it tracks the table's position, but
+ * every visual dimension (axis thickness, corner handle size, dividers,
+ * fonts) is multiplied by `inv = 1 / zoom` so the chrome stays a constant
+ * screen-px size at any zoom — mirrors how TransformHandles, Rulers, and
+ * the other canvas gizmos behave. The chrome rotates with the table.
  */
 
 import { useMemo, useRef, useState } from 'react'
@@ -52,11 +55,18 @@ export interface TableChromeProps {
   isViewer: boolean
 }
 
-/** Slide-px width of the row-number axis and height of the column-
- *  letter axis. Same constant on both so the corner squares stay square. */
+/** SCREEN-px width of the row-number axis and height of the column-
+ *  letter axis. Same constant on both so the corner squares stay square.
+ *  Multiplied by `inv` at render time → world-px = `AXIS_THICKNESS * inv`. */
 const AXIS_THICKNESS = 24
-/** Slide-px size of the corner buttons (move / add-col / add-row). */
+/** SCREEN-px size of the corner buttons (move / add-col / add-row). */
 const CORNER_SIZE = 20
+/** SCREEN-px width of the boundary-drag hit zones. */
+const BOUNDARY_HIT = 8
+/** SCREEN-px font size for the column letters / row numbers. */
+const AXIS_FONT = 11
+/** SCREEN-px width of the inner dividers between header cells. */
+const DIVIDER_PX = 1
 
 const COL_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const colLabel = (c: number): string => {
@@ -112,6 +122,18 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
 
   const colX = useMemo(() => cumulativeCols(table), [table])
   const rowY = useMemo(() => cumulativeRows(table), [table])
+
+  // Inverse zoom — every visual dimension below is `<screen-px> * inv` so
+  // it lands at the intended size on screen after the artboard's
+  // scale(zoom) transform.
+  const inv = 1 / (zoom || 1)
+  const axis = AXIS_THICKNESS * inv
+  // CORNER_SIZE intentionally NOT pre-multiplied: each corner handle
+  // applies `transform: scale(inv)` itself so it can keep crisp lines
+  // at any zoom (see CornerHandle for the rationale).
+  const boundaryHit = BOUNDARY_HIT * inv
+  const axisFont = AXIS_FONT * inv
+  const divider = DIVIDER_PX * inv
 
   // Pointer scale: world coords → slide-screen px require dividing by
   // zoom for screen-pixel deltas. We grab live zoom for pointer math.
@@ -374,17 +396,17 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
   // Layout in world coords
   // -------------------------------------------------------------------
 
-  // The chrome's outer rect sits at the table's origin minus the axis
-  // thickness on the left/top — wraps the table edges so the row /
-  // column axes hug the cells.
+  // The chrome's outer rect sits at the table's origin minus the (zoom-
+  // independent) axis thickness on the left/top — wraps the table edges
+  // so the row/column axes hug the cells.
   const outerStyle: React.CSSProperties = {
     position: 'absolute',
-    left: table.x - AXIS_THICKNESS,
-    top: table.y - AXIS_THICKNESS,
-    width: table.width + AXIS_THICKNESS * 2,
-    height: table.height + AXIS_THICKNESS * 2,
+    left: table.x - axis,
+    top: table.y - axis,
+    width: table.width + axis * 2,
+    height: table.height + axis * 2,
     transform: `rotate(${table.rotation}rad)`,
-    transformOrigin: `${table.width / 2 + AXIS_THICKNESS}px ${table.height / 2 + AXIS_THICKNESS}px`,
+    transformOrigin: `${table.width / 2 + axis}px ${table.height / 2 + axis}px`,
     pointerEvents: 'none',
     zIndex: 28,
   }
@@ -395,15 +417,15 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
       <div
         style={{
           position: 'absolute',
-          left: AXIS_THICKNESS,
+          left: axis,
           top: 0,
           width: table.width,
-          height: AXIS_THICKNESS,
+          height: axis,
           pointerEvents: 'auto',
           // Subtle baseline separating the axis bar from the table cells
           // below — same colour as the inner dividers so the whole bar
           // reads as one strip of header chrome.
-          borderBottom: '1px solid rgba(0,0,0,0.12)',
+          borderBottom: `${divider}px solid rgba(0,0,0,0.12)`,
         }}
       >
         {table.colWidths.map((_, c) => {
@@ -419,7 +441,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
                 left: colX[c],
                 top: 0,
                 width: (colX[c + 1] ?? colX[c] ?? 0) - (colX[c] ?? 0),
-                height: AXIS_THICKNESS,
+                height: axis,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -427,11 +449,11 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
                 // Inner dividers between adjacent header cells — give a
                 // visual cue that the columns are separately resizable.
                 // Skip on the last cell so the right edge stays clean.
-                borderRight: isLast ? 'none' : '1px solid rgba(0,0,0,0.12)',
+                borderRight: isLast ? 'none' : `${divider}px solid rgba(0,0,0,0.12)`,
                 background: 'transparent',
                 cursor: 'pointer',
                 color: 'rgba(0,0,0,0.55)',
-                fontSize: 11,
+                fontSize: axisFont,
                 fontWeight: 500,
                 userSelect: 'none',
               }}
@@ -447,10 +469,10 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
             onPointerDown={onColBoundaryPointerDown(i)}
             style={{
               position: 'absolute',
-              left: (colX[i + 1] ?? 0) - 4,
+              left: (colX[i + 1] ?? 0) - boundaryHit / 2,
               top: 0,
-              width: 8,
-              height: AXIS_THICKNESS,
+              width: boundaryHit,
+              height: axis,
               cursor: 'col-resize',
               background: 'transparent',
             }}
@@ -463,12 +485,12 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
         style={{
           position: 'absolute',
           left: 0,
-          top: AXIS_THICKNESS,
-          width: AXIS_THICKNESS,
+          top: axis,
+          width: axis,
           height: table.height,
           pointerEvents: 'auto',
           // Subtle separator between row-number bar and table cells.
-          borderRight: '1px solid rgba(0,0,0,0.12)',
+          borderRight: `${divider}px solid rgba(0,0,0,0.12)`,
         }}
       >
         {table.rowHeights.map((_, r) => {
@@ -483,7 +505,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
                 position: 'absolute',
                 left: 0,
                 top: rowY[r],
-                width: AXIS_THICKNESS,
+                width: axis,
                 height: (rowY[r + 1] ?? rowY[r] ?? 0) - (rowY[r] ?? 0),
                 display: 'flex',
                 alignItems: 'center',
@@ -491,11 +513,11 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
                 border: 'none',
                 // Inner divider between row headers — same rationale as
                 // the column letters.
-                borderBottom: isLast ? 'none' : '1px solid rgba(0,0,0,0.12)',
+                borderBottom: isLast ? 'none' : `${divider}px solid rgba(0,0,0,0.12)`,
                 background: 'transparent',
                 cursor: 'pointer',
                 color: 'rgba(0,0,0,0.55)',
-                fontSize: 11,
+                fontSize: axisFont,
                 fontWeight: 500,
                 userSelect: 'none',
               }}
@@ -511,9 +533,9 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
             style={{
               position: 'absolute',
               left: 0,
-              top: (rowY[i + 1] ?? 0) - 4,
-              width: AXIS_THICKNESS,
-              height: 8,
+              top: (rowY[i + 1] ?? 0) - boundaryHit / 2,
+              width: axis,
+              height: boundaryHit,
               cursor: 'row-resize',
               background: 'transparent',
             }}
@@ -523,9 +545,9 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
 
       {/* ── Top-left ◯ : move-table handle ───────────────────────────── */}
       <CornerHandle
-        x={(AXIS_THICKNESS - CORNER_SIZE) / 2}
-        y={(AXIS_THICKNESS - CORNER_SIZE) / 2}
-        size={CORNER_SIZE}
+        cx={axis / 2}
+        cy={axis / 2}
+        inv={inv}
         cursor="move"
         ariaLabel="Move table"
         onPointerDown={onMoveHandlePointerDown}
@@ -543,9 +565,9 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
 
       {/* ── Top-right ⫼ : add/remove columns ─────────────────────────── */}
       <CornerHandle
-        x={AXIS_THICKNESS + table.width + (AXIS_THICKNESS - CORNER_SIZE) / 2}
-        y={(AXIS_THICKNESS - CORNER_SIZE) / 2}
-        size={CORNER_SIZE}
+        cx={axis + table.width + axis / 2}
+        cy={axis / 2}
+        inv={inv}
         cursor="ew-resize"
         ariaLabel="Add or remove columns"
         onPointerDown={onAddColHandlePointerDown}
@@ -558,9 +580,9 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
 
       {/* ── Bottom-left ☰ : add/remove rows ──────────────────────────── */}
       <CornerHandle
-        x={(AXIS_THICKNESS - CORNER_SIZE) / 2}
-        y={AXIS_THICKNESS + table.height + (AXIS_THICKNESS - CORNER_SIZE) / 2}
-        size={CORNER_SIZE}
+        cx={axis / 2}
+        cy={axis + table.height + axis / 2}
+        inv={inv}
         cursor="ns-resize"
         ariaLabel="Add or remove rows"
         onPointerDown={onAddRowHandlePointerDown}
@@ -586,23 +608,33 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
 // ---------------------------------------------------------------------------
 
 function CornerHandle({
-  x,
-  y,
-  size,
+  cx,
+  cy,
+  inv,
   cursor,
   ariaLabel,
   onPointerDown,
   children,
 }: {
-  x: number
-  y: number
-  size: number
+  /** World-px center of the handle (X). */
+  cx: number
+  /** World-px center of the handle (Y). */
+  cy: number
+  /** 1 / zoom — applied via `scale(inv)` so the handle stays at constant
+   *  screen-px regardless of artboard zoom. */
+  inv: number
   cursor: string
   ariaLabel: string
   onPointerDown: (e: React.PointerEvent) => void
   children: React.ReactNode
 }) {
   const [hover, setHover] = useState(false)
+  // Same trick as `handleVisuals.tsx`: the element + its children use raw
+  // CSS px (CORNER_SIZE = 20, border 1.5px, etc), and the wrapper applies
+  // `transform: translate(-50%, -50%) scale(inv)` so the browser
+  // composites the whole layer at native resolution. Result: sharp lines
+  // at any zoom — multiplying border/box-shadow widths by `inv` would
+  // produce sub-pixel CSS values that don't rasterize cleanly.
   return (
     <div
       role="button"
@@ -612,10 +644,10 @@ function CornerHandle({
       onPointerLeave={() => setHover(false)}
       style={{
         position: 'absolute',
-        left: x,
-        top: y,
-        width: size,
-        height: size,
+        left: cx,
+        top: cy,
+        width: CORNER_SIZE,
+        height: CORNER_SIZE,
         borderRadius: '50%',
         background: 'white',
         border: '1.5px solid rgba(59, 130, 246, 0.9)',
@@ -627,6 +659,8 @@ function CornerHandle({
         justifyContent: 'center',
         boxShadow: '0 1px 2px rgba(0,0,0,0.08)',
         userSelect: 'none',
+        transform: `translate(-50%, -50%) scale(${inv})`,
+        transformOrigin: 'center',
       }}
     >
       {children}

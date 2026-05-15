@@ -595,6 +595,142 @@ export function setRangeCellStyle(
 }
 
 /**
+ * Border preset names — Keynote-style 9-cell preset grid in the
+ * Inspector. Each preset maps every cell in the range to a specific
+ * set of edges (top/right/bottom/left). Cells whose computed edge set
+ * is empty get their `border` field deleted so they fall back to the
+ * table defaults.
+ *
+ *   - `none`     : Clear all borders on every cell in the range.
+ *   - `all`      : Every cell gets all four edges.
+ *   - `outer`    : Perimeter of the range only. Cells on the top/bottom
+ *                  row get top/bottom; cells on the left/right column
+ *                  get left/right. Interior cells get no edges.
+ *   - `inside`   : Interior dividers only. Non-top cells get a top
+ *                  edge (horizontal dividers); non-left cells get a
+ *                  left edge (vertical dividers).
+ *   - `top` / `bottom` / `left` / `right`: only the named outer edge
+ *                  on the cells that touch that edge of the range.
+ *   - `insideH`  : Horizontal interior dividers only (top edge on
+ *                  every cell except the top row).
+ *   - `insideV`  : Vertical interior dividers only (left edge on
+ *                  every cell except the left column).
+ *
+ * Conventions for shared boundaries: we always set top + left rather
+ * than bottom + right when an interior divider could be assigned to
+ * either side, so adjacent cells never duplicate the same divider in
+ * their stored shape.
+ */
+export type TableBorderPreset =
+  | 'none'
+  | 'all'
+  | 'outer'
+  | 'inside'
+  | 'top'
+  | 'bottom'
+  | 'left'
+  | 'right'
+  | 'insideH'
+  | 'insideV'
+
+type CellEdge = 'top' | 'right' | 'bottom' | 'left'
+
+function edgesForPreset(
+  preset: TableBorderPreset,
+  r: number,
+  c: number,
+  range: { r0: number; c0: number; r1: number; c1: number },
+): CellEdge[] {
+  const isTopRow = r === range.r0
+  const isBottomRow = r === range.r1
+  const isLeftCol = c === range.c0
+  const isRightCol = c === range.c1
+  switch (preset) {
+    case 'none':
+      return []
+    case 'all':
+      return ['top', 'right', 'bottom', 'left']
+    case 'outer': {
+      const out: CellEdge[] = []
+      if (isTopRow) out.push('top')
+      if (isBottomRow) out.push('bottom')
+      if (isLeftCol) out.push('left')
+      if (isRightCol) out.push('right')
+      return out
+    }
+    case 'inside': {
+      const out: CellEdge[] = []
+      if (!isTopRow) out.push('top')
+      if (!isLeftCol) out.push('left')
+      return out
+    }
+    case 'top':
+      return isTopRow ? ['top'] : []
+    case 'bottom':
+      return isBottomRow ? ['bottom'] : []
+    case 'left':
+      return isLeftCol ? ['left'] : []
+    case 'right':
+      return isRightCol ? ['right'] : []
+    case 'insideH':
+      return isTopRow ? [] : ['top']
+    case 'insideV':
+      return isLeftCol ? [] : ['left']
+  }
+}
+
+/**
+ * Apply a Keynote-style border preset to every cell in a range.
+ * `edgeSpec` is the {color, width} stamped on each enabled edge —
+ * caller pulls this from `defaults.border` or from the most recently
+ * edited per-edge spec so the preset honours the user's chosen style.
+ *
+ * Cells whose edge set is empty get `border` deleted entirely so the
+ * cell falls back to `defaults.border` on every edge. Merge-continuation
+ * pointer cells are skipped (the origin sits within the range anyway).
+ */
+export function setRangeBorderPreset(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  range: { r0: number; c0: number; r1: number; c1: number },
+  preset: TableBorderPreset,
+  edgeSpec: { color: number; width: number },
+): void {
+  const rowsY = getRowsArr(ctx, tableId)
+  if (rowsY === null) return
+  const { r0, c0, r1, c1 } = normRange(range.r0, range.c0, range.r1, range.c1)
+  ctx.doc.transact(() => {
+    for (let r = r0; r <= r1; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      for (let c = c0; c <= c1 && c < row.length; c++) {
+        const cell = row.get(c)
+        if (cell === undefined) continue
+        if (cell.get('mergeOriginR') !== undefined || cell.get('mergeOriginC') !== undefined) {
+          continue
+        }
+        const edges = edgesForPreset(preset, r, c, { r0, c0, r1, c1 })
+        if (edges.length === 0) {
+          cell.delete('border')
+          continue
+        }
+        // Mirror the per-edge shape used by setRangeCellStyle: a Y.Map at
+        // the `border` slot whose values are plain JS objects (NOT Y.Maps).
+        // The bindings unwrap path flattens the outer Y.Map but expects
+        // plain edge specs — wrapping each edge in another Y.Map would
+        // surface them as Y.Map references in the read path and break
+        // every `cell.border.top.width` consumer.
+        const borderMap = new Y.Map<unknown>()
+        for (const edge of edges) {
+          borderMap.set(edge, { color: edgeSpec.color, width: edgeSpec.width })
+        }
+        cell.set('border', borderMap)
+      }
+    }
+  }, LOCAL_ORIGIN)
+}
+
+/**
  * Read whether the cell at (r, c) is the origin of a merge (returns its
  * extent), a continuation (returns the origin coords), or neither.
  * Used by UI to decide whether to render "Merge" vs "Split" in menus.

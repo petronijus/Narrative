@@ -107,12 +107,13 @@ export {
   mergeTableCells,
   splitTableCell,
   setRangeCellStyle,
+  setRangeBorderPreset,
   getTableMergeInfo,
   DEFAULT_TABLE_DEFAULTS,
   DEFAULT_TABLE_ROWS,
   DEFAULT_TABLE_COLS,
 } from './tableMutations.js'
-export type { AddTableOpts, CellStylePatch } from './tableMutations.js'
+export type { AddTableOpts, CellStylePatch, TableBorderPreset } from './tableMutations.js'
 
 // Rich-text helpers (P15+) — Y.Text ↔ delta ↔ HTML
 export {

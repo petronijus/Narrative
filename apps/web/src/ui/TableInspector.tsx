@@ -28,6 +28,7 @@ import * as Y from 'yjs'
 import {
   type ObjectsMutationContext,
   type CellStylePatch,
+  type TableBorderPreset,
   applyFormat,
   deleteTableCol,
   deleteTableRow,
@@ -36,6 +37,7 @@ import {
   insertTableRow,
   LOCAL_ORIGIN,
   mergeTableCells,
+  setRangeBorderPreset,
   setRangeCellStyle,
   setTableCellStyle,
   setTableDefaultsPatch,
@@ -153,6 +155,38 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       return
     }
     patchCell(patch as Parameters<typeof setTableCellStyle>[4])
+  }
+
+  /**
+   * Apply a Keynote-style border preset to the current range (or the
+   * active cell when no range is selected). Edge color/width comes from
+   * `defaults.border` so the stamp matches the table's overall stroke
+   * style — the user can still refine per edge through the existing
+   * BorderEditor below the preset grid.
+   */
+  const applyBorderPreset = (preset: TableBorderPreset): void => {
+    const defaultsBorder = obj.defaults.border
+    const seedColor =
+      typeof defaultsBorder?.color === 'number' ? (defaultsBorder.color as number) : 0xcccccc
+    const seedWidth = defaultsBorder?.width ?? 1
+    if (range !== null && range.tableId === obj.id) {
+      setRangeBorderPreset(
+        mutationCtx,
+        obj.id,
+        { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 },
+        preset,
+        { color: seedColor, width: seedWidth },
+      )
+      return
+    }
+    if (active === null || active.tableId !== obj.id) return
+    setRangeBorderPreset(
+      mutationCtx,
+      obj.id,
+      { r0: active.r, c0: active.c, r1: active.r, c1: active.c },
+      preset,
+      { color: seedColor, width: seedWidth },
+    )
   }
 
   const rangeInfo = useMemo(() => {
@@ -502,6 +536,11 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
+          {/* Keynote-style 9-preset grid — stamps a common border layout
+              (outer, all, inside, individual edges, interior horizontal/
+              vertical) across the range in one click. Refinement of
+              colour/width per edge stays in the BorderEditor below. */}
+          <BorderPresetGrid disabled={isViewer} onApply={applyBorderPreset} />
           {/* Per-edge border editor — seeded from the range's top-left
               cell's border (if any), but every toggle stamps the same
               shape onto every non-continuation cell in the range via
@@ -602,6 +641,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
+          <BorderPresetGrid disabled={isViewer} onApply={applyBorderPreset} />
           <BorderEditor
             border={activeCell.border}
             defaults={d}
@@ -725,6 +765,107 @@ function BorderEditor({
           Reset all edges
         </button>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// BorderPresetGrid — Keynote-style 9-cell preset picker
+// ---------------------------------------------------------------------------
+
+/**
+ * Glyph edges drawn inside each preset thumbnail. Each segment is shown
+ * solid when "active" and faint otherwise so the user can tell at a
+ * glance which edges the preset will stamp.
+ *
+ *   ┌─┬─┐
+ *   ├─┼─┤    six segments: top/right/bottom/left (outer)
+ *   └─┴─┘                  innerH (middle horizontal)
+ *                          innerV (middle vertical)
+ */
+type PresetGlyphEdge = 'top' | 'right' | 'bottom' | 'left' | 'innerH' | 'innerV'
+
+interface PresetDef {
+  preset: TableBorderPreset
+  label: string
+  active: PresetGlyphEdge[]
+}
+
+/** Preset order mirrors Keynote's familiar 3×3 layout. */
+const PRESETS: PresetDef[] = [
+  { preset: 'outer', label: 'Outer border', active: ['top', 'right', 'bottom', 'left'] },
+  {
+    preset: 'all',
+    label: 'All borders',
+    active: ['top', 'right', 'bottom', 'left', 'innerH', 'innerV'],
+  },
+  { preset: 'inside', label: 'Inside borders', active: ['innerH', 'innerV'] },
+  { preset: 'top', label: 'Top edge only', active: ['top'] },
+  { preset: 'right', label: 'Right edge only', active: ['right'] },
+  { preset: 'bottom', label: 'Bottom edge only', active: ['bottom'] },
+  { preset: 'left', label: 'Left edge only', active: ['left'] },
+  { preset: 'insideH', label: 'Inside horizontals', active: ['innerH'] },
+  { preset: 'insideV', label: 'Inside verticals', active: ['innerV'] },
+]
+
+function PresetGlyph({ active }: { active: PresetGlyphEdge[] }) {
+  const set = new Set(active)
+  const seg = (key: PresetGlyphEdge, x1: number, y1: number, x2: number, y2: number) => (
+    <line
+      key={key}
+      x1={x1}
+      y1={y1}
+      x2={x2}
+      y2={y2}
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="square"
+      opacity={set.has(key) ? 1 : 0.22}
+    />
+  )
+  return (
+    <svg width={20} height={20} viewBox="0 0 20 20" aria-hidden="true">
+      {seg('top', 2, 2, 18, 2)}
+      {seg('right', 18, 2, 18, 18)}
+      {seg('bottom', 2, 18, 18, 18)}
+      {seg('left', 2, 2, 2, 18)}
+      {seg('innerH', 2, 10, 18, 10)}
+      {seg('innerV', 10, 2, 10, 18)}
+    </svg>
+  )
+}
+
+function BorderPresetGrid({
+  disabled,
+  onApply,
+}: {
+  disabled: boolean
+  onApply: (preset: TableBorderPreset) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Border preset
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        {PRESETS.map(({ preset, label, active }) => (
+          <button
+            key={preset}
+            type="button"
+            title={label}
+            aria-label={label}
+            disabled={disabled}
+            onClick={() => onApply(preset)}
+            className={[
+              'flex h-8 items-center justify-center rounded-md border border-input',
+              'text-muted-foreground hover:border-primary hover:bg-accent/40 hover:text-foreground',
+              'transition-colors disabled:opacity-40 disabled:hover:border-input disabled:hover:bg-transparent',
+            ].join(' ')}
+          >
+            <PresetGlyph active={active} />
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
