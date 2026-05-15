@@ -2465,10 +2465,20 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {/* M29 Phase 3: drag-selected cell range highlight. */}
                     <TableRangeHighlight />
 
-                    {/* M29: blue indicator on edges the inspector's
-                      border-preset grid is targeting. Visible only when
-                      an icon is active in the inspector. */}
-                    <TableBorderSelectionOverlay />
+                    {/* M29: faint blue grid guides on every cell boundary
+                      of a selected table (always visible — survives
+                      width-0 / white-on-white borders so the user can
+                      always see the cell layout) + a brighter overlay
+                      on whichever edges the inspector's border-preset
+                      grid is targeting. Mirrors Keynote. */}
+                    {selectedIds.size === 1 &&
+                      (() => {
+                        const onlyId = [...selectedIds][0]
+                        if (onlyId === undefined) return null
+                        const obj = objects.find((o) => o.id === onlyId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return <TableBorderSelectionOverlay table={obj} />
+                      })()}
 
                     {/* M29 Phase 5: Keynote-style chrome around the
                       selected table (axis bars + corner handles). */}

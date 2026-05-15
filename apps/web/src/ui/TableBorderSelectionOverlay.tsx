@@ -1,25 +1,36 @@
 /**
  * ui/TableBorderSelectionOverlay.tsx
  *
- * M29 — thin blue indicator drawn on top of the table whenever the
- * inspector's border-preset grid has an icon active. Shows the user
- * exactly which edges the style controls are about to modify, even
- * when those edges are currently invisible (width 0, white-on-white,
- * etc.). Mirrors Keynote's blue selection markers in the border
- * inspector.
+ * M29 — selection-time grid guides + preset indicator drawn on top of
+ * a selected table.
+ *
+ *   Always-on (whenever the table is in the canvas selection):
+ *     thin faint-blue lines on every cell boundary (outer rectangle +
+ *     interior horizontals + verticals) so the user can see the cell
+ *     layout even when the actual borders are invisible — width 0,
+ *     white-on-white, missing default, etc. Mirrors Keynote's "ghost
+ *     grid" on a selected table.
+ *
+ *   When an inspector preset icon is active for this table:
+ *     the edges that the preset targets are drawn BRIGHTER and a touch
+ *     THICKER on top of the guides so the user can see exactly which
+ *     edges the style controls are about to modify.
  *
  * Lives in slide-world coords so it tracks the table as it moves /
- * rotates, but line stroke is divided by `zoom` so it stays at a
- * constant ~2 screen-px regardless of artboard scale — same trick the
- * range-highlight + TableChrome use.
+ * rotates, but every stroke is divided by `zoom` so it stays at a
+ * constant screen-px width — same trick the range-highlight + chrome
+ * use.
  */
 
 import { useMemo } from 'react'
 import type { TableBorderPreset } from '@narrative/slide-model'
-import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import type { TableObject } from '@narrative/shared'
+
+export interface TableBorderSelectionOverlayProps {
+  table: TableObject
+}
 
 /** Cumulative column edges in TABLE-LOCAL world-px, rescaled so the
  *  edges sit on the same pixels the Pixi renderer drew the cells on. */
@@ -52,9 +63,7 @@ type CellEdge = 'top' | 'right' | 'bottom' | 'left'
 /**
  * For a given preset + cell position inside the target range, return
  * the set of edges that the preset will stamp on that cell. Kept in
- * sync with `edgesForPreset` in `tableMutations.ts` — both files are
- * pure and tiny so duplicating the table is fine. Centralising would
- * require pulling slide-model types into a shared location.
+ * sync with `edgesForPreset` in `tableMutations.ts`.
  */
 function edgesForPreset(
   preset: TableBorderPreset,
@@ -68,7 +77,6 @@ function edgesForPreset(
   const isRightCol = c === range.c1
   switch (preset) {
     case 'none':
-      return ['top', 'right', 'bottom', 'left']
     case 'all':
       return ['top', 'right', 'bottom', 'left']
     case 'outer': {
@@ -107,25 +115,29 @@ interface Segment {
   y2: number
 }
 
-export function TableBorderSelectionOverlay() {
+export function TableBorderSelectionOverlay({ table }: TableBorderSelectionOverlayProps) {
   const { active, range, activeBorderPreset } = useTableEdit()
-  const { objects } = useSlideObjects()
   const { zoom } = useZoomLevel()
   const inv = 1 / (zoom || 1)
 
-  const table = useMemo<TableObject | null>(() => {
-    if (activeBorderPreset === null) return null
-    // The inspector tells us which table is targeted, so we don't need
-    // a cell/range to be active — the indicator shows up the moment
-    // the user clicks an icon on a freshly-selected table.
-    const obj = objects.find((o) => o.id === activeBorderPreset.tableId)
-    return obj !== undefined && obj.type === 'table' ? obj : null
-  }, [objects, activeBorderPreset])
+  const colX = useMemo(() => cumulativeCols(table), [table])
+  const rowY = useMemo(() => cumulativeRows(table), [table])
 
-  const segments = useMemo<Segment[]>(() => {
-    if (table === null || activeBorderPreset === null) return []
-    // Resolve the target range — same precedence as TableInspector:
-    // explicit drag-selection → active cell (1×1) → whole table.
+  // Always-on grid guides — N+1 horizontals + M+1 verticals.
+  const gridSegments = useMemo<Segment[]>(() => {
+    const out: Segment[] = []
+    for (const y of rowY) {
+      out.push({ x1: 0, y1: y, x2: table.width, y2: y })
+    }
+    for (const x of colX) {
+      out.push({ x1: x, y1: 0, x2: x, y2: table.height })
+    }
+    return out
+  }, [colX, rowY, table.width, table.height])
+
+  // Brighter overlay for the edges the active preset will stamp.
+  const presetSegments = useMemo<Segment[]>(() => {
+    if (activeBorderPreset === null || activeBorderPreset.tableId !== table.id) return []
     const targetRange =
       range !== null && range.tableId === table.id
         ? { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 }
@@ -142,8 +154,6 @@ export function TableBorderSelectionOverlay() {
     const c0 = Math.min(targetRange.c0, targetRange.c1)
     const c1 = Math.max(targetRange.c0, targetRange.c1)
 
-    const colX = cumulativeCols(table)
-    const rowY = cumulativeRows(table)
     const out: Segment[] = []
     for (let r = r0; r <= r1; r++) {
       const rowCells = table.rows[r]
@@ -151,8 +161,6 @@ export function TableBorderSelectionOverlay() {
       for (let c = c0; c <= c1 && c < rowCells.length; c++) {
         const cell = rowCells[c]
         if (cell === undefined) continue
-        // Skip merge-continuation cells — the origin draws the merged
-        // area, so the indicator on a pointer would be wrong.
         if (cell.mergeOriginR !== undefined || cell.mergeOriginC !== undefined) continue
         const edges = edgesForPreset(activeBorderPreset.preset, r, c, { r0, c0, r1, c1 })
         const x = colX[c] ?? 0
@@ -178,9 +186,7 @@ export function TableBorderSelectionOverlay() {
       }
     }
     return out
-  }, [table, activeBorderPreset, range, active])
-
-  if (table === null || segments.length === 0) return null
+  }, [activeBorderPreset, table, range, active, colX, rowY])
 
   return (
     <div
@@ -192,8 +198,6 @@ export function TableBorderSelectionOverlay() {
         top: table.y,
         width: table.width,
         height: table.height,
-        // Rotate around the table centre so the overlay tracks rotation
-        // alongside the Pixi-rendered cells.
         transform: `rotate(${table.rotation}rad)`,
         transformOrigin: `${table.width / 2}px ${table.height / 2}px`,
         pointerEvents: 'none',
@@ -207,9 +211,23 @@ export function TableBorderSelectionOverlay() {
         viewBox={`0 0 ${table.width} ${table.height}`}
         style={{ position: 'absolute', inset: 0, overflow: 'visible' }}
       >
-        {segments.map((s, i) => (
+        {/* Pass 1 — faint cell-boundary guides, always visible. */}
+        {gridSegments.map((s, i) => (
           <line
-            key={i}
+            key={`g-${i}`}
+            x1={s.x1}
+            y1={s.y1}
+            x2={s.x2}
+            y2={s.y2}
+            stroke="rgba(59, 130, 246, 0.4)"
+            strokeWidth={1 * inv}
+            shapeRendering="crispEdges"
+          />
+        ))}
+        {/* Pass 2 — brighter overlay on the active preset's edges. */}
+        {presetSegments.map((s, i) => (
+          <line
+            key={`p-${i}`}
             x1={s.x1}
             y1={s.y1}
             x2={s.x2}
