@@ -24,7 +24,7 @@
 
 import { nanoid } from 'nanoid'
 import type * as Y from 'yjs'
-import type { SlideObject, ComponentInstanceObject, AnimationStep } from '@narrative/shared'
+import type { SlideObject, AnimationStep } from '@narrative/shared'
 import { yMapToPlainObject } from './bindings.js'
 import { yMapToAnimationStep } from './animationBindings.js'
 
@@ -98,35 +98,6 @@ function collectSubtreeIds(rootIds: ReadonlySet<string>, allObjects: SlideObject
 }
 
 // ---------------------------------------------------------------------------
-// Internal: compute bounding box of a plain-object array
-// ---------------------------------------------------------------------------
-
-interface BBox {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-function computeBoundingBox(objects: SlideObject[]): BBox {
-  if (objects.length === 0) return { x: 0, y: 0, width: 0, height: 0 }
-
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-
-  for (const obj of objects) {
-    minX = Math.min(minX, obj.x)
-    minY = Math.min(minY, obj.y)
-    maxX = Math.max(maxX, obj.x + obj.width)
-    maxY = Math.max(maxY, obj.y + obj.height)
-  }
-
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
-}
-
-// ---------------------------------------------------------------------------
 // PromoteToComponentPlan — the return value of promoteToComponent
 // ---------------------------------------------------------------------------
 
@@ -145,13 +116,11 @@ function computeBoundingBox(objects: SlideObject[]): BBox {
 export interface PromoteToComponentPlan {
   /** Nanoid(12) that will be the new component's id. */
   componentId: string
-  /** The master tree — all promoted objects with stable ids, bounding-box normalized. */
+  /** The master tree — all promoted objects with stable ids. */
   masterTree: SlideObject[]
   /** Animation steps pruned to the promoted subtree targets. */
   masterAnimations: AnimationStep[]
-  /** The ComponentInstance node to place on the slide. */
-  instanceObject: ComponentInstanceObject
-  /** Ids of the original objects to remove from the slide after inserting the instance. */
+  /** Ids of the original objects to remove from the slide after writing the master. */
   removedObjectIds: string[]
 }
 
@@ -251,22 +220,6 @@ export function promoteToComponent(
     throw new Error('promoteToComponent: none of the specified objectIds exist on the slide')
   }
 
-  // --- Reject nested components ---
-  // Components are intentionally flat: a master subtree must not itself
-  // contain a componentInstance. Nesting opens the door to recursive
-  // expansion, override-merge ambiguity (master-of-master vs instance
-  // overrides at every level), and animation-id remap collisions —
-  // surface area we explicitly don't want to pay for. Detach the
-  // inner instance(s) first if you really need this composition.
-  if (promotedObjects.some((o) => o.type === 'componentInstance')) {
-    throw new Error(
-      'promoteToComponent: selection contains a component instance — components cannot be nested. Detach the inner instance first.',
-    )
-  }
-
-  // --- Compute bounding box ---
-  const bbox = computeBoundingBox(promotedObjects)
-
   // --- Generate component id ---
   const componentId = nanoid(12)
 
@@ -290,24 +243,10 @@ export function promoteToComponent(
     return clone as unknown as SlideObject
   })
 
-  // --- Build the instance node ---
-  const instanceObject: ComponentInstanceObject = {
-    id: nanoid(),
-    type: 'componentInstance',
-    componentId,
-    x: bbox.x,
-    y: bbox.y,
-    width: bbox.width,
-    height: bbox.height,
-    rotation: 0,
-    opacity: 1,
-  }
-
   return {
     componentId,
     masterTree,
     masterAnimations,
-    instanceObject,
     removedObjectIds: Array.from(subtreeIds),
   }
 }

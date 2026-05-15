@@ -172,7 +172,7 @@ describe('promoteToComponent', () => {
     expect(masterIds).toContain('r2')
   })
 
-  it('instance is placed at the bounding box top-left of the selection', () => {
+  it('master tree preserves the original object positions', () => {
     const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
     // r1 at (50, 80) 100×80 → right/bottom edge at (150, 160)
     // r2 at (200, 10) 100×80 → right/bottom edge at (300, 90)
@@ -182,21 +182,25 @@ describe('promoteToComponent', () => {
 
     const plan = promoteToComponent(deckCtx, slideId, ['r1', 'r2'], 'folder-1')
 
-    expect(plan.instanceObject.x).toBe(50)
-    expect(plan.instanceObject.y).toBe(10)
-    expect(plan.instanceObject.width).toBe(250)
-    expect(plan.instanceObject.height).toBe(150)
-    expect(plan.instanceObject.type).toBe('componentInstance')
-    expect(plan.instanceObject.componentId).toBe(plan.componentId)
+    // promoteToComponent no longer emits an instance object — components
+    // are now stamps. Verify master tree positions instead.
+    const positions = plan.masterTree.map((o) => ({ x: o.x, y: o.y }))
+    expect(positions).toEqual(
+      expect.arrayContaining([
+        { x: 50, y: 80 },
+        { x: 200, y: 10 },
+      ]),
+    )
+    expect(plan.componentId).toEqual(expect.any(String))
   })
 
-  it('instance gets a fresh id different from all promoted objects', () => {
+  it('master tree keeps the original promoted object ids', () => {
     const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
     addObject(objCtx, makeRect('r1', 0, 0))
 
     const plan = promoteToComponent(deckCtx, slideId, ['r1'], 'folder-1')
 
-    expect(plan.instanceObject.id).not.toBe('r1')
+    expect(plan.masterTree.map((o) => o.id)).toContain('r1')
     expect(plan.removedObjectIds).toContain('r1')
   })
 
@@ -303,9 +307,9 @@ describe('promoteToComponent — CRDT convergence', () => {
 
     // Master trees should have the same object structure
     expect(plan1.masterTree.length).toBe(plan2.masterTree.length)
-    expect(plan1.instanceObject.x).toBe(plan2.instanceObject.x)
-    expect(plan1.instanceObject.y).toBe(plan2.instanceObject.y)
-    expect(plan1.instanceObject.width).toBe(plan2.instanceObject.width)
+    const xs1 = plan1.masterTree.map((o) => o.x).sort()
+    const xs2 = plan2.masterTree.map((o) => o.x).sort()
+    expect(xs1).toEqual(xs2)
     expect(plan1.removedObjectIds.sort()).toEqual(plan2.removedObjectIds.sort())
   })
 })

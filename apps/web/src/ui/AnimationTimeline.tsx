@@ -42,8 +42,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { AnimationStep, AnimationTrigger, ComponentInstanceObject } from '@narrative/shared'
-import { ComponentAnimationGroup } from './ComponentAnimationGroup.js'
+import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
 import {
   removeAnimation,
   reorderAnimations,
@@ -1475,37 +1474,6 @@ export function AnimationTimeline() {
                     }}
                   />
                 </div>
-
-                {/* M16 P8 — Component instance groups. One block per
-                    componentInstance on the slide, rendered above the
-                    slide-native rows. Each block is collapsible and
-                    contains rows for the master's animation steps with
-                    per-instance override controls. The master's natural
-                    order is honoured; reorder writes per-step `order`
-                    overrides via setAnimationOverride. */}
-                {(() => {
-                  const componentInstances = slideObjects.filter(
-                    (o) => o.type === 'componentInstance',
-                  ) as ComponentInstanceObject[]
-                  if (componentInstances.length === 0) return null
-                  return (
-                    <div
-                      className="flex flex-col gap-1 border-b divider-soft px-2 py-1.5"
-                      style={{ width: trackWidthPx }}
-                      data-testid="animation-timeline-component-groups"
-                    >
-                      {componentInstances.map((inst) => (
-                        <ComponentAnimationGroup
-                          key={inst.id}
-                          instance={inst}
-                          mutationCtx={objectsCtx}
-                          disabled={isViewer}
-                          compact
-                        />
-                      ))}
-                    </div>
-                  )
-                })()}
 
                 {/* Rows — one per unique objectId (first-seen order + user
                   preference). All animations on an object share the row;

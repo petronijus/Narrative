@@ -118,30 +118,6 @@ export type { PromoteToComponentPlan } from './components.js'
 // Component stamp helper (refactor: components-as-stamps)
 export { stampComponent } from './stampComponent.js'
 
-// Component instance override resolver (M16 P7)
-export { resolveInstanceTree, resolveInstanceAnimations } from './resolveOverrides.js'
-
-// Component instance override mutations (M16 P7)
-export {
-  setLeafOverride,
-  setLeafOverridePatch,
-  seedInstanceTextCopy,
-  clearLeafOverride,
-  setAnimationOverride,
-  clearAnimationOverride,
-  resetAllOverrides,
-  applyInstanceFit,
-  resetInstanceFit,
-  instanceMasterMissing,
-  removeComponentInstancesFromDoc,
-} from './instanceOverrides.js'
-export type {
-  LeafOverridePatch,
-  GenericLeafOverridePatch,
-  AnimationOverridePatch,
-  MasterPresenceProbe,
-} from './instanceOverrides.js'
-
 // Design tokens (M16 P2)
 export { isTokenRef, resolveTokenValue } from './tokens.js'
 export type {
@@ -191,7 +167,6 @@ import type {
   TextObject,
   ImageObject,
   VideoObject,
-  ComponentInstanceObject,
 } from '@narrative/shared'
 
 registerObjectType<RectangleObject>({
@@ -359,24 +334,5 @@ registerObjectType<VideoObject>({
     loop: false,
     muted: true,
     aspectLocked: true,
-  }),
-})
-
-/**
- * Component instance type (M16 P5).
- * Callers MUST provide componentId (and ideally width/height matching the
- * master's bounding box) via createObjectOfType overrides.
- * The renderer shows a placeholder box until P6 lands the master expansion.
- */
-registerObjectType<ComponentInstanceObject>({
-  type: 'componentInstance',
-  defaultProps: () => ({
-    x: 100,
-    y: 100,
-    width: 200,
-    height: 150,
-    rotation: 0,
-    opacity: 1,
-    componentId: '',
   }),
 })

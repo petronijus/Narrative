@@ -26,11 +26,6 @@
 import type { TargetResolver, PixiTargetHandle } from '@narrative/animation'
 import type { Container } from 'pixi.js'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
-import { getInstanceLeafContainer } from '../renderer/objectRenderers/componentInstanceRenderer.js'
-import { makeInstanceLeafTargetId, parseInstanceTargetId } from './instanceTargetIds.js'
-
-// Re-export so existing imports continue to work.
-export { makeInstanceLeafTargetId }
 
 // ---------------------------------------------------------------------------
 // Internal handle — extends PixiTargetHandle with the bound Container so
@@ -100,12 +95,6 @@ export function createPixiTargetResolver(sceneGraph: SceneGraph): TargetResolver
   }
 
   function resolveContainer(targetId: string): Container | null {
-    const parsed = parseInstanceTargetId(targetId)
-    if (parsed !== null) {
-      const instanceNode = sceneGraph.getNode(parsed.instanceId)
-      if (instanceNode === undefined) return null
-      return getInstanceLeafContainer(instanceNode.container, parsed.leafId)
-    }
     const node = sceneGraph.getNode(targetId)
     return node === undefined ? null : node.container
   }

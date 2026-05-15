@@ -20,7 +20,6 @@ import { videoRenderer } from './videoRenderer'
 import { triangleRenderer, polygonRenderer } from './polygonRenderer'
 import { lineRenderer, arrowRenderer } from './lineRenderer'
 import { pathRenderer } from './pathRenderer'
-import { componentInstanceRenderer } from './componentInstanceRenderer'
 import type { Container } from 'pixi.js'
 import type { SlideObject } from '@narrative/shared'
 
@@ -64,8 +63,6 @@ export const rendererRegistry = new Map<string, ObjectRenderer<any>>([
   ['text', textRenderer],
   ['image', imageRenderer],
   ['video', videoRenderer as ObjectRenderer<SlideObject>],
-  // M16 P5 — component instance placeholder
-  ['componentInstance', componentInstanceRenderer as ObjectRenderer<SlideObject>],
 ])
 
 /**
