@@ -187,6 +187,14 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       setEdgeDash(seedDash)
     }
   }, [obj.id, seedColor, seedWidth, seedDash, setActiveBorderPreset])
+  // Inspector unmount = the user navigated away from this table's
+  // selection. Dismiss the blue overlay so it doesn't linger on the
+  // canvas when the table isn't actively being edited.
+  useEffect(() => {
+    return () => {
+      setActiveBorderPreset(null)
+    }
+  }, [setActiveBorderPreset])
 
   /**
    * Target range for border presets: an explicit drag-selected range
@@ -224,11 +232,11 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     // Clicking the already-active icon toggles it off — same Keynote
     // affordance, lets the user dismiss the blue selection indicator
     // without picking a different preset.
-    if (activeBorderPreset === preset) {
+    if (activeBorderPreset?.preset === preset && activeBorderPreset.tableId === obj.id) {
       setActiveBorderPreset(null)
       return
     }
-    setActiveBorderPreset(preset)
+    setActiveBorderPreset({ preset, tableId: obj.id })
     stampBorderPreset(preset, { color: edgeColor, width: edgeWidth, dash: edgeDash })
   }
 
@@ -247,7 +255,9 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     if (next.color !== undefined) setEdgeColor(next.color)
     if (next.width !== undefined) setEdgeWidth(next.width)
     if (next.dash !== undefined) setEdgeDash(next.dash)
-    if (activeBorderPreset !== null) stampBorderPreset(activeBorderPreset, merged)
+    if (activeBorderPreset !== null && activeBorderPreset.tableId === obj.id) {
+      stampBorderPreset(activeBorderPreset.preset, merged)
+    }
   }
 
   const rangeInfo = useMemo(() => {
@@ -534,7 +544,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           Border
         </div>
         <BorderPresetGrid
-          activePreset={activeBorderPreset}
+          activePreset={activeBorderPreset?.tableId === obj.id ? activeBorderPreset.preset : null}
           disabled={isViewer}
           onApply={applyBorderPreset}
         />

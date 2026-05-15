@@ -39,22 +39,32 @@ export interface CellRange {
   c1: number
 }
 
+/** Which border-preset icon (if any) is currently selected in the
+ *  inspector, paired with the table it targets. Hoisted into the
+ *  context so the canvas overlay can draw the blue selection lines on
+ *  the same edges the inspector is going to stamp — wires the
+ *  inspector's "which edges am I editing?" affordance through to the
+ *  table on the artboard.
+ *
+ *  The `tableId` is required even when there's no active cell/range:
+ *  the inspector knows the target table (it's the selected object) and
+ *  the overlay needs that to find the geometry to paint over. */
+export interface ActiveBorderPresetState {
+  preset: TableBorderPreset
+  tableId: string
+}
+
 export interface TableEditContextValue {
   active: ActiveCell | null
   range: CellRange | null
-  /** Which border-preset icon (if any) is currently selected in the
-   *  inspector. Hoisted into the context so the canvas overlay can
-   *  draw the blue selection lines on the same edges the inspector is
-   *  going to stamp — wires the inspector's "which edges am I editing?"
-   *  affordance through to the table on the artboard. */
-  activeBorderPreset: TableBorderPreset | null
+  activeBorderPreset: ActiveBorderPresetState | null
   setActive: (cell: { tableId: string; r: number; c: number }) => void
   beginEdit: (cell?: { tableId: string; r: number; c: number }) => void
   endEdit: () => void
   setRange: (range: CellRange) => void
   clearRange: () => void
   clear: () => void
-  setActiveBorderPreset: (preset: TableBorderPreset | null) => void
+  setActiveBorderPreset: (value: ActiveBorderPresetState | null) => void
 }
 
 const TableEditContext = createContext<TableEditContextValue | null>(null)
@@ -62,7 +72,9 @@ const TableEditContext = createContext<TableEditContextValue | null>(null)
 export function TableEditProvider({ children }: { children: React.ReactNode }) {
   const [active, setActiveState] = useState<ActiveCell | null>(null)
   const [range, setRangeState] = useState<CellRange | null>(null)
-  const [activeBorderPreset, setActiveBorderPresetState] = useState<TableBorderPreset | null>(null)
+  const [activeBorderPreset, setActiveBorderPresetState] = useState<ActiveBorderPresetState | null>(
+    null,
+  )
 
   const setActive = useCallback((cell: { tableId: string; r: number; c: number }) => {
     setActiveState({ tableId: cell.tableId, r: cell.r, c: cell.c, editing: false })
@@ -105,7 +117,7 @@ export function TableEditProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const setActiveBorderPreset = useCallback(
-    (preset: TableBorderPreset | null) => setActiveBorderPresetState(preset),
+    (value: ActiveBorderPresetState | null) => setActiveBorderPresetState(value),
     [],
   )
 

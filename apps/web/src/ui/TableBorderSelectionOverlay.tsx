@@ -115,14 +115,12 @@ export function TableBorderSelectionOverlay() {
 
   const table = useMemo<TableObject | null>(() => {
     if (activeBorderPreset === null) return null
-    // Prefer the explicit table referenced by the range or active cell;
-    // otherwise the preset target is "unknown" (the user hasn't focused
-    // a specific table yet) → don't draw.
-    const tableId = range !== null ? range.tableId : active !== null ? active.tableId : null
-    if (tableId === null) return null
-    const obj = objects.find((o) => o.id === tableId)
+    // The inspector tells us which table is targeted, so we don't need
+    // a cell/range to be active — the indicator shows up the moment
+    // the user clicks an icon on a freshly-selected table.
+    const obj = objects.find((o) => o.id === activeBorderPreset.tableId)
     return obj !== undefined && obj.type === 'table' ? obj : null
-  }, [objects, activeBorderPreset, range, active])
+  }, [objects, activeBorderPreset])
 
   const segments = useMemo<Segment[]>(() => {
     if (table === null || activeBorderPreset === null) return []
@@ -156,7 +154,7 @@ export function TableBorderSelectionOverlay() {
         // Skip merge-continuation cells — the origin draws the merged
         // area, so the indicator on a pointer would be wrong.
         if (cell.mergeOriginR !== undefined || cell.mergeOriginC !== undefined) continue
-        const edges = edgesForPreset(activeBorderPreset, r, c, { r0, c0, r1, c1 })
+        const edges = edgesForPreset(activeBorderPreset.preset, r, c, { r0, c0, r1, c1 })
         const x = colX[c] ?? 0
         const y = rowY[r] ?? 0
         const w = (colX[c + 1] ?? x) - x
