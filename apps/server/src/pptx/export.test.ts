@@ -593,4 +593,100 @@ describe('exportDeckToPptx', () => {
     // No <p:pic> emitted since the image was dropped.
     expect(xml).not.toContain('<p:pic')
   })
+
+  // ─── M29 Phase 4 — first-class TableObject export ──────────────────────────
+
+  it('emits an <a:tbl> for a first-class TableObject with per-cell text', async () => {
+    const slides: Slide[] = [
+      {
+        id: 's1',
+        objects: [
+          {
+            id: 't1',
+            type: 'table',
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 200,
+            rotation: 0,
+            opacity: 1,
+            colWidths: [200, 200],
+            rowHeights: [100, 100],
+            rows: [
+              [{ text: 'A1' }, { text: 'B1' }],
+              [{ text: 'A2' }, { text: 'B2' }],
+            ],
+            defaults: {
+              fontSize: 18,
+              fontWeight: 'normal',
+              color: 0x111111,
+              align: 'left',
+              vAlign: 'middle',
+              border: { color: 0xcccccc, width: 1 },
+              padding: { top: 8, right: 8, bottom: 8, left: 8 },
+            },
+          },
+        ],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+    ]
+    const buf = await exportDeckToPptx(slides)
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:tbl>')
+    expect(xml).toContain('<a:tblGrid>')
+    expect(xml).toContain('<a:gridCol')
+    expect(xml).toContain('<a:tr')
+    expect(xml).toContain('<a:t>A1</a:t>')
+    expect(xml).toContain('<a:t>B2</a:t>')
+  })
+
+  it('emits gridSpan on the origin cell when a TableObject has a merged span', async () => {
+    const slides: Slide[] = [
+      {
+        id: 's1',
+        objects: [
+          {
+            id: 't1',
+            type: 'table',
+            x: 0,
+            y: 0,
+            width: 400,
+            height: 100,
+            rotation: 0,
+            opacity: 1,
+            colWidths: [200, 200],
+            rowHeights: [100],
+            rows: [
+              [
+                { text: 'Header', gridSpan: 2 },
+                // Continuation cell — exporter must skip it so pptxgenjs
+                // emits gridSpan="2" on the origin without ALSO emitting
+                // a duplicate `<a:tc>` for the covered slot.
+                { text: '', mergeOriginR: 0, mergeOriginC: 0 },
+              ],
+            ],
+            defaults: {
+              fontSize: 18,
+              fontWeight: 'normal',
+              color: 0x111111,
+              align: 'left',
+              vAlign: 'middle',
+              border: { color: 0xcccccc, width: 1 },
+              padding: { top: 8, right: 8, bottom: 8, left: 8 },
+            },
+          },
+        ],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+    ]
+    const buf = await exportDeckToPptx(slides)
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('gridSpan="2"')
+    expect(xml).toContain('<a:t>Header</a:t>')
+    // hMerge marker on the covered slot — pptxgenjs writes one even
+    // though our row array only included the origin.
+    expect(xml).toContain('hMerge="1"')
+  })
 })

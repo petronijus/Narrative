@@ -56,6 +56,9 @@ import type {
   PathAnchor,
   ImageObject,
   VideoObject,
+  TableObject,
+  TableCell,
+  TableDefaults,
   ColorBackground,
   ImageBackground,
   LinearGradientBackground,
@@ -484,7 +487,132 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     return obj
   }
 
+  if (s.kind === 'table') {
+    return mapTableShape(s, base, scale)
+  }
+
   return null
+}
+
+/**
+ * Build a Narrative TableObject from a parsed `<a:tbl>` shape.
+ *
+ * The parser emits a fully-populated cell matrix with merge pointers
+ * already stamped (origin carries gridSpan/rowSpan; continuation cells
+ * carry mergeOriginR/C). We translate each cell into a TableCell with
+ * a Y.Text body, honour explicit per-cell styles, and let the table's
+ * `defaults` carry any uniform layout values (font / padding / border).
+ *
+ * Width/height: the parser already produced `tableColWidths` /
+ * `tableRowHeights` in px (pre-scale). We rescale them so they sum to
+ * the table's outer bbox — the renderer treats colWidths/rowHeights as
+ * proportions, so the absolute values don't have to match the bbox
+ * exactly, but keeping them in sync makes future drag-resize start from
+ * a sane baseline.
+ */
+function mapTableShape(
+  s: ParsedShape,
+  base: {
+    id: string
+    x: number
+    y: number
+    width: number
+    height: number
+    rotation: number
+    opacity: number
+  },
+  scale: number,
+): TableObject | null {
+  const rawCells = s.tableCells
+  const rawColWidths = s.tableColWidths
+  const rawRowHeights = s.tableRowHeights
+  if (
+    rawCells === undefined ||
+    rawColWidths === undefined ||
+    rawRowHeights === undefined ||
+    rawCells.length === 0 ||
+    rawColWidths.length === 0
+  ) {
+    return null
+  }
+  // Rescale col/row sizes from px (pre-scale) to slide px (post-scale).
+  // Renderer treats these as proportions, so the absolute scale doesn't
+  // matter functionally — but keeping them aligned with the bbox makes
+  // the column-resize handles (Phase 5 polish) start with sane values.
+  const colWidths = rawColWidths.map((w) => Math.max(1, round(w * scale)))
+  const rowHeights = rawRowHeights.map((h) => Math.max(1, round(h * scale)))
+
+  // Build the TableDefaults — uniform values pulled from the cells
+  // when every cell agrees, else fall back to the schema's built-in
+  // defaults. Borders default to PowerPoint's classic light-grey grid.
+  const defaults: TableDefaults = {
+    fontSize: 18,
+    fontWeight: 'normal',
+    color: 0x111111,
+    align: 'left',
+    vAlign: 'middle',
+    border: { color: 0xcccccc, width: 1 },
+    padding: { top: 8, right: 8, bottom: 8, left: 8 },
+  }
+
+  // Build rows. Each cell either carries its own Y.Text-backed body or
+  // an empty string (the binding layer in slide-model will create the
+  // Y.Text post-integration during addObject).
+  const rows: TableCell[][] = []
+  for (let r = 0; r < rawCells.length; r++) {
+    const rawRow = rawCells[r]!
+    const row: TableCell[] = []
+    for (let c = 0; c < rawColWidths.length; c++) {
+      const rawCell = rawRow[c] ?? { text: '' }
+      const cell: TableCell = { text: rawCell.text ?? '' }
+      // Build a Y.Text body if any run carries inline formatting. We
+      // reuse `buildRichTextBody` by faking a `ParsedShape` with the
+      // cell's runs — the function reads `textRuns` and returns either
+      // a formatted Y.Text or null.
+      const richBody = buildRichTextBody(
+        { textRuns: rawCell.textRuns, kind: 'text' } as ParsedShape,
+        scale,
+      )
+      if (richBody !== null) cell.text = richBody
+      if (rawCell.fontSize !== undefined) cell.fontSize = round(rawCell.fontSize * scale)
+      if (rawCell.fontWeight !== undefined) cell.fontWeight = rawCell.fontWeight
+      if (rawCell.color !== undefined) cell.color = rawCell.color
+      if (rawCell.align !== undefined) cell.align = rawCell.align
+      if (rawCell.vAlign !== undefined) cell.vAlign = rawCell.vAlign
+      if (rawCell.fill !== undefined) cell.fill = rawCell.fill
+      if (rawCell.fillAlpha !== undefined && rawCell.fillAlpha < 1) {
+        cell.fillAlpha = rawCell.fillAlpha
+      }
+      if (rawCell.padding !== undefined) {
+        cell.padding = {
+          top: round(rawCell.padding.top * scale),
+          right: round(rawCell.padding.right * scale),
+          bottom: round(rawCell.padding.bottom * scale),
+          left: round(rawCell.padding.left * scale),
+        }
+      }
+      // Merge stamping — same shape as Narrative's TableCell schema.
+      if (rawCell.gridSpan !== undefined && rawCell.gridSpan > 1) {
+        cell.gridSpan = rawCell.gridSpan
+      }
+      if (rawCell.rowSpan !== undefined && rawCell.rowSpan > 1) {
+        cell.rowSpan = rawCell.rowSpan
+      }
+      if (rawCell.mergeOriginR !== undefined) cell.mergeOriginR = rawCell.mergeOriginR
+      if (rawCell.mergeOriginC !== undefined) cell.mergeOriginC = rawCell.mergeOriginC
+      row.push(cell)
+    }
+    rows.push(row)
+  }
+
+  return {
+    ...base,
+    type: 'table',
+    colWidths,
+    rowHeights,
+    rows,
+    defaults,
+  }
 }
 
 function backgroundForSlide(
