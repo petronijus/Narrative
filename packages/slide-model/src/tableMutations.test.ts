@@ -324,22 +324,27 @@ describe('setRangeCellStyle', () => {
 describe('setRangeBorderPreset', () => {
   const spec = { color: 0x111111, width: 2 }
 
-  it('outer: only perimeter cells of the range carry the matching edge', () => {
+  it('outer: only perimeter cells of the range carry an active matching edge', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'outer', spec)
     const t = readTable(ctx.objects, id)
-    // Top-left corner — top + left only
+    // Top-left corner — top + left active (width 2), right + bottom inactive (width 0)
     expect(t.rows[0]![0]!.border?.top?.width).toBe(2)
     expect(t.rows[0]![0]!.border?.left?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.bottom).toBeUndefined()
-    expect(t.rows[0]![0]!.border?.right).toBeUndefined()
-    // Bottom-right — bottom + right only
+    expect(t.rows[0]![0]!.border?.right?.width).toBe(0)
+    expect(t.rows[0]![0]!.border?.bottom?.width).toBe(0)
+    // Bottom-right — bottom + right active
     expect(t.rows[2]![2]!.border?.bottom?.width).toBe(2)
     expect(t.rows[2]![2]!.border?.right?.width).toBe(2)
-    expect(t.rows[2]![2]!.border?.top).toBeUndefined()
-    // Interior cell — no edges set, falls back to defaults
-    expect(t.rows[1]![1]!.border).toBeUndefined()
+    expect(t.rows[2]![2]!.border?.top?.width).toBe(0)
+    expect(t.rows[2]![2]!.border?.left?.width).toBe(0)
+    // Interior cell — every edge written with width 0 so the default grid
+    // is suppressed inside the range.
+    expect(t.rows[1]![1]!.border?.top?.width).toBe(0)
+    expect(t.rows[1]![1]!.border?.right?.width).toBe(0)
+    expect(t.rows[1]![1]!.border?.bottom?.width).toBe(0)
+    expect(t.rows[1]![1]!.border?.left?.width).toBe(0)
   })
 
   it('all: every cell gets all four edges', () => {
@@ -363,20 +368,21 @@ describe('setRangeBorderPreset', () => {
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'inside', spec)
     const t = readTable(ctx.objects, id)
-    // (0,0): top-row + left-col → no interior edges
-    expect(t.rows[0]![0]!.border).toBeUndefined()
-    // (0,1): top-row but not left-col → only left edge (vertical divider)
+    // (0,0): top-row + left-col → no interior edges active
+    expect(t.rows[0]![0]!.border?.top?.width).toBe(0)
+    expect(t.rows[0]![0]!.border?.left?.width).toBe(0)
+    // (0,1): top-row but not left-col → only left edge active (vertical divider)
     expect(t.rows[0]![1]!.border?.left?.width).toBe(2)
-    expect(t.rows[0]![1]!.border?.top).toBeUndefined()
-    // (1,0): left-col but not top-row → only top edge (horizontal divider)
+    expect(t.rows[0]![1]!.border?.top?.width).toBe(0)
+    // (1,0): left-col but not top-row → only top edge active (horizontal divider)
     expect(t.rows[1]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[1]![0]!.border?.left).toBeUndefined()
-    // (1,1): interior cell → both top and left
+    expect(t.rows[1]![0]!.border?.left?.width).toBe(0)
+    // (1,1): interior cell → both top and left active
     expect(t.rows[1]![1]!.border?.top?.width).toBe(2)
     expect(t.rows[1]![1]!.border?.left?.width).toBe(2)
   })
 
-  it('none: clears existing border config on every cell', () => {
+  it('none: every edge of every cell in range is suppressed (width 0)', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', spec)
@@ -384,20 +390,48 @@ describe('setRangeBorderPreset', () => {
     const t = readTable(ctx.objects, id)
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < 2; c++) {
-        expect(t.rows[r]![c]!.border).toBeUndefined()
+        const b = t.rows[r]![c]!.border
+        expect(b?.top?.width).toBe(0)
+        expect(b?.right?.width).toBe(0)
+        expect(b?.bottom?.width).toBe(0)
+        expect(b?.left?.width).toBe(0)
       }
     }
   })
 
-  it('bottom: only the bottom-row cells carry a bottom edge', () => {
+  it('bottom: only the bottom-row cells carry an active bottom edge', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 1 }, 'bottom', spec)
     const t = readTable(ctx.objects, id)
-    expect(t.rows[0]![0]!.border).toBeUndefined()
-    expect(t.rows[1]![0]!.border).toBeUndefined()
+    expect(t.rows[0]![0]!.border?.bottom?.width).toBe(0)
+    expect(t.rows[1]![0]!.border?.bottom?.width).toBe(0)
     expect(t.rows[2]![0]!.border?.bottom?.width).toBe(2)
     expect(t.rows[2]![1]!.border?.bottom?.width).toBe(2)
+  })
+
+  it('honours an optional dash style on active edges', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', {
+      color: 0xff0000,
+      width: 3,
+      dash: 'dash',
+    })
+    const t = readTable(ctx.objects, id)
+    expect(t.rows[0]![0]!.border?.top?.dash).toBe('dash')
+    expect(t.rows[0]![0]!.border?.bottom?.dash).toBe('dash')
+    // Inactive (zero-width) edges shouldn't carry a dash field.
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'outer', {
+      color: 0xff0000,
+      width: 3,
+      dash: 'dot',
+    })
+    const t2 = readTable(ctx.objects, id)
+    // (0,0) interior edges (right/bottom) are inactive → width 0, no dash
+    expect(t2.rows[0]![0]!.border?.right?.width).toBe(0)
+    expect(t2.rows[0]![0]!.border?.right?.dash).toBeUndefined()
+    expect(t2.rows[0]![0]!.border?.top?.dash).toBe('dot')
   })
 
   it('skips merge continuation cells', () => {

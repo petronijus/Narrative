@@ -23,7 +23,7 @@
  * state.
  */
 
-import { useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import * as Y from 'yjs'
 import {
   type ObjectsMutationContext,
@@ -157,36 +157,89 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     patchCell(patch as Parameters<typeof setTableCellStyle>[4])
   }
 
-  /**
-   * Apply a Keynote-style border preset to the current range (or the
-   * active cell when no range is selected). Edge color/width comes from
-   * `defaults.border` so the stamp matches the table's overall stroke
-   * style — the user can still refine per edge through the existing
-   * BorderEditor below the preset grid.
-   */
-  const applyBorderPreset = (preset: TableBorderPreset): void => {
-    const defaultsBorder = obj.defaults.border
-    const seedColor =
-      typeof defaultsBorder?.color === 'number' ? (defaultsBorder.color as number) : 0xcccccc
-    const seedWidth = defaultsBorder?.width ?? 1
-    if (range !== null && range.tableId === obj.id) {
-      setRangeBorderPreset(
-        mutationCtx,
-        obj.id,
-        { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 },
-        preset,
-        { color: seedColor, width: seedWidth },
-      )
-      return
+  // --- Keynote-style border preset + style state ------------------------
+  // `activePreset` tracks which preset icon the user has selected so
+  // that changes to the line style/width/color below restamp the same
+  // preset over the current target — exactly how Keynote's border
+  // inspector works. The style controls always carry a value (seeded
+  // from defaults.border) so the next preset click uses sensible
+  // defaults even before the user touches them.
+  const defaultsBorder = obj.defaults.border
+  const seedColor =
+    typeof defaultsBorder?.color === 'number' ? (defaultsBorder.color as number) : 0xcccccc
+  const seedWidth = defaultsBorder?.width ?? 1
+  const seedDash: 'solid' | 'dash' | 'dot' = defaultsBorder?.dash ?? 'solid'
+  const [activePreset, setActivePreset] = useState<TableBorderPreset | null>(null)
+  const [edgeColor, setEdgeColor] = useState<number>(seedColor)
+  const [edgeWidth, setEdgeWidth] = useState<number>(seedWidth)
+  const [edgeDash, setEdgeDash] = useState<'solid' | 'dash' | 'dot'>(seedDash)
+  // Clear the active preset whenever the user moves selection to a
+  // different table — sticky state across tables would let style edits
+  // leak onto an unrelated table on the next style change.
+  const lastTableIdRef = useRef(obj.id)
+  useEffect(() => {
+    if (lastTableIdRef.current !== obj.id) {
+      lastTableIdRef.current = obj.id
+      setActivePreset(null)
+      setEdgeColor(seedColor)
+      setEdgeWidth(seedWidth)
+      setEdgeDash(seedDash)
     }
-    if (active === null || active.tableId !== obj.id) return
-    setRangeBorderPreset(
-      mutationCtx,
-      obj.id,
-      { r0: active.r, c0: active.c, r1: active.r, c1: active.c },
-      preset,
-      { color: seedColor, width: seedWidth },
-    )
+  }, [obj.id, seedColor, seedWidth, seedDash])
+
+  /**
+   * Target range for border presets: an explicit drag-selected range
+   * wins, a single active cell becomes a 1×1 range, and otherwise we
+   * default to the whole table so the icons stay useful when the user
+   * has the table selected but no cells highlighted.
+   */
+  const borderTargetRange = useMemo(() => {
+    if (range !== null && range.tableId === obj.id) {
+      return { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 }
+    }
+    if (active !== null && active.tableId === obj.id) {
+      return { r0: active.r, c0: active.c, r1: active.r, c1: active.c }
+    }
+    return {
+      r0: 0,
+      c0: 0,
+      r1: Math.max(0, obj.rows.length - 1),
+      c1: Math.max(0, obj.colWidths.length - 1),
+    }
+  }, [range, active, obj])
+
+  const stampBorderPreset = (
+    preset: TableBorderPreset,
+    spec: { color: number; width: number; dash: 'solid' | 'dash' | 'dot' },
+  ): void => {
+    setRangeBorderPreset(mutationCtx, obj.id, borderTargetRange, preset, {
+      color: spec.color,
+      width: spec.width,
+      dash: spec.dash,
+    })
+  }
+
+  const applyBorderPreset = (preset: TableBorderPreset): void => {
+    setActivePreset(preset)
+    stampBorderPreset(preset, { color: edgeColor, width: edgeWidth, dash: edgeDash })
+  }
+
+  // Whenever the user tweaks style/width/color WITH a preset active,
+  // restamp the same preset so the change shows up on the targeted
+  // edges immediately — mirrors Keynote's "the style controls drive
+  // the active border" affordance.
+  const updateEdgeStyle = (
+    next: Partial<{ color: number; width: number; dash: 'solid' | 'dash' | 'dot' }>,
+  ): void => {
+    const merged = {
+      color: next.color ?? edgeColor,
+      width: next.width ?? edgeWidth,
+      dash: next.dash ?? edgeDash,
+    }
+    if (next.color !== undefined) setEdgeColor(next.color)
+    if (next.width !== undefined) setEdgeWidth(next.width)
+    if (next.dash !== undefined) setEdgeDash(next.dash)
+    if (activePreset !== null) stampBorderPreset(activePreset, merged)
   }
 
   const rangeInfo = useMemo(() => {
@@ -447,37 +500,6 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             ]}
           />
         </Row>
-        <Row label="Border color">
-          <ColorCell
-            value={resolveHex(d.border?.color, '#cccccc')}
-            disabled={isViewer}
-            onChange={(hex) =>
-              patchDefault({
-                border: {
-                  color: hexToNumber(hex),
-                  width: d.border?.width ?? 1,
-                },
-              })
-            }
-          />
-        </Row>
-        <Row label="Border width">
-          <NumInput
-            value={d.border?.width ?? 1}
-            min={0}
-            max={20}
-            step={0.5}
-            disabled={isViewer}
-            onCommit={(n) =>
-              patchDefault({
-                border: {
-                  color: typeof d.border?.color === 'number' ? d.border.color : 0xcccccc,
-                  width: n,
-                },
-              })
-            }
-          />
-        </Row>
         <Row label="Padding">
           <NumInput
             value={d.padding.top}
@@ -491,6 +513,32 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             }
           />
         </Row>
+      </div>
+
+      {/* ────────────────────────────────────────────────────────────── */}
+      {/* BORDERS — Keynote-style preset grid + line style controls.    */}
+      {/* Always visible; targets the selected range > active cell >     */}
+      {/* whole table. Clicking an icon stamps the preset; tweaking the  */}
+      {/* style restamps the active preset.                              */}
+      {/* ────────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col gap-1.5">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Border
+        </div>
+        <BorderPresetGrid
+          activePreset={activePreset}
+          disabled={isViewer}
+          onApply={applyBorderPreset}
+        />
+        <BorderStyleControls
+          color={edgeColor}
+          width={edgeWidth}
+          dash={edgeDash}
+          disabled={isViewer}
+          onChangeColor={(n) => updateEdgeStyle({ color: n })}
+          onChangeWidth={(n) => updateEdgeStyle({ width: n })}
+          onChangeDash={(v) => updateEdgeStyle({ dash: v })}
+        />
       </div>
 
       {/* ────────────────────────────────────────────────────────────── */}
@@ -536,25 +584,6 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
-          {/* Keynote-style 9-preset grid — stamps a common border layout
-              (outer, all, inside, individual edges, interior horizontal/
-              vertical) across the range in one click. Refinement of
-              colour/width per edge stays in the BorderEditor below. */}
-          <BorderPresetGrid disabled={isViewer} onApply={applyBorderPreset} />
-          {/* Per-edge border editor — seeded from the range's top-left
-              cell's border (if any), but every toggle stamps the same
-              shape onto every non-continuation cell in the range via
-              patchRange. Lets a user select a whole row and stamp a
-              single "bottom border under header" with one click. */}
-          <BorderEditor
-            border={(() => {
-              const seed = obj.rows[rangeInfo.r0]?.[rangeInfo.c0]
-              return seed?.border
-            })()}
-            defaults={d}
-            disabled={isViewer}
-            onPatch={(border) => patchRange({ border })}
-          />
         </div>
       )}
 
@@ -641,129 +670,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
-          <BorderPresetGrid disabled={isViewer} onApply={applyBorderPreset} />
-          <BorderEditor
-            border={activeCell.border}
-            defaults={d}
-            disabled={isViewer}
-            onPatch={(border) => patchCell({ border })}
-          />
         </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * Per-edge border editor. The `border` prop is the current TRBL
- * override (one cell's or, for a multi-cell selection, the "shared"
- * shape — usually undefined when cells disagree). `onPatch` receives
- * the next override value or `undefined` to clear it. Used inside
- * both the single-cell section and the multi-cell range section so
- * users can stamp a per-edge border across many cells at once.
- */
-function BorderEditor({
-  border,
-  defaults,
-  disabled,
-  onPatch,
-}: {
-  border: TableObject['rows'][number][number]['border'] | undefined
-  defaults: TableObject['defaults']
-  disabled: boolean
-  onPatch: (border: TableObject['rows'][number][number]['border']) => void
-}) {
-  const edges = ['top', 'right', 'bottom', 'left'] as const
-  type Edge = (typeof edges)[number]
-  // Default border colour / width used as the seed when a user enables
-  // an edge for the first time. Matches the renderer's fallback so the
-  // visual is predictable.
-  const seedBorder = (): { color: number; width: number } => ({
-    color:
-      typeof defaults.border?.color === 'number' ? (defaults.border.color as number) : 0xcccccc,
-    width: defaults.border?.width ?? 1,
-  })
-  // Read the per-edge spec already on the cell/range.
-  const edgeOverride = (edge: Edge): { color: number; width: number } | undefined => {
-    const v = border?.[edge]
-    if (v === undefined) return undefined
-    return {
-      color: typeof v.color === 'number' ? (v.color as number) : 0xcccccc,
-      width: v.width,
-    }
-  }
-  const setEdge = (edge: Edge, spec: { color: number; width: number } | undefined): void => {
-    const next: NonNullable<typeof border> = { ...(border ?? {}) }
-    if (spec === undefined) delete (next as Record<string, unknown>)[edge]
-    else next[edge] = spec
-    // Empty record collapses to undefined so the cells go back to
-    // inheriting defaults on every edge.
-    const hasAny = (Object.keys(next) as Edge[]).some((k) => next[k] !== undefined)
-    onPatch(hasAny ? next : undefined)
-  }
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Borders
-      </div>
-      {edges.map((edge) => {
-        const cur = edgeOverride(edge)
-        const enabled = cur !== undefined
-        const label = edge.charAt(0).toUpperCase() + edge.slice(1)
-        return (
-          <div key={edge} className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setEdge(edge, enabled ? undefined : seedBorder())}
-              disabled={disabled}
-              aria-pressed={enabled}
-              className={[
-                'h-6 w-12 rounded-md border text-[10px] font-medium',
-                enabled
-                  ? 'border-primary bg-primary/15 text-primary'
-                  : 'border-input text-muted-foreground hover:bg-accent/40',
-                'disabled:opacity-40',
-              ].join(' ')}
-            >
-              {label}
-            </button>
-            <div className="flex flex-1 items-center gap-1.5">
-              <ColorCell
-                value={resolveHex(cur?.color, '#cccccc')}
-                disabled={disabled || !enabled}
-                onChange={(hex) =>
-                  enabled && setEdge(edge, { color: hexToNumber(hex), width: cur?.width ?? 1 })
-                }
-              />
-              <input
-                type="number"
-                min={0}
-                max={20}
-                step={0.5}
-                value={cur?.width ?? ''}
-                placeholder={String(defaults.border?.width ?? 1)}
-                disabled={disabled || !enabled}
-                onChange={(e) => {
-                  const n = Number(e.target.value)
-                  if (Number.isFinite(n)) {
-                    setEdge(edge, { color: cur?.color ?? 0xcccccc, width: n })
-                  }
-                }}
-                className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
-              />
-            </div>
-          </div>
-        )
-      })}
-      {border !== undefined && (
-        <button
-          type="button"
-          onClick={() => onPatch(undefined)}
-          disabled={disabled}
-          className="self-start text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
-        >
-          Reset all edges
-        </button>
       )}
     </div>
   )
@@ -836,36 +743,102 @@ function PresetGlyph({ active }: { active: PresetGlyphEdge[] }) {
 }
 
 function BorderPresetGrid({
+  activePreset,
   disabled,
   onApply,
 }: {
+  activePreset: TableBorderPreset | null
   disabled: boolean
   onApply: (preset: TableBorderPreset) => void
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Border preset
-      </div>
-      <div className="grid grid-cols-3 gap-1">
-        {PRESETS.map(({ preset, label, active }) => (
+    <div className="grid grid-cols-3 gap-1">
+      {PRESETS.map(({ preset, label, active }) => {
+        const isActive = activePreset === preset
+        return (
           <button
             key={preset}
             type="button"
             title={label}
             aria-label={label}
+            aria-pressed={isActive}
             disabled={disabled}
             onClick={() => onApply(preset)}
             className={[
-              'flex h-8 items-center justify-center rounded-md border border-input',
-              'text-muted-foreground hover:border-primary hover:bg-accent/40 hover:text-foreground',
-              'transition-colors disabled:opacity-40 disabled:hover:border-input disabled:hover:bg-transparent',
+              'flex h-8 items-center justify-center rounded-md border transition-colors',
+              isActive
+                ? 'border-primary bg-primary/15 text-primary'
+                : 'border-input text-muted-foreground hover:border-primary hover:bg-accent/40 hover:text-foreground',
+              'disabled:opacity-40 disabled:hover:border-input disabled:hover:bg-transparent',
             ].join(' ')}
           >
             <PresetGlyph active={active} />
           </button>
-        ))}
-      </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Single style configurator that drives the active preset. When the
+ * user has selected a preset icon, edits here restamp that preset
+ * over the current target — the user-facing "the style controls
+ * configure the selected border" affordance from Keynote.
+ *
+ *   ┌──────────────────────────────────────────┐
+ *   │   Style: [solid ▾]                       │
+ *   │   Color: [■] Width: [ 1 ]                │
+ *   └──────────────────────────────────────────┘
+ */
+function BorderStyleControls({
+  color,
+  width,
+  dash,
+  disabled,
+  onChangeColor,
+  onChangeWidth,
+  onChangeDash,
+}: {
+  color: number
+  width: number
+  dash: 'solid' | 'dash' | 'dot'
+  disabled: boolean
+  onChangeColor: (n: number) => void
+  onChangeWidth: (n: number) => void
+  onChangeDash: (v: 'solid' | 'dash' | 'dot') => void
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <Row label="Style">
+        <select
+          value={dash}
+          disabled={disabled}
+          onChange={(e) => onChangeDash(e.target.value as 'solid' | 'dash' | 'dot')}
+          className="h-6 flex-1 rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
+        >
+          <option value="solid">Solid</option>
+          <option value="dash">Dashed</option>
+          <option value="dot">Dotted</option>
+        </select>
+      </Row>
+      <Row label="Color">
+        <ColorCell
+          value={numberToHex(color)}
+          disabled={disabled}
+          onChange={(hex) => onChangeColor(hexToNumber(hex))}
+        />
+      </Row>
+      <Row label="Width">
+        <NumInput
+          value={width}
+          min={0}
+          max={20}
+          step={0.5}
+          disabled={disabled}
+          onCommit={onChangeWidth}
+        />
+      </Row>
     </div>
   )
 }

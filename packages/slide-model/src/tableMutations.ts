@@ -681,20 +681,22 @@ function edgesForPreset(
 
 /**
  * Apply a Keynote-style border preset to every cell in a range.
- * `edgeSpec` is the {color, width} stamped on each enabled edge —
- * caller pulls this from `defaults.border` or from the most recently
- * edited per-edge spec so the preset honours the user's chosen style.
+ * `edgeSpec` is the {color, width, dash?} stamped on each ENABLED edge.
+ * DISABLED edges are written as width-0 entries so the renderer's
+ * `border.width <= 0 → skip` guard suppresses them — crucial when a
+ * preset is applied to a sub-range while `defaults.border` is set,
+ * because otherwise interior cells of the range would fall back to the
+ * default grid even when the preset says "no border here".
  *
- * Cells whose edge set is empty get `border` deleted entirely so the
- * cell falls back to `defaults.border` on every edge. Merge-continuation
- * pointer cells are skipped (the origin sits within the range anyway).
+ * Merge-continuation pointer cells are skipped (the origin sits within
+ * the range anyway and gets the patch on its own iteration).
  */
 export function setRangeBorderPreset(
   ctx: ObjectsMutationContext,
   tableId: string,
   range: { r0: number; c0: number; r1: number; c1: number },
   preset: TableBorderPreset,
-  edgeSpec: { color: number; width: number },
+  edgeSpec: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' },
 ): void {
   const rowsY = getRowsArr(ctx, tableId)
   if (rowsY === null) return
@@ -709,20 +711,24 @@ export function setRangeBorderPreset(
         if (cell.get('mergeOriginR') !== undefined || cell.get('mergeOriginC') !== undefined) {
           continue
         }
-        const edges = edgesForPreset(preset, r, c, { r0, c0, r1, c1 })
-        if (edges.length === 0) {
-          cell.delete('border')
-          continue
-        }
+        const active = new Set(edgesForPreset(preset, r, c, { r0, c0, r1, c1 }))
         // Mirror the per-edge shape used by setRangeCellStyle: a Y.Map at
         // the `border` slot whose values are plain JS objects (NOT Y.Maps).
-        // The bindings unwrap path flattens the outer Y.Map but expects
-        // plain edge specs — wrapping each edge in another Y.Map would
-        // surface them as Y.Map references in the read path and break
-        // every `cell.border.top.width` consumer.
+        // Every edge gets an entry — active edges carry the spec, inactive
+        // edges carry width: 0 so the renderer skips them even when
+        // `defaults.border` would otherwise fill in.
         const borderMap = new Y.Map<unknown>()
-        for (const edge of edges) {
-          borderMap.set(edge, { color: edgeSpec.color, width: edgeSpec.width })
+        for (const edge of ['top', 'right', 'bottom', 'left'] as CellEdge[]) {
+          if (active.has(edge)) {
+            const value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } = {
+              color: edgeSpec.color,
+              width: edgeSpec.width,
+            }
+            if (edgeSpec.dash !== undefined) value.dash = edgeSpec.dash
+            borderMap.set(edge, value)
+          } else {
+            borderMap.set(edge, { color: edgeSpec.color, width: 0 })
+          }
         }
         cell.set('border', borderMap)
       }
