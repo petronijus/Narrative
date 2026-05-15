@@ -591,6 +591,38 @@ function mapTableShape(
           left: round(rawCell.padding.left * scale),
         }
       }
+      // Per-edge borders. Each edge already carries px values (the
+      // parser ran through emuToPx) — the writer just multiplies by
+      // the slide-canvas scale so widths land in the same units as
+      // every other shape's stroke.
+      if (rawCell.border !== undefined) {
+        const b: NonNullable<TableCell['border']> = {}
+        if (rawCell.border.top !== undefined) {
+          b.top = {
+            color: rawCell.border.top.color,
+            width: round(rawCell.border.top.width * scale),
+          }
+        }
+        if (rawCell.border.right !== undefined) {
+          b.right = {
+            color: rawCell.border.right.color,
+            width: round(rawCell.border.right.width * scale),
+          }
+        }
+        if (rawCell.border.bottom !== undefined) {
+          b.bottom = {
+            color: rawCell.border.bottom.color,
+            width: round(rawCell.border.bottom.width * scale),
+          }
+        }
+        if (rawCell.border.left !== undefined) {
+          b.left = {
+            color: rawCell.border.left.color,
+            width: round(rawCell.border.left.width * scale),
+          }
+        }
+        cell.border = b
+      }
       // Merge stamping — same shape as Narrative's TableCell schema.
       if (rawCell.gridSpan !== undefined && rawCell.gridSpan > 1) {
         cell.gridSpan = rawCell.gridSpan

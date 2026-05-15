@@ -708,18 +708,32 @@ function emitTable(slide: PptxSlide, obj: TableObject): void {
       if (cell.fill !== undefined) {
         cellOpts['fill'] = { color: hex6(resolveColor(cell.fill, 0xffffff)) }
       }
-      // Cell border — TableCell.border is a per-edge override, while
-      // TableDefaults.border is uniform. We collapse the cell-level
-      // shape down to whichever edge is set (top first, then any),
-      // matching pptxgenjs's single-border argument. Phase 5 polish
-      // expands this to the 4-edge array form when per-edge differs.
-      const borderUniform = resolveTableBorder(cell, d)
-      if (borderUniform !== undefined) {
-        cellOpts['border'] = {
-          type: 'solid',
-          color: hex6(resolveColor(borderUniform.color, 0xcccccc)),
-          pt: strokeWidthPxToPt(borderUniform.width),
-        }
+      // Cell border. When every edge is uniform (either the cell
+      // inherits the table default on all four sides, or its four
+      // per-edge overrides happen to share colour + width) we emit
+      // pptxgenjs's single `border: BorderProps`. Otherwise we emit
+      // the 4-element TRBL array so per-edge differences land as
+      // distinct `<a:lnT/R/B/L>` declarations in PPTX.
+      const trbl = resolvePerEdgeBorder(cell, d)
+      if (trbl !== null) {
+        const allSame =
+          trbl[0].color === trbl[1].color &&
+          trbl[1].color === trbl[2].color &&
+          trbl[2].color === trbl[3].color &&
+          trbl[0].width === trbl[1].width &&
+          trbl[1].width === trbl[2].width &&
+          trbl[2].width === trbl[3].width
+        cellOpts['border'] = allSame
+          ? {
+              type: 'solid',
+              color: hex6(trbl[0].color),
+              pt: strokeWidthPxToPt(trbl[0].width),
+            }
+          : trbl.map((b) => ({
+              type: 'solid',
+              color: hex6(b.color),
+              pt: strokeWidthPxToPt(b.width),
+            }))
       }
       const padding = cell.padding ?? d.padding
       cellOpts['margin'] = [
@@ -774,22 +788,49 @@ function emitTable(slide: PptxSlide, obj: TableObject): void {
 }
 
 /**
- * Resolve a cell's effective border to a single uniform `{ color, width }`.
- * Cell-level border is per-edge (top/right/bottom/left); table defaults
- * are uniform. We pick the cell's top edge first, then fall through to
- * any present edge, finally defaults. Returns undefined when nothing
- * applies.
+ * Resolve a cell's four borders to a TRBL tuple of resolved `{ color,
+ * width }`. Each edge falls through:
+ *   cell.border[edge] (per-edge override) → defaults.border (uniform)
+ *   → null (no border).
+ *
+ * Returns `null` when every edge is unset on both the cell and the
+ * defaults (no border at all). Callers collapse all-equal tuples back
+ * to pptxgenjs's single `BorderProps` form; differing edges land as
+ * the 4-element array shape pptxgenjs accepts.
  */
-function resolveTableBorder(
+function resolvePerEdgeBorder(
   cell: TableCell,
   defaults: TableObject['defaults'],
-): { color: number | TokenRef; width: number } | undefined {
-  const b = cell.border
-  if (b !== undefined) {
-    const pick = b.top ?? b.right ?? b.bottom ?? b.left
-    if (pick !== undefined) return pick
+):
+  | [
+      { color: number; width: number },
+      { color: number; width: number },
+      { color: number; width: number },
+      { color: number; width: number },
+    ]
+  | null {
+  const edgeOverride = cell.border
+  const defaultStyle = defaults.border
+  const pick = (
+    edge: { color: number | TokenRef; width: number } | undefined,
+  ): { color: number; width: number } | null => {
+    const src = edge ?? defaultStyle
+    if (src === undefined) return null
+    return {
+      color: resolveColor(src.color, 0xcccccc),
+      width: src.width,
+    }
   }
-  return defaults.border
+  const top = pick(edgeOverride?.top)
+  const right = pick(edgeOverride?.right)
+  const bottom = pick(edgeOverride?.bottom)
+  const left = pick(edgeOverride?.left)
+  if (top === null && right === null && bottom === null && left === null) return null
+  // Any unset edge becomes a 0-width transparent border so the array
+  // size stays consistent for pptxgenjs. The renderer's parsing side
+  // also treats 0-width as "no border".
+  const fallback = { color: 0xcccccc, width: 0 }
+  return [top ?? fallback, right ?? fallback, bottom ?? fallback, left ?? fallback]
 }
 
 /**

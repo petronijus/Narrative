@@ -525,7 +525,130 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               onChange={(v) => patchCell({ vAlign: v as 'top' | 'middle' | 'bottom' })}
             />
           </Row>
+          <CellBorderEditor
+            cell={activeCell}
+            defaults={d}
+            disabled={isViewer}
+            onPatch={(border) => patchCell({ border })}
+          />
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Per-edge border editor for one cell. Each edge is toggleable (button)
+ * + its own colour swatch + width input. "Clear" returns the cell to
+ * inheriting the table's uniform default border on every edge.
+ */
+function CellBorderEditor({
+  cell,
+  defaults,
+  disabled,
+  onPatch,
+}: {
+  cell: ReturnType<TableObject['rows'][number]['at']> extends infer T
+    ? T extends TableObject['rows'][number][number]
+      ? T
+      : never
+    : never
+  defaults: TableObject['defaults']
+  disabled: boolean
+  onPatch: (border: TableObject['rows'][number][number]['border']) => void
+}) {
+  const edges = ['top', 'right', 'bottom', 'left'] as const
+  type Edge = (typeof edges)[number]
+  // Default border colour / width used as the seed when a user enables
+  // an edge for the first time. Matches the renderer's fallback so the
+  // visual is predictable.
+  const seedBorder = (): { color: number; width: number } => ({
+    color:
+      typeof defaults.border?.color === 'number' ? (defaults.border.color as number) : 0xcccccc,
+    width: defaults.border?.width ?? 1,
+  })
+  // Returns the per-edge spec the inspector is rendering for: cell
+  // override > undefined (i.e. inheriting default).
+  const edgeOverride = (edge: Edge): { color: number; width: number } | undefined => {
+    const v = cell.border?.[edge]
+    if (v === undefined) return undefined
+    return {
+      color: typeof v.color === 'number' ? (v.color as number) : 0xcccccc,
+      width: v.width,
+    }
+  }
+  const setEdge = (edge: Edge, spec: { color: number; width: number } | undefined): void => {
+    const next: NonNullable<typeof cell.border> = { ...(cell.border ?? {}) }
+    if (spec === undefined) delete (next as Record<string, unknown>)[edge]
+    else next[edge] = spec
+    // Empty record collapses to undefined so the cell goes back to
+    // inheriting defaults on every edge.
+    const hasAny = (Object.keys(next) as Edge[]).some((k) => next[k] !== undefined)
+    onPatch(hasAny ? next : undefined)
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Borders
+      </div>
+      {edges.map((edge) => {
+        const cur = edgeOverride(edge)
+        const enabled = cur !== undefined
+        const label = edge.charAt(0).toUpperCase() + edge.slice(1)
+        return (
+          <div key={edge} className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEdge(edge, enabled ? undefined : seedBorder())}
+              disabled={disabled}
+              aria-pressed={enabled}
+              className={[
+                'h-6 w-12 rounded-md border text-[10px] font-medium',
+                enabled
+                  ? 'border-primary bg-primary/15 text-primary'
+                  : 'border-input text-muted-foreground hover:bg-accent/40',
+                'disabled:opacity-40',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+            <div className="flex flex-1 items-center gap-1.5">
+              <ColorCell
+                value={resolveHex(cur?.color, '#cccccc')}
+                disabled={disabled || !enabled}
+                onChange={(hex) =>
+                  enabled && setEdge(edge, { color: hexToNumber(hex), width: cur?.width ?? 1 })
+                }
+              />
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={0.5}
+                value={cur?.width ?? ''}
+                placeholder={String(defaults.border?.width ?? 1)}
+                disabled={disabled || !enabled}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  if (Number.isFinite(n)) {
+                    setEdge(edge, { color: cur?.color ?? 0xcccccc, width: n })
+                  }
+                }}
+                className="h-6 w-14 rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
+              />
+            </div>
+          </div>
+        )
+      })}
+      {cell.border !== undefined && (
+        <button
+          type="button"
+          onClick={() => onPatch(undefined)}
+          disabled={disabled}
+          className="self-start text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+        >
+          Reset all edges
+        </button>
       )}
     </div>
   )

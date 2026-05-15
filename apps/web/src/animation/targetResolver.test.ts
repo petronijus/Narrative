@@ -177,4 +177,46 @@ describe('createPixiTargetResolver', () => {
     expect(resolver.resolve('instance:onlyone')).toBeNull()
     expect(resolver.resolve('instance::leaf')).toBeNull()
   })
+
+  // M29 Phase 5 — animations on TableObject reuse the standard
+  // Container resolution path. No special-casing in the runtime; the
+  // table's top Container drives alpha / transform exactly the way
+  // every other slide-object does. This test pins that contract so a
+  // future renderer rewrite can't silently drop it.
+  it('M29: a TableObject resolves to its top Container like any other slide-object', () => {
+    const tableContainer = createMockContainer({ x: 200, y: 400, alpha: 0.7 })
+    const nodeMap = new Map([
+      [
+        'tbl-1',
+        {
+          container: tableContainer,
+          // Shape of the data field doesn't matter for the resolver,
+          // but using the real discriminator makes the intent clear.
+          data: { id: 'tbl-1', type: 'table' },
+        },
+      ],
+    ])
+    const sceneGraph = createMockSceneGraph(nodeMap)
+    const resolver = createPixiTargetResolver(sceneGraph)
+
+    const handle = resolver.resolve('tbl-1')
+    if (handle === null || handle.kind !== 'pixi') throw new Error('expected pixi handle')
+
+    // Proxy initialises from the table's container — same path as
+    // every other SlideObject.
+    expect(handle.proxy.x).toBe(200)
+    expect(handle.proxy.y).toBe(400)
+    expect(handle.proxy.alpha).toBe(0.7)
+
+    // apply() writes proxy → container, so a fadeIn animation that
+    // tweens proxy.alpha 0 → 1 will set container.alpha 0 → 1, which
+    // Pixi propagates down to every child (cell HTMLText + grid +
+    // mask), fading the whole table as one unit.
+    handle.proxy.alpha = 0.25
+    handle.proxy.x = 300
+    handle.proxy.y = 500
+    handle.apply()
+    expect(tableContainer.alpha).toBe(0.25)
+    expect(tableContainer.position.set).toHaveBeenCalledWith(300, 500)
+  })
 })

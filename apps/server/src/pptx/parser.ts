@@ -62,10 +62,16 @@ export interface ParsedTableCell {
    *  preset-banding heuristic. */
   fill?: number
   fillAlpha?: number
-  /** Per-cell border override (`<a:tcPr>/<a:lnL|R|T|B>`). v1 collapses
-   *  to a single border colour / width for the cell — Phase 5 polish
-   *  splits into per-edge overrides matching the renderer. */
-  border?: { color: number; width: number }
+  /** Per-cell border override (`<a:tcPr>/<a:lnL|R|T|B>`). Each edge
+   *  carries its own colour + width, matching Narrative's
+   *  TableCellEdgeBorders shape. An undefined edge means "inherit
+   *  from the table default" (renderer-side fallback). */
+  border?: {
+    top?: { color: number; width: number }
+    right?: { color: number; width: number }
+    bottom?: { color: number; width: number }
+    left?: { color: number; width: number }
+  }
   /** Cell content padding (PPTX `<a:tcPr marL/marR/marT/marB>`). */
   padding?: { top: number; right: number; bottom: number; left: number }
   /** Merge extent — set on the origin only. `gridSpan` = column count
@@ -2870,11 +2876,14 @@ function parseTable(
         const presetFill = computePresetFill(preset, r, ci, totalRows, totalCols, theme)
         if (presetFill !== undefined) targetCell.fill = presetFill
       }
-      const borderColor = cellStyle.strokeColor
-      const borderWidth = cellStyle.strokeWidth
-      if (borderColor !== undefined && (borderWidth ?? 0) > 0) {
-        targetCell.border = { color: borderColor, width: borderWidth ?? 1 }
-      }
+      // Per-edge borders — copy whichever edges PPTX declared so the
+      // writer can stamp them onto the TableCell's per-edge override.
+      const edgeBorder: NonNullable<ParsedTableCell['border']> = {}
+      if (cellStyle.borderTop !== undefined) edgeBorder.top = cellStyle.borderTop
+      if (cellStyle.borderRight !== undefined) edgeBorder.right = cellStyle.borderRight
+      if (cellStyle.borderBottom !== undefined) edgeBorder.bottom = cellStyle.borderBottom
+      if (cellStyle.borderLeft !== undefined) edgeBorder.left = cellStyle.borderLeft
+      if (Object.keys(edgeBorder).length > 0) targetCell.border = edgeBorder
       // Padding from `<a:tcPr marL/marR/marT/marB>`. PPTX defaults
       // (when unspecified) are 91440 EMU L/R + 45720 EMU T/B; v1 reads
       // explicit values only and lets the writer fall back to Narrative's
@@ -3142,9 +3151,16 @@ interface CellStyle {
   fillColor?: number
   fillAlpha?: number
   fillGradient?: ParsedGradient
-  strokeColor?: number
-  strokeAlpha?: number
-  strokeWidth?: number
+  /** Per-edge borders extracted from `<a:tcPr>/<a:lnL|R|T|B>`. An edge
+   *  with `<a:noFill/>` and no override is absent here so the renderer
+   *  can fall back to the table-wide default. The four-edges-all-noFill
+   *  case still surfaces as fully absent — Narrative's renderer treats
+   *  an undefined cell.border as "inherit", so explicit suppression on
+   *  every edge collapses into the same behaviour. */
+  borderTop?: { color: number; width: number }
+  borderRight?: { color: number; width: number }
+  borderBottom?: { color: number; width: number }
+  borderLeft?: { color: number; width: number }
 }
 
 function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
@@ -3174,57 +3190,33 @@ function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
   // so we leave fillColor/fillGradient unset. The cell rect's default
   // (no fill key) makes it transparent.
 
-  // ─── Per-edge borders → uniform stroke ───────────────────────────────────
-  // Priority left → right → top → bottom: the first edge with a solidFill
-  // wins. PowerPoint defaults each edge to `<a:lnL>` (or family) with the
-  // master/theme's table-grid colour when unspecified, but for v1 we honour
-  // only inline declarations.
-  for (const edge of ['a:lnL', 'a:lnR', 'a:lnT', 'a:lnB']) {
-    const ln = findFirst(tcPrChildren, edge)
+  // ─── Per-edge borders ─────────────────────────────────────────────────────
+  // Each `<a:lnL/R/T/B>` is captured independently so the writer can
+  // emit a per-edge override on the TableCell. `<a:noFill/>` on a given
+  // edge leaves that edge undefined in our output — the renderer's
+  // default-fallback then re-introduces the table-wide grid border.
+  // (Explicitly suppressing the default on every edge would require a
+  // schema sentinel; deferred until a test case demands it.)
+  const edges: Array<{ tag: string; key: keyof CellStyle }> = [
+    { tag: 'a:lnT', key: 'borderTop' },
+    { tag: 'a:lnR', key: 'borderRight' },
+    { tag: 'a:lnB', key: 'borderBottom' },
+    { tag: 'a:lnL', key: 'borderLeft' },
+  ]
+  for (const { tag, key } of edges) {
+    const ln = findFirst(tcPrChildren, tag)
     if (!ln) continue
-    const lnChildren = getChildren(ln, edge)
-    // Width is on the `<a:lnL w="EMU">` attribute. Convert to px.
-    const wAttr = getAttrs(ln)['@w']
-    const w = typeof wAttr === 'string' ? emuToPx(Number(wAttr)) : undefined
-    // `<a:noFill/>` on an edge explicitly suppresses the border. When all
-    // edges are noFill we want strokeColor=undefined; mark this once.
-    if (findFirst(lnChildren, 'a:noFill') !== undefined) {
-      // Suppression — but ONLY if every edge agrees. Keep scanning.
-      continue
-    }
+    const lnChildren = getChildren(ln, tag)
+    if (findFirst(lnChildren, 'a:noFill') !== undefined) continue
     const lnSolid = findFirst(lnChildren, 'a:solidFill')
-    if (lnSolid) {
-      const c = parseColourAndAlphaFrom(lnSolid, theme)
-      if (c !== undefined) {
-        out.strokeColor = c.color
-        if (c.alpha !== undefined) out.strokeAlpha = c.alpha
-        if (w !== undefined && w > 0) out.strokeWidth = w
-        break
-      }
-    }
-  }
-
-  // If all four edges were `<a:noFill/>` (every present `a:ln*` had a
-  // `<a:noFill/>` child and no solid), explicitly suppress the stroke so
-  // the cell renders borderless instead of falling back to the uniform
-  // grid. Detect this by checking that EVERY declared edge was noFill.
-  if (out.strokeColor === undefined) {
-    const declaredEdges = ['a:lnL', 'a:lnR', 'a:lnT', 'a:lnB']
-      .map((tag) => findFirst(tcPrChildren, tag))
-      .filter((n): n is XmlNode => n !== undefined)
-    if (declaredEdges.length > 0) {
-      const allNoFill = declaredEdges.every((ln) => {
-        const tag = getTag(ln)
-        if (tag === null) return false
-        return findFirst(getChildren(ln, tag), 'a:noFill') !== undefined
-      })
-      if (allNoFill) {
-        // Sentinel: a strokeWidth of 0 communicates "intentionally
-        // borderless" downstream. The cell-rect builder treats absent
-        // strokeColor + strokeWidth=0 as "draw no stroke", overriding the
-        // gray-grid default.
-        out.strokeWidth = 0
-      }
+    if (!lnSolid) continue
+    const c = parseColourAndAlphaFrom(lnSolid, theme)
+    if (c === undefined) continue
+    const wAttr = getAttrs(ln)['@w']
+    const w = typeof wAttr === 'string' ? emuToPx(Number(wAttr)) : 1
+    ;(out as Record<string, unknown>)[key] = {
+      color: c.color,
+      width: w > 0 ? w : 1,
     }
   }
 

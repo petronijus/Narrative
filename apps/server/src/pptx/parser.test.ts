@@ -594,7 +594,7 @@ describe('parsePptx', () => {
     expect(tbl.tableCells![0]![0]!.fill).toBe(0xff8800)
   })
 
-  it('picks the first defined <a:lnL/R/T/B> edge as the cell border', async () => {
+  it('captures `<a:lnL/R/T/B>` edges as per-edge cell borders', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -622,9 +622,15 @@ describe('parsePptx', () => {
     const out = await parsePptx(buf)
     const tbl = out.slides[0]!.shapes[0]!
     expect(tbl.kind).toBe('table')
-    expect(tbl.tableCells![0]![0]!.border?.color).toBe(0x112233)
-    // 19050 EMU = 2 px @ 96 DPI.
-    expect(tbl.tableCells![0]![0]!.border?.width).toBeCloseTo(2, 1)
+    const border = tbl.tableCells![0]![0]!.border
+    expect(border?.left?.color).toBe(0x112233)
+    expect(border?.left?.width).toBeCloseTo(2, 1) // 19050 EMU = 2 px @ 96 DPI
+    expect(border?.bottom?.color).toBe(0x445566)
+    expect(border?.bottom?.width).toBeCloseTo(4, 1) // 38100 EMU = 4 px
+    // Edges not declared by the XML are absent — renderer falls back
+    // to the table default for those.
+    expect(border?.top).toBeUndefined()
+    expect(border?.right).toBeUndefined()
   })
 
   // ─── <a:tblPr> presets ────────────────────────────────────────────────────

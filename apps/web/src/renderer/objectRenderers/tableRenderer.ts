@@ -225,8 +225,36 @@ function syntheticCellTextObject(
   }
 }
 
+/**
+ * Resolve the effective border for one edge of a cell: the cell's
+ * per-edge override (when set), otherwise the table-wide default. A
+ * cell with `cell.border = { top: ..., bottom: ... }` lets the user
+ * draw e.g. just a top + bottom border with no sides, which is the
+ * classic "ledger row" look.
+ */
+function resolveCellEdgeBorder(
+  cell: TableCell,
+  edge: 'top' | 'right' | 'bottom' | 'left',
+  defaults: TableObject['defaults'],
+): { color: number; width: number } | null {
+  const edgeOverride = cell.border?.[edge]
+  if (edgeOverride !== undefined) {
+    return {
+      color: resolveBorderColour(edgeOverride, 0xcccccc),
+      width: edgeOverride.width,
+    }
+  }
+  // No per-edge override on this cell — fall back to the table default.
+  if (defaults.border === undefined) return null
+  return {
+    color: resolveBorderColour(defaults.border, 0xcccccc),
+    width: defaults.border.width,
+  }
+}
+
 function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: number[]): void {
   grid.clear()
+  // Pass 1 — cell fills first so subsequent stroke segments draw on top.
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
@@ -239,18 +267,47 @@ function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: num
       }
     }
   }
-  const defaultBorder = table.defaults.border
-  const defaultColor = resolveBorderColour(defaultBorder, 0xcccccc)
-  const defaultWidth = defaultBorder?.width ?? 1
+  // Pass 2 — per-edge borders. Each cell asks for its own four edges;
+  // when the cell has no per-edge override the table default fills in.
+  // Drawing edge-by-edge (not whole rectangles) lets a user disable
+  // individual sides — e.g. only a top border for a header row.
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
       const bbox = cellBbox(table, r, c, colX, rowY)
       if (bbox === null) continue
-      grid.rect(bbox.x, bbox.y, bbox.w, bbox.h)
-      grid.stroke({ color: defaultColor, width: defaultWidth, alpha: 1 })
+      const cell = row[c]!
+      drawCellEdges(grid, cell, bbox, table.defaults)
     }
   }
+}
+
+function drawCellEdges(
+  grid: Graphics,
+  cell: TableCell,
+  bbox: { x: number; y: number; w: number; h: number },
+  defaults: TableObject['defaults'],
+): void {
+  const stroke = (
+    border: { color: number; width: number },
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+  ): void => {
+    if (border.width <= 0) return
+    grid.moveTo(x1, y1)
+    grid.lineTo(x2, y2)
+    grid.stroke({ color: border.color, width: border.width, alpha: 1 })
+  }
+  const top = resolveCellEdgeBorder(cell, 'top', defaults)
+  if (top !== null) stroke(top, bbox.x, bbox.y, bbox.x + bbox.w, bbox.y)
+  const right = resolveCellEdgeBorder(cell, 'right', defaults)
+  if (right !== null) stroke(right, bbox.x + bbox.w, bbox.y, bbox.x + bbox.w, bbox.y + bbox.h)
+  const bottom = resolveCellEdgeBorder(cell, 'bottom', defaults)
+  if (bottom !== null) stroke(bottom, bbox.x, bbox.y + bbox.h, bbox.x + bbox.w, bbox.y + bbox.h)
+  const left = resolveCellEdgeBorder(cell, 'left', defaults)
+  if (left !== null) stroke(left, bbox.x, bbox.y, bbox.x, bbox.y + bbox.h)
 }
 
 /**
