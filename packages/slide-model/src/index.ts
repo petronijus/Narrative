@@ -94,11 +94,20 @@ export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 export {
   addTable,
   buildTable,
+  insertTableRow,
+  insertTableCol,
+  deleteTableRow,
+  deleteTableCol,
+  getTableCellYMap,
+  setTableCellStyle,
+  setTableDefaultsPatch,
+  setTableColWidth,
+  setTableRowHeight,
   DEFAULT_TABLE_DEFAULTS,
   DEFAULT_TABLE_ROWS,
   DEFAULT_TABLE_COLS,
 } from './tableMutations.js'
-export type { AddTableOpts } from './tableMutations.js'
+export type { AddTableOpts, CellStylePatch } from './tableMutations.js'
 
 // Rich-text helpers (P15+) — Y.Text ↔ delta ↔ HTML
 export {

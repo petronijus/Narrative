@@ -14,6 +14,7 @@
  */
 
 import { nanoid } from 'nanoid'
+import * as Y from 'yjs'
 import type { SlideObject, TableCell, TableDefaults, TableObject } from '@narrative/shared'
 import { addObject, type ObjectsMutationContext } from './mutations.js'
 
@@ -126,4 +127,288 @@ export function addTable(ctx: ObjectsMutationContext, opts: AddTableOpts): strin
   const table = buildTable(opts)
   addObject(ctx, table as SlideObject)
   return table.id
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — structural & style mutations on an existing table
+// ---------------------------------------------------------------------------
+
+/**
+ * Locate the table Y.Map by id in the slide's objects array. Returns
+ * `null` if the id isn't present or the object isn't a table — keeps
+ * callers from accidentally mutating a non-table object that happens
+ * to share the id namespace (which shouldn't happen, but defensive).
+ */
+function findTableYMap(ctx: ObjectsMutationContext, id: string): Y.Map<unknown> | null {
+  for (let i = 0; i < ctx.objects.length; i++) {
+    const m = ctx.objects.get(i)
+    if (m === undefined) continue
+    if (m.get('id') === id && m.get('type') === 'table') return m
+  }
+  return null
+}
+
+/**
+ * Build a fresh, empty cell Y.Map. Uses an EMPTY Y.Text (no text inserts)
+ * so the two-phase deep-integration trap doesn't apply — callers can
+ * append the result to an already-integrated parent and immediately
+ * read the cell's Y.Text reference for binding to a contenteditable.
+ */
+function buildEmptyCellYMap(): Y.Map<unknown> {
+  const y = new Y.Map<unknown>()
+  y.set('text', new Y.Text())
+  return y
+}
+
+function avgOf(arr: Y.Array<number>, fallback: number): number {
+  if (arr.length === 0) return fallback
+  let s = 0
+  for (let i = 0; i < arr.length; i++) s += arr.get(i) ?? 0
+  return s / arr.length
+}
+
+/**
+ * Insert a row at `atIndex`. Pass `atIndex >= rowCount` (or `-1`) to
+ * append at the end. New cells start blank and inherit the table's
+ * defaults; new row height = average of existing rows so the visual
+ * footprint scales naturally.
+ */
+export function insertTableRow(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  atIndex: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  const rowHeights = yMap.get('rowHeights') as Y.Array<number> | undefined
+  const colWidths = yMap.get('colWidths') as Y.Array<number> | undefined
+  if (rowsY === undefined || rowHeights === undefined || colWidths === undefined) return
+  const colCount = colWidths.length
+  const insertAt = atIndex < 0 || atIndex > rowsY.length ? rowsY.length : Math.floor(atIndex)
+  ctx.doc.transact(() => {
+    const newRow = new Y.Array<Y.Map<unknown>>()
+    const cells: Y.Map<unknown>[] = []
+    for (let c = 0; c < colCount; c++) cells.push(buildEmptyCellYMap())
+    newRow.push(cells)
+    rowsY.insert(insertAt, [newRow])
+    rowHeights.insert(insertAt, [avgOf(rowHeights, 40)])
+  })
+}
+
+/**
+ * Insert a column at `atIndex` (or append when out of range). Iterates
+ * over each row and inserts a blank cell at the matching position. New
+ * width = average of existing columns.
+ */
+export function insertTableCol(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  atIndex: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  const colWidths = yMap.get('colWidths') as Y.Array<number> | undefined
+  if (rowsY === undefined || colWidths === undefined) return
+  const colCount = colWidths.length
+  const insertAt = atIndex < 0 || atIndex > colCount ? colCount : Math.floor(atIndex)
+  ctx.doc.transact(() => {
+    for (let r = 0; r < rowsY.length; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      row.insert(insertAt, [buildEmptyCellYMap()])
+    }
+    colWidths.insert(insertAt, [avgOf(colWidths, 60)])
+  })
+}
+
+/**
+ * Delete the row at `atIndex`. No-op when the table has only one row
+ * left (a 0-row table is degenerate; let the user delete the whole
+ * object via the standard delete-object path instead).
+ */
+export function deleteTableRow(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  atIndex: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  const rowHeights = yMap.get('rowHeights') as Y.Array<number> | undefined
+  if (rowsY === undefined || rowHeights === undefined) return
+  if (rowsY.length <= 1) return
+  if (atIndex < 0 || atIndex >= rowsY.length) return
+  ctx.doc.transact(() => {
+    rowsY.delete(atIndex, 1)
+    if (atIndex < rowHeights.length) rowHeights.delete(atIndex, 1)
+  })
+}
+
+/**
+ * Delete the column at `atIndex`. Same single-column guard as
+ * `deleteTableRow`.
+ */
+export function deleteTableCol(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  atIndex: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  const colWidths = yMap.get('colWidths') as Y.Array<number> | undefined
+  if (rowsY === undefined || colWidths === undefined) return
+  if (colWidths.length <= 1) return
+  if (atIndex < 0 || atIndex >= colWidths.length) return
+  ctx.doc.transact(() => {
+    for (let r = 0; r < rowsY.length; r++) {
+      const row = rowsY.get(r)
+      if (row === undefined) continue
+      if (atIndex < row.length) row.delete(atIndex, 1)
+    }
+    colWidths.delete(atIndex, 1)
+  })
+}
+
+/**
+ * Read the cell Y.Map at (r, c) — useful for callers that need to bind
+ * a contenteditable to the cell's Y.Text. Returns null when out of
+ * range or the table doesn't exist.
+ */
+export function getTableCellYMap(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  r: number,
+  c: number,
+): Y.Map<unknown> | null {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return null
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  if (rowsY === undefined) return null
+  const row = rowsY.get(r)
+  if (row === undefined) return null
+  const cell = row.get(c)
+  return cell ?? null
+}
+
+/**
+ * Patch fields on a single cell. Pass `value === undefined` for any key
+ * to delete that field (the cell falls back to the table's `defaults`
+ * for the affected style). `text` must be a Y.Text — string assignment
+ * here would orphan the Y.Text binding and break collab; use the
+ * Y.Text's own delete/insert API instead.
+ */
+// Each field may be `undefined` to *delete* the cell-level override and
+// fall back to the table's defaults. `exactOptionalPropertyTypes`
+// requires the union with `undefined` to be explicit on every property
+// (a bare optional `?:` doesn't accept `undefined`).
+type WithUndefined<T> = { [K in keyof T]: T[K] | undefined }
+export type CellStylePatch = Partial<
+  WithUndefined<Omit<TableCell, 'text' | 'border' | 'padding'>>
+> & {
+  border?: TableCell['border'] | undefined
+  padding?: TableCell['padding'] | undefined
+}
+
+export function setTableCellStyle(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  r: number,
+  c: number,
+  patch: CellStylePatch,
+): void {
+  const cellY = getTableCellYMap(ctx, tableId, r, c)
+  if (cellY === null) return
+  ctx.doc.transact(() => {
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) {
+        cellY.delete(k)
+        continue
+      }
+      if ((k === 'border' || k === 'padding') && v !== null && typeof v === 'object') {
+        const sub = new Y.Map<unknown>()
+        for (const [sk, sv] of Object.entries(v as unknown as Record<string, unknown>)) {
+          sub.set(sk, sv)
+        }
+        cellY.set(k, sub)
+        continue
+      }
+      cellY.set(k, v)
+    }
+  })
+}
+
+/**
+ * Patch the table-wide defaults. Same delete-on-undefined semantics as
+ * `setTableCellStyle`. Border / padding are replaced wholesale (it's
+ * rare to patch a single edge default in practice; per-cell overrides
+ * cover that case).
+ */
+export function setTableDefaultsPatch(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  patch: Partial<TableDefaults>,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const defaultsY = yMap.get('defaults') as Y.Map<unknown> | undefined
+  if (defaultsY === undefined) return
+  ctx.doc.transact(() => {
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) {
+        defaultsY.delete(k)
+        continue
+      }
+      if ((k === 'border' || k === 'padding') && v !== null && typeof v === 'object') {
+        const sub = new Y.Map<unknown>()
+        for (const [sk, sv] of Object.entries(v as unknown as Record<string, unknown>)) {
+          sub.set(sk, sv)
+        }
+        defaultsY.set(k, sub)
+        continue
+      }
+      defaultsY.set(k, v)
+    }
+  })
+}
+
+/**
+ * Set the absolute width of a single column (Phase 5 drag handles use
+ * this). The renderer rescales `colWidths` to fit `table.width` so the
+ * value is effectively a proportion within the column-vector sum.
+ */
+export function setTableColWidth(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  colIndex: number,
+  width: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const colWidths = yMap.get('colWidths') as Y.Array<number> | undefined
+  if (colWidths === undefined) return
+  if (colIndex < 0 || colIndex >= colWidths.length) return
+  ctx.doc.transact(() => {
+    colWidths.delete(colIndex, 1)
+    colWidths.insert(colIndex, [Math.max(1, width)])
+  })
+}
+
+export function setTableRowHeight(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  rowIndex: number,
+  height: number,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const rowHeights = yMap.get('rowHeights') as Y.Array<number> | undefined
+  if (rowHeights === undefined) return
+  if (rowIndex < 0 || rowIndex >= rowHeights.length) return
+  ctx.doc.transact(() => {
+    rowHeights.delete(rowIndex, 1)
+    rowHeights.insert(rowIndex, [Math.max(1, height)])
+  })
 }

@@ -25,6 +25,7 @@ import { resolveColour } from '../colourResolver.js'
 
 const GRID_TAG = Symbol('tableGrid')
 const TEXTS_TAG = Symbol('tableTexts')
+const CLIPS_TAG = Symbol('tableClips')
 const DATA_TAG = Symbol('tableData')
 
 /**
@@ -175,8 +176,22 @@ function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: num
   }
 }
 
-function paintTexts(parent: Container, table: TableObject, colX: number[], rowY: number[]): Text[] {
-  const out: Text[] = []
+/**
+ * For each cell, mount a sub-Container holding the Pixi.Text + a
+ * Graphics mask that clips text to the cell's inner padding box.
+ * Without the mask, a long string would draw past the cell border —
+ * the user sees this as text "overflowing the cell" the moment the
+ * inline editor closes. We return the masks alongside the texts so
+ * `rebuild()` can destroy them on update.
+ */
+function paintTexts(
+  parent: Container,
+  table: TableObject,
+  colX: number[],
+  rowY: number[],
+): { texts: Text[]; clips: Container[] } {
+  const texts: Text[] = []
+  const clips: Container[] = []
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
@@ -186,60 +201,77 @@ function paintTexts(parent: Container, table: TableObject, colX: number[], rowY:
       const style = resolveCellStyle(table, cell)
       const textValue = typeof cell.text === 'string' ? cell.text : (cell.text?.toString() ?? '')
       if (textValue.length === 0) continue
+      const innerW = Math.max(1, bbox.w - style.padding.left - style.padding.right)
+      const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
       const styleObj: ConstructorParameters<typeof TextStyle>[0] = {
         fontSize: style.fontSize,
         fontWeight: style.fontWeight as TextStyle['fontWeight'],
         fill: style.color,
         align: style.align,
         wordWrap: true,
-        wordWrapWidth: Math.max(1, bbox.w - style.padding.left - style.padding.right),
+        wordWrapWidth: innerW,
+        // Break mid-word too — without this, a long unbroken string
+        // ("aaaaaaaaaaaaaaa") would only wrap on whitespace, blowing
+        // past the cell border and getting clipped to a single line.
+        breakWords: true,
       }
       if (style.fontFamily !== undefined) styleObj.fontFamily = style.fontFamily
       const t = new Text({ text: textValue, style: new TextStyle(styleObj) })
-      // Anchor at top-left to make manual positioning predictable.
       t.anchor.set(0, 0)
-      const innerW = bbox.w - style.padding.left - style.padding.right
-      const innerH = bbox.h - style.padding.top - style.padding.bottom
       // Horizontal align inside the inner box.
-      let tx = bbox.x + style.padding.left
-      if (style.align === 'center') tx = bbox.x + style.padding.left + (innerW - t.width) / 2
-      else if (style.align === 'right') tx = bbox.x + bbox.w - style.padding.right - t.width
+      let tx = style.padding.left
+      if (style.align === 'center') tx = style.padding.left + (innerW - t.width) / 2
+      else if (style.align === 'right') tx = bbox.w - style.padding.right - t.width
       // Vertical align inside the inner box.
-      let ty = bbox.y + style.padding.top
-      if (style.vAlign === 'middle') ty = bbox.y + style.padding.top + (innerH - t.height) / 2
-      else if (style.vAlign === 'bottom') ty = bbox.y + bbox.h - style.padding.bottom - t.height
+      let ty = style.padding.top
+      if (style.vAlign === 'middle') ty = style.padding.top + (innerH - t.height) / 2
+      else if (style.vAlign === 'bottom') ty = bbox.h - style.padding.bottom - t.height
       t.x = tx
       t.y = ty
-      parent.addChild(t)
-      out.push(t)
+      // Wrap the Text in a clip Container so overflowing glyphs don't
+      // leak past the cell boundary (long words, multi-line text in a
+      // short row, etc.). The mask Graphics covers exactly the cell
+      // bbox; both are positioned at (bbox.x, bbox.y) so children draw
+      // in local coords relative to the cell's top-left.
+      const clip = new Container()
+      clip.x = bbox.x
+      clip.y = bbox.y
+      const mask = new Graphics()
+      mask.rect(0, 0, bbox.w, bbox.h).fill({ color: 0xffffff })
+      clip.addChild(mask)
+      clip.addChild(t)
+      clip.mask = mask
+      parent.addChild(clip)
+      texts.push(t)
+      clips.push(clip)
     }
   }
-  return out
+  return { texts, clips }
 }
 
 function rebuild(container: Container, data: TableObject): void {
   const colX = cumulativeCols(data)
   const rowY = cumulativeRows(data)
-  // Wipe previous state — grid + per-cell Texts are stored under separate
-  // symbol tags (see end of this function), so look both up directly.
-  const prevGrid = (container as Container & { [k: symbol]: unknown })[GRID_TAG] as
-    | Graphics
-    | undefined
-  const prevTexts = (container as Container & { [k: symbol]: unknown })[TEXTS_TAG] as
-    | Text[]
-    | undefined
+  const tagged = container as Container & { [k: symbol]: unknown }
+  // Wipe previous state. Clip Containers own both their mask Graphics
+  // and the Pixi.Text child, so destroying them with `children:true`
+  // tears the whole sub-tree down in one call.
+  const prevGrid = tagged[GRID_TAG] as Graphics | undefined
+  const prevClips = tagged[CLIPS_TAG] as Container[] | undefined
   if (prevGrid !== undefined) prevGrid.destroy({ children: false, texture: false })
-  if (prevTexts !== undefined) {
-    for (const t of prevTexts) t.destroy({ children: false, texture: true, textureSource: true })
+  if (prevClips !== undefined) {
+    for (const clip of prevClips)
+      clip.destroy({ children: true, texture: true, textureSource: true })
   }
   container.removeChildren()
   const grid = new Graphics()
   paintGrid(grid, data, colX, rowY)
   container.addChild(grid)
-  const texts = paintTexts(container, data, colX, rowY)
-  ;(container as Container & { [k: symbol]: unknown })[GRID_TAG] = grid
-  ;(container as Container & { [k: symbol]: unknown })[TEXTS_TAG] = texts
-  ;(container as Container & { [k: symbol]: unknown })[DATA_TAG] = data
+  const { texts, clips } = paintTexts(container, data, colX, rowY)
+  tagged[GRID_TAG] = grid
+  tagged[TEXTS_TAG] = texts
+  tagged[CLIPS_TAG] = clips
+  tagged[DATA_TAG] = data
   applyObjectTransform(container, data)
 }
 
@@ -256,13 +288,12 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     applyFilterEffects(node, next.shadow, next.blur)
   },
   destroy(node) {
-    const cache = (node as Container & { [k: symbol]: unknown })[GRID_TAG] as Graphics | undefined
-    if (cache !== undefined) cache.destroy({ children: false, texture: false })
-    const texts = (node as Container & { [k: symbol]: unknown })[TEXTS_TAG] as Text[] | undefined
-    if (texts !== undefined) {
-      for (const t of texts) {
-        t.destroy({ children: false, texture: true, textureSource: true })
-      }
+    const tagged = node as Container & { [k: symbol]: unknown }
+    const grid = tagged[GRID_TAG] as Graphics | undefined
+    if (grid !== undefined) grid.destroy({ children: false, texture: false })
+    const clips = tagged[CLIPS_TAG] as Container[] | undefined
+    if (clips !== undefined) {
+      for (const clip of clips) clip.destroy({ children: true, texture: true, textureSource: true })
     }
     destroyFilterEffects(node)
     node.destroy({ children: true })

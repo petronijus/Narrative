@@ -34,6 +34,7 @@ import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
 import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
 import { TextEditProvider } from '../state/TextEditContext.js'
+import { TableEditProvider } from '../state/TableEditContext.js'
 import { CropModeProvider } from '../state/CropModeContext.js'
 import { PathPointsModeProvider } from '../state/PathPointsModeContext.js'
 import { RulersProvider } from '../state/RulersContext.js'
@@ -103,16 +104,18 @@ export function ComponentMasterEditor() {
                 <SelectionProvider>
                   <ToolProvider>
                     <TextEditProvider>
-                      <CropModeProvider>
-                        <PathPointsModeProvider>
-                          <RulersProvider>
-                            <CanvasInstanceContext.Provider value={canvasInstance}>
-                              <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
-                              <ComponentThumbnailUploader componentId={componentId} />
-                            </CanvasInstanceContext.Provider>
-                          </RulersProvider>
-                        </PathPointsModeProvider>
-                      </CropModeProvider>
+                      <TableEditProvider>
+                        <CropModeProvider>
+                          <PathPointsModeProvider>
+                            <RulersProvider>
+                              <CanvasInstanceContext.Provider value={canvasInstance}>
+                                <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
+                                <ComponentThumbnailUploader componentId={componentId} />
+                              </CanvasInstanceContext.Provider>
+                            </RulersProvider>
+                          </PathPointsModeProvider>
+                        </CropModeProvider>
+                      </TableEditProvider>
                     </TextEditProvider>
                   </ToolProvider>
                 </SelectionProvider>

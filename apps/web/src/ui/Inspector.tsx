@@ -71,6 +71,7 @@ import {
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { TokenColorInput } from './TokenColorInput.js'
+import { TableInspector } from './TableInspector.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
@@ -909,6 +910,13 @@ export function Inspector() {
         patch={patch as (p: SlideObjectPatch<SlideObject>) => void}
       />
     )
+  }
+
+  // M29 Phase 2 — Table object has its own inspector with row/col +
+  // defaults + active-cell override controls. Skips the generic shape
+  // chrome below (fill/stroke/etc. live inside the table's `defaults`).
+  if (obj.type === 'table' && mutationCtx !== null) {
+    return <TableInspector obj={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
   }
 
   return (

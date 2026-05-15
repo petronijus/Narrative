@@ -30,6 +30,7 @@ import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
+import { useTableEdit } from '../state/TableEditContext'
 import { useCropMode } from '../state/CropModeContext'
 import { CropOverlay } from '../ui/CropOverlay'
 import { PathPointsOverlay } from '../ui/PathPointsOverlay'
@@ -37,6 +38,7 @@ import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
 import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
+import { TableCellEditor } from '../ui/TableCellEditor'
 import { InstanceLeafTextEditor } from '../ui/InstanceLeafTextEditor'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
@@ -66,6 +68,7 @@ import type {
   PathAnchor,
   PathObject,
   ComponentInstanceObject,
+  TableObject,
 } from '@narrative/shared'
 import {
   hitTestInstanceLeaf,
@@ -150,6 +153,51 @@ function constrainDraft(
     currentX: startX + Math.sign(dx || 1) * size,
     currentY: startY + Math.sign(dy || 1) * size,
   }
+}
+
+/**
+ * Inverse-transform a world-space cursor point into a table's local
+ * cell coordinates. Returns `{ r, c }` of the cell under the cursor,
+ * or `null` when the point falls outside the table's bbox (clicking
+ * the rotated halo).
+ */
+function hitTestTableCell(
+  table: TableObject,
+  worldX: number,
+  worldY: number,
+): { r: number; c: number } | null {
+  const cx = table.x + table.width / 2
+  const cy = table.y + table.height / 2
+  const cos = Math.cos(-table.rotation)
+  const sin = Math.sin(-table.rotation)
+  const dx = worldX - cx
+  const dy = worldY - cy
+  const localX = cos * dx - sin * dy + table.width / 2
+  const localY = sin * dx + cos * dy + table.height / 2
+  if (localX < 0 || localX > table.width || localY < 0 || localY > table.height) return null
+  const colSum = table.colWidths.reduce((a, b) => a + b, 0) || 1
+  const rowSum = table.rowHeights.reduce((a, b) => a + b, 0) || 1
+  const sx = table.width / colSum
+  const sy = table.height / rowSum
+  let acc = 0
+  let col = table.colWidths.length - 1
+  for (let i = 0; i < table.colWidths.length; i++) {
+    acc += (table.colWidths[i] ?? 0) * sx
+    if (localX <= acc) {
+      col = i
+      break
+    }
+  }
+  acc = 0
+  let row = table.rowHeights.length - 1
+  for (let i = 0; i < table.rowHeights.length; i++) {
+    acc += (table.rowHeights[i] ?? 0) * sy
+    if (localY <= acc) {
+      row = i
+      break
+    }
+  }
+  return { r: row, c: col }
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +518,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   } = useSelection()
   const { animations, animationsCtx } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
+  const {
+    active: activeTableCell,
+    beginEdit: beginTableCellEdit,
+    endEdit: endTableCellEdit,
+    clear: clearTableCellEdit,
+  } = useTableEdit()
   // Inline text-edit state for component-instance leaves. Lives separate
   // from useTextEdit because instance leaves don't exist in the slide's
   // object array — TextEditOverlay's read/write paths can't address
@@ -878,6 +932,23 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     instanceLeafTextEditId,
   ])
 
+  // M29 Phase 2: clear table-cell-edit state if the active cell's table
+  // disappears (deleted, peer removed it) or selection moves to a non-
+  // table object. Mirrors the instance-edit cleanup effect above.
+  useEffect(() => {
+    if (activeTableCell === null) return
+    const t = objects.find((o) => o.id === activeTableCell.tableId)
+    if (t === undefined || t.type !== 'table') {
+      clearTableCellEdit()
+      return
+    }
+    // Selection moved off the table — drop the editor target so the
+    // inspector doesn't show table chrome for an unrelated object.
+    if (selectedIds.size > 0 && !selectedIds.has(activeTableCell.tableId)) {
+      clearTableCellEdit()
+    }
+  }, [objects, activeTableCell, selectedIds, clearTableCellEdit])
+
   // Keep the artboard centred in the viewport on mount AND after every
   // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
   // so the scroll adjustment is synchronous with the zoom-induced
@@ -969,6 +1040,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // clicks, so edit mode would persist silently.
       if (editingTextId !== null) {
         endEdit()
+      }
+      // M29 Phase 2: same logic for table cell edit. The table editor
+      // overlay stops propagation on clicks inside the contenteditable,
+      // so any pointerdown that reaches the canvas means the user
+      // clicked outside — exit edit mode so subsequent clicks behave
+      // as ordinary canvas gestures.
+      if (activeTableCell !== null && activeTableCell.editing) {
+        endTableCellEdit()
       }
 
       // P11 (Keynote crop): if we're in crop mode and the pointer hit
@@ -1313,6 +1392,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       selectMany,
       editingTextId,
       endEdit,
+      activeTableCell,
+      endTableCellEdit,
       activeInstanceEditId,
       exitInstanceEdit,
       selectLeaf,
@@ -1803,6 +1884,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         beginEdit(hitId)
         return
       }
+      if (hit.type === 'table') {
+        if (isViewer) return
+        selectOne(hitId)
+        const cell = hitTestTableCell(hit, x, y)
+        if (cell === null) return
+        beginTableCellEdit({ tableId: hitId, r: cell.r, c: cell.c })
+        return
+      }
       if (hit.type === 'image') {
         // Keynote-style crop: dbl-click enters crop mode for this image.
         // Editing role only — viewer's selection model still works,
@@ -1839,6 +1928,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       objects,
       selectOne,
       beginEdit,
+      beginTableCellEdit,
       enterCrop,
       enterPathPoints,
       isViewer,
@@ -2654,6 +2744,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         return (
                           <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
                         )
+                      })()}
+
+                    {/* M29 Phase 2: per-cell editor for the first-class
+                      TableObject. Mounts only when `tableEdit.active.editing`
+                      is true; binds to the cell's Y.Text and handles
+                      Tab/Enter navigation across cells. */}
+                    {activeTableCell !== null &&
+                      activeTableCell.editing &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const obj = objects.find((o) => o.id === activeTableCell.tableId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return <TableCellEditor table={obj} mutationCtx={mutationCtx} />
                       })()}
 
                     {/* M16 P8: inline editor for a TextObject leaf inside

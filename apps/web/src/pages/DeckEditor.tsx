@@ -17,6 +17,7 @@ import { useOutletContext } from 'react-router-dom'
 import { SelectionProvider } from '../state/SelectionContext.js'
 import { ToolProvider } from '../state/ToolContext.js'
 import { TextEditProvider } from '../state/TextEditContext.js'
+import { TableEditProvider } from '../state/TableEditContext.js'
 import { CropModeProvider } from '../state/CropModeContext.js'
 import { PathPointsModeProvider } from '../state/PathPointsModeContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
@@ -29,11 +30,13 @@ export function DeckEditor() {
     <SelectionProvider>
       <ToolProvider>
         <TextEditProvider>
-          <CropModeProvider>
-            <PathPointsModeProvider>
-              <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
-            </PathPointsModeProvider>
-          </CropModeProvider>
+          <TableEditProvider>
+            <CropModeProvider>
+              <PathPointsModeProvider>
+                <EditorLayout onCanvasReady={ctx?.onCanvasReady} />
+              </PathPointsModeProvider>
+            </CropModeProvider>
+          </TableEditProvider>
         </TextEditProvider>
       </ToolProvider>
     </SelectionProvider>
