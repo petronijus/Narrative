@@ -28,6 +28,7 @@
 import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
+import { isTokenRef } from '@narrative/shared'
 import type {
   TableObject,
   TableCell,
@@ -68,6 +69,13 @@ interface CellNode {
 
 function resolveBorderColour(b: TableBorderStyle | undefined, fallback: number): number {
   if (b === undefined) return fallback
+  // Direct numeric value — return as-is so pure black (0x000000) survives.
+  // The fallback-on-0 dance below is only meaningful for TokenRef inputs,
+  // because `resolveColour` returns 0 BOTH for "not a token" and for
+  // "token failed to resolve". For literal numbers there's nothing to
+  // distinguish, so we trust the user's pick.
+  if (typeof b.color === 'number') return b.color
+  if (!isTokenRef(b.color)) return fallback
   const resolved = resolveColour(b.color)
   return resolved === 0 ? fallback : resolved
 }
@@ -145,15 +153,37 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
   const d = table.defaults
   const padding = cell.padding ?? d.padding
   const fontWeight = (cell.fontWeight ?? d.fontWeight) as FontWeight
-  const colorRaw = resolveColour(cell.color ?? d.color)
+  // Distinguish literal numbers (trust as-is — preserves pure black /
+  // 0x000000) from TokenRef inputs (fall back when the token didn't
+  // resolve). The legacy `resolveColour(x) === 0 ? fallback : x` pattern
+  // can't tell the two apart because resolveColour returns 0 for both
+  // "input was the number 0" and "token failed to resolve".
+  const colorSrc = cell.color ?? d.color
+  const color =
+    typeof colorSrc === 'number'
+      ? colorSrc
+      : isTokenRef(colorSrc)
+        ? resolveColour(colorSrc) || 0x111111
+        : 0x111111
+  // Same logic for the cell fill — undefined means "no fill"; a literal
+  // 0 means "fill with black" and must survive.
+  const fillSrc = cell.fill
+  const fill =
+    fillSrc === undefined
+      ? undefined
+      : typeof fillSrc === 'number'
+        ? fillSrc
+        : isTokenRef(fillSrc)
+          ? resolveColour(fillSrc) || 0xffffff
+          : 0xffffff
   return {
     fontSize: cell.fontSize ?? d.fontSize,
     fontWeight,
-    color: colorRaw === 0 ? 0x111111 : colorRaw,
+    color,
     align: cell.align ?? d.align,
     vAlign: cell.vAlign ?? d.vAlign,
     fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
-    fill: cell.fill !== undefined ? resolveColour(cell.fill) || 0xffffff : undefined,
+    fill,
     fillAlpha: cell.fillAlpha ?? 1,
     padding,
   }

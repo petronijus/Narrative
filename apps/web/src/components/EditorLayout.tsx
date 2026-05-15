@@ -39,6 +39,7 @@ import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
 import { TableCellEditor } from '../ui/TableCellEditor'
+import { TableChrome } from '../ui/TableChrome'
 import { TableRangeHighlight } from '../ui/TableRangeHighlight'
 import { InstanceLeafTextEditor } from '../ui/InstanceLeafTextEditor'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
@@ -2865,6 +2866,20 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
                     {/* M29 Phase 3: drag-selected cell range highlight. */}
                     <TableRangeHighlight />
+
+                    {/* M29 Phase 5: Keynote-style chrome around the
+                      selected table (axis bars + corner handles). */}
+                    {selectedIds.size === 1 &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const onlyId = [...selectedIds][0]
+                        if (onlyId === undefined) return null
+                        const obj = objects.find((o) => o.id === onlyId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return (
+                          <TableChrome table={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
+                        )
+                      })()}
 
                     {/* M16 P8: inline editor for a TextObject leaf inside
                       an active component-instance edit session. Writes
