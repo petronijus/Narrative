@@ -811,6 +811,97 @@ export interface ComponentInstanceObject extends BaseSlideObject {
 }
 
 /**
+ * M29 — first-class table object. Live alongside RectangleObject as a
+ * peer in the SlideObject union; renderer + inspector + PPTX import all
+ * branch on `type: 'table'`.
+ *
+ * The 2-D `rows` grid mirrors PPTX `<a:tr>/<a:tc>` exactly. Cell merge
+ * works via origin cells carrying `gridSpan`/`rowSpan` while non-origin
+ * cells in the spanned area carry `mergeOriginR/C` pointers; the
+ * renderer skips drawing the pointer cells. `colWidths` + `rowHeights`
+ * sum to the table's `width` / `height`; resizing the outer bbox
+ * proportionally scales each, while resizing an inner divider
+ * redistributes between two adjacent cells (table width unchanged —
+ * the Office convention, picked over Google Docs's grow-the-table mode
+ * per the M29 plan's default).
+ */
+export interface TableBorderStyle {
+  color: number | TokenRef
+  width: number
+  /** Stroke style. Subset of PPTX's many — sane v1 set. */
+  dash?: 'solid' | 'dash' | 'dot'
+  alpha?: number
+}
+
+export interface TableCellEdgeBorders {
+  top?: TableBorderStyle
+  right?: TableBorderStyle
+  bottom?: TableBorderStyle
+  left?: TableBorderStyle
+}
+
+export interface TableCellPadding {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export interface TableCell {
+  /** Y.Text-backed body — same rich-text pipeline as TextObject. Existing
+   *  Y.Docs loaded from disk may still carry a plain string until the
+   *  next mutation promotes it (mirrors TextObject's promotion path). */
+  text: string | Y.Text
+  /** Per-cell overrides; missing fields inherit from `table.defaults`. */
+  fontSize?: number
+  fontWeight?: FontWeight
+  color?: number | TokenRef
+  align?: 'left' | 'center' | 'right'
+  vAlign?: 'top' | 'middle' | 'bottom'
+  fill?: number | TokenRef
+  fillAlpha?: number
+  /** Per-edge border — independently controllable, fixes the M28-era
+   *  "Narrative has one stroke per shape" limitation that collapsed
+   *  PPTX `<a:lnL|R|T|B>` to a single uniform stroke on import. */
+  border?: TableCellEdgeBorders
+  padding?: TableCellPadding
+  /** Cell merge — gridSpan/rowSpan on the ORIGIN cell only; non-origin
+   *  cells in the spanned area carry mergeOriginR/C pointers. The
+   *  origin renders the full merged area; pointer cells skip rendering.
+   *  gridSpan/rowSpan default to 1 when missing. */
+  gridSpan?: number
+  rowSpan?: number
+  mergeOriginR?: number
+  mergeOriginC?: number
+}
+
+export interface TableDefaults {
+  fontFamily?: string
+  fontSize: number
+  fontWeight: FontWeight
+  color: number | TokenRef
+  align: 'left' | 'center' | 'right'
+  vAlign: 'top' | 'middle' | 'bottom'
+  fill?: number | TokenRef
+  /** Default per-edge border; falls back to a 1px `#CCCCCC` grid when
+   *  the table is freshly created. */
+  border?: TableBorderStyle
+  padding: TableCellPadding
+}
+
+export interface TableObject extends BaseSlideObject {
+  type: 'table'
+  /** Column widths in slide-local px. Sum must equal `width`. */
+  colWidths: number[]
+  /** Row heights in slide-local px. Sum must equal `height`. */
+  rowHeights: number[]
+  /** rows[r][c] = TableCell. 2-D shape mirrors PPTX `<a:tr>/<a:tc>`. */
+  rows: TableCell[][]
+  /** Default cell styling — cells inherit any field they don't override. */
+  defaults: TableDefaults
+}
+
+/**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
 export type SlideObject =
@@ -824,6 +915,7 @@ export type SlideObject =
   | TextObject
   | ImageObject
   | VideoObject
+  | TableObject
   | ComponentInstanceObject
 
 /** Typ string pro switch/lookup */

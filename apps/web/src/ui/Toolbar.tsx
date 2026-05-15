@@ -41,6 +41,7 @@ import {
   ChevronDown,
   PenTool,
   Ruler,
+  Table2,
   Component as ComponentIcon,
 } from 'lucide-react'
 import { nanoid } from 'nanoid'
@@ -96,6 +97,7 @@ const TOOL_BUTTONS: ToolButton[] = [
   { tool: 'select', label: 'Select', shortcut: 'V', icon: MousePointer2 },
   { tool: 'hand', label: 'Hand', shortcut: 'H', icon: Hand },
   { tool: 'text', label: 'Text', shortcut: 'T', icon: Type },
+  { tool: 'table', label: 'Table', shortcut: 'K', icon: Table2 },
 ]
 
 const SHAPE_TOOLS: ToolButton[] = [
@@ -377,6 +379,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
       description: 'Text tool',
       handler: () => {
         setActiveTool('text')
+      },
+    },
+    {
+      keys: 'k',
+      scope: 'global',
+      description: 'Table tool',
+      handler: () => {
+        setActiveTool('table')
       },
     },
     {

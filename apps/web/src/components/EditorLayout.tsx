@@ -1627,7 +1627,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
               ? objectDefaults.strokeDefaults
               : dr.tool === 'text'
                 ? objectDefaults.textColorDefaults
-                : objectDefaults.fillDefaults
+                : dr.tool === 'table'
+                  ? {}
+                  : objectDefaults.fillDefaults
           if (w < minSize && h < minSize) {
             created = createObjectOfType(mutationCtx, dr.tool, {
               x: dr.startX,

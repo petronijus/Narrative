@@ -10,8 +10,12 @@
 
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
-import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/shared'
-import { plainObjectToYMap } from './bindings.js'
+import type { SlideObject, SlideObjectType, SlideObjectPatch, TableCell } from '@narrative/shared'
+import {
+  plainObjectToYMap,
+  collectPendingCellTextInserts,
+  type PendingCellTextInsert,
+} from './bindings.js'
 import { getObjectTypeDef } from './registry.js'
 import { createTextValue } from './richText.js'
 import type { RichDeltaOp } from './richText.js'
@@ -68,6 +72,17 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
       prepared = { ...prepared, text: createTextValue(t) } as SlideObject
     }
   }
+  // Tables carry per-cell Y.Texts in deeply-nested Y.Arrays. Pending ops
+  // on standalone Y.Texts don't fire when the cell Y.Text is integrated
+  // indirectly through `row Y.Array → rows Y.Array → table Y.Map →
+  // objects Y.Array`. Capture initial text strings here so we can apply
+  // them via `yText.insert()` AFTER integration inside the same transact.
+  let tablePendingInserts: PendingCellTextInsert[] = []
+  if (prepared.type === 'table') {
+    tablePendingInserts = collectPendingCellTextInserts(
+      prepared as unknown as { rows: TableCell[][] },
+    )
+  }
   const yMap = plainObjectToYMap(prepared)
   ctx.doc.transact(() => {
     ctx.objects.push([yMap])
@@ -84,6 +99,19 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
             attributes?: Record<string, unknown>
           }>,
         )
+      }
+    }
+    if (tablePendingInserts.length > 0) {
+      const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+      if (rowsY !== undefined) {
+        for (const p of tablePendingInserts) {
+          const rowY = rowsY.get(p.r) as Y.Array<Y.Map<unknown>> | undefined
+          if (rowY === undefined) continue
+          const cellY = rowY.get(p.c) as Y.Map<unknown> | undefined
+          if (cellY === undefined) continue
+          const yt = cellY.get('text')
+          if (yt instanceof Y.Text) yt.insert(0, p.initial)
+        }
       }
     }
   }, LOCAL_ORIGIN)

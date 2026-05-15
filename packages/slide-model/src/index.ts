@@ -90,6 +90,16 @@ export type { DeckGuidesContext } from './deckGuides.js'
 // Bindings — objects
 export { yMapToPlainObject, plainObjectToYMap } from './bindings.js'
 
+// M29 table mutations
+export {
+  addTable,
+  buildTable,
+  DEFAULT_TABLE_DEFAULTS,
+  DEFAULT_TABLE_ROWS,
+  DEFAULT_TABLE_COLS,
+} from './tableMutations.js'
+export type { AddTableOpts } from './tableMutations.js'
+
 // Rich-text helpers (P15+) — Y.Text ↔ delta ↔ HTML
 export {
   createTextValue,
@@ -188,8 +198,10 @@ import type {
   TextObject,
   ImageObject,
   VideoObject,
+  TableObject,
   ComponentInstanceObject,
 } from '@narrative/shared'
+import { DEFAULT_TABLE_DEFAULTS, DEFAULT_TABLE_COLS, DEFAULT_TABLE_ROWS } from './tableMutations.js'
 
 registerObjectType<RectangleObject>({
   type: 'rectangle',
@@ -376,4 +388,45 @@ registerObjectType<ComponentInstanceObject>({
     opacity: 1,
     componentId: '',
   }),
+})
+
+/**
+ * Table object type (M29). Default rows/cols/styling sourced from
+ * `tableMutations.ts` so `addTable` and `createObjectOfType('table')`
+ * produce structurally identical tables. Toolbar uses click-to-place →
+ * `createObjectOfType('table', { x, y, width, height })`; drag-to-size
+ * fills the same overrides with the dragged bbox.
+ */
+registerObjectType<TableObject>({
+  type: 'table',
+  defaultProps: () => {
+    const w = 400
+    const h = 200
+    const colCount = DEFAULT_TABLE_COLS
+    const rowCount = DEFAULT_TABLE_ROWS
+    const colW = w / colCount
+    const rowH = h / rowCount
+    const colWidths: number[] = []
+    for (let c = 0; c < colCount; c++) colWidths.push(colW)
+    const rowHeights: number[] = []
+    for (let r = 0; r < rowCount; r++) rowHeights.push(rowH)
+    const rows: TableObject['rows'] = []
+    for (let r = 0; r < rowCount; r++) {
+      const row: TableObject['rows'][number] = []
+      for (let c = 0; c < colCount; c++) row.push({ text: '' })
+      rows.push(row)
+    }
+    return {
+      x: 100,
+      y: 100,
+      width: w,
+      height: h,
+      rotation: 0,
+      opacity: 1,
+      colWidths,
+      rowHeights,
+      rows,
+      defaults: { ...DEFAULT_TABLE_DEFAULTS },
+    }
+  },
 })
