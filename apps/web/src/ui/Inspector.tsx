@@ -1997,7 +1997,12 @@ interface PositionSectionProps {
  * MultiSelectInspector and uses the selection union as the reference,
  * matching Figma / Keynote conventions.
  */
-function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: PositionSectionProps) {
+export function PositionSection({
+  obj,
+  patch,
+  disabled,
+  layerMutationCtx = null,
+}: PositionSectionProps) {
   const rotationDeg = radToDeg(obj.rotation)
 
   const alignToCanvas = (axis: AlignAxis): void => {

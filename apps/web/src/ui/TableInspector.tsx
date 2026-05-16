@@ -42,8 +42,14 @@ import {
   setTableCellStyle,
   setTableDefaultsPatch,
   splitTableCell,
+  updateObject,
 } from '@narrative/slide-model'
-import { isTokenRef, type TableObject } from '@narrative/shared'
+import {
+  isTokenRef,
+  type SlideObject,
+  type SlideObjectPatch,
+  type TableObject,
+} from '@narrative/shared'
 import {
   AlignCenter,
   AlignLeft,
@@ -53,6 +59,7 @@ import {
   AlignVerticalJustifyStart,
 } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
+import { PositionSection } from './Inspector.js'
 import { TokenColorInput } from './TokenColorInput.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import {
@@ -88,6 +95,14 @@ export interface TableInspectorProps {
 
 export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorProps) {
   const { active, range, activeBorderPreset, setActiveBorderPreset } = useTableEdit()
+
+  // Mirrors the `patch` closure inside the generic Inspector — feeds the
+  // shared PositionSection the same write path. Viewer mode bails out so
+  // the section's disabled inputs can't be subverted by a stale ref.
+  const patchObject = (p: SlideObjectPatch<SlideObject>): void => {
+    if (isViewer) return
+    updateObject(mutationCtx, obj.id, p)
+  }
 
   // Re-render when the active text selection (cell editor publishes
   // here) changes so the toolbar's pressed state stays accurate as
@@ -343,6 +358,17 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
   return (
     <div className="flex flex-col gap-3 px-3 py-2 text-xs">
+      {/* Shared with shapes / texts — layer order, alignment, X/Y, size,
+          rotation, flip. The inner Section component owns its own
+          collapse-state under storageKey="position" so the table picks
+          up the user's last open/closed preference for free. */}
+      <PositionSection
+        obj={obj}
+        patch={patchObject}
+        disabled={isViewer}
+        layerMutationCtx={mutationCtx}
+      />
+
       {/* ────────────────────────────────────────────────────────────── */}
       {/* TEXT FORMAT (Phase 5 / advanced typing)                        */}
       {/* Only renders while a cell is in edit mode and there is a       */}
