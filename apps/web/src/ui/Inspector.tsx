@@ -244,7 +244,7 @@ interface NumberFieldProps {
  * therefore dims fill, stroke, image, text and any nested decoration
  * uniformly — independent of per-fill / per-stroke alpha.
  */
-function TransparencySlider({
+export function TransparencySlider({
   id,
   value,
   onChange,
@@ -297,7 +297,7 @@ function TransparencySlider({
  * "Size", "Rotation"). Less pronounced than the section title — used
  * inside the Position block to mirror the Figma inspector layout.
  */
-function SubLabel({ children }: { children: React.ReactNode }) {
+export function SubLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="-mb-0.5 mt-1 text-[10px] text-muted-foreground/70 first:mt-0">{children}</div>
   )
@@ -586,7 +586,7 @@ function NameField({
   )
 }
 
-function Section({
+export function Section({
   title,
   children,
   storageKey,
@@ -2256,7 +2256,12 @@ export function PositionSection({
 // Appearance section — fill + stroke + (rectangle-only) corner radius
 // ---------------------------------------------------------------------------
 
-type FilledShape = RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
+export type FilledShape =
+  | RectangleObject
+  | EllipseObject
+  | TriangleObject
+  | PolygonObject
+  | PathObject
 
 interface AppearanceSectionProps {
   obj: FilledShape
@@ -2641,12 +2646,32 @@ function StrokeBody({
   )
 }
 
-function FillBody({
+export function FillBody({
   obj,
   patch,
+  onClear,
+  emptyFill,
 }: {
   obj: FilledShape
   patch: (p: SlideObjectPatch<FilledShape>) => void
+  /**
+   * Override for the picker's "No color" button. When omitted, FillBody
+   * drops the visible fill by zeroing `fillAlpha` (schema-safe — `fill`
+   * is required on most FilledShape variants, so we can't just delete
+   * it). When the parent has a richer notion of "no fill" — e.g. a
+   * TableDefaults shim that can truly remove the `fill` field — it
+   * passes its own clear handler here.
+   */
+  onClear?: (() => void) | undefined
+  /**
+   * Parent-supplied override for the empty-fill display state. When
+   * the host's schema can truly clear the fill (TableDefaults.fill,
+   * which is optional), the picker should show "No color" instead of
+   * the seed hex it fell back to. When omitted, FillBody infers from
+   * `obj.fillAlpha === 0` (the schema-safe "no fill" representation
+   * for FilledShape variants whose `fill` field is required).
+   */
+  emptyFill?: boolean
 }) {
   const folderTokensSnapshot = useFolderTokens()
   const { folderId } = useDeckRole()
@@ -2787,6 +2812,23 @@ function FillBody({
                       } as unknown as SlideObjectPatch<FilledShape>)
                   : undefined
               }
+              // "No color". Default path zeroes fillAlpha — FilledShape
+              // schema requires `fill`, so dropping coverage is the
+              // schema-safe way to render nothing. Parents with a
+              // richer schema (TableDefaults supports `fill?`) inject
+              // their own handler here and remove the field outright.
+              onClear={
+                onClear ??
+                (() =>
+                  patch({
+                    fillAlpha: 0,
+                    fillStyle: undefined,
+                  } as unknown as SlideObjectPatch<FilledShape>))
+              }
+              // Parent's truth wins; otherwise derive from alpha for the
+              // shape default (`fill` is required so we can't tell from
+              // the value itself whether it's "set" or "unset").
+              emptyLabel={(emptyFill ?? fillAlpha === 0) && !fillIsToken ? 'No color' : undefined}
               onOpenFolderSettings={
                 folderId !== null ? () => void navigate(`/folder/${folderId}/settings`) : undefined
               }
