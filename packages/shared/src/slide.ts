@@ -700,6 +700,10 @@ export interface TableDefaults {
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'
   fill?: number | TokenRef
+  /** Default fill alpha 0..1 (cells inherit when their own `fillAlpha`
+   *  is absent). 0 = transparent / "no color" — matches the shape
+   *  inspector's representation. Missing ⇒ 1 (fully opaque). */
+  fillAlpha?: number
   /** Default per-edge border; falls back to a 1px `#CCCCCC` grid when
    *  the table is freshly created. */
   border?: TableBorderStyle

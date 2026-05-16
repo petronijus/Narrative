@@ -170,8 +170,12 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
         ? resolveColour(colorSrc) || 0x111111
         : 0x111111
   // Same logic for the cell fill — undefined means "no fill"; a literal
-  // 0 means "fill with black" and must survive.
-  const fillSrc = cell.fill
+  // 0 means "fill with black" and must survive. Cells inherit
+  // `defaults.fill` when they don't carry their own override, mirroring
+  // how `color` falls back above. Without the fallback, picking a
+  // table-wide fill in the inspector silently no-ops on cells that
+  // were never individually painted.
+  const fillSrc = cell.fill ?? d.fill
   const fill =
     fillSrc === undefined
       ? undefined
@@ -188,7 +192,11 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
     vAlign: cell.vAlign ?? d.vAlign,
     fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
     fill,
-    fillAlpha: cell.fillAlpha ?? 1,
+    // Cells inherit `defaults.fillAlpha` when they don't carry their
+    // own override. Mirrors the `fill` + `color` fallback above so the
+    // inspector's table-wide "No color" (alpha=0) actually paints
+    // every cell transparent.
+    fillAlpha: cell.fillAlpha ?? d.fillAlpha ?? 1,
     padding,
   }
 }

@@ -46,9 +46,11 @@ import {
 } from '@narrative/slide-model'
 import {
   isTokenRef,
+  type RectangleObject,
   type SlideObject,
   type SlideObjectPatch,
   type TableObject,
+  type TokenRef,
 } from '@narrative/shared'
 import {
   AlignCenter,
@@ -59,7 +61,14 @@ import {
   AlignVerticalJustifyStart,
 } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
-import { PositionSection } from './Inspector.js'
+import {
+  FillBody,
+  type FilledShape,
+  PositionSection,
+  Section,
+  SubLabel,
+  TransparencySlider,
+} from './Inspector.js'
 import { TokenColorInput } from './TokenColorInput.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import {
@@ -367,6 +376,31 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
         patch={patchObject}
         disabled={isViewer}
         layerMutationCtx={mutationCtx}
+      />
+
+      {/* Shared with shapes — exact same Section / SubLabel / FillBody /
+          TransparencySlider chrome the generic inspector renders.
+          Fill is context-aware: range > active cell > table-wide
+          defaults. Same dispatch chain the existing per-section Fill
+          controls already use, but funnelled through the
+          Inspector-grade Figma-style picker. Stroke / corner radius /
+          gradient / image stay out — borders live in the Keynote
+          preset grid below, and TableDefaults doesn't model the rest.
+          `fill` writes go through patchRange / patchCell /
+          patchDefault depending on what's selected; "No color" maps
+          to the same dispatch with `fill: undefined`, which the
+          mutations interpret as "delete the field" → cell falls back
+          to defaults, or the whole table goes transparent. */}
+      <TableAppearance
+        obj={obj}
+        isViewer={isViewer}
+        mutationCtx={mutationCtx}
+        active={active}
+        range={range}
+        patchObject={patchObject}
+        patchCell={patchCell}
+        patchRange={patchRange}
+        patchDefault={patchDefault}
       />
 
       {/* ────────────────────────────────────────────────────────────── */}
@@ -884,6 +918,174 @@ function BorderStyleControls({
         />
       </Row>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Appearance section — reuses the shape inspector's Section / SubLabel /
+// FillBody / TransparencySlider so the table inspector is visually
+// identical to a rectangle's. Fill writes dispatch through the existing
+// table mutation helpers based on what's selected:
+//   - range present       → patchRange (paint every non-merged cell)
+//   - active cell present → patchCell (paint just that cell)
+//   - neither             → patchDefault (table-wide default fill)
+// "No color" maps to the same dispatch with `fill: undefined`, which
+// the underlying mutations interpret as "delete the field" — cells
+// fall back to defaults, table-wide goes transparent.
+// ---------------------------------------------------------------------------
+
+interface TableAppearanceProps {
+  obj: TableObject
+  isViewer: boolean
+  mutationCtx: ObjectsMutationContext
+  active: { tableId: string; r: number; c: number; editing: boolean } | null
+  range: { tableId: string; r0: number; c0: number; r1: number; c1: number } | null
+  patchObject: (p: SlideObjectPatch<SlideObject>) => void
+  patchCell: (p: CellStylePatch) => void
+  patchRange: (p: CellStylePatch) => void
+  patchDefault: (p: Partial<TableObject['defaults']>) => void
+}
+
+function TableAppearance({
+  obj,
+  isViewer,
+  mutationCtx,
+  active,
+  range,
+  patchObject,
+  patchCell,
+  patchRange,
+  patchDefault,
+}: TableAppearanceProps) {
+  const d = obj.defaults
+
+  // Which scope a fill write should land on. Mirrors the priority chain
+  // the border-preset code already uses.
+  const scope: 'range' | 'cell' | 'table' =
+    range !== null && range.tableId === obj.id
+      ? 'range'
+      : active !== null && active.tableId === obj.id
+        ? 'cell'
+        : 'table'
+
+  // Resolved fill + alpha for display in the picker. Reads from the
+  // most specific level that actually carries a value (cell override
+  // > table defaults > sensible defaults). The shim still hands
+  // FillBody a literal fill so the in-popover saturation picker has
+  // somewhere to start when the user un-clears.
+  const cellAtActive =
+    scope === 'cell' && active !== null ? (obj.rows[active.r]?.[active.c] ?? null) : null
+  const resolvedFill: number | TokenRef | undefined =
+    (cellAtActive?.fill as number | TokenRef | undefined) ??
+    (d.fill as number | TokenRef | undefined)
+  const resolvedAlpha: number = cellAtActive?.fillAlpha ?? d.fillAlpha ?? 1
+  // "No color" matches the shape inspector's representation: alpha 0.
+  // Show the picker's empty-state chrome (checkered swatch, "No color"
+  // label) whenever the resolved alpha is exactly zero.
+  const emptyFill = resolvedAlpha === 0
+  const seedFill: number | TokenRef = resolvedFill ?? 0xffffff
+
+  // Shape-flavoured surrogate. FillBody reads `fill`, `fillStyle`,
+  // `fillAlpha`, `opacity` — the rest of RectangleObject is filled in
+  // from the real table so id/keying stays stable across renders.
+  const shimmedShape: RectangleObject = {
+    id: obj.id,
+    type: 'rectangle',
+    x: obj.x,
+    y: obj.y,
+    width: obj.width,
+    height: obj.height,
+    rotation: obj.rotation,
+    opacity: obj.opacity,
+    fill: seedFill,
+    fillAlpha: resolvedAlpha,
+  }
+
+  /**
+   * Dispatch a fill / fillAlpha write to the right scope. Picking a
+   * colour on a table-wide write must override every per-cell `fill`
+   * override (so the whole table truly recolours), so we clear cell
+   * overrides first and then update the defaults. "No color" is
+   * encoded as `fillAlpha = 0` to match the shape inspector — the
+   * literal `fill` stays as a seed so picking a fresh hue later has
+   * a starting point.
+   */
+  const writeFillPatch = (patch: { fill?: number | TokenRef; fillAlpha?: number }): void => {
+    if (isViewer) return
+    if (scope === 'range') {
+      patchRange(patch as CellStylePatch)
+      return
+    }
+    if (scope === 'cell') {
+      patchCell(patch as CellStylePatch)
+      return
+    }
+    // Table-wide: erase per-cell overrides for the keys we're writing
+    // so the new default wins everywhere — Keynote-style "paint the
+    // whole table" semantics. Wrap in a transact so the clear + set
+    // land in a single Yjs update.
+    const rows = obj.rows.length
+    const cols = obj.colWidths.length
+    mutationCtx.doc.transact(() => {
+      if (rows > 0 && cols > 0) {
+        const clear: CellStylePatch = {}
+        if ('fill' in patch) clear.fill = undefined
+        if ('fillAlpha' in patch) clear.fillAlpha = undefined
+        if (Object.keys(clear).length > 0) {
+          setRangeCellStyle(
+            mutationCtx,
+            obj.id,
+            { r0: 0, c0: 0, r1: rows - 1, c1: cols - 1 },
+            clear,
+          )
+        }
+      }
+      // patchDefault's type is Partial<TableDefaults> with
+      // exactOptionalPropertyTypes — bare `fill?: …` doesn't accept
+      // `undefined` in the value position. The underlying mutation
+      // deletes the field on undefined; bypass the strict optional
+      // check the same way the rest of the file's WithUndefined
+      // patches do.
+      patchDefault(patch as Partial<TableObject['defaults']>)
+    })
+  }
+
+  const patchShim = (p: SlideObjectPatch<FilledShape>): void => {
+    const next = p as Partial<RectangleObject>
+    const fillNext = next.fill as number | TokenRef | undefined
+    const alphaNext = next.fillAlpha
+    // Combine fill + alpha into a single dispatched patch so the
+    // table-wide path only emits one Yjs transaction (one clear-cells
+    // pass, one defaults set). If the user is in the empty state and
+    // picks a hex, auto-restore alpha to 1 so the colour is actually
+    // visible — otherwise the hue change would silently no-op.
+    const combined: { fill?: number | TokenRef; fillAlpha?: number } = {}
+    if (fillNext !== undefined) combined.fill = fillNext
+    if (alphaNext !== undefined) combined.fillAlpha = alphaNext
+    if (fillNext !== undefined && alphaNext === undefined && emptyFill) {
+      combined.fillAlpha = 1
+    }
+    if (Object.keys(combined).length > 0) writeFillPatch(combined)
+    if (next.opacity !== undefined) {
+      patchObject({ opacity: next.opacity } as SlideObjectPatch<SlideObject>)
+    }
+  }
+
+  const clearFill = (): void => writeFillPatch({ fillAlpha: 0 })
+
+  return (
+    <Section title="Appearance" storageKey="appearance">
+      <SubLabel>Fill</SubLabel>
+      <FillBody obj={shimmedShape} patch={patchShim} onClear={clearFill} emptyFill={emptyFill} />
+
+      <SubLabel>Transparency</SubLabel>
+      <TransparencySlider
+        id={`inspector-opacity-${obj.id}`}
+        value={obj.opacity}
+        disabled={isViewer}
+        onChange={(v) => patchObject({ opacity: v } as SlideObjectPatch<SlideObject>)}
+      />
+    </Section>
   )
 }
 
