@@ -760,6 +760,73 @@ describe('P6 object operations', () => {
     expect(ids).toEqual(['a', 'b', 'c'])
   })
 
+  it('moveObjectsLayer back on a table preserves nested rows / defaults / cell text', () => {
+    // Regression: pre-fix `applyReorderMinimal` only cloned top-level
+    // Y.Text values when delete+inserting the moving Y.Map. A table's
+    // shape is Y.Array<Y.Array<Y.Map<Y.Text>>> for rows + Y.Map for
+    // defaults, so the nested Y.Arrays / Y.Maps became orphans the
+    // moment the parent was deleted and Yjs crashed in
+    // typeListInsertGenerics when trying to reattach them. The fix
+    // uses Y.Map.clone() which recurses through nested AbstractTypes.
+    //
+    // We seed via raw Y.Map building (not addTable) so this test can
+    // live in mutations.test.ts without circular import. The shape
+    // mirrors the real TableObject closely enough that the orphaning
+    // behaviour reproduces.
+    const ctx = makeCtx()
+    // Two plain rects + a table sandwiched between them.
+    addObject(ctx, sampleRect)
+    addObject(ctx, { ...sampleRect, id: 'r2' })
+
+    const tableMap = new Y.Map<unknown>()
+    tableMap.set('id', 't1')
+    tableMap.set('type', 'table')
+    tableMap.set('x', 0)
+    tableMap.set('y', 0)
+    tableMap.set('width', 300)
+    tableMap.set('height', 200)
+    tableMap.set('rotation', 0)
+    tableMap.set('opacity', 1)
+    tableMap.set('colWidths', [150, 150])
+    tableMap.set('rowHeights', [100, 100])
+    // defaults — the field whose absence crashed TableInspector at
+    // line 184 (`obj.defaults.border`) after the orphaned clone.
+    const defaultsMap = new Y.Map<unknown>()
+    defaultsMap.set('align', 'left')
+    defaultsMap.set('vAlign', 'top')
+    defaultsMap.set('padding', { top: 4, right: 6, bottom: 4, left: 6 })
+    tableMap.set('defaults', defaultsMap)
+    // 2×2 rows array of Y.Map cells with a Y.Text per cell.
+    const rowsArr = new Y.Array<Y.Array<Y.Map<unknown>>>()
+    for (let r = 0; r < 2; r++) {
+      const rowArr = new Y.Array<Y.Map<unknown>>()
+      for (let c = 0; c < 2; c++) {
+        const cellMap = new Y.Map<unknown>()
+        const text = new Y.Text()
+        text.insert(0, `r${r}c${c}`)
+        cellMap.set('text', text)
+        rowArr.push([cellMap])
+      }
+      rowsArr.push([rowArr])
+    }
+    tableMap.set('rows', rowsArr)
+    ctx.objects.push([tableMap])
+
+    expect(() => moveObjectsLayer(ctx, ['t1'], 'back')).not.toThrow()
+
+    // Table now at index 0; structure intact.
+    const moved = ctx.objects.get(0)
+    expect(moved.get('id')).toBe('t1')
+    expect(moved.get('defaults')).toBeInstanceOf(Y.Map)
+    const rowsAfter = moved.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>>
+    expect(rowsAfter).toBeInstanceOf(Y.Array)
+    expect(rowsAfter.length).toBe(2)
+    const cell00 = rowsAfter.get(0).get(0)
+    const cell11 = rowsAfter.get(1).get(1)
+    expect((cell00.get('text') as Y.Text).toString()).toBe('r0c0')
+    expect((cell11.get('text') as Y.Text).toString()).toBe('r1c1')
+  })
+
   it('alignObjects left snaps every object to union left edge', () => {
     const ctx = makeCtx()
     seed3(ctx)
