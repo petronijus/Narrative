@@ -606,20 +606,16 @@ export function setRangeCellStyle(
  *   - `outer`    : Perimeter of the range only. Cells on the top/bottom
  *                  row get top/bottom; cells on the left/right column
  *                  get left/right. Interior cells get no edges.
- *   - `inside`   : Interior dividers only. Non-top cells get a top
- *                  edge (horizontal dividers); non-left cells get a
- *                  left edge (vertical dividers).
+ *   - `inside`   : Interior dividers only. Stamped on BOTH sides of
+ *                  every inner line so width 0 truly hides it instead
+ *                  of leaving the unowned half drawing via the table
+ *                  default — see the comment above `edgesForPreset`.
  *   - `top` / `bottom` / `left` / `right`: only the named outer edge
  *                  on the cells that touch that edge of the range.
- *   - `insideH`  : Horizontal interior dividers only (top edge on
- *                  every cell except the top row).
- *   - `insideV`  : Vertical interior dividers only (left edge on
- *                  every cell except the left column).
- *
- * Conventions for shared boundaries: we always set top + left rather
- * than bottom + right when an interior divider could be assigned to
- * either side, so adjacent cells never duplicate the same divider in
- * their stored shape.
+ *   - `insideH`  : Horizontal interior dividers only (stamped on both
+ *                  sides — see `inside`).
+ *   - `insideV`  : Vertical interior dividers only (stamped on both
+ *                  sides — see `inside`).
  */
 export type TableBorderPreset =
   | 'none'
@@ -635,6 +631,17 @@ export type TableBorderPreset =
 
 type CellEdge = 'top' | 'right' | 'bottom' | 'left'
 
+/**
+ * Pick the per-cell edges this preset wants stamped at `(r, c)` inside
+ * `range`. Symmetry for inside-family presets matters: each inner
+ * divider gets BOTH adjacent cells' opposing edges (e.g. (r,c).bottom
+ * AND (r+1,c).top for an inner horizontal). The renderer would
+ * otherwise resurrect a "cleared" divider from `defaults.border` via
+ * the unowned half when the caller stamps width 0 — Keynote-style
+ * "hide inside borders" only works if BOTH halves drop to width 0.
+ * The extra write at width > 0 is a no-op visually (same color/width
+ * on both sides of one line).
+ */
 function edgesForPreset(
   preset: TableBorderPreset,
   r: number,
@@ -661,7 +668,9 @@ function edgesForPreset(
     case 'inside': {
       const out: CellEdge[] = []
       if (!isTopRow) out.push('top')
+      if (!isBottomRow) out.push('bottom')
       if (!isLeftCol) out.push('left')
+      if (!isRightCol) out.push('right')
       return out
     }
     case 'top':
@@ -672,10 +681,18 @@ function edgesForPreset(
       return isLeftCol ? ['left'] : []
     case 'right':
       return isRightCol ? ['right'] : []
-    case 'insideH':
-      return isTopRow ? [] : ['top']
-    case 'insideV':
-      return isLeftCol ? [] : ['left']
+    case 'insideH': {
+      const out: CellEdge[] = []
+      if (!isTopRow) out.push('top')
+      if (!isBottomRow) out.push('bottom')
+      return out
+    }
+    case 'insideV': {
+      const out: CellEdge[] = []
+      if (!isLeftCol) out.push('left')
+      if (!isRightCol) out.push('right')
+      return out
+    }
   }
 }
 

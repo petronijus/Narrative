@@ -384,22 +384,93 @@ describe('setRangeBorderPreset', () => {
     }
   })
 
-  it('inside: only interior cells get top/left stamped, others untouched', () => {
+  it('inside: every inner divider stamped on both adjacent cells (no outer edges)', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'inside', spec)
     const t = readTable(ctx.objects, id)
-    // (0,0): top-row + left-col → preset writes no edges, cell.border undefined
-    expect(t.rows[0]![0]!.border).toBeUndefined()
-    // (0,1): top-row but not left-col → left edge stamped, top untouched
+    // (0,0): inner-facing edges are bottom + right — both stamped so width 0
+    // future stamps truly hide the dividers regardless of defaults.border.
+    expect(t.rows[0]![0]!.border?.bottom?.width).toBe(2)
+    expect(t.rows[0]![0]!.border?.right?.width).toBe(2)
+    expect(t.rows[0]![0]!.border?.top).toBeUndefined()
+    expect(t.rows[0]![0]!.border?.left).toBeUndefined()
+    // (0,1): inner-facing edges are bottom + left.
+    expect(t.rows[0]![1]!.border?.bottom?.width).toBe(2)
     expect(t.rows[0]![1]!.border?.left?.width).toBe(2)
     expect(t.rows[0]![1]!.border?.top).toBeUndefined()
-    // (1,0): left-col but not top-row → top edge stamped, left untouched
+    expect(t.rows[0]![1]!.border?.right).toBeUndefined()
+    // (1,0): inner-facing edges are top + right.
     expect(t.rows[1]![0]!.border?.top?.width).toBe(2)
+    expect(t.rows[1]![0]!.border?.right?.width).toBe(2)
+    expect(t.rows[1]![0]!.border?.bottom).toBeUndefined()
     expect(t.rows[1]![0]!.border?.left).toBeUndefined()
-    // (1,1): both top and left stamped
+    // (1,1): inner-facing edges are top + left.
     expect(t.rows[1]![1]!.border?.top?.width).toBe(2)
     expect(t.rows[1]![1]!.border?.left?.width).toBe(2)
+    expect(t.rows[1]![1]!.border?.bottom).toBeUndefined()
+    expect(t.rows[1]![1]!.border?.right).toBeUndefined()
+  })
+
+  it('inside at width 0 truly hides inner dividers (no defaults.border resurrection)', () => {
+    // Regression: at width 0, the renderer skips owned edges, but the
+    // unowned half of an inner line previously fell back to
+    // `defaults.border` (width 1 in DEFAULT_TABLE_DEFAULTS) and drew
+    // the line anyway. Both-sides stamping fixes this.
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'inside', {
+      color: 0x111111,
+      width: 0,
+    })
+    const t = readTable(ctx.objects, id)
+    // Inner H between row 0 and row 1: drawn by both (0,c).bottom AND
+    // (1,c).top. Both must be 0 or defaults.border draws the line.
+    for (let c = 0; c < 3; c++) {
+      expect(t.rows[0]![c]!.border?.bottom?.width).toBe(0)
+      expect(t.rows[1]![c]!.border?.top?.width).toBe(0)
+    }
+    // Inner V between col 0 and col 1: drawn by both (r,0).right AND
+    // (r,1).left. Both must be 0.
+    for (let r = 0; r < 3; r++) {
+      expect(t.rows[r]![0]!.border?.right?.width).toBe(0)
+      expect(t.rows[r]![1]!.border?.left?.width).toBe(0)
+    }
+  })
+
+  it('insideH/insideV at width 0 clears horizontals / verticals on both sides', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideH', {
+      color: 0x111111,
+      width: 0,
+    })
+    const tH = readTable(ctx.objects, id)
+    for (let c = 0; c < 3; c++) {
+      expect(tH.rows[0]![c]!.border?.bottom?.width).toBe(0)
+      expect(tH.rows[1]![c]!.border?.top?.width).toBe(0)
+      expect(tH.rows[1]![c]!.border?.bottom?.width).toBe(0)
+      expect(tH.rows[2]![c]!.border?.top?.width).toBe(0)
+      // No vertical writes from insideH.
+      expect(tH.rows[1]![c]!.border?.left).toBeUndefined()
+      expect(tH.rows[1]![c]!.border?.right).toBeUndefined()
+    }
+
+    const id2 = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    setRangeBorderPreset(ctx, id2, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideV', {
+      color: 0x111111,
+      width: 0,
+    })
+    const tV = readTable(ctx.objects, id2)
+    for (let r = 0; r < 3; r++) {
+      expect(tV.rows[r]![0]!.border?.right?.width).toBe(0)
+      expect(tV.rows[r]![1]!.border?.left?.width).toBe(0)
+      expect(tV.rows[r]![1]!.border?.right?.width).toBe(0)
+      expect(tV.rows[r]![2]!.border?.left?.width).toBe(0)
+      // No horizontal writes from insideV.
+      expect(tV.rows[r]![1]!.border?.top).toBeUndefined()
+      expect(tV.rows[r]![1]!.border?.bottom).toBeUndefined()
+    }
   })
 
   it('none: every edge of every cell in range is suppressed (width 0)', () => {
