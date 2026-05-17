@@ -32,6 +32,7 @@ import {
   applyFormat,
   deleteTableCol,
   deleteTableRow,
+  edgesForPreset,
   getTableCellYMap,
   insertTableCol,
   insertTableRow,
@@ -252,22 +253,94 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     })
   }
 
+  // Read the existing style on the edges this preset would target.
+  // Returns the uniform {color, width, dash} when every active edge
+  // matches, 'mixed' when they differ, or 'empty' when the preset
+  // selects no edges (e.g. `insideH` on a 1-row table).
+  //
+  // Falls back to `defaults.border` whenever a cell has no per-edge
+  // override — that's what the renderer would draw, so it's the
+  // honest "what's currently there" for the user.
+  const readPresetUniformStyle = (
+    preset: TableBorderPreset,
+  ): { color: number; width: number; dash: 'solid' | 'dash' | 'dot' } | 'mixed' | 'empty' => {
+    const range = borderTargetRange
+    const dflt = obj.defaults.border
+    const dfltColor = typeof dflt?.color === 'number' ? dflt.color : 0xcccccc
+    const dfltWidth = dflt?.width ?? 0
+    const dfltDash: 'solid' | 'dash' | 'dot' = dflt?.dash ?? 'solid'
+    let found: { color: number; width: number; dash: 'solid' | 'dash' | 'dot' } | null = null
+    for (let r = range.r0; r <= range.r1; r++) {
+      const row = obj.rows[r]
+      if (row === undefined) continue
+      for (let c = range.c0; c <= range.c1 && c < row.length; c++) {
+        const cell = row[c]
+        if (cell === undefined) continue
+        const edges = edgesForPreset(preset, r, c, range)
+        for (const edge of edges) {
+          const override = cell.border?.[edge]
+          const style =
+            override !== undefined
+              ? {
+                  color: typeof override.color === 'number' ? override.color : 0xcccccc,
+                  width: override.width,
+                  dash: override.dash ?? 'solid',
+                }
+              : { color: dfltColor, width: dfltWidth, dash: dfltDash }
+          if (found === null) {
+            found = style
+            continue
+          }
+          if (
+            found.color !== style.color ||
+            found.width !== style.width ||
+            found.dash !== style.dash
+          ) {
+            return 'mixed'
+          }
+        }
+      }
+    }
+    return found ?? 'empty'
+  }
+
+  // Mixed-state flag for the style row (color swatch / width / dash).
+  // Initialised when a preset is selected; cleared when the user
+  // commits any control (because committing implies "make them all
+  // this value", which is unambiguous afterwards).
+  const [presetMixed, setPresetMixed] = useState(false)
+
   const applyBorderPreset = (preset: TableBorderPreset): void => {
     // Clicking the already-active icon toggles it off — same Keynote
     // affordance, lets the user dismiss the blue selection indicator
     // without picking a different preset.
     if (activeBorderPreset?.preset === preset && activeBorderPreset.tableId === obj.id) {
       setActiveBorderPreset(null)
+      setPresetMixed(false)
       return
     }
     setActiveBorderPreset({ preset, tableId: obj.id })
-    stampBorderPreset(preset, { color: edgeColor, width: edgeWidth, dash: edgeDash })
+    // Selection-only: don't stamp. Instead, prime the style controls
+    // with whatever the preset's edges currently carry so the user
+    // sees a true reading and can adjust from there. The stamp
+    // happens later in `updateEdgeStyle` when they actually commit
+    // a control.
+    const uniform = readPresetUniformStyle(preset)
+    if (uniform === 'mixed') {
+      setPresetMixed(true)
+    } else if (uniform === 'empty') {
+      setPresetMixed(false)
+    } else {
+      setPresetMixed(false)
+      setEdgeColor(uniform.color)
+      setEdgeWidth(uniform.width)
+      setEdgeDash(uniform.dash)
+    }
   }
 
   // Whenever the user tweaks style/width/color WITH a preset active,
-  // restamp the same preset so the change shows up on the targeted
-  // edges immediately — mirrors Keynote's "the style controls drive
-  // the active border" affordance.
+  // stamp the active preset — that's the only path that writes
+  // borders now (selecting a preset only reads, never writes).
   const updateEdgeStyle = (
     next: Partial<{ color: number; width: number; dash: 'solid' | 'dash' | 'dot' }>,
   ): void => {
@@ -279,6 +352,9 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     if (next.color !== undefined) setEdgeColor(next.color)
     if (next.width !== undefined) setEdgeWidth(next.width)
     if (next.dash !== undefined) setEdgeDash(next.dash)
+    // Any commit unambiguously sets every targeted edge to one value,
+    // so the "mixed" indicator no longer applies.
+    setPresetMixed(false)
     if (activeBorderPreset !== null && activeBorderPreset.tableId === obj.id) {
       stampBorderPreset(activeBorderPreset.preset, merged)
     }
@@ -596,8 +672,9 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* ────────────────────────────────────────────────────────────── */}
       {/* BORDERS — Keynote-style preset grid + line style controls.    */}
       {/* Always visible; targets the selected range > active cell >     */}
-      {/* whole table. Clicking an icon stamps the preset; tweaking the  */}
-      {/* style restamps the active preset.                              */}
+      {/* whole table. Clicking a preset selects it and primes the      */}
+      {/* style controls with what's currently drawn on those edges —   */}
+      {/* nothing is mutated until the user commits a style change.     */}
       {/* ────────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -612,7 +689,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           color={edgeColor}
           width={edgeWidth}
           dash={edgeDash}
-          disabled={isViewer}
+          mixed={presetMixed}
+          disabled={
+            isViewer || activeBorderPreset === null || activeBorderPreset.tableId !== obj.id
+          }
           onChangeColor={(n) => updateEdgeStyle({ color: n })}
           onChangeWidth={(n) => updateEdgeStyle({ width: n })}
           onChangeDash={(v) => updateEdgeStyle({ dash: v })}
@@ -873,6 +953,7 @@ function BorderStyleControls({
   color,
   width,
   dash,
+  mixed,
   disabled,
   onChangeColor,
   onChangeWidth,
@@ -881,6 +962,13 @@ function BorderStyleControls({
   color: number
   width: number
   dash: 'solid' | 'dash' | 'dot'
+  /**
+   * True when the currently selected preset spans edges with differing
+   * styles. The controls show a "Mixed" hint instead of a (possibly
+   * misleading) single value; committing any control normalises every
+   * targeted edge to that value and clears the hint.
+   */
+  mixed: boolean
   disabled: boolean
   onChangeColor: (n: number) => void
   onChangeWidth: (n: number) => void
@@ -890,29 +978,50 @@ function BorderStyleControls({
     <div className="flex flex-col gap-1">
       <Row label="Style">
         <select
-          value={dash}
+          value={mixed ? '' : dash}
           disabled={disabled}
           onChange={(e) => onChangeDash(e.target.value as 'solid' | 'dash' | 'dot')}
           className="h-6 flex-1 rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
         >
+          {mixed && (
+            <option value="" disabled>
+              Mixed
+            </option>
+          )}
           <option value="solid">Solid</option>
           <option value="dash">Dashed</option>
           <option value="dot">Dotted</option>
         </select>
       </Row>
       <Row label="Color">
-        <ColorCell
-          value={numberToHex(color)}
-          disabled={disabled}
-          onChange={(hex) => onChangeColor(hexToNumber(hex))}
-        />
+        {mixed ? (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChangeColor(color)}
+            className="h-6 flex-1 rounded-md border border-input bg-background px-1.5 text-left text-xs text-muted-foreground disabled:opacity-50"
+            title="Multiple colors — click to normalise to one"
+          >
+            Mixed
+          </button>
+        ) : (
+          <ColorCell
+            value={numberToHex(color)}
+            disabled={disabled}
+            onChange={(hex) => onChangeColor(hexToNumber(hex))}
+          />
+        )}
       </Row>
       <Row label="Width">
+        {/* `key` swap when `mixed` flips forces the uncontrolled input to
+            adopt the new placeholder / value cleanly. */}
         <NumInput
+          key={mixed ? 'mixed' : `value-${width}`}
           value={width}
           min={0}
           max={20}
           step={0.5}
+          placeholder={mixed ? 'Mixed' : undefined}
           disabled={disabled}
           onCommit={onChangeWidth}
         />
@@ -1137,6 +1246,7 @@ function NumInput({
   min,
   max,
   step,
+  placeholder,
   disabled,
   onCommit,
 }: {
@@ -1144,17 +1254,21 @@ function NumInput({
   min?: number
   max?: number
   step?: number
+  /** Shown instead of `value` when the parent wants an empty visual
+   *  state — e.g. "Mixed" when the selected edges aren't uniform. */
+  placeholder?: string | undefined
   disabled?: boolean
   onCommit: (n: number) => void
 }) {
   return (
     <input
       type="number"
-      defaultValue={value}
+      defaultValue={placeholder === undefined ? value : ''}
       key={value}
       min={min}
       max={max}
       step={step ?? 1}
+      placeholder={placeholder}
       disabled={disabled}
       className="h-6 w-full rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
       onBlur={(e) => {

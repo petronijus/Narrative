@@ -629,7 +629,8 @@ export type TableBorderPreset =
   | 'insideH'
   | 'insideV'
 
-type CellEdge = 'top' | 'right' | 'bottom' | 'left'
+export type TableCellEdge = 'top' | 'right' | 'bottom' | 'left'
+type CellEdge = TableCellEdge
 
 /**
  * Pick the per-cell edges this preset wants stamped at `(r, c)` inside
@@ -642,12 +643,12 @@ type CellEdge = 'top' | 'right' | 'bottom' | 'left'
  * The extra write at width > 0 is a no-op visually (same color/width
  * on both sides of one line).
  */
-function edgesForPreset(
+export function edgesForPreset(
   preset: TableBorderPreset,
   r: number,
   c: number,
   range: { r0: number; c0: number; r1: number; c1: number },
-): CellEdge[] {
+): TableCellEdge[] {
   const isTopRow = r === range.r0
   const isBottomRow = r === range.r1
   const isLeftCol = c === range.c0
