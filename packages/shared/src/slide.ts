@@ -719,6 +719,17 @@ export interface TableDefaults {
   letterSpacing?: number
   /** Visual case transform at render time. Mirrors TextObject. */
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Paragraph spacing in px (above / below each paragraph). Mirrors
+   *  TextObject — meaningful for tables now that plain Enter inside a
+   *  cell inserts a paragraph break. */
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  /** Folder text-style preset binding (M16). When set, the inspector
+   *  marks the table as "linked" to that preset and folder-token edits
+   *  propagate to whichever fields aren't in `textStyleOverrides`.
+   *  Mirrors TextObject's identical pair. */
+  textStyleId?: string
+  textStyleOverrides?: Array<TextStyleOverrideKey>
   color: number | TokenRef
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'

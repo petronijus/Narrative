@@ -149,6 +149,10 @@ interface ResolvedCellStyle {
   lineHeight: number
   letterSpacing: number
   textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Paragraph spacing in px — table-wide only (no per-cell override).
+   *  Now meaningful since plain Enter inside a cell inserts a paragraph. */
+  paragraphSpaceBefore: number
+  paragraphSpaceAfter: number
   color: number
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'
@@ -201,6 +205,8 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
     lineHeight: cell.lineHeight ?? d.lineHeight ?? 1.2,
     letterSpacing: cell.letterSpacing ?? d.letterSpacing ?? 0,
     textTransform: cell.textTransform ?? d.textTransform ?? 'none',
+    paragraphSpaceBefore: d.paragraphSpaceBefore ?? 0,
+    paragraphSpaceAfter: d.paragraphSpaceAfter ?? 0,
     color,
     align: cell.align ?? d.align,
     vAlign: cell.vAlign ?? d.vAlign,
@@ -252,6 +258,8 @@ function syntheticCellTextObject(
     lineHeight: style.lineHeight,
     letterSpacing: style.letterSpacing,
     textTransform: style.textTransform,
+    paragraphSpaceBefore: style.paragraphSpaceBefore,
+    paragraphSpaceAfter: style.paragraphSpaceAfter,
   }
 }
 

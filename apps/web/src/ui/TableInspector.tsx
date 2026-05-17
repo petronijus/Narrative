@@ -161,6 +161,11 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   // is dummied. `id` is the table's own id so the inline-format helpers
   // inside TypographySection never spuriously match an active cell-edit
   // session (cell edits use `${tableId}#${r},${c}` as their objectId).
+  // textStyleId / textStyleOverrides forward so the preset menu can
+  // show "Linked: <name>", and "Reset / Update preset" find their
+  // anchor field. paragraphSpace fields complete the preset transfer
+  // (a folder text style writes paragraphSpaceBefore / After when
+  // applied — without these we'd silently drop them).
   const defaultsAsTextObject: TextObject = useMemo(
     () => ({
       id: obj.id,
@@ -183,16 +188,24 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       ...(d.lineHeight !== undefined ? { lineHeight: d.lineHeight } : {}),
       ...(d.letterSpacing !== undefined ? { letterSpacing: d.letterSpacing } : {}),
       ...(d.textTransform !== undefined ? { textTransform: d.textTransform } : {}),
+      ...(d.paragraphSpaceBefore !== undefined
+        ? { paragraphSpaceBefore: d.paragraphSpaceBefore }
+        : {}),
+      ...(d.paragraphSpaceAfter !== undefined
+        ? { paragraphSpaceAfter: d.paragraphSpaceAfter }
+        : {}),
+      ...(d.textStyleId !== undefined ? { textStyleId: d.textStyleId } : {}),
+      ...(d.textStyleOverrides !== undefined ? { textStyleOverrides: d.textStyleOverrides } : {}),
     }),
     [obj.id, obj.width, obj.height, d],
   )
 
   // Adapter: TypographySection writes `SlideObjectPatch<TextObject>` —
-  // we whitelist the keys TableDefaults actually persists and forward
-  // them through `patchDefault`. Keys outside the whitelist
-  // (`text`, `textStyleId`, `paragraphSpace*`, etc.) are ignored —
-  // those features are gated off in the section's `features` prop so
-  // the controls never produce patches for them.
+  // we whitelist the keys TableDefaults persists and forward them
+  // through `patchDefault`. Keys outside the whitelist (`text`,
+  // `listStyle`, `stroke*`, `colorAlpha`) are ignored — those features
+  // are gated off in the section's `features` prop so the controls
+  // never produce patches for them anyway.
   const TYPOGRAPHY_TO_DEFAULTS: ReadonlyArray<keyof TableObject['defaults']> = [
     'fontFamily',
     'fontSize',
@@ -202,6 +215,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     'lineHeight',
     'letterSpacing',
     'textTransform',
+    'paragraphSpaceBefore',
+    'paragraphSpaceAfter',
+    'textStyleId',
+    'textStyleOverrides',
     'color',
     'align',
     'vAlign',
@@ -644,8 +661,12 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
         obj={defaultsAsTextObject}
         patch={patchDefaultsAsTextObject}
         features={{
-          textStylePreset: false,
-          paragraphSpacing: false,
+          // TableDefaults gained textStyleId + textStyleOverrides +
+          // paragraphSpace* so the preset binding round-trips fully.
+          textStylePreset: true,
+          paragraphSpacing: true,
+          // TableDefaults still doesn't model list markers, glyph
+          // stroke or text-color alpha — those rows stay hidden.
           listStyle: false,
           stroke: false,
           colorAlpha: false,
