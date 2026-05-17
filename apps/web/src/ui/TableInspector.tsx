@@ -502,7 +502,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   }
 
   return (
-    <div className="flex flex-col gap-3 px-3 py-2 text-xs">
+    <div className="scrollbar-narrative flex flex-col overflow-y-auto text-xs">
       {/* Shared with shapes — authored name + lock toggle. Same Section
           chrome as the generic inspector; collapse-state shared under
           storageKey="identity" so a user who closed Identity on a
@@ -556,10 +556,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* non-collapsed selection in that cell.                           */}
       {/* ────────────────────────────────────────────────────────────── */}
       {editingObjectId !== null && (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Text format
-          </div>
+        <Section title="Text format" storageKey="table-text-format">
           <div className="flex items-center gap-1.5">
             <FormatToggle
               label="B"
@@ -598,7 +595,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ? 'Select text inside the cell to format it'
               : 'Toggles apply to the highlighted range'}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ────────────────────────────────────────────────────────────── */}
@@ -607,10 +604,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* delete live in the canvas right-click menu; surfacing them    */}
       {/* here too was redundant and crowded the inspector.             */}
       {/* ────────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-1.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Structure
-        </div>
+      <Section title="Structure" storageKey="table-structure">
         {/* Setting Rows / Columns to a higher number appends blank
             rows/cols from the end; lower deletes from the end. Min 1
             so the table can never collapse. */}
@@ -630,7 +624,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             onSet={(n) => setColCount(n)}
           />
         </Row>
-      </div>
+      </Section>
 
       {/* ────────────────────────────────────────────────────────────── */}
       {/* DEFAULTS — drives `obj.defaults` via TypographySection. The    */}
@@ -709,10 +703,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* RANGE (Phase 3 — multi-cell drag selection)                    */}
       {/* ────────────────────────────────────────────────────────────── */}
       {rangeInfo !== null && (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Selection ({rangeInfo.count} cells)
-          </div>
+        <Section title={`Selection (${rangeInfo.count} cells)`} storageKey="table-selection">
           <div className="grid grid-cols-2 gap-1.5">
             <BtnRow label="Merge cells" disabled={isViewer} onClick={handleMerge} />
             <BtnRow
@@ -748,17 +739,14 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
-        </div>
+        </Section>
       )}
 
       {/* ────────────────────────────────────────────────────────────── */}
       {/* ACTIVE CELL                                                    */}
       {/* ────────────────────────────────────────────────────────────── */}
       {rangeInfo === null && activeCell !== null && active !== null && (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Cell ({active.r}, {active.c})
-          </div>
+        <Section title={`Cell (${active.r}, ${active.c})`} storageKey="table-cell">
           <Row label="Fill">
             <div className="flex flex-1 items-center gap-1.5">
               <ColorCell
@@ -834,7 +822,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
               ]}
             />
           </Row>
-        </div>
+        </Section>
       )}
 
       {/* Animations — same Section the shape inspector renders. Tables
