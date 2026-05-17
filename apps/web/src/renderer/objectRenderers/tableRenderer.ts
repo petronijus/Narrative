@@ -144,6 +144,11 @@ function cellBbox(
 interface ResolvedCellStyle {
   fontSize: number
   fontWeight: FontWeight
+  italic: boolean
+  underline: boolean
+  lineHeight: number
+  letterSpacing: number
+  textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   color: number
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'
@@ -187,6 +192,15 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
   return {
     fontSize: cell.fontSize ?? d.fontSize,
     fontWeight,
+    // Typography flags: cell wins, table default falls in next, then
+    // a safe baseline. The cell.X ?? defaults.X chain matches the way
+    // the inspector's Typography section resolves "current value"
+    // before priming its controls.
+    italic: cell.italic ?? d.italic ?? false,
+    underline: cell.underline ?? d.underline ?? false,
+    lineHeight: cell.lineHeight ?? d.lineHeight ?? 1.2,
+    letterSpacing: cell.letterSpacing ?? d.letterSpacing ?? 0,
+    textTransform: cell.textTransform ?? d.textTransform ?? 'none',
     color,
     align: cell.align ?? d.align,
     vAlign: cell.vAlign ?? d.vAlign,
@@ -230,10 +244,14 @@ function syntheticCellTextObject(
     fontFamily: style.fontFamily,
     fontSize: style.fontSize,
     fontWeight: style.fontWeight,
+    italic: style.italic,
+    underline: style.underline,
     color: style.color,
     align: style.align,
     vAlign: style.vAlign,
-    lineHeight: 1.2,
+    lineHeight: style.lineHeight,
+    letterSpacing: style.letterSpacing,
+    textTransform: style.textTransform,
   }
 }
 

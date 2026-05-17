@@ -672,6 +672,19 @@ export interface TableCell {
   /** Per-cell overrides; missing fields inherit from `table.defaults`. */
   fontSize?: number
   fontWeight?: FontWeight
+  /** Italic + underline are box-level (single value for the cell). Inline
+   *  per-run formatting is handled separately on the Y.Text body — the
+   *  field here is the fallback for cells without inline overrides and
+   *  the value the Typography section toggles when no caret is set. */
+  italic?: boolean
+  underline?: boolean
+  /** Line height as a unitless multiplier (e.g. 1.2). Matches the
+   *  TextObject schema so the same Typography section can drive both. */
+  lineHeight?: number
+  /** Letter-spacing in slide-local px. Mirrors TextObject. */
+  letterSpacing?: number
+  /** Visual case transform applied at render time. Mirrors TextObject. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   color?: number | TokenRef
   align?: 'left' | 'center' | 'right'
   vAlign?: 'top' | 'middle' | 'bottom'
@@ -696,6 +709,16 @@ export interface TableDefaults {
   fontFamily?: string
   fontSize: number
   fontWeight: FontWeight
+  /** Italic / underline box-level defaults; cells override via their
+   *  own optional fields. Same semantics as TextObject. */
+  italic?: boolean
+  underline?: boolean
+  /** Unitless line-height multiplier (e.g. 1.2). Mirrors TextObject. */
+  lineHeight?: number
+  /** Letter-spacing in slide-local px. Mirrors TextObject. */
+  letterSpacing?: number
+  /** Visual case transform at render time. Mirrors TextObject. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   color: number | TokenRef
   align: 'left' | 'center' | 'right'
   vAlign: 'top' | 'middle' | 'bottom'

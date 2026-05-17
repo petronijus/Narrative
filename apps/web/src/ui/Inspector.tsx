@@ -1008,7 +1008,7 @@ export function Inspector() {
 
       {/* Text properties */}
       {obj.type === 'text' && (
-        <TextSection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
+        <TypographySection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
       )}
 
       {/* P8: Video properties — autoplay/loop/muted, volume, fit,
@@ -1426,7 +1426,7 @@ function layerLabel(obj: SlideObject): string {
   return `${obj.type}-${obj.id.slice(0, 4)}`
 }
 
-function LayersPanel({
+export function LayersPanel({
   activeIds,
   mutationCtx,
   readOnly,
@@ -3679,9 +3679,38 @@ function ShadowControls({
 // Text section
 // ---------------------------------------------------------------------------
 
-interface TextSectionProps {
+/**
+ * Toggle which optional rows the Typography section renders. Defaults
+ * are tuned for a TextObject (everything on); the TableInspector
+ * passes a subset because TableDefaults / TableCell don't model
+ * paragraph spacing, list markers, glyph stroke or text-style preset
+ * binding.
+ */
+export interface TypographyFeatures {
+  /** Folder text-style preset dropdown + actions menu (TextObject-only). */
+  textStylePreset?: boolean
+  /** Paragraph space-before / space-after row. */
+  paragraphSpacing?: boolean
+  /** List style (•, 1.) dropdown. */
+  listStyle?: boolean
+  /** Glyph stroke checkbox + color + width. */
+  stroke?: boolean
+  /** Text-color alpha popover (TextObject has colorAlpha; TableDefaults does not). */
+  colorAlpha?: boolean
+}
+
+const FEATURES_TEXT: Required<TypographyFeatures> = {
+  textStylePreset: true,
+  paragraphSpacing: true,
+  listStyle: true,
+  stroke: true,
+  colorAlpha: true,
+}
+
+interface TypographySectionProps {
   obj: TextObject
   patch: (p: SlideObjectPatch<TextObject>) => void
+  features?: TypographyFeatures
 }
 
 interface FontSizeFieldProps {
@@ -3823,7 +3852,12 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
   )
 }
 
-function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
+export function TypographySection({
+  obj,
+  patch: rawPatch,
+  features: featuresIn,
+}: TypographySectionProps) {
+  const features: Required<TypographyFeatures> = { ...FEATURES_TEXT, ...featuresIn }
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   // M16 P2: folder text style tokens
@@ -3973,8 +4007,10 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        {/* M16 P2: Text style dropdown — only shown when folder has text styles defined */}
-        {textStylesList.length > 0 && (
+        {/* M16 P2: Text style dropdown — only shown when folder has text styles defined.
+            Gated behind the textStylePreset feature so the table inspector can hide
+            it (table defaults don't bind to folder text styles). */}
+        {features.textStylePreset && textStylesList.length > 0 && (
           <div className="flex items-center gap-2" data-text-edit-keep-focus>
             <label
               htmlFor={`inspector-textstyle-${obj.id}`}
@@ -4316,41 +4352,45 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
         {/* Paragraph spacing — vertical gap above and below each
             paragraph block. The renderer wraps every line break in a
             <div> with these margins so multi-paragraph text gets the
-            requested room without the user fiddling with line-height. */}
-        <div className="flex items-center gap-1">
-          <CompactNumberField
-            id={`inspector-paragraphspacebefore-${obj.id}`}
-            glyph={
-              <span className="text-[9px] font-semibold leading-none" aria-hidden>
-                ¶↑
-              </span>
-            }
-            ariaLabel="Paragraph space before"
-            value={obj.paragraphSpaceBefore ?? 0}
-            step={1}
-            onChange={(v) =>
-              patch({
-                paragraphSpaceBefore: Math.max(0, v),
-              } as SlideObjectPatch<TextObject>)
-            }
-          />
-          <CompactNumberField
-            id={`inspector-paragraphspaceafter-${obj.id}`}
-            glyph={
-              <span className="text-[9px] font-semibold leading-none" aria-hidden>
-                ¶↓
-              </span>
-            }
-            ariaLabel="Paragraph space after"
-            value={obj.paragraphSpaceAfter ?? 0}
-            step={1}
-            onChange={(v) =>
-              patch({
-                paragraphSpaceAfter: Math.max(0, v),
-              } as SlideObjectPatch<TextObject>)
-            }
-          />
-        </div>
+            requested room without the user fiddling with line-height.
+            Gated behind paragraphSpacing — table cells don't model
+            multi-paragraph blocks (cell text is single-flow). */}
+        {features.paragraphSpacing && (
+          <div className="flex items-center gap-1">
+            <CompactNumberField
+              id={`inspector-paragraphspacebefore-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ¶↑
+                </span>
+              }
+              ariaLabel="Paragraph space before"
+              value={obj.paragraphSpaceBefore ?? 0}
+              step={1}
+              onChange={(v) =>
+                patch({
+                  paragraphSpaceBefore: Math.max(0, v),
+                } as SlideObjectPatch<TextObject>)
+              }
+            />
+            <CompactNumberField
+              id={`inspector-paragraphspaceafter-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ¶↓
+                </span>
+              }
+              ariaLabel="Paragraph space after"
+              value={obj.paragraphSpaceAfter ?? 0}
+              step={1}
+              onChange={(v) =>
+                patch({
+                  paragraphSpaceAfter: Math.max(0, v),
+                } as SlideObjectPatch<TextObject>)
+              }
+            />
+          </div>
+        )}
 
         {/* Text color — Appearance-Fill–style inline swatch + hex with
             alpha popover. No "Color" label; context is the Text panel. */}
@@ -4384,8 +4424,13 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
               }}
               ariaLabel="Text color"
               showHex
-              alpha={obj.colorAlpha ?? 1}
-              onAlphaChange={(a) => patch({ colorAlpha: a } as SlideObjectPatch<TextObject>)}
+              {...(features.colorAlpha
+                ? {
+                    alpha: obj.colorAlpha ?? 1,
+                    onAlphaChange: (a: number) =>
+                      patch({ colorAlpha: a } as SlideObjectPatch<TextObject>),
+                  }
+                : {})}
               inputClassName="!h-5 !w-7"
               hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
             />
@@ -4393,85 +4438,93 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
         </div>
 
         {/* List style — placed at the bottom of the typographic
-            controls, just above the Stroke row. */}
-        <div className="flex items-center gap-2">
-          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
-          <select
-            value={obj.listStyle ?? ''}
-            onChange={(e) =>
-              patch({
-                listStyle:
-                  e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
-              } as unknown as SlideObjectPatch<TextObject>)
-            }
-            className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            title="List style"
-          >
-            <option value="">No list</option>
-            <option value="bullet">• Bullet</option>
-            <option value="numbered">1. Numbered</option>
-          </select>
-        </div>
-
-        {/* Text stroke (outline on glyphs) — optional. */}
-        <div className="flex items-center gap-2">
-          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
-          <div className="flex flex-1 items-center gap-1.5">
-            <input
-              type="checkbox"
-              aria-label="Enable text stroke"
-              checked={obj.stroke !== undefined}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<TextObject>)
-                } else {
-                  patch({
-                    stroke: undefined,
-                    strokeWidth: undefined,
-                  } as unknown as SlideObjectPatch<TextObject>)
-                }
-              }}
-              className="h-3.5 w-3.5"
-            />
-            {obj.stroke !== undefined && (
-              <>
-                <TokenColorInput
-                  value={numberToHex(colourAsNumber(obj.stroke))}
-                  onChange={(hex) =>
-                    patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
-                  }
-                  ariaLabel="Text stroke color"
-                  showHex={false}
-                  alpha={obj.strokeAlpha ?? 1}
-                  onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
-                />
-                <input
-                  type="number"
-                  aria-label="Text stroke width"
-                  min={0}
-                  step={0.5}
-                  value={obj.strokeWidth ?? 1}
-                  onChange={(e) => {
-                    const v = Number.parseFloat(e.target.value)
-                    if (Number.isFinite(v)) {
-                      patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
-                    }
-                  }}
-                  onKeyDown={(e) =>
-                    handleShiftArrowStep(
-                      e,
-                      obj.strokeWidth ?? 1,
-                      0.5,
-                      (v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>),
-                      { min: 0 },
-                    )
-                  }
-                  className="w-16 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                />
-              </>
-            )}
+            controls, just above the Stroke row. Gated behind
+            listStyle — table cells render single-flow text without
+            list markers. */}
+        {features.listStyle && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
+            <select
+              value={obj.listStyle ?? ''}
+              onChange={(e) =>
+                patch({
+                  listStyle:
+                    e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              title="List style"
+            >
+              <option value="">No list</option>
+              <option value="bullet">• Bullet</option>
+              <option value="numbered">1. Numbered</option>
+            </select>
           </div>
-        </div>
+        )}
+
+        {/* Text stroke (outline on glyphs) — optional. Gated behind
+            `stroke` — TableDefaults doesn't model glyph stroke. */}
+        {features.stroke && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
+            <div className="flex flex-1 items-center gap-1.5">
+              <input
+                type="checkbox"
+                aria-label="Enable text stroke"
+                checked={obj.stroke !== undefined}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<TextObject>)
+                  } else {
+                    patch({
+                      stroke: undefined,
+                      strokeWidth: undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                  }
+                }}
+                className="h-3.5 w-3.5"
+              />
+              {obj.stroke !== undefined && (
+                <>
+                  <TokenColorInput
+                    value={numberToHex(colourAsNumber(obj.stroke))}
+                    onChange={(hex) =>
+                      patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
+                    }
+                    ariaLabel="Text stroke color"
+                    showHex={false}
+                    alpha={obj.strokeAlpha ?? 1}
+                    onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
+                  />
+                  <input
+                    type="number"
+                    aria-label="Text stroke width"
+                    min={0}
+                    step={0.5}
+                    value={obj.strokeWidth ?? 1}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value)
+                      if (Number.isFinite(v)) {
+                        patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
+                      }
+                    }}
+                    onKeyDown={(e) =>
+                      handleShiftArrowStep(
+                        e,
+                        obj.strokeWidth ?? 1,
+                        0.5,
+                        (v) =>
+                          patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>),
+                        { min: 0 },
+                      )
+                    }
+                    className="w-16 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </Section>
 
       {newPresetOpen && (
@@ -5258,7 +5311,7 @@ function AnimationItem({
   )
 }
 
-function AnimationsSection({
+export function AnimationsSection({
   objectId,
   animations,
   mutationCtx,

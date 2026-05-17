@@ -6,11 +6,10 @@
  * Three logical sections:
  *
  *   1. Layout       — base x/y/w/h/rotation/opacity through `patch`.
- *   2. Structure    — insert/delete row + col around the active cell.
- *                     "Active cell" is read from TableEditContext; when
- *                     no cell is active, the buttons operate on the
- *                     last row / last col so the user can still grow
- *                     the table from a fresh selection.
+ *   2. Structure    — Rows / Columns count steppers (append or trim
+ *                     from the end). Granular per-cell insert/delete
+ *                     lives in the canvas right-click menu so the
+ *                     inspector stays focused on table-wide controls.
  *   3. Defaults     — table-wide style (font size, weight, color,
  *                     align, border color/width, padding).
  *   4. Active cell  — per-cell overrides (fill, color, font-size,
@@ -51,6 +50,7 @@ import {
   type SlideObject,
   type SlideObjectPatch,
   type TableObject,
+  type TextObject,
   type TokenRef,
 } from '@narrative/shared'
 import {
@@ -63,14 +63,18 @@ import {
 } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useAnimations } from '../state/useAnimations.js'
 import {
+  AnimationsSection,
   FillBody,
   type FilledShape,
   IdentitySection,
+  LayersPanel,
   PositionSection,
   Section,
   SubLabel,
   TransparencySlider,
+  TypographySection,
 } from './Inspector.js'
 import { TokenColorInput } from './TokenColorInput.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
@@ -110,6 +114,12 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   // Sibling-object list — IdentitySection enforces per-slide name
   // uniqueness against this, so we feed the live slide snapshot.
   const { objects: slideObjects } = useSlideObjects()
+  // AnimationsSection + LayersPanel come straight from the shape
+  // inspector; both expect the same hook output (animations array +
+  // mutation ctx). Hooks live at the inspector level — TableInspector
+  // is unmounted when selection moves off the table, so the
+  // subscriptions follow the user's focus naturally.
+  const { animations, animationsCtx: animMutationCtx } = useAnimations()
 
   // Mirrors the `patch` closure inside the generic Inspector — feeds the
   // shared PositionSection the same write path. Viewer mode bails out so
@@ -133,17 +143,6 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       : null
   const selectionAttrs = editingObjectId === null ? null : readActiveSelectionAttrs(editingObjectId)
 
-  // The (r, c) that structural mutations and cell-override edits target.
-  // When the editor isn't tracking an active cell (user clicked the table
-  // body but never a specific cell), default to (rowCount-1, colCount-1)
-  // so "+ Row Below" / "+ Col After" still produce sensible appends.
-  const target = useMemo(() => {
-    if (active !== null && active.tableId === obj.id) {
-      return { r: active.r, c: active.c }
-    }
-    return { r: obj.rows.length - 1, c: obj.colWidths.length - 1 }
-  }, [active, obj])
-
   const activeCell = useMemo(() => {
     if (active === null || active.tableId !== obj.id) return null
     return obj.rows[active.r]?.[active.c] ?? null
@@ -151,17 +150,73 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
   const d = obj.defaults
 
-  // --- Structure mutations ---
-  const handleAddRowAbove = () => insertTableRow(mutationCtx, obj.id, target.r)
-  const handleAddRowBelow = () => insertTableRow(mutationCtx, obj.id, target.r + 1)
-  const handleDeleteRow = () => deleteTableRow(mutationCtx, obj.id, target.r)
-  const handleAddColBefore = () => insertTableCol(mutationCtx, obj.id, target.c)
-  const handleAddColAfter = () => insertTableCol(mutationCtx, obj.id, target.c + 1)
-  const handleDeleteCol = () => deleteTableCol(mutationCtx, obj.id, target.c)
-
   // --- Defaults patches ---
   const patchDefault = (patch: Partial<TableObject['defaults']>): void => {
     setTableDefaultsPatch(mutationCtx, obj.id, patch)
+  }
+
+  // Synthetic TextObject that mirrors `obj.defaults` so the shared
+  // TypographySection (which expects a TextObject) can drive table-
+  // wide defaults. Only the typography-relevant fields matter — geometry
+  // is dummied. `id` is the table's own id so the inline-format helpers
+  // inside TypographySection never spuriously match an active cell-edit
+  // session (cell edits use `${tableId}#${r},${c}` as their objectId).
+  const defaultsAsTextObject: TextObject = useMemo(
+    () => ({
+      id: obj.id,
+      type: 'text' as const,
+      x: 0,
+      y: 0,
+      width: obj.width,
+      height: obj.height,
+      rotation: 0,
+      opacity: 1,
+      text: '',
+      fontSize: d.fontSize,
+      fontWeight: d.fontWeight,
+      color: d.color,
+      align: d.align,
+      ...(d.fontFamily !== undefined ? { fontFamily: d.fontFamily } : {}),
+      vAlign: d.vAlign,
+      ...(d.italic !== undefined ? { italic: d.italic } : {}),
+      ...(d.underline !== undefined ? { underline: d.underline } : {}),
+      ...(d.lineHeight !== undefined ? { lineHeight: d.lineHeight } : {}),
+      ...(d.letterSpacing !== undefined ? { letterSpacing: d.letterSpacing } : {}),
+      ...(d.textTransform !== undefined ? { textTransform: d.textTransform } : {}),
+    }),
+    [obj.id, obj.width, obj.height, d],
+  )
+
+  // Adapter: TypographySection writes `SlideObjectPatch<TextObject>` —
+  // we whitelist the keys TableDefaults actually persists and forward
+  // them through `patchDefault`. Keys outside the whitelist
+  // (`text`, `textStyleId`, `paragraphSpace*`, etc.) are ignored —
+  // those features are gated off in the section's `features` prop so
+  // the controls never produce patches for them.
+  const TYPOGRAPHY_TO_DEFAULTS: ReadonlyArray<keyof TableObject['defaults']> = [
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'italic',
+    'underline',
+    'lineHeight',
+    'letterSpacing',
+    'textTransform',
+    'color',
+    'align',
+    'vAlign',
+  ]
+  const patchDefaultsAsTextObject = (p: SlideObjectPatch<TextObject>): void => {
+    const src = p as Record<string, unknown>
+    const out: Partial<TableObject['defaults']> = {}
+    let touched = false
+    for (const key of TYPOGRAPHY_TO_DEFAULTS) {
+      if (key in src) {
+        ;(out as Record<string, unknown>)[key] = src[key]
+        touched = true
+      }
+    }
+    if (touched) patchDefault(out)
   }
 
   // --- Active cell patches (no-op when no active cell) ---
@@ -547,16 +602,18 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       )}
 
       {/* ────────────────────────────────────────────────────────────── */}
-      {/* STRUCTURE                                                      */}
+      {/* STRUCTURE — Rows / Columns count steppers only.                */}
+      {/* Granular "insert above / below / left / right" + per-cell      */}
+      {/* delete live in the canvas right-click menu; surfacing them    */}
+      {/* here too was redundant and crowded the inspector.             */}
       {/* ────────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-1.5">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Structure
         </div>
-        {/* Total-count fields. Setting Rows / Columns to a higher number
-            appends from the end; setting to a lower number deletes from
-            the end (Keynote behaviour). Always at least 1; clamped at
-            both ends. */}
+        {/* Setting Rows / Columns to a higher number appends blank
+            rows/cols from the end; lower deletes from the end. Min 1
+            so the table can never collapse. */}
         <Row label="Rows">
           <CountStepper
             value={obj.rows.length}
@@ -573,104 +630,35 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             onSet={(n) => setColCount(n)}
           />
         </Row>
-        <div className="grid grid-cols-2 gap-1.5">
-          <BtnRow
-            label={`+ Row above (r=${target.r})`}
-            disabled={isViewer}
-            onClick={handleAddRowAbove}
-          />
-          <BtnRow label={`+ Row below`} disabled={isViewer} onClick={handleAddRowBelow} />
-          <BtnRow label="+ Col left" disabled={isViewer} onClick={handleAddColBefore} />
-          <BtnRow label="+ Col right" disabled={isViewer} onClick={handleAddColAfter} />
-          <BtnRow
-            label="− Delete row"
-            danger
-            disabled={isViewer || obj.rows.length <= 1}
-            onClick={handleDeleteRow}
-          />
-          <BtnRow
-            label="− Delete col"
-            danger
-            disabled={isViewer || obj.colWidths.length <= 1}
-            onClick={handleDeleteCol}
-          />
-        </div>
-        <div className="text-[10px] text-muted-foreground/70">
-          Targets r=
-          {target.r}, c={target.c}
-          {active !== null && active.tableId === obj.id
-            ? active.editing
-              ? ' (editing)'
-              : ' (active)'
-            : ' (last cell — pick one to target)'}
-        </div>
       </div>
 
       {/* ────────────────────────────────────────────────────────────── */}
-      {/* DEFAULTS                                                       */}
+      {/* DEFAULTS — drives `obj.defaults` via TypographySection. The    */}
+      {/* shared component renders the full text-inspector Typography   */}
+      {/* row stack (family, size, weight, B/I/U, align, v-align, case, */}
+      {/* line-height, letter-spacing, color). Table-only features      */}
+      {/* (paragraphSpacing / listStyle / stroke / colorAlpha /         */}
+      {/* textStylePreset) stay off — the TableDefaults schema doesn't  */}
+      {/* model them. Padding is below as a table-only row.             */}
+      {/* `defaultsAsTextObject` is a synthetic TextObject that mirrors */}
+      {/* `obj.defaults` so TypographySection (which expects a real     */}
+      {/* TextObject) can read every field it shows. Writes flow back   */}
+      {/* through `patchDefaultsAsTextObject`, which whitelists the     */}
+      {/* keys TableDefaults actually persists and ignores the rest.    */}
       {/* ────────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-1.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Defaults
-        </div>
-        <Row label="Font size">
-          <NumInput
-            value={d.fontSize}
-            min={6}
-            max={200}
-            disabled={isViewer}
-            onCommit={(n) => patchDefault({ fontSize: n })}
-          />
-        </Row>
-        <Row label="Font weight">
-          <select
-            value={String(d.fontWeight)}
-            disabled={isViewer}
-            onChange={(e) =>
-              patchDefault({
-                fontWeight: e.target.value === 'bold' ? 'bold' : 'normal',
-              })
-            }
-            className="h-6 flex-1 rounded-md border border-input bg-background px-1.5 text-xs disabled:opacity-50"
-          >
-            <option value="normal">Normal</option>
-            <option value="bold">Bold</option>
-          </select>
-        </Row>
-        <Row label="Text color">
-          <ColorCell
-            value={resolveHex(d.color, '#111111')}
-            disabled={isViewer}
-            onChange={(hex) => patchDefault({ color: hexToNumber(hex) })}
-          />
-        </Row>
-        <Row label="Align">
-          <AlignButtonGroup
-            value={d.align}
-            ariaLabel="Default horizontal alignment"
-            disabled={isViewer}
-            onChange={(v) => patchDefault({ align: v })}
-            options={[
-              { value: 'left', label: 'Left', Icon: AlignLeft },
-              { value: 'center', label: 'Center', Icon: AlignCenter },
-              { value: 'right', label: 'Right', Icon: AlignRight },
-            ]}
-          />
-        </Row>
-        <Row label="V-Align">
-          <AlignButtonGroup
-            value={d.vAlign}
-            ariaLabel="Default vertical alignment"
-            disabled={isViewer}
-            onChange={(v) => patchDefault({ vAlign: v })}
-            options={[
-              { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
-              { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
-              { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
-            ]}
-          />
-        </Row>
-        <Row label="Padding">
+      <TypographySection
+        obj={defaultsAsTextObject}
+        patch={patchDefaultsAsTextObject}
+        features={{
+          textStylePreset: false,
+          paragraphSpacing: false,
+          listStyle: false,
+          stroke: false,
+          colorAlpha: false,
+        }}
+      />
+      <Section title="Padding" storageKey="table-padding">
+        <Row label="All sides">
           <NumInput
             value={d.padding.top}
             min={0}
@@ -683,19 +671,21 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
             }
           />
         </Row>
-      </div>
+      </Section>
 
       {/* ────────────────────────────────────────────────────────────── */}
       {/* BORDERS — Keynote-style preset grid + line style controls.    */}
-      {/* Always visible; targets the selected range > active cell >     */}
-      {/* whole table. Clicking a preset selects it and primes the      */}
-      {/* style controls with what's currently drawn on those edges —   */}
-      {/* nothing is mutated until the user commits a style change.     */}
+      {/* Wrapped in the shared collapsible Section so users can fold   */}
+      {/* it like every other inspector block. `table-border`           */}
+      {/* storageKey keeps its open/closed state per-user (localStorage */}
+      {/* under `narrative:inspector:collapsed:…`) — same affordance as */}
+      {/* Identity / Position / Appearance / Animations.                */}
+      {/* Targets the selected range > active cell > whole table.       */}
+      {/* Clicking a preset selects it and primes the style controls    */}
+      {/* with what's currently drawn on those edges — nothing is       */}
+      {/* mutated until the user commits a style change.                */}
       {/* ────────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-1.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Border
-        </div>
+      <Section title="Border" storageKey="table-border">
         <BorderPresetGrid
           activePreset={activeBorderPreset?.tableId === obj.id ? activeBorderPreset.preset : null}
           disabled={isViewer}
@@ -713,7 +703,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           onChangeWidth={(n) => updateEdgeStyle({ width: n })}
           onChangeDash={(v) => updateEdgeStyle({ dash: v })}
         />
-      </div>
+      </Section>
 
       {/* ────────────────────────────────────────────────────────────── */}
       {/* RANGE (Phase 3 — multi-cell drag selection)                    */}
@@ -846,6 +836,24 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           </Row>
         </div>
       )}
+
+      {/* Animations — same Section the shape inspector renders. Tables
+          animate as a single object (whole-table fade / slide / etc.);
+          per-cell animation isn't exposed yet, but selecting the table
+          and adding a preset here works identically to shapes. */}
+      {animMutationCtx !== null && (
+        <AnimationsSection
+          objectId={obj.id}
+          animations={animations}
+          mutationCtx={animMutationCtx}
+          totalAnimations={animations.length}
+        />
+      )}
+
+      {/* Layers panel — full slide layer list. Identical to the shape
+          inspector's; renders at the bottom so it scrolls
+          independently of the table-specific controls above. */}
+      <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
     </div>
   )
 }
