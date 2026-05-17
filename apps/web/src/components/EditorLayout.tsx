@@ -95,6 +95,16 @@ import { Button } from '@/components/ui/button'
 // ---------------------------------------------------------------------------
 
 /**
+ * Tap-vs-drag threshold in SCREEN pixels for the table cell-tap gesture.
+ * Pointer movement under this distance between down and up commits a
+ * tap (enters cell-select mode on the clicked cell); past it the
+ * gesture promotes to a regular object-drag of the whole table. Sized
+ * to swallow normal hand jitter at any zoom level — kept in client
+ * coords on purpose so the feel is the same at 25% and 200%.
+ */
+const TAP_THRESHOLD_PX = 4
+
+/**
  * Converts viewport (clientX, clientY) coordinates into artboard-local
  * slide coordinates. When the artboard is rendered under a CSS
  * transform:scale, getBoundingClientRect already returns the scaled
@@ -720,6 +730,22 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   } | null>(null)
 
   /**
+   * M29 Phase 3+ — pending tap-vs-drag on an already-selected table.
+   * Pointerdown over a table that's in `selectedIds` enters this state
+   * (no mutation yet); pointermove past TAP_THRESHOLD_PX promotes it
+   * to a regular object drag (move the whole table), pointerup without
+   * the promotion commits the tapped cell as the active cell. Pattern
+   * mirrors Keynote: drag = move the table, tap = drill into cells.
+   */
+  const pendingTableTapRef = useRef<{
+    tableId: string
+    r: number
+    c: number
+    startClientX: number
+    startClientY: number
+  } | null>(null)
+
+  /**
    * Pen-tool session — accumulates anchor points while the user is
    * drawing. Anchors live in SLIDE coords (absolute). `dragIndex` is
    * the index of the anchor being shaped (cpOut + symmetric cpIn)
@@ -1047,13 +1073,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         selectOne(hitId)
       }
 
-      // M29 Phase 3: when a table is already selected and the user
-      // clicks inside its body, start a cell-drag-select gesture
-      // instead of an object drag. Sets the anchor cell + pointer
-      // capture; handlePointerMove updates the range, handlePointerUp
-      // finalises. First click on a table still flows through the
-      // normal selection path above — the cell-drag only kicks in on
-      // the *second* click while the table is already selected.
+      // M29 Phase 3+: pointer over an already-selected table forks on
+      // whether we're already in cell-edit mode (an active cell exists
+      // on this table):
+      //   NOT in cell mode → defer the gesture. Release under
+      //     TAP_THRESHOLD_PX = tap, commits cell mode on the clicked
+      //     cell. Past the threshold = promote to a normal object
+      //     drag of the whole table. This is the Keynote "select
+      //     once to grab, double-take to drill in" pattern.
+      //   In cell mode → drag-select a cell range from this anchor.
+      //     The first click already drilled in; now drags re-anchor
+      //     and extend the selection like a spreadsheet does.
+      // First click on the table is handled by the normal selection
+      // path above — this branch only fires on subsequent pointerdowns.
       if (
         hitObj !== undefined &&
         hitObj.type === 'table' &&
@@ -1062,7 +1094,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       ) {
         const raw = hitTestTableCell(hitObj, x, y)
         if (raw !== null) {
-          // Resolve merge continuation → origin so the drag anchor
+          // Resolve merge continuation → origin so the cell anchor
           // lands on the visible (origin) cell.
           const target = hitObj.rows[raw.r]?.[raw.c]
           const r =
@@ -1073,12 +1105,29 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
             target !== undefined && typeof target.mergeOriginC === 'number'
               ? target.mergeOriginC
               : raw.c
-          cellSelectionDragRef.current = {
-            tableId: hitObj.id,
-            startR: r,
-            startC: c,
+          const inCellMode = activeTableCell !== null && activeTableCell.tableId === hitObj.id
+          if (inCellMode) {
+            // Already in cell mode — start a range drag from this
+            // anchor. Re-seeding active here means tap-only also
+            // works (1×1 range collapses to active-only in the range
+            // setter), and drag-extends produce a fresh selection
+            // rather than a confusing extend-from-prior-active.
+            cellSelectionDragRef.current = {
+              tableId: hitObj.id,
+              startR: r,
+              startC: c,
+            }
+            setTableCellActive({ tableId: hitObj.id, r, c })
+          } else {
+            // Not yet in cell mode — defer tap vs table-drag.
+            pendingTableTapRef.current = {
+              tableId: hitObj.id,
+              r,
+              c,
+              startClientX: e.clientX,
+              startClientY: e.clientY,
+            }
           }
-          setTableCellActive({ tableId: hitObj.id, r, c })
           ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
           return
         }
@@ -1278,6 +1327,31 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         return
       }
 
+      // M29 Phase 3+ — pending tap-vs-drag promotion. If the user
+      // moved past the screen-space threshold, switch the gesture
+      // from "tap → cell mode" to "drag → move the whole table" by
+      // setting up dragRef in place; the regular drag branch below
+      // takes it from here. Under the threshold we stay pending so
+      // pointerup can still commit a cell tap.
+      const pendingTap = pendingTableTapRef.current
+      if (pendingTap !== null) {
+        const sx = e.clientX - pendingTap.startClientX
+        const sy = e.clientY - pendingTap.startClientY
+        if (Math.hypot(sx, sy) <= TAP_THRESHOLD_PX) return
+        const tableObj = objects.find((o) => o.id === pendingTap.tableId)
+        pendingTableTapRef.current = null
+        if (tableObj === undefined || tableObj.locked === true) return
+        dragRef.current = {
+          active: true,
+          objectIds: [pendingTap.tableId],
+          startX: pendingTap.startClientX,
+          startY: pendingTap.startClientY,
+          initialPositions: [{ id: pendingTap.tableId, x: tableObj.x, y: tableObj.y }],
+          initialImageRects: new Map(),
+        }
+        // Fall through — drag branch below now owns the move.
+      }
+
       // M29 Phase 3 — cell-drag-select update. Hit-test the current
       // pointer position against the table's cell grid and write a
       // normalised range covering (startR/C) → (currentR/C). The
@@ -1426,6 +1500,16 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         return
       }
 
+      // M29 Phase 3+ — tap commit. If the user pointed-down on an
+      // already-selected table and released without crossing the
+      // promotion threshold, treat it as a tap: enter cell-select
+      // mode on the cell that was under the pointer at pointerdown.
+      const pendingTap = pendingTableTapRef.current
+      if (pendingTap !== null) {
+        pendingTableTapRef.current = null
+        setTableCellActive({ tableId: pendingTap.tableId, r: pendingTap.r, c: pendingTap.c })
+        return
+      }
       // M29 Phase 3 — cell-drag-select teardown. setTableCellRange
       // already collapsed single-cell ranges down to active-only, so
       // here we just clear the gesture state.
@@ -1574,7 +1658,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       dragRef.current = null
       setSnapGuides([])
     },
-    [objects, canvasInstance, selectedIds, selectMany],
+    [objects, canvasInstance, selectedIds, selectMany, setTableCellActive],
   )
 
   // M8: Cursor leave — broadcast null (peer offline z canvasu)
