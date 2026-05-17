@@ -16,10 +16,12 @@
  * which `SceneGraph.setTextNodeFaded` knows how to walk back to the
  * table's per-cell HTMLText.
  *
- * Cell-only keyboard nav (Tab / Shift+Tab / Enter → next-row) is
- * intercepted on `onKeyDownCapture` of the wrapper div *before* the
- * contenteditable inside TextEditOverlay sees the key. Shift+Enter
- * still inserts a soft line break inside the cell.
+ * Cell-only keyboard nav (Tab / Shift+Tab → horizontal cell move,
+ * Cmd/Ctrl+Enter → next row) is intercepted on `onKeyDownCapture` of
+ * the wrapper div *before* the contenteditable inside TextEditOverlay
+ * sees the key. Plain Enter (and Shift+Enter) fall through so the
+ * user can compose multi-paragraph text inside a cell — same as a
+ * regular text box.
  */
 
 import { useMemo, useRef } from 'react'
@@ -166,9 +168,13 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
 
   if (binding === null || synthetic === null) return null
 
-  // Cell nav — intercept Tab / Shift+Tab / plain Enter BEFORE
-  // TextEditOverlay's onKeyDown sees them. `onKeyDownCapture` fires
-  // on the wrapper before the contenteditable inside.
+  // Cell nav — intercept Tab / Shift+Tab BEFORE TextEditOverlay's
+  // onKeyDown sees them. `onKeyDownCapture` fires on the wrapper
+  // before the contenteditable inside. Enter is intentionally NOT
+  // intercepted — it falls through to the contenteditable so the
+  // user can write multi-paragraph text in a cell (matches the way
+  // Enter behaves inside a regular text box). Cmd/Ctrl+Enter still
+  // jumps to the next row for spreadsheet-style fast entry.
   const moveTo = (nr: number, nc: number): void => {
     setActive({ tableId: table.id, r: nr, c: nc })
     beginEdit({ tableId: table.id, r: nr, c: nc })
@@ -220,15 +226,17 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
           else tabNext()
           return
         }
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // Cmd/Ctrl+Enter — spreadsheet-style "commit + move down".
+        // Plain Enter (and Shift+Enter) fall through to the contenteditable
+        // so the user can insert paragraph / soft-line breaks inside the
+        // cell. Esc is handled by TextEditOverlay itself (calls onEnd →
+        // endEdit).
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault()
           e.stopPropagation()
           enterRow()
           return
         }
-        // Shift+Enter falls through to TextEditOverlay's contenteditable,
-        // which inserts a soft line break inside the cell. Esc is
-        // handled by TextEditOverlay itself (calls onEnd → endEdit).
       }}
     >
       <TextEditOverlay obj={synthetic} mutationCtx={mutationCtx} onEnd={endEdit} />
