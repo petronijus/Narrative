@@ -10,11 +10,13 @@
  *                     from the end). Granular per-cell insert/delete
  *                     lives in the canvas right-click menu so the
  *                     inspector stays focused on table-wide controls.
- *   3. Defaults     — table-wide style (font size, weight, color,
- *                     align, border color/width, padding).
- *   4. Active cell  — per-cell overrides (fill, color, font-size,
- *                     alignments) with a reset-to-default action.
- *                     Only renders when a cell is active.
+ *   3. Typography   — shared `TypographySection`. Scope-aware: when
+ *                     a range / active cell is targeted, edits go to
+ *                     that scope; otherwise to `obj.defaults`. Preset
+ *                     binding (`textStyleId`) is table-level only.
+ *   4. Appearance   — shared `FillBody`, scope-aware (range > cell
+ *                     > defaults), same dispatch convention as
+ *                     Typography.
  *
  * Writes go through `setTableCellStyle`, `setTableDefaultsPatch`, and
  * the row/col mutations exported from `@narrative/slide-model`. All
@@ -53,14 +55,7 @@ import {
   type TextObject,
   type TokenRef,
 } from '@narrative/shared'
-import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  AlignVerticalJustifyCenter,
-  AlignVerticalJustifyEnd,
-  AlignVerticalJustifyStart,
-} from 'lucide-react'
+import { AlignCenter, AlignLeft, AlignRight } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -143,97 +138,11 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       : null
   const selectionAttrs = editingObjectId === null ? null : readActiveSelectionAttrs(editingObjectId)
 
-  const activeCell = useMemo(() => {
-    if (active === null || active.tableId !== obj.id) return null
-    return obj.rows[active.r]?.[active.c] ?? null
-  }, [active, obj])
-
   const d = obj.defaults
 
   // --- Defaults patches ---
   const patchDefault = (patch: Partial<TableObject['defaults']>): void => {
     setTableDefaultsPatch(mutationCtx, obj.id, patch)
-  }
-
-  // Synthetic TextObject that mirrors `obj.defaults` so the shared
-  // TypographySection (which expects a TextObject) can drive table-
-  // wide defaults. Only the typography-relevant fields matter — geometry
-  // is dummied. `id` is the table's own id so the inline-format helpers
-  // inside TypographySection never spuriously match an active cell-edit
-  // session (cell edits use `${tableId}#${r},${c}` as their objectId).
-  // textStyleId / textStyleOverrides forward so the preset menu can
-  // show "Linked: <name>", and "Reset / Update preset" find their
-  // anchor field. paragraphSpace fields complete the preset transfer
-  // (a folder text style writes paragraphSpaceBefore / After when
-  // applied — without these we'd silently drop them).
-  const defaultsAsTextObject: TextObject = useMemo(
-    () => ({
-      id: obj.id,
-      type: 'text' as const,
-      x: 0,
-      y: 0,
-      width: obj.width,
-      height: obj.height,
-      rotation: 0,
-      opacity: 1,
-      text: '',
-      fontSize: d.fontSize,
-      fontWeight: d.fontWeight,
-      color: d.color,
-      align: d.align,
-      ...(d.fontFamily !== undefined ? { fontFamily: d.fontFamily } : {}),
-      vAlign: d.vAlign,
-      ...(d.italic !== undefined ? { italic: d.italic } : {}),
-      ...(d.underline !== undefined ? { underline: d.underline } : {}),
-      ...(d.lineHeight !== undefined ? { lineHeight: d.lineHeight } : {}),
-      ...(d.letterSpacing !== undefined ? { letterSpacing: d.letterSpacing } : {}),
-      ...(d.textTransform !== undefined ? { textTransform: d.textTransform } : {}),
-      ...(d.paragraphSpaceBefore !== undefined
-        ? { paragraphSpaceBefore: d.paragraphSpaceBefore }
-        : {}),
-      ...(d.paragraphSpaceAfter !== undefined
-        ? { paragraphSpaceAfter: d.paragraphSpaceAfter }
-        : {}),
-      ...(d.textStyleId !== undefined ? { textStyleId: d.textStyleId } : {}),
-      ...(d.textStyleOverrides !== undefined ? { textStyleOverrides: d.textStyleOverrides } : {}),
-    }),
-    [obj.id, obj.width, obj.height, d],
-  )
-
-  // Adapter: TypographySection writes `SlideObjectPatch<TextObject>` —
-  // we whitelist the keys TableDefaults persists and forward them
-  // through `patchDefault`. Keys outside the whitelist (`text`,
-  // `listStyle`, `stroke*`, `colorAlpha`) are ignored — those features
-  // are gated off in the section's `features` prop so the controls
-  // never produce patches for them anyway.
-  const TYPOGRAPHY_TO_DEFAULTS: ReadonlyArray<keyof TableObject['defaults']> = [
-    'fontFamily',
-    'fontSize',
-    'fontWeight',
-    'italic',
-    'underline',
-    'lineHeight',
-    'letterSpacing',
-    'textTransform',
-    'paragraphSpaceBefore',
-    'paragraphSpaceAfter',
-    'textStyleId',
-    'textStyleOverrides',
-    'color',
-    'align',
-    'vAlign',
-  ]
-  const patchDefaultsAsTextObject = (p: SlideObjectPatch<TextObject>): void => {
-    const src = p as Record<string, unknown>
-    const out: Partial<TableObject['defaults']> = {}
-    let touched = false
-    for (const key of TYPOGRAPHY_TO_DEFAULTS) {
-      if (key in src) {
-        ;(out as Record<string, unknown>)[key] = src[key]
-        touched = true
-      }
-    }
-    if (touched) patchDefault(out)
   }
 
   // --- Active cell patches (no-op when no active cell) ---
@@ -257,6 +166,162 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       return
     }
     patchCell(patch as Parameters<typeof setTableCellStyle>[4])
+  }
+
+  // Top-left of the current target — used as the "read sample" for
+  // the synthetic TextObject below. Range wins over active cell so
+  // the inputs reflect what most of the user's selection looks like;
+  // single active cell is the obvious fallback. null means "no cell
+  // context" → defaults.
+  const targetCell = useMemo(() => {
+    if (range !== null && range.tableId === obj.id) {
+      const r0 = Math.min(range.r0, range.r1)
+      const c0 = Math.min(range.c0, range.c1)
+      return obj.rows[r0]?.[c0] ?? null
+    }
+    if (active !== null && active.tableId === obj.id) {
+      return obj.rows[active.r]?.[active.c] ?? null
+    }
+    return null
+  }, [range, active, obj])
+
+  // Synthetic TextObject that mirrors the *effective* style of the
+  // currently targeted cell (or the table defaults when nothing is
+  // selected). Cell-overridable fields fall through `cell.X ?? d.X`
+  // — same chain the renderer uses — so the Typography inputs always
+  // show what the user is actually looking at. Defaults-only fields
+  // (`fontFamily`, paragraph spacing, text-style binding) always come
+  // from `d` because TableCell doesn't model them.
+  // `id` is the table's id so the inline-format helpers inside
+  // TypographySection never spuriously match an active cell-edit
+  // session (cell edits use `${tableId}#${r},${c}` as their objectId).
+  const defaultsAsTextObject: TextObject = useMemo(() => {
+    const cellOrNull = targetCell
+    const pickCell = <K extends keyof TableObject['rows'][number][number]>(
+      k: K,
+    ): TableObject['rows'][number][number][K] | undefined => cellOrNull?.[k]
+    return {
+      id: obj.id,
+      type: 'text' as const,
+      x: 0,
+      y: 0,
+      width: obj.width,
+      height: obj.height,
+      rotation: 0,
+      opacity: 1,
+      text: '',
+      fontSize: pickCell('fontSize') ?? d.fontSize,
+      fontWeight: pickCell('fontWeight') ?? d.fontWeight,
+      color: pickCell('color') ?? d.color,
+      align: pickCell('align') ?? d.align,
+      vAlign: pickCell('vAlign') ?? d.vAlign,
+      ...(d.fontFamily !== undefined ? { fontFamily: d.fontFamily } : {}),
+      ...((pickCell('italic') ?? d.italic) !== undefined
+        ? { italic: pickCell('italic') ?? d.italic }
+        : {}),
+      ...((pickCell('underline') ?? d.underline) !== undefined
+        ? { underline: pickCell('underline') ?? d.underline }
+        : {}),
+      ...((pickCell('lineHeight') ?? d.lineHeight) !== undefined
+        ? { lineHeight: pickCell('lineHeight') ?? d.lineHeight }
+        : {}),
+      ...((pickCell('letterSpacing') ?? d.letterSpacing) !== undefined
+        ? { letterSpacing: pickCell('letterSpacing') ?? d.letterSpacing }
+        : {}),
+      ...((pickCell('textTransform') ?? d.textTransform) !== undefined
+        ? { textTransform: pickCell('textTransform') ?? d.textTransform }
+        : {}),
+      ...(d.paragraphSpaceBefore !== undefined
+        ? { paragraphSpaceBefore: d.paragraphSpaceBefore }
+        : {}),
+      ...(d.paragraphSpaceAfter !== undefined
+        ? { paragraphSpaceAfter: d.paragraphSpaceAfter }
+        : {}),
+      ...(d.textStyleId !== undefined ? { textStyleId: d.textStyleId } : {}),
+      ...(d.textStyleOverrides !== undefined ? { textStyleOverrides: d.textStyleOverrides } : {}),
+    }
+  }, [obj.id, obj.width, obj.height, d, targetCell])
+
+  // Scope-aware adapter: TypographySection emits
+  // `SlideObjectPatch<TextObject>` — we route each key to the
+  // narrowest legal target:
+  //   - Preset binding (`textStyleId` / `textStyleOverrides`) is
+  //     table-level only, so when either is in the patch we route
+  //     the WHOLE patch to defaults (applying a preset paints the
+  //     table, not a single cell).
+  //   - Cell-overridable fields (size/weight/italic/underline/
+  //     lineHeight/letterSpacing/textTransform/color/align/vAlign):
+  //     dispatch through range → active cell → defaults.
+  //   - Defaults-only fields (`fontFamily`, paragraph spacing) always
+  //     write to defaults — TableCell doesn't carry them.
+  const CELL_OVERRIDABLE_KEYS = [
+    'fontSize',
+    'fontWeight',
+    'italic',
+    'underline',
+    'lineHeight',
+    'letterSpacing',
+    'textTransform',
+    'color',
+    'align',
+    'vAlign',
+  ] as const
+  const DEFAULTS_ONLY_KEYS = ['fontFamily', 'paragraphSpaceBefore', 'paragraphSpaceAfter'] as const
+  const patchDefaultsAsTextObject = (p: SlideObjectPatch<TextObject>): void => {
+    const src = p as Record<string, unknown>
+
+    // Preset application short-circuit: any write that touches the
+    // binding fields is treated as a table-wide preset operation.
+    if ('textStyleId' in src || 'textStyleOverrides' in src) {
+      const out: Partial<TableObject['defaults']> = {}
+      for (const key of [
+        ...CELL_OVERRIDABLE_KEYS,
+        ...DEFAULTS_ONLY_KEYS,
+        'textStyleId' as const,
+        'textStyleOverrides' as const,
+      ]) {
+        if (key in src) (out as Record<string, unknown>)[key] = src[key]
+      }
+      patchDefault(out)
+      return
+    }
+
+    // Split the patch by where each key can legally land.
+    const cellPart: Record<string, unknown> = {}
+    const defaultsPart: Partial<TableObject['defaults']> = {}
+    let cellTouched = false
+    let defaultsTouched = false
+    for (const key of CELL_OVERRIDABLE_KEYS) {
+      if (key in src) {
+        cellPart[key] = src[key]
+        cellTouched = true
+      }
+    }
+    for (const key of DEFAULTS_ONLY_KEYS) {
+      if (key in src) {
+        ;(defaultsPart as Record<string, unknown>)[key] = src[key]
+        defaultsTouched = true
+      }
+    }
+
+    if (cellTouched) {
+      const hasRange = range !== null && range.tableId === obj.id
+      const hasActive = active !== null && active.tableId === obj.id
+      if (hasRange) {
+        patchRange(cellPart as CellStylePatch)
+      } else if (hasActive) {
+        patchCell(cellPart as Parameters<typeof setTableCellStyle>[4])
+      } else {
+        // No cell context — promote the cell-overridable keys to
+        // table-wide defaults so the user can still tune the look
+        // when nothing is selected.
+        for (const k of CELL_OVERRIDABLE_KEYS) {
+          if (k in src) (defaultsPart as Record<string, unknown>)[k] = src[k]
+        }
+        defaultsTouched = true
+      }
+    }
+    if (defaultsTouched) patchDefault(defaultsPart)
   }
 
   // --- Keynote-style border preset + style state ------------------------
@@ -763,88 +828,12 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
         </Section>
       )}
 
-      {/* ────────────────────────────────────────────────────────────── */}
-      {/* ACTIVE CELL                                                    */}
-      {/* ────────────────────────────────────────────────────────────── */}
-      {rangeInfo === null && activeCell !== null && active !== null && (
-        <Section title={`Cell (${active.r}, ${active.c})`} storageKey="table-cell">
-          <Row label="Fill">
-            <div className="flex flex-1 items-center gap-1.5">
-              <ColorCell
-                value={
-                  activeCell.fill !== undefined ? resolveHex(activeCell.fill, '#ffffff') : '#ffffff'
-                }
-                disabled={isViewer}
-                onChange={(hex) => patchCell({ fill: hexToNumber(hex) })}
-              />
-              {activeCell.fill !== undefined && (
-                <button
-                  type="button"
-                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
-                  disabled={isViewer}
-                  onClick={() => patchCell({ fill: undefined })}
-                >
-                  reset
-                </button>
-              )}
-            </div>
-          </Row>
-          <Row label="Text color">
-            <div className="flex flex-1 items-center gap-1.5">
-              <ColorCell
-                value={resolveHex(activeCell.color, resolveHex(d.color, '#111111'))}
-                disabled={isViewer}
-                onChange={(hex) => patchCell({ color: hexToNumber(hex) })}
-              />
-              {activeCell.color !== undefined && (
-                <button
-                  type="button"
-                  className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
-                  disabled={isViewer}
-                  onClick={() => patchCell({ color: undefined })}
-                >
-                  reset
-                </button>
-              )}
-            </div>
-          </Row>
-          <Row label="Font size">
-            <NumInput
-              value={activeCell.fontSize ?? d.fontSize}
-              min={6}
-              max={200}
-              disabled={isViewer}
-              onCommit={(n) => patchCell({ fontSize: n })}
-            />
-          </Row>
-          <Row label="Align">
-            <AlignButtonGroup
-              value={activeCell.align ?? d.align}
-              ariaLabel="Cell horizontal alignment"
-              disabled={isViewer}
-              onChange={(v) => patchCell({ align: v })}
-              options={[
-                { value: 'left', label: 'Left', Icon: AlignLeft },
-                { value: 'center', label: 'Center', Icon: AlignCenter },
-                { value: 'right', label: 'Right', Icon: AlignRight },
-              ]}
-            />
-          </Row>
-          <Row label="V-Align">
-            <AlignButtonGroup
-              value={activeCell.vAlign ?? d.vAlign}
-              ariaLabel="Cell vertical alignment"
-              disabled={isViewer}
-              onChange={(v) => patchCell({ vAlign: v })}
-              options={[
-                { value: 'top', label: 'Top', Icon: AlignVerticalJustifyStart },
-                { value: 'middle', label: 'Middle', Icon: AlignVerticalJustifyCenter },
-                { value: 'bottom', label: 'Bottom', Icon: AlignVerticalJustifyEnd },
-              ]}
-            />
-          </Row>
-        </Section>
-      )}
+      {/* Per-cell typography (size / weight / color / italic /
+          underline / align / vAlign / line-height / letter-spacing /
+          case) and per-cell fill are handled by the Typography +
+          Appearance sections above — both are scope-aware
+          (range > active cell > table-wide defaults). No bespoke
+          "Cell" section needed. */}
 
       {/* Animations — same Section the shape inspector renders. Tables
           animate as a single object (whole-table fade / slide / etc.);
