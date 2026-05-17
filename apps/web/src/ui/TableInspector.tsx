@@ -62,9 +62,11 @@ import {
   AlignVerticalJustifyStart,
 } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
+import { useSlideObjects } from '../state/useSlideObjects.js'
 import {
   FillBody,
   type FilledShape,
+  IdentitySection,
   PositionSection,
   Section,
   SubLabel,
@@ -105,6 +107,9 @@ export interface TableInspectorProps {
 
 export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorProps) {
   const { active, range, activeBorderPreset, setActiveBorderPreset } = useTableEdit()
+  // Sibling-object list — IdentitySection enforces per-slide name
+  // uniqueness against this, so we feed the live slide snapshot.
+  const { objects: slideObjects } = useSlideObjects()
 
   // Mirrors the `patch` closure inside the generic Inspector — feeds the
   // shared PositionSection the same write path. Viewer mode bails out so
@@ -443,6 +448,17 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
   return (
     <div className="flex flex-col gap-3 px-3 py-2 text-xs">
+      {/* Shared with shapes — authored name + lock toggle. Same Section
+          chrome as the generic inspector; collapse-state shared under
+          storageKey="identity" so a user who closed Identity on a
+          rectangle finds it closed on a table too. `objects` fed in
+          from useSlideObjects for the name-uniqueness check. */}
+      <IdentitySection
+        obj={obj as SlideObject}
+        objects={slideObjects}
+        isViewer={isViewer}
+        patch={patchObject}
+      />
       {/* Shared with shapes / texts — layer order, alignment, X/Y, size,
           rotation, flip. The inner Section component owns its own
           collapse-state under storageKey="position" so the table picks

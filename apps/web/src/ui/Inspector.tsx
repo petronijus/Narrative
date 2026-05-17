@@ -586,6 +586,75 @@ function NameField({
   )
 }
 
+/**
+ * Identity section — authored name (Magic Move pair key + layer label)
+ * and lock toggle. Shared by the generic shape inspector and by
+ * TableInspector so every object type carries the same header chrome.
+ *
+ * The `children` slot is rendered inside the same `<Section>` after the
+ * name + lock row, so callers can append type-specific sub-blocks
+ * (e.g. the page-number toggle for text) without duplicating the
+ * Section wrapper or the name field wiring.
+ */
+export function IdentitySection({
+  obj,
+  objects,
+  isViewer,
+  patch,
+  children,
+}: {
+  obj: SlideObject
+  objects: SlideObject[]
+  isViewer: boolean
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+  children?: React.ReactNode
+}) {
+  return (
+    <Section title="Identity" storageKey="identity">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-name-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Name
+        </label>
+        <NameField
+          obj={obj}
+          objects={objects}
+          disabled={isViewer}
+          onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
+        />
+        <button
+          type="button"
+          onClick={() =>
+            patch({
+              locked: obj.locked === true ? undefined : true,
+            } as SlideObjectPatch<SlideObject>)
+          }
+          disabled={isViewer}
+          aria-pressed={obj.locked === true}
+          aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
+          title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
+          className={[
+            'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
+            obj.locked === true
+              ? 'border-primary bg-primary/15 text-primary'
+              : 'border-border text-muted-foreground hover:text-foreground',
+            'disabled:opacity-40',
+          ].join(' ')}
+        >
+          {obj.locked === true ? (
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+      {children}
+    </Section>
+  )
+}
+
 export function Section({
   title,
   children,
@@ -807,55 +876,15 @@ export function Inspector() {
           <p className="text-[10px] text-muted-foreground/80">View only</p>
         </div>
       )}
-      {/* P5a: Identity — authored name + lock toggle. Name feeds Magic Move
-          pair key and the layer label. Lock disables transform handles +
-          click-picking but keeps the Inspector functional so the flag can
-          be toggled back off. A padlock badge is rendered over the object
-          in the canvas so the state is visible without opening this panel. */}
-      <Section title="Identity" storageKey="identity">
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-name-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Name
-          </label>
-          <NameField
-            obj={obj}
-            objects={objects}
-            disabled={isViewer}
-            onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
-          />
-          <button
-            type="button"
-            onClick={() =>
-              patch({
-                locked: obj.locked === true ? undefined : true,
-              } as SlideObjectPatch<SlideObject>)
-            }
-            disabled={isViewer}
-            aria-pressed={obj.locked === true}
-            aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
-            title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
-            className={[
-              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
-              obj.locked === true
-                ? 'border-primary bg-primary/15 text-primary'
-                : 'border-border text-muted-foreground hover:text-foreground',
-              'disabled:opacity-40',
-            ].join(' ')}
-          >
-            {obj.locked === true ? (
-              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            ) : (
-              <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-        {/* Page-number field (text only). When ON, the renderer ignores
-            stored content and shows the live deck index for the slide
-            hosting this text (or hosting the component instance, when
-            the leaf lives inside one). Styling continues to apply. */}
+      {/* P5a: Identity — authored name + lock toggle, shared with the
+          table inspector. Name feeds Magic Move pair key and the layer
+          label. Lock disables transform handles + click-picking but
+          keeps the Inspector functional so the flag can be toggled back
+          off. A padlock badge is rendered over the object in the canvas
+          so the state is visible without opening this panel. The
+          page-number toggle is text-only and passed as children so the
+          shared chrome stays type-agnostic. */}
+      <IdentitySection obj={obj} objects={objects} isViewer={isViewer} patch={patch}>
         {obj.type === 'text' && (
           <div className="flex items-center gap-2">
             <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Field</span>
@@ -911,7 +940,7 @@ export function Inspector() {
             </button>
           </div>
         )}
-      </Section>
+      </IdentitySection>
       <SlideNumberPromptDialog
         open={slideNumberPromptOpen}
         textStyleAvailable={footnotesAndPagesStyleId !== null}
