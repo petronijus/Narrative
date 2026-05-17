@@ -690,6 +690,15 @@ export interface TableCell {
   vAlign?: 'top' | 'middle' | 'bottom'
   fill?: number | TokenRef
   fillAlpha?: number
+  /**
+   * Non-solid fill (linear gradient / radial gradient / image). When
+   * present, the renderer paints this *instead* of the flat `fill` —
+   * the latter stays around as the solid-color fallback that's
+   * applied if the user later switches back. Cell-level override
+   * shadows the table-wide `defaults.fillStyle`; absent means "use
+   * the solid `fill` + `fillAlpha` path".
+   */
+  fillStyle?: FillStyle
   /** Per-edge border — independently controllable, fixes the M28-era
    *  "Narrative has one stroke per shape" limitation that collapsed
    *  PPTX `<a:lnL|R|T|B>` to a single uniform stroke on import. */
@@ -738,6 +747,13 @@ export interface TableDefaults {
    *  is absent). 0 = transparent / "no color" — matches the shape
    *  inspector's representation. Missing ⇒ 1 (fully opaque). */
   fillAlpha?: number
+  /**
+   * Non-solid fill default. Identical semantics to `TableCell.fillStyle`:
+   * when present, every cell that doesn't carry its own `fillStyle`
+   * override paints this instead of the flat `fill`. Cells can opt
+   * back to solid by setting `fillStyle: undefined` on themselves.
+   */
+  fillStyle?: FillStyle
   /** Default per-edge border; falls back to a 1px `#CCCCCC` grid when
    *  the table is freshly created. */
   border?: TableBorderStyle

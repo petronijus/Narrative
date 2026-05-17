@@ -89,7 +89,7 @@ export function releaseProceduralFill(container: Container): void {
   setHeldProceduralKey(container, undefined)
 }
 
-function clampStops(
+export function clampStops(
   stops: ReadonlyArray<{ color: number; offset: number; alpha?: number }>,
 ): Array<{ color: number; offset: number; alpha: number }> {
   if (stops.length === 0) return [{ color: 0xffffff, offset: 0, alpha: 1 }]
@@ -121,7 +121,7 @@ function numberToRgba(hex: number, alpha = 1): string {
  * so a freshly created shape (size 0) or an insane slider value doesn't
  * pass absurd dimensions to Canvas2D.
  */
-function paintLinearGradientTexture(
+export function paintLinearGradientTexture(
   stops: Array<{ color: number; offset: number; alpha: number }>,
   angleDeg: number,
   widthPx: number,
@@ -157,7 +157,7 @@ function paintLinearGradientTexture(
   return Texture.from({ resource: canvas })
 }
 
-function paintRadialGradientTexture(
+export function paintRadialGradientTexture(
   stops: Array<{ color: number; offset: number; alpha: number }>,
   centerXNorm: number,
   centerYNorm: number,

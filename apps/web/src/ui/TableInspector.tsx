@@ -48,6 +48,7 @@ import {
 } from '@narrative/slide-model'
 import {
   isTokenRef,
+  type FillStyle,
   type RectangleObject,
   type SlideObject,
   type SlideObjectPatch,
@@ -1110,10 +1111,17 @@ function TableAppearance({
     (cellAtActive?.fill as number | TokenRef | undefined) ??
     (d.fill as number | TokenRef | undefined)
   const resolvedAlpha: number = cellAtActive?.fillAlpha ?? d.fillAlpha ?? 1
+  // Non-solid fill (linear / radial / image) — same cell-override >
+  // defaults chain. When present, FillBody renders the appropriate
+  // sub-editor (stops list / focal point / media browser) and the
+  // renderer paints the gradient or image *instead of* the flat fill.
+  const resolvedFillStyle: FillStyle | undefined =
+    cellAtActive?.fillStyle ?? d.fillStyle ?? undefined
   // "No color" matches the shape inspector's representation: alpha 0.
   // Show the picker's empty-state chrome (checkered swatch, "No color"
-  // label) whenever the resolved alpha is exactly zero.
-  const emptyFill = resolvedAlpha === 0
+  // label) whenever the resolved alpha is exactly zero AND there's no
+  // non-solid style — a gradient/image overrides the "empty" affordance.
+  const emptyFill = resolvedAlpha === 0 && resolvedFillStyle === undefined
   const seedFill: number | TokenRef = resolvedFill ?? 0xffffff
 
   // Shape-flavoured surrogate. FillBody reads `fill`, `fillStyle`,
@@ -1130,6 +1138,7 @@ function TableAppearance({
     opacity: obj.opacity,
     fill: seedFill,
     fillAlpha: resolvedAlpha,
+    ...(resolvedFillStyle !== undefined ? { fillStyle: resolvedFillStyle } : {}),
   }
 
   /**
@@ -1141,7 +1150,11 @@ function TableAppearance({
    * literal `fill` stays as a seed so picking a fresh hue later has
    * a starting point.
    */
-  const writeFillPatch = (patch: { fill?: number | TokenRef; fillAlpha?: number }): void => {
+  const writeFillPatch = (patch: {
+    fill?: number | TokenRef
+    fillAlpha?: number
+    fillStyle?: FillStyle | undefined
+  }): void => {
     if (isViewer) return
     if (scope === 'range') {
       patchRange(patch as CellStylePatch)
@@ -1162,6 +1175,7 @@ function TableAppearance({
         const clear: CellStylePatch = {}
         if ('fill' in patch) clear.fill = undefined
         if ('fillAlpha' in patch) clear.fillAlpha = undefined
+        if ('fillStyle' in patch) clear.fillStyle = undefined
         if (Object.keys(clear).length > 0) {
           setRangeCellStyle(
             mutationCtx,
@@ -1185,18 +1199,35 @@ function TableAppearance({
     const next = p as Partial<RectangleObject>
     const fillNext = next.fill as number | TokenRef | undefined
     const alphaNext = next.fillAlpha
-    // Combine fill + alpha into a single dispatched patch so the
+    // The shape inspector emits `fillStyle: undefined` explicitly to
+    // mean "switch back to solid color". Distinguish "present + undefined"
+    // (forwarded as a clear) from "key not in patch" (don't touch).
+    const fillStyleInPatch = 'fillStyle' in next
+    const fillStyleNext = fillStyleInPatch ? next.fillStyle : undefined
+    // Combine fill + alpha + fillStyle into a single dispatched patch so the
     // table-wide path only emits one Yjs transaction (one clear-cells
     // pass, one defaults set). If the user is in the empty state and
     // picks a hex, auto-restore alpha to 1 so the colour is actually
     // visible — otherwise the hue change would silently no-op.
-    const combined: { fill?: number | TokenRef; fillAlpha?: number } = {}
+    const combined: {
+      fill?: number | TokenRef
+      fillAlpha?: number
+      fillStyle?: FillStyle | undefined
+    } = {}
     if (fillNext !== undefined) combined.fill = fillNext
     if (alphaNext !== undefined) combined.fillAlpha = alphaNext
+    if (fillStyleInPatch) combined.fillStyle = fillStyleNext
     if (fillNext !== undefined && alphaNext === undefined && emptyFill) {
       combined.fillAlpha = 1
     }
-    if (Object.keys(combined).length > 0) writeFillPatch(combined)
+    // Switching TO a non-solid fillStyle implies solid alpha should
+    // also be at full — otherwise the gradient/image renders against
+    // a transparent backdrop the user can't see and the chrome looks
+    // broken. Mirror that intent here.
+    if (fillStyleNext !== undefined && alphaNext === undefined && emptyFill) {
+      combined.fillAlpha = 1
+    }
+    if (Object.keys(combined).length > 0 || fillStyleInPatch) writeFillPatch(combined)
     if (next.opacity !== undefined) {
       patchObject({ opacity: next.opacity } as SlideObjectPatch<SlideObject>)
     }

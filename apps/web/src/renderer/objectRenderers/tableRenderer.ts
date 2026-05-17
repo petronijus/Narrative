@@ -25,7 +25,7 @@
  *                          `applyVerticalAlign` within the inner pad box)
  */
 
-import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
+import { Container, Graphics, HTMLText, HTMLTextStyle, type Texture } from 'pixi.js'
 import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
 import { isTokenRef } from '@narrative/shared'
@@ -35,6 +35,7 @@ import type {
   TableBorderStyle,
   TextObject,
   FontWeight,
+  FillStyle,
 } from '@narrative/shared'
 import {
   buildHtml,
@@ -46,6 +47,18 @@ import {
 } from './textRenderer.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { resolveColour } from '../colourResolver.js'
+import {
+  clampStops,
+  imageFillToPixiFill,
+  paintLinearGradientTexture,
+  paintRadialGradientTexture,
+} from '../fillStyleToPixi.js'
+import {
+  ensureImageFillKeyed,
+  getImageFillSlotKeys,
+  releaseAllImageFillsKeyed,
+  releaseImageFillKeyed,
+} from '../imageFillLoader.js'
 
 /** Default font stack — kept in lockstep with TextEditOverlay so cell
  *  text glyphs sit on the same baselines between edit and render. */
@@ -58,6 +71,27 @@ const FADED_TAG = Symbol('tableFadedCell')
  *  decide whether the fast (transform-only) path or the full rebuild
  *  is required. */
 const DATA_TAG = Symbol('tableData')
+/**
+ * Per-cell fill Graphics. Each cell paints its background on its own
+ * tiny Graphics positioned at the cell's bbox; Pixi v8's `Graphics.fill`
+ * uses the path-local AABB for texture mapping, so gradients / image
+ * fills work cell-by-cell without matrix gymnastics on a shared
+ * Graphics (whose AABB = the union of all cells = one gradient smeared
+ * over the whole table).
+ *
+ * `FillNode.fillKey` caches the structural fingerprint of the painted
+ * fill so a rebuild with unchanged fill skips canvas re-paint entirely.
+ * `texture` is the cached gradient texture (when applicable) so it can
+ * be destroyed when the fillKey changes.
+ */
+const CELL_FILLS_TAG = Symbol('tableCellFills')
+interface FillNode {
+  graphics: Graphics
+  fillKey: string
+  texture: Texture | undefined
+  width: number
+  height: number
+}
 
 /**
  * One rendered cell — kept alive across rebuilds so Pixi's HTMLText
@@ -159,6 +193,9 @@ interface ResolvedCellStyle {
   fontFamily: string
   fill: number | undefined
   fillAlpha: number
+  /** Non-solid fill — linear / radial gradient or image. When present
+   *  the renderer paints this instead of the flat `fill`. */
+  fillStyle: FillStyle | undefined
   padding: { top: number; right: number; bottom: number; left: number }
 }
 
@@ -217,6 +254,9 @@ function resolveCellStyle(table: TableObject, cell: TableCell): ResolvedCellStyl
     // inspector's table-wide "No color" (alpha=0) actually paints
     // every cell transparent.
     fillAlpha: cell.fillAlpha ?? d.fillAlpha ?? 1,
+    // Cell wins; falling back to the table-wide gradient / image
+    // default. `undefined` means "paint the solid color fallback".
+    fillStyle: cell.fillStyle ?? d.fillStyle,
     padding,
   }
 }
@@ -302,20 +342,195 @@ function resolveCellEdgeBorder(
   }
 }
 
-function paintGrid(grid: Graphics, table: TableObject, colX: number[], rowY: number[]): void {
+/**
+ * Per-cell key (used for image-fill slot tracking + the cell-fill
+ * Graphics map). Row / column inserts and deletes rebuild the whole
+ * grid via `paintGrid`, which sweeps stale keys at the end of the
+ * pass — no need for stable per-cell ids.
+ */
+function cellSlotKey(r: number, c: number): string {
+  return `cell:${r},${c}`
+}
+
+/**
+ * Structural fingerprint of a cell's fill — bumped only when a real
+ * visual change occurs (color, alpha, gradient stops / angle / focal
+ * point, image asset, dimensions). Used by the per-cell fill cache to
+ * skip canvas repaint + Graphics re-trace when nothing changed.
+ */
+function cellFillKey(style: ResolvedCellStyle, w: number, h: number): string {
+  const fs = style.fillStyle
+  const dims = `${Math.round(w)}x${Math.round(h)}`
+  const solid = style.fill === undefined ? '_' : `${style.fill}@${style.fillAlpha.toFixed(3)}`
+  if (fs === undefined) return `s:${dims}:${solid}`
+  if (fs.kind === 'linearGradient') {
+    const stops = clampStops(fs.stops)
+      .map((s) => `${s.offset.toFixed(3)}@${s.color.toString(16)}x${s.alpha.toFixed(3)}`)
+      .join(',')
+    return `l:${dims}:${fs.angleDeg.toFixed(2)}:${stops}:a${style.fillAlpha.toFixed(3)}`
+  }
+  if (fs.kind === 'radialGradient') {
+    const stops = clampStops(fs.stops)
+      .map((s) => `${s.offset.toFixed(3)}@${s.color.toString(16)}x${s.alpha.toFixed(3)}`)
+      .join(',')
+    return `r:${dims}:${(fs.centerX ?? 0.5).toFixed(3)},${(fs.centerY ?? 0.5).toFixed(3)}:${stops}:a${style.fillAlpha.toFixed(3)}`
+  }
+  // image
+  return `i:${dims}:${fs.assetId}:${fs.fit ?? 'cover'}:a${style.fillAlpha.toFixed(3)}`
+}
+
+function getCellFillsMap(container: Container): Map<string, FillNode> {
+  const tagged = container as Container & { [k: symbol]: unknown }
+  let map = tagged[CELL_FILLS_TAG] as Map<string, FillNode> | undefined
+  if (map === undefined) {
+    map = new Map()
+    tagged[CELL_FILLS_TAG] = map
+  }
+  return map
+}
+
+function disposeFillNode(node: FillNode): void {
+  node.graphics.parent?.removeChild(node.graphics)
+  // Destroy our owned procedural gradient texture (image-fill textures
+  // are owned by the ResourceManager via imageFillLoader; don't destroy
+  // those here — `releaseImageFillKeyed` does it).
+  if (node.texture !== undefined) node.texture.destroy(true)
+  node.graphics.destroy({ children: false, texture: false })
+}
+
+/**
+ * Paint or reuse the per-cell fill Graphics. Each cell is its own tiny
+ * Graphics sized to the cell bbox; Pixi v8's default `textureSpace:
+ * 'local'` then maps any gradient / image texture 1:1 to that single
+ * sub-path. No cross-cell smearing.
+ *
+ * Cache key encodes every visual input — `cellFillKey` returns the
+ * same string when nothing changed, so we early-out before re-tracing
+ * the rect or re-painting the gradient canvas. That's the main win on
+ * laggy rebuilds: a 50-cell table with one gradient default + frequent
+ * unrelated edits used to repaint 50 canvases per rebuild; now it
+ * repaints zero.
+ */
+function paintCellFill(
+  container: Container,
+  r: number,
+  c: number,
+  style: ResolvedCellStyle,
+  bbox: { x: number; y: number; w: number; h: number },
+  onReady: () => void,
+): void {
+  const map = getCellFillsMap(container)
+  const key = cellSlotKey(r, c)
+  const fillKey = cellFillKey(style, bbox.w, bbox.h)
+  let node = map.get(key)
+
+  // Position is always (bbox.x, bbox.y) — cheap, update regardless.
+  // The Graphics is created lazily below so we set position after.
+
+  // Fast path — same key, same dimensions: re-position only (already
+  // current here) and bail. Skips canvas repaint + rect re-trace +
+  // texture upload.
+  if (node !== undefined && node.fillKey === fillKey) {
+    node.graphics.x = bbox.x
+    node.graphics.y = bbox.y
+    return
+  }
+
+  // Slow path — fill changed. Replace the Graphics's contents.
+  if (node === undefined) {
+    node = {
+      graphics: new Graphics(),
+      fillKey: '',
+      texture: undefined,
+      width: bbox.w,
+      height: bbox.h,
+    }
+    container.addChildAt(node.graphics, 0)
+    map.set(key, node)
+  }
+  // Drop the previous procedural texture if any (gradient kind changed
+  // or dimensions changed — both invalidate the cached canvas).
+  if (node.texture !== undefined) {
+    node.texture.destroy(true)
+    node.texture = undefined
+  }
+  node.graphics.clear()
+  node.graphics.x = bbox.x
+  node.graphics.y = bbox.y
+  node.graphics.rect(0, 0, bbox.w, bbox.h)
+
+  const fs = style.fillStyle
+  if (fs?.kind === 'linearGradient' || fs?.kind === 'radialGradient') {
+    releaseImageFillKeyed(container, key)
+    const stops = clampStops(fs.stops)
+    const texture =
+      fs.kind === 'linearGradient'
+        ? paintLinearGradientTexture(stops, fs.angleDeg, bbox.w, bbox.h)
+        : paintRadialGradientTexture(stops, fs.centerX ?? 0.5, fs.centerY ?? 0.5, bbox.w, bbox.h)
+    node.texture = texture
+    // No matrix, no textureSpace override — Pixi's default 'local' maps
+    // the cell-sized texture 1:1 onto the cell-sized rect.
+    node.graphics.fill({ texture, alpha: style.fillAlpha })
+  } else if (fs?.kind === 'image') {
+    const texture = ensureImageFillKeyed(container, key, fs, onReady)
+    if (texture !== null) {
+      // Same `textureSpace: 'local'` semantics the rectangle renderer
+      // uses; `imageFillToPixiFill` builds the cover/contain matrix.
+      node.graphics.fill({
+        ...imageFillToPixiFill(fs, texture, bbox.w, bbox.h),
+        alpha: style.fillAlpha,
+      })
+    } else if (style.fill !== undefined && style.fillAlpha > 0) {
+      node.graphics.fill({ color: style.fill, alpha: style.fillAlpha })
+    }
+  } else {
+    releaseImageFillKeyed(container, key)
+    if (style.fill !== undefined && style.fillAlpha > 0) {
+      node.graphics.fill({ color: style.fill, alpha: style.fillAlpha })
+    }
+  }
+
+  node.fillKey = fillKey
+  node.width = bbox.w
+  node.height = bbox.h
+}
+
+function paintGrid(
+  grid: Graphics,
+  container: Container,
+  table: TableObject,
+  colX: number[],
+  rowY: number[],
+  onAsyncImageReady: () => void,
+): void {
   grid.clear()
-  // Pass 1 — cell fills first so subsequent stroke segments draw on top.
+  // Track which per-cell fill Graphics + image-fill slots are alive
+  // this pass so trailing entries from a deleted row / column can be
+  // released cleanly at the end.
+  const liveKeys = new Set<string>()
+  // Pass 1 — per-cell fill Graphics (gradient / image / solid). Each
+  // cell paints onto its own tiny Graphics positioned at (bbox.x,
+  // bbox.y); the cache in `paintCellFill` early-outs when the cell's
+  // fill key is unchanged.
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
       const bbox = cellBbox(table, r, c, colX, rowY)
       if (bbox === null) continue
+      liveKeys.add(cellSlotKey(r, c))
       const style = resolveCellStyle(table, row[c]!)
-      if (style.fill !== undefined) {
-        grid.rect(bbox.x, bbox.y, bbox.w, bbox.h)
-        grid.fill({ color: style.fill, alpha: style.fillAlpha })
-      }
+      paintCellFill(container, r, c, style, bbox, onAsyncImageReady)
     }
+  }
+  // Sweep abandoned per-cell fill nodes + image-fill slots.
+  const fillsMap = getCellFillsMap(container)
+  for (const [key, node] of fillsMap) {
+    if (liveKeys.has(key)) continue
+    disposeFillNode(node)
+    fillsMap.delete(key)
+  }
+  for (const key of getImageFillSlotKeys(container)) {
+    if (!liveKeys.has(key)) releaseImageFillKeyed(container, key)
   }
   // Pass 2 — per-edge borders. Each cell asks for its own four edges;
   // when the cell has no per-edge override the table default fills in.
@@ -577,17 +792,24 @@ function rebuild(container: Container, data: TableObject): void {
   const rowY = cumulativeRows(data)
   const tagged = container as Container & { [k: symbol]: unknown }
 
-  // Grid Graphics — single one, reused across updates.
+  // Grid Graphics — single one, reused across updates. Now holds ONLY
+  // borders (per-cell fills live on their own Graphics children).
   let grid = tagged[GRID_TAG] as Graphics | undefined
   if (grid === undefined) {
     grid = new Graphics()
     container.addChild(grid)
     tagged[GRID_TAG] = grid
-  } else {
-    // Re-attach to keep the grid behind the per-cell text containers.
-    container.addChildAt(grid, 0)
   }
-  paintGrid(grid, data, colX, rowY)
+  // Async image-fill loads invoke this callback when the texture
+  // lands — re-enter `rebuild` so the cell repaints with the resolved
+  // texture instead of the solid fallback. Reads from DATA_TAG so the
+  // closure tracks the freshest state when multiple edits queue up
+  // before the load completes.
+  const onAsyncImageReady = (): void => {
+    const latest = (tagged[DATA_TAG] as TableObject | undefined) ?? data
+    rebuild(container, latest)
+  }
+  paintGrid(grid, container, data, colX, rowY, onAsyncImageReady)
 
   // Per-cell HTMLText sub-trees.
   const prevCells =
@@ -595,6 +817,11 @@ function rebuild(container: Container, data: TableObject): void {
   const fadedYText = tagged[FADED_TAG] as Y.Text | null | undefined
   const nextCells = reconcileCells(container, data, colX, rowY, prevCells, fadedYText ?? null)
   tagged[CELLS_TAG] = nextCells
+
+  // Z-order: cell-fill Graphics (added during paintGrid at index 0),
+  // HTMLText cell containers, borders Graphics on top. Re-attach grid
+  // last so it stays above any cell-fill nodes that were just inserted.
+  container.addChild(grid)
 
   applyObjectTransform(container, data)
   tagged[DATA_TAG] = data
@@ -683,6 +910,12 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     const tagged = node as Container & { [k: symbol]: unknown }
     const grid = tagged[GRID_TAG] as Graphics | undefined
     if (grid !== undefined) grid.destroy({ children: false, texture: false })
+    // Dispose per-cell fill Graphics + their owned gradient textures.
+    const fills = tagged[CELL_FILLS_TAG] as Map<string, FillNode> | undefined
+    if (fills !== undefined) {
+      for (const fn of fills.values()) disposeFillNode(fn)
+      fills.clear()
+    }
     const cells = tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined
     if (cells !== undefined) {
       // Same deferred-destroy reasoning as `reconcileCells`: detach
@@ -694,6 +927,11 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
         queueDeferredDestroy(cn.clip)
       }
     }
+    // Drop every image-fill ref-count this table acquired across all
+    // cells. Mirrors how the shape renderers call `releaseImageFill`
+    // on destroy — without this the texture cache leaks one ref per
+    // image-filled cell every time a table is removed from the slide.
+    releaseAllImageFillsKeyed(node)
     destroyFilterEffects(node)
     node.destroy({ children: false })
   },

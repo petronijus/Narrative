@@ -142,3 +142,121 @@ export function releaseImageFill(container: Container): void {
   }
   setSlot(container, undefined)
 }
+
+/**
+ * Multi-slot variant of `ensureImageFill`. The single-slot API above
+ * keys one image fill per container — fine for shapes that have a
+ * single fill, wrong for tables where each cell can carry its own
+ * `ImageFillStyle`. The keyed API stores slots in a Map<slotKey, ...>
+ * so a table container can hold one resolved texture per cell without
+ * the slots clobbering each other.
+ *
+ * Callers are responsible for invoking `releaseImageFillKeyed` (or
+ * `releaseAllImageFillsKeyed` on destroy) so the refcounts stay
+ * balanced. Mixing the two APIs on the same container is safe; they
+ * use disjoint storage tags.
+ */
+const SLOTS_TAG = Symbol('imageFillSlotsByKey')
+
+function getSlotsMap(container: Container): Map<string, FillSlot> | undefined {
+  return asAny(container)[SLOTS_TAG] as Map<string, FillSlot> | undefined
+}
+
+function ensureSlotsMap(container: Container): Map<string, FillSlot> {
+  let map = getSlotsMap(container)
+  if (map === undefined) {
+    map = new Map()
+    asAny(container)[SLOTS_TAG] = map
+  }
+  return map
+}
+
+export function ensureImageFillKeyed(
+  container: Container,
+  slotKey: string,
+  fill: ImageFillStyle | undefined,
+  onReady: () => void,
+): Texture | null {
+  const rm = getDefaultResourceManager()
+
+  if (fill === undefined || fill.assetId === '') {
+    releaseImageFillKeyed(container, slotKey)
+    return null
+  }
+
+  const variant = 'display' as const
+  const slots = getSlotsMap(container)
+  const current = slots?.get(slotKey)
+
+  // Same assetId in this slot — return whatever texture (or null) we
+  // have. Refcount stays as-is.
+  if (current !== undefined && current.assetId === fill.assetId) {
+    if (current.texture !== undefined) return current.texture
+    return null
+  }
+
+  // New / changed assetId — release the previous slot's texture ref.
+  if (current !== undefined && current.url !== undefined) {
+    rm.releaseTexture(current.url)
+  }
+
+  const slot: FillSlot = { assetId: fill.assetId, variant, loading: true }
+  ensureSlotsMap(container).set(slotKey, slot)
+
+  const resolver = getDefaultImageUrlResolver()
+  void (async () => {
+    try {
+      const url = await resolver({ assetId: fill.assetId, variant })
+      const active = getSlotsMap(container)?.get(slotKey)
+      if (active !== slot) return
+      const texture = await rm.acquireTexture(url)
+      const stillActive = getSlotsMap(container)?.get(slotKey)
+      if (stillActive !== slot) {
+        rm.releaseTexture(url)
+        return
+      }
+      slot.url = url
+      slot.texture = texture
+      slot.loading = false
+      onReady()
+    } catch {
+      const stillActive = getSlotsMap(container)?.get(slotKey)
+      if (stillActive === slot) slot.loading = false
+    }
+  })()
+
+  return null
+}
+
+export function releaseImageFillKeyed(container: Container, slotKey: string): void {
+  const slots = getSlotsMap(container)
+  if (slots === undefined) return
+  const slot = slots.get(slotKey)
+  if (slot === undefined) return
+  if (slot.url !== undefined) {
+    getDefaultResourceManager().releaseTexture(slot.url)
+  }
+  slots.delete(slotKey)
+  if (slots.size === 0) delete asAny(container)[SLOTS_TAG]
+}
+
+/**
+ * Snapshot the slot keys currently allocated on this container. Used
+ * by the table renderer to sweep abandoned slots after a row / column
+ * delete without exposing the Symbol-tagged storage.
+ */
+export function getImageFillSlotKeys(container: Container): string[] {
+  const slots = getSlotsMap(container)
+  return slots === undefined ? [] : [...slots.keys()]
+}
+
+/** Release every keyed image-fill slot the container holds. */
+export function releaseAllImageFillsKeyed(container: Container): void {
+  const slots = getSlotsMap(container)
+  if (slots === undefined) return
+  const rm = getDefaultResourceManager()
+  for (const slot of slots.values()) {
+    if (slot.url !== undefined) rm.releaseTexture(slot.url)
+  }
+  delete asAny(container)[SLOTS_TAG]
+}
