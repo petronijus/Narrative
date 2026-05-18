@@ -587,13 +587,25 @@ function strokeEdge(
   if (border.dash === 'solid') {
     grid.moveTo(x1, y1)
     grid.lineTo(x2, y2)
-    grid.stroke({ color: border.color, width: border.width, alpha: 1 })
+    // `cap: 'square'` extends each end of the stroke by half-width
+    // along the line direction. For SOLID borders that means
+    // adjacent edges of a cell (top + left, etc.) overlap their caps
+    // at the corner and form a sharp 90° join — Pixi's default
+    // `round` cap would otherwise paint a quarter-circle bulge past
+    // each endpoint, which at a 20px border looks visibly softened.
+    // The half-width over-shoot at a cell with NO perpendicular
+    // neighbour edge is invisible against adjacent cells (their fill
+    // / borders cover it) and on outer-corner cells reads as a
+    // crisp Keynote-style overhang.
+    grid.stroke({ color: border.color, width: border.width, alpha: 1, cap: 'square' })
     return
   }
   // Dashed / dotted: emit a series of short solid segments. Pixi v8's
   // Graphics has no native dash, so the cheapest approach is one
   // moveTo+lineTo+stroke per dash. Tables aren't dense enough for the
-  // per-segment overhead to matter visually.
+  // per-segment overhead to matter visually. `cap: 'butt'` here so
+  // dashes stay distinct — `square` would extend each dash by half
+  // its width and run them into each other.
   const [onMul, offMul] = dashPattern(border.dash)
   const onLen = Math.max(border.width * onMul, 0.5)
   const offLen = Math.max(border.width * offMul, 0.5)
@@ -614,7 +626,7 @@ function strokeEdge(
       const ey = y1 + uy * (consumed + segLen)
       grid.moveTo(sx, sy)
       grid.lineTo(ex, ey)
-      grid.stroke({ color: border.color, width: border.width, alpha: 1 })
+      grid.stroke({ color: border.color, width: border.width, alpha: 1, cap: 'butt' })
     }
     consumed += segLen
     drawing = !drawing
