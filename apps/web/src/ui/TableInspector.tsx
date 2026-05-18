@@ -33,7 +33,7 @@ import {
   applyFormat,
   deleteTableCol,
   deleteTableRow,
-  edgesForPreset,
+  segmentsForPreset,
   getTableCellYMap,
   insertTableCol,
   insertTableRow,
@@ -47,6 +47,7 @@ import {
   updateObject,
 } from '@narrative/slide-model'
 import {
+  getEffectiveBorderSegment,
   isTokenRef,
   type FillStyle,
   type RectangleObject,
@@ -396,13 +397,13 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     })
   }
 
-  // Read the existing style on the edges this preset would target.
-  // Returns the uniform {color, width, dash} when every active edge
-  // matches, 'mixed' when they differ, or 'empty' when the preset
-  // selects no edges (e.g. `insideH` on a 1-row table).
+  // Read the existing style on the segments this preset would target.
+  // Returns the uniform {color, width, dash} when every targeted
+  // segment matches, 'mixed' when they differ, or 'empty' when the
+  // preset addresses no segments (e.g. `insideH` on a 1-row table).
   //
-  // Falls back to `defaults.border` whenever a cell has no per-edge
-  // override — that's what the renderer would draw, so it's the
+  // Falls back to `defaults.border` whenever a segment isn't
+  // explicitly set — that's what the renderer would draw, so it's the
   // honest "what's currently there" for the user.
   const readPresetUniformStyle = (
     preset: TableBorderPreset,
@@ -413,35 +414,22 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     const dfltWidth = dflt?.width ?? 0
     const dfltDash: 'solid' | 'dash' | 'dot' = dflt?.dash ?? 'solid'
     let found: { color: number; width: number; dash: 'solid' | 'dash' | 'dot' } | null = null
-    for (let r = range.r0; r <= range.r1; r++) {
-      const row = obj.rows[r]
-      if (row === undefined) continue
-      for (let c = range.c0; c <= range.c1 && c < row.length; c++) {
-        const cell = row[c]
-        if (cell === undefined) continue
-        const edges = edgesForPreset(preset, r, c, range)
-        for (const edge of edges) {
-          const override = cell.border?.[edge]
-          const style =
-            override !== undefined
-              ? {
-                  color: typeof override.color === 'number' ? override.color : 0xcccccc,
-                  width: override.width,
-                  dash: override.dash ?? 'solid',
-                }
-              : { color: dfltColor, width: dfltWidth, dash: dfltDash }
-          if (found === null) {
-            found = style
-            continue
-          }
-          if (
-            found.color !== style.color ||
-            found.width !== style.width ||
-            found.dash !== style.dash
-          ) {
-            return 'mixed'
-          }
-        }
+    for (const key of segmentsForPreset(preset, range)) {
+      const seg = getEffectiveBorderSegment(obj, key)
+      const style =
+        seg !== undefined
+          ? {
+              color: typeof seg.color === 'number' ? seg.color : 0xcccccc,
+              width: seg.width,
+              dash: seg.dash ?? 'solid',
+            }
+          : { color: dfltColor, width: dfltWidth, dash: dfltDash }
+      if (found === null) {
+        found = style
+        continue
+      }
+      if (found.color !== style.color || found.width !== style.width || found.dash !== style.dash) {
+        return 'mixed'
       }
     }
     return found ?? 'empty'

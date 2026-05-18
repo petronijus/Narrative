@@ -39,6 +39,13 @@ export function yMapToPlainObject<T extends SlideObject>(yMap: Y.Map<unknown>): 
     plain['colWidths'] = unwrapNumberArray(yMap.get('colWidths'))
     plain['rowHeights'] = unwrapNumberArray(yMap.get('rowHeights'))
     plain['defaults'] = unwrapTableDefaults(yMap.get('defaults'))
+    // `borderSegments` is a sparse Y.Map<string, plain-object>; absent
+    // on freshly-created tables (legacy decks use cell.border instead
+    // and the renderer derives effective segments at read time).
+    const segs = yMap.get('borderSegments')
+    if (segs instanceof Y.Map) {
+      plain['borderSegments'] = Object.fromEntries(segs.entries())
+    }
   }
 
   // Cast je justifikovaný: plainObjectToYMap() garantuje správný tvar při zápisu,
@@ -173,7 +180,7 @@ function buildTableYMap(table: TableObject): Y.Map<unknown> {
 
   // Base fields first — skip the nested ones; we set those explicitly
   // below with proper Yjs containers.
-  const NESTED = new Set(['rows', 'colWidths', 'rowHeights', 'defaults'])
+  const NESTED = new Set(['rows', 'colWidths', 'rowHeights', 'defaults', 'borderSegments'])
   for (const [key, value] of Object.entries(table as unknown as Record<string, unknown>)) {
     if (NESTED.has(key)) continue
     yMap.set(key, value)
@@ -198,6 +205,12 @@ function buildTableYMap(table: TableObject): Y.Map<unknown> {
     rows.push([rowY])
   }
   yMap.set('rows', rows)
+
+  if (table.borderSegments !== undefined) {
+    const segs = new Y.Map<unknown>()
+    for (const [k, v] of Object.entries(table.borderSegments)) segs.set(k, v)
+    yMap.set('borderSegments', segs)
+  }
 
   return yMap
 }

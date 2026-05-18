@@ -34,7 +34,7 @@
 import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
-import { isTokenRef } from '@narrative/shared'
+import { getEffectiveBorderSegment, isTokenRef } from '@narrative/shared'
 import type {
   TableObject,
   TableCell,
@@ -328,36 +328,55 @@ type EdgeStroke = {
 }
 
 /**
- * Resolve the effective border for one edge of a cell: the cell's
- * per-edge override (when set), otherwise the table-wide default. A
- * cell with `cell.border = { top: ..., bottom: ... }` lets the user
- * draw e.g. just a top + bottom border with no sides, which is the
- * classic "ledger row" look.
- *
- * Carries the dash style through so the renderer can draw solid /
- * dashed / dotted strokes per edge — same affordance Keynote offers
- * in its Border > Style dropdown.
+ * Resolve the effective stroke spec for a single grid-line segment.
+ * Reads from the table-wide flat `borderSegments` map first (with
+ * fallback through the legacy per-cell `border` field for old decks
+ * — see `getEffectiveBorderSegment`), then falls back to
+ * `defaults.border`. Returns `null` when no level configures the
+ * segment, so the caller can skip the stroke entirely.
  */
-function resolveCellEdgeBorder(
-  cell: TableCell,
-  edge: 'top' | 'right' | 'bottom' | 'left',
-  defaults: TableObject['defaults'],
+function resolveSegmentStroke(
+  table: TableObject,
+  key: string,
+  defaultsBorder: TableBorderStyle | undefined,
 ): EdgeStroke | null {
-  const edgeOverride = cell.border?.[edge]
-  if (edgeOverride !== undefined) {
+  const seg = getEffectiveBorderSegment(table, key)
+  if (seg !== undefined) {
     return {
-      color: resolveBorderColour(edgeOverride, 0xcccccc),
-      width: edgeOverride.width,
-      dash: edgeOverride.dash ?? 'solid',
+      color: resolveBorderColour(seg, 0xcccccc),
+      width: seg.width,
+      dash: seg.dash ?? 'solid',
     }
   }
-  // No per-edge override on this cell — fall back to the table default.
-  if (defaults.border === undefined) return null
+  if (defaultsBorder === undefined) return null
   return {
-    color: resolveBorderColour(defaults.border, 0xcccccc),
-    width: defaults.border.width,
-    dash: defaults.border.dash ?? 'solid',
+    color: resolveBorderColour(defaultsBorder, 0xcccccc),
+    width: defaultsBorder.width,
+    dash: defaultsBorder.dash ?? 'solid',
   }
+}
+
+/**
+ * Identifies the merged-region "anchor" for a cell at (r, c):
+ *   - A merge-continuation pointer returns its origin coords.
+ *   - A merge origin (gridSpan or rowSpan > 1) returns its own coords.
+ *   - Otherwise null — the cell isn't part of any merge.
+ *
+ * Two segments are "interior to the same merge" when both adjacent
+ * cells share a non-null anchor; the renderer skips those segments
+ * so the merge looks like one continuous region instead of having
+ * the row/column dividers run through it.
+ */
+function mergeAnchor(table: TableObject, r: number, c: number): { r: number; c: number } | null {
+  const cell = table.rows[r]?.[c]
+  if (cell === undefined) return null
+  if (typeof cell.mergeOriginR === 'number' && typeof cell.mergeOriginC === 'number') {
+    return { r: cell.mergeOriginR, c: cell.mergeOriginC }
+  }
+  const colSpan = cell.gridSpan ?? 1
+  const rowSpan = cell.rowSpan ?? 1
+  if (colSpan > 1 || rowSpan > 1) return { r, c }
+  return null
 }
 
 /**
@@ -547,20 +566,142 @@ function paintCellFills(
 }
 
 /**
- * Pass 2 — per-edge borders on the shared `grid` Graphics. Each cell
- * asks for its own four edges; when the cell has no per-edge override
- * the table default fills in. Drawing edge-by-edge (not whole
- * rectangles) lets a user disable individual sides — e.g. only a top
- * border for a header row.
+ * Pass 2 — borders. Each grid line in the table is a single segment
+ * with a single stroke spec, so we paint exactly once per line. The
+ * row of horizontal lines runs `0..R` (inclusive), `0` being the
+ * outer top edge, `R` the outer bottom; vertical lines run `0..C`.
+ * Segments interior to a merged region are skipped so the merge
+ * looks like one continuous area.
  */
 function paintBorders(grid: Graphics, table: TableObject, colX: number[], rowY: number[]): void {
   grid.clear()
-  for (let r = 0; r < table.rows.length; r++) {
-    const row = table.rows[r]!
-    for (let c = 0; c < row.length; c++) {
-      const bbox = cellBbox(table, r, c, colX, rowY)
-      if (bbox === null) continue
-      drawCellEdges(grid, row[c]!, bbox, table.defaults)
+  const R = table.rows.length
+  const C = table.colWidths.length
+  const dflt = table.defaults.border
+  // Horizontal: `row` is the row INDEX whose top edge this is, so
+  // `row === R` is the table's outer bottom.
+  for (let row = 0; row <= R; row++) {
+    const y = rowY[row]
+    if (y === undefined) continue
+    // Outer rim alignment trick — shift outer-rim strokes INSIDE
+    // the table by half their width so the stroke's full thickness
+    // sits below (or above) the rim line instead of straddling it.
+    // Matches how Keynote / Excel paint table outer borders: nothing
+    // bulges past the visible table bounds, so a thick cell border
+    // adjacent to a thin neighbour doesn't overhang the rim.
+    for (let col = 0; col < C; col++) {
+      // Skip interior of a merge — only relevant when both sides exist.
+      if (row > 0 && row < R) {
+        const up = mergeAnchor(table, row - 1, col)
+        const lo = mergeAnchor(table, row, col)
+        if (up !== null && lo !== null && up.r === lo.r && up.c === lo.c) continue
+      }
+      const stroke = resolveSegmentStroke(table, `h:${row}:${col}`, dflt)
+      if (stroke === null) continue
+      const x1 = colX[col]
+      const x2 = colX[col + 1]
+      if (x1 === undefined || x2 === undefined) continue
+      const drawY = row === 0 ? y + stroke.width / 2 : row === R ? y - stroke.width / 2 : y
+      strokeEdge(grid, stroke, x1, drawY, x2, drawY)
+    }
+  }
+  // Vertical: `col === C` is the table's outer right.
+  for (let row = 0; row < R; row++) {
+    const y1 = rowY[row]
+    const y2 = rowY[row + 1]
+    if (y1 === undefined || y2 === undefined) continue
+    for (let col = 0; col <= C; col++) {
+      if (col > 0 && col < C) {
+        const lf = mergeAnchor(table, row, col - 1)
+        const rt = mergeAnchor(table, row, col)
+        if (lf !== null && rt !== null && lf.r === rt.r && lf.c === rt.c) continue
+      }
+      const stroke = resolveSegmentStroke(table, `v:${row}:${col}`, dflt)
+      if (stroke === null) continue
+      const x = colX[col]
+      if (x === undefined) continue
+      // Same outer-rim shift as horizontals — outer left/right
+      // columns get aligned INSIDE the table.
+      const drawX = col === 0 ? x + stroke.width / 2 : col === C ? x - stroke.width / 2 : x
+      strokeEdge(grid, stroke, drawX, y1, drawX, y2)
+    }
+  }
+  paintCornerPatches(grid, table, colX, rowY, R, C, dflt)
+}
+
+/**
+ * Pass 3 — corner patches. At every grid intersection, paint a small
+ * filled square sized to the THICKEST adjacent stroke's width, colored
+ * with that stroke's colour. Fills the tiny notches that butt-cap
+ * strokes leave behind when same-style segments meet, and ensures the
+ * corner colour is consistent (the thicker stroke "wins") when mixed
+ * styles meet — matches Excel / Keynote's corner-priority behaviour.
+ *
+ * Outer-rim corners get the same alignment-inside shift as their
+ * strokes so the patch doesn't bulge past the visible table bounds.
+ * Interior corners are centered on the grid line.
+ */
+function paintCornerPatches(
+  grid: Graphics,
+  table: TableObject,
+  colX: number[],
+  rowY: number[],
+  R: number,
+  C: number,
+  dflt: TableBorderStyle | undefined,
+): void {
+  for (let row = 0; row <= R; row++) {
+    const cy = rowY[row]
+    if (cy === undefined) continue
+    for (let col = 0; col <= C; col++) {
+      const cx = colX[col]
+      if (cx === undefined) continue
+      // Interior of a merged region — no border lines cross here.
+      if (row > 0 && row < R && col > 0 && col < C) {
+        const nw = mergeAnchor(table, row - 1, col - 1)
+        const ne = mergeAnchor(table, row - 1, col)
+        const sw = mergeAnchor(table, row, col - 1)
+        const se = mergeAnchor(table, row, col)
+        if (
+          nw !== null &&
+          ne !== null &&
+          sw !== null &&
+          se !== null &&
+          nw.r === ne.r &&
+          nw.c === ne.c &&
+          nw.r === sw.r &&
+          nw.c === sw.c &&
+          nw.r === se.r &&
+          nw.c === se.c
+        ) {
+          continue
+        }
+      }
+      // Collect adjacent strokes (up to 4: h-left, h-right, v-up, v-down).
+      let thickest: EdgeStroke | null = null
+      const consider = (s: EdgeStroke | null): void => {
+        if (s === null || s.width <= 0) return
+        if (thickest === null || s.width > thickest.width) thickest = s
+      }
+      if (col > 0) consider(resolveSegmentStroke(table, `h:${row}:${col - 1}`, dflt))
+      if (col < C) consider(resolveSegmentStroke(table, `h:${row}:${col}`, dflt))
+      if (row > 0) consider(resolveSegmentStroke(table, `v:${row - 1}:${col}`, dflt))
+      if (row < R) consider(resolveSegmentStroke(table, `v:${row}:${col}`, dflt))
+      if (thickest === null) continue
+      // Some TS narrowing dance — TS thinks thickest could still be null
+      // inside the closures. Pull the value into a local.
+      const s: EdgeStroke = thickest
+      // Patch geometry — centered on (cx, cy), aligned inside the
+      // table on outer rim corners. Square of side = thickest's width.
+      const w = s.width
+      let x0 = cx - w / 2
+      let y0 = cy - w / 2
+      if (col === 0) x0 = cx
+      else if (col === C) x0 = cx - w
+      if (row === 0) y0 = cy
+      else if (row === R) y0 = cy - w
+      grid.rect(x0, y0, w, w)
+      grid.fill({ color: s.color, alpha: 1 })
     }
   }
 }
@@ -587,17 +728,18 @@ function strokeEdge(
   if (border.dash === 'solid') {
     grid.moveTo(x1, y1)
     grid.lineTo(x2, y2)
-    // `cap: 'square'` extends each end of the stroke by half-width
-    // along the line direction. For SOLID borders that means
-    // adjacent edges of a cell (top + left, etc.) overlap their caps
-    // at the corner and form a sharp 90° join — Pixi's default
-    // `round` cap would otherwise paint a quarter-circle bulge past
-    // each endpoint, which at a 20px border looks visibly softened.
-    // The half-width over-shoot at a cell with NO perpendicular
-    // neighbour edge is invisible against adjacent cells (their fill
-    // / borders cover it) and on outer-corner cells reads as a
-    // crisp Keynote-style overhang.
-    grid.stroke({ color: border.color, width: border.width, alpha: 1, cap: 'square' })
+    // `cap: 'butt'` ends the stroke perpendicular to its direction
+    // at the exact endpoint — no half-width overshoot past the
+    // corner. The square cap we used before kept inner corners
+    // crisp (the half-width overshoot from two perpendicular
+    // segments overlapped to fill the outer corner), but on the
+    // table's OUTER rim it bulged the stroke past the table's
+    // visual bounds — visible as a thick segment extending beyond
+    // a thinner adjacent segment. Butt trades a tiny missing-pixel
+    // notch at same-style outer corners for a clean rim everywhere
+    // (the notch is half-width × half-width, so invisible for thin
+    // borders and an acceptable trade for thick ones).
+    grid.stroke({ color: border.color, width: border.width, alpha: 1, cap: 'butt' })
     return
   }
   // Dashed / dotted: emit a series of short solid segments. Pixi v8's
@@ -631,24 +773,6 @@ function strokeEdge(
     consumed += segLen
     drawing = !drawing
   }
-}
-
-function drawCellEdges(
-  grid: Graphics,
-  cell: TableCell,
-  bbox: { x: number; y: number; w: number; h: number },
-  defaults: TableObject['defaults'],
-): void {
-  const top = resolveCellEdgeBorder(cell, 'top', defaults)
-  if (top !== null) strokeEdge(grid, top, bbox.x, bbox.y, bbox.x + bbox.w, bbox.y)
-  const right = resolveCellEdgeBorder(cell, 'right', defaults)
-  if (right !== null)
-    strokeEdge(grid, right, bbox.x + bbox.w, bbox.y, bbox.x + bbox.w, bbox.y + bbox.h)
-  const bottom = resolveCellEdgeBorder(cell, 'bottom', defaults)
-  if (bottom !== null)
-    strokeEdge(grid, bottom, bbox.x, bbox.y + bbox.h, bbox.x + bbox.w, bbox.y + bbox.h)
-  const left = resolveCellEdgeBorder(cell, 'left', defaults)
-  if (left !== null) strokeEdge(grid, left, bbox.x, bbox.y, bbox.x, bbox.y + bbox.h)
 }
 
 /**
@@ -957,6 +1081,7 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     const prev = tagged[DATA_TAG] as TableObject | undefined
     if (prev === undefined) return // shouldn't happen — mount stores DATA_TAG
     const structural = STRUCTURAL_KEYS.some((k) => k in patch)
+    const borderSegmentsChanged = 'borderSegments' in patch
     if (!structural) {
       // Fast path — transform / opacity / filter only. Move the outer
       // container; cells stay put in container-local coords.
@@ -966,6 +1091,19 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
       if (patch.opacity !== undefined) node.alpha = patch.opacity
       if ('shadow' in patch || 'blur' in patch) {
         applyFilterEffects(node, patch.shadow ?? prev.shadow, patch.blur ?? prev.blur)
+      }
+      // Border edit: `borderSegments` isn't structural (cell text + cell
+      // fill aren't affected), but the grid Graphics needs to repaint
+      // to reflect the new segment values. Skip the HTMLText reconcile
+      // and the per-cell fill repaint — only `paintBorders` matters.
+      if (borderSegmentsChanged) {
+        const grid = tagged[GRID_TAG] as Graphics | undefined
+        if (grid !== undefined) {
+          const merged = { ...prev, ...patch } as TableObject
+          const colX = cumulativeCols(merged)
+          const rowY = cumulativeRows(merged)
+          paintBorders(grid, merged, colX, rowY)
+        }
       }
       tagged[DATA_TAG] = { ...prev, ...patch } as TableObject
       return

@@ -770,6 +770,79 @@ export interface TableObject extends BaseSlideObject {
   rows: TableCell[][]
   /** Default cell styling — cells inherit any field they don't override. */
   defaults: TableDefaults
+  /**
+   * Flat sparse map of border segments — each grid line in the table
+   * is a single segment with a single style. Removes the ambiguity of
+   * the legacy per-cell `top/right/bottom/left` model where a shared
+   * line was owned by two cells and could carry two different values.
+   *
+   * Keys are positional addresses on the grid:
+   *   - `h:<row>:<col>` — horizontal segment ABOVE row index `row`,
+   *     in column `col`. `row` ∈ [0, rows.length]; the topmost line
+   *     of the table is `h:0:*`, the bottom is `h:<rows.length>:*`.
+   *   - `v:<row>:<col>` — vertical segment to the LEFT of column
+   *     index `col`, in row `row`. `col` ∈ [0, colWidths.length].
+   *
+   * Sparse: only segments the user has explicitly set are stored.
+   * Unset segments fall back to `defaults.border`. Width 0 means
+   * "explicitly invisible" and overrides the default fallback.
+   */
+  borderSegments?: { [key: string]: TableBorderStyle }
+}
+
+/**
+ * Position address for a single border segment in a TableObject. The
+ * key form `'h:<row>:<col>'` / `'v:<row>:<col>'` is used as both the
+ * map index in `TableObject.borderSegments` and the public addressing
+ * scheme for mutation APIs.
+ */
+export type TableBorderSegmentKey = `h:${number}:${number}` | `v:${number}:${number}`
+
+/** Build a horizontal-segment key (line ABOVE row `row` at column `col`). */
+export function hSegKey(row: number, col: number): TableBorderSegmentKey {
+  return `h:${row}:${col}`
+}
+/** Build a vertical-segment key (line LEFT of column `col` at row `row`). */
+export function vSegKey(row: number, col: number): TableBorderSegmentKey {
+  return `v:${row}:${col}`
+}
+
+/**
+ * Read the effective stroke for the segment at `key` on `table`:
+ *   1. Explicit `table.borderSegments[key]` (the new model) wins.
+ *   2. Otherwise fall back to deriving the value from the legacy
+ *      per-cell `border.top/right/bottom/left` fields — for shared
+ *      lines the right / lower cell's facing edge wins (arbitrary
+ *      but deterministic; existing decks where both halves disagreed
+ *      will pick the same side every time).
+ * Returns `undefined` when the segment isn't configured at either
+ * level; the caller is expected to fall back to `defaults.border`.
+ */
+export function getEffectiveBorderSegment(
+  table: TableObject,
+  key: TableBorderSegmentKey | string,
+): TableBorderStyle | undefined {
+  const explicit = table.borderSegments?.[key]
+  if (explicit !== undefined) return explicit
+  const m = /^(h|v):(\d+):(\d+)$/.exec(key)
+  if (m === null) return undefined
+  const orient = m[1] as 'h' | 'v'
+  const row = Number.parseInt(m[2]!, 10)
+  const col = Number.parseInt(m[3]!, 10)
+  if (orient === 'h') {
+    // Lower cell's .top wins; fall back to upper cell's .bottom.
+    const lower = table.rows[row]?.[col]?.border?.top
+    if (lower !== undefined) return lower
+    const upper = table.rows[row - 1]?.[col]?.border?.bottom
+    if (upper !== undefined) return upper
+    return undefined
+  }
+  // Vertical — right cell's .left wins, then left cell's .right.
+  const right = table.rows[row]?.[col]?.border?.left
+  if (right !== undefined) return right
+  const left = table.rows[row]?.[col - 1]?.border?.right
+  if (left !== undefined) return left
+  return undefined
 }
 
 /**

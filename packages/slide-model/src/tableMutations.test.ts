@@ -27,6 +27,7 @@ import {
   setTableRowHeight,
   splitTableCell,
 } from './tableMutations.js'
+import { getEffectiveBorderSegment } from '@narrative/shared'
 import type { TableObject } from '@narrative/shared'
 
 function makeCtx() {
@@ -324,99 +325,84 @@ describe('setRangeCellStyle', () => {
 describe('setRangeBorderPreset', () => {
   const spec = { color: 0x111111, width: 2 }
 
-  it('outer: only perimeter cells get the matching edge stamped, others untouched', () => {
+  // Convenience: read the segment value the renderer would paint at
+  // `key` on `t`. Goes through the public effective-segment lookup
+  // (which also handles the legacy-cell fallback for old decks).
+  const seg = (t: TableObject, key: string) => getEffectiveBorderSegment(t, key)
+
+  it('outer: only the perimeter segments are written', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'outer', spec)
     const t = readTable(ctx.objects, id)
-    // Top-left corner — top + left stamped; right + bottom NOT written
-    // (they stay undefined → fall back to defaults).
-    expect(t.rows[0]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.left?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.right).toBeUndefined()
-    expect(t.rows[0]![0]!.border?.bottom).toBeUndefined()
-    // Bottom-right — bottom + right stamped, others untouched.
-    expect(t.rows[2]![2]!.border?.bottom?.width).toBe(2)
-    expect(t.rows[2]![2]!.border?.right?.width).toBe(2)
-    expect(t.rows[2]![2]!.border?.top).toBeUndefined()
-    expect(t.rows[2]![2]!.border?.left).toBeUndefined()
-    // Interior cell — preset writes no edges, cell.border stays undefined.
-    expect(t.rows[1]![1]!.border).toBeUndefined()
+    // Outer top — every column of `h:0:*`.
+    for (let c = 0; c < 3; c++) expect(seg(t, `h:0:${c}`)?.width).toBe(2)
+    // Outer bottom — `h:3:*`.
+    for (let c = 0; c < 3; c++) expect(seg(t, `h:3:${c}`)?.width).toBe(2)
+    // Outer left + right.
+    for (let r = 0; r < 3; r++) {
+      expect(seg(t, `v:${r}:0`)?.width).toBe(2)
+      expect(seg(t, `v:${r}:3`)?.width).toBe(2)
+    }
+    // Inner segments are NOT written — `getEffectiveBorderSegment`
+    // returns undefined and the renderer falls back to defaults.
+    expect(seg(t, `h:1:1`)).toBeUndefined()
+    expect(seg(t, `v:1:1`)).toBeUndefined()
   })
 
-  it('preserves edges that the preset does not touch', () => {
+  it('outer preset writes to obj.borderSegments, not legacy cell.border', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
-    // Stamp All first (every edge gets width 2).
-    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', spec)
-    // Then stamp Bottom with a different width — only bottom of the
-    // bottom row should change; other edges keep the original spec.
-    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'bottom', {
-      color: 0xff0000,
-      width: 5,
-    })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'outer', spec)
     const t = readTable(ctx.objects, id)
-    // Bottom row's bottom edge updated.
-    expect(t.rows[1]![0]!.border?.bottom?.width).toBe(5)
-    expect(t.rows[1]![0]!.border?.bottom?.color).toBe(0xff0000)
-    // Bottom row's other edges retain the original All spec.
-    expect(t.rows[1]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[1]![0]!.border?.left?.width).toBe(2)
-    expect(t.rows[1]![0]!.border?.right?.width).toBe(2)
-    // Top row entirely untouched.
-    expect(t.rows[0]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.bottom?.width).toBe(2)
+    expect(t.borderSegments).toBeDefined()
+    expect(t.borderSegments?.['h:0:0']?.width).toBe(2)
+    // No legacy per-cell border writes.
+    for (const row of t.rows) for (const c of row) expect(c.border).toBeUndefined()
   })
 
-  it('all: every cell gets all four edges', () => {
+  it('all: every segment in the range is set', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', spec)
     const t = readTable(ctx.objects, id)
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 2; c++) {
-        const cell = t.rows[r]![c]!
-        expect(cell.border?.top?.color).toBe(0x111111)
-        expect(cell.border?.right?.color).toBe(0x111111)
-        expect(cell.border?.bottom?.color).toBe(0x111111)
-        expect(cell.border?.left?.color).toBe(0x111111)
-      }
+    // 3 horizontal rows of lines × 2 cols + 2 vertical rows × 3 cols = 12 segments.
+    for (let row = 0; row <= 2; row++) {
+      for (let col = 0; col < 2; col++) expect(seg(t, `h:${row}:${col}`)?.color).toBe(0x111111)
+    }
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col <= 2; col++) expect(seg(t, `v:${row}:${col}`)?.color).toBe(0x111111)
     }
   })
 
-  it('inside: every inner divider stamped on both adjacent cells (no outer edges)', () => {
+  it('inside: only the interior horizontals + verticals are set', () => {
     const ctx = makeCtx()
-    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
-    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'inside', spec)
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'inside', spec)
     const t = readTable(ctx.objects, id)
-    // (0,0): inner-facing edges are bottom + right — both stamped so width 0
-    // future stamps truly hide the dividers regardless of defaults.border.
-    expect(t.rows[0]![0]!.border?.bottom?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.right?.width).toBe(2)
-    expect(t.rows[0]![0]!.border?.top).toBeUndefined()
-    expect(t.rows[0]![0]!.border?.left).toBeUndefined()
-    // (0,1): inner-facing edges are bottom + left.
-    expect(t.rows[0]![1]!.border?.bottom?.width).toBe(2)
-    expect(t.rows[0]![1]!.border?.left?.width).toBe(2)
-    expect(t.rows[0]![1]!.border?.top).toBeUndefined()
-    expect(t.rows[0]![1]!.border?.right).toBeUndefined()
-    // (1,0): inner-facing edges are top + right.
-    expect(t.rows[1]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[1]![0]!.border?.right?.width).toBe(2)
-    expect(t.rows[1]![0]!.border?.bottom).toBeUndefined()
-    expect(t.rows[1]![0]!.border?.left).toBeUndefined()
-    // (1,1): inner-facing edges are top + left.
-    expect(t.rows[1]![1]!.border?.top?.width).toBe(2)
-    expect(t.rows[1]![1]!.border?.left?.width).toBe(2)
-    expect(t.rows[1]![1]!.border?.bottom).toBeUndefined()
-    expect(t.rows[1]![1]!.border?.right).toBeUndefined()
+    // Inner H lines: h:1:*, h:2:*.
+    for (let c = 0; c < 3; c++) {
+      expect(seg(t, `h:1:${c}`)?.width).toBe(2)
+      expect(seg(t, `h:2:${c}`)?.width).toBe(2)
+    }
+    // Outer h lines NOT touched.
+    for (let c = 0; c < 3; c++) {
+      expect(seg(t, `h:0:${c}`)).toBeUndefined()
+      expect(seg(t, `h:3:${c}`)).toBeUndefined()
+    }
+    // Inner V lines: v:*:1, v:*:2.
+    for (let r = 0; r < 3; r++) {
+      expect(seg(t, `v:${r}:1`)?.width).toBe(2)
+      expect(seg(t, `v:${r}:2`)?.width).toBe(2)
+    }
+    // Outer v lines NOT touched.
+    for (let r = 0; r < 3; r++) {
+      expect(seg(t, `v:${r}:0`)).toBeUndefined()
+      expect(seg(t, `v:${r}:3`)).toBeUndefined()
+    }
   })
 
-  it('inside at width 0 truly hides inner dividers (no defaults.border resurrection)', () => {
-    // Regression: at width 0, the renderer skips owned edges, but the
-    // unowned half of an inner line previously fell back to
-    // `defaults.border` (width 1 in DEFAULT_TABLE_DEFAULTS) and drew
-    // the line anyway. Both-sides stamping fixes this.
+  it('inside at width 0 writes width-0 segments (renderer skips, defaults.border is bypassed)', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'inside', {
@@ -424,86 +410,77 @@ describe('setRangeBorderPreset', () => {
       width: 0,
     })
     const t = readTable(ctx.objects, id)
-    // Inner H between row 0 and row 1: drawn by both (0,c).bottom AND
-    // (1,c).top. Both must be 0 or defaults.border draws the line.
+    // Each inner line carries a single width-0 segment — no double-write,
+    // no defaults.border resurrection.
     for (let c = 0; c < 3; c++) {
-      expect(t.rows[0]![c]!.border?.bottom?.width).toBe(0)
-      expect(t.rows[1]![c]!.border?.top?.width).toBe(0)
+      expect(seg(t, `h:1:${c}`)?.width).toBe(0)
+      expect(seg(t, `h:2:${c}`)?.width).toBe(0)
     }
-    // Inner V between col 0 and col 1: drawn by both (r,0).right AND
-    // (r,1).left. Both must be 0.
     for (let r = 0; r < 3; r++) {
-      expect(t.rows[r]![0]!.border?.right?.width).toBe(0)
-      expect(t.rows[r]![1]!.border?.left?.width).toBe(0)
+      expect(seg(t, `v:${r}:1`)?.width).toBe(0)
+      expect(seg(t, `v:${r}:2`)?.width).toBe(0)
     }
   })
 
-  it('insideH/insideV at width 0 clears horizontals / verticals on both sides', () => {
+  it('insideH / insideV target only their axis', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
-    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideH', {
-      color: 0x111111,
-      width: 0,
-    })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideH', spec)
     const tH = readTable(ctx.objects, id)
     for (let c = 0; c < 3; c++) {
-      expect(tH.rows[0]![c]!.border?.bottom?.width).toBe(0)
-      expect(tH.rows[1]![c]!.border?.top?.width).toBe(0)
-      expect(tH.rows[1]![c]!.border?.bottom?.width).toBe(0)
-      expect(tH.rows[2]![c]!.border?.top?.width).toBe(0)
-      // No vertical writes from insideH.
-      expect(tH.rows[1]![c]!.border?.left).toBeUndefined()
-      expect(tH.rows[1]![c]!.border?.right).toBeUndefined()
+      expect(seg(tH, `h:1:${c}`)?.width).toBe(2)
+      expect(seg(tH, `h:2:${c}`)?.width).toBe(2)
+    }
+    // Inner verticals untouched.
+    for (let r = 0; r < 3; r++) {
+      expect(seg(tH, `v:${r}:1`)).toBeUndefined()
+      expect(seg(tH, `v:${r}:2`)).toBeUndefined()
     }
 
     const id2 = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 3 })
-    setRangeBorderPreset(ctx, id2, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideV', {
-      color: 0x111111,
-      width: 0,
-    })
+    setRangeBorderPreset(ctx, id2, { r0: 0, c0: 0, r1: 2, c1: 2 }, 'insideV', spec)
     const tV = readTable(ctx.objects, id2)
     for (let r = 0; r < 3; r++) {
-      expect(tV.rows[r]![0]!.border?.right?.width).toBe(0)
-      expect(tV.rows[r]![1]!.border?.left?.width).toBe(0)
-      expect(tV.rows[r]![1]!.border?.right?.width).toBe(0)
-      expect(tV.rows[r]![2]!.border?.left?.width).toBe(0)
-      // No horizontal writes from insideV.
-      expect(tV.rows[r]![1]!.border?.top).toBeUndefined()
-      expect(tV.rows[r]![1]!.border?.bottom).toBeUndefined()
+      expect(seg(tV, `v:${r}:1`)?.width).toBe(2)
+      expect(seg(tV, `v:${r}:2`)?.width).toBe(2)
+    }
+    // Inner horizontals untouched.
+    for (let c = 0; c < 3; c++) {
+      expect(seg(tV, `h:1:${c}`)).toBeUndefined()
+      expect(seg(tV, `h:2:${c}`)).toBeUndefined()
     }
   })
 
-  it('none: every edge of every cell in range is suppressed (width 0)', () => {
+  it('none: every segment in the range is suppressed (width 0)', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', spec)
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'none', spec)
     const t = readTable(ctx.objects, id)
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 2; c++) {
-        const b = t.rows[r]![c]!.border
-        expect(b?.top?.width).toBe(0)
-        expect(b?.right?.width).toBe(0)
-        expect(b?.bottom?.width).toBe(0)
-        expect(b?.left?.width).toBe(0)
-      }
+    for (let row = 0; row <= 2; row++) {
+      for (let col = 0; col < 2; col++) expect(seg(t, `h:${row}:${col}`)?.width).toBe(0)
+    }
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col <= 2; col++) expect(seg(t, `v:${row}:${col}`)?.width).toBe(0)
     }
   })
 
-  it('bottom: only the bottom-row cells get a bottom edge stamped', () => {
+  it('bottom: only the outer-bottom line is set', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 1 }, 'bottom', spec)
     const t = readTable(ctx.objects, id)
-    expect(t.rows[0]![0]!.border).toBeUndefined()
-    expect(t.rows[1]![0]!.border).toBeUndefined()
-    expect(t.rows[2]![0]!.border?.bottom?.width).toBe(2)
-    expect(t.rows[2]![1]!.border?.bottom?.width).toBe(2)
-    // The bottom-row cells' other edges stay undefined (fall back to defaults).
-    expect(t.rows[2]![0]!.border?.top).toBeUndefined()
+    // h:3:* (outer bottom of a 3-row table) is the only horizontal line set.
+    expect(seg(t, 'h:3:0')?.width).toBe(2)
+    expect(seg(t, 'h:3:1')?.width).toBe(2)
+    expect(seg(t, 'h:0:0')).toBeUndefined()
+    expect(seg(t, 'h:1:0')).toBeUndefined()
+    expect(seg(t, 'h:2:0')).toBeUndefined()
+    // No vertical segments written.
+    expect(seg(t, 'v:0:0')).toBeUndefined()
   })
 
-  it('honours an optional dash style on active edges', () => {
+  it('honours an optional dash style on active segments', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'all', {
@@ -512,33 +489,99 @@ describe('setRangeBorderPreset', () => {
       dash: 'dash',
     })
     const t = readTable(ctx.objects, id)
-    expect(t.rows[0]![0]!.border?.top?.dash).toBe('dash')
-    expect(t.rows[0]![0]!.border?.bottom?.dash).toBe('dash')
-    // Inactive (zero-width) edges shouldn't carry a dash field.
+    expect(seg(t, 'h:0:0')?.dash).toBe('dash')
+    expect(seg(t, 'h:1:0')?.dash).toBe('dash')
+    // Re-stamp `outer` with `dot`: outer segments switch to dot;
+    // inner segments keep the earlier `dash` (additive semantics —
+    // the preset only writes its targeted segments).
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'outer', {
       color: 0xff0000,
       width: 3,
       dash: 'dot',
     })
     const t2 = readTable(ctx.objects, id)
-    // (0,0): outer edges (top + left) switch to 'dot'.
-    expect(t2.rows[0]![0]!.border?.top?.dash).toBe('dot')
-    expect(t2.rows[0]![0]!.border?.left?.dash).toBe('dot')
-    // Interior-facing edges of (0,0) keep the earlier 'dash' style.
-    expect(t2.rows[0]![0]!.border?.right?.dash).toBe('dash')
-    expect(t2.rows[0]![0]!.border?.bottom?.dash).toBe('dash')
+    expect(seg(t2, 'h:0:0')?.dash).toBe('dot') // outer top
+    expect(seg(t2, 'v:0:0')?.dash).toBe('dot') // outer left
+    expect(seg(t2, 'h:1:0')?.dash).toBe('dash') // inner h — untouched
+    expect(seg(t2, 'v:0:1')?.dash).toBe('dash') // inner v — untouched
   })
 
-  it('skips merge continuation cells', () => {
+  it('shared lines: writing one side IS the same write — no double-stroke possible', () => {
+    // Each grid line is a SINGLE segment. The user-reported bug
+    // (two strokes overlapping on a shared edge because both cells
+    // had borders) is gone by construction: there's exactly one
+    // slot per line and "last write wins" trivially.
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 1 })
+    // Stamp `bottom` on the top cell → writes h:1:0.
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 0, c1: 0 }, 'bottom', {
+      color: 0x000000,
+      width: 8,
+    })
+    let t = readTable(ctx.objects, id)
+    expect(seg(t, 'h:1:0')?.width).toBe(8)
+    expect(seg(t, 'h:1:0')?.color).toBe(0x000000)
+    // Stamp `top` on the cell below → writes the SAME segment h:1:0.
+    setRangeBorderPreset(ctx, id, { r0: 1, c0: 0, r1: 1, c1: 0 }, 'top', {
+      color: 0xaaaaaa,
+      width: 2,
+    })
+    t = readTable(ctx.objects, id)
+    expect(seg(t, 'h:1:0')?.width).toBe(2)
+    expect(seg(t, 'h:1:0')?.color).toBe(0xaaaaaa)
+  })
+})
+
+describe('border segment shift on row / col mutations', () => {
+  const spec = { color: 0x111111, width: 2 }
+
+  it('insertTableRow shifts horizontal lines below the insert point', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
+    // Set the outer bottom on h:2:* (rows=2 → bottom line is at row=2).
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'bottom', spec)
+    insertTableRow(ctx, id, 1)
+    // After insert, the table has 3 rows. The outer bottom is now at h:3:*.
+    const t = readTable(ctx.objects, id)
+    expect(getEffectiveBorderSegment(t, 'h:3:0')?.width).toBe(2)
+    expect(getEffectiveBorderSegment(t, 'h:2:0')).toBeUndefined() // new line, default
+  })
+
+  it('deleteTableRow drops the upper line of the deleted row and shifts the rest up', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 3, cols: 2 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 2, c1: 1 }, 'all', spec)
+    deleteTableRow(ctx, id, 1) // remove the middle row
+    const t = readTable(ctx.objects, id)
+    // Outer bottom shifts from h:3:* to h:2:*.
+    expect(getEffectiveBorderSegment(t, 'h:2:0')?.width).toBe(2)
+    // Outer top stays at h:0:*.
+    expect(getEffectiveBorderSegment(t, 'h:0:0')?.width).toBe(2)
+  })
+
+  it('insertTableCol shifts vertical lines past the insert point', () => {
+    const ctx = makeCtx()
+    const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 2 })
+    setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 1 }, 'right', spec)
+    // Outer right of a 2-col table is v:*:2.
+    let t = readTable(ctx.objects, id)
+    expect(getEffectiveBorderSegment(t, 'v:0:2')?.width).toBe(2)
+    insertTableCol(ctx, id, 1)
+    t = readTable(ctx.objects, id)
+    // After insert, outer right is at v:*:3.
+    expect(getEffectiveBorderSegment(t, 'v:0:3')?.width).toBe(2)
+    // The newly-inserted column's interior vertical is unset.
+    expect(getEffectiveBorderSegment(t, 'v:0:2')).toBeUndefined()
+  })
+
+  it('deleteTableCol drops the right-side line of the deleted col', () => {
     const ctx = makeCtx()
     const id = addTable(ctx, { x: 0, y: 0, width: 300, height: 200, rows: 2, cols: 3 })
-    mergeTableCells(ctx, id, { r0: 0, c0: 0, r1: 0, c1: 1 })
     setRangeBorderPreset(ctx, id, { r0: 0, c0: 0, r1: 1, c1: 2 }, 'all', spec)
+    deleteTableCol(ctx, id, 1)
     const t = readTable(ctx.objects, id)
-    // Origin gets the border, continuation pointer is untouched.
-    expect(t.rows[0]![0]!.border?.top?.width).toBe(2)
-    expect(t.rows[0]![1]!.border).toBeUndefined()
-    expect(t.rows[0]![2]!.border?.top?.width).toBe(2)
+    expect(getEffectiveBorderSegment(t, 'v:0:2')?.width).toBe(2) // outer right shifted left
+    expect(getEffectiveBorderSegment(t, 'v:0:0')?.width).toBe(2) // outer left preserved
   })
 })
 

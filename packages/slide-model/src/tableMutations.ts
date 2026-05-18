@@ -168,10 +168,53 @@ function avgOf(arr: Y.Array<number>, fallback: number): number {
 }
 
 /**
+ * Apply a coordinate transform to every segment in `segs`. The
+ * `mapper` returns the new (row, col) for a segment OR `null` to
+ * drop the segment (e.g. when its line collapsed into a neighbour
+ * after a row / column delete). Implemented as clear + repopulate
+ * inside a single transact — the only safe way to bulk-rewrite Y.Map
+ * keys without aliasing live entries during iteration.
+ */
+function shiftBorderSegments(
+  segs: Y.Map<unknown>,
+  mapper: (orient: 'h' | 'v', row: number, col: number) => { row: number; col: number } | null,
+): void {
+  const next: Array<[string, unknown]> = []
+  segs.forEach((v, k) => {
+    const m = /^(h|v):(\d+):(\d+)$/.exec(k)
+    if (m === null) {
+      next.push([k, v])
+      return
+    }
+    const orient = m[1] as 'h' | 'v'
+    const row = Number.parseInt(m[2]!, 10)
+    const col = Number.parseInt(m[3]!, 10)
+    const out = mapper(orient, row, col)
+    if (out !== null) next.push([`${orient}:${out.row}:${out.col}`, v])
+  })
+  segs.clear()
+  for (const [k, v] of next) segs.set(k, v)
+}
+
+/** Pull the borderSegments Y.Map from a table, or `null` when absent. */
+function getBorderSegmentsMap(yMap: Y.Map<unknown>): Y.Map<unknown> | null {
+  const segs = yMap.get('borderSegments')
+  return segs instanceof Y.Map ? segs : null
+}
+
+/**
  * Insert a row at `atIndex`. Pass `atIndex >= rowCount` (or `-1`) to
  * append at the end. New cells start blank and inherit the table's
  * defaults; new row height = average of existing rows so the visual
  * footprint scales naturally.
+ *
+ * Border segments shift to keep their physical lines in place:
+ *   - Horizontal lines at row indices >= `atIndex + 1` shift down by
+ *     one (they're now above rows that themselves shifted down).
+ *   - Vertical segments at row indices >= `atIndex` shift down by
+ *     one (the rows they belonged to are now at row+1).
+ *   - The newly-inserted row's interior lines start unset and fall
+ *     back to `defaults.border`.
  */
 export function insertTableRow(
   ctx: ObjectsMutationContext,
@@ -193,13 +236,22 @@ export function insertTableRow(
     newRow.push(cells)
     rowsY.insert(insertAt, [newRow])
     rowHeights.insert(insertAt, [avgOf(rowHeights, 40)])
+    const segs = getBorderSegmentsMap(yMap)
+    if (segs !== null) {
+      shiftBorderSegments(segs, (orient, row, col) => {
+        if (orient === 'h') return { row: row >= insertAt + 1 ? row + 1 : row, col }
+        return { row: row >= insertAt ? row + 1 : row, col }
+      })
+    }
   }, LOCAL_ORIGIN)
 }
 
 /**
  * Insert a column at `atIndex` (or append when out of range). Iterates
  * over each row and inserts a blank cell at the matching position. New
- * width = average of existing columns.
+ * width = average of existing columns. Border segments shift to keep
+ * the user's existing lines in place (see `insertTableRow` for the
+ * row-shift rationale, symmetric here).
  */
 export function insertTableCol(
   ctx: ObjectsMutationContext,
@@ -220,6 +272,13 @@ export function insertTableCol(
       row.insert(insertAt, [buildEmptyCellYMap()])
     }
     colWidths.insert(insertAt, [avgOf(colWidths, 60)])
+    const segs = getBorderSegmentsMap(yMap)
+    if (segs !== null) {
+      shiftBorderSegments(segs, (orient, row, col) => {
+        if (orient === 'h') return { row, col: col >= insertAt ? col + 1 : col }
+        return { row, col: col >= insertAt + 1 ? col + 1 : col }
+      })
+    }
   }, LOCAL_ORIGIN)
 }
 
@@ -227,6 +286,10 @@ export function insertTableCol(
  * Delete the row at `atIndex`. No-op when the table has only one row
  * left (a 0-row table is degenerate; let the user delete the whole
  * object via the standard delete-object path instead).
+ *
+ * Segment shift: the LINE BELOW the deleted row (`h:atIndex+1:*`) is
+ * dropped (it collapses into the line ABOVE), vertical segments IN
+ * the deleted row are dropped, and everything below shifts up by one.
  */
 export function deleteTableRow(
   ctx: ObjectsMutationContext,
@@ -243,12 +306,28 @@ export function deleteTableRow(
   ctx.doc.transact(() => {
     rowsY.delete(atIndex, 1)
     if (atIndex < rowHeights.length) rowHeights.delete(atIndex, 1)
+    const segs = getBorderSegmentsMap(yMap)
+    if (segs !== null) {
+      shiftBorderSegments(segs, (orient, row, col) => {
+        if (orient === 'h') {
+          if (row === atIndex + 1) return null
+          if (row > atIndex + 1) return { row: row - 1, col }
+          return { row, col }
+        }
+        if (row === atIndex) return null
+        if (row > atIndex) return { row: row - 1, col }
+        return { row, col }
+      })
+    }
   }, LOCAL_ORIGIN)
 }
 
 /**
  * Delete the column at `atIndex`. Same single-column guard as
- * `deleteTableRow`.
+ * `deleteTableRow`. Segment shift mirrors the row case:
+ *   - Vertical line RIGHT of the deleted col (`v:*:atIndex+1`) drops.
+ *   - Horizontal segments IN the deleted col drop.
+ *   - Everything past the deletion shifts left by one.
  */
 export function deleteTableCol(
   ctx: ObjectsMutationContext,
@@ -269,6 +348,19 @@ export function deleteTableCol(
       if (atIndex < row.length) row.delete(atIndex, 1)
     }
     colWidths.delete(atIndex, 1)
+    const segs = getBorderSegmentsMap(yMap)
+    if (segs !== null) {
+      shiftBorderSegments(segs, (orient, row, col) => {
+        if (orient === 'h') {
+          if (col === atIndex) return null
+          if (col > atIndex) return { row, col: col - 1 }
+          return { row, col }
+        }
+        if (col === atIndex + 1) return null
+        if (col > atIndex + 1) return { row, col: col - 1 }
+        return { row, col }
+      })
+    }
   }, LOCAL_ORIGIN)
 }
 
@@ -698,23 +790,90 @@ export function edgesForPreset(
 }
 
 /**
- * Apply a Keynote-style border preset to every cell in a range.
- * `edgeSpec` is the {color, width, dash?} stamped on each ENABLED edge.
+ * Compute the segment keys a preset targets on a given range. Mirrors
+ * the visual presets the inspector exposes:
+ *   - `none`     → every segment in the perimeter of the range (so we
+ *                  can write width 0 and force the renderer to skip).
+ *   - `all`      → every segment touching the range (outer + inner).
+ *   - `outer`    → top + bottom + left + right of the range only.
+ *   - `inside`   → inner-horizontal + inner-vertical lines only.
+ *   - `top` / `bottom` / `left` / `right` → that single outer line.
+ *   - `insideH` / `insideV` → the inner subset of the matching axis.
  *
- * Semantics: stamping a preset ONLY touches the edges that the preset
- * activates on a given cell — other edges are left untouched (their
- * existing per-edge override stays, or they continue to fall back to
- * `defaults.border`). This matches Keynote's "selecting Bottom means
- * I'm going to edit the bottom edge, not erase the rest" affordance.
+ * Horizontal lines in range cover rows `[r0..r1+1]` × cols `[c0..c1]`.
+ * Vertical lines cover rows `[r0..r1]` × cols `[c0..c1+1]`.
+ */
+export function segmentsForPreset(
+  preset: TableBorderPreset,
+  range: { r0: number; c0: number; r1: number; c1: number },
+): Set<string> {
+  const { r0, c0, r1, c1 } = range
+  const out = new Set<string>()
+  const addHRow = (row: number): void => {
+    for (let c = c0; c <= c1; c++) out.add(`h:${row}:${c}`)
+  }
+  const addVCol = (col: number): void => {
+    for (let r = r0; r <= r1; r++) out.add(`v:${r}:${col}`)
+  }
+  switch (preset) {
+    case 'none':
+    case 'all': {
+      for (let row = r0; row <= r1 + 1; row++) addHRow(row)
+      for (let col = c0; col <= c1 + 1; col++) addVCol(col)
+      return out
+    }
+    case 'outer': {
+      addHRow(r0)
+      addHRow(r1 + 1)
+      addVCol(c0)
+      addVCol(c1 + 1)
+      return out
+    }
+    case 'top':
+      addHRow(r0)
+      return out
+    case 'bottom':
+      addHRow(r1 + 1)
+      return out
+    case 'left':
+      addVCol(c0)
+      return out
+    case 'right':
+      addVCol(c1 + 1)
+      return out
+    case 'inside': {
+      for (let row = r0 + 1; row <= r1; row++) addHRow(row)
+      for (let col = c0 + 1; col <= c1; col++) addVCol(col)
+      return out
+    }
+    case 'insideH': {
+      for (let row = r0 + 1; row <= r1; row++) addHRow(row)
+      return out
+    }
+    case 'insideV': {
+      for (let col = c0 + 1; col <= c1; col++) addVCol(col)
+      return out
+    }
+  }
+}
+
+/**
+ * Apply a Keynote-style border preset to a range. Writes to the
+ * table's flat `borderSegments` Y.Map keyed by segment address. Each
+ * grid line in a table is now a SINGLE value (one segment, one
+ * stroke spec) — the renderer paints each line once without the
+ * per-cell-edge ambiguity the older `cell.border` model had.
  *
- * The one exception is `preset === 'none'`, which is explicitly the
- * "clear everything in this range" operation: every edge of every
- * cell is written with width 0 so the renderer's `width <= 0 → skip`
- * guard suppresses both per-edge overrides and any `defaults.border`
- * fallback. Use this when the caller wants a truly borderless region.
+ *   - Preset → `segmentsForPreset` → key set targeted on the range.
+ *   - For each key: `borderSegments.set(key, value)` where `value` is
+ *     `{ color, width, dash? }` from the inspector. `preset === 'none'`
+ *     writes width 0 so the renderer's `width <= 0 → skip` guard
+ *     suppresses any `defaults.border` fallback on those lines.
  *
- * Merge-continuation pointer cells are skipped (the origin sits within
- * the range anyway and gets the patch on its own iteration).
+ * Legacy `cell.border` data on the same table is intentionally NOT
+ * cleared — the renderer's segment-lookup falls back to
+ * `cell.border` only when `borderSegments[key]` is missing, so once
+ * any preset stamps the affected keys the new value wins.
  */
 export function setRangeBorderPreset(
   ctx: ObjectsMutationContext,
@@ -723,58 +882,48 @@ export function setRangeBorderPreset(
   preset: TableBorderPreset,
   edgeSpec: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' },
 ): void {
-  const rowsY = getRowsArr(ctx, tableId)
-  if (rowsY === null) return
-  const { r0, c0, r1, c1 } = normRange(range.r0, range.c0, range.r1, range.c1)
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  const norm = normRange(range.r0, range.c0, range.r1, range.c1)
+  const keys = segmentsForPreset(preset, norm)
+  if (keys.size === 0) return
+  const value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } = {
+    color: edgeSpec.color,
+    width: preset === 'none' ? 0 : edgeSpec.width,
+  }
+  if (preset !== 'none' && edgeSpec.dash !== undefined) value.dash = edgeSpec.dash
   ctx.doc.transact(() => {
-    for (let r = r0; r <= r1; r++) {
-      const row = rowsY.get(r)
-      if (row === undefined) continue
-      for (let c = c0; c <= c1 && c < row.length; c++) {
-        const cell = row.get(c)
-        if (cell === undefined) continue
-        if (cell.get('mergeOriginR') !== undefined || cell.get('mergeOriginC') !== undefined) {
-          continue
-        }
-
-        const active =
-          preset === 'none'
-            ? (['top', 'right', 'bottom', 'left'] as CellEdge[])
-            : edgesForPreset(preset, r, c, { r0, c0, r1, c1 })
-        if (active.length === 0) {
-          // This cell has no edges in this preset — leave it alone so
-          // existing borders / defaults stay visible.
-          continue
-        }
-
-        // Reuse the existing border Y.Map so the edges we don't touch
-        // keep their identity (and stay visible). Only create one if
-        // the cell didn't have a border map yet.
-        const existing = cell.get('border')
-        let borderMap: Y.Map<unknown>
-        if (existing instanceof Y.Map) {
-          borderMap = existing
-        } else {
-          borderMap = new Y.Map<unknown>()
-          cell.set('border', borderMap)
-        }
-
-        for (const edge of active) {
-          if (preset === 'none') {
-            // Force-clear: width 0 so the renderer skips this edge
-            // even when `defaults.border` would otherwise fill in.
-            borderMap.set(edge, { color: edgeSpec.color, width: 0 })
-            continue
-          }
-          const value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } = {
-            color: edgeSpec.color,
-            width: edgeSpec.width,
-          }
-          if (edgeSpec.dash !== undefined) value.dash = edgeSpec.dash
-          borderMap.set(edge, value)
-        }
-      }
+    let segs = yMap.get('borderSegments')
+    if (!(segs instanceof Y.Map)) {
+      segs = new Y.Map<unknown>()
+      yMap.set('borderSegments', segs)
     }
+    for (const key of keys) (segs as Y.Map<unknown>).set(key, value)
+  }, LOCAL_ORIGIN)
+}
+
+/**
+ * Write a single border segment directly. Used by inspector controls
+ * that operate on one line at a time (e.g. a future per-segment style
+ * picker); `setRangeBorderPreset` is the bulk path.
+ */
+export function setTableBorderSegment(
+  ctx: ObjectsMutationContext,
+  tableId: string,
+  key: string,
+  value: { color: number; width: number; dash?: 'solid' | 'dash' | 'dot' } | undefined,
+): void {
+  const yMap = findTableYMap(ctx, tableId)
+  if (yMap === null) return
+  ctx.doc.transact(() => {
+    let segs = yMap.get('borderSegments')
+    if (!(segs instanceof Y.Map)) {
+      if (value === undefined) return
+      segs = new Y.Map<unknown>()
+      yMap.set('borderSegments', segs)
+    }
+    if (value === undefined) (segs as Y.Map<unknown>).delete(key)
+    else (segs as Y.Map<unknown>).set(key, value)
   }, LOCAL_ORIGIN)
 }
 
