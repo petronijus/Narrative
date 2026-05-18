@@ -59,7 +59,12 @@ import { getRenderingSlideNumber } from '../slideNumberContext.js'
  * which empirically covers Pixi's worst-case rasterise window without
  * burning CPU during steady-state animation/typing.
  */
-function scheduleAsyncTextureCatchup(node: {
+/**
+ * Exported for cross-renderer reuse — the table renderer mounts a
+ * per-cell HTMLText that shares the same async lifecycle handling as
+ * the main text-object renderer. Internal otherwise.
+ */
+export function scheduleAsyncTextureCatchup(node: {
   __narrativeCatchupActive?: boolean
   destroyed?: boolean
 }): void {
@@ -97,7 +102,8 @@ function scheduleAsyncTextureCatchup(node: {
  * GSAP transform animation, which previously had us scheduling
  * dozens of rAF wake-ups every second.
  */
-function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
+/** @see scheduleAsyncTextureCatchup — same export rationale. */
+export function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const node = textNode as any
   if (typeof node.onViewUpdate !== 'function') return
@@ -132,7 +138,8 @@ function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
  * Legacy plain-string text (decks predating Phase A) is HTML-escaped
  * and rendered as a single run.
  */
-function buildHtml(data: TextObject): string {
+/** Exported for the table renderer — same HTML build pipeline for cells. */
+export function buildHtml(data: TextObject): string {
   // Defaults handed to toHtml only carry the field types that need
   // structural HTML (i.e. <i> / <u>). Pixi's TextStyle applies the
   // default fontWeight + color directly on the SVG root, and per-run
@@ -272,8 +279,10 @@ function collectRunFontFamilies(data: TextObject): string[] {
  * synthesis path in applyPatch) and by the live HTMLText node. We
  * keep the field set in one place to guarantee the two stay in sync.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pixi TextStyle options loosely typed
-function buildStyleOpts(data: TextObject): any {
+
+/** Exported for the table renderer — same HTMLTextStyle options builder. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function buildStyleOpts(data: TextObject): any {
   // Pixi v8 HTMLText's `extractFontFamilies` reads `style.fontFamily`
   // and adds every entry of an Array directly to the @font-face embed
   // list. Per-run families inserted via inline `<span>` only get picked
@@ -354,7 +363,7 @@ function buildStyle(data: TextObject): TextStyle {
  * via the SceneGraph so the editing caret aligns with this exact
  * offset.
  */
-function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
+export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   const vAlign = data.vAlign ?? 'top'
   if (vAlign === 'top') {
     textNode.y = 0
@@ -383,7 +392,7 @@ function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
  * multi-line text the style.align field still drives the per-line
  * justification — this only handles the block's offset.
  */
-function applyHorizontalAlign(textNode: HTMLText, data: TextObject): void {
+export function applyHorizontalAlign(textNode: HTMLText, data: TextObject): void {
   const align = data.align ?? 'left'
   if (align === 'right') {
     textNode.anchor.x = 1

@@ -30,26 +30,54 @@ export interface ResolvedFillInput {
 }
 
 /**
- * P12c: per-container memo of the procedural-texture key currently in
- * use. Lets the renderer release the previous key when the fill changes
- * and on container destroy. Kept on the Container itself via Symbol tag
- * so we don't need a side-table keyed by Container.
+ * Per-container memo of the procedural-texture keys currently in use,
+ * keyed by an arbitrary slot id. Lets a renderer release the previous
+ * key whenever a slot's fill changes (or on destroy). Shape renderers
+ * (rect / ellipse / triangle / polygon / path) carry exactly one fill
+ * per Container and use the default slot — `'_default'` — so they
+ * effectively see a scalar. Multi-fill renderers (the table cell grid
+ * paints one fill per cell on a shared container) pass distinct slot
+ * keys so the slots don't clobber each other.
+ *
+ * Backed by a Map on the Container via Symbol tag so we don't need a
+ * side-table.
  */
-const PROC_KEY_TAG = Symbol('proceduralFillKey')
+const PROC_SLOTS_TAG = Symbol('proceduralFillSlots')
+const DEFAULT_PROC_SLOT = '_default'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Symbol metadata on Pixi Container is untyped
 const asAny = (n: Container): any => n as any
 
-function getHeldProceduralKey(node: Container): string | undefined {
-  return asAny(node)[PROC_KEY_TAG] as string | undefined
+function getSlotsMap(node: Container): Map<string, string> | undefined {
+  return asAny(node)[PROC_SLOTS_TAG] as Map<string, string> | undefined
 }
 
-function setHeldProceduralKey(node: Container, key: string | undefined): void {
-  if (key === undefined) {
-    delete asAny(node)[PROC_KEY_TAG]
-  } else {
-    asAny(node)[PROC_KEY_TAG] = key
+function ensureSlotsMap(node: Container): Map<string, string> {
+  let map = getSlotsMap(node)
+  if (map === undefined) {
+    map = new Map()
+    asAny(node)[PROC_SLOTS_TAG] = map
   }
+  return map
+}
+
+function getHeldProceduralKey(node: Container, slotKey = DEFAULT_PROC_SLOT): string | undefined {
+  return getSlotsMap(node)?.get(slotKey)
+}
+
+function setHeldProceduralKey(
+  node: Container,
+  key: string | undefined,
+  slotKey = DEFAULT_PROC_SLOT,
+): void {
+  const slots = getSlotsMap(node)
+  if (key === undefined) {
+    if (slots === undefined) return
+    slots.delete(slotKey)
+    if (slots.size === 0) delete asAny(node)[PROC_SLOTS_TAG]
+    return
+  }
+  ensureSlotsMap(node).set(slotKey, key)
 }
 
 /**
@@ -74,22 +102,42 @@ function gradientKey(
 }
 
 /**
- * P12c: release any procedural texture currently held by `container`.
- * Renderers call this from their `destroy()` hook so the ResourceManager
- * can drop the ref count.
+ * Release the procedural texture currently held in `slotKey` on
+ * `container`. Renderers call this from their `destroy()` hook so the
+ * ResourceManager can drop the ref count. Single-slot callers (shapes)
+ * omit `slotKey` and the default slot is released.
  */
-export function releaseProceduralFill(container: Container): void {
-  const key = getHeldProceduralKey(container)
+export function releaseProceduralFill(container: Container, slotKey?: string): void {
+  const key = getHeldProceduralKey(container, slotKey)
   if (key === undefined) return
   try {
     getDefaultResourceManager().releaseProcedural(key)
   } catch {
     // ResourceManager not installed (tests) — safe to drop.
   }
-  setHeldProceduralKey(container, undefined)
+  setHeldProceduralKey(container, undefined, slotKey)
 }
 
-function clampStops(
+/**
+ * Release every procedural slot held on `container`. Used by multi-slot
+ * renderers (the table cell grid) so the destroy hook doesn't have to
+ * enumerate slot keys it owns.
+ */
+export function releaseAllProceduralFills(container: Container): void {
+  const slots = getSlotsMap(container)
+  if (slots === undefined) return
+  let rm: ReturnType<typeof getDefaultResourceManager>
+  try {
+    rm = getDefaultResourceManager()
+  } catch {
+    delete asAny(container)[PROC_SLOTS_TAG]
+    return
+  }
+  for (const key of slots.values()) rm.releaseProcedural(key)
+  delete asAny(container)[PROC_SLOTS_TAG]
+}
+
+export function clampStops(
   stops: ReadonlyArray<{ color: number; offset: number; alpha?: number }>,
 ): Array<{ color: number; offset: number; alpha: number }> {
   if (stops.length === 0) return [{ color: 0xffffff, offset: 0, alpha: 1 }]
@@ -200,24 +248,30 @@ export function fillStyleToPixi(
   widthPx: number,
   heightPx: number,
   container?: Container,
+  slotKey?: string,
 ): ResolvedFillInput {
   if (fillStyle === undefined) return { input: { color: solidFallback } }
 
   if (fillStyle.kind === 'linearGradient' || fillStyle.kind === 'radialGradient') {
     const stops = clampStops(fillStyle.stops)
     const key = gradientKey({ ...fillStyle, stops }, widthPx, heightPx)
-    const texture = acquireOrPaint(container, key, () => {
-      if (fillStyle.kind === 'linearGradient') {
-        return paintLinearGradientTexture(stops, fillStyle.angleDeg, widthPx, heightPx)
-      }
-      return paintRadialGradientTexture(
-        stops,
-        fillStyle.centerX ?? 0.5,
-        fillStyle.centerY ?? 0.5,
-        widthPx,
-        heightPx,
-      )
-    })
+    const texture = acquireOrPaint(
+      container,
+      key,
+      () => {
+        if (fillStyle.kind === 'linearGradient') {
+          return paintLinearGradientTexture(stops, fillStyle.angleDeg, widthPx, heightPx)
+        }
+        return paintRadialGradientTexture(
+          stops,
+          fillStyle.centerX ?? 0.5,
+          fillStyle.centerY ?? 0.5,
+          widthPx,
+          heightPx,
+        )
+      },
+      slotKey,
+    )
     return { input: { texture } }
   }
   return { input: { color: solidFallback } }
@@ -237,6 +291,7 @@ function acquireOrPaint(
   container: Container | undefined,
   key: string,
   factory: () => Texture,
+  slotKey?: string,
 ): Texture {
   if (container === undefined) return factory()
   let rm: ReturnType<typeof getDefaultResourceManager>
@@ -245,12 +300,12 @@ function acquireOrPaint(
   } catch {
     return factory()
   }
-  const prev = getHeldProceduralKey(container)
+  const prev = getHeldProceduralKey(container, slotKey)
   if (prev !== undefined) {
     rm.releaseProcedural(prev)
   }
   const tex = rm.acquireProcedural(key, factory)
-  setHeldProceduralKey(container, key)
+  setHeldProceduralKey(container, key, slotKey)
   return tex
 }
 

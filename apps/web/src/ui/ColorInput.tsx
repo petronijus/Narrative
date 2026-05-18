@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { HexColorPicker } from 'react-colorful'
-import { Pipette, Plus, X } from 'lucide-react'
+import { Ban, Pipette, Plus, X } from 'lucide-react'
 import { useRecentColors } from '../state/useRecentColors.js'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js'
 import type { TokenRef, ColorTokenSnapshot } from '@narrative/slide-model'
@@ -96,6 +96,25 @@ export interface ColorInputProps {
    */
   linkedLabel?: string | undefined
   onUnlink?: (() => void) | undefined
+  /**
+   * When provided, the popover renders a "No color" button at the top
+   * that calls this handler and closes itself. The parent decides what
+   * "no colour" means semantically — for a TableDefaults.fill it means
+   * clearing the field (transparent cells); for a FilledShape's fill it
+   * means dropping the alpha to 0. The picker itself doesn't push the
+   * current hex into recents when the clear path is taken.
+   */
+  onClear?: (() => void) | undefined
+  /**
+   * When set, the outer hex input is replaced with this static label
+   * (similar to `linkedLabel` for tokens), and the trigger swatch
+   * paints over a checkered backdrop so the empty state reads as
+   * transparent at a glance. Use this when the underlying value is
+   * "no colour / cleared" and the displayed hex would be a misleading
+   * fallback (e.g. white). Inside the popover the hex input stays
+   * editable so the user can type a real colour to un-clear.
+   */
+  emptyLabel?: string | undefined
 }
 
 const CHECKER_BG =
@@ -138,8 +157,11 @@ export function ColorInput({
   linkedLabel,
   onUnlink,
   onOpenFolderSettings,
+  onClear,
+  emptyLabel,
 }: ColorInputProps) {
   const alphaEnabled = alpha !== undefined && onAlphaChange !== undefined
+  const isEmpty = emptyLabel !== undefined
   const alphaVal = alphaEnabled ? clampAlpha(alpha as number) : 1
   const commitAlpha = onAlphaCommit ?? onAlphaChange
   const { colors: recentColors, push } = useRecentColors()
@@ -253,7 +275,7 @@ export function ColorInput({
               inputClassName,
             ].join(' ')}
           >
-            {alphaEnabled ? (
+            {alphaEnabled || isEmpty ? (
               <span
                 aria-hidden="true"
                 className="block h-full w-full rounded-sm"
@@ -266,7 +288,10 @@ export function ColorInput({
                 <span
                   aria-hidden="true"
                   className="block h-full w-full rounded-sm"
-                  style={{ background: value, opacity: alphaVal }}
+                  style={{
+                    background: isEmpty ? 'transparent' : value,
+                    opacity: isEmpty ? 0 : alphaVal,
+                  }}
                 />
               </span>
             ) : (
@@ -294,6 +319,32 @@ export function ColorInput({
           // (Radix default).
         >
           <div className="flex flex-col gap-3">
+            {/* "No color" — only when the parent wired the clear path.
+                Drops fill entirely (table cells / shape alpha=0 / etc.).
+                Pinned to the top so the user sees it before fiddling
+                with hex; closes the popover and skips the
+                recent-colour push so a transparent state doesn't show
+                up as a hex swatch in history. */}
+            {onClear !== undefined && (
+              <button
+                type="button"
+                aria-label="No color (transparent)"
+                onClick={() => {
+                  skipCloseCommitRef.current = true
+                  onClear()
+                  setOpen(false)
+                }}
+                className={[
+                  'flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-input',
+                  'text-[11px] text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                  'focus:border-ring focus:outline-none',
+                ].join(' ')}
+              >
+                <Ban className="h-3.5 w-3.5" aria-hidden="true" />
+                No color
+              </button>
+            )}
+
             {/* Saturation/hue picker. The library renders its own canvas. */}
             <HexColorPicker
               color={value}
@@ -472,6 +523,14 @@ export function ColorInput({
             </button>
           )}
         </div>
+      ) : isEmpty ? (
+        // Empty / cleared fill — show the parent-supplied label
+        // instead of a misleading fallback hex. No unlink affordance:
+        // picking any colour in the popover writes through and clears
+        // the empty state naturally.
+        <span className="min-w-0 flex-1 truncate text-[11px] uppercase tracking-wide text-muted-foreground">
+          {emptyLabel}
+        </span>
       ) : (
         showHex && (
           <input

@@ -30,6 +30,7 @@ import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
 import { useTextEdit } from '../state/TextEditContext'
+import { useTableEdit } from '../state/TableEditContext'
 import { useCropMode } from '../state/CropModeContext'
 import { CropOverlay } from '../ui/CropOverlay'
 import { PathPointsOverlay } from '../ui/PathPointsOverlay'
@@ -37,6 +38,10 @@ import { MoveToTargetOverlay } from '../ui/MoveToTargetOverlay'
 import { useAnimations } from '../state/useAnimations'
 import { usePathPointsMode } from '../state/PathPointsModeContext'
 import { TextEditOverlay } from '../ui/TextEditOverlay'
+import { TableCellEditor } from '../ui/TableCellEditor'
+import { TableBorderSelectionOverlay } from '../ui/TableBorderSelectionOverlay'
+import { TableChrome } from '../ui/TableChrome'
+import { TableRangeHighlight } from '../ui/TableRangeHighlight'
 import { EditorVideoPreview } from '../ui/EditorVideoPreview'
 import { useSlideObjects } from '../state/useSlideObjects'
 import { useSlideDoc } from '../state/useSlideDoc'
@@ -56,7 +61,13 @@ import {
 } from '@narrative/slide-model'
 import type { ObjectsMutationContext } from '@narrative/slide-model'
 import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
-import type { SlideObject, SlideObjectType, PathAnchor, PathObject } from '@narrative/shared'
+import type {
+  SlideObject,
+  SlideObjectType,
+  PathAnchor,
+  PathObject,
+  TableObject,
+} from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -82,6 +93,16 @@ import { Button } from '@/components/ui/button'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Tap-vs-drag threshold in SCREEN pixels for the table cell-tap gesture.
+ * Pointer movement under this distance between down and up commits a
+ * tap (enters cell-select mode on the clicked cell); past it the
+ * gesture promotes to a regular object-drag of the whole table. Sized
+ * to swallow normal hand jitter at any zoom level — kept in client
+ * coords on purpose so the feel is the same at 25% and 200%.
+ */
+const TAP_THRESHOLD_PX = 4
 
 /**
  * Converts viewport (clientX, clientY) coordinates into artboard-local
@@ -133,6 +154,51 @@ function constrainDraft(
     currentX: startX + Math.sign(dx || 1) * size,
     currentY: startY + Math.sign(dy || 1) * size,
   }
+}
+
+/**
+ * Inverse-transform a world-space cursor point into a table's local
+ * cell coordinates. Returns `{ r, c }` of the cell under the cursor,
+ * or `null` when the point falls outside the table's bbox (clicking
+ * the rotated halo).
+ */
+function hitTestTableCell(
+  table: TableObject,
+  worldX: number,
+  worldY: number,
+): { r: number; c: number } | null {
+  const cx = table.x + table.width / 2
+  const cy = table.y + table.height / 2
+  const cos = Math.cos(-table.rotation)
+  const sin = Math.sin(-table.rotation)
+  const dx = worldX - cx
+  const dy = worldY - cy
+  const localX = cos * dx - sin * dy + table.width / 2
+  const localY = sin * dx + cos * dy + table.height / 2
+  if (localX < 0 || localX > table.width || localY < 0 || localY > table.height) return null
+  const colSum = table.colWidths.reduce((a, b) => a + b, 0) || 1
+  const rowSum = table.rowHeights.reduce((a, b) => a + b, 0) || 1
+  const sx = table.width / colSum
+  const sy = table.height / rowSum
+  let acc = 0
+  let col = table.colWidths.length - 1
+  for (let i = 0; i < table.colWidths.length; i++) {
+    acc += (table.colWidths[i] ?? 0) * sx
+    if (localX <= acc) {
+      col = i
+      break
+    }
+  }
+  acc = 0
+  let row = table.rowHeights.length - 1
+  for (let i = 0; i < table.rowHeights.length; i++) {
+    acc += (table.rowHeights[i] ?? 0) * sy
+    if (localY <= acc) {
+      row = i
+      break
+    }
+  }
+  return { r: row, c: col }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,6 +506,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
   const { animations, animationsCtx } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
+  const {
+    active: activeTableCell,
+    setActive: setTableCellActive,
+    beginEdit: beginTableCellEdit,
+    endEdit: endTableCellEdit,
+    setRange: setTableCellRange,
+    clear: clearTableCellEdit,
+  } = useTableEdit()
   const { cropImageId, enterCrop, exitCrop } = useCropMode()
   const { pathPointsId, enterPathPoints, exitPathPoints } = usePathPointsMode()
   const { activeTool, setActiveTool } = useTool()
@@ -643,6 +717,35 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const draftRef = useRef<DraftState | null>(null)
 
   /**
+   * M29 Phase 3 — drag-select state for cells inside a TableObject.
+   * Set when the user pointerdowns on an already-selected table; cleared
+   * on pointerup. `startR/C` is the anchor cell (where the drag began);
+   * the resulting `CellRange` in TableEditContext uses (startR, startC)
+   * as one corner and the cell under the latest pointer as the other.
+   */
+  const cellSelectionDragRef = useRef<{
+    tableId: string
+    startR: number
+    startC: number
+  } | null>(null)
+
+  /**
+   * M29 Phase 3+ — pending tap-vs-drag on an already-selected table.
+   * Pointerdown over a table that's in `selectedIds` enters this state
+   * (no mutation yet); pointermove past TAP_THRESHOLD_PX promotes it
+   * to a regular object drag (move the whole table), pointerup without
+   * the promotion commits the tapped cell as the active cell. Pattern
+   * mirrors Keynote: drag = move the table, tap = drill into cells.
+   */
+  const pendingTableTapRef = useRef<{
+    tableId: string
+    r: number
+    c: number
+    startClientX: number
+    startClientY: number
+  } | null>(null)
+
+  /**
    * Pen-tool session — accumulates anchor points while the user is
    * drawing. Anchors live in SLIDE coords (absolute). `dragIndex` is
    * the index of the anchor being shaped (cpOut + symmetric cpIn)
@@ -673,6 +776,23 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // (removed) component-instance edit-mode guard + auto-fit:
   // components are now stamped as primitives, so no per-instance
   // bbox math or active-edit tracking is required.
+
+  // M29 Phase 2: clear table-cell-edit state if the active cell's table
+  // disappears (deleted, peer removed it) or selection moves to a non-
+  // table object. Mirrors the instance-edit cleanup effect above.
+  useEffect(() => {
+    if (activeTableCell === null) return
+    const t = objects.find((o) => o.id === activeTableCell.tableId)
+    if (t === undefined || t.type !== 'table') {
+      clearTableCellEdit()
+      return
+    }
+    // Selection moved off the table — drop the editor target so the
+    // inspector doesn't show table chrome for an unrelated object.
+    if (selectedIds.size > 0 && !selectedIds.has(activeTableCell.tableId)) {
+      clearTableCellEdit()
+    }
+  }, [objects, activeTableCell, selectedIds, clearTableCellEdit])
 
   // Keep the artboard centred in the viewport on mount AND after every
   // zoom change (zoom-to-artboard-centre UX). Runs in useLayoutEffect
@@ -765,6 +885,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // clicks, so edit mode would persist silently.
       if (editingTextId !== null) {
         endEdit()
+      }
+      // M29 Phase 2: same logic for table cell edit. The table editor
+      // overlay stops propagation on clicks inside the contenteditable,
+      // so any pointerdown that reaches the canvas means the user
+      // clicked outside — exit edit mode so subsequent clicks behave
+      // as ordinary canvas gestures.
+      if (activeTableCell !== null && activeTableCell.editing) {
+        endTableCellEdit()
       }
 
       // P11 (Keynote crop): if we're in crop mode and the pointer hit
@@ -875,6 +1003,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         // Klik na prázdnou plochu
         if (!e.shiftKey) {
           clear()
+          // Drop any cell-edit / drag-range state so the highlight
+          // disappears and the inspector reverts to the slide-default
+          // panel — leaving a stale range on an unselected table is
+          // confusing.
+          clearTableCellEdit()
           // Empty-canvas click also exits group isolation, mirroring
           // Figma's behaviour.
           if (enteredGroupId !== null) setEnteredGroupId(null)
@@ -938,6 +1071,66 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         if (!allInSelection) selectMany(groupMembers)
       } else if (!selectedIds.has(hitId)) {
         selectOne(hitId)
+      }
+
+      // M29 Phase 3+: pointer over an already-selected table forks on
+      // whether we're already in cell-edit mode (an active cell exists
+      // on this table):
+      //   NOT in cell mode → defer the gesture. Release under
+      //     TAP_THRESHOLD_PX = tap, commits cell mode on the clicked
+      //     cell. Past the threshold = promote to a normal object
+      //     drag of the whole table. This is the Keynote "select
+      //     once to grab, double-take to drill in" pattern.
+      //   In cell mode → drag-select a cell range from this anchor.
+      //     The first click already drilled in; now drags re-anchor
+      //     and extend the selection like a spreadsheet does.
+      // First click on the table is handled by the normal selection
+      // path above — this branch only fires on subsequent pointerdowns.
+      if (
+        hitObj !== undefined &&
+        hitObj.type === 'table' &&
+        !inIsolation &&
+        selectedIds.has(hitId)
+      ) {
+        const raw = hitTestTableCell(hitObj, x, y)
+        if (raw !== null) {
+          // Resolve merge continuation → origin so the cell anchor
+          // lands on the visible (origin) cell.
+          const target = hitObj.rows[raw.r]?.[raw.c]
+          const r =
+            target !== undefined && typeof target.mergeOriginR === 'number'
+              ? target.mergeOriginR
+              : raw.r
+          const c =
+            target !== undefined && typeof target.mergeOriginC === 'number'
+              ? target.mergeOriginC
+              : raw.c
+          const inCellMode = activeTableCell !== null && activeTableCell.tableId === hitObj.id
+          if (inCellMode) {
+            // Already in cell mode — start a range drag from this
+            // anchor. Re-seeding active here means tap-only also
+            // works (1×1 range collapses to active-only in the range
+            // setter), and drag-extends produce a fresh selection
+            // rather than a confusing extend-from-prior-active.
+            cellSelectionDragRef.current = {
+              tableId: hitObj.id,
+              startR: r,
+              startC: c,
+            }
+            setTableCellActive({ tableId: hitObj.id, r, c })
+          } else {
+            // Not yet in cell mode — defer tap vs table-drag.
+            pendingTableTapRef.current = {
+              tableId: hitObj.id,
+              r,
+              c,
+              startClientX: e.clientX,
+              startClientY: e.clientY,
+            }
+          }
+          ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
+          return
+        }
       }
 
       // P5a: locked objects can be selected but not moved — filter them out
@@ -1035,6 +1228,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       selectMany,
       editingTextId,
       endEdit,
+      activeTableCell,
+      endTableCellEdit,
+      setTableCellActive,
+      clearTableCellEdit,
     ],
   )
 
@@ -1130,6 +1327,53 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         return
       }
 
+      // M29 Phase 3+ — pending tap-vs-drag promotion. If the user
+      // moved past the screen-space threshold, switch the gesture
+      // from "tap → cell mode" to "drag → move the whole table" by
+      // setting up dragRef in place; the regular drag branch below
+      // takes it from here. Under the threshold we stay pending so
+      // pointerup can still commit a cell tap.
+      const pendingTap = pendingTableTapRef.current
+      if (pendingTap !== null) {
+        const sx = e.clientX - pendingTap.startClientX
+        const sy = e.clientY - pendingTap.startClientY
+        if (Math.hypot(sx, sy) <= TAP_THRESHOLD_PX) return
+        const tableObj = objects.find((o) => o.id === pendingTap.tableId)
+        pendingTableTapRef.current = null
+        if (tableObj === undefined || tableObj.locked === true) return
+        dragRef.current = {
+          active: true,
+          objectIds: [pendingTap.tableId],
+          startX: pendingTap.startClientX,
+          startY: pendingTap.startClientY,
+          initialPositions: [{ id: pendingTap.tableId, x: tableObj.x, y: tableObj.y }],
+          initialImageRects: new Map(),
+        }
+        // Fall through — drag branch below now owns the move.
+      }
+
+      // M29 Phase 3 — cell-drag-select update. Hit-test the current
+      // pointer position against the table's cell grid and write a
+      // normalised range covering (startR/C) → (currentR/C). The
+      // range setter collapses single-cell ranges to active-only so
+      // a click without drag doesn't leave a stale 1×1 range.
+      const cellDrag = cellSelectionDragRef.current
+      if (cellDrag !== null && canvasCoords !== null) {
+        const tableObj = objects.find((o) => o.id === cellDrag.tableId)
+        if (tableObj !== undefined && tableObj.type === 'table') {
+          const cell = hitTestTableCell(tableObj, canvasCoords.x, canvasCoords.y)
+          if (cell !== null) {
+            setTableCellRange({
+              tableId: cellDrag.tableId,
+              r0: cellDrag.startR,
+              c0: cellDrag.startC,
+              r1: cell.r,
+              c1: cell.c,
+            })
+          }
+        }
+        return
+      }
       // Object drag
       const drag = dragRef.current
       if (drag === null || !drag.active) return
@@ -1245,7 +1489,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         }),
       )
     },
-    [mutationCtx, objects, setCursor],
+    [mutationCtx, objects, setCursor, setTableCellRange],
   )
 
   const handlePointerUp = useCallback(
@@ -1256,6 +1500,23 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         return
       }
 
+      // M29 Phase 3+ — tap commit. If the user pointed-down on an
+      // already-selected table and released without crossing the
+      // promotion threshold, treat it as a tap: enter cell-select
+      // mode on the cell that was under the pointer at pointerdown.
+      const pendingTap = pendingTableTapRef.current
+      if (pendingTap !== null) {
+        pendingTableTapRef.current = null
+        setTableCellActive({ tableId: pendingTap.tableId, r: pendingTap.r, c: pendingTap.c })
+        return
+      }
+      // M29 Phase 3 — cell-drag-select teardown. setTableCellRange
+      // already collapsed single-cell ranges down to active-only, so
+      // here we just clear the gesture state.
+      if (cellSelectionDragRef.current !== null) {
+        cellSelectionDragRef.current = null
+        return
+      }
       // Pen session — just release the current drag (the controls set
       // during pointermove stay on the anchor). If no drag delta, clear
       // the controls so tap-clicks produce polyline segments.
@@ -1302,7 +1563,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
               ? objectDefaults.strokeDefaults
               : dr.tool === 'text'
                 ? objectDefaults.textColorDefaults
-                : objectDefaults.fillDefaults
+                : dr.tool === 'table'
+                  ? {}
+                  : objectDefaults.fillDefaults
           if (w < minSize && h < minSize) {
             created = createObjectOfType(mutationCtx, dr.tool, {
               x: dr.startX,
@@ -1395,7 +1658,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       dragRef.current = null
       setSnapGuides([])
     },
-    [objects, canvasInstance, selectedIds, selectMany],
+    [objects, canvasInstance, selectedIds, selectMany, setTableCellActive],
   )
 
   // M8: Cursor leave — broadcast null (peer offline z canvasu)
@@ -1446,6 +1709,27 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         beginEdit(hitId)
         return
       }
+      if (hit.type === 'table') {
+        if (isViewer) return
+        selectOne(hitId)
+        const raw = hitTestTableCell(hit, x, y)
+        if (raw === null) return
+        // Walk to the merge origin so a double-click anywhere inside
+        // a merged cell opens the editor at the origin (where the
+        // visible text lives), not on the now-hidden continuation
+        // pointer cell.
+        const target = hit.rows[raw.r]?.[raw.c]
+        const r =
+          target !== undefined && typeof target.mergeOriginR === 'number'
+            ? target.mergeOriginR
+            : raw.r
+        const c =
+          target !== undefined && typeof target.mergeOriginC === 'number'
+            ? target.mergeOriginC
+            : raw.c
+        beginTableCellEdit({ tableId: hitId, r, c })
+        return
+      }
       if (hit.type === 'image') {
         // Keynote-style crop: dbl-click enters crop mode for this image.
         // Editing role only — viewer's selection model still works,
@@ -1482,6 +1766,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       objects,
       selectOne,
       beginEdit,
+      beginTableCellEdit,
       enterCrop,
       enterPathPoints,
       isViewer,
@@ -2248,6 +2533,50 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         )
                       })()}
 
+                    {/* M29 Phase 2: per-cell editor for the first-class
+                      TableObject. Mounts only when `tableEdit.active.editing`
+                      is true; binds to the cell's Y.Text and handles
+                      Tab/Enter navigation across cells. */}
+                    {activeTableCell !== null &&
+                      activeTableCell.editing &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const obj = objects.find((o) => o.id === activeTableCell.tableId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return <TableCellEditor table={obj} mutationCtx={mutationCtx} />
+                      })()}
+
+                    {/* M29 Phase 3: drag-selected cell range highlight. */}
+                    <TableRangeHighlight />
+
+                    {/* M29: faint blue grid guides on every cell boundary
+                      of a selected table (always visible — survives
+                      width-0 / white-on-white borders so the user can
+                      always see the cell layout) + a brighter overlay
+                      on whichever edges the inspector's border-preset
+                      grid is targeting. Mirrors Keynote. */}
+                    {selectedIds.size === 1 &&
+                      (() => {
+                        const onlyId = [...selectedIds][0]
+                        if (onlyId === undefined) return null
+                        const obj = objects.find((o) => o.id === onlyId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return <TableBorderSelectionOverlay table={obj} />
+                      })()}
+
+                    {/* M29 Phase 5: Keynote-style chrome around the
+                      selected table (axis bars + corner handles). */}
+                    {selectedIds.size === 1 &&
+                      mutationCtx !== null &&
+                      (() => {
+                        const onlyId = [...selectedIds][0]
+                        if (onlyId === undefined) return null
+                        const obj = objects.find((o) => o.id === onlyId)
+                        if (obj === undefined || obj.type !== 'table') return null
+                        return (
+                          <TableChrome table={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
+                        )
+                      })()}
                     {/* P11: Keynote-style image crop overlay. */}
                     {cropImageId !== null &&
                       mutationCtx !== null &&

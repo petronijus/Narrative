@@ -41,6 +41,7 @@ import {
   ChevronDown,
   PenTool,
   Ruler,
+  Table2,
   Component as ComponentIcon,
 } from 'lucide-react'
 import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
@@ -51,7 +52,7 @@ import {
   releaseComponentDoc,
   getComponentDoc,
 } from '../state/componentDocCache.js'
-import { stampComponent } from '@narrative/slide-model'
+import { addTable, stampComponent, type ObjectsMutationContext } from '@narrative/slide-model'
 import type { ComponentSummary } from '../api/client.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
@@ -76,6 +77,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface ToolButton {
   tool: ActiveTool
@@ -98,6 +100,7 @@ const TOOL_BUTTONS: ToolButton[] = [
   { tool: 'select', label: 'Select', shortcut: 'V', icon: MousePointer2 },
   { tool: 'hand', label: 'Hand', shortcut: 'H', icon: Hand },
   { tool: 'text', label: 'Text', shortcut: 'T', icon: Type },
+  { tool: 'table', label: 'Table', shortcut: 'K', icon: Table2 },
 ]
 
 const SHAPE_TOOLS: ToolButton[] = [
@@ -344,6 +347,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
       },
     },
     {
+      keys: 'k',
+      scope: 'global',
+      description: 'Table tool',
+      handler: () => {
+        setActiveTool('table')
+      },
+    },
+    {
       keys: 'r',
       scope: 'global',
       description: 'Rectangle tool',
@@ -577,9 +588,12 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
             />
           )}
 
-          {/* Text tool */}
+          {/* Text tool — index 2 in TOOL_BUTTONS, simple onClick toggle. */}
           {!isViewer &&
-            TOOL_BUTTONS.slice(2).map(({ tool, label, shortcut, icon: Icon }) => {
+            (() => {
+              const t = TOOL_BUTTONS[2]
+              if (t === undefined) return null
+              const { tool, label, shortcut, icon: Icon } = t
               const isActive = activeTool === tool
               return (
                 <Tooltip key={tool}>
@@ -600,7 +614,20 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   </TooltipContent>
                 </Tooltip>
               )
-            })}
+            })()}
+
+          {/* Table tool — opens a Word-style grid picker. Hover the
+              cells to size the table; clicking commits + drops the
+              table on the active slide. The legacy `K` shortcut still
+              activates click-to-place mode for keyboard users. */}
+          {!isViewer && objectsCtx !== null && (
+            <TableGridButton
+              objectsCtx={objectsCtx}
+              setActiveTool={setActiveTool}
+              selectOne={selectOne}
+              activeTool={activeTool}
+            />
+          )}
 
           {/* Insert Media — dropdown with Image + Video. Hidden for viewer role. */}
           {!isViewer && (
@@ -938,6 +965,121 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
         </div>
       )}
     </TooltipProvider>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Table grid picker — Word / PowerPoint / LibreImpress-style popover where
+// the user hovers a 10×10 grid to size the table, then clicks to drop it
+// on the active slide at its chosen dimensions.
+// ---------------------------------------------------------------------------
+
+interface TableGridButtonProps {
+  objectsCtx: ObjectsMutationContext
+  setActiveTool: (tool: ActiveTool) => void
+  selectOne: (id: string) => void
+  activeTool: ActiveTool
+}
+
+function TableGridButton({
+  objectsCtx,
+  setActiveTool,
+  selectOne,
+  activeTool,
+}: TableGridButtonProps) {
+  const [open, setOpen] = useState(false)
+  const isActive = activeTool === 'table'
+  const commit = (rows: number, cols: number): void => {
+    // Per-cell dimensions match the registry's defaultProps fallback
+    // (3×3 → 400×200 ⇒ ~133×67 per cell), rounded to a tidy 120×60.
+    // The user can resize after — the picker just sets the initial
+    // proportions to match the chosen grid.
+    const colW = 120
+    const rowH = 60
+    const id = addTable(objectsCtx, {
+      x: 100,
+      y: 100,
+      width: cols * colW,
+      height: rows * rowH,
+      rows,
+      cols,
+    })
+    selectOne(id)
+    setOpen(false)
+    // Stay on Select afterwards — the table is already placed, there's
+    // nothing else for the user to do with the Table tool.
+    setActiveTool('select')
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant={isActive ? 'default' : 'ghost'}
+              size="icon"
+              aria-label="Insert table (K)"
+              aria-pressed={isActive}
+              className="h-7 w-7"
+            >
+              <Table2 className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          Insert table <span className="ml-2 opacity-60">K</span>
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent align="center" side="bottom" sideOffset={6} className="w-auto p-2">
+        <TableGridPicker onCommit={commit} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface TableGridPickerProps {
+  onCommit: (rows: number, cols: number) => void
+}
+
+function TableGridPicker({ onCommit }: TableGridPickerProps) {
+  const MAX = 10
+  // `null` = pointer hasn't entered the grid yet, show the placeholder
+  // label. After first hover, `hover` tracks the selected size.
+  const [hover, setHover] = useState<{ row: number; col: number } | null>(null)
+  const label = hover === null ? 'Insert table' : `${hover.col + 1} × ${hover.row + 1}`
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-center text-[11px] tabular-nums text-muted-foreground">{label}</div>
+      <div
+        className="grid gap-0.5"
+        style={{
+          gridTemplateColumns: `repeat(${MAX}, 14px)`,
+          gridTemplateRows: `repeat(${MAX}, 14px)`,
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {Array.from({ length: MAX * MAX }, (_, i) => {
+          const row = Math.floor(i / MAX)
+          const col = i % MAX
+          const inside = hover !== null && row <= hover.row && col <= hover.col
+          return (
+            <button
+              key={i}
+              type="button"
+              onMouseEnter={() => setHover({ row, col })}
+              onClick={() => onCommit(row + 1, col + 1)}
+              aria-label={`${col + 1} columns by ${row + 1} rows`}
+              className={[
+                'h-3.5 w-3.5 rounded-[2px] border transition-colors',
+                inside
+                  ? 'border-primary bg-primary'
+                  : 'border-input bg-background hover:border-primary/40',
+              ].join(' ')}
+            />
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

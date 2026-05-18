@@ -456,7 +456,7 @@ describe('parsePptx', () => {
 
   // ─── Tables ───────────────────────────────────────────────────────────────
 
-  it('explodes a 2×2 table into 4 grouped cell rects + cell text shapes', async () => {
+  it('parses a 2×2 table into a single kind=table shape with per-cell text', async () => {
     // Table at (0,0) with 2 columns of 914400 EMU (= 96px) and 2 rows of
     // 457200 EMU (= 48px). Each cell has a single text run.
     const slideXml = `${SLIDE_OPEN}
@@ -487,30 +487,25 @@ describe('parsePptx', () => {
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
     const shapes = out.slides[0]!.shapes
-    // 4 cells × (1 rect + 1 text) = 8 shapes.
-    expect(shapes).toHaveLength(8)
-    // All shapes share one groupId.
-    const groupIds = new Set(shapes.map((s) => s.groupId))
-    expect(groupIds.size).toBe(1)
-    expect([...groupIds][0]).toMatch(/^[A-Za-z0-9_-]{12}$/)
-    // Cells laid out 2×2; A1 = (0,0), B1 = (96,0), A2 = (0,48), B2 = (96,48).
-    const a1Rect = shapes[0]!
-    expect(a1Rect.kind).toBe('rectangle')
-    expect(a1Rect.x).toBeCloseTo(0)
-    expect(a1Rect.y).toBeCloseTo(0)
-    expect(a1Rect.width).toBeCloseTo(96)
-    expect(a1Rect.height).toBeCloseTo(48)
-    expect(a1Rect.strokeColor).toBe(0xcccccc)
-    const a1Text = shapes[1]!
-    expect(a1Text.kind).toBe('text')
-    expect(a1Text.text).toBe('A1')
-    const b1Rect = shapes[2]!
-    expect(b1Rect.x).toBeCloseTo(96)
-    const a2Rect = shapes[4]!
-    expect(a2Rect.y).toBeCloseTo(48)
+    expect(shapes).toHaveLength(1)
+    const tbl = shapes[0]!
+    expect(tbl.kind).toBe('table')
+    expect(tbl.x).toBeCloseTo(0)
+    expect(tbl.y).toBeCloseTo(0)
+    expect(tbl.width).toBeCloseTo(192) // 2 × 96 px
+    expect(tbl.height).toBeCloseTo(96) // 2 × 48 px
+    expect(tbl.tableColWidths).toHaveLength(2)
+    expect(tbl.tableRowHeights).toHaveLength(2)
+    expect(tbl.tableColWidths![0]).toBeCloseTo(96)
+    expect(tbl.tableRowHeights![0]).toBeCloseTo(48)
+    const rows = tbl.tableCells!
+    expect(rows[0]![0]!.text).toBe('A1')
+    expect(rows[0]![1]!.text).toBe('B1')
+    expect(rows[1]![0]!.text).toBe('A2')
+    expect(rows[1]![1]!.text).toBe('B2')
   })
 
-  it('skips an empty cell (no <a:txBody>) — emits only the cell rect', async () => {
+  it('emits an empty-string cell when `<a:txBody>` is absent', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -532,10 +527,11 @@ describe('parsePptx', () => {
     const out = await parsePptx(buf)
     const shapes = out.slides[0]!.shapes
     expect(shapes).toHaveLength(1)
-    expect(shapes[0]!.kind).toBe('rectangle')
+    expect(shapes[0]!.kind).toBe('table')
+    expect(shapes[0]!.tableCells![0]![0]!.text).toBe('')
   })
 
-  it('respects gridSpan — a merged-column cell is wider than a single grid col', async () => {
+  it('stamps merge pointers + origin gridSpan for hMerge cells', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -559,16 +555,16 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
-    const shapes = out.slides[0]!.shapes
-    // Just one cell rect + one text (continuation cell skipped).
-    expect(shapes).toHaveLength(2)
-    expect(shapes[0]!.kind).toBe('rectangle')
-    expect(shapes[0]!.width).toBeCloseTo(192) // 2 × 96 px
-    expect(shapes[1]!.kind).toBe('text')
-    expect(shapes[1]!.text).toBe('Header')
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    const cells = tbl.tableCells!
+    expect(cells[0]![0]!.gridSpan).toBe(2)
+    expect(cells[0]![0]!.text).toBe('Header')
+    expect(cells[0]![1]!.mergeOriginR).toBe(0)
+    expect(cells[0]![1]!.mergeOriginC).toBe(0)
   })
 
-  it('applies <a:tcPr><a:solidFill> to the cell rect fill', async () => {
+  it('applies <a:tcPr><a:solidFill> to the cell fill', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -593,12 +589,12 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
-    const rect = out.slides[0]!.shapes[0]!
-    expect(rect.kind).toBe('rectangle')
-    expect(rect.fillColor).toBe(0xff8800)
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    expect(tbl.tableCells![0]![0]!.fill).toBe(0xff8800)
   })
 
-  it('picks the first defined <a:lnL/R/T/B> edge as the cell stroke', async () => {
+  it('captures `<a:lnL/R/T/B>` edges as per-edge cell borders', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:graphicFrame>
         <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
@@ -624,44 +620,17 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
-    const rect = out.slides[0]!.shapes[0]!
-    // Left edge wins per priority order.
-    expect(rect.strokeColor).toBe(0x112233)
-    // 19050 EMU = 2 px @ 96 DPI.
-    expect(rect.strokeWidth).toBeCloseTo(2, 1)
-  })
-
-  it('emits a borderless cell when every declared edge is <a:noFill/>', async () => {
-    const slideXml = `${SLIDE_OPEN}
-      <p:graphicFrame>
-        <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
-        <p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></p:xfrm>
-        <a:graphic>
-          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
-            <a:tbl>
-              <a:tblPr/>
-              <a:tblGrid><a:gridCol w="914400"/></a:tblGrid>
-              <a:tr h="457200">
-                <a:tc>
-                  <a:txBody><a:bodyPr/><a:lstStyle/><a:p/></a:txBody>
-                  <a:tcPr>
-                    <a:lnL><a:noFill/></a:lnL>
-                    <a:lnR><a:noFill/></a:lnR>
-                    <a:lnT><a:noFill/></a:lnT>
-                    <a:lnB><a:noFill/></a:lnB>
-                  </a:tcPr>
-                </a:tc>
-              </a:tr>
-            </a:tbl>
-          </a:graphicData>
-        </a:graphic>
-      </p:graphicFrame>
-    ${SLIDE_CLOSE}`
-    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
-    const out = await parsePptx(buf)
-    const rect = out.slides[0]!.shapes[0]!
-    expect(rect.strokeColor).toBeUndefined()
-    expect(rect.strokeWidth).toBeUndefined()
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    const border = tbl.tableCells![0]![0]!.border
+    expect(border?.left?.color).toBe(0x112233)
+    expect(border?.left?.width).toBeCloseTo(2, 1) // 19050 EMU = 2 px @ 96 DPI
+    expect(border?.bottom?.color).toBe(0x445566)
+    expect(border?.bottom?.width).toBeCloseTo(4, 1) // 38100 EMU = 4 px
+    // Edges not declared by the XML are absent — renderer falls back
+    // to the table default for those.
+    expect(border?.top).toBeUndefined()
+    expect(border?.right).toBeUndefined()
   })
 
   // ─── <a:tblPr> presets ────────────────────────────────────────────────────
@@ -691,13 +660,10 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
-    const shapes = out.slides[0]!.shapes
-    const headerRect = shapes[0]!
-    const bodyRect = shapes[2]!
-    expect(headerRect.kind).toBe('rectangle')
-    expect(headerRect.fillColor).toBe(0x4472c4)
-    expect(bodyRect.kind).toBe('rectangle')
-    expect(bodyRect.fillColor).toBeUndefined()
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    expect(tbl.tableCells![0]![0]!.fill).toBe(0x4472c4) // header (firstRow)
+    expect(tbl.tableCells![1]![0]!.fill).toBeUndefined() // body row — unshaded
   })
 
   it('alternates fills on banded rows below the header', async () => {
@@ -723,16 +689,15 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
-    const rectAt = (rowIndex: number): import('./parser.js').ParsedShape =>
-      out.slides[0]!.shapes[rowIndex]!
-    // 4 rows × no <a:txBody> content (`<a:p/>` is empty) → 1 rect per row,
-    // no text shapes. Indices map 1:1 to rows.
-    expect(rectAt(0).fillColor).toBe(0x4472c4) // header (firstRow)
-    expect(rectAt(1).fillColor).toBeUndefined() // data row 0 — unshaded
-    expect(rectAt(2).fillColor).toBeDefined() // data row 1 — banded
-    expect(rectAt(3).fillColor).toBeUndefined() // data row 2 — unshaded
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    const cells = tbl.tableCells!
+    expect(cells[0]![0]!.fill).toBe(0x4472c4) // header (firstRow)
+    expect(cells[1]![0]!.fill).toBeUndefined() // data row 0 — unshaded
+    expect(cells[2]![0]!.fill).toBeDefined() // data row 1 — banded
+    expect(cells[3]![0]!.fill).toBeUndefined() // data row 2 — unshaded
     // Banded fill is a tint of accent1 — lighter than the original.
-    const banded = rectAt(2).fillColor!
+    const banded = cells[2]![0]!.fill!
     const r = (banded >> 16) & 0xff
     expect(r).toBeGreaterThan(0x44) // tint pushes red channel toward 255
   })
@@ -762,8 +727,10 @@ describe('parsePptx', () => {
     ${SLIDE_CLOSE}`
     const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
     // Explicit green fill wins over preset header colour.
-    expect(out.slides[0]!.shapes[0]!.fillColor).toBe(0x00ff00)
+    expect(tbl.tableCells![0]![0]!.fill).toBe(0x00ff00)
   })
 
   // ─── Parametric shapes (triangle, polygon, arrow) ────────────────────────

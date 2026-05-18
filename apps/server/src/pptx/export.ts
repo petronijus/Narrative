@@ -36,6 +36,8 @@ import type {
   PathObject,
   ImageObject,
   VideoObject,
+  TableObject,
+  TableCell,
   SlideBackground,
   SlideTransition,
   AnimationStep,
@@ -652,6 +654,218 @@ async function emitImage(slide: PptxSlide, obj: ImageObject, loader: AssetLoader
  * emitting them individually. Groups that don't pass the grid test
  * contribute zero ids and survive as plain grouped shapes.
  */
+/**
+ * M29 Phase 4 — emit a first-class TableObject as a real PPTX `<a:tbl>`
+ * via pptxgenjs `addTable`. Continuation cells (covered by a merge) are
+ * filtered out of the row arrays; the origin carries `colspan` / `rowspan`
+ * which pptxgenjs translates into PPTX `gridSpan` / `rowSpan` on the
+ * origin and `hMerge` / `vMerge` markers on the covered slots.
+ *
+ * Cell text uses the same run-array form `emitText` builds for rich text
+ * — per-run bold/italic/underline/color/fontSize survive into the cell
+ * via pptxgenjs's nested TableCell array. Plain-text cells stay on the
+ * string path.
+ */
+function emitTable(slide: PptxSlide, obj: TableObject): void {
+  if (obj.rows.length === 0 || obj.colWidths.length === 0) return
+
+  // Rescale col/row sizes to sum to the table's bbox so the exported
+  // table occupies the same area on the slide regardless of how the
+  // CRDT stored the proportions.
+  const colSum = obj.colWidths.reduce((a, b) => a + b, 0) || 1
+  const rowSum = obj.rowHeights.reduce((a, b) => a + b, 0) || 1
+  const colWPx = obj.colWidths.map((w) => (w / colSum) * obj.width)
+  const rowHPx = obj.rowHeights.map((h) => (h / rowSum) * obj.height)
+
+  const d = obj.defaults
+  const defaultColorHex = hex6(resolveColor(d.color, 0x111111))
+  const defaultBold = d.fontWeight === 'bold' || Number(d.fontWeight) >= 600
+
+  const rows: Array<Array<{ text: unknown; options?: Record<string, unknown> }>> = []
+  for (let r = 0; r < obj.rows.length; r++) {
+    const row: Array<{ text: unknown; options?: Record<string, unknown> }> = []
+    const sourceRow = obj.rows[r] ?? []
+    for (let c = 0; c < obj.colWidths.length; c++) {
+      const cell = sourceRow[c]
+      if (cell === undefined) continue
+      // Skip merge continuation cells — pptxgenjs's colspan/rowspan on
+      // the origin marks these slots as covered. Including them shifts
+      // subsequent cells over by one column.
+      if (cell.mergeOriginR !== undefined || cell.mergeOriginC !== undefined) continue
+
+      const cellOpts: Record<string, unknown> = {
+        color: hex6(resolveColor(cell.color ?? d.color, 0x111111)) || defaultColorHex,
+        fontSize: fontPxToPt(cell.fontSize ?? d.fontSize),
+        bold: cell.fontWeight !== undefined ? cell.fontWeight === 'bold' : defaultBold,
+        align: cell.align ?? d.align,
+        valign:
+          (cell.vAlign ?? d.vAlign) === 'middle'
+            ? 'middle'
+            : (cell.vAlign ?? d.vAlign) === 'bottom'
+              ? 'bottom'
+              : 'top',
+      }
+      if (cell.fill !== undefined) {
+        cellOpts['fill'] = { color: hex6(resolveColor(cell.fill, 0xffffff)) }
+      }
+      // Cell border. When every edge is uniform (either the cell
+      // inherits the table default on all four sides, or its four
+      // per-edge overrides happen to share colour + width) we emit
+      // pptxgenjs's single `border: BorderProps`. Otherwise we emit
+      // the 4-element TRBL array so per-edge differences land as
+      // distinct `<a:lnT/R/B/L>` declarations in PPTX.
+      const trbl = resolvePerEdgeBorder(cell, d)
+      if (trbl !== null) {
+        const allSame =
+          trbl[0].color === trbl[1].color &&
+          trbl[1].color === trbl[2].color &&
+          trbl[2].color === trbl[3].color &&
+          trbl[0].width === trbl[1].width &&
+          trbl[1].width === trbl[2].width &&
+          trbl[2].width === trbl[3].width
+        cellOpts['border'] = allSame
+          ? {
+              type: 'solid',
+              color: hex6(trbl[0].color),
+              pt: strokeWidthPxToPt(trbl[0].width),
+            }
+          : trbl.map((b) => ({
+              type: 'solid',
+              color: hex6(b.color),
+              pt: strokeWidthPxToPt(b.width),
+            }))
+      }
+      const padding = cell.padding ?? d.padding
+      cellOpts['margin'] = [
+        px(padding.top),
+        px(padding.right),
+        px(padding.bottom),
+        px(padding.left),
+      ]
+      if (cell.gridSpan !== undefined && cell.gridSpan > 1) {
+        cellOpts['colspan'] = cell.gridSpan
+      }
+      if (cell.rowSpan !== undefined && cell.rowSpan > 1) {
+        cellOpts['rowspan'] = cell.rowSpan
+      }
+
+      // Text body — rich path mirrors `emitText`'s run-array form.
+      const textValue = buildCellTextForExport(cell, d)
+      row.push({ text: textValue, options: cellOpts })
+    }
+    rows.push(row)
+  }
+
+  const opts: Record<string, unknown> = {
+    x: px(obj.x),
+    y: px(obj.y),
+    w: px(obj.width),
+    h: px(obj.height),
+    colW: colWPx.map(px),
+    rowH: rowHPx.map(px),
+    fontSize: fontPxToPt(d.fontSize),
+    color: defaultColorHex,
+    bold: defaultBold,
+  }
+  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
+  // Default border from table.defaults so empty cells still get a grid.
+  if (d.border !== undefined) {
+    opts['border'] = {
+      type: 'solid',
+      color: hex6(resolveColor(d.border.color, 0xcccccc)),
+      pt: strokeWidthPxToPt(d.border.width),
+    }
+  }
+
+  // pptxgenjs's signature is loose; the runtime accepts the shape we
+  // build here even though the .d.ts narrows `text` to `string |
+  // TableCell[]` and we sometimes pass nested run arrays.
+  slide.addTable(
+    rows as unknown as Array<Array<{ text: string; options?: Record<string, unknown> }>>,
+    opts,
+  )
+}
+
+/**
+ * Resolve a cell's four borders to a TRBL tuple of resolved `{ color,
+ * width }`. Each edge falls through:
+ *   cell.border[edge] (per-edge override) → defaults.border (uniform)
+ *   → null (no border).
+ *
+ * Returns `null` when every edge is unset on both the cell and the
+ * defaults (no border at all). Callers collapse all-equal tuples back
+ * to pptxgenjs's single `BorderProps` form; differing edges land as
+ * the 4-element array shape pptxgenjs accepts.
+ */
+function resolvePerEdgeBorder(
+  cell: TableCell,
+  defaults: TableObject['defaults'],
+):
+  | [
+      { color: number; width: number },
+      { color: number; width: number },
+      { color: number; width: number },
+      { color: number; width: number },
+    ]
+  | null {
+  const edgeOverride = cell.border
+  const defaultStyle = defaults.border
+  const pick = (
+    edge: { color: number | TokenRef; width: number } | undefined,
+  ): { color: number; width: number } | null => {
+    const src = edge ?? defaultStyle
+    if (src === undefined) return null
+    return {
+      color: resolveColor(src.color, 0xcccccc),
+      width: src.width,
+    }
+  }
+  const top = pick(edgeOverride?.top)
+  const right = pick(edgeOverride?.right)
+  const bottom = pick(edgeOverride?.bottom)
+  const left = pick(edgeOverride?.left)
+  if (top === null && right === null && bottom === null && left === null) return null
+  // Any unset edge becomes a 0-width transparent border so the array
+  // size stays consistent for pptxgenjs. The renderer's parsing side
+  // also treats 0-width as "no border".
+  const fallback = { color: 0xcccccc, width: 0 }
+  return [top ?? fallback, right ?? fallback, bottom ?? fallback, left ?? fallback]
+}
+
+/**
+ * Build the `text` payload for one table cell in pptxgenjs's expected
+ * shape: either a plain string (no per-run formatting) or an array of
+ * `{ text, options }` runs that pptxgenjs nests as multiple `<a:r>`
+ * inside the cell's single paragraph. Mirrors `emitText`'s rich path.
+ */
+function buildCellTextForExport(
+  cell: TableCell,
+  defaults: TableObject['defaults'],
+): string | Array<{ text: string; options?: Record<string, unknown> }> {
+  if (cell.text instanceof Y.Text) {
+    const delta = toDelta(cell.text)
+    if (delta.length === 0) return ''
+    if (delta.some((op) => op.attributes !== undefined)) {
+      return delta.map((op) => {
+        const runOpts: Record<string, unknown> = {}
+        const a = op.attributes
+        if (a !== undefined) {
+          if (a.fontWeight !== undefined) runOpts['bold'] = a.fontWeight >= 600
+          if (a.italic === true) runOpts['italic'] = true
+          if (a.underline === true) runOpts['underline'] = { style: 'sng' }
+          if (a.color !== undefined) runOpts['color'] = hex6(a.color)
+          if (a.fontSize !== undefined) runOpts['fontSize'] = fontPxToPt(a.fontSize)
+        }
+        return { text: op.insert, options: runOpts }
+      })
+    }
+    return cell.text.toString()
+  }
+  void defaults // referenced for symmetry with emitText; cell-level defaults applied via cellOpts already
+  return typeof cell.text === 'string' ? cell.text : ''
+}
+
 function emitGroupedTables(slide: PptxSlide, objects: SlideObject[]): Set<string> {
   const consumed = new Set<string>()
   if (objects.length < 2) return consumed
@@ -829,6 +1043,9 @@ async function emitObject(
       break
     case 'video':
       if (loader !== undefined) await emitVideo(slide, obj, loader)
+      break
+    case 'table':
+      emitTable(slide, obj)
       break
     default:
       // component-instance → not yet supported (planned: flatten on

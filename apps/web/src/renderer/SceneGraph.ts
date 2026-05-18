@@ -21,7 +21,9 @@
 
 import { Container, Point } from 'pixi.js'
 import type { Application } from 'pixi.js'
+import * as Y from 'yjs'
 import { getRenderer } from './objectRenderers'
+import { setTableCellFaded } from './objectRenderers/tableRenderer.js'
 import type { SlideObject, SlideObjectType, ObjectChangeSet } from '@narrative/shared'
 import type { ObjectBounds } from './types'
 import type { RenderScheduler } from './RenderScheduler'
@@ -417,6 +419,24 @@ export class SceneGraph {
    * No-op when the id is unknown or its container has no text child.
    */
   setTextNodeFaded(id: string, faded: boolean): void {
+    // M29 — table cell ids are encoded as `${tableId}#${r},${c}`. The
+    // cell isn't a slide-object so we look up the table's container
+    // and let `setTableCellFaded` resolve which HTMLText to fade by
+    // walking the table renderer's Y.Text-keyed cell map.
+    const hashIdx = id.indexOf('#')
+    if (hashIdx > 0) {
+      const tableId = id.slice(0, hashIdx)
+      const tableContainer = this.nodes.get(tableId)?.container
+      if (tableContainer !== undefined) {
+        // Look up the cell's Y.Text from the table's snapshot.
+        const yText = this._cellYTextForId(tableId, id.slice(hashIdx + 1))
+        if (yText !== null) {
+          setTableCellFaded(tableContainer, yText, faded)
+          this.markDirty()
+          return
+        }
+      }
+    }
     const container = this.nodes.get(id)?.container
     if (container === undefined) return
     // Match the same heuristic textRenderer uses internally: the
@@ -429,6 +449,23 @@ export class SceneGraph {
     if (textChild === undefined) return
     textChild.alpha = faded ? 0 : 1
     this.markDirty()
+  }
+
+  /** Resolve a table cell's Y.Text from the current snapshot. Used
+   *  by `setTextNodeFaded` to translate a synthetic cell id into the
+   *  Y.Text identity the table renderer keys its per-cell HTMLText
+   *  sub-nodes by. */
+  private _cellYTextForId(tableId: string, rcSuffix: string): Y.Text | null {
+    const parts = rcSuffix.split(',')
+    if (parts.length !== 2) return null
+    const r = Number(parts[0])
+    const c = Number(parts[1])
+    if (!Number.isInteger(r) || !Number.isInteger(c)) return null
+    const data = this.nodes.get(tableId)?.data
+    if (data === undefined || data.type !== 'table') return null
+    const cell = data.rows[r]?.[c]
+    if (cell === undefined) return null
+    return cell.text instanceof Y.Text ? cell.text : null
   }
 
   /**

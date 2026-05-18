@@ -342,11 +342,12 @@ export function subscribeToSlideObjectsWithFlush(
         processArrayEvent(event as Y.YArrayEvent<Y.Map<unknown>>, pending, currentSnapshot)
       } else if (event.target instanceof Y.Map) {
         processMapEvent(event as Y.YMapEvent<unknown>, pending)
-      } else if (event.target instanceof Y.Text) {
-        // Rich-text bodies live as Y.Text inside the slide-object Y.Map.
-        // A format / insert / delete on the Y.Text fires a Y.YTextEvent.
-        // We surface it as a patch on the parent object so the reconciler re-renders.
-        processTextEvent(event as Y.YTextEvent, objectsArr, pending)
+      } else {
+        // Y.Text / nested Y.Array events (TextObject.text inserts,
+        // TableObject row/col mutations, deep cell-style changes).
+        // Walk up to the id-bearing slide-object Y.Map and re-emit
+        // the top-level field that owns the changed subtree.
+        emitOwningFieldPatch(event.target, pending)
       }
     }
 
@@ -691,101 +692,48 @@ function readIdFromDeletedYMap(yMap: Y.Map<unknown>): string | undefined {
   return undefined
 }
 
-function processTextEvent(
-  event: Y.YTextEvent,
-  objectsArr: Y.Array<Y.Map<unknown>>,
-  pending: PendingBatch,
-): void {
-  // event.path is the ABSOLUTE path from the doc root to the Y.Text — it is NOT
-  // relative to objectsArr. Do NOT use path indices to locate the parent Y.Map or
-  // derive the field name: path[0] is the slide index and path[1] is "objects" (the
-  // key in the slide Y.Map), which is wrong for both purposes.
-  //
-  // Instead, walk up from the event target:
-  //   - event.target          = the Y.Text that was mutated
-  //   - event.target.parent   = the text-object Y.Map that owns the field
-  //   - _item.parentSub       = the key name of the Y.Text within its parent Y.Map
-  //
-  // We then confirm the parent Y.Map is actually a direct item of objectsArr
-  // (guards against accidentally processing events from unrelated subtrees that
-  // Yjs might route through this observer).
-
-  const yText = event.target as Y.Text
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parentMap = (yText as any).parent as Y.Map<unknown> | null | undefined
-  if (!(parentMap instanceof Y.Map)) return
-
-  const id = parentMap.get('id')
-  if (typeof id !== 'string') return
-
-  // Retrieve the key name from Yjs internals (_item.parentSub is the map key).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const key: string = ((yText as any)._item?.parentSub as string | undefined) ?? 'text'
-
-  const patch: Record<string, unknown> = { [key]: parentMap.get(key) }
-  const existing = pending.updatedPatches.get(id)
-  if (existing !== undefined) {
-    pending.updatedPatches.set(id, { ...existing, ...patch } as Partial<SlideObject>)
-  } else {
-    pending.updatedPatches.set(id, patch as Partial<SlideObject>)
-  }
-}
-
-function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): void {
-  const yMap = event.target as Y.Map<unknown>
-  const id = yMap.get('id')
-
-  const merge = (ownerId: string, patch: Record<string, unknown>): void => {
-    if (Object.keys(patch).length === 0) return
-    const existing = pending.updatedPatches.get(ownerId)
-    if (existing !== undefined) {
-      pending.updatedPatches.set(ownerId, { ...existing, ...patch } as Partial<SlideObject>)
-    } else {
-      pending.updatedPatches.set(ownerId, patch as Partial<SlideObject>)
-    }
-  }
-
-  if (typeof id === 'string') {
-    // Direct change on the slide-object Y.Map.
-    const patch: Record<string, unknown> = {}
-    for (const [key] of event.keys) {
-      if (key === 'id' || key === 'type') continue
-      // Value may itself be a Y.Type (e.g. fresh `overrides` Y.Map). Convert
-      // to plain JSON so the renderer's applyPatch path always sees the
-      // same shape regardless of the Yjs storage choice.
-      const v = yMap.get(key)
-      patch[key] = v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
-    }
-    merge(id, patch)
-    return
-  }
-
-  // Nested change — e.g. write into instance.overrides.leaves[leafId]. The
-  // event.target Y.Map has no `id`. Walk up the parent chain to find the
-  // id-bearing slide-object Y.Map, then re-emit the top-level field that
-  // owns the changed subtree as a plain-JSON patch. Without this, the
-  // renderer's applyPatch never sees `'overrides' in patch` and the
-  // canvas stays stale until reload.
+/**
+ * Walk up from a nested Yjs type (Y.Text, Y.Array, Y.Map without an `id`)
+ * to the first id-bearing slide-object Y.Map. Re-emit the top-level
+ * field that owns the changed subtree as a plain-JSON patch so the
+ * reconciler re-renders the affected object.
+ *
+ * Shared by Y.Text + nested-Y.Array event handling. The id-bearing
+ * Y.Map walk in `processMapEvent` does the same job for its nested-
+ * Y.Map case but inlines the loop for clarity around the fast-path
+ * direct-key emit.
+ */
+function emitOwningFieldPatch(target: Y.AbstractType<unknown>, pending: PendingBatch): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type AnyType = Y.AbstractType<any>
   const getParent = (t: AnyType): AnyType | null => {
     const p = (t as unknown as { parent: unknown }).parent
     return p instanceof Y.AbstractType ? (p as AnyType) : null
   }
-
-  let cur: AnyType = yMap as unknown as AnyType
+  let cur: AnyType = target as AnyType
   for (let depth = 0; depth < 12; depth++) {
     const parent = getParent(cur)
     if (parent === null) return
     if (parent instanceof Y.Map) {
       const candidateId = parent.get('id')
       if (typeof candidateId === 'string') {
+        const ownerType =
+          typeof parent.get('type') === 'string' ? (parent.get('type') as string) : ''
+        // Found the slide-object Y.Map. Emit a patch on the field
+        // that owns `cur`. Fast path for Y.Text (parentSub gives the
+        // key directly); slow path iterates entries.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const directKey = (cur as any)._item?.parentSub as string | undefined
+        if (typeof directKey === 'string' && directKey !== 'id' && directKey !== 'type') {
+          mergePatch(pending, candidateId, {
+            [directKey]: snapshotField(parent, directKey, ownerType),
+          })
+          return
+        }
         for (const [k, v] of parent.entries()) {
           if (v === cur) {
             if (k !== 'id' && k !== 'type') {
-              const plain =
-                v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
-              merge(candidateId, { [k]: plain })
+              mergePatch(pending, candidateId, { [k]: snapshotField(parent, k, ownerType) })
             }
             return
           }
@@ -795,4 +743,128 @@ function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): vo
     }
     cur = parent
   }
+}
+
+/**
+ * Read field `key` off a slide-object's id-bearing Y.Map and project
+ * it to the plain shape the renderer consumes.
+ *
+ * Critical invariant: `Y.Text` instances are NEVER flattened to plain
+ * strings. The renderer (textRenderer.buildHtml, table cell paint) keys
+ * its async HTMLText rasterisation off Y.Text identity and reads
+ * per-run formatting via `toDelta()` — flattening here would replace
+ * the live Y.Text reference with a snapshot string, and the next user
+ * keystroke would then diff against that snapshot instead of against
+ * the live Y.Text, producing only the most-recent character ever
+ * making it to the canvas.
+ *
+ * Other AbstractType fields (e.g. componentInstance.overrides Y.Map)
+ * are projected with `toJSON()` because the reconciler reads them
+ * as plain JSON. Y.Array of numbers / nested maps inside tables get
+ * structural unwrapping that preserves the Y.Text body of each cell.
+ */
+function snapshotField(yMap: Y.Map<unknown>, key: string, ownerType: string): unknown {
+  const v = yMap.get(key)
+  if (ownerType === 'table') {
+    if (key === 'rows' && v instanceof Y.Array) {
+      return unwrapTableRowsPreservingYText(v as Y.Array<Y.Array<Y.Map<unknown>>>)
+    }
+    if (key === 'colWidths' || key === 'rowHeights') {
+      if (!(v instanceof Y.Array)) return v
+      const out: number[] = []
+      for (let i = 0; i < v.length; i++) {
+        const n = v.get(i)
+        if (typeof n === 'number') out.push(n)
+      }
+      return out
+    }
+    if (key === 'defaults' && v instanceof Y.Map) {
+      return unwrapTableDefaults(v as Y.Map<unknown>)
+    }
+  }
+  // Preserve Y.Text references — see the docstring above. Only Y.Map
+  // and Y.Array values go through toJSON.
+  if (v instanceof Y.Text) return v
+  return v instanceof Y.AbstractType ? (v as Y.AbstractType<unknown>).toJSON() : v
+}
+
+function unwrapTableRowsPreservingYText(
+  rowsY: Y.Array<Y.Array<Y.Map<unknown>>>,
+): Array<Array<Record<string, unknown>>> {
+  const out: Array<Array<Record<string, unknown>>> = []
+  for (let r = 0; r < rowsY.length; r++) {
+    const rowY = rowsY.get(r)
+    if (!(rowY instanceof Y.Array)) {
+      out.push([])
+      continue
+    }
+    const row: Array<Record<string, unknown>> = []
+    for (let c = 0; c < rowY.length; c++) {
+      const cellY = rowY.get(c)
+      if (cellY instanceof Y.Map) {
+        row.push(unwrapCellPreservingYText(cellY))
+      } else {
+        row.push({ text: '' })
+      }
+    }
+    out.push(row)
+  }
+  return out
+}
+
+function unwrapCellPreservingYText(cellY: Y.Map<unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  cellY.forEach((value, key) => {
+    if ((key === 'border' || key === 'padding') && value instanceof Y.Map) {
+      out[key] = Object.fromEntries(value.entries())
+      return
+    }
+    // Y.Text refs survive intact — renderer keys per-cell HTMLText
+    // sub-nodes by this identity for cross-update reuse.
+    out[key] = value
+  })
+  if (!('text' in out)) out['text'] = ''
+  return out
+}
+
+function unwrapTableDefaults(defaultsY: Y.Map<unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  defaultsY.forEach((value, key) => {
+    if ((key === 'border' || key === 'padding') && value instanceof Y.Map) {
+      out[key] = Object.fromEntries(value.entries())
+      return
+    }
+    out[key] = value
+  })
+  return out
+}
+
+function mergePatch(pending: PendingBatch, id: string, patch: Record<string, unknown>): void {
+  if (Object.keys(patch).length === 0) return
+  const existing = pending.updatedPatches.get(id)
+  pending.updatedPatches.set(
+    id,
+    existing !== undefined
+      ? ({ ...existing, ...patch } as Partial<SlideObject>)
+      : (patch as Partial<SlideObject>),
+  )
+}
+
+function processMapEvent(event: Y.YMapEvent<unknown>, pending: PendingBatch): void {
+  const yMap = event.target as Y.Map<unknown>
+  const id = yMap.get('id')
+  if (typeof id === 'string') {
+    // Direct change on the slide-object Y.Map.
+    const ownerType = typeof yMap.get('type') === 'string' ? (yMap.get('type') as string) : ''
+    const patch: Record<string, unknown> = {}
+    for (const [key] of event.keys) {
+      if (key === 'id' || key === 'type') continue
+      patch[key] = snapshotField(yMap, key, ownerType)
+    }
+    mergePatch(pending, id, patch)
+    return
+  }
+  // Nested Y.Map (no id) — e.g. instance.overrides.leaves[leafId] or a
+  // table cell's style sub-map. Defer to the shared walker.
+  emitOwningFieldPatch(yMap as unknown as Y.AbstractType<unknown>, pending)
 }

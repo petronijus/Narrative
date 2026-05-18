@@ -25,6 +25,13 @@ export type {
   TextListStyle,
   ImageObject,
   VideoObject,
+  TableObject,
+  TableCell,
+  TableDefaults,
+  TableBorderStyle,
+  TableBorderSegmentKey,
+  TableCellEdgeBorders,
+  TableCellPadding,
   SlideObject,
   SlideObjectType,
   SlideObjectPatch,
@@ -43,6 +50,7 @@ export type {
 } from './slide.js'
 
 export { TEXT_STYLE_OVERRIDE_KEYS, isTextStyleOverrideKey } from './slide.js'
+export { hSegKey, vSegKey, getEffectiveBorderSegment } from './slide.js'
 
 export type {
   SlideTransitionKind,

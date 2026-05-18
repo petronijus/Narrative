@@ -71,6 +71,8 @@ import {
 } from 'lucide-react'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { TokenColorInput } from './TokenColorInput.js'
+import { TableInspector } from './TableInspector.js'
+import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
@@ -232,54 +234,9 @@ interface NumberFieldProps {
   onChange: (value: number) => void
 }
 
-interface AlignButtonGroupProps<V extends string> {
-  value: V
-  onChange: (value: V) => void
-  ariaLabel: string
-  options: ReadonlyArray<{
-    value: V
-    label: string
-    Icon: LucideIcon
-  }>
-}
-
-function AlignButtonGroup<V extends string>({
-  value,
-  onChange,
-  ariaLabel,
-  options,
-}: AlignButtonGroupProps<V>) {
-  return (
-    <div
-      role="group"
-      aria-label={ariaLabel}
-      className="flex flex-1 items-stretch overflow-hidden rounded-md border border-input field-surface"
-    >
-      {options.map(({ value: v, label, Icon }, idx) => {
-        const active = v === value
-        return (
-          <button
-            key={v}
-            type="button"
-            aria-label={label}
-            aria-pressed={active}
-            title={label}
-            onClick={() => onChange(v)}
-            className={[
-              'flex flex-1 items-center justify-center px-2 py-1 transition-colors',
-              idx > 0 ? 'border-l border-input' : '',
-              active
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-            ].join(' ')}
-          >
-            <Icon className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        )
-      })}
-    </div>
-  )
-}
+// AlignButtonGroup lives in its own module so the table inspector can
+// import the same component without circular dependencies. Keep the
+// import here colocated with the rest of the ui imports above.
 
 /**
  * Slider + numeric % field for whole-object transparency. Wired to
@@ -287,7 +244,7 @@ function AlignButtonGroup<V extends string>({
  * therefore dims fill, stroke, image, text and any nested decoration
  * uniformly — independent of per-fill / per-stroke alpha.
  */
-function TransparencySlider({
+export function TransparencySlider({
   id,
   value,
   onChange,
@@ -340,7 +297,7 @@ function TransparencySlider({
  * "Size", "Rotation"). Less pronounced than the section title — used
  * inside the Position block to mirror the Figma inspector layout.
  */
-function SubLabel({ children }: { children: React.ReactNode }) {
+export function SubLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="-mb-0.5 mt-1 text-[10px] text-muted-foreground/70 first:mt-0">{children}</div>
   )
@@ -629,7 +586,76 @@ function NameField({
   )
 }
 
-function Section({
+/**
+ * Identity section — authored name (Magic Move pair key + layer label)
+ * and lock toggle. Shared by the generic shape inspector and by
+ * TableInspector so every object type carries the same header chrome.
+ *
+ * The `children` slot is rendered inside the same `<Section>` after the
+ * name + lock row, so callers can append type-specific sub-blocks
+ * (e.g. the page-number toggle for text) without duplicating the
+ * Section wrapper or the name field wiring.
+ */
+export function IdentitySection({
+  obj,
+  objects,
+  isViewer,
+  patch,
+  children,
+}: {
+  obj: SlideObject
+  objects: SlideObject[]
+  isViewer: boolean
+  patch: (p: SlideObjectPatch<SlideObject>) => void
+  children?: React.ReactNode
+}) {
+  return (
+    <Section title="Identity" storageKey="identity">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor={`inspector-name-${obj.id}`}
+          className="w-16 flex-shrink-0 text-xs text-muted-foreground"
+        >
+          Name
+        </label>
+        <NameField
+          obj={obj}
+          objects={objects}
+          disabled={isViewer}
+          onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
+        />
+        <button
+          type="button"
+          onClick={() =>
+            patch({
+              locked: obj.locked === true ? undefined : true,
+            } as SlideObjectPatch<SlideObject>)
+          }
+          disabled={isViewer}
+          aria-pressed={obj.locked === true}
+          aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
+          title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
+          className={[
+            'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
+            obj.locked === true
+              ? 'border-primary bg-primary/15 text-primary'
+              : 'border-border text-muted-foreground hover:text-foreground',
+            'disabled:opacity-40',
+          ].join(' ')}
+        >
+          {obj.locked === true ? (
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+      {children}
+    </Section>
+  )
+}
+
+export function Section({
   title,
   children,
   storageKey,
@@ -835,6 +861,13 @@ export function Inspector() {
     updateObject(mutationCtx, obj.id, p)
   }
 
+  // M29 Phase 2 — Table object has its own inspector with row/col +
+  // defaults + active-cell override controls. Skips the generic shape
+  // chrome below (fill/stroke/etc. live inside the table's `defaults`).
+  if (obj.type === 'table' && mutationCtx !== null) {
+    return <TableInspector obj={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
+  }
+
   return (
     <div className="scrollbar-narrative flex flex-col overflow-y-auto">
       {/* M10: viewer mode notice */}
@@ -843,55 +876,15 @@ export function Inspector() {
           <p className="text-[10px] text-muted-foreground/80">View only</p>
         </div>
       )}
-      {/* P5a: Identity — authored name + lock toggle. Name feeds Magic Move
-          pair key and the layer label. Lock disables transform handles +
-          click-picking but keeps the Inspector functional so the flag can
-          be toggled back off. A padlock badge is rendered over the object
-          in the canvas so the state is visible without opening this panel. */}
-      <Section title="Identity" storageKey="identity">
-        <div className="flex items-center gap-2">
-          <label
-            htmlFor={`inspector-name-${obj.id}`}
-            className="w-16 flex-shrink-0 text-xs text-muted-foreground"
-          >
-            Name
-          </label>
-          <NameField
-            obj={obj}
-            objects={objects}
-            disabled={isViewer}
-            onCommit={(next) => patch({ name: next } as unknown as SlideObjectPatch<SlideObject>)}
-          />
-          <button
-            type="button"
-            onClick={() =>
-              patch({
-                locked: obj.locked === true ? undefined : true,
-              } as SlideObjectPatch<SlideObject>)
-            }
-            disabled={isViewer}
-            aria-pressed={obj.locked === true}
-            aria-label={obj.locked === true ? 'Unlock object' : 'Lock object'}
-            title={obj.locked === true ? 'Unlock' : 'Lock — no dragging / resizing'}
-            className={[
-              'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border',
-              obj.locked === true
-                ? 'border-primary bg-primary/15 text-primary'
-                : 'border-border text-muted-foreground hover:text-foreground',
-              'disabled:opacity-40',
-            ].join(' ')}
-          >
-            {obj.locked === true ? (
-              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            ) : (
-              <Unlock className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-        {/* Page-number field (text only). When ON, the renderer ignores
-            stored content and shows the live deck index for the slide
-            hosting this text (or hosting the component instance, when
-            the leaf lives inside one). Styling continues to apply. */}
+      {/* P5a: Identity — authored name + lock toggle, shared with the
+          table inspector. Name feeds Magic Move pair key and the layer
+          label. Lock disables transform handles + click-picking but
+          keeps the Inspector functional so the flag can be toggled back
+          off. A padlock badge is rendered over the object in the canvas
+          so the state is visible without opening this panel. The
+          page-number toggle is text-only and passed as children so the
+          shared chrome stays type-agnostic. */}
+      <IdentitySection obj={obj} objects={objects} isViewer={isViewer} patch={patch}>
         {obj.type === 'text' && (
           <div className="flex items-center gap-2">
             <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Field</span>
@@ -947,7 +940,7 @@ export function Inspector() {
             </button>
           </div>
         )}
-      </Section>
+      </IdentitySection>
       <SlideNumberPromptDialog
         open={slideNumberPromptOpen}
         textStyleAvailable={footnotesAndPagesStyleId !== null}
@@ -1015,7 +1008,7 @@ export function Inspector() {
 
       {/* Text properties */}
       {obj.type === 'text' && (
-        <TextSection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
+        <TypographySection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
       )}
 
       {/* P8: Video properties — autoplay/loop/muted, volume, fit,
@@ -1433,7 +1426,7 @@ function layerLabel(obj: SlideObject): string {
   return `${obj.type}-${obj.id.slice(0, 4)}`
 }
 
-function LayersPanel({
+export function LayersPanel({
   activeIds,
   mutationCtx,
   readOnly,
@@ -2033,7 +2026,12 @@ interface PositionSectionProps {
  * MultiSelectInspector and uses the selection union as the reference,
  * matching Figma / Keynote conventions.
  */
-function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: PositionSectionProps) {
+export function PositionSection({
+  obj,
+  patch,
+  disabled,
+  layerMutationCtx = null,
+}: PositionSectionProps) {
   const rotationDeg = radToDeg(obj.rotation)
 
   const alignToCanvas = (axis: AlignAxis): void => {
@@ -2287,7 +2285,12 @@ function PositionSection({ obj, patch, disabled, layerMutationCtx = null }: Posi
 // Appearance section — fill + stroke + (rectangle-only) corner radius
 // ---------------------------------------------------------------------------
 
-type FilledShape = RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject
+export type FilledShape =
+  | RectangleObject
+  | EllipseObject
+  | TriangleObject
+  | PolygonObject
+  | PathObject
 
 interface AppearanceSectionProps {
   obj: FilledShape
@@ -2672,12 +2675,32 @@ function StrokeBody({
   )
 }
 
-function FillBody({
+export function FillBody({
   obj,
   patch,
+  onClear,
+  emptyFill,
 }: {
   obj: FilledShape
   patch: (p: SlideObjectPatch<FilledShape>) => void
+  /**
+   * Override for the picker's "No color" button. When omitted, FillBody
+   * drops the visible fill by zeroing `fillAlpha` (schema-safe — `fill`
+   * is required on most FilledShape variants, so we can't just delete
+   * it). When the parent has a richer notion of "no fill" — e.g. a
+   * TableDefaults shim that can truly remove the `fill` field — it
+   * passes its own clear handler here.
+   */
+  onClear?: (() => void) | undefined
+  /**
+   * Parent-supplied override for the empty-fill display state. When
+   * the host's schema can truly clear the fill (TableDefaults.fill,
+   * which is optional), the picker should show "No color" instead of
+   * the seed hex it fell back to. When omitted, FillBody infers from
+   * `obj.fillAlpha === 0` (the schema-safe "no fill" representation
+   * for FilledShape variants whose `fill` field is required).
+   */
+  emptyFill?: boolean
 }) {
   const folderTokensSnapshot = useFolderTokens()
   const { folderId } = useDeckRole()
@@ -2818,6 +2841,23 @@ function FillBody({
                       } as unknown as SlideObjectPatch<FilledShape>)
                   : undefined
               }
+              // "No color". Default path zeroes fillAlpha — FilledShape
+              // schema requires `fill`, so dropping coverage is the
+              // schema-safe way to render nothing. Parents with a
+              // richer schema (TableDefaults supports `fill?`) inject
+              // their own handler here and remove the field outright.
+              onClear={
+                onClear ??
+                (() =>
+                  patch({
+                    fillAlpha: 0,
+                    fillStyle: undefined,
+                  } as unknown as SlideObjectPatch<FilledShape>))
+              }
+              // Parent's truth wins; otherwise derive from alpha for the
+              // shape default (`fill` is required so we can't tell from
+              // the value itself whether it's "set" or "unset").
+              emptyLabel={(emptyFill ?? fillAlpha === 0) && !fillIsToken ? 'No color' : undefined}
               onOpenFolderSettings={
                 folderId !== null ? () => void navigate(`/folder/${folderId}/settings`) : undefined
               }
@@ -3064,6 +3104,14 @@ function GradientPreviewBar({
   // Track whether the pointer actually moved during a press so a
   // click-without-drag can fall through to the dblclick handler.
   const draggedRef = useRef(false)
+  // While dragging, paint the handle from local state instead of the
+  // prop so the cursor and handle move 1:1 regardless of the Yjs +
+  // React re-render round-trip. Cleared on pointerup; the prop value
+  // then matches what we last committed and the handoff is seamless.
+  const [dragOverride, setDragOverride] = useState<{
+    idx: number
+    offset: number
+  } | null>(null)
 
   const beginDrag = (idx: number, e: React.PointerEvent<HTMLButtonElement>): void => {
     e.preventDefault()
@@ -3076,14 +3124,40 @@ function GradientPreviewBar({
     draggedRef.current = false
     const startX = e.clientX
 
+    // rAF-coalesce the Yjs writes so a 120Hz pointer doesn't fire
+    // 120 transactions per second through the whole Inspector tree.
+    // `latestOffset` always holds the most-recent value seen since
+    // the last flush so the rAF callback writes exactly that.
+    let pendingFrame: number | null = null
+    let latestOffset: number | null = null
+    const flush = (): void => {
+      pendingFrame = null
+      if (latestOffset !== null) onUpdate(idx, { offset: latestOffset })
+    }
+
     const move = (ev: PointerEvent) => {
       if (Math.abs(ev.clientX - startX) > 2) draggedRef.current = true
       if (!draggedRef.current) return
       const x = ev.clientX - rect.left
       const t = Math.max(0, Math.min(1, x / Math.max(1, rect.width)))
-      onUpdate(idx, { offset: t })
+      latestOffset = t
+      // Instant visual feedback — bypasses Yjs entirely.
+      setDragOverride({ idx, offset: t })
+      if (pendingFrame === null) pendingFrame = requestAnimationFrame(flush)
     }
     const up = (ev: PointerEvent) => {
+      // Flush the last pending tick synchronously so the committed
+      // offset matches the visible handle before we release the
+      // override (no flash back to the previous value).
+      if (pendingFrame !== null) {
+        cancelAnimationFrame(pendingFrame)
+        flush()
+      } else if (latestOffset !== null) {
+        // pointerup without an outstanding rAF — still need to make
+        // sure the very last move committed.
+        onUpdate(idx, { offset: latestOffset })
+      }
+      setDragOverride(null)
       target.releasePointerCapture(ev.pointerId)
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', up)
@@ -3109,7 +3183,13 @@ function GradientPreviewBar({
       style={{ backgroundImage: previewCss }}
     >
       {stops.map((stop, idx) => {
-        const left = `${Math.max(0, Math.min(1, stop.offset)) * 100}%`
+        // During a drag, the active handle paints from local state so
+        // the cursor and handle stay locked together regardless of the
+        // Yjs / React round-trip. Inactive handles + every handle when
+        // not dragging come straight from the prop.
+        const effectiveOffset =
+          dragOverride !== null && dragOverride.idx === idx ? dragOverride.offset : stop.offset
+        const left = `${Math.max(0, Math.min(1, effectiveOffset)) * 100}%`
         return (
           <div
             key={idx}
@@ -3639,9 +3719,38 @@ function ShadowControls({
 // Text section
 // ---------------------------------------------------------------------------
 
-interface TextSectionProps {
+/**
+ * Toggle which optional rows the Typography section renders. Defaults
+ * are tuned for a TextObject (everything on); the TableInspector
+ * passes a subset because TableDefaults / TableCell don't model
+ * paragraph spacing, list markers, glyph stroke or text-style preset
+ * binding.
+ */
+export interface TypographyFeatures {
+  /** Folder text-style preset dropdown + actions menu (TextObject-only). */
+  textStylePreset?: boolean
+  /** Paragraph space-before / space-after row. */
+  paragraphSpacing?: boolean
+  /** List style (•, 1.) dropdown. */
+  listStyle?: boolean
+  /** Glyph stroke checkbox + color + width. */
+  stroke?: boolean
+  /** Text-color alpha popover (TextObject has colorAlpha; TableDefaults does not). */
+  colorAlpha?: boolean
+}
+
+const FEATURES_TEXT: Required<TypographyFeatures> = {
+  textStylePreset: true,
+  paragraphSpacing: true,
+  listStyle: true,
+  stroke: true,
+  colorAlpha: true,
+}
+
+interface TypographySectionProps {
   obj: TextObject
   patch: (p: SlideObjectPatch<TextObject>) => void
+  features?: TypographyFeatures
 }
 
 interface FontSizeFieldProps {
@@ -3783,7 +3892,12 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
   )
 }
 
-function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
+export function TypographySection({
+  obj,
+  patch: rawPatch,
+  features: featuresIn,
+}: TypographySectionProps) {
+  const features: Required<TypographyFeatures> = { ...FEATURES_TEXT, ...featuresIn }
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
   // M16 P2: folder text style tokens
@@ -3933,8 +4047,10 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
           redundant and easy to accidentally type into. */}
 
       <Section title="Typography" storageKey="typography">
-        {/* M16 P2: Text style dropdown — only shown when folder has text styles defined */}
-        {textStylesList.length > 0 && (
+        {/* M16 P2: Text style dropdown — only shown when folder has text styles defined.
+            Gated behind the textStylePreset feature so the table inspector can hide
+            it (table defaults don't bind to folder text styles). */}
+        {features.textStylePreset && textStylesList.length > 0 && (
           <div className="flex items-center gap-2" data-text-edit-keep-focus>
             <label
               htmlFor={`inspector-textstyle-${obj.id}`}
@@ -4276,41 +4392,45 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
         {/* Paragraph spacing — vertical gap above and below each
             paragraph block. The renderer wraps every line break in a
             <div> with these margins so multi-paragraph text gets the
-            requested room without the user fiddling with line-height. */}
-        <div className="flex items-center gap-1">
-          <CompactNumberField
-            id={`inspector-paragraphspacebefore-${obj.id}`}
-            glyph={
-              <span className="text-[9px] font-semibold leading-none" aria-hidden>
-                ¶↑
-              </span>
-            }
-            ariaLabel="Paragraph space before"
-            value={obj.paragraphSpaceBefore ?? 0}
-            step={1}
-            onChange={(v) =>
-              patch({
-                paragraphSpaceBefore: Math.max(0, v),
-              } as SlideObjectPatch<TextObject>)
-            }
-          />
-          <CompactNumberField
-            id={`inspector-paragraphspaceafter-${obj.id}`}
-            glyph={
-              <span className="text-[9px] font-semibold leading-none" aria-hidden>
-                ¶↓
-              </span>
-            }
-            ariaLabel="Paragraph space after"
-            value={obj.paragraphSpaceAfter ?? 0}
-            step={1}
-            onChange={(v) =>
-              patch({
-                paragraphSpaceAfter: Math.max(0, v),
-              } as SlideObjectPatch<TextObject>)
-            }
-          />
-        </div>
+            requested room without the user fiddling with line-height.
+            Gated behind paragraphSpacing — table cells don't model
+            multi-paragraph blocks (cell text is single-flow). */}
+        {features.paragraphSpacing && (
+          <div className="flex items-center gap-1">
+            <CompactNumberField
+              id={`inspector-paragraphspacebefore-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ¶↑
+                </span>
+              }
+              ariaLabel="Paragraph space before"
+              value={obj.paragraphSpaceBefore ?? 0}
+              step={1}
+              onChange={(v) =>
+                patch({
+                  paragraphSpaceBefore: Math.max(0, v),
+                } as SlideObjectPatch<TextObject>)
+              }
+            />
+            <CompactNumberField
+              id={`inspector-paragraphspaceafter-${obj.id}`}
+              glyph={
+                <span className="text-[9px] font-semibold leading-none" aria-hidden>
+                  ¶↓
+                </span>
+              }
+              ariaLabel="Paragraph space after"
+              value={obj.paragraphSpaceAfter ?? 0}
+              step={1}
+              onChange={(v) =>
+                patch({
+                  paragraphSpaceAfter: Math.max(0, v),
+                } as SlideObjectPatch<TextObject>)
+              }
+            />
+          </div>
+        )}
 
         {/* Text color — Appearance-Fill–style inline swatch + hex with
             alpha popover. No "Color" label; context is the Text panel. */}
@@ -4344,8 +4464,13 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
               }}
               ariaLabel="Text color"
               showHex
-              alpha={obj.colorAlpha ?? 1}
-              onAlphaChange={(a) => patch({ colorAlpha: a } as SlideObjectPatch<TextObject>)}
+              {...(features.colorAlpha
+                ? {
+                    alpha: obj.colorAlpha ?? 1,
+                    onAlphaChange: (a: number) =>
+                      patch({ colorAlpha: a } as SlideObjectPatch<TextObject>),
+                  }
+                : {})}
               inputClassName="!h-5 !w-7"
               hexClassName="!h-5 !border-0 !bg-transparent !px-1 !py-0 !text-[11px] uppercase"
             />
@@ -4353,85 +4478,93 @@ function TextSection({ obj, patch: rawPatch }: TextSectionProps) {
         </div>
 
         {/* List style — placed at the bottom of the typographic
-            controls, just above the Stroke row. */}
-        <div className="flex items-center gap-2">
-          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
-          <select
-            value={obj.listStyle ?? ''}
-            onChange={(e) =>
-              patch({
-                listStyle:
-                  e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
-              } as unknown as SlideObjectPatch<TextObject>)
-            }
-            className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            title="List style"
-          >
-            <option value="">No list</option>
-            <option value="bullet">• Bullet</option>
-            <option value="numbered">1. Numbered</option>
-          </select>
-        </div>
-
-        {/* Text stroke (outline on glyphs) — optional. */}
-        <div className="flex items-center gap-2">
-          <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
-          <div className="flex flex-1 items-center gap-1.5">
-            <input
-              type="checkbox"
-              aria-label="Enable text stroke"
-              checked={obj.stroke !== undefined}
-              onChange={(e) => {
-                if (e.target.checked) {
-                  patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<TextObject>)
-                } else {
-                  patch({
-                    stroke: undefined,
-                    strokeWidth: undefined,
-                  } as unknown as SlideObjectPatch<TextObject>)
-                }
-              }}
-              className="h-3.5 w-3.5"
-            />
-            {obj.stroke !== undefined && (
-              <>
-                <TokenColorInput
-                  value={numberToHex(colourAsNumber(obj.stroke))}
-                  onChange={(hex) =>
-                    patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
-                  }
-                  ariaLabel="Text stroke color"
-                  showHex={false}
-                  alpha={obj.strokeAlpha ?? 1}
-                  onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
-                />
-                <input
-                  type="number"
-                  aria-label="Text stroke width"
-                  min={0}
-                  step={0.5}
-                  value={obj.strokeWidth ?? 1}
-                  onChange={(e) => {
-                    const v = Number.parseFloat(e.target.value)
-                    if (Number.isFinite(v)) {
-                      patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
-                    }
-                  }}
-                  onKeyDown={(e) =>
-                    handleShiftArrowStep(
-                      e,
-                      obj.strokeWidth ?? 1,
-                      0.5,
-                      (v) => patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>),
-                      { min: 0 },
-                    )
-                  }
-                  className="w-16 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-                />
-              </>
-            )}
+            controls, just above the Stroke row. Gated behind
+            listStyle — table cells render single-flow text without
+            list markers. */}
+        {features.listStyle && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
+            <select
+              value={obj.listStyle ?? ''}
+              onChange={(e) =>
+                patch({
+                  listStyle:
+                    e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
+                } as unknown as SlideObjectPatch<TextObject>)
+              }
+              className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              title="List style"
+            >
+              <option value="">No list</option>
+              <option value="bullet">• Bullet</option>
+              <option value="numbered">1. Numbered</option>
+            </select>
           </div>
-        </div>
+        )}
+
+        {/* Text stroke (outline on glyphs) — optional. Gated behind
+            `stroke` — TableDefaults doesn't model glyph stroke. */}
+        {features.stroke && (
+          <div className="flex items-center gap-2">
+            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">Stroke</span>
+            <div className="flex flex-1 items-center gap-1.5">
+              <input
+                type="checkbox"
+                aria-label="Enable text stroke"
+                checked={obj.stroke !== undefined}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    patch({ stroke: 0x000000, strokeWidth: 1 } as SlideObjectPatch<TextObject>)
+                  } else {
+                    patch({
+                      stroke: undefined,
+                      strokeWidth: undefined,
+                    } as unknown as SlideObjectPatch<TextObject>)
+                  }
+                }}
+                className="h-3.5 w-3.5"
+              />
+              {obj.stroke !== undefined && (
+                <>
+                  <TokenColorInput
+                    value={numberToHex(colourAsNumber(obj.stroke))}
+                    onChange={(hex) =>
+                      patch({ stroke: hexToNumber(hex) } as SlideObjectPatch<TextObject>)
+                    }
+                    ariaLabel="Text stroke color"
+                    showHex={false}
+                    alpha={obj.strokeAlpha ?? 1}
+                    onAlphaChange={(a) => patch({ strokeAlpha: a } as SlideObjectPatch<TextObject>)}
+                  />
+                  <input
+                    type="number"
+                    aria-label="Text stroke width"
+                    min={0}
+                    step={0.5}
+                    value={obj.strokeWidth ?? 1}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value)
+                      if (Number.isFinite(v)) {
+                        patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>)
+                      }
+                    }}
+                    onKeyDown={(e) =>
+                      handleShiftArrowStep(
+                        e,
+                        obj.strokeWidth ?? 1,
+                        0.5,
+                        (v) =>
+                          patch({ strokeWidth: Math.max(0, v) } as SlideObjectPatch<TextObject>),
+                        { min: 0 },
+                      )
+                    }
+                    className="w-16 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  />
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </Section>
 
       {newPresetOpen && (
@@ -5218,7 +5351,7 @@ function AnimationItem({
   )
 }
 
-function AnimationsSection({
+export function AnimationsSection({
   objectId,
   animations,
   mutationCtx,

@@ -32,7 +32,57 @@ export type ParsedShapeKind =
   | 'path'
   | 'image'
   | 'video'
+  | 'table'
   | 'unknown'
+
+/**
+ * M29 Phase 4 — one parsed cell inside `<a:tbl>`. Mirrors the run-level
+ * subset of `ParsedShape` that's relevant inside a table cell. Per-edge
+ * border / padding / fill colour come from `<a:tcPr>`; the merge fields
+ * mirror Narrative's TableCell schema (origin carries gridSpan/rowSpan,
+ * continuation cells carry mergeOriginR/C pointers).
+ */
+export interface ParsedTableCell {
+  /** Concatenated plain text of every run in the cell — same shape as
+   *  ParsedShape.text for ordinary text frames. The writer turns this
+   *  into a Y.Text body. */
+  text: string
+  /** Per-run breakdown so the writer can preserve mid-cell formatting
+   *  (bold, italic, colour, font) via Y.Text format ops. Absent when
+   *  the cell has no `<a:txBody>`. */
+  textRuns?: ParsedTextRun[]
+  /** First-run text colour (0xRRGGBB). */
+  color?: number
+  fontSize?: number
+  fontWeight?: 'normal' | 'bold'
+  fontFamily?: string
+  align?: 'left' | 'center' | 'right'
+  vAlign?: 'top' | 'middle' | 'bottom'
+  /** Cell background — solid fill from `<a:tcPr>/<a:solidFill>` or the
+   *  preset-banding heuristic. */
+  fill?: number
+  fillAlpha?: number
+  /** Per-cell border override (`<a:tcPr>/<a:lnL|R|T|B>`). Each edge
+   *  carries its own colour + width, matching Narrative's
+   *  TableCellEdgeBorders shape. An undefined edge means "inherit
+   *  from the table default" (renderer-side fallback). */
+  border?: {
+    top?: { color: number; width: number }
+    right?: { color: number; width: number }
+    bottom?: { color: number; width: number }
+    left?: { color: number; width: number }
+  }
+  /** Cell content padding (PPTX `<a:tcPr marL/marR/marT/marB>`). */
+  padding?: { top: number; right: number; bottom: number; left: number }
+  /** Merge extent — set on the origin only. `gridSpan` = column count
+   *  the origin owns, `rowSpan` = row count. */
+  gridSpan?: number
+  rowSpan?: number
+  /** Continuation pointer — set on every covered cell except the origin.
+   *  Lets the renderer skip them and the editor walk back. */
+  mergeOriginR?: number
+  mergeOriginC?: number
+}
 
 /**
  * Stop on a parsed gradient. `offset` is normalised 0..1 (PPTX uses 0..100000
@@ -235,6 +285,14 @@ export interface ParsedShape {
   textStrokeColor?: number
   textStrokeAlpha?: number
   textStrokeWidth?: number
+  /** Set when `kind === 'table'` — column widths in px (post emuToPx,
+   *  pre-scale). The writer rescales these into the table's bbox when
+   *  it builds the Narrative TableObject. */
+  tableColWidths?: number[]
+  /** Set when `kind === 'table'` — row heights in px. */
+  tableRowHeights?: number[]
+  /** Set when `kind === 'table'` — `rows[r][c]` is a parsed cell. */
+  tableCells?: ParsedTableCell[][]
 }
 
 export interface ParsedBackground {
@@ -2693,11 +2751,31 @@ function parseChartFallback(graphicFrame: XmlNode, imageRels: ImageRelMap): Pars
   return shape
 }
 
+/**
+ * M29 Phase 4 — parse `<a:tbl>` into a single first-class table shape.
+ *
+ * Returns `null` when the table is empty or malformed; the caller skips
+ * the slot entirely (no fallback rectangle in v1). Each `tableCells[r][c]`
+ * carries its own text, style, padding, border, fill, and merge info —
+ * the writer turns that into a `TableObject` via `buildTable` +
+ * `setTableCellStyle` + `mergeTableCells`.
+ *
+ * `tableColWidths` / `tableRowHeights` are in PX (post `emuToPx`,
+ * pre-scale). The writer rescales them to fit the table's bbox.
+ *
+ * Merge handling: the parsed grid is FULLY POPULATED (cells[r][c] exists
+ * for every (r,c) in the grid). The origin cell carries `gridSpan` and
+ * `rowSpan`; every covered slot gets `mergeOriginR`/`mergeOriginC`
+ * pointers back to the origin. PPTX uses two-step encoding for vMerge
+ * (a covered row's `<a:tc vMerge="1">` follows the origin's `<a:tc
+ * rowSpan="N">` in the next N-1 rows) — we resolve both representations
+ * to the same canonical form.
+ */
 function parseTable(
   graphicFrame: XmlNode,
   theme: ThemeColourMap,
   hyperlinkRels: HyperlinkRelMap,
-): ParsedShape[] {
+): ParsedShape | null {
   const gfChildren = getChildren(graphicFrame, 'p:graphicFrame')
 
   // Table position + size from `<p:xfrm>` (NOT `<a:xfrm>` — the
@@ -2725,170 +2803,182 @@ function parseTable(
 
   // Drill down to <a:tbl> via the standard graphicData hierarchy.
   const graphic = findFirst(gfChildren, 'a:graphic')
-  if (!graphic) return []
+  if (!graphic) return null
   const graphicData = findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData')
-  if (!graphicData) return []
+  if (!graphicData) return null
   const tbl = findFirst(getChildren(graphicData, 'a:graphicData'), 'a:tbl')
-  if (!tbl) return []
+  if (!tbl) return null
   const tblChildren = getChildren(tbl, 'a:tbl')
 
   // Column widths (EMU) from `<a:tblGrid>/<a:gridCol w>`.
-  const colWidths: number[] = []
+  const colWidthsEmu: number[] = []
   const tblGrid = findFirst(tblChildren, 'a:tblGrid')
   if (tblGrid) {
     for (const col of findAll(getChildren(tblGrid, 'a:tblGrid'), 'a:gridCol')) {
       const w = Number(getAttrs(col)['@w'] ?? 0)
-      colWidths.push(w)
+      colWidthsEmu.push(w)
     }
   }
-  if (colWidths.length === 0) return []
+  if (colWidthsEmu.length === 0) return null
 
-  // Pre-compute column x offsets so cell coordinate math is O(1) per cell.
-  const colOffsets: number[] = []
-  {
-    let acc = 0
-    for (const w of colWidths) {
-      colOffsets.push(acc)
-      acc += w
-    }
-  }
-
-  // `<a:tblPr>` carries banding / first-row / first-col / last-row /
-  // last-col toggles that select per-slot fills from the theme's
-  // built-in table style (`<a:tableStyleId>` references `ppt/tableStyles.xml`).
-  // Full resolution of that XML is out of v1 scope — instead we apply a
-  // heuristic using the deck's `accent1` colour, which matches what
-  // PowerPoint produces for its default table styles (subtle blue header
-  // + alternating banded rows). The heuristic only kicks in for cells
-  // that DON'T declare their own `<a:tcPr>/<a:solidFill>`.
   const preset = parseTblPr(tblChildren)
   const allRows = findAll(tblChildren, 'a:tr')
+  if (allRows.length === 0) return null
   const totalRows = allRows.length
-  const totalCols = colWidths.length
+  const totalCols = colWidthsEmu.length
+  const rowHeightsEmu: number[] = []
+  for (const row of allRows) rowHeightsEmu.push(Number(getAttrs(row)['@h'] ?? 0))
 
-  const cellShapes: ParsedShape[] = []
-  const groupId = nanoid12()
+  // Pre-build a fully-populated cell matrix and walk the PPTX `<a:tc>`
+  // sequence, stamping merge pointers as we go. PPTX's per-row `<a:tc>`
+  // sequence is column-indexed (after any prior gridSpan); a vMerge="1"
+  // cell still occupies one column slot. We use `ci` to track the
+  // current column position in the row.
+  const tableCells: ParsedTableCell[][] = []
+  for (let r = 0; r < totalRows; r++) {
+    const row: ParsedTableCell[] = []
+    for (let c = 0; c < totalCols; c++) row.push({ text: '' })
+    tableCells.push(row)
+  }
 
-  let rowY = 0
-  let rowIndex = 0
-  for (const row of allRows) {
-    const rowH = Number(getAttrs(row)['@h'] ?? 0)
-    const cells = findAll(getChildren(row, 'a:tr'), 'a:tc')
+  for (let r = 0; r < totalRows; r++) {
+    const rowNode = allRows[r]!
+    const tcs = findAll(getChildren(rowNode, 'a:tr'), 'a:tc')
     let ci = 0
-    for (const tc of cells) {
+    for (const tc of tcs) {
       const tcAttrs = getAttrs(tc)
-      // hMerge / vMerge cells are CONTINUATION slots of a merged cell;
-      // they carry no content of their own. Skip them entirely (we'll
-      // make the originating cell wider/taller via gridSpan/rowSpan).
-      if (tcAttrs['@hMerge'] === '1' || tcAttrs['@vMerge'] === '1') {
+      const isHMergeCont = tcAttrs['@hMerge'] === '1'
+      const isVMergeCont = tcAttrs['@vMerge'] === '1'
+      if (isHMergeCont || isVMergeCont) {
+        // Continuation cell — origin must already be present (above or to
+        // the left, depending on direction). Stamp pointer; the writer
+        // will resolve via the matrix scan below.
         ci++
         continue
       }
       const gridSpan = Math.max(1, Number(tcAttrs['@gridSpan'] ?? 1))
       const rowSpan = Math.max(1, Number(tcAttrs['@rowSpan'] ?? 1))
 
-      const cellXEmu = tableX + (colOffsets[ci] ?? 0)
-      const cellYEmu = tableY + rowY
-      // Cell width = sum of spanned columns; cell height likewise. For
-      // rowSpan we approximate against the current row's height (proper
-      // would peek ahead at the next row(s) — out of v1 scope, the
-      // approximation looks fine on uniform-row tables).
-      let cellWEmu = 0
-      for (let k = 0; k < gridSpan; k++) cellWEmu += colWidths[ci + k] ?? 0
-      const cellHEmu = rowH * rowSpan
-
-      const cellX = emuToPx(cellXEmu)
-      const cellY = emuToPx(cellYEmu)
-      const cellW = emuToPx(cellWEmu)
-      const cellH = emuToPx(cellHEmu)
-
-      // ─ Cell background rect ───────────────────────────────────────────
-      // Pull fill + per-edge borders from `<a:tcPr>` if present. Cells
-      // without `<a:tcPr>` (or with an empty one) fall back to a uniform
-      // 1px gray grid so the table stays visible. A `<a:lnL/R/T/B>` with
-      // `<a:noFill/>` on every declared edge surfaces as strokeWidth=0 +
-      // no strokeColor — we emit a borderless rect in that case.
       const cellStyle = parseCellStyle(tc, theme)
-      const isBorderless = cellStyle.strokeColor === undefined && cellStyle.strokeWidth === 0
-      const rectShape: ParsedShape = {
-        kind: 'rectangle',
-        x: cellX,
-        y: cellY,
-        width: cellW,
-        height: cellH,
-        rotation: 0,
-        sourceTag: 'a:tc',
-        groupId,
+      const targetCell = tableCells[r]?.[ci]
+      if (targetCell === undefined) {
+        ci += gridSpan
+        continue
       }
-      if (!isBorderless) {
-        rectShape.strokeColor = cellStyle.strokeColor ?? 0xcccccc
-        rectShape.strokeWidth = cellStyle.strokeWidth ?? 1
-        if (cellStyle.strokeAlpha !== undefined) rectShape.strokeAlpha = cellStyle.strokeAlpha
-      }
-      if (cellStyle.fillColor !== undefined) rectShape.fillColor = cellStyle.fillColor
-      if (cellStyle.fillAlpha !== undefined) rectShape.fillAlpha = cellStyle.fillAlpha
-      if (cellStyle.fillGradient !== undefined) rectShape.fillGradient = cellStyle.fillGradient
-      // Apply `<a:tblPr>` preset heuristic ONLY when the cell didn't
-      // declare its own fill. Slot priority follows PowerPoint:
-      // firstRow / lastRow / firstCol / lastCol → solid accent; bandRow /
-      // bandCol → alternating tints. The heuristic produces visually
-      // close-to-PowerPoint defaults without resolving `tableStyles.xml`.
+      // Fill + border.
+      if (cellStyle.fillColor !== undefined) targetCell.fill = cellStyle.fillColor
+      if (cellStyle.fillAlpha !== undefined) targetCell.fillAlpha = cellStyle.fillAlpha
       if (
-        rectShape.fillColor === undefined &&
-        rectShape.fillGradient === undefined &&
-        rectShape.fillAlpha === undefined
+        targetCell.fill === undefined &&
+        cellStyle.fillGradient === undefined &&
+        cellStyle.fillAlpha === undefined
       ) {
-        const presetFill = computePresetFill(preset, rowIndex, ci, totalRows, totalCols, theme)
-        if (presetFill !== undefined) {
-          rectShape.fillColor = presetFill
-        }
+        const presetFill = computePresetFill(preset, r, ci, totalRows, totalCols, theme)
+        if (presetFill !== undefined) targetCell.fill = presetFill
       }
-      cellShapes.push(rectShape)
+      // Per-edge borders — copy whichever edges PPTX declared so the
+      // writer can stamp them onto the TableCell's per-edge override.
+      const edgeBorder: NonNullable<ParsedTableCell['border']> = {}
+      if (cellStyle.borderTop !== undefined) edgeBorder.top = cellStyle.borderTop
+      if (cellStyle.borderRight !== undefined) edgeBorder.right = cellStyle.borderRight
+      if (cellStyle.borderBottom !== undefined) edgeBorder.bottom = cellStyle.borderBottom
+      if (cellStyle.borderLeft !== undefined) edgeBorder.left = cellStyle.borderLeft
+      if (Object.keys(edgeBorder).length > 0) targetCell.border = edgeBorder
+      // Padding from `<a:tcPr marL/marR/marT/marB>`. PPTX defaults
+      // (when unspecified) are 91440 EMU L/R + 45720 EMU T/B; v1 reads
+      // explicit values only and lets the writer fall back to Narrative's
+      // standard 8px when absent.
+      const tcPr = findFirst(getChildren(tc, 'a:tc'), 'a:tcPr')
+      if (tcPr) {
+        const a = getAttrs(tcPr)
+        const padTop = a['@marT'] !== undefined ? emuToPx(Number(a['@marT'])) : undefined
+        const padRight = a['@marR'] !== undefined ? emuToPx(Number(a['@marR'])) : undefined
+        const padBottom = a['@marB'] !== undefined ? emuToPx(Number(a['@marB'])) : undefined
+        const padLeft = a['@marL'] !== undefined ? emuToPx(Number(a['@marL'])) : undefined
+        if (
+          padTop !== undefined ||
+          padRight !== undefined ||
+          padBottom !== undefined ||
+          padLeft !== undefined
+        ) {
+          targetCell.padding = {
+            top: padTop ?? 8,
+            right: padRight ?? 8,
+            bottom: padBottom ?? 8,
+            left: padLeft ?? 8,
+          }
+        }
+        // Vertical anchor on `<a:tcPr anchor="t|ctr|b">`.
+        const anchor = a['@anchor']
+        if (anchor === 't') targetCell.vAlign = 'top'
+        else if (anchor === 'ctr') targetCell.vAlign = 'middle'
+        else if (anchor === 'b') targetCell.vAlign = 'bottom'
+      }
 
-      // ─ Cell text (if any) ─────────────────────────────────────────────
-      // Re-use `parseShape` on a synthesised `<p:sp>` so the cell text
-      // picks up the full run/style/hyperlink/bullet pipeline. The
-      // simplest way to do that without copying code is to construct a
-      // minimal `<p:sp>` wrapper around the cell's `<a:txBody>` and feed
-      // it to `parseShape`. We pre-set the cell's geometry on a synthetic
-      // `<a:xfrm>` so the inherited-placeholder fallback doesn't run.
+      // Cell text. Re-use `parseShape` on a synthesised `<p:sp>` so the
+      // cell text picks up the full run/style/hyperlink pipeline — same
+      // pattern the legacy exploded-cell path used. The synthesised x/y/w/h
+      // doesn't matter for the table (the writer uses the table bbox);
+      // just need parseShape to produce text + textRuns + style fields.
       const cellTxBody = findFirst(getChildren(tc, 'a:tc'), 'a:txBody')
       if (cellTxBody) {
-        // Build a minimal in-memory `p:sp` XmlNode that wraps the cell's
-        // text body with concrete xfrm geometry. We feed it through
-        // parseShape so the full text resolution pipeline applies.
-        const synthSp = synthesiseCellShape(cellTxBody, cellXEmu, cellYEmu, cellWEmu, cellHEmu)
+        const synthSp = synthesiseCellShape(cellTxBody, 0, 0, 1, 1)
         const txt = parseShape(synthSp, 'p:sp', theme, new Map(), new Map(), {}, hyperlinkRels)
         if (txt !== null && txt.kind === 'text') {
-          txt.groupId = groupId
-          cellShapes.push(txt)
+          targetCell.text = txt.text ?? ''
+          if (txt.textRuns !== undefined) targetCell.textRuns = txt.textRuns
+          if (txt.textColor !== undefined) targetCell.color = txt.textColor
+          if (txt.fontSize !== undefined) targetCell.fontSize = txt.fontSize
+          if (txt.bold === true) targetCell.fontWeight = 'bold'
+          if (txt.fontFamily !== undefined) targetCell.fontFamily = txt.fontFamily
+          if (txt.textAlign === 'left' || txt.textAlign === 'center' || txt.textAlign === 'right') {
+            targetCell.align = txt.textAlign
+          }
+          if (txt.textVerticalAlign !== undefined && targetCell.vAlign === undefined) {
+            targetCell.vAlign = txt.textVerticalAlign
+          }
+        }
+      }
+
+      // Merge stamping. Origin owns gridSpan/rowSpan; continuation cells
+      // get pointers back. We populate the matrix unconditionally — even
+      // when subsequent `<a:tc>` siblings carry their own hMerge/vMerge
+      // flags, our matrix-based stamping is the canonical source.
+      if (gridSpan > 1 || rowSpan > 1) {
+        targetCell.gridSpan = gridSpan
+        targetCell.rowSpan = rowSpan
+        for (let rr = r; rr < r + rowSpan && rr < totalRows; rr++) {
+          for (let cc = ci; cc < ci + gridSpan && cc < totalCols; cc++) {
+            if (rr === r && cc === ci) continue
+            const cont = tableCells[rr]?.[cc]
+            if (cont !== undefined) {
+              cont.mergeOriginR = r
+              cont.mergeOriginC = ci
+            }
+          }
         }
       }
 
       ci += gridSpan
     }
-    rowY += rowH
-    rowIndex++
   }
 
-  // Sanity guard — if we somehow ended up with zero cells but had a
-  // non-empty grid, surface the table bounds as a single hint rect so
-  // the slide isn't visually empty where the table used to be.
-  if (cellShapes.length === 0 && tableW > 0 && tableH > 0) {
-    cellShapes.push({
-      kind: 'rectangle',
-      x: emuToPx(tableX),
-      y: emuToPx(tableY),
-      width: emuToPx(tableW),
-      height: emuToPx(tableH),
-      rotation: 0,
-      strokeColor: 0xcccccc,
-      strokeWidth: 1,
-      sourceTag: 'a:tbl',
-      groupId,
-    })
+  // Sanity guard — at least one cell with content (text or fill) OR a
+  // non-zero bbox. Otherwise treat as garbage and drop.
+  if (tableW <= 0 || tableH <= 0) return null
+
+  return {
+    kind: 'table',
+    x: emuToPx(tableX),
+    y: emuToPx(tableY),
+    width: emuToPx(tableW),
+    height: emuToPx(tableH),
+    rotation: 0,
+    sourceTag: 'a:tbl',
+    tableColWidths: colWidthsEmu.map(emuToPx),
+    tableRowHeights: rowHeightsEmu.map(emuToPx),
+    tableCells,
   }
-  return cellShapes
 }
 
 /**
@@ -3061,9 +3151,16 @@ interface CellStyle {
   fillColor?: number
   fillAlpha?: number
   fillGradient?: ParsedGradient
-  strokeColor?: number
-  strokeAlpha?: number
-  strokeWidth?: number
+  /** Per-edge borders extracted from `<a:tcPr>/<a:lnL|R|T|B>`. An edge
+   *  with `<a:noFill/>` and no override is absent here so the renderer
+   *  can fall back to the table-wide default. The four-edges-all-noFill
+   *  case still surfaces as fully absent — Narrative's renderer treats
+   *  an undefined cell.border as "inherit", so explicit suppression on
+   *  every edge collapses into the same behaviour. */
+  borderTop?: { color: number; width: number }
+  borderRight?: { color: number; width: number }
+  borderBottom?: { color: number; width: number }
+  borderLeft?: { color: number; width: number }
 }
 
 function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
@@ -3093,71 +3190,36 @@ function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
   // so we leave fillColor/fillGradient unset. The cell rect's default
   // (no fill key) makes it transparent.
 
-  // ─── Per-edge borders → uniform stroke ───────────────────────────────────
-  // Priority left → right → top → bottom: the first edge with a solidFill
-  // wins. PowerPoint defaults each edge to `<a:lnL>` (or family) with the
-  // master/theme's table-grid colour when unspecified, but for v1 we honour
-  // only inline declarations.
-  for (const edge of ['a:lnL', 'a:lnR', 'a:lnT', 'a:lnB']) {
-    const ln = findFirst(tcPrChildren, edge)
+  // ─── Per-edge borders ─────────────────────────────────────────────────────
+  // Each `<a:lnL/R/T/B>` is captured independently so the writer can
+  // emit a per-edge override on the TableCell. `<a:noFill/>` on a given
+  // edge leaves that edge undefined in our output — the renderer's
+  // default-fallback then re-introduces the table-wide grid border.
+  // (Explicitly suppressing the default on every edge would require a
+  // schema sentinel; deferred until a test case demands it.)
+  const edges: Array<{ tag: string; key: keyof CellStyle }> = [
+    { tag: 'a:lnT', key: 'borderTop' },
+    { tag: 'a:lnR', key: 'borderRight' },
+    { tag: 'a:lnB', key: 'borderBottom' },
+    { tag: 'a:lnL', key: 'borderLeft' },
+  ]
+  for (const { tag, key } of edges) {
+    const ln = findFirst(tcPrChildren, tag)
     if (!ln) continue
-    const lnChildren = getChildren(ln, edge)
-    // Width is on the `<a:lnL w="EMU">` attribute. Convert to px.
-    const wAttr = getAttrs(ln)['@w']
-    const w = typeof wAttr === 'string' ? emuToPx(Number(wAttr)) : undefined
-    // `<a:noFill/>` on an edge explicitly suppresses the border. When all
-    // edges are noFill we want strokeColor=undefined; mark this once.
-    if (findFirst(lnChildren, 'a:noFill') !== undefined) {
-      // Suppression — but ONLY if every edge agrees. Keep scanning.
-      continue
-    }
+    const lnChildren = getChildren(ln, tag)
+    if (findFirst(lnChildren, 'a:noFill') !== undefined) continue
     const lnSolid = findFirst(lnChildren, 'a:solidFill')
-    if (lnSolid) {
-      const c = parseColourAndAlphaFrom(lnSolid, theme)
-      if (c !== undefined) {
-        out.strokeColor = c.color
-        if (c.alpha !== undefined) out.strokeAlpha = c.alpha
-        if (w !== undefined && w > 0) out.strokeWidth = w
-        break
-      }
+    if (!lnSolid) continue
+    const c = parseColourAndAlphaFrom(lnSolid, theme)
+    if (c === undefined) continue
+    const wAttr = getAttrs(ln)['@w']
+    const w = typeof wAttr === 'string' ? emuToPx(Number(wAttr)) : 1
+    ;(out as Record<string, unknown>)[key] = {
+      color: c.color,
+      width: w > 0 ? w : 1,
     }
   }
 
-  // If all four edges were `<a:noFill/>` (every present `a:ln*` had a
-  // `<a:noFill/>` child and no solid), explicitly suppress the stroke so
-  // the cell renders borderless instead of falling back to the uniform
-  // grid. Detect this by checking that EVERY declared edge was noFill.
-  if (out.strokeColor === undefined) {
-    const declaredEdges = ['a:lnL', 'a:lnR', 'a:lnT', 'a:lnB']
-      .map((tag) => findFirst(tcPrChildren, tag))
-      .filter((n): n is XmlNode => n !== undefined)
-    if (declaredEdges.length > 0) {
-      const allNoFill = declaredEdges.every((ln) => {
-        const tag = getTag(ln)
-        if (tag === null) return false
-        return findFirst(getChildren(ln, tag), 'a:noFill') !== undefined
-      })
-      if (allNoFill) {
-        // Sentinel: a strokeWidth of 0 communicates "intentionally
-        // borderless" downstream. The cell-rect builder treats absent
-        // strokeColor + strokeWidth=0 as "draw no stroke", overriding the
-        // gray-grid default.
-        out.strokeWidth = 0
-      }
-    }
-  }
-
-  return out
-}
-
-/** Stable 12-char id for grouping table cells together. Inline to avoid
- *  pulling nanoid into the parser's already-large dep surface. */
-function nanoid12(): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-'
-  let out = ''
-  for (let i = 0; i < 12; i++) {
-    out += alphabet[Math.floor(Math.random() * alphabet.length)]
-  }
   return out
 }
 
@@ -3243,7 +3305,8 @@ function parseSlide(
       const gd = graphic ? findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData') : undefined
       const uri = gd !== undefined ? String(getAttrs(gd)['@uri'] ?? '') : ''
       if (uri.endsWith('/table')) {
-        shapes.push(...parseTable(node, theme, hyperlinkRels))
+        const tableShape = parseTable(node, theme, hyperlinkRels)
+        if (tableShape !== null) shapes.push(tableShape)
       } else if (uri.endsWith('/chart')) {
         const chartShape = parseChartFallback(node, imageRels)
         if (chartShape !== null) shapes.push(chartShape)

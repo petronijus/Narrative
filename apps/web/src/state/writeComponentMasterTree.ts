@@ -16,7 +16,11 @@
 
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import type { SlideObject, AnimationStep } from '@narrative/shared'
+import type { SlideObject, AnimationStep, TableObject, TableCell } from '@narrative/shared'
+import {
+  plainObjectToYMap as canonicalPlainObjectToYMap,
+  collectPendingCellTextInserts,
+} from '@narrative/slide-model'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
@@ -73,10 +77,46 @@ export async function writeComponentMasterTree({
       slide.set('order', 0)
 
       const objects = new Y.Array<Y.Map<unknown>>()
+      // Tables need a two-phase init: build the Y.Map (with empty Y.Texts in
+      // each cell), push into the parent Y.Array so the Y.Texts get a real
+      // doc context, then insert the initial text strings. A standalone
+      // Y.Text's `_pending` ops don't fire when the Y.Text is integrated via
+      // deeply-nested containers (cell → row Y.Array → rows Y.Array → table
+      // Y.Map). Mirrors mutations.ts `addObject`.
+      const pendingTableInits: Array<{
+        yMap: Y.Map<unknown>
+        inserts: ReturnType<typeof collectPendingCellTextInserts>
+      }> = []
       for (const obj of masterTree) {
-        objects.push([plainObjectToYMap(obj)])
+        if ((obj as { type?: string }).type === 'table') {
+          const table = obj as TableObject
+          const yMap = canonicalPlainObjectToYMap(obj)
+          objects.push([yMap])
+          pendingTableInits.push({
+            yMap,
+            inserts: collectPendingCellTextInserts(table as unknown as { rows: TableCell[][] }),
+          })
+        } else {
+          objects.push([plainObjectToYMap(obj)])
+        }
       }
       slide.set('objects', objects)
+
+      // Phase 2: now that every table Y.Map is integrated into `objects`,
+      // its nested Y.Texts have a real parent — safe to insert content.
+      for (const { yMap, inserts } of pendingTableInits) {
+        if (inserts.length === 0) continue
+        const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+        if (rowsY === undefined) continue
+        for (const p of inserts) {
+          const rowY = rowsY.get(p.r) as Y.Array<Y.Map<unknown>> | undefined
+          if (rowY === undefined) continue
+          const cellY = rowY.get(p.c) as Y.Map<unknown> | undefined
+          if (cellY === undefined) continue
+          const yt = cellY.get('text')
+          if (yt instanceof Y.Text) yt.insert(0, p.initial)
+        }
+      }
 
       const animations = new Y.Array<Y.Map<unknown>>()
       for (const step of masterAnimations) {

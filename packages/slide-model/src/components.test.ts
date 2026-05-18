@@ -14,10 +14,11 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
 import { addObject } from './mutations.js'
+import { addTable } from './tableMutations.js'
 import { addAnimation } from './animationMutations.js'
 import { getSlideObjectsCtx, getSlideAnimationsCtx, listSlides } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
-import type { RectangleObject, AnimationStep } from '@narrative/shared'
+import type { RectangleObject, AnimationStep, TableObject } from '@narrative/shared'
 import { getComponentDocName, pruneAnimationsToScope, promoteToComponent } from './components.js'
 
 // ---------------------------------------------------------------------------
@@ -262,6 +263,60 @@ describe('promoteToComponent', () => {
     const plan = promoteToComponent(deckCtx, slideId, ['r1'], 'folder-1')
 
     // If JSON.stringify throws, the plan contains non-serializable values
+    expect(() => JSON.stringify(plan)).not.toThrow()
+  })
+
+  // Regression — promoting a table used to leak Y.Text refs from the deck doc
+  // into the masterTree (via rows[r][c].text), and the receiver tried to
+  // re-encode them into the component doc, blowing the writeAny stack. The
+  // plan must contain plain-string cell texts only.
+  it('table plan: cell texts are plain strings (no Y.Text refs to source doc)', () => {
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    const tableId = addTable(objCtx, {
+      x: 50,
+      y: 60,
+      width: 300,
+      height: 200,
+      rows: 2,
+      cols: 3,
+    })
+
+    // Type some content into cells via Y.Text so the rows have real text.
+    // We reach into the live Y.Map to mirror how the editor types.
+    const objectsArr = (
+      deckCtx.slides.toArray().find((s) => s.get('id') === slideId) as Y.Map<unknown>
+    ).get('objects') as Y.Array<Y.Map<unknown>>
+    let liveTable: Y.Map<unknown> | null = null
+    for (let i = 0; i < objectsArr.length; i++) {
+      const m = objectsArr.get(i)
+      if (m.get('id') === tableId) {
+        liveTable = m
+        break
+      }
+    }
+    expect(liveTable).not.toBeNull()
+    const rowsY = liveTable!.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>>
+    const cellY = rowsY.get(0).get(1)
+    const cellText = cellY.get('text') as Y.Text
+    cellText.insert(0, 'Hello')
+
+    const plan = promoteToComponent(deckCtx, slideId, [tableId], 'folder-1')
+
+    const tbl = plan.masterTree.find((o) => o.id === tableId) as TableObject
+    expect(tbl).toBeDefined()
+    expect(tbl.type).toBe('table')
+    expect(tbl.rows).toHaveLength(2)
+    expect(tbl.rows[0]).toHaveLength(3)
+    // Every cell.text must be a plain JS string (no toString/insert duck).
+    for (const row of tbl.rows) {
+      for (const cell of row) {
+        expect(typeof cell.text).toBe('string')
+      }
+    }
+    expect(tbl.rows[0]![1]!.text).toBe('Hello')
+
+    // The whole plan must JSON-serialize (Y.Text would throw because of
+    // circular doc refs).
     expect(() => JSON.stringify(plan)).not.toThrow()
   })
 

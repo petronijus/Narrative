@@ -626,6 +626,226 @@ export interface VideoObject extends BaseSlideObject {
 // ---------------------------------------------------------------------------
 
 /**
+
+/**
+ * M29 — first-class table object. Live alongside RectangleObject as a
+ * peer in the SlideObject union; renderer + inspector + PPTX import all
+ * branch on `type: 'table'`.
+ *
+ * The 2-D `rows` grid mirrors PPTX `<a:tr>/<a:tc>` exactly. Cell merge
+ * works via origin cells carrying `gridSpan`/`rowSpan` while non-origin
+ * cells in the spanned area carry `mergeOriginR/C` pointers; the
+ * renderer skips drawing the pointer cells. `colWidths` + `rowHeights`
+ * sum to the table's `width` / `height`; resizing the outer bbox
+ * proportionally scales each, while resizing an inner divider
+ * redistributes between two adjacent cells (table width unchanged —
+ * the Office convention, picked over Google Docs's grow-the-table mode
+ * per the M29 plan's default).
+ */
+export interface TableBorderStyle {
+  color: number | TokenRef
+  width: number
+  /** Stroke style. Subset of PPTX's many — sane v1 set. */
+  dash?: 'solid' | 'dash' | 'dot'
+  alpha?: number
+}
+
+export interface TableCellEdgeBorders {
+  top?: TableBorderStyle
+  right?: TableBorderStyle
+  bottom?: TableBorderStyle
+  left?: TableBorderStyle
+}
+
+export interface TableCellPadding {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+export interface TableCell {
+  /** Y.Text-backed body — same rich-text pipeline as TextObject. Existing
+   *  Y.Docs loaded from disk may still carry a plain string until the
+   *  next mutation promotes it (mirrors TextObject's promotion path). */
+  text: string | Y.Text
+  /** Per-cell overrides; missing fields inherit from `table.defaults`. */
+  fontSize?: number
+  fontWeight?: FontWeight
+  /** Italic + underline are box-level (single value for the cell). Inline
+   *  per-run formatting is handled separately on the Y.Text body — the
+   *  field here is the fallback for cells without inline overrides and
+   *  the value the Typography section toggles when no caret is set. */
+  italic?: boolean
+  underline?: boolean
+  /** Line height as a unitless multiplier (e.g. 1.2). Matches the
+   *  TextObject schema so the same Typography section can drive both. */
+  lineHeight?: number
+  /** Letter-spacing in slide-local px. Mirrors TextObject. */
+  letterSpacing?: number
+  /** Visual case transform applied at render time. Mirrors TextObject. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  color?: number | TokenRef
+  align?: 'left' | 'center' | 'right'
+  vAlign?: 'top' | 'middle' | 'bottom'
+  fill?: number | TokenRef
+  fillAlpha?: number
+  /**
+   * Non-solid fill (linear gradient / radial gradient / image). When
+   * present, the renderer paints this *instead* of the flat `fill` —
+   * the latter stays around as the solid-color fallback that's
+   * applied if the user later switches back. Cell-level override
+   * shadows the table-wide `defaults.fillStyle`; absent means "use
+   * the solid `fill` + `fillAlpha` path".
+   */
+  fillStyle?: FillStyle
+  /** Per-edge border — independently controllable, fixes the M28-era
+   *  "Narrative has one stroke per shape" limitation that collapsed
+   *  PPTX `<a:lnL|R|T|B>` to a single uniform stroke on import. */
+  border?: TableCellEdgeBorders
+  padding?: TableCellPadding
+  /** Cell merge — gridSpan/rowSpan on the ORIGIN cell only; non-origin
+   *  cells in the spanned area carry mergeOriginR/C pointers. The
+   *  origin renders the full merged area; pointer cells skip rendering.
+   *  gridSpan/rowSpan default to 1 when missing. */
+  gridSpan?: number
+  rowSpan?: number
+  mergeOriginR?: number
+  mergeOriginC?: number
+}
+
+export interface TableDefaults {
+  fontFamily?: string
+  fontSize: number
+  fontWeight: FontWeight
+  /** Italic / underline box-level defaults; cells override via their
+   *  own optional fields. Same semantics as TextObject. */
+  italic?: boolean
+  underline?: boolean
+  /** Unitless line-height multiplier (e.g. 1.2). Mirrors TextObject. */
+  lineHeight?: number
+  /** Letter-spacing in slide-local px. Mirrors TextObject. */
+  letterSpacing?: number
+  /** Visual case transform at render time. Mirrors TextObject. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Paragraph spacing in px (above / below each paragraph). Mirrors
+   *  TextObject — meaningful for tables now that plain Enter inside a
+   *  cell inserts a paragraph break. */
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  /** Folder text-style preset binding (M16). When set, the inspector
+   *  marks the table as "linked" to that preset and folder-token edits
+   *  propagate to whichever fields aren't in `textStyleOverrides`.
+   *  Mirrors TextObject's identical pair. */
+  textStyleId?: string
+  textStyleOverrides?: Array<TextStyleOverrideKey>
+  color: number | TokenRef
+  align: 'left' | 'center' | 'right'
+  vAlign: 'top' | 'middle' | 'bottom'
+  fill?: number | TokenRef
+  /** Default fill alpha 0..1 (cells inherit when their own `fillAlpha`
+   *  is absent). 0 = transparent / "no color" — matches the shape
+   *  inspector's representation. Missing ⇒ 1 (fully opaque). */
+  fillAlpha?: number
+  /**
+   * Non-solid fill default. Identical semantics to `TableCell.fillStyle`:
+   * when present, every cell that doesn't carry its own `fillStyle`
+   * override paints this instead of the flat `fill`. Cells can opt
+   * back to solid by setting `fillStyle: undefined` on themselves.
+   */
+  fillStyle?: FillStyle
+  /** Default per-edge border; falls back to a 1px `#CCCCCC` grid when
+   *  the table is freshly created. */
+  border?: TableBorderStyle
+  padding: TableCellPadding
+}
+
+export interface TableObject extends BaseSlideObject {
+  type: 'table'
+  /** Column widths in slide-local px. Sum must equal `width`. */
+  colWidths: number[]
+  /** Row heights in slide-local px. Sum must equal `height`. */
+  rowHeights: number[]
+  /** rows[r][c] = TableCell. 2-D shape mirrors PPTX `<a:tr>/<a:tc>`. */
+  rows: TableCell[][]
+  /** Default cell styling — cells inherit any field they don't override. */
+  defaults: TableDefaults
+  /**
+   * Flat sparse map of border segments — each grid line in the table
+   * is a single segment with a single style. Removes the ambiguity of
+   * the legacy per-cell `top/right/bottom/left` model where a shared
+   * line was owned by two cells and could carry two different values.
+   *
+   * Keys are positional addresses on the grid:
+   *   - `h:<row>:<col>` — horizontal segment ABOVE row index `row`,
+   *     in column `col`. `row` ∈ [0, rows.length]; the topmost line
+   *     of the table is `h:0:*`, the bottom is `h:<rows.length>:*`.
+   *   - `v:<row>:<col>` — vertical segment to the LEFT of column
+   *     index `col`, in row `row`. `col` ∈ [0, colWidths.length].
+   *
+   * Sparse: only segments the user has explicitly set are stored.
+   * Unset segments fall back to `defaults.border`. Width 0 means
+   * "explicitly invisible" and overrides the default fallback.
+   */
+  borderSegments?: { [key: string]: TableBorderStyle }
+}
+
+/**
+ * Position address for a single border segment in a TableObject. The
+ * key form `'h:<row>:<col>'` / `'v:<row>:<col>'` is used as both the
+ * map index in `TableObject.borderSegments` and the public addressing
+ * scheme for mutation APIs.
+ */
+export type TableBorderSegmentKey = `h:${number}:${number}` | `v:${number}:${number}`
+
+/** Build a horizontal-segment key (line ABOVE row `row` at column `col`). */
+export function hSegKey(row: number, col: number): TableBorderSegmentKey {
+  return `h:${row}:${col}`
+}
+/** Build a vertical-segment key (line LEFT of column `col` at row `row`). */
+export function vSegKey(row: number, col: number): TableBorderSegmentKey {
+  return `v:${row}:${col}`
+}
+
+/**
+ * Read the effective stroke for the segment at `key` on `table`:
+ *   1. Explicit `table.borderSegments[key]` (the new model) wins.
+ *   2. Otherwise fall back to deriving the value from the legacy
+ *      per-cell `border.top/right/bottom/left` fields — for shared
+ *      lines the right / lower cell's facing edge wins (arbitrary
+ *      but deterministic; existing decks where both halves disagreed
+ *      will pick the same side every time).
+ * Returns `undefined` when the segment isn't configured at either
+ * level; the caller is expected to fall back to `defaults.border`.
+ */
+export function getEffectiveBorderSegment(
+  table: TableObject,
+  key: TableBorderSegmentKey | string,
+): TableBorderStyle | undefined {
+  const explicit = table.borderSegments?.[key]
+  if (explicit !== undefined) return explicit
+  const m = /^(h|v):(\d+):(\d+)$/.exec(key)
+  if (m === null) return undefined
+  const orient = m[1] as 'h' | 'v'
+  const row = Number.parseInt(m[2]!, 10)
+  const col = Number.parseInt(m[3]!, 10)
+  if (orient === 'h') {
+    // Lower cell's .top wins; fall back to upper cell's .bottom.
+    const lower = table.rows[row]?.[col]?.border?.top
+    if (lower !== undefined) return lower
+    const upper = table.rows[row - 1]?.[col]?.border?.bottom
+    if (upper !== undefined) return upper
+    return undefined
+  }
+  // Vertical — right cell's .left wins, then left cell's .right.
+  const right = table.rows[row]?.[col]?.border?.left
+  if (right !== undefined) return right
+  const left = table.rows[row]?.[col - 1]?.border?.right
+  if (left !== undefined) return left
+  return undefined
+}
+
+/**
  * SlideObject — discriminated union. switch(obj.type) pro type narrowing.
  */
 export type SlideObject =
@@ -639,6 +859,7 @@ export type SlideObject =
   | TextObject
   | ImageObject
   | VideoObject
+  | TableObject
 
 /** Typ string pro switch/lookup */
 export type SlideObjectType = SlideObject['type']

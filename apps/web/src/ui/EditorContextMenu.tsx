@@ -45,12 +45,20 @@ import {
   updateObject,
   createObjectOfType,
   ungroupObjects,
+  insertTableRow,
+  insertTableCol,
+  deleteTableRow,
+  deleteTableCol,
+  mergeTableCells,
+  splitTableCell,
+  getTableMergeInfo,
 } from '@narrative/slide-model'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
+import { useTableEdit } from '../state/TableEditContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
@@ -60,7 +68,53 @@ import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
 import { useApi } from '../api/client.js'
-import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/shared'
+import type { SlideObject, SlideObjectPatch, SlideObjectType, TableObject } from '@narrative/shared'
+
+/**
+ * Hit-test a world (slide-space) point against a TableObject's cell
+ * grid, accounting for the table's rotation around its centre and the
+ * renderer's "rescale colWidths/rowHeights to fit table.width" rule.
+ * Returns `{ r, c }` of the cell under the cursor or `null` when the
+ * point falls outside the table's bbox.
+ */
+function hitTestTableCell(
+  table: TableObject,
+  worldX: number,
+  worldY: number,
+): { r: number; c: number } | null {
+  const cx = table.x + table.width / 2
+  const cy = table.y + table.height / 2
+  const cos = Math.cos(-table.rotation)
+  const sin = Math.sin(-table.rotation)
+  const dx = worldX - cx
+  const dy = worldY - cy
+  const localX = cos * dx - sin * dy + table.width / 2
+  const localY = sin * dx + cos * dy + table.height / 2
+  if (localX < 0 || localX > table.width || localY < 0 || localY > table.height) return null
+  const colSum = table.colWidths.reduce((a, b) => a + b, 0) || 1
+  const rowSum = table.rowHeights.reduce((a, b) => a + b, 0) || 1
+  const sx = table.width / colSum
+  const sy = table.height / rowSum
+  let acc = 0
+  let col = table.colWidths.length - 1
+  for (let i = 0; i < table.colWidths.length; i++) {
+    acc += (table.colWidths[i] ?? 0) * sx
+    if (localX <= acc) {
+      col = i
+      break
+    }
+  }
+  acc = 0
+  let row = table.rowHeights.length - 1
+  for (let i = 0; i < table.rowHeights.length; i++) {
+    acc += (table.rowHeights[i] ?? 0) * sy
+    if (localY <= acc) {
+      row = i
+      break
+    }
+  }
+  return { r: row, c: col }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,6 +145,7 @@ type Mode = 'object' | 'canvas'
 export function EditorContextMenu({ canvasContainerRef, children }: EditorContextMenuProps) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
+  const { range: tableRange } = useTableEdit()
   const canvasInstance = useCanvasInstance()
   const { zoom, setZoom } = useZoomLevel()
   const defaults = useDefaultObjectFill()
@@ -116,6 +171,11 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
   /** Slide-space coords for canvas-mode insert/paste. */
   const cursorCoordsRef = useRef<{ x: number; y: number }>({ x: 400, y: 300 })
+
+  /** Right-clicked cell inside a TableObject — snapshot for the table-
+   *  specific menu items. `null` when the right-click missed a table or
+   *  the table's cell math couldn't resolve a cell at the click point. */
+  const tableCellHitRef = useRef<{ tableId: string; r: number; c: number } | null>(null)
 
   // ---------------------------------------------------------------------------
   // Right-click hit-test — runs synchronously during the contextmenu event
@@ -157,10 +217,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
           }
         }
         setMode('object')
+        // Capture the table cell under the cursor so the table-specific
+        // menu items (insert/delete row + col) target the right slot.
+        const hitObj = objects.find((o) => o.id === hitId)
+        if (hitObj !== undefined && hitObj.type === 'table') {
+          const cell = hitTestTableCell(hitObj, slideX, slideY)
+          tableCellHitRef.current =
+            cell === null ? null : { tableId: hitObj.id, r: cell.r, c: cell.c }
+        } else {
+          tableCellHitRef.current = null
+        }
         return
       }
     }
     targetIdsRef.current = []
+    tableCellHitRef.current = null
     setMode('canvas')
   }
 
@@ -212,6 +283,66 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     const ids = targetIdsRef.current
     if (ids.length === 0) return
     moveObjectsLayer(mutationCtx, ids, move)
+  }
+
+  // ---------- Table cell ops — driven by tableCellHitRef ----------
+  const tableTarget = (): { table: TableObject; r: number; c: number } | null => {
+    const hit = tableCellHitRef.current
+    if (hit === null || mutationCtx === null) return null
+    const obj = objects.find((o) => o.id === hit.tableId)
+    return obj === undefined || obj.type !== 'table'
+      ? null
+      : { table: obj as TableObject, r: hit.r, c: hit.c }
+  }
+  const handleTableInsertRowAbove = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) insertTableRow(mutationCtx, t.table.id, t.r)
+  }
+  const handleTableInsertRowBelow = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) insertTableRow(mutationCtx, t.table.id, t.r + 1)
+  }
+  const handleTableInsertColBefore = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) insertTableCol(mutationCtx, t.table.id, t.c)
+  }
+  const handleTableInsertColAfter = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) insertTableCol(mutationCtx, t.table.id, t.c + 1)
+  }
+  const handleTableDeleteRow = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) deleteTableRow(mutationCtx, t.table.id, t.r)
+  }
+  const handleTableDeleteCol = (): void => {
+    const t = tableTarget()
+    if (t !== null && mutationCtx !== null) deleteTableCol(mutationCtx, t.table.id, t.c)
+  }
+  /** Phase 3 — Merge / split helpers driven by the table-edit range or
+   *  the cell under the cursor. Read fresh on each invocation so the
+   *  menu always acts on the latest state. */
+  const handleTableMerge = (): void => {
+    if (mutationCtx === null) return
+    if (tableRange !== null && targetIdsRef.current.includes(tableRange.tableId)) {
+      mergeTableCells(mutationCtx, tableRange.tableId, {
+        r0: tableRange.r0,
+        c0: tableRange.c0,
+        r1: tableRange.r1,
+        c1: tableRange.c1,
+      })
+    }
+  }
+  const handleTableSplit = (): void => {
+    if (mutationCtx === null) return
+    const hit = tableCellHitRef.current
+    if (hit !== null) splitTableCell(mutationCtx, hit.tableId, hit.r, hit.c)
+  }
+  const mergeInfoAtClickedCell = (): { kind: 'origin' | 'continuation' } | null => {
+    if (mutationCtx === null) return null
+    const hit = tableCellHitRef.current
+    if (hit === null) return null
+    const info = getTableMergeInfo(mutationCtx, hit.tableId, hit.r, hit.c)
+    return info === null ? null : { kind: info.kind }
   }
 
   const handleToggleLock = (): void => {
@@ -483,6 +614,84 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
             </ContextMenuItem>
 
             <ContextMenuSeparator />
+
+            {/* M29 — Table cell mutations. Only render when the right
+                click landed inside a single TableObject's grid; the
+                hit is captured in `handleContextMenu` so the menu
+                items operate on the cell under the cursor, not the
+                currently-active edit cell. */}
+            {tableCellHitRef.current !== null &&
+              targetIdsRef.current.length === 1 &&
+              targetIdsRef.current[0] === tableCellHitRef.current.tableId && (
+                <>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null}
+                    onSelect={handleTableInsertRowAbove}
+                  >
+                    Insert row above
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null}
+                    onSelect={handleTableInsertRowBelow}
+                  >
+                    Insert row below
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null}
+                    onSelect={handleTableInsertColBefore}
+                  >
+                    Insert column left
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null}
+                    onSelect={handleTableInsertColAfter}
+                  >
+                    Insert column right
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={
+                      mutationCtx === null ||
+                      ((): boolean => {
+                        const t = tableTarget()
+                        return t === null || t.table.rows.length <= 1
+                      })()
+                    }
+                    onSelect={handleTableDeleteRow}
+                  >
+                    Delete row
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={
+                      mutationCtx === null ||
+                      ((): boolean => {
+                        const t = tableTarget()
+                        return t === null || t.table.colWidths.length <= 1
+                      })()
+                    }
+                    onSelect={handleTableDeleteCol}
+                  >
+                    Delete column
+                  </ContextMenuItem>
+                  {/* M29 Phase 3 — Merge / Split */}
+                  <ContextMenuItem
+                    disabled={
+                      mutationCtx === null ||
+                      tableRange === null ||
+                      tableRange.tableId !== tableCellHitRef.current.tableId
+                    }
+                    onSelect={handleTableMerge}
+                  >
+                    Merge cells
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    disabled={mutationCtx === null || mergeInfoAtClickedCell() === null}
+                    onSelect={handleTableSplit}
+                  >
+                    Split cell
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                </>
+              )}
 
             <ContextMenuItem
               disabled={target === undefined || mutationCtx === null}

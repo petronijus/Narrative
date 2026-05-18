@@ -10,8 +10,12 @@
 
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
-import type { SlideObject, SlideObjectType, SlideObjectPatch } from '@narrative/shared'
-import { plainObjectToYMap } from './bindings.js'
+import type { SlideObject, SlideObjectType, SlideObjectPatch, TableCell } from '@narrative/shared'
+import {
+  plainObjectToYMap,
+  collectPendingCellTextInserts,
+  type PendingCellTextInsert,
+} from './bindings.js'
 import { getObjectTypeDef } from './registry.js'
 import { createTextValue } from './richText.js'
 import type { RichDeltaOp } from './richText.js'
@@ -68,6 +72,17 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
       prepared = { ...prepared, text: createTextValue(t) } as SlideObject
     }
   }
+  // Tables carry per-cell Y.Texts in deeply-nested Y.Arrays. Pending ops
+  // on standalone Y.Texts don't fire when the cell Y.Text is integrated
+  // indirectly through `row Y.Array → rows Y.Array → table Y.Map →
+  // objects Y.Array`. Capture initial text strings here so we can apply
+  // them via `yText.insert()` AFTER integration inside the same transact.
+  let tablePendingInserts: PendingCellTextInsert[] = []
+  if (prepared.type === 'table') {
+    tablePendingInserts = collectPendingCellTextInserts(
+      prepared as unknown as { rows: TableCell[][] },
+    )
+  }
   const yMap = plainObjectToYMap(prepared)
   ctx.doc.transact(() => {
     ctx.objects.push([yMap])
@@ -84,6 +99,19 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
             attributes?: Record<string, unknown>
           }>,
         )
+      }
+    }
+    if (tablePendingInserts.length > 0) {
+      const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+      if (rowsY !== undefined) {
+        for (const p of tablePendingInserts) {
+          const rowY = rowsY.get(p.r) as Y.Array<Y.Map<unknown>> | undefined
+          if (rowY === undefined) continue
+          const cellY = rowY.get(p.c) as Y.Map<unknown> | undefined
+          if (cellY === undefined) continue
+          const yt = cellY.get('text')
+          if (yt instanceof Y.Text) yt.insert(0, p.initial)
+        }
       }
     }
   }, LOCAL_ORIGIN)
@@ -415,38 +443,26 @@ function applyReorderMinimal(
     const sourceIdx = order.indexOf(desiredId)
     if (sourceIdx === -1) continue
 
-    // Snapshot the moving Y.Map's values. delete + insert creates a new
-    // Y.Map with the same data — the old identity is gone but only for
-    // THIS item, not every sibling.
+    // Snapshot the moving Y.Map. delete + insert creates a fresh
+    // identity — the old Y.Map can't be re-inserted because every
+    // shared-type subtree inside it (Y.Text runs, table rows, default
+    // maps, …) would be a detached orphan once the parent is removed,
+    // and Yjs crashes deep inside `typeListInsertGenerics` when asked
+    // to re-integrate an orphan whose internal `_length` is null.
     //
-    // Y.Text (and other shared types) cannot be re-attached after the
-    // parent is detached: once `arr.delete` runs, the Y.Text becomes
-    // an orphan and `freshMap.set('text', orphan)` is silently a
-    // no-op, producing an empty text slot in the reordered object.
-    // Clone any Y.Text into a brand-new Y.Text BEFORE deleting so the
-    // content survives the round-trip.
-    const yMap = arr.get(sourceIdx)
-    const plain: Record<string, unknown> = {}
-    for (const [key, value] of yMap.entries()) {
-      if (value instanceof Y.Text) {
-        const fresh = new Y.Text()
-        fresh.applyDelta(value.toDelta())
-        plain[key] = fresh
-      } else {
-        plain[key] = value
-      }
-    }
+    // `Y.Map.clone()` (Yjs 13.6+) returns a detached deep copy with
+    // every nested AbstractType also cloned recursively, which is
+    // exactly what we need — works uniformly for plain objects,
+    // text-bearing shapes, and the table object's deeply nested
+    // Y.Array<Y.Array<Y.Map<Y.Text>>> rows.
+    const cloned = arr.get(sourceIdx).clone()
     arr.delete(sourceIdx, 1)
-
-    // Build replacement Y.Map.
-    const freshMap = new Y.Map<unknown>()
-    for (const [key, value] of Object.entries(plain)) freshMap.set(key, value)
 
     // Keep our local `order` array in sync so subsequent iterations
     // compute correct indices.
     order.splice(sourceIdx, 1)
     order.splice(targetIdx, 0, desiredId)
-    arr.insert(targetIdx, [freshMap])
+    arr.insert(targetIdx, [cloned])
   }
 }
 

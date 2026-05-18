@@ -16,7 +16,9 @@ import type {
   TextObject,
   ImageObject,
   VideoObject,
+  TableObject,
 } from '@narrative/shared'
+import { buildTable } from './tableMutations.js'
 
 describe('plainObjectToYMap → yMapToPlainObject round-trip', () => {
   it('rectangle round-trip (v Y.Doc)', () => {
@@ -330,5 +332,53 @@ describe('plainObjectToYMap (standalone — pouze pro write před insertem)', ()
     // Nyní je yMap integrovaný v doc — hodnoty jsou čitelné
     expect(yMap.get('id')).toBe('standalone')
     expect(yMap.get('type')).toBe('rectangle')
+  })
+
+  it('table round-trip — 2×3 grid with nested Y.Array<Y.Array<Y.Map>>', async () => {
+    // Build a fresh 2-row × 3-col table; verify the nested Yjs structure
+    // survives a write → read cycle and lands back as a plain TableObject
+    // with the same dimensions + cells. Uses `addObject` (mutations.ts)
+    // because that's the only entry point that knows to apply per-cell
+    // text inserts AFTER the table Y.Map is integrated — pending ops on
+    // standalone Y.Text don't fire when integrated via nested Y.Array.
+    const { addObject } = await import('./mutations.js')
+    const table = buildTable({
+      x: 100,
+      y: 200,
+      width: 300,
+      height: 150,
+      rows: 2,
+      cols: 3,
+    })
+    // Seed a couple of cells with text so the Y.Text → string projection
+    // gets exercised on the read side.
+    table.rows[0]![0]!.text = 'A1'
+    table.rows[1]![2]!.text = 'C2'
+    table.rows[0]![1]!.fill = 0xff0000
+
+    const doc = new Y.Doc()
+    const arr = doc.getArray<Y.Map<unknown>>('objects')
+    addObject({ doc, objects: arr }, table as never)
+    const yMap = arr.get(0) as Y.Map<unknown>
+
+    // Nested Yjs containers are now alive in the doc.
+    const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>>
+    expect(rowsY).toBeInstanceOf(Y.Array)
+    expect(rowsY.length).toBe(2)
+    expect((rowsY.get(0) as Y.Array<Y.Map<unknown>>).length).toBe(3)
+
+    // Cell text is Y.Text in the live doc — projection back to plain
+    // happens via yMapToPlainObject's table-aware path.
+    const result = yMapToPlainObject<TableObject>(yMap)
+    expect(result.type).toBe('table')
+    expect(result.rows).toHaveLength(2)
+    expect(result.rows[0]).toHaveLength(3)
+    expect(result.colWidths).toHaveLength(3)
+    expect(result.rowHeights).toHaveLength(2)
+    // Y.Text values survive as Y.Text instances so the renderer can bind.
+    expect(result.rows[0]![0]!.text).toBeInstanceOf(Y.Text)
+    expect((result.rows[0]![0]!.text as Y.Text).toString()).toBe('A1')
+    expect((result.rows[1]![2]!.text as Y.Text).toString()).toBe('C2')
+    expect(result.rows[0]![1]!.fill).toBe(0xff0000)
   })
 })
