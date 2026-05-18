@@ -25,7 +25,7 @@
  *                          `applyVerticalAlign` within the inner pad box)
  */
 
-import { Container, Graphics, HTMLText, HTMLTextStyle, type Texture } from 'pixi.js'
+import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import * as Y from 'yjs'
 import type { ObjectRenderer } from './index.js'
 import { isTokenRef } from '@narrative/shared'
@@ -49,9 +49,10 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { resolveColour } from '../colourResolver.js'
 import {
   clampStops,
+  fillStyleToPixi,
   imageFillToPixiFill,
-  paintLinearGradientTexture,
-  paintRadialGradientTexture,
+  releaseAllProceduralFills,
+  releaseProceduralFill,
 } from '../fillStyleToPixi.js'
 import {
   ensureImageFillKeyed,
@@ -88,7 +89,16 @@ const CELL_FILLS_TAG = Symbol('tableCellFills')
 interface FillNode {
   graphics: Graphics
   fillKey: string
-  texture: Texture | undefined
+  /**
+   * Identifies this cell's slot in the container's procedural-fill
+   * cache (managed by `fillStyleToPixi` + `releaseProceduralFill`).
+   * The actual gradient texture is owned + ref-counted by the
+   * ResourceManager — `disposeFillNode` releases the slot but never
+   * destroys the texture directly. `undefined` means this cell holds
+   * no procedural texture (solid or image fill).
+   */
+  procSlotKey: string
+  hasProcedural: boolean
   width: number
   height: number
 }
@@ -389,12 +399,15 @@ function getCellFillsMap(container: Container): Map<string, FillNode> {
   return map
 }
 
-function disposeFillNode(node: FillNode): void {
+function disposeFillNode(container: Container, node: FillNode): void {
   node.graphics.parent?.removeChild(node.graphics)
-  // Destroy our owned procedural gradient texture (image-fill textures
-  // are owned by the ResourceManager via imageFillLoader; don't destroy
-  // those here — `releaseImageFillKeyed` does it).
-  if (node.texture !== undefined) node.texture.destroy(true)
+  // Release the procedural cache slot (ref-counted by ResourceManager;
+  // we don't destroy the texture ourselves — another cell or shape
+  // sharing the same gradient key may still be using it).
+  if (node.hasProcedural) {
+    releaseProceduralFill(container, node.procSlotKey)
+    node.hasProcedural = false
+  }
   node.graphics.destroy({ children: false, texture: false })
 }
 
@@ -441,18 +454,13 @@ function paintCellFill(
     node = {
       graphics: new Graphics(),
       fillKey: '',
-      texture: undefined,
+      procSlotKey: key,
+      hasProcedural: false,
       width: bbox.w,
       height: bbox.h,
     }
     container.addChildAt(node.graphics, 0)
     map.set(key, node)
-  }
-  // Drop the previous procedural texture if any (gradient kind changed
-  // or dimensions changed — both invalidate the cached canvas).
-  if (node.texture !== undefined) {
-    node.texture.destroy(true)
-    node.texture = undefined
   }
   node.graphics.clear()
   node.graphics.x = bbox.x
@@ -462,20 +470,23 @@ function paintCellFill(
   const fs = style.fillStyle
   if (fs?.kind === 'linearGradient' || fs?.kind === 'radialGradient') {
     releaseImageFillKeyed(container, key)
-    const stops = clampStops(fs.stops)
-    const texture =
-      fs.kind === 'linearGradient'
-        ? paintLinearGradientTexture(stops, fs.angleDeg, bbox.w, bbox.h)
-        : paintRadialGradientTexture(stops, fs.centerX ?? 0.5, fs.centerY ?? 0.5, bbox.w, bbox.h)
-    node.texture = texture
-    // No matrix, no textureSpace override — Pixi's default 'local' maps
-    // the cell-sized texture 1:1 onto the cell-sized rect.
-    node.graphics.fill({ texture, alpha: style.fillAlpha })
+    // Route through the shared procedural cache — `fillStyleToPixi`
+    // builds the gradient key, acquires (or hits) a ref-counted
+    // texture, and tracks the held key on the container under
+    // `procSlotKey` so N cells sharing the same gradient + bbox
+    // dimensions share one Texture. Drag-painting the stops only
+    // repaints the canvas once per unique key per tick.
+    const resolved = fillStyleToPixi(fs, 0, bbox.w, bbox.h, container, node.procSlotKey)
+    node.hasProcedural = true
+    node.graphics.fill({ ...resolved.input, alpha: style.fillAlpha })
   } else if (fs?.kind === 'image') {
+    // Image-fill doesn't use the procedural slot; release if we held one.
+    if (node.hasProcedural) {
+      releaseProceduralFill(container, node.procSlotKey)
+      node.hasProcedural = false
+    }
     const texture = ensureImageFillKeyed(container, key, fs, onReady)
     if (texture !== null) {
-      // Same `textureSpace: 'local'` semantics the rectangle renderer
-      // uses; `imageFillToPixiFill` builds the cover/contain matrix.
       node.graphics.fill({
         ...imageFillToPixiFill(fs, texture, bbox.w, bbox.h),
         alpha: style.fillAlpha,
@@ -485,6 +496,10 @@ function paintCellFill(
     }
   } else {
     releaseImageFillKeyed(container, key)
+    if (node.hasProcedural) {
+      releaseProceduralFill(container, node.procSlotKey)
+      node.hasProcedural = false
+    }
     if (style.fill !== undefined && style.fillAlpha > 0) {
       node.graphics.fill({ color: style.fill, alpha: style.fillAlpha })
     }
@@ -526,7 +541,7 @@ function paintGrid(
   const fillsMap = getCellFillsMap(container)
   for (const [key, node] of fillsMap) {
     if (liveKeys.has(key)) continue
-    disposeFillNode(node)
+    disposeFillNode(container, node)
     fillsMap.delete(key)
   }
   for (const key of getImageFillSlotKeys(container)) {
@@ -910,10 +925,10 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
     const tagged = node as Container & { [k: symbol]: unknown }
     const grid = tagged[GRID_TAG] as Graphics | undefined
     if (grid !== undefined) grid.destroy({ children: false, texture: false })
-    // Dispose per-cell fill Graphics + their owned gradient textures.
+    // Dispose per-cell fill Graphics + drop procedural cache refs.
     const fills = tagged[CELL_FILLS_TAG] as Map<string, FillNode> | undefined
     if (fills !== undefined) {
-      for (const fn of fills.values()) disposeFillNode(fn)
+      for (const fn of fills.values()) disposeFillNode(node, fn)
       fills.clear()
     }
     const cells = tagged[CELLS_TAG] as Map<Y.Text, CellNode> | undefined
@@ -927,11 +942,16 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
         queueDeferredDestroy(cn.clip)
       }
     }
-    // Drop every image-fill ref-count this table acquired across all
-    // cells. Mirrors how the shape renderers call `releaseImageFill`
-    // on destroy — without this the texture cache leaks one ref per
-    // image-filled cell every time a table is removed from the slide.
+    // Drop every image-fill ref + procedural-fill ref this table
+    // acquired across all cells. Mirrors how the shape renderers call
+    // `releaseImageFill` + `releaseProceduralFill` on destroy — without
+    // this the texture cache leaks one ref per filled cell every time
+    // a table is removed from the slide. (Per-FillNode releases above
+    // already covered each slot, but `releaseAllProceduralFills` is
+    // belt-and-braces in case a code path adds a slot without a
+    // matching FillNode entry.)
     releaseAllImageFillsKeyed(node)
+    releaseAllProceduralFills(node)
     destroyFilterEffects(node)
     node.destroy({ children: false })
   },
