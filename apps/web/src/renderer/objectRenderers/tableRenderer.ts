@@ -17,12 +17,18 @@
  *
  * Layout:
  *   Container (positioned/rotated as the TableObject)
- *   ├── Graphics  (cell fills + grid lines)
- *   └── per cell:
- *        Container (clip)  — positioned at cell bbox, masks overflow
- *           ├── Graphics  (mask)
- *           └── HTMLText  (anchored by `applyHorizontalAlign` /
- *                          `applyVerticalAlign` within the inner pad box)
+ *   ├── Graphics  (per-cell fill — one small Graphics per cell, sized
+ *   │              + positioned to the cell bbox; Pixi's default
+ *   │              `textureSpace: 'local'` maps any gradient / image
+ *   │              texture 1:1 to that single sub-path)
+ *   │   (one of these per cell, stored in CELL_FILLS_TAG map)
+ *   ├── per cell:
+ *   │     Container (clip) — positioned at cell bbox, masks overflow
+ *   │        ├── Graphics  (mask)
+ *   │        └── HTMLText  (anchored by `applyHorizontalAlign` /
+ *   │                       `applyVerticalAlign` within the inner pad box)
+ *   └── Graphics  (shared border-stroke grid, drawn last so borders
+ *                  sit above both fills and text)
  */
 
 import { Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
@@ -94,13 +100,15 @@ interface FillNode {
    * cache (managed by `fillStyleToPixi` + `releaseProceduralFill`).
    * The actual gradient texture is owned + ref-counted by the
    * ResourceManager — `disposeFillNode` releases the slot but never
-   * destroys the texture directly. `undefined` means this cell holds
-   * no procedural texture (solid or image fill).
+   * destroys the texture directly.
    */
   procSlotKey: string
+  /**
+   * True while a procedural slot is currently held for this cell.
+   * Toggled when paint switches between gradient and solid/image so
+   * the slot release pairs with the slot acquire.
+   */
   hasProcedural: boolean
-  width: number
-  height: number
 }
 
 /**
@@ -355,8 +363,8 @@ function resolveCellEdgeBorder(
 /**
  * Per-cell key (used for image-fill slot tracking + the cell-fill
  * Graphics map). Row / column inserts and deletes rebuild the whole
- * grid via `paintGrid`, which sweeps stale keys at the end of the
- * pass — no need for stable per-cell ids.
+ * grid via `paintCellFills`, which sweeps stale keys at the end of
+ * the pass — no need for stable per-cell ids.
  */
 function cellSlotKey(r: number, c: number): string {
   return `cell:${r},${c}`
@@ -404,10 +412,7 @@ function disposeFillNode(container: Container, node: FillNode): void {
   // Release the procedural cache slot (ref-counted by ResourceManager;
   // we don't destroy the texture ourselves — another cell or shape
   // sharing the same gradient key may still be using it).
-  if (node.hasProcedural) {
-    releaseProceduralFill(container, node.procSlotKey)
-    node.hasProcedural = false
-  }
+  if (node.hasProcedural) releaseProceduralFill(container, node.procSlotKey)
   node.graphics.destroy({ children: false, texture: false })
 }
 
@@ -437,12 +442,10 @@ function paintCellFill(
   const fillKey = cellFillKey(style, bbox.w, bbox.h)
   let node = map.get(key)
 
-  // Position is always (bbox.x, bbox.y) — cheap, update regardless.
-  // The Graphics is created lazily below so we set position after.
-
-  // Fast path — same key, same dimensions: re-position only (already
-  // current here) and bail. Skips canvas repaint + rect re-trace +
-  // texture upload.
+  // Fast path — fillKey unchanged: only re-position (cheap) and bail.
+  // Skips Graphics re-trace + Graphics.fill + texture upload, which is
+  // what kept the inspector responsive during animation frames that
+  // don't actually change visuals.
   if (node !== undefined && node.fillKey === fillKey) {
     node.graphics.x = bbox.x
     node.graphics.y = bbox.y
@@ -456,8 +459,6 @@ function paintCellFill(
       fillKey: '',
       procSlotKey: key,
       hasProcedural: false,
-      width: bbox.w,
-      height: bbox.h,
     }
     container.addChildAt(node.graphics, 0)
     map.set(key, node)
@@ -506,27 +507,24 @@ function paintCellFill(
   }
 
   node.fillKey = fillKey
-  node.width = bbox.w
-  node.height = bbox.h
 }
 
-function paintGrid(
-  grid: Graphics,
+/**
+ * Pass 1 — per-cell fill Graphics (gradient / image / solid). Each
+ * cell paints onto its own tiny Graphics positioned at (bbox.x,
+ * bbox.y); the cache in `paintCellFill` early-outs when the cell's
+ * fill key is unchanged. Sweeps abandoned per-cell fill nodes and
+ * image-fill slots at the end so a deleted row / column doesn't
+ * leak.
+ */
+function paintCellFills(
   container: Container,
   table: TableObject,
   colX: number[],
   rowY: number[],
   onAsyncImageReady: () => void,
 ): void {
-  grid.clear()
-  // Track which per-cell fill Graphics + image-fill slots are alive
-  // this pass so trailing entries from a deleted row / column can be
-  // released cleanly at the end.
   const liveKeys = new Set<string>()
-  // Pass 1 — per-cell fill Graphics (gradient / image / solid). Each
-  // cell paints onto its own tiny Graphics positioned at (bbox.x,
-  // bbox.y); the cache in `paintCellFill` early-outs when the cell's
-  // fill key is unchanged.
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
@@ -537,7 +535,6 @@ function paintGrid(
       paintCellFill(container, r, c, style, bbox, onAsyncImageReady)
     }
   }
-  // Sweep abandoned per-cell fill nodes + image-fill slots.
   const fillsMap = getCellFillsMap(container)
   for (const [key, node] of fillsMap) {
     if (liveKeys.has(key)) continue
@@ -547,17 +544,23 @@ function paintGrid(
   for (const key of getImageFillSlotKeys(container)) {
     if (!liveKeys.has(key)) releaseImageFillKeyed(container, key)
   }
-  // Pass 2 — per-edge borders. Each cell asks for its own four edges;
-  // when the cell has no per-edge override the table default fills in.
-  // Drawing edge-by-edge (not whole rectangles) lets a user disable
-  // individual sides — e.g. only a top border for a header row.
+}
+
+/**
+ * Pass 2 — per-edge borders on the shared `grid` Graphics. Each cell
+ * asks for its own four edges; when the cell has no per-edge override
+ * the table default fills in. Drawing edge-by-edge (not whole
+ * rectangles) lets a user disable individual sides — e.g. only a top
+ * border for a header row.
+ */
+function paintBorders(grid: Graphics, table: TableObject, colX: number[], rowY: number[]): void {
+  grid.clear()
   for (let r = 0; r < table.rows.length; r++) {
     const row = table.rows[r]!
     for (let c = 0; c < row.length; c++) {
       const bbox = cellBbox(table, r, c, colX, rowY)
       if (bbox === null) continue
-      const cell = row[c]!
-      drawCellEdges(grid, cell, bbox, table.defaults)
+      drawCellEdges(grid, row[c]!, bbox, table.defaults)
     }
   }
 }
@@ -824,7 +827,8 @@ function rebuild(container: Container, data: TableObject): void {
     const latest = (tagged[DATA_TAG] as TableObject | undefined) ?? data
     rebuild(container, latest)
   }
-  paintGrid(grid, container, data, colX, rowY, onAsyncImageReady)
+  paintCellFills(container, data, colX, rowY, onAsyncImageReady)
+  paintBorders(grid, data, colX, rowY)
 
   // Per-cell HTMLText sub-trees.
   const prevCells =
@@ -833,9 +837,10 @@ function rebuild(container: Container, data: TableObject): void {
   const nextCells = reconcileCells(container, data, colX, rowY, prevCells, fadedYText ?? null)
   tagged[CELLS_TAG] = nextCells
 
-  // Z-order: cell-fill Graphics (added during paintGrid at index 0),
-  // HTMLText cell containers, borders Graphics on top. Re-attach grid
-  // last so it stays above any cell-fill nodes that were just inserted.
+  // Z-order: cell-fill Graphics (added at index 0 by paintCellFills),
+  // HTMLText cell containers (appended by reconcileCells), borders
+  // Graphics on top. Re-attach grid last so it stays above any
+  // HTMLText nodes that were just appended.
   container.addChild(grid)
 
   applyObjectTransform(container, data)
@@ -884,6 +889,45 @@ const STRUCTURAL_KEYS: ReadonlyArray<keyof TableObject> = [
   'defaults',
 ]
 
+/**
+ * Fill-related defaults keys — when ONLY these differ between two
+ * `defaults` snapshots, the cells' HTMLText renderers and the borders
+ * don't need a pass: only `paintCellFills` does. Used by the mid-path
+ * in `applyPatch` to skip the per-cell HTMLTextStyle reassignment +
+ * border re-stroke during table-wide gradient stop drags.
+ *
+ * Stop-dragging a gradient fires one Yjs `defaults` update per
+ * animation frame. Each update fully re-rasterises every cell's
+ * SVG-backed HTMLText if we hit the rebuild path, which is what made
+ * the inspector slider feel sticky on a multi-cell table even after
+ * the procedural cache made the fill paint itself cheap.
+ */
+const DEFAULTS_FILL_KEYS = new Set(['fill', 'fillAlpha', 'fillStyle'])
+
+function isFillOnlyDefaultsChange(
+  prev: TableObject['defaults'],
+  next: TableObject['defaults'],
+): boolean {
+  const allKeys = new Set([...Object.keys(prev), ...Object.keys(next)]) as Set<string>
+  const prevR = prev as unknown as Record<string, unknown>
+  const nextR = next as unknown as Record<string, unknown>
+  for (const k of allKeys) {
+    if (DEFAULTS_FILL_KEYS.has(k)) continue
+    const a = prevR[k]
+    const b = nextR[k]
+    if (a === b) continue
+    // Nested objects (border, padding, textStyleOverrides) get a
+    // shallow JSON compare — cheap because they're small, sufficient
+    // because Yjs always emits fresh references but the JSON shape is
+    // stable when nothing changed.
+    if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+      if (JSON.stringify(a) === JSON.stringify(b)) continue
+    }
+    return false
+  }
+  return true
+}
+
 export const tableRenderer: ObjectRenderer<TableObject> = {
   type: 'table',
   mount(data) {
@@ -914,10 +958,40 @@ export const tableRenderer: ObjectRenderer<TableObject> = {
       tagged[DATA_TAG] = { ...prev, ...patch } as TableObject
       return
     }
-    // Structural change — fall back to the full rebuild path. width/
-    // height changes recompute cell bboxes; rows/colWidths/rowHeights/
-    // defaults restructure the cell map.
+    // Structural change. Two paths:
+    //   - Defaults changed but only fill-related fields → repaint the
+    //     per-cell fill Graphics (cheap, hits the procedural cache)
+    //     and skip the HTMLText reconcile (which would re-rasterise
+    //     every cell's SVG synchronously per pointer tick).
+    //   - Anything else → full rebuild (width/height/rows/colWidths/
+    //     rowHeights or a non-fill defaults edit).
     const merged = { ...prev, ...patch } as TableObject
+    const onlyDefaults =
+      'defaults' in patch &&
+      !('width' in patch) &&
+      !('height' in patch) &&
+      !('rows' in patch) &&
+      !('colWidths' in patch) &&
+      !('rowHeights' in patch)
+    if (onlyDefaults && isFillOnlyDefaultsChange(prev.defaults, merged.defaults)) {
+      // Only fill-related defaults changed — repaint per-cell fills
+      // (the procedural cache short-circuits the texture cost). Skip
+      // both `paintBorders` and `reconcileCells`: nothing about the
+      // borders or the cells' text rendering changed. The grid's
+      // z-order doesn't need re-attaching — new cell-fill Graphics
+      // insert at index 0 via `addChildAt`, leaving the grid where
+      // it was (on top).
+      const colX = cumulativeCols(merged)
+      const rowY = cumulativeRows(merged)
+      const onAsyncImageReady = (): void => {
+        const latest = (tagged[DATA_TAG] as TableObject | undefined) ?? merged
+        rebuild(node, latest)
+      }
+      paintCellFills(node, merged, colX, rowY, onAsyncImageReady)
+      tagged[DATA_TAG] = merged
+      applyFilterEffects(node, merged.shadow, merged.blur)
+      return
+    }
     rebuild(node, merged)
     applyFilterEffects(node, merged.shadow, merged.blur)
   },

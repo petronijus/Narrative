@@ -3104,6 +3104,14 @@ function GradientPreviewBar({
   // Track whether the pointer actually moved during a press so a
   // click-without-drag can fall through to the dblclick handler.
   const draggedRef = useRef(false)
+  // While dragging, paint the handle from local state instead of the
+  // prop so the cursor and handle move 1:1 regardless of the Yjs +
+  // React re-render round-trip. Cleared on pointerup; the prop value
+  // then matches what we last committed and the handoff is seamless.
+  const [dragOverride, setDragOverride] = useState<{
+    idx: number
+    offset: number
+  } | null>(null)
 
   const beginDrag = (idx: number, e: React.PointerEvent<HTMLButtonElement>): void => {
     e.preventDefault()
@@ -3116,14 +3124,40 @@ function GradientPreviewBar({
     draggedRef.current = false
     const startX = e.clientX
 
+    // rAF-coalesce the Yjs writes so a 120Hz pointer doesn't fire
+    // 120 transactions per second through the whole Inspector tree.
+    // `latestOffset` always holds the most-recent value seen since
+    // the last flush so the rAF callback writes exactly that.
+    let pendingFrame: number | null = null
+    let latestOffset: number | null = null
+    const flush = (): void => {
+      pendingFrame = null
+      if (latestOffset !== null) onUpdate(idx, { offset: latestOffset })
+    }
+
     const move = (ev: PointerEvent) => {
       if (Math.abs(ev.clientX - startX) > 2) draggedRef.current = true
       if (!draggedRef.current) return
       const x = ev.clientX - rect.left
       const t = Math.max(0, Math.min(1, x / Math.max(1, rect.width)))
-      onUpdate(idx, { offset: t })
+      latestOffset = t
+      // Instant visual feedback — bypasses Yjs entirely.
+      setDragOverride({ idx, offset: t })
+      if (pendingFrame === null) pendingFrame = requestAnimationFrame(flush)
     }
     const up = (ev: PointerEvent) => {
+      // Flush the last pending tick synchronously so the committed
+      // offset matches the visible handle before we release the
+      // override (no flash back to the previous value).
+      if (pendingFrame !== null) {
+        cancelAnimationFrame(pendingFrame)
+        flush()
+      } else if (latestOffset !== null) {
+        // pointerup without an outstanding rAF — still need to make
+        // sure the very last move committed.
+        onUpdate(idx, { offset: latestOffset })
+      }
+      setDragOverride(null)
       target.releasePointerCapture(ev.pointerId)
       target.removeEventListener('pointermove', move)
       target.removeEventListener('pointerup', up)
@@ -3149,7 +3183,13 @@ function GradientPreviewBar({
       style={{ backgroundImage: previewCss }}
     >
       {stops.map((stop, idx) => {
-        const left = `${Math.max(0, Math.min(1, stop.offset)) * 100}%`
+        // During a drag, the active handle paints from local state so
+        // the cursor and handle stay locked together regardless of the
+        // Yjs / React round-trip. Inactive handles + every handle when
+        // not dragging come straight from the prop.
+        const effectiveOffset =
+          dragOverride !== null && dragOverride.idx === idx ? dragOverride.offset : stop.offset
+        const left = `${Math.max(0, Math.min(1, effectiveOffset)) * 100}%`
         return (
           <div
             key={idx}
