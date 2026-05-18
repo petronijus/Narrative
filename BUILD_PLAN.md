@@ -307,19 +307,30 @@ Object type SDK as the public form of the registry that has existed since M2. `r
 
 **Deliverable**: extensible object system + 3 example plugins.
 
-### M28 — PowerPoint import & export (next to ship — 2026-05-14)
+### M28 — PowerPoint import & export (shipped 2026-05-14)
 
-Round-trip a deck between Narrative and Microsoft PowerPoint with acceptable fidelity for content-focused decks. Both flows run server-side: import via a tus upload + BullMQ worker that parses `.pptx` with `jszip` + `fast-xml-parser` and writes Yjs updates; export via a route that uses `pptxgenjs` and streams the result. **In MVP**: plain text frames, images, rect/ellipse/line shapes, slide backgrounds, position/size/rotation. **Deferred to follow-ups**: per-run text formatting, layouts/masters, theme tokens, tables, charts, SmartArt, animations, transitions, video.
+Round-trip a deck between Narrative and Microsoft PowerPoint with acceptable fidelity for content-focused decks. Both flows run server-side: import via a tus upload + BullMQ worker that parses `.pptx` with `jszip` + `fast-xml-parser` and writes Yjs updates; export via a route that uses `pptxgenjs` and streams the result. **In MVP**: plain text frames, images, rect/ellipse/line shapes, slide backgrounds, position/size/rotation. **Tables** ship as exploded grids of `RectangleObject` + `TextObject` sharing a `groupId` — proper native table object lands in M29. **Deferred to follow-ups**: per-run text formatting, layouts/masters, theme tokens, charts, SmartArt, animations, transitions, video.
 
 PDF / PNG export and view-only share link (the original M28 scope) move to their own follow-up milestone or stay parked. Video export remains parked.
 
 **Plan**: `docs/plans/m28-pptx-import-export.md` — covers scope, library choices, data-model mapping, phases (spike → export MVP → import MVP → fidelity passes), and a Phase-1 spike that gates GO/NO-GO on the custom-parser approach.
 
-**Deliverable**: drag-a-pptx-to-import + click-to-export. 80% fidelity for content decks.
+**Deliverable**: drag-a-pptx-to-import + click-to-export. 80% fidelity for content decks. ✅
 
-### M29 — Performance + observability + polish
+### M29 — First-class TableObject (shipped 2026-05-18)
+
+Native `TableObject` in the slide model + editor. Users insert a table from the toolbar (10×10 grid picker), edit per-cell rich text inline, set per-cell / per-range / per-table style. Borders use a flat segment-keyed model so every grid line is a single value — no double-paint on shared edges. Inspector parity with the shape inspector (`IdentitySection` / `PositionSection` / `TypographySection` / `AnimationsSection` / `LayersPanel`). Linear / radial / image fills on tables via the shared `FillBody` + procedural-texture cache. Folder text-style presets bind to tables. Outer-rim alignment-inside trick + per-corner patches give clean Excel-style corners. M28's PPTX exploded-grid path still works during the migration; converting an exploded grid back into a `TableObject` is the next follow-up.
+
+**Plan**: `docs/plans/m29-table-object.md`.
+**Handoff**: `docs/handoff/0.8.0-table-object.md`.
+
+**Deliverable**: insert / edit / collaborate on tables natively. ✅
+
+### M30 — Performance + observability + polish
 
 Profile with 50-slide decks, multiple videos, 15 concurrent editors (synthetic load script from M6, extended). Optimize hot paths: PixiJS scene diffing, Yjs update handling, awareness throttling, GSAP tween count. Prometheus metrics from server + workers. Structured logs (pino). Runbook in `docs/ops.md`. Backup scripts (Postgres pg_dump + MinIO mc mirror + ZFS snapshot).
+
+(Was M29 in the original plan; renumbered after M29 was repurposed for the native TableObject.)
 
 **Deliverable**: production-grade stability.
 
@@ -331,7 +342,7 @@ Profile with 50-slide decks, multiple videos, 15 concurrent editors (synthetic l
 - **M6** = animation engine complete, foundation solid
 - **M12** = usable v1 (animations, video, live presentations)
 - **M15** = rich preset library, product feels "luxurious"
-- **M29** = feature-complete
+- **M30** = feature-complete
 
 ## How to work with the developer
 

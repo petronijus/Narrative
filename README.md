@@ -1,6 +1,13 @@
 # Narrative
 
-Self-hosted collaborative presentation tool with Keynote-level animations, real-time multi-user editing, and AI-assisted slide generation. Built for small teams (up to 15 simultaneous editors) on your own infrastructure.
+Self-hosted collaborative presentation tool with Keynote-level animations,
+real-time multi-user editing, native tables, PowerPoint round-trip, and
+AI-assisted slide generation. Built for small teams (up to 15 simultaneous
+editors) on your own infrastructure.
+
+Latest milestones:
+**[M28 — PowerPoint import & export](./docs/handoff/M28-pptx-import-export.md)** (2026-05-14) +
+**[M29 — first-class TableObject](./docs/handoff/0.8.0-table-object.md)** (2026-05-18).
 
 ## Requirements
 

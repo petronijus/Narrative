@@ -4,6 +4,115 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.8.0 — First-class TableObject (M29) (2026-05-18)
+
+Adds a native `TableObject` to the slide model + editor. Tables can be
+inserted from the toolbar, edited inline (per-cell rich text, borders,
+fills, padding), and round-trip through the existing M28 PPTX paths
+(import / export wired in a follow-up). Replaces the "exploded grid of
+RectangleObject + TextObject" workaround that landed with M28.
+
+Full plan: [`docs/plans/m29-table-object.md`](./docs/plans/m29-table-object.md).
+Handoff + deploy notes:
+[`docs/handoff/0.8.0-table-object.md`](./docs/handoff/0.8.0-table-object.md).
+
+### Added
+
+- **Schema** — `TableObject` with `rows / colWidths / rowHeights /
+defaults / borderSegments`. Cells carry per-cell style overrides
+  - merge-cell pointers. Borders use a **flat segment-keyed map**
+    (`h:<row>:<col>` / `v:<row>:<col>`) so every grid line is one
+    value — no more two-cells-own-this-edge ambiguity that double-painted
+    shared borders.
+- **`getEffectiveBorderSegment`** + `hSegKey` / `vSegKey` exported from
+  `@narrative/shared` — explicit `borderSegments` wins, falls back to
+  deriving from legacy `cell.border` for back-compat reads.
+- **Renderer** (`apps/web/src/renderer/objectRenderers/tableRenderer.ts`)
+  — three-pass scene graph (per-cell fill Graphics → per-cell HTMLText
+  → shared border Graphics). Outer-rim strokes aligned INSIDE the table
+  - per-corner patch fill give clean Keynote/Excel-style corners.
+- **Inspector** (`apps/web/src/ui/TableInspector.tsx`) — reuses the
+  shape inspector's `IdentitySection`, `PositionSection`,
+  `TypographySection` (now exported), `AnimationsSection`, `LayersPanel`.
+  Scope-aware: edits dispatch through range → active cell → defaults.
+  Folder text-style presets bind to tables via `TableDefaults`.
+- **Border preset UX** — clicking a preset _selects_ it and primes the
+  Style / Color / Width inputs with the existing segment values
+  (shows "Mixed" when targeted segments aren't uniform). Adjusting
+  any input restamps the active preset with the new value.
+- **Fill support** — linear gradient / radial gradient / image fill on
+  tables, routed through the shared `FillBody` + `ResourceManager`
+  procedural cache. A table-wide gradient on N cells acquires N refs
+  to ONE texture; gradient-stop drag paints one canvas per frame.
+- **Per-cell rich-text editor** — `apps/web/src/ui/TableCellEditor.tsx`
+  hosts a TextEditOverlay bound to the cell's Y.Text. Enter inserts
+  a paragraph (matches text-box behaviour). Cmd/Ctrl+Enter / Tab /
+  Shift+Tab still navigate cells.
+- **Canvas chrome** — `TableChrome` adds move handle, add-row /
+  add-col affordances, col-letter / row-number headers, drag-to-resize
+  for column widths + row heights.
+- **Gestures** — tap on a selected table enters cell mode; drag moves
+  the whole table; drag inside cell-active mode selects a range.
+- **Toolbar grid picker** — `TableGridButton` opens a 10×10 popover
+  (Word / PowerPoint / LibreImpress style). Hover sizes, click commits
+  - drops a table on the active slide. The `K` shortcut still
+    activates legacy click-to-place mode for keyboard users.
+- **Structural mutations** — `insertTableRow / Col` and `deleteTableRow /
+Col` shift `borderSegments` keys so the user's existing border lines
+  stay in place after a row / column edit.
+- **Tests** — 39 new tests in `packages/slide-model/src/tableMutations.test.ts`
+  covering presets, segment shift on structural edits, and the shared-edge
+  single-value invariant. 257 / 257 slide-model tests green.
+
+### Changed
+
+- **`Inspector.tsx`** — renamed internal `TextSection` to `TypographySection`,
+  exported it with a `features: TypographyFeatures` prop. Table inspector
+  passes the same component with text-only features (preset menu /
+  paragraph spacing / list style / stroke / color-alpha) gated off as
+  needed. Same component now serves both shapes and tables.
+- **`fillStyleToPixi.ts`** — `acquireOrPaint` / `releaseProceduralFill` /
+  `fillStyleToPixi` gained an optional `slotKey` defaulting to `'_default'`.
+  Single-fill renderers (shapes) unchanged; multi-fill renderers
+  (the table cell grid) pass per-cell slot keys so the slots don't
+  clobber each other. New `releaseAllProceduralFills(container)`
+  walks the map for destroy hooks.
+- **`imageFillLoader.ts`** — added per-key multi-slot variant
+  (`ensureImageFillKeyed` / `releaseImageFillKeyed` /
+  `releaseAllImageFillsKeyed`) for tables. Single-slot API unchanged
+  for shape renderers.
+- **Bundle hash** — `index-DeshjMfs.js` (637 KB, +23 KB vs 0.7.x).
+
+### Fixed
+
+- **`apps/server/package.json`** — promoted `jszip`, `fast-xml-parser`,
+  `pptxgenjs` from `devDependencies` to `dependencies`. They were
+  imported at runtime by the M28 PPTX parser / exporter but excluded
+  from the production image's `pnpm install --prod` pass, so the server
+  crashlooped with `ERR_MODULE_NOT_FOUND` for `jszip` on the first
+  prod redeploy after M28 landed.
+
+### Why
+
+The M28 PPTX import landed tables as "exploded grids of `RectangleObject` +
+`TextObject` shapes sharing a `groupId`". That round-trips a deck through
+PowerPoint with acceptable fidelity, but the user can't insert a table
+from scratch in Narrative, can't add a row, can't resize columns
+independently. M29 adds the native object type so all of that works
+inline, then keeps the M28 import / export paths working during the
+migration (separate follow-up will retire the exploded-grid heuristic).
+
+### Note on milestone numbering
+
+`BUILD_PLAN.md` originally planned M29 as "performance + observability +
+polish". That work has been deferred to a later milestone — the table
+object was promoted ahead of it because M28's PPTX round-trip needed a
+real table type to be useful. Stale `M29+` references elsewhere in
+`README.md` (DRM, video-worker limits, MinIO console restrictions)
+refer to the old plan; they belong to a future renumber pass.
+
+---
+
 ## 0.7.0 — Sharing rework: invite by email + pending invites (2026-05-13)
 
 Closes the usability gap from M10: invite collaborators by email instead
