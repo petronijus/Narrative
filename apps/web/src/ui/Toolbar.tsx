@@ -66,6 +66,10 @@ import { ShareDialog } from './ShareDialog.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useApi } from '../api/client.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useSlideDoc } from '../state/useSlideDoc.js'
+import { listSlides } from '@narrative/slide-model'
+import { ExportPptxDialog } from './ExportPptxDialog.js'
+import type { Slide } from '@narrative/shared'
 import { useSelection } from '../state/SelectionContext.js'
 import { createObjectOfType } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
@@ -143,6 +147,10 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   // confusing empty download.
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  // D2 — pre-export compatibility-warning dialog. Opens on Export click;
+  // contains a `Slide[]` snapshot the scanner walks for known losses.
+  const [exportDialogSlides, setExportDialogSlides] = useState<Slide[] | null>(null)
+  const slideDoc = useSlideDoc()
   const [appending, setAppending] = useState(false)
   const appendInputRef = useRef<HTMLInputElement | null>(null)
   // Auto-dismiss the export-error banner after a few seconds — feels nicer
@@ -817,9 +825,10 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
 
         {/* M28: Export to PowerPoint — editor+ role (covered by isOwner since
             we don't expose a non-owner role here yet; the server route enforces
-            editor+ regardless). Uses fetch + blob URL instead of a plain
-            navigation so we can show a spinner during the ~1-2 s pptx build
-            and surface server errors as a banner. */}
+            editor+ regardless). Clicking opens a compatibility-warning dialog
+            (D2) which lists what won't survive the round-trip; the actual
+            fetch happens when the user confirms inside the dialog.
+            Server errors surface as a transient toolbar banner. */}
         {isOwner && id !== undefined && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -828,51 +837,12 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 size="sm"
                 disabled={exporting}
                 onClick={() => {
-                  void (async () => {
-                    setExporting(true)
-                    setExportError(null)
-                    const apiUrl =
-                      (import.meta.env['VITE_API_URL'] as string | undefined) ??
-                      'http://localhost:3001'
-                    try {
-                      const res = await fetch(`${apiUrl}/decks/${id}/export.pptx`, {
-                        credentials: 'include',
-                      })
-                      if (!res.ok) {
-                        let msg = `Export failed (HTTP ${res.status})`
-                        try {
-                          const body = (await res.json()) as { error?: string }
-                          if (typeof body.error === 'string') msg = body.error
-                        } catch {
-                          /* non-JSON body */
-                        }
-                        setExportError(msg)
-                        return
-                      }
-                      // Stream the body into a blob, then click a hidden anchor
-                      // to trigger the browser's "Save as" with the right
-                      // filename. URL.revokeObjectURL releases the blob memory
-                      // once the click completes.
-                      const filenameMatch = /filename="([^"]+)"/.exec(
-                        res.headers.get('content-disposition') ?? '',
-                      )
-                      const filename = filenameMatch?.[1] ?? 'deck.pptx'
-                      const blob = await res.blob()
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement('a')
-                      a.href = url
-                      a.download = filename
-                      document.body.appendChild(a)
-                      a.click()
-                      document.body.removeChild(a)
-                      // Defer revoke a tick so the browser commits the download.
-                      setTimeout(() => URL.revokeObjectURL(url), 1_000)
-                    } catch (err) {
-                      setExportError(err instanceof Error ? err.message : 'Network error')
-                    } finally {
-                      setExporting(false)
-                    }
-                  })()
+                  const slides =
+                    slideDoc !== null && slideDoc.deckCtx !== undefined
+                      ? listSlides(slideDoc.deckCtx)
+                      : []
+                  setExportError(null)
+                  setExportDialogSlides(slides)
                 }}
                 aria-label="Export to PowerPoint"
                 className="gap-1.5"
@@ -889,8 +859,51 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 </span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Download as .pptx</TooltipContent>
+            <TooltipContent side="bottom">Review compatibility & download .pptx</TooltipContent>
           </Tooltip>
+        )}
+        {exportDialogSlides !== null && id !== undefined && (
+          <ExportPptxDialog
+            slides={exportDialogSlides}
+            onClose={() => setExportDialogSlides(null)}
+            onExport={async () => {
+              setExporting(true)
+              const apiUrl =
+                (import.meta.env['VITE_API_URL'] as string | undefined) ?? 'http://localhost:3001'
+              try {
+                const res = await fetch(`${apiUrl}/decks/${id}/export.pptx`, {
+                  credentials: 'include',
+                })
+                if (!res.ok) {
+                  let msg = `Export failed (HTTP ${res.status})`
+                  try {
+                    const body = (await res.json()) as { error?: string }
+                    if (typeof body.error === 'string') msg = body.error
+                  } catch {
+                    /* non-JSON body */
+                  }
+                  setExportError(msg)
+                  throw new Error(msg)
+                }
+                const filenameMatch = /filename="([^"]+)"/.exec(
+                  res.headers.get('content-disposition') ?? '',
+                )
+                const filename = filenameMatch?.[1] ?? 'deck.pptx'
+                const blob = await res.blob()
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = filename
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                setTimeout(() => URL.revokeObjectURL(url), 1_000)
+                setExportDialogSlides(null)
+              } finally {
+                setExporting(false)
+              }
+            }}
+          />
         )}
 
         {/* Preview animations — deck only; masters have no presentation. */}

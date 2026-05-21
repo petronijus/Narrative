@@ -8,17 +8,33 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { CheckCircle2, FileUp, Folder, FolderPlus, Loader2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FileUp,
+  Folder,
+  FolderPlus,
+  Info,
+  Loader2,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { FolderSummary, ImportPptxResult } from '../api/client.js'
+import { IMPORT_KNOWN_LOSSES, relevantIgnoredElements } from '../lib/pptxCompat.js'
 
 interface ImportPptxDialogProps {
   file: File
   folders: FolderSummary[]
   /** Performs the import. Resolves with the server's summary so the dialog
    *  can show it briefly before navigating. Rejects with `{ body: { error } }`
-   *  on 4xx so we surface the actual server message. */
-  onImport: (folderId: string, file: File) => Promise<ImportPptxResult>
+   *  on 4xx so we surface the actual server message. The dialog passes a
+   *  callback shape so the implementation can drive a percentage bar — the
+   *  tus path reports per-chunk progress; the legacy synchronous fetch
+   *  implementation can ignore it. */
+  onImport: (
+    folderId: string,
+    file: File,
+    opts: { onProgress?: (fraction: number) => void },
+  ) => Promise<ImportPptxResult>
   onCreateFolder: (name: string) => Promise<FolderSummary>
   /** Called after the success summary has been on-screen long enough to be
    *  read — typically the parent navigates to the new deck here. */
@@ -44,22 +60,37 @@ export function ImportPptxDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<ImportPptxResult | null>(null)
+  // Upload progress (0..1). Tracked separately from `busy` so the bar can
+  // render while bytes flow; the post-upload server processing step (parse
+  // + DB writes) lives between the last byte and `success`, during which
+  // the progress fraction stays at 1 and the label flips to "Processing…".
+  const [progress, setProgress] = useState(0)
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing'>('idle')
   const newNameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (creatingNew) newNameInputRef.current?.focus()
   }, [creatingNew])
 
-  // Auto-advance from "success" → onSuccess (navigation) after a short pause.
+  // Auto-advance from "success" → onSuccess (navigation) after a short
+  // pause, BUT only when the import was clean (no unsupported elements
+  // detected). When the parser flagged content that couldn't come
+  // through (charts, smartart, etc.) we pause and require the user to
+  // dismiss the warnings explicitly — they should know what changed
+  // before they land on the deck.
+  const importIssues = success === null ? [] : relevantIgnoredElements(success.ignoredElements)
   useEffect(() => {
     if (success === null) return
+    if (importIssues.length > 0) return
     const t = setTimeout(() => onSuccess(success), SUCCESS_DISPLAY_MS)
     return () => clearTimeout(t)
-  }, [success, onSuccess])
+  }, [success, importIssues.length, onSuccess])
 
   const handleConfirm = async () => {
     setError(null)
     setBusy(true)
+    setProgress(0)
+    setPhase('uploading')
     try {
       let folderId = selectedId
       if (creatingNew) {
@@ -67,6 +98,7 @@ export function ImportPptxDialog({
         if (trimmed === '') {
           setError('Folder name cannot be empty.')
           setBusy(false)
+          setPhase('idle')
           return
         }
         const created = await onCreateFolder(trimmed)
@@ -75,9 +107,15 @@ export function ImportPptxDialog({
       if (folderId == null) {
         setError('Pick a folder first.')
         setBusy(false)
+        setPhase('idle')
         return
       }
-      const result = await onImport(folderId, file)
+      const result = await onImport(folderId, file, {
+        onProgress: (fraction) => {
+          setProgress(fraction)
+          if (fraction >= 1) setPhase('processing')
+        },
+      })
       // Leave `busy` true so the inputs stay disabled while the success
       // panel is showing — it's not "interactive" any more.
       setSuccess(result)
@@ -86,6 +124,7 @@ export function ImportPptxDialog({
       const body = (err as { body?: { error?: string } }).body
       setError(body?.error ?? (err instanceof Error ? err.message : 'Import failed'))
       setBusy(false)
+      setPhase('idle')
     }
   }
 
@@ -131,9 +170,48 @@ export function ImportPptxDialog({
                 {success.skipped.unknownShapes > 0
                   ? ` · ${success.skipped.unknownShapes} unsupported shape(s) skipped`
                   : ''}
-                . Opening deck…
+                {importIssues.length === 0 ? '. Opening deck…' : '.'}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Import compatibility warnings — surface the categories the
+            parser flagged plus the static known-losses for each so the
+            user can investigate after opening the deck. */}
+        {success !== null && importIssues.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <h3 className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
+              Some content couldn’t come through
+            </h3>
+            <ul className="space-y-2">
+              {IMPORT_KNOWN_LOSSES.filter((entry) =>
+                matchesIgnoredCategory(entry.id, importIssues),
+              ).map((entry) => (
+                <li
+                  key={entry.id}
+                  className="rounded-md border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground"
+                >
+                  <p className="font-medium text-foreground">{entry.title}</p>
+                  <p className="mt-1 leading-relaxed">{entry.detail}</p>
+                </li>
+              ))}
+            </ul>
+            {/* If the parser flagged a tag that doesn't map to a known
+                category we still want to surface it generically. */}
+            {importIssues.some((t) => !KNOWN_TAGS_BY_CATEGORY.has(t)) && (
+              <p className="flex items-start gap-1.5 rounded-md border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  Additional unsupported elements were skipped:{' '}
+                  <code className="text-foreground/80">
+                    {importIssues.filter((t) => !KNOWN_TAGS_BY_CATEGORY.has(t)).join(', ')}
+                  </code>
+                  .
+                </span>
+              </p>
+            )}
           </div>
         )}
 
@@ -224,30 +302,91 @@ export function ImportPptxDialog({
           )}
         </div>
 
+        {/* Upload progress + processing status. Visible while bytes are
+            in flight (`uploading`) and during the post-upload server-side
+            parse step (`processing`). Hidden in the idle state and once
+            the success panel takes over. */}
+        {(phase === 'uploading' || phase === 'processing') && success === null && (
+          <div className="mt-3" aria-live="polite">
+            <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                {phase === 'uploading'
+                  ? `Uploading… ${Math.round(progress * 100)}%`
+                  : 'Processing…'}
+              </span>
+              {phase === 'uploading' && (
+                <span className="text-[10px] tracking-wide">
+                  {formatBytes(Math.round(progress * file.size))} / {formatBytes(file.size)}
+                </span>
+              )}
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-1">
+              <div
+                className="h-full bg-primary transition-[width] duration-150 ease-linear"
+                style={{
+                  width: phase === 'processing' ? '100%' : `${Math.round(progress * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {error !== null && <p className="mt-3 text-xs text-destructive-foreground">{error}</p>}
 
         {/* Actions */}
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => void handleConfirm()}
-            disabled={busy || (!creatingNew && selectedId == null)}
-            className="btn-brand gap-1.5"
-          >
-            {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : (
+          {success !== null && importIssues.length > 0 ? (
+            // Successful import that needs explicit user dismissal — single
+            // CTA jumps to the deck.
+            <Button size="sm" onClick={() => onSuccess(success)} className="btn-brand gap-1.5">
               <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-            )}
-            {busy ? 'Importing…' : 'Import'}
-          </Button>
+              Open deck
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void handleConfirm()}
+                disabled={busy || (!creatingNew && selectedId == null)}
+                className="btn-brand gap-1.5"
+              >
+                {busy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {busy ? 'Importing…' : 'Import'}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </div>
   )
+}
+
+/**
+ * Map parser-flagged tag names → which `IMPORT_KNOWN_LOSSES` category
+ * they belong to. The compat scanner already surfaces a curated subset
+ * via `relevantIgnoredElements`, so this lookup just figures out which
+ * static panel entry to highlight for each flagged tag.
+ */
+const KNOWN_TAGS_BY_CATEGORY: ReadonlyMap<string, string> = new Map([
+  ['a:chart', 'charts'],
+  ['c:chart', 'charts'],
+  ['a:smartArt', 'smartArt'],
+  ['p:oleObj', 'oleEmbed'],
+  ['p:OLEObject', 'oleEmbed'],
+  ['mc:AlternateContent', 'oleEmbed'],
+  ['p:bldOver', 'complexTiming'],
+  ['p:tnLst', 'complexTiming'],
+])
+
+function matchesIgnoredCategory(categoryId: string, ignored: string[]): boolean {
+  return ignored.some((tag) => KNOWN_TAGS_BY_CATEGORY.get(tag) === categoryId)
 }
 
 function formatBytes(bytes: number): string {
