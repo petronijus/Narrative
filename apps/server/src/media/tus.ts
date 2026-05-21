@@ -46,6 +46,10 @@ import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { parseFontMetadata } from './fontMetadata.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import { eq } from 'drizzle-orm'
+import { folders, decks } from '../db/schema.js'
+import { DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 
 // probe-image-size is CommonJS — import via createRequire so ESM build works
@@ -69,8 +73,20 @@ const MAX_FONT_UPLOAD_SIZE = Number(process.env['MAX_FONT_UPLOAD_SIZE'] ?? 8_000
 const MAX_IMAGE_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_000)
 /** Max size for video uploads. */
 const MAX_VIDEO_UPLOAD_SIZE = Number(process.env['MAX_VIDEO_UPLOAD_SIZE'] ?? 500_000_000)
-/** tus server-level maxSize — set to the larger of the two; per-MIME enforcement is in onUploadCreate. */
-const MAX_UPLOAD_SIZE = Math.max(MAX_IMAGE_UPLOAD_SIZE, MAX_VIDEO_UPLOAD_SIZE, MAX_FONT_UPLOAD_SIZE)
+/**
+ * Max size for `.pptx` imports. Default 2 GB. The pptx path doesn't
+ * create a `media_assets` row; instead the `onUploadFinish` hook runs
+ * the full deck-import pipeline against the freshly-uploaded blob.
+ */
+const MAX_PPTX_UPLOAD_SIZE = Number(process.env['MAX_PPTX_UPLOAD_SIZE'] ?? 2 * 1024 * 1024 * 1024)
+/** tus server-level maxSize — set to the largest of the four; per-MIME enforcement is in onUploadCreate. */
+const MAX_UPLOAD_SIZE = Math.max(
+  MAX_IMAGE_UPLOAD_SIZE,
+  MAX_VIDEO_UPLOAD_SIZE,
+  MAX_FONT_UPLOAD_SIZE,
+  MAX_PPTX_UPLOAD_SIZE,
+)
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
 /**
  * P15: classifies an upload as a font from its MIME or filename
@@ -200,6 +216,7 @@ function extensionFromMimeOrFilename(mime: string, filename?: string): string {
     'application/x-font-opentype': 'otf',
     'application/x-font-truetype': 'ttf',
     'application/vnd.ms-opentype': 'otf',
+    [PPTX_MIME]: 'pptx',
   }
 
   const fromMime = mimeMap[mime.toLowerCase()]
@@ -246,6 +263,28 @@ async function probeImageDimensions(
     return undefined
   }
 }
+
+/**
+ * Best-effort MinIO delete. Used for transient pptx blobs (which are
+ * parsed in onUploadFinish and then thrown away). A failed delete just
+ * leaves an orphan object behind — annoying but not fatal; the M29 GC
+ * sweep is the safety net.
+ */
+async function deleteMinIOObject(s3: S3Client, storageKey: string): Promise<void> {
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: storageKey }))
+  } catch (err) {
+    console.warn('[tus] DeleteObject failed for', storageKey, err)
+  }
+}
+
+// `decks` is imported up top to satisfy the unused-import lint; the
+// `db.delete(decks)` rollback paths we briefly considered for failed
+// imports turned out unnecessary (importDeckFromPptxBytes runs the
+// deck-creating transaction atomically, so partial-failure rollback is
+// already handled). Reference the symbol so the import isn't tree-shaken
+// in a way that confuses tooling.
+void decks
 
 // ---------------------------------------------------------------------------
 // Auth helper
@@ -322,15 +361,25 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     namingFunction: (_req: IncomingMessage, metadata?: Record<string, string | null>) => {
       const assetId = nanoid(16)
       const deckId = metadata?.['deckId'] ?? 'unknown'
+      const folderId = metadata?.['folderId'] ?? null
       const filename = metadata?.['filename'] ?? undefined
       const mime =
         metadata?.['content-type'] ?? metadata?.['mimeType'] ?? 'application/octet-stream'
       const ext = extensionFromMimeOrFilename(mime, filename)
+      // PPTX imports are transient: the bytes get parsed in onUploadFinish
+      // and then deleted from MinIO. Storing them under their own folder
+      // namespaced by folderId (NOT deckId — the deck doesn't exist yet)
+      // makes the cleanup path unambiguous and lets a future GC sweep
+      // pick up orphaned imports without scanning the whole bucket.
       // P15: fonts get their own folder so the deck listing logic can
-      // tell them apart at a glance and a future cleanup job can wipe
-      // them in bulk on deck delete.
-      const folder = isFontUpload(mime, filename) ? 'fonts' : 'uploads'
-      const storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
+      // tell them apart at a glance.
+      let storageKey: string
+      if (mime === PPTX_MIME) {
+        storageKey = `imports/pptx-temp/${folderId ?? 'unknown'}/${assetId}/source.${ext}`
+      } else {
+        const folder = isFontUpload(mime, filename) ? 'fonts' : 'uploads'
+        storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
+      }
 
       const encoded = `${assetId}:${deckId}:${Buffer.from(storageKey).toString('base64url')}`
       return encoded
@@ -353,12 +402,9 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // 2. Parse metadata from Upload-Metadata header
       const meta = parseMetadata(req.headers['upload-metadata'])
       const deckId = meta['deckId'] ?? upload.metadata?.['deckId'] ?? null
+      const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
 
-      if (!deckId) {
-        throw { status_code: 400, body: 'Missing deckId in Upload-Metadata' }
-      }
-
-      // 3. MIME validation — accept image/* and video/*; reject everything else
+      // 3. MIME resolution (used by both the pptx branch and the media branch).
       const mime =
         meta['content-type'] ??
         meta['mimeType'] ??
@@ -380,6 +426,45 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         )
       }
 
+      // ─── PPTX import branch ────────────────────────────────────────────
+      // Different metadata model: pptx imports create a NEW deck inside a
+      // folder, so they require `folderId` (not `deckId`) and we check
+      // folder ownership instead of deck role. The MinIO blob is transient
+      // — the onUploadFinish hook parses it and deletes it.
+      if (mime === PPTX_MIME) {
+        if (!folderId) {
+          throw {
+            status_code: 400,
+            body: 'Missing folderId in Upload-Metadata for pptx import',
+          }
+        }
+        const uploadSize = upload.size ?? 0
+        if (uploadSize > MAX_PPTX_UPLOAD_SIZE) {
+          throw {
+            status_code: 413,
+            body: `PPTX import exceeds maximum size of ${MAX_PPTX_UPLOAD_SIZE} bytes.`,
+          }
+        }
+        // Folder ownership — same check the synchronous pptxImport route does.
+        const [folder] = await db
+          .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+          .from(folders)
+          .where(eq(folders.id, folderId))
+          .limit(1)
+        if (!folder) {
+          throw { status_code: 404, body: 'Folder not found' }
+        }
+        if (folder.ownerUserId !== userId) {
+          throw { status_code: 403, body: 'Forbidden: only the folder owner may import' }
+        }
+        return { res }
+      }
+
+      // ─── Existing media upload branch ─────────────────────────────────
+      if (!deckId) {
+        throw { status_code: 400, body: 'Missing deckId in Upload-Metadata' }
+      }
+
       const filenameForMime = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
       const isImage = mime.startsWith('image/')
       const isVideo = mime.startsWith('video/')
@@ -388,7 +473,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       if (!isImage && !isVideo && !isFont) {
         throw {
           status_code: 415,
-          body: `Unsupported media type: ${mime}. Only image/*, video/* and font/* are accepted.`,
+          body: `Unsupported media type: ${mime}. Only image/*, video/*, font/*, and pptx are accepted.`,
         }
       }
 
@@ -480,6 +565,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         meta['mimeType'] ??
         upload.metadata?.['content-type'] ??
         'application/octet-stream'
+      const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
 
       // Get authoritative size from S3 head
       let sizeBytes = upload.size ?? 0
@@ -488,6 +574,76 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         sizeBytes = head.ContentLength ?? sizeBytes
       } catch (err) {
         console.warn('[tus] HeadObject failed, using tus-reported size:', err)
+      }
+
+      // ─── PPTX import branch ────────────────────────────────────────────
+      // The blob is transient: read it back, run the deck-import pipeline,
+      // delete the MinIO object whether import succeeded or not. Failed
+      // imports leave nothing behind to clean up.
+      if (mimeRaw === PPTX_MIME) {
+        if (!folderId) {
+          // Should have been caught in onUploadCreate; defensive guard.
+          await deleteMinIOObject(s3, storageKey)
+          throw { status_code: 400, body: 'Missing folderId in pptx import metadata' }
+        }
+        let pptxBytes: Buffer
+        try {
+          const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: storageKey }))
+          if (!obj.Body) throw new Error('S3 returned empty body for pptx blob')
+          const chunks: Buffer[] = []
+          for await (const chunk of obj.Body as Readable) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
+          }
+          pptxBytes = Buffer.concat(chunks)
+        } catch (err) {
+          console.error('[tus] pptx GetObject failed:', err)
+          await deleteMinIOObject(s3, storageKey)
+          throw { status_code: 500, body: 'Failed to read uploaded pptx from storage' }
+        }
+
+        const importResult = await importDeckFromPptxBytes({
+          bytes: pptxBytes,
+          folderId,
+          ownerUserId: userId,
+          ...(typeof filename === 'string' ? { filenameForTitle: filename } : {}),
+          db,
+          log: {
+            info: (o, m) => console.info('[tus-pptx]', m ?? '', o),
+            warn: (o, m) => console.warn('[tus-pptx]', m ?? '', o),
+          },
+        })
+
+        // ALWAYS clean up the temp blob — successful import doesn't need
+        // the bytes (image extraction was already done from the in-memory
+        // Buffer); failed import has nothing worth keeping.
+        await deleteMinIOObject(s3, storageKey)
+
+        if (!importResult.ok) {
+          const { error } = importResult
+          const status =
+            error.kind === 'folderNotFound'
+              ? 404
+              : error.kind === 'forbidden'
+                ? 403
+                : error.kind === 'parseFailed' ||
+                    error.kind === 'noSlides' ||
+                    error.kind === 'emptyBody'
+                  ? 400
+                  : 500
+          const message =
+            error.kind === 'parseFailed' ? `Could not parse .pptx — ${error.message}` : error.kind
+          throw { status_code: status, body: message }
+        }
+
+        return {
+          res,
+          status_code: 201,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Narrative-Deck-Id': importResult.result.deckId,
+          },
+          body: JSON.stringify(importResult.result),
+        }
       }
 
       const isVideo = mimeRaw.startsWith('video/')

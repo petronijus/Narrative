@@ -1,0 +1,320 @@
+/**
+ * pptx/importDeck.ts
+ *
+ * Shared "import a `.pptx` Buffer as a new deck" pipeline. Extracted so
+ * the two upload paths can converge on the same logic:
+ *   1. `POST /folders/:folderId/import-pptx` — synchronous buffered POST
+ *      (the original M28 endpoint, kept for backward compat).
+ *   2. tus-based chunked upload — the new path that streams the bytes
+ *      into MinIO first, then calls this from `onUploadFinish` after
+ *      reading them back as a Buffer.
+ *
+ * Steps:
+ *   - Verify folder ownership.
+ *   - Parse pptx via `parsePptx`.
+ *   - Upload every embedded image / video to MinIO under the new deck's
+ *     namespace, patching the parsed shapes' `assetId` fields.
+ *   - Build a Y.Doc state buffer via `buildDeckUpdate`.
+ *   - Insert deck + permission + media_assets + deck_updates in one tx.
+ *
+ * The function is loader-friendly: callers pass their own logger so the
+ * tus path can use `fastify.log`'s child logger while the route path uses
+ * `request.log`. Returns the same result shape both paths surface to the
+ * client (matches `apps/web/src/api/client.ts:ImportPptxResult`).
+ */
+
+import { Readable } from 'node:stream'
+import { createRequire } from 'node:module'
+import { PutObjectCommand } from '@aws-sdk/client-s3'
+import { nanoid } from 'nanoid'
+import { eq } from 'drizzle-orm'
+import type { Database } from '../db/client.js'
+import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
+import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
+import { buildDeckUpdate } from './writer.js'
+
+const require = createRequire(import.meta.url)
+interface ProbeResult {
+  width: number
+  height: number
+  type: string
+}
+const probeImageSize: (
+  stream: Readable,
+) => Promise<ProbeResult | null> = require('probe-image-size')
+
+/** Minimal logger surface that both Fastify request loggers and the
+ *  Fastify app logger satisfy — accepts `(obj, msg)` like pino. */
+export interface ImportLogger {
+  info: (obj: unknown, msg?: string) => void
+  warn: (obj: unknown, msg?: string) => void
+}
+
+/**
+ * Standard result shape — kept in sync with `ImportPptxResult` on the
+ * client side. Both upload paths surface this to the user.
+ */
+export interface ImportDeckResult {
+  deckId: string
+  slideCount: number
+  objectsCreated: number
+  skipped: { images: number; unknownShapes: number }
+  ignoredElements: string[]
+  slideWidth: number
+  slideHeight: number
+}
+
+/**
+ * Failure outcome — kept as a discriminated union so callers can map
+ * each kind to the right HTTP status code (404 for folder-not-found,
+ * 403 for forbidden, 400 for parse failure, etc.). Throwing exceptions
+ * across the tus / route boundary is messy because tus only surfaces
+ * a body string; returning a structured result lets each caller format
+ * the error in its native shape.
+ */
+export type ImportDeckError =
+  | { kind: 'folderNotFound' }
+  | { kind: 'forbidden' }
+  | { kind: 'emptyBody' }
+  | { kind: 'parseFailed'; message: string }
+  | { kind: 'noSlides' }
+  | { kind: 'deckInsertFailed' }
+
+/**
+ * Run the full "buffer → deck" pipeline. Pure server side; no HTTP
+ * primitives. Caller is responsible for surfacing the result / error
+ * over the right transport.
+ */
+export async function importDeckFromPptxBytes(args: {
+  bytes: Buffer
+  folderId: string
+  ownerUserId: string
+  filenameForTitle?: string
+  db: Database
+  log: ImportLogger
+}): Promise<{ ok: true; result: ImportDeckResult } | { ok: false; error: ImportDeckError }> {
+  const { bytes, folderId, ownerUserId, filenameForTitle, db, log } = args
+
+  if (bytes.byteLength === 0) {
+    return { ok: false, error: { kind: 'emptyBody' } }
+  }
+
+  // Verify folder ownership before doing expensive parse work.
+  const [folder] = await db
+    .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .limit(1)
+  if (!folder) return { ok: false, error: { kind: 'folderNotFound' } }
+  if (folder.ownerUserId !== ownerUserId) {
+    return { ok: false, error: { kind: 'forbidden' } }
+  }
+
+  let parsed: ParsedPptx
+  try {
+    parsed = await parsePptx(bytes)
+  } catch (err) {
+    log.warn({ err }, 'pptx-import: parse failed')
+    return {
+      ok: false,
+      error: {
+        kind: 'parseFailed',
+        message: err instanceof Error ? err.message : 'unknown error',
+      },
+    }
+  }
+  if (parsed.slides.length === 0) {
+    return { ok: false, error: { kind: 'noSlides' } }
+  }
+
+  const deckId = nanoid(12)
+  const title = deriveTitle(filenameForTitle)
+  const now = new Date()
+
+  const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages } =
+    await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+
+  const { state, slideCount, objectsCreated, skipped } = buildDeckUpdate(parsed)
+
+  const insertedDeck = await db.transaction(async (tx) => {
+    const [deck] = await tx
+      .insert(decks)
+      .values({
+        id: deckId,
+        title,
+        ownerUserId,
+        folderId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+    if (!deck) return null
+
+    await tx.insert(deckPermissions).values({
+      deckId,
+      userId: ownerUserId,
+      role: 'owner',
+      grantedAt: now,
+      grantedBy: ownerUserId,
+    })
+
+    if (mediaAssetRows.length > 0) {
+      await tx.insert(mediaAssets).values(mediaAssetRows)
+    }
+
+    await tx.insert(deckUpdates).values({
+      deckId,
+      update: state,
+      createdAt: now,
+    })
+
+    return deck
+  })
+
+  if (!insertedDeck) {
+    return { ok: false, error: { kind: 'deckInsertFailed' } }
+  }
+
+  log.info(
+    {
+      deckId,
+      slideCount,
+      objectsCreated,
+      skippedImages: skipped.images + skippedUnsupportedImages,
+      skippedUnknown: skipped.unknownShapes,
+      uploadedImages: uploadedImageCount,
+      ignored: parsed.ignoredElements,
+    },
+    'pptx-import: deck created',
+  )
+
+  return {
+    ok: true,
+    result: {
+      deckId,
+      slideCount,
+      objectsCreated,
+      skipped: {
+        images: skipped.images + skippedUnsupportedImages,
+        unknownShapes: skipped.unknownShapes,
+      },
+      ignoredElements: parsed.ignoredElements,
+      slideWidth: parsed.slideWidth,
+      slideHeight: parsed.slideHeight,
+    },
+  }
+}
+
+/**
+ * Walk the parsed deck's embedded media (images + videos), upload each
+ * to MinIO under the new deck's namespace, and patch the parsed shapes'
+ * `assetId` fields so the writer's Y.Doc output points to the right
+ * media_assets rows. Unsupported MIME types (e.g. WMF, EMF) are skipped
+ * and counted so the caller can surface the loss.
+ *
+ * Public for reuse by the append-pptx route which mirrors this step.
+ */
+export async function uploadEmbeddedImagesAndPatchAssetIds(
+  parsed: ParsedPptx,
+  deckId: string,
+  ownerUserId: string,
+  log: ImportLogger,
+): Promise<{
+  mediaAssetRows: Array<typeof mediaAssets.$inferInsert>
+  uploadedImageCount: number
+  skippedUnsupportedImages: number
+}> {
+  const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+  const SUPPORTED_VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
+  const s3 = buildS3Client()
+  const mediaPathToAssetId = new Map<string, string>()
+  const mediaAssetRows: Array<typeof mediaAssets.$inferInsert> = []
+  let uploadedImageCount = 0
+  let skippedUnsupportedImages = 0
+
+  for (const [zipPath, media] of parsed.embeddedImages) {
+    const isImage = SUPPORTED_IMAGE_MIME.has(media.mimeType)
+    const isVideo = SUPPORTED_VIDEO_MIME.has(media.mimeType)
+    if (!isImage && !isVideo) {
+      skippedUnsupportedImages++
+      continue
+    }
+    const assetId = nanoid(12)
+    const storageKey = `decks/${deckId}/uploads/${assetId}/original.${media.ext}`
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: MEDIA_BUCKET,
+          Key: storageKey,
+          Body: media.bytes,
+          ContentType: media.mimeType,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      )
+    } catch (err) {
+      log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping asset')
+      continue
+    }
+    const dims = isImage ? await probeImageDims(media) : null
+    mediaPathToAssetId.set(zipPath, assetId)
+    mediaAssetRows.push({
+      id: assetId,
+      deckId,
+      uploaderUserId: ownerUserId,
+      mimeType: media.mimeType,
+      sizeBytes: media.bytes.byteLength,
+      storageKey,
+      originalFilename: zipPath.split('/').pop() ?? null,
+      width: dims?.width ?? null,
+      height: dims?.height ?? null,
+      kind: isVideo ? 'video' : 'image',
+    })
+    uploadedImageCount++
+  }
+
+  // Patch parsed shapes + backgrounds with their resolved assetIds.
+  for (const slide of parsed.slides) {
+    if (slide.background.imagePath !== undefined) {
+      const aid = mediaPathToAssetId.get(slide.background.imagePath)
+      if (aid !== undefined) slide.background.assetId = aid
+    }
+    for (const sh of slide.shapes) {
+      if (sh.imagePath !== undefined) {
+        const aid = mediaPathToAssetId.get(sh.imagePath)
+        if (aid !== undefined) sh.assetId = aid
+      }
+      if (sh.videoPath !== undefined) {
+        const aid = mediaPathToAssetId.get(sh.videoPath)
+        if (aid !== undefined) sh.assetId = aid
+      }
+    }
+  }
+
+  return { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages }
+}
+
+async function probeImageDims(
+  img: ParsedEmbeddedImage,
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const r = await probeImageSize(Readable.from(img.bytes))
+    if (r === null) return null
+    return { width: r.width, height: r.height }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pick a sensible deck title from the original filename. Falls back to
+ * a generic name when the filename is missing, empty, or too long.
+ */
+export function deriveTitle(rawFilename: string | undefined): string {
+  if (typeof rawFilename !== 'string' || rawFilename.length === 0) {
+    return 'Imported deck'
+  }
+  const trimmed = rawFilename.replace(/\.pptx$/i, '').trim()
+  if (trimmed.length === 0 || trimmed.length > 200) return 'Imported deck'
+  return trimmed
+}

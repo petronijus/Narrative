@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
 import { NewDeckDialog } from '../ui/NewDeckDialog.js'
 import { ImportPptxDialog } from '../ui/ImportPptxDialog.js'
+import { importPptxViaTus } from '../state/importPptxViaTus.js'
 
 // ---------------------------------------------------------------------------
 // FoldersHome
@@ -336,7 +337,18 @@ export function FoldersHome() {
             setFolders((prev) => [...prev, folder])
             return folder
           }}
-          onImport={(folderId, file) => api.importPptx(file, folderId)}
+          onImport={(folderId, file, opts) =>
+            // Resumable, chunked tus upload. The server-side onUploadFinish
+            // hook runs the full deck-import pipeline against the freshly
+            // uploaded blob and returns the standard ImportPptxResult.
+            importPptxViaTus({
+              file,
+              folderId,
+              ...(opts.onProgress !== undefined
+                ? { onProgress: (p) => opts.onProgress!(p.fraction) }
+                : {}),
+            })
+          }
           onSuccess={(result) => {
             // Dialog has already shown its "Imported …" summary for a beat;
             // tear it down and navigate to the freshly created deck so the

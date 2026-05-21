@@ -115,7 +115,11 @@ const app = Fastify({
   // first-slide preview) can land in the 800 KB – 2 MB range for slides
   // with image/video content; widening the global limit keeps the
   // request from being rejected before our route's per-payload check
-  // (MAX_THUMBNAIL_BYTES on decoded bytes) can run.
+  // (MAX_THUMBNAIL_BYTES on decoded bytes) can run. PPTX uploads bypass
+  // this global limit two ways: tus-based uploads stream 5 MB chunks
+  // (each chunk well below any limit), and the legacy synchronous
+  // endpoint sets its own per-content-type bodyLimit on the addContentTypeParser
+  // call — Fastify's content-type parser bodyLimit overrides the global.
   bodyLimit: 4 * 1024 * 1024,
 })
 

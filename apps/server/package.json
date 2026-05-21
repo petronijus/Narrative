@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
+    "dev": "node --env-file=../../.env --max-old-space-size=8192 ../../node_modules/tsx/dist/cli.mjs watch src/index.ts",
     "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
@@ -14,7 +14,7 @@
     "db:migrate-demo": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/migrateDemoUserDecks.ts",
     "db:purge-components": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/purgeComponentInstances.ts",
     "pptx:spike": "node --expose-gc ../../node_modules/tsx/dist/cli.mjs src/scripts/pptxSpike.ts",
-    "start": "node dist/index.js"
+    "start": "node --max-old-space-size=8192 dist/index.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.776.0",
