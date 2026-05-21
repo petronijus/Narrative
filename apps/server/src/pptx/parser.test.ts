@@ -172,6 +172,121 @@ describe('parsePptx', () => {
     expect(out.slides[0]!.shapes[0]!.fillColor).toBe(0x4472c4)
   })
 
+  it('resolves alias slots (bg1/tx1/bg2/tx2) against the loaded theme, not DEFAULT_THEME', async () => {
+    // Regression for the sample deck: theme stores `lt1 = 010101`
+    // (near-black) instead of the conventional white. A run with
+    // `<a:schemeClr val="bg1"/>` must alias-resolve to `lt1` from the
+    // LOADED theme and import as #010101 — not as DEFAULT_THEME.bg1 (white).
+    const DARK_LT1_THEME = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <a:themeElements><a:clrScheme name="DarkLt1">
+    <a:dk1><a:srgbClr val="010101"/></a:dk1>
+    <a:lt1><a:srgbClr val="010101"/></a:lt1>
+    <a:dk2><a:srgbClr val="A7A7A7"/></a:dk2>
+    <a:lt2><a:srgbClr val="535353"/></a:lt2>
+    <a:accent1><a:srgbClr val="FFFE59"/></a:accent1>
+    <a:accent2><a:srgbClr val="FEF400"/></a:accent2>
+    <a:accent3><a:srgbClr val="3D05AC"/></a:accent3>
+    <a:accent4><a:srgbClr val="550DF5"/></a:accent4>
+    <a:accent5><a:srgbClr val="48EABB"/></a:accent5>
+    <a:accent6><a:srgbClr val="FF0055"/></a:accent6>
+  </a:clrScheme></a:themeElements>
+</a:theme>`
+    const buf = await makeFixture({
+      themeXml: DARK_LT1_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/>
+            <a:lstStyle/>
+            <a:p><a:r>
+              <a:rPr lang="en-US"><a:solidFill><a:schemeClr val="bg1"/></a:solidFill></a:rPr>
+              <a:t>Hello</a:t>
+            </a:r></a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.textColor).toBe(0x010101)
+  })
+
+  it('falls back to <a:lstStyle>/<a:lvl1pPr>/<a:defRPr> when run rPr has no color', async () => {
+    // Regression for the sample "ACME" shape — the run is just
+    // <a:rPr sz="N"/> with no solidFill; the colour lives on the text
+    // body's lstStyle defRPr. Must inherit per OOXML run-property cascade.
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/>
+            <a:lstStyle>
+              <a:lvl1pPr algn="ctr">
+                <a:defRPr sz="3000">
+                  <a:solidFill><a:srgbClr val="D1FD51"/></a:solidFill>
+                  <a:latin typeface="Custom Display"/>
+                </a:defRPr>
+              </a:lvl1pPr>
+            </a:lstStyle>
+            <a:p><a:r><a:rPr sz="5997"/><a:t>ACME</a:t></a:r></a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const sh = out.slides[0]!.shapes[0]!
+    expect(sh.textColor).toBe(0xd1fd51)
+    expect(sh.fontFamily).toBe('Custom Display')
+  })
+
+  it('falls back to <a:pPr>/<a:defRPr> when run rPr has no color', async () => {
+    // Regression for the sample "you say when…" shape — the paragraph
+    // has its own <a:pPr><a:defRPr> with colour + font; runs inside carry
+    // only <a:rPr sz="N"/>. Per-paragraph defRPr fallback must apply.
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+          <p:txBody>
+            <a:bodyPr/>
+            <a:lstStyle/>
+            <a:p>
+              <a:pPr>
+                <a:defRPr sz="1400">
+                  <a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>
+                  <a:latin typeface="Paragraph Font"/>
+                </a:defRPr>
+              </a:pPr>
+              <a:r><a:rPr sz="2799"/><a:t>hello</a:t></a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const sh = out.slides[0]!.shapes[0]!
+    expect(sh.textColor).toBe(0xffffff)
+    expect(sh.fontFamily).toBe('Paragraph Font')
+    // Run-level sz overrides paraDefaults.fontSize.
+    expect(sh.fontSize).toBeCloseTo(2799 * (96 / 7200), 2)
+  })
+
   it('applies lumMod / lumOff modifiers to a scheme colour', async () => {
     const buf = await makeFixture({
       themeXml: OFFICE_THEME,
@@ -1209,6 +1324,63 @@ describe('parsePptx', () => {
     expect(shape.imageRect!.x).toBeCloseTo(-33.33, 1)
     expect(shape.imageRect!.height).toBeCloseTo(111.11, 1)
     expect(shape.imageRect!.y).toBeCloseTo(0, 1)
+  })
+
+  it('captures `<a:blip>/<a:alphaModFix amt>` as image opacity', async () => {
+    // Regression for the sample deck — a `<p:pic>` with
+    // `<a:alphaModFix amt="10000"/>` (10% opacity) on its blip must surface
+    // as `imageAlpha = 0.1` on the parsed shape.
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/_rels/slide1.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/>
+</Relationships>`,
+    )
+    zip.file(
+      'ppt/slides/slide1.xml',
+      `${SLIDE_OPEN}
+        <p:pic>
+          <p:nvPicPr><p:cNvPr id="2" name="i"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+          <p:blipFill>
+            <a:blip r:embed="rId2"><a:alphaModFix amt="10000"/></a:blip>
+            <a:stretch><a:fillRect/></a:stretch>
+          </p:blipFill>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          </p:spPr>
+        </p:pic>
+      ${SLIDE_CLOSE}`,
+    )
+    zip.file(
+      'ppt/media/image1.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('image')
+    expect(shape.imageAlpha).toBeCloseTo(0.1, 3)
   })
 
   it('captures slide name + skipped flag', async () => {

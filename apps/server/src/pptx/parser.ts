@@ -219,6 +219,10 @@ export interface ParsedShape {
    *  the parser at the same time as `blipRelId` so the route handler has a
    *  stable key without re-walking the rels chain. */
   imagePath?: string
+  /** Image opacity 0..1 from `<a:blip>/<a:alphaModFix amt="N">` (PPTX uses
+   *  parts-per-100000). Maps to the writer's `opacity` on the emitted image
+   *  object. Missing ⇒ fully opaque. */
+  imageAlpha?: number
   /** Set by the importer after MinIO upload. The writer uses this to emit
    *  a Narrative `ImageObject` with a real `assetId`. */
   assetId?: string
@@ -332,6 +336,26 @@ export interface ParsedBackground {
  * actual theme rather than guessing a default palette.
  */
 export type ThemeColourMap = Record<string, number>
+
+/**
+ * `<a:theme>/<a:objectDefaults>/<a:txDef>/<a:lstStyle>/<a:defPPr>/<a:defRPr>`
+ * — the OOXML-level default text styling for a text-box shape (`<p:cNvSpPr
+ *  txBox="1">`) that doesn't carry its own color/font on the run, paragraph,
+ * or text body. Lowest layer of the inheritance chain for non-placeholder
+ * text. Stored on a WeakMap keyed by the theme map so we don't have to
+ * thread an extra parameter through the dozen functions that take a
+ * `ThemeColourMap`.
+ */
+interface ThemeTxDef {
+  color?: number
+  colorAlpha?: number
+  fontSize?: number
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  fontFamily?: string
+}
+const themeTxDefStore = new WeakMap<ThemeColourMap, ThemeTxDef>()
 
 export interface ParsedSlide {
   /** File name like `slide1.xml` — useful for diagnostics. */
@@ -449,15 +473,24 @@ const DEFAULT_THEME: ThemeColourMap = {
 }
 
 function resolveSchemeColour(name: string, theme: ThemeColourMap): number | undefined {
-  // `tx1` / `bg1` etc. alias dk1/lt1 in OOXML.
+  // OOXML themes physically store `dk1/lt1/dk2/lt2`; `tx1/bg1/tx2/bg2` are
+  // *slot aliases* the slide-master `<p:clrMap>` (default mapping) points at.
+  // Resolve direct + aliased against the *loaded* theme first — only then
+  // fall through to DEFAULT_THEME — otherwise a deck whose `lt1` is non-white
+  // (legal!) reads as white because DEFAULT_THEME.bg1 short-circuits the
+  // alias lookup.
   const aliases: Record<string, string> = {
     tx1: 'dk1',
     bg1: 'lt1',
     tx2: 'dk2',
     bg2: 'lt2',
   }
-  const lookup = (k: string): number | undefined => theme[k] ?? DEFAULT_THEME[k]
-  return lookup(name) ?? lookup(aliases[name] ?? '')
+  const aliased = aliases[name]
+  if (theme[name] !== undefined) return theme[name]
+  if (aliased !== undefined && theme[aliased] !== undefined) return theme[aliased]
+  if (DEFAULT_THEME[name] !== undefined) return DEFAULT_THEME[name]
+  if (aliased !== undefined && DEFAULT_THEME[aliased] !== undefined) return DEFAULT_THEME[aliased]
+  return undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -1913,6 +1946,22 @@ function parseShape(
   const gradFill = findFirst(spPrChildren, 'a:gradFill')
   if (gradFill) fillGradient = parseGradient(gradFill, theme)
   let imagePath: string | undefined
+  let imageAlpha: number | undefined
+  // PPTX expresses image opacity as `<a:blip>/<a:alphaModFix amt="N">`
+  // where N is parts-per-100000 (so amt="10000" = 10%). We capture it from
+  // whichever blip the picture is sourced from (spPr's blipFill OR p:pic's
+  // p:blipFill) and let the writer apply it as the image object's opacity.
+  const readBlipAlpha = (blip: XmlNode): number | undefined => {
+    for (const child of getChildren(blip, 'a:blip')) {
+      if (getTag(child) !== 'a:alphaModFix') continue
+      const amt = getAttrs(child)['@amt']
+      if (typeof amt !== 'string') continue
+      const v = Number(amt)
+      if (!Number.isFinite(v)) continue
+      return clamp01(v / 100000)
+    }
+    return undefined
+  }
   const blipFill = findFirst(spPrChildren, 'a:blipFill')
   if (blipFill) {
     for (const desc of walk([blipFill])) {
@@ -1922,6 +1971,8 @@ function parseShape(
           blipRelId = embed
           imagePath = imageRels.get(embed)
         }
+        const a = readBlipAlpha(desc)
+        if (a !== undefined) imageAlpha = a
       }
     }
     if (kind === 'unknown') kind = 'image'
@@ -1938,6 +1989,8 @@ function parseShape(
             blipRelId = embed
             imagePath = imageRels.get(embed)
           }
+          const a = readBlipAlpha(desc)
+          if (a !== undefined) imageAlpha = a
         }
       }
     }
@@ -2260,6 +2313,63 @@ function parseShape(
       // matching how PowerPoint flattens its multi-paragraph frames.
       if (pi > 0) allRuns.push({ text: '\n' })
 
+      // Per-paragraph default run properties from `<a:pPr>/<a:defRPr>` —
+      // PowerPoint applies these to any run in THIS paragraph whose own
+      // `<a:rPr>` doesn't override them. Distinct level in the inheritance
+      // chain from the shape's `<a:lstStyle>` lvl1 defaults (handled
+      // post-loop) and from the run-level rPr (highest, handled below).
+      const paraDefaults: {
+        color?: number
+        colorAlpha?: number
+        fontSize?: number
+        bold?: boolean
+        italic?: boolean
+        underline?: boolean
+        letterSpacing?: number
+        textTransform?: ParsedShape['textTransform']
+        fontFamily?: string
+      } = {}
+      {
+        const paraPPr = findFirst(pChildren, 'a:pPr')
+        if (paraPPr !== undefined) {
+          const paraPPrChildren = getChildren(paraPPr, 'a:pPr')
+          const paraDefRPr = findFirst(paraPPrChildren, 'a:defRPr')
+          if (paraDefRPr !== undefined) {
+            const da = getAttrs(paraDefRPr)
+            const dsz = da['@sz']
+            if (typeof dsz === 'string') {
+              const v = Number(dsz)
+              if (Number.isFinite(v)) paraDefaults.fontSize = v * PPTX_FONT_TO_PX
+            }
+            if (da['@b'] === '1' || da['@b'] === 'true') paraDefaults.bold = true
+            if (da['@i'] === '1' || da['@i'] === 'true') paraDefaults.italic = true
+            if (typeof da['@u'] === 'string' && da['@u'] !== 'none') paraDefaults.underline = true
+            const dspc = da['@spc']
+            if (typeof dspc === 'string') {
+              const v = Number(dspc)
+              if (Number.isFinite(v)) paraDefaults.letterSpacing = v * PPTX_FONT_TO_PX
+            }
+            const dcap = da['@cap']
+            if (dcap === 'all') paraDefaults.textTransform = 'uppercase'
+            else if (dcap === 'small') paraDefaults.textTransform = 'lowercase'
+            const paraDefChildren = getChildren(paraDefRPr, 'a:defRPr')
+            const paraSolid = findFirst(paraDefChildren, 'a:solidFill')
+            if (paraSolid !== undefined) {
+              const c = parseColourAndAlphaFrom(paraSolid, theme)
+              if (c !== undefined) {
+                paraDefaults.color = c.color
+                if (c.alpha !== undefined) paraDefaults.colorAlpha = c.alpha
+              }
+            }
+            const paraLatin = findFirst(paraDefChildren, 'a:latin')
+            if (paraLatin !== undefined) {
+              const tf = getAttrs(paraLatin)['@typeface']
+              if (typeof tf === 'string' && tf.length > 0) paraDefaults.fontFamily = tf
+            }
+          }
+        }
+      }
+
       const runs = findAll(pChildren, 'a:r')
       const runStrings: string[] = []
       for (const r of runs) {
@@ -2269,6 +2379,8 @@ function parseShape(
         // AND captured per-run into `allRuns` for the Y.Text format pass.
         const rPr = findFirst(rChildren, 'a:rPr')
         const runAttrs: ParsedTextRun = { text: '' }
+        let runTextTransform: ParsedShape['textTransform']
+        let rPrLn: XmlNode | undefined
         if (rPr) {
           const a = getAttrs(rPr)
           if (a['@b'] === '1' || a['@b'] === 'true') runAttrs.bold = true
@@ -2283,7 +2395,6 @@ function parseShape(
             if (Number.isFinite(v)) runAttrs.letterSpacing = v * PPTX_FONT_TO_PX
           }
           // Text case — `cap="all"|"small"|"none"` maps to textTransform.
-          let runTextTransform: ParsedShape['textTransform']
           const cap = a['@cap']
           if (cap === 'all') runTextTransform = 'uppercase'
           else if (cap === 'small') runTextTransform = 'lowercase'
@@ -2308,7 +2419,7 @@ function parseShape(
           // Text stroke — `<a:rPr><a:ln w>` with a `<a:solidFill>` inside.
           // Captured as frame-level on the first run; per-run text stroke
           // doesn't survive into Narrative's TextObject model.
-          const rPrLn = findFirst(rPrChildren, 'a:ln')
+          rPrLn = findFirst(rPrChildren, 'a:ln')
           // Hyperlink rel id → resolved URL via slide rels. PPTX stamps
           // `<a:hlinkClick r:id="rIdN"/>` on the run; the rId maps to a
           // `…/hyperlink` Relationship with the actual URL as Target.
@@ -2321,38 +2432,65 @@ function parseShape(
               if (href !== undefined) runAttrs.hyperlinkHref = href
             }
           }
-          if (!firstRunStyled) {
-            if (runAttrs.bold === true) bold = true
-            if (runAttrs.fontSize !== undefined) fontSize = runAttrs.fontSize
-            if (runAttrs.color !== undefined) {
-              textColor = runAttrs.color
-              if (runAttrs.colorAlpha !== undefined) textColorAlpha = runAttrs.colorAlpha
-            }
-            // Frame-level fields from the first run only.
-            if (runAttrs.fontFamily !== undefined) frameFontFamily = runAttrs.fontFamily
-            if (runAttrs.letterSpacing !== undefined) {
-              frameLetterSpacing = runAttrs.letterSpacing
-            }
-            if (runTextTransform !== undefined) frameTextTransform = runTextTransform
-            if (rPrLn) {
-              const lnAttrs = getAttrs(rPrLn)
-              const lnW = lnAttrs['@w']
-              if (typeof lnW === 'string') frameTextStrokeWidth = emuToPx(Number(lnW))
-              const lnChildren = getChildren(rPrLn, 'a:ln')
-              const lnSolid = findFirst(lnChildren, 'a:solidFill')
-              if (lnSolid) {
-                const c = parseColourAndAlphaFrom(lnSolid, theme)
-                if (c !== undefined) {
-                  frameTextStrokeColor = c.color
-                  if (c.alpha !== undefined) frameTextStrokeAlpha = c.alpha
-                }
+        }
+        // Per-paragraph defRPr fallback — fill in anything the run's own
+        // rPr didn't supply (or for runs that have no rPr at all).
+        if (runAttrs.color === undefined && paraDefaults.color !== undefined) {
+          runAttrs.color = paraDefaults.color
+          if (paraDefaults.colorAlpha !== undefined) {
+            runAttrs.colorAlpha = paraDefaults.colorAlpha
+          }
+        }
+        if (runAttrs.fontSize === undefined && paraDefaults.fontSize !== undefined) {
+          runAttrs.fontSize = paraDefaults.fontSize
+        }
+        if (runAttrs.bold !== true && paraDefaults.bold === true) runAttrs.bold = true
+        if (runAttrs.italic !== true && paraDefaults.italic === true) runAttrs.italic = true
+        if (runAttrs.underline !== true && paraDefaults.underline === true) {
+          runAttrs.underline = true
+        }
+        if (runAttrs.letterSpacing === undefined && paraDefaults.letterSpacing !== undefined) {
+          runAttrs.letterSpacing = paraDefaults.letterSpacing
+        }
+        if (runTextTransform === undefined && paraDefaults.textTransform !== undefined) {
+          runTextTransform = paraDefaults.textTransform
+        }
+        if (runAttrs.fontFamily === undefined && paraDefaults.fontFamily !== undefined) {
+          runAttrs.fontFamily = paraDefaults.fontFamily
+        }
+        // First-run promotion to frame-level. Runs out at this point, so
+        // the run inherits whatever rPr / pPr-defRPr together produced —
+        // not silently empty when the run had no <a:rPr> of its own.
+        if (!firstRunStyled) {
+          if (runAttrs.bold === true) bold = true
+          if (runAttrs.fontSize !== undefined) fontSize = runAttrs.fontSize
+          if (runAttrs.color !== undefined) {
+            textColor = runAttrs.color
+            if (runAttrs.colorAlpha !== undefined) textColorAlpha = runAttrs.colorAlpha
+          }
+          if (runAttrs.fontFamily !== undefined) frameFontFamily = runAttrs.fontFamily
+          if (runAttrs.letterSpacing !== undefined) {
+            frameLetterSpacing = runAttrs.letterSpacing
+          }
+          if (runTextTransform !== undefined) frameTextTransform = runTextTransform
+          if (rPrLn) {
+            const lnAttrs = getAttrs(rPrLn)
+            const lnW = lnAttrs['@w']
+            if (typeof lnW === 'string') frameTextStrokeWidth = emuToPx(Number(lnW))
+            const lnChildren = getChildren(rPrLn, 'a:ln')
+            const lnSolid = findFirst(lnChildren, 'a:solidFill')
+            if (lnSolid) {
+              const c = parseColourAndAlphaFrom(lnSolid, theme)
+              if (c !== undefined) {
+                frameTextStrokeColor = c.color
+                if (c.alpha !== undefined) frameTextStrokeAlpha = c.alpha
               }
             }
-            firstRunStyled = true
           }
-          if (firstHyperlinkHref === undefined && runAttrs.hyperlinkHref !== undefined) {
-            firstHyperlinkHref = runAttrs.hyperlinkHref
-          }
+          firstRunStyled = true
+        }
+        if (firstHyperlinkHref === undefined && runAttrs.hyperlinkHref !== undefined) {
+          firstHyperlinkHref = runAttrs.hyperlinkHref
         }
         const tNode = findFirst(rChildren, 'a:t')
         const runTextParts: string[] = []
@@ -2376,6 +2514,61 @@ function parseShape(
       text = paraStrings.join('\n')
       // Override geom-derived kind — a text-bearing shape IS a text frame.
       kind = 'text'
+    }
+    // Shape-inline lstStyle fallback: the text body's own `<a:lstStyle>/
+    // <a:lvl1pPr>/<a:defRPr>` defines run properties that apply when the
+    // paragraph's runs didn't supply them at the run-level `<a:rPr>`. This
+    // is the standard OOXML inheritance for non-placeholder shapes that
+    // author their own text style. Higher priority than `<p:style>/
+    // <a:fontRef>`, inherited placeholder defaults, and `<p:txStyles>`;
+    // run-level `<a:rPr>` (already processed above) still wins.
+    const lstStyleNode = findFirst(txBodyChildren, 'a:lstStyle')
+    if (lstStyleNode !== undefined) {
+      const lvl1 = findFirst(getChildren(lstStyleNode, 'a:lstStyle'), 'a:lvl1pPr')
+      if (lvl1 !== undefined) {
+        const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
+        if (defRPr !== undefined) {
+          const a = getAttrs(defRPr)
+          if (fontSize === undefined) {
+            const sz = a['@sz']
+            if (typeof sz === 'string') {
+              const v = Number(sz)
+              if (Number.isFinite(v)) fontSize = v * PPTX_FONT_TO_PX
+            }
+          }
+          if (!bold && (a['@b'] === '1' || a['@b'] === 'true')) bold = true
+          if (frameLetterSpacing === undefined) {
+            const spc = a['@spc']
+            if (typeof spc === 'string') {
+              const v = Number(spc)
+              if (Number.isFinite(v)) frameLetterSpacing = v * PPTX_FONT_TO_PX
+            }
+          }
+          if (frameTextTransform === undefined) {
+            const cap = a['@cap']
+            if (cap === 'all') frameTextTransform = 'uppercase'
+            else if (cap === 'small') frameTextTransform = 'lowercase'
+          }
+          const defRPrChildren = getChildren(defRPr, 'a:defRPr')
+          if (textColor === undefined) {
+            const solid = findFirst(defRPrChildren, 'a:solidFill')
+            if (solid !== undefined) {
+              const c = parseColourAndAlphaFrom(solid, theme)
+              if (c !== undefined) {
+                textColor = c.color
+                if (c.alpha !== undefined) textColorAlpha = c.alpha
+              }
+            }
+          }
+          if (frameFontFamily === undefined) {
+            const latin = findFirst(defRPrChildren, 'a:latin')
+            if (latin !== undefined) {
+              const tf = getAttrs(latin)['@typeface']
+              if (typeof tf === 'string' && tf.length > 0) frameFontFamily = tf
+            }
+          }
+        }
+      }
     }
     // Fall through to the theme-style font colour when no run-level rPr
     // colour was set (the common case for placeholder text).
@@ -2428,6 +2621,25 @@ function parseShape(
         }
       }
     }
+    // Theme `<a:txDef>/<a:lstStyle>/<a:defPPr>/<a:defRPr>` is the LAST
+    // resort for text shapes without explicit colour anywhere. OOXML uses
+    // it as the default for `<p:cNvSpPr txBox="1">` shapes (the text-box
+    // type). Lower priority than placeholder/master/style fallbacks above;
+    // higher than Narrative's hard-coded DEFAULT_TEXT_COLOR (writer-side).
+    const themeDef = themeTxDefStore.get(theme)
+    if (themeDef !== undefined) {
+      if (textColor === undefined && themeDef.color !== undefined) {
+        textColor = themeDef.color
+        if (themeDef.colorAlpha !== undefined) textColorAlpha = themeDef.colorAlpha
+      }
+      if (fontSize === undefined && themeDef.fontSize !== undefined) {
+        fontSize = themeDef.fontSize
+      }
+      if (!bold && themeDef.bold === true) bold = true
+      if (frameFontFamily === undefined && themeDef.fontFamily !== undefined) {
+        frameFontFamily = themeDef.fontFamily
+      }
+    }
   }
 
   const shape: ParsedShape = {
@@ -2458,6 +2670,7 @@ function parseShape(
   if (prst !== undefined) shape.prstGeom = prst
   if (blipRelId !== undefined) shape.blipRelId = blipRelId
   if (imagePath !== undefined) shape.imagePath = imagePath
+  if (imageAlpha !== undefined && imageAlpha < 1) shape.imageAlpha = imageAlpha
   if (videoPath !== undefined) shape.videoPath = videoPath
   if (shadow !== undefined) shape.shadow = shadow
   if (blurRadius !== undefined && blurRadius > 0) shape.blur = blurRadius
@@ -3254,6 +3467,136 @@ function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
   return out
 }
 
+/**
+ * Composable group-coordinate transform. A `<p:grpSp>` introduces its own
+ * `<a:xfrm>` with `<a:off>` + `<a:ext>` (the group's slot in the parent's
+ * coordinate frame) AND `<a:chOff>` + `<a:chExt>` (the child-local
+ * coordinate frame). A child shape with its own `<a:off cx>` / `<a:ext cw>`
+ * in the child-local frame maps to slide-space via:
+ *
+ *   slideX = parent.x + parent.scaleX * (cx - chOffX) * (extX / chExtX) + parent.scaleX * offX
+ *
+ * The same formula expressed as an affine transform `(offset, scale)` and
+ * composed across nested groups. The slide-level transform is identity.
+ */
+interface GroupTransform {
+  x: number
+  y: number
+  scaleX: number
+  scaleY: number
+}
+const IDENTITY_GROUP_TRANSFORM: GroupTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
+
+function applyGroupTransform(shape: ParsedShape, t: GroupTransform): void {
+  if (t === IDENTITY_GROUP_TRANSFORM) return
+  shape.x = shape.x * t.scaleX + t.x
+  shape.y = shape.y * t.scaleY + t.y
+  shape.width = shape.width * t.scaleX
+  shape.height = shape.height * t.scaleY
+}
+
+/**
+ * Recursively flattens a `<p:grpSp>` into a list of shapes whose coords
+ * have been mapped to slide-space. Narrative has no native "group" object,
+ * so we bake every descendant out and tag them with a shared `groupId`
+ * (the OOXML `<p:cNvPr id>` of the outermost containing `<p:grpSp>`) so
+ * the user can re-select the group with one click in the editor.
+ */
+function flattenGroupShape(
+  grpSp: XmlNode,
+  parentTransform: GroupTransform,
+  groupId: string,
+  theme: ThemeColourMap,
+  placeholders: PlaceholderMap,
+  imageRels: ImageRelMap,
+  txStyles: TxStylesByBucket,
+  hyperlinkRels: HyperlinkRelMap,
+): ParsedShape[] {
+  const out: ParsedShape[] = []
+  const grpChildren = getChildren(grpSp, 'p:grpSp')
+  // Compose the group's xfrm with the parent.
+  const grpSpPr = findFirst(grpChildren, 'p:grpSpPr')
+  let newTransform = parentTransform
+  if (grpSpPr !== undefined) {
+    const xfrm = findFirst(getChildren(grpSpPr, 'p:grpSpPr'), 'a:xfrm')
+    if (xfrm !== undefined) {
+      const xc = getChildren(xfrm, 'a:xfrm')
+      const off = findFirst(xc, 'a:off')
+      const ext = findFirst(xc, 'a:ext')
+      const chOff = findFirst(xc, 'a:chOff')
+      const chExt = findFirst(xc, 'a:chExt')
+      if (off !== undefined && ext !== undefined && chOff !== undefined && chExt !== undefined) {
+        const offX = emuToPx(Number(getAttrs(off)['@x'] ?? 0))
+        const offY = emuToPx(Number(getAttrs(off)['@y'] ?? 0))
+        const extX = emuToPx(Number(getAttrs(ext)['@cx'] ?? 0))
+        const extY = emuToPx(Number(getAttrs(ext)['@cy'] ?? 0))
+        const chOffX = emuToPx(Number(getAttrs(chOff)['@x'] ?? 0))
+        const chOffY = emuToPx(Number(getAttrs(chOff)['@y'] ?? 0))
+        const chExtX = emuToPx(Number(getAttrs(chExt)['@cx'] ?? 0))
+        const chExtY = emuToPx(Number(getAttrs(chExt)['@cy'] ?? 0))
+        // Guard against degenerate xfrms (some authors emit zero extents
+        // on outer wrappers). Treat as identity within the group rather
+        // than collapsing every child to a single point.
+        const scaleX = chExtX > 0 ? extX / chExtX : 1
+        const scaleY = chExtY > 0 ? extY / chExtY : 1
+        newTransform = {
+          x: parentTransform.x + parentTransform.scaleX * (offX - chOffX * scaleX),
+          y: parentTransform.y + parentTransform.scaleY * (offY - chOffY * scaleY),
+          scaleX: parentTransform.scaleX * scaleX,
+          scaleY: parentTransform.scaleY * scaleY,
+        }
+      }
+    }
+  }
+  for (const node of grpChildren) {
+    const tag = getTag(node)
+    if (tag === 'p:sp' || tag === 'p:pic' || tag === 'p:cxnSp') {
+      const shape = parseShape(node, tag, theme, placeholders, imageRels, txStyles, hyperlinkRels)
+      if (shape !== null) {
+        applyGroupTransform(shape, newTransform)
+        if (shape.groupId === undefined) shape.groupId = groupId
+        out.push(shape)
+      }
+    } else if (tag === 'p:graphicFrame') {
+      // Tables / charts inside groups — same dispatch as the top-level
+      // spTree handler; coords get transformed after the fact.
+      const gfChildren = getChildren(node, 'p:graphicFrame')
+      const graphic = findFirst(gfChildren, 'a:graphic')
+      const gd = graphic ? findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData') : undefined
+      const uri = gd !== undefined ? String(getAttrs(gd)['@uri'] ?? '') : ''
+      if (uri.endsWith('/table')) {
+        const tableShape = parseTable(node, theme, hyperlinkRels)
+        if (tableShape !== null) {
+          applyGroupTransform(tableShape, newTransform)
+          if (tableShape.groupId === undefined) tableShape.groupId = groupId
+          out.push(tableShape)
+        }
+      } else if (uri.endsWith('/chart')) {
+        const chartShape = parseChartFallback(node, imageRels)
+        if (chartShape !== null) {
+          applyGroupTransform(chartShape, newTransform)
+          if (chartShape.groupId === undefined) chartShape.groupId = groupId
+          out.push(chartShape)
+        }
+      }
+    } else if (tag === 'p:grpSp') {
+      out.push(
+        ...flattenGroupShape(
+          node,
+          newTransform,
+          groupId,
+          theme,
+          placeholders,
+          imageRels,
+          txStyles,
+          hyperlinkRels,
+        ),
+      )
+    }
+  }
+  return out
+}
+
 function parseSlide(
   xml: string,
   sourceName: string,
@@ -3378,6 +3721,31 @@ function parseSlide(
           }
         }
       }
+    } else if (tag === 'p:grpSp') {
+      // OOXML groups — flatten recursively. Narrative has no native group
+      // object; we bake every descendant out and tag them with a shared
+      // `groupId` so the user can re-select the cluster in one click.
+      const grpChildren = getChildren(node, 'p:grpSp')
+      const nvGrpSpPr = findFirst(grpChildren, 'p:nvGrpSpPr')
+      let groupId = `grp-${shapes.length}`
+      if (nvGrpSpPr !== undefined) {
+        const cNvPr = findFirst(getChildren(nvGrpSpPr, 'p:nvGrpSpPr'), 'p:cNvPr')
+        if (cNvPr !== undefined) {
+          const id = getAttrs(cNvPr)['@id']
+          if (typeof id === 'string') groupId = `grp-${id}`
+        }
+      }
+      const flat = flattenGroupShape(
+        node,
+        IDENTITY_GROUP_TRANSFORM,
+        groupId,
+        theme,
+        context.placeholders,
+        imageRels,
+        context.txStyles,
+        hyperlinkRels,
+      )
+      shapes.push(...flat)
     }
   }
 
@@ -3648,6 +4016,75 @@ async function parseThemeColours(zip: JSZip): Promise<ThemeColourMap> {
   return map
 }
 
+/**
+ * Parse `<a:theme>/<a:objectDefaults>/<a:txDef>/<a:lstStyle>/<a:defPPr>/
+ * <a:defRPr>` from theme1.xml. This is the OOXML-defined "default text
+ * style for an unstyled text-box shape" — the lowest layer in the run
+ * property inheritance chain for non-placeholder text. Returns `undefined`
+ * when the theme has no `<a:txDef>` (older themes / non-Office sources).
+ */
+async function parseThemeTxDef(zip: JSZip, theme: ThemeColourMap): Promise<ThemeTxDef | undefined> {
+  const themeEntry = zip.file('ppt/theme/theme1.xml')
+  if (themeEntry === null) return undefined
+  const xml = await themeEntry.async('string')
+  const xmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@',
+    preserveOrder: true,
+    ignoreDeclaration: true,
+  })
+  const tree = xmlParser.parse(xml) as XmlNode[]
+  let txDef: XmlNode | undefined
+  for (const node of walk(tree)) {
+    if (getTag(node) === 'a:txDef') {
+      txDef = node
+      break
+    }
+  }
+  if (txDef === undefined) return undefined
+  // Find <a:txDef>/<a:lstStyle>/<a:defPPr>/<a:defRPr> (the no-explicit-lvl
+  // default). Fall back to lvl1pPr's defRPr if defPPr is absent.
+  const lstStyle = findFirst(getChildren(txDef, 'a:txDef'), 'a:lstStyle')
+  if (lstStyle === undefined) return undefined
+  const lstChildren = getChildren(lstStyle, 'a:lstStyle')
+  const defPPr = findFirst(lstChildren, 'a:defPPr') ?? findFirst(lstChildren, 'a:lvl1pPr')
+  if (defPPr === undefined) return undefined
+  const defPPrTag = getTag(defPPr)
+  if (defPPrTag === null) return undefined
+  const defRPr = findFirst(getChildren(defPPr, defPPrTag), 'a:defRPr')
+  if (defRPr === undefined) return undefined
+  const out: ThemeTxDef = {}
+  const a = getAttrs(defRPr)
+  const sz = a['@sz']
+  if (typeof sz === 'string') {
+    const v = Number(sz)
+    if (Number.isFinite(v)) out.fontSize = v * PPTX_FONT_TO_PX
+  }
+  if (a['@b'] === '1' || a['@b'] === 'true') out.bold = true
+  if (a['@i'] === '1' || a['@i'] === 'true') out.italic = true
+  if (typeof a['@u'] === 'string' && a['@u'] !== 'none') out.underline = true
+  const defRPrChildren = getChildren(defRPr, 'a:defRPr')
+  const solid = findFirst(defRPrChildren, 'a:solidFill')
+  if (solid !== undefined) {
+    const c = parseColourAndAlphaFrom(solid, theme)
+    if (c !== undefined) {
+      out.color = c.color
+      if (c.alpha !== undefined) out.colorAlpha = c.alpha
+    }
+  }
+  const latin = findFirst(defRPrChildren, 'a:latin')
+  if (latin !== undefined) {
+    const tf = getAttrs(latin)['@typeface']
+    // OOXML uses `+mn-lt` / `+mj-lt` as theme-font placeholders. Skip those
+    // — we don't have a font-scheme resolver yet, and emitting the literal
+    // string would surface raw OOXML markup in Narrative's font field.
+    if (typeof tf === 'string' && tf.length > 0 && !tf.startsWith('+')) {
+      out.fontFamily = tf
+    }
+  }
+  return out
+}
+
 // ---------------------------------------------------------------------------
 // Presentation-level (slide order + dimensions)
 // ---------------------------------------------------------------------------
@@ -3768,6 +4205,11 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
 
   const { slidePaths, slideWidth, slideHeight } = await parsePresentationXml(zip)
   const theme = await parseThemeColours(zip)
+  // Side-band: tag the theme map with its `<a:txDef>` defaults so parseShape
+  // can fall back to them for non-placeholder text without re-threading a
+  // new parameter through the dozen functions that take a ThemeColourMap.
+  const themeTxDef = await parseThemeTxDef(zip, theme)
+  if (themeTxDef !== undefined) themeTxDefStore.set(theme, themeTxDef)
   // `referencedImagePaths` collects every image referenced anywhere in the
   // deck — slide bodies AND baked master/layout shapes — so the next pass
   // can pull the matching bytes out of the zip and the route handler can

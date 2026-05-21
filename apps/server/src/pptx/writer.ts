@@ -451,6 +451,8 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       variant: 'display',
       fit: 'cover',
     }
+    // PPTX `<a:alphaModFix>` on the blip maps to the image object's opacity.
+    if (s.imageAlpha !== undefined && s.imageAlpha < 1) obj.opacity = s.imageAlpha
     if (s.imageRect !== undefined) {
       obj.imageRect = {
         x: round(s.imageRect.x * scale),

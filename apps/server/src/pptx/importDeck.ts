@@ -31,6 +31,7 @@ import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { enqueueVideoTranscode } from '../media/enqueue.js'
 import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
 
@@ -132,7 +133,7 @@ export async function importDeckFromPptxBytes(args: {
   const title = deriveTitle(filenameForTitle)
   const now = new Date()
 
-  const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages } =
+  const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages, videoTranscodeJobs } =
     await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
 
   const { state, slideCount, objectsCreated, skipped } = buildDeckUpdate(parsed)
@@ -174,6 +175,24 @@ export async function importDeckFromPptxBytes(args: {
 
   if (!insertedDeck) {
     return { ok: false, error: { kind: 'deckInsertFailed' } }
+  }
+
+  // Enqueue HLS transcode for every imported video. We do this AFTER the
+  // tx commits so the worker never picks up a job before the media_assets
+  // row exists. Same pattern as the tus upload path — failures are logged
+  // and don't fail the import; the operator can re-enqueue manually.
+  for (const job of videoTranscodeJobs) {
+    try {
+      await enqueueVideoTranscode({
+        assetId: job.assetId,
+        deckId,
+        storageKey: job.storageKey,
+        uploaderUserId: ownerUserId,
+        mimeType: job.mimeType,
+      })
+    } catch (err) {
+      log.warn({ err, assetId: job.assetId }, 'pptx: enqueueVideoTranscode failed')
+    }
   }
 
   log.info(
@@ -224,12 +243,22 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   mediaAssetRows: Array<typeof mediaAssets.$inferInsert>
   uploadedImageCount: number
   skippedUnsupportedImages: number
+  videoTranscodeJobs: Array<{
+    assetId: string
+    storageKey: string
+    mimeType: string
+  }>
 }> {
   const SUPPORTED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
   const SUPPORTED_VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime'])
   const s3 = buildS3Client()
   const mediaPathToAssetId = new Map<string, string>()
   const mediaAssetRows: Array<typeof mediaAssets.$inferInsert> = []
+  const videoTranscodeJobs: Array<{
+    assetId: string
+    storageKey: string
+    mimeType: string
+  }> = []
   let uploadedImageCount = 0
   let skippedUnsupportedImages = 0
 
@@ -269,7 +298,11 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       width: dims?.width ?? null,
       height: dims?.height ?? null,
       kind: isVideo ? 'video' : 'image',
+      ...(isVideo ? { transcodeStatus: 'pending' as const } : {}),
     })
+    if (isVideo) {
+      videoTranscodeJobs.push({ assetId, storageKey, mimeType: media.mimeType })
+    }
     uploadedImageCount++
   }
 
@@ -291,7 +324,7 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
     }
   }
 
-  return { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages }
+  return { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages, videoTranscodeJobs }
 }
 
 async function probeImageDims(
