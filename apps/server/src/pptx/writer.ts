@@ -75,6 +75,7 @@ import type {
   ParsedSlide,
   ParsedGradient,
   ParsedBackground,
+  ParsedTableCell,
 } from './parser.js'
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,13 @@ function gradientToFillStyle(g: ParsedGradient): FillStyle {
  *   fontWeight         → 700 for bold runs, omitted otherwise
  *   color              → number 0xRRGGBB
  *   fontSize           → px (already scaled here)
+ *   fontFamily         → string (passed through; renderer reads it on the
+ *                        delta via `richText.toHtml`)
+ *
+ * `letterSpacing` is captured on `ParsedTextRun` but NOT plumbed into the
+ * Y.Text body — `richText.RichAttrs` doesn't model it (PPTX has no
+ * established mid-run letter-spacing convention either; Narrative carries
+ * it at the frame / cell level only).
  *
  * Hyperlinks on individual runs are NOT serialised as Quill attrs in v1 —
  * Narrative's model attaches one hyperlink per TextObject, not per run.
@@ -161,7 +169,8 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
         r.italic === true ||
         r.underline === true ||
         r.color !== undefined ||
-        r.fontSize !== undefined),
+        r.fontSize !== undefined ||
+        r.fontFamily !== undefined),
   )
   if (!hasRichRun) return null
 
@@ -182,6 +191,7 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
     if (r.underline === true) attrs['underline'] = true
     if (r.color !== undefined) attrs['color'] = r.color
     if (r.fontSize !== undefined) attrs['fontSize'] = round(r.fontSize * scale)
+    if (r.fontFamily !== undefined) attrs['fontFamily'] = r.fontFamily
     if (Object.keys(attrs).length > 0) {
       yt.format(cursor, r.text.length, attrs)
     }
@@ -542,22 +552,38 @@ function mapTableShape(
   const colWidths = rawColWidths.map((w) => Math.max(1, round(w * scale)))
   const rowHeights = rawRowHeights.map((h) => Math.max(1, round(h * scale)))
 
-  // Build the TableDefaults — uniform values pulled from the cells
-  // when every cell agrees, else fall back to the schema's built-in
-  // defaults. Borders default to PowerPoint's classic light-grey grid.
+  // Aggregate typography defaults across live cells (skipping merge
+  // continuation cells). Any field that's uniformly set on every cell that
+  // has a value gets lifted to `TableDefaults`; per-cell overrides for the
+  // same field are then stripped so the doc isn't bloated with redundancy
+  // and the renderer's "inherit-from-defaults" path takes over. Mirrors
+  // PowerPoint's `<a:tblPr>` + `<a:txStyles>` model where a default tier
+  // governs everything not explicitly overridden per cell.
+  const agg = aggregateTableTypography(rawCells, scale)
   const defaults: TableDefaults = {
-    fontSize: 18,
-    fontWeight: 'normal',
-    color: 0x111111,
-    align: 'left',
-    vAlign: 'middle',
+    fontSize: agg.fontSize ?? 18,
+    fontWeight: agg.fontWeight ?? 'normal',
+    color: agg.color ?? 0x111111,
+    align: agg.align ?? 'left',
+    vAlign: agg.vAlign ?? 'middle',
     border: { color: 0xcccccc, width: 1 },
-    padding: { top: 8, right: 8, bottom: 8, left: 8 },
+    padding: agg.padding ?? { top: 8, right: 8, bottom: 8, left: 8 },
   }
+  if (agg.fontFamily !== undefined) defaults.fontFamily = agg.fontFamily
+  if (agg.lineHeight !== undefined) defaults.lineHeight = agg.lineHeight
+  if (agg.letterSpacing !== undefined) defaults.letterSpacing = agg.letterSpacing
+  if (agg.paragraphSpaceBefore !== undefined) {
+    defaults.paragraphSpaceBefore = agg.paragraphSpaceBefore
+  }
+  if (agg.paragraphSpaceAfter !== undefined) {
+    defaults.paragraphSpaceAfter = agg.paragraphSpaceAfter
+  }
+  if (agg.textTransform !== undefined) defaults.textTransform = agg.textTransform
 
   // Build rows. Each cell either carries its own Y.Text-backed body or
   // an empty string (the binding layer in slide-model will create the
-  // Y.Text post-integration during addObject).
+  // Y.Text post-integration during addObject). Per-cell typography is
+  // only written when the value diverges from the aggregated default.
   const rows: TableCell[][] = []
   for (let r = 0; r < rawCells.length; r++) {
     const rawRow = rawCells[r]!
@@ -574,21 +600,58 @@ function mapTableShape(
         scale,
       )
       if (richBody !== null) cell.text = richBody
-      if (rawCell.fontSize !== undefined) cell.fontSize = round(rawCell.fontSize * scale)
-      if (rawCell.fontWeight !== undefined) cell.fontWeight = rawCell.fontWeight
-      if (rawCell.color !== undefined) cell.color = rawCell.color
-      if (rawCell.align !== undefined) cell.align = rawCell.align
-      if (rawCell.vAlign !== undefined) cell.vAlign = rawCell.vAlign
+      if (rawCell.fontSize !== undefined) {
+        const scaled = round(rawCell.fontSize * scale)
+        if (scaled !== defaults.fontSize) cell.fontSize = scaled
+      }
+      if (rawCell.fontWeight !== undefined && rawCell.fontWeight !== defaults.fontWeight) {
+        cell.fontWeight = rawCell.fontWeight
+      }
+      if (rawCell.color !== undefined && rawCell.color !== defaults.color) {
+        cell.color = rawCell.color
+      }
+      if (rawCell.align !== undefined && rawCell.align !== defaults.align) {
+        cell.align = rawCell.align
+      }
+      if (rawCell.vAlign !== undefined && rawCell.vAlign !== defaults.vAlign) {
+        cell.vAlign = rawCell.vAlign
+      }
+      if (rawCell.lineHeight !== undefined && rawCell.lineHeight !== defaults.lineHeight) {
+        cell.lineHeight = rawCell.lineHeight
+      }
+      if (rawCell.letterSpacing !== undefined) {
+        const scaled = round(rawCell.letterSpacing * scale)
+        if (scaled !== defaults.letterSpacing) cell.letterSpacing = scaled
+      }
+      if (
+        rawCell.textTransform !== undefined &&
+        rawCell.textTransform !== 'none' &&
+        rawCell.textTransform !== defaults.textTransform
+      ) {
+        cell.textTransform = rawCell.textTransform
+      }
       if (rawCell.fill !== undefined) cell.fill = rawCell.fill
       if (rawCell.fillAlpha !== undefined && rawCell.fillAlpha < 1) {
         cell.fillAlpha = rawCell.fillAlpha
       }
+      if (rawCell.fillGradient !== undefined) {
+        cell.fillStyle = gradientToFillStyle(rawCell.fillGradient)
+      }
       if (rawCell.padding !== undefined) {
-        cell.padding = {
+        const scaledPadding = {
           top: round(rawCell.padding.top * scale),
           right: round(rawCell.padding.right * scale),
           bottom: round(rawCell.padding.bottom * scale),
           left: round(rawCell.padding.left * scale),
+        }
+        const dp = defaults.padding
+        if (
+          scaledPadding.top !== dp.top ||
+          scaledPadding.right !== dp.right ||
+          scaledPadding.bottom !== dp.bottom ||
+          scaledPadding.left !== dp.left
+        ) {
+          cell.padding = scaledPadding
         }
       }
       // Per-edge borders. Each edge already carries px values (the
@@ -645,6 +708,114 @@ function mapTableShape(
     rows,
     defaults,
   }
+}
+
+interface AggregatedTableTypography {
+  fontFamily?: string
+  fontSize?: number
+  fontWeight?: 'normal' | 'bold'
+  color?: number
+  align?: 'left' | 'center' | 'right'
+  vAlign?: 'top' | 'middle' | 'bottom'
+  lineHeight?: number
+  letterSpacing?: number
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  padding?: { top: number; right: number; bottom: number; left: number }
+}
+
+/**
+ * Scan every live cell (skipping merge-continuation slots) and collect a
+ * field's value when it's uniform — i.e. every cell that sets the field
+ * agrees on the value. Numeric fields are scaled the same way the
+ * per-cell write path scales them so the strip-on-match comparison is
+ * exact rather than tolerance-based.
+ */
+function aggregateTableTypography(
+  rawCells: ParsedTableCell[][],
+  scale: number,
+): AggregatedTableTypography {
+  const live: ParsedTableCell[] = []
+  for (const row of rawCells) {
+    for (const c of row) {
+      if (c.mergeOriginR !== undefined || c.mergeOriginC !== undefined) continue
+      live.push(c)
+    }
+  }
+  if (live.length === 0) return {}
+
+  function uniform<T>(
+    get: (c: ParsedTableCell) => T | undefined,
+    eq: (a: T, b: T) => boolean = (a, b) => a === b,
+  ): T | undefined {
+    let candidate: T | undefined
+    let found = false
+    for (const c of live) {
+      const v = get(c)
+      if (v === undefined) continue
+      if (!found) {
+        candidate = v
+        found = true
+      } else if (candidate === undefined || !eq(candidate, v)) {
+        return undefined
+      }
+    }
+    return candidate
+  }
+
+  const paddingEq = (
+    a: { top: number; right: number; bottom: number; left: number },
+    b: { top: number; right: number; bottom: number; left: number },
+  ): boolean => a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left
+
+  const result: AggregatedTableTypography = {}
+  const fontFamily = uniform((c) => c.fontFamily)
+  if (fontFamily !== undefined) result.fontFamily = fontFamily
+  const fontSize = uniform((c) =>
+    c.fontSize !== undefined ? round(c.fontSize * scale) : undefined,
+  )
+  if (fontSize !== undefined) result.fontSize = fontSize
+  const fontWeight = uniform((c) => c.fontWeight)
+  if (fontWeight !== undefined) result.fontWeight = fontWeight
+  const color = uniform((c) => c.color)
+  if (color !== undefined) result.color = color
+  const align = uniform((c) => c.align)
+  if (align !== undefined) result.align = align
+  const vAlign = uniform((c) => c.vAlign)
+  if (vAlign !== undefined) result.vAlign = vAlign
+  const lineHeight = uniform((c) => c.lineHeight)
+  if (lineHeight !== undefined) result.lineHeight = lineHeight
+  const letterSpacing = uniform((c) =>
+    c.letterSpacing !== undefined ? round(c.letterSpacing * scale) : undefined,
+  )
+  if (letterSpacing !== undefined) result.letterSpacing = letterSpacing
+  const paragraphSpaceBefore = uniform((c) =>
+    c.paragraphSpaceBefore !== undefined ? round(c.paragraphSpaceBefore * scale) : undefined,
+  )
+  if (paragraphSpaceBefore !== undefined) result.paragraphSpaceBefore = paragraphSpaceBefore
+  const paragraphSpaceAfter = uniform((c) =>
+    c.paragraphSpaceAfter !== undefined ? round(c.paragraphSpaceAfter * scale) : undefined,
+  )
+  if (paragraphSpaceAfter !== undefined) result.paragraphSpaceAfter = paragraphSpaceAfter
+  const textTransform = uniform((c) =>
+    c.textTransform !== undefined && c.textTransform !== 'none' ? c.textTransform : undefined,
+  )
+  if (textTransform !== undefined) result.textTransform = textTransform
+  const padding = uniform(
+    (c) =>
+      c.padding !== undefined
+        ? {
+            top: round(c.padding.top * scale),
+            right: round(c.padding.right * scale),
+            bottom: round(c.padding.bottom * scale),
+            left: round(c.padding.left * scale),
+          }
+        : undefined,
+    paddingEq,
+  )
+  if (padding !== undefined) result.padding = padding
+  return result
 }
 
 function backgroundForSlide(

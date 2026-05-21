@@ -56,12 +56,28 @@ export interface ParsedTableCell {
   fontSize?: number
   fontWeight?: 'normal' | 'bold'
   fontFamily?: string
+  /** Frame-level typography from `<a:txBody>/<a:bodyPr>` + first paragraph
+   *  `<a:pPr>` + first run `<a:rPr>`. These mirror the ParsedShape fields
+   *  parseShape produces for text frames; the writer either lifts them
+   *  into `TableDefaults` when uniform across all cells or writes them
+   *  per-cell otherwise. Values are in px / unitless (already scaled by
+   *  parseShape's PPTX_FONT_TO_PX). */
+  lineHeight?: number
+  letterSpacing?: number
+  paragraphSpaceBefore?: number
+  paragraphSpaceAfter?: number
+  textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   align?: 'left' | 'center' | 'right'
   vAlign?: 'top' | 'middle' | 'bottom'
   /** Cell background — solid fill from `<a:tcPr>/<a:solidFill>` or the
    *  preset-banding heuristic. */
   fill?: number
   fillAlpha?: number
+  /** Cell background — linear or radial gradient from `<a:tcPr>/<a:gradFill>`.
+   *  Writer maps to `TableCell.fillStyle` (`gradientToFillStyle`); the
+   *  renderer paints it through the same procedural-texture cache
+   *  rectangles use. Image fills on cells are not supported in v1. */
+  fillGradient?: ParsedGradient
   /** Per-cell border override (`<a:tcPr>/<a:lnL|R|T|B>`). Each edge
    *  carries its own colour + width, matching Narrative's
    *  TableCellEdgeBorders shape. An undefined edge means "inherit
@@ -2868,6 +2884,7 @@ function parseTable(
       // Fill + border.
       if (cellStyle.fillColor !== undefined) targetCell.fill = cellStyle.fillColor
       if (cellStyle.fillAlpha !== undefined) targetCell.fillAlpha = cellStyle.fillAlpha
+      if (cellStyle.fillGradient !== undefined) targetCell.fillGradient = cellStyle.fillGradient
       if (
         targetCell.fill === undefined &&
         cellStyle.fillGradient === undefined &&
@@ -2936,6 +2953,20 @@ function parseTable(
           }
           if (txt.textVerticalAlign !== undefined && targetCell.vAlign === undefined) {
             targetCell.vAlign = txt.textVerticalAlign
+          }
+          // Advanced typography — same fields parseShape captures on text
+          // frames. Writer aggregates uniform values into TableDefaults and
+          // keeps the rest as per-cell overrides.
+          if (txt.lineHeight !== undefined) targetCell.lineHeight = txt.lineHeight
+          if (txt.letterSpacing !== undefined) targetCell.letterSpacing = txt.letterSpacing
+          if (txt.paragraphSpaceBefore !== undefined) {
+            targetCell.paragraphSpaceBefore = txt.paragraphSpaceBefore
+          }
+          if (txt.paragraphSpaceAfter !== undefined) {
+            targetCell.paragraphSpaceAfter = txt.paragraphSpaceAfter
+          }
+          if (txt.textTransform !== undefined && txt.textTransform !== 'none') {
+            targetCell.textTransform = txt.textTransform
           }
         }
       }

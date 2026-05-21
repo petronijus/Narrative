@@ -689,4 +689,443 @@ describe('exportDeckToPptx', () => {
     // though our row array only included the origin.
     expect(xml).toContain('hMerge="1"')
   })
+
+  // ─── M29 fidelity round (export side) ──────────────────────────────────────
+
+  function makeTableSlide(table: Partial<import('@narrative/shared').TableObject>): Slide[] {
+    const base: import('@narrative/shared').TableObject = {
+      id: 't1',
+      type: 'table',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 200,
+      rotation: 0,
+      opacity: 1,
+      colWidths: [200, 200],
+      rowHeights: [100, 100],
+      rows: [
+        [{ text: 'A1' }, { text: 'B1' }],
+        [{ text: 'A2' }, { text: 'B2' }],
+      ],
+      defaults: {
+        fontSize: 18,
+        fontWeight: 'normal',
+        color: 0x111111,
+        align: 'left',
+        vAlign: 'middle',
+        border: { color: 0xcccccc, width: 1 },
+        padding: { top: 8, right: 8, bottom: 8, left: 8 },
+      },
+    }
+    return [
+      {
+        id: 's1',
+        objects: [{ ...base, ...table }],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+    ]
+  }
+
+  it('emits per-edge cell borders read from table.borderSegments', async () => {
+    // 2×2 table where the left edge of cell (0,0) is a thick red stroke
+    // (v:0:0) and the inner horizontal divider (h:1:0) is a green dashed
+    // stroke. Both come from the new flat segment map — no legacy
+    // cell.border anywhere. Exported per-cell <a:lnL/T/R/B> should
+    // surface both styles.
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        borderSegments: {
+          'v:0:0': { color: 0xff0000, width: 4 },
+          'h:1:0': { color: 0x00aa00, width: 2, dash: 'dash' },
+        },
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    // Red 4px stroke landed somewhere (on the cell that owns v:0:0).
+    expect(xml.toUpperCase()).toContain('FF0000')
+    // Green stroke landed too.
+    expect(xml.toUpperCase()).toContain('00AA00')
+    // Dashed declared via prstDash. pptxgenjs maps our `dash` to `sysDash`
+    // — see node_modules/pptxgenjs/dist/pptxgen.cjs.js for the literal map.
+    expect(xml).toMatch(/<a:prstDash val="sysDash"/i)
+  })
+
+  it('emits a <a:gradFill> inside <a:tcPr> for a cell with a gradient fillStyle', async () => {
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        rows: [
+          [
+            {
+              text: 'gradient',
+              fillStyle: {
+                kind: 'linearGradient',
+                angleDeg: 90,
+                stops: [
+                  { offset: 0, color: 0xff0000 },
+                  { offset: 1, color: 0x0000ff },
+                ],
+              },
+            },
+            { text: '' },
+          ],
+          [{ text: '' }, { text: '' }],
+        ],
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    // gradFill landed inside the table (somewhere in slide1.xml).
+    expect(xml).toContain('<a:gradFill')
+    // Both stop colours present.
+    expect(xml.toUpperCase()).toContain('FF0000')
+    expect(xml.toUpperCase()).toContain('0000FF')
+  })
+
+  it('emits fontFace + italic + underline + lineSpacingMultiple from TableDefaults', async () => {
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        defaults: {
+          fontFamily: 'Comic Sans MS',
+          fontSize: 18,
+          fontWeight: 'normal',
+          italic: true,
+          underline: true,
+          lineHeight: 1.5,
+          letterSpacing: 2,
+          color: 0x111111,
+          align: 'left',
+          vAlign: 'middle',
+          padding: { top: 8, right: 8, bottom: 8, left: 8 },
+        },
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    // fontFace lands as <a:latin typeface="Comic Sans MS"/>.
+    expect(xml).toContain('typeface="Comic Sans MS"')
+    // PPTX italic = i="1" on each <a:rPr>; underline = u="sng".
+    expect(xml).toMatch(/i="1"/)
+    expect(xml).toMatch(/u="sng"/)
+    // lineSpacingMultiple writes <a:lnSpc>/<a:spcPct val="150000"/>.
+    expect(xml).toContain('spcPct')
+  })
+
+  it('emits cell-level italic + underline overrides for a single cell', async () => {
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        rows: [
+          [{ text: 'plain' }, { text: 'fancy', italic: true, underline: true }],
+          [{ text: '' }, { text: '' }],
+        ],
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toMatch(/i="1"/)
+    expect(xml).toMatch(/u="sng"/)
+  })
+
+  it('emits transparency on a cell with fillAlpha < 1', async () => {
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        rows: [
+          [{ text: 'translucent', fill: 0x88ccff, fillAlpha: 0.4 }, { text: '' }],
+          [{ text: '' }, { text: '' }],
+        ],
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    // pptxgenjs emits transparency via <a:alpha val="..."/>. 0.4 alpha →
+    // 60% transparency → alpha val 40000 (40% opacity) in PPTX EMU
+    // convention. The exact number depends on rounding; we just assert an
+    // <a:alpha> is present somewhere in the cell fill.
+    expect(xml).toContain('<a:alpha')
+  })
+
+  // ─── M29 field-level round-trip ─────────────────────────────────────────────
+
+  it('round-trips a feature-rich TableObject through export → parser', async () => {
+    // Build a TableObject exercising every M29 surface that should survive
+    // a round-trip: borderSegments, cell gradient fill, cell solid fill,
+    // cell fillAlpha, padding, merge spans, default typography (font /
+    // size / colour / lineHeight / letterSpacing / paragraphSpace / align),
+    // per-cell colour override.
+    const sourceTable: import('@narrative/shared').TableObject = {
+      id: 't1',
+      type: 'table',
+      x: 100,
+      y: 100,
+      width: 400,
+      height: 200,
+      rotation: 0,
+      opacity: 1,
+      colWidths: [200, 200],
+      rowHeights: [100, 100],
+      rows: [
+        [
+          { text: 'A1', color: 0x0066cc },
+          {
+            text: 'gradient',
+            fillStyle: {
+              kind: 'linearGradient',
+              angleDeg: 90,
+              stops: [
+                { offset: 0, color: 0xff0000 },
+                { offset: 1, color: 0x0000ff },
+              ],
+            },
+          },
+        ],
+        [
+          { text: 'merged', gridSpan: 2 },
+          { text: '', mergeOriginR: 1, mergeOriginC: 0 },
+        ],
+      ],
+      defaults: {
+        fontFamily: 'Inter',
+        fontSize: 24,
+        fontWeight: 'normal',
+        color: 0x111111,
+        align: 'center',
+        vAlign: 'middle',
+        lineHeight: 1.4,
+        border: { color: 0xaaaaaa, width: 1 },
+        padding: { top: 8, right: 8, bottom: 8, left: 8 },
+      },
+      borderSegments: {
+        // Outer top of the table (h:0:0, h:0:1) — thick red.
+        'h:0:0': { color: 0xff3300, width: 4 },
+        'h:0:1': { color: 0xff3300, width: 4 },
+      },
+    }
+    const buf = await exportDeckToPptx([
+      {
+        id: 's1',
+        objects: [sourceTable],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+    ])
+    const { parsePptx } = await import('./parser.js')
+    const parsed = await parsePptx(buf)
+    // Single slide, single shape, kind = table.
+    expect(parsed.slides).toHaveLength(1)
+    expect(parsed.slides[0]!.shapes).toHaveLength(1)
+    const tbl = parsed.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    expect(tbl.tableCells).toBeDefined()
+    expect(tbl.tableCells).toHaveLength(2)
+    expect(tbl.tableCells![0]).toHaveLength(2)
+    // Cell text round-trips.
+    expect(tbl.tableCells![0]![0]!.text).toBe('A1')
+    expect(tbl.tableCells![0]![1]!.text).toBe('gradient')
+    expect(tbl.tableCells![1]![0]!.text).toBe('merged')
+    // Merge: origin carries gridSpan=2; continuation cell carries pointer.
+    expect(tbl.tableCells![1]![0]!.gridSpan).toBe(2)
+    expect(tbl.tableCells![1]![1]!.mergeOriginR).toBe(1)
+    expect(tbl.tableCells![1]![1]!.mergeOriginC).toBe(0)
+    // Cell gradient survives — parser stores it as fillGradient.
+    const g = tbl.tableCells![0]![1]!.fillGradient
+    expect(g).toBeDefined()
+    expect(g!.kind).toBe('linearGradient')
+    expect(g!.stops).toHaveLength(2)
+    expect(g!.stops[0]!.color).toBe(0xff0000)
+    expect(g!.stops[1]!.color).toBe(0x0000ff)
+    // Top-row outer-edge segment from borderSegments lands as the cell's
+    // top edge after re-import — PPTX cells own their four edges,
+    // segment-vs-cell is an internal Narrative distinction. The thick red
+    // 4px stroke from h:0:0 / h:0:1 should appear on row-0 cells' top.
+    const topEdge00 = tbl.tableCells![0]![0]!.border?.top
+    expect(topEdge00).toBeDefined()
+    expect(topEdge00!.color).toBe(0xff3300)
+    // Per-cell colour override survives.
+    expect(tbl.tableCells![0]![0]!.color).toBe(0x0066cc)
+  })
+
+  it('preserves a Y.Text-backed cell body across per-run splits', async () => {
+    // Post-F15 behaviour: a Y.Text body with mid-cell formatting is
+    // split into multiple `<a:r>` runs via the XML splice pass. The
+    // concatenated text still reads correctly (just across two `<a:t>`
+    // elements instead of one). This replaces the earlier "flattens to
+    // a single string" test that captured the pre-F15 limitation.
+    const doc = new Y.Doc()
+    const yt = doc.getText('cell-text')
+    yt.insert(0, 'Hello world')
+    yt.format(0, 5, { fontFamily: 'Inter' })
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        rows: [
+          [{ text: yt }, { text: '' }],
+          [{ text: '' }, { text: '' }],
+        ],
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:t>Hello</a:t>')
+    expect(xml).toContain('<a:t> world</a:t>')
+    expect(xml).toContain('typeface="Inter"')
+  })
+
+  // ─── M-fidelity batch (F1-F15) ─────────────────────────────────────────────
+
+  it('F1 — emits rectRadius for a rectangle with cornerRadius', async () => {
+    const buf = await exportDeckToPptx(singleSlide([makeRect({ cornerRadius: 20 })]))
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('roundRect')
+    // pptxgenjs encodes rectRadius as `<a:gd name="adj" fmla="val NNNNN"/>`.
+    // For w=288, h=144 (shortSide=144), radius=20 → fraction=0.139 → ~6944
+    // in PPTX's 50000-unit "val" range (val 50000 = 100%).
+    expect(xml).toMatch(/<a:gd[^>]*fmla="val \d+"/)
+  })
+
+  it('F2 — emits flipH/flipV on a rectangle', async () => {
+    const buf = await exportDeckToPptx(singleSlide([makeRect({ flipH: true, flipV: true })]))
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('flipH="1"')
+    expect(xml).toContain('flipV="1"')
+  })
+
+  it('F3 — emits <a:hlinkClick action="ppaction://hlinksldjump"> for slide-jump hyperlink', async () => {
+    const slides: Slide[] = [
+      {
+        id: 's1',
+        objects: [
+          makeText({
+            text: 'jump',
+            hyperlink: { kind: 'slide', slideId: 's2' },
+          }),
+        ],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+      {
+        id: 's2',
+        objects: [],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      },
+    ]
+    const buf = await exportDeckToPptx(slides)
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toMatch(/<a:hlinkClick[^>]*action="ppaction:\/\/hlinksldjump"/i)
+  })
+
+  it('F4 — emits stretch sizing for an image with fit=contain', async () => {
+    const slides: Slide[] = singleSlide([
+      {
+        id: 'img1',
+        type: 'image',
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+        rotation: 0,
+        opacity: 1,
+        assetId: 'asset-1',
+        fit: 'contain',
+      },
+    ])
+    const buf = await exportDeckToPptx(slides, {
+      assetLoader: async () => ({
+        bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+        mimeType: 'image/jpeg',
+      }),
+    })
+    const xml = await getSlide1Xml(buf)
+    // pptxgenjs's 'contain' mode emits a <a:stretch><a:fillRect ...> with
+    // negative l/t insets to letterbox; either form is acceptable.
+    expect(xml).toMatch(/<a:stretch>|<a:srcRect/)
+  })
+
+  it('F5 — emits <a:fld type="slidenum"> for an isSlideNumber TextObject', async () => {
+    const buf = await exportDeckToPptx(singleSlide([makeText({ text: '#', isSlideNumber: true })]))
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toMatch(/<a:fld[^>]*type="slidenum"/)
+  })
+
+  it('F6 — emits <a:gradFill> on the slide background for a linear-gradient bg', async () => {
+    const slides: Slide[] = [
+      {
+        id: 's1',
+        objects: [],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+        background: {
+          kind: 'linearGradient',
+          angleDeg: 90,
+          stops: [
+            { offset: 0, color: 0xff0000 },
+            { offset: 1, color: 0x0000ff },
+          ],
+        },
+      },
+    ]
+    const buf = await exportDeckToPptx(slides)
+    const xml = await getSlide1Xml(buf)
+    // The bg should now carry a gradFill, not just a solid placeholder.
+    const bgMatch = xml.match(/<p:bg>[\s\S]*?<\/p:bg>/)
+    expect(bgMatch).not.toBeNull()
+    expect(bgMatch![0]).toContain('<a:gradFill')
+    // Both stop colours present in the bg.
+    expect(bgMatch![0].toUpperCase()).toContain('FF0000')
+    expect(bgMatch![0].toUpperCase()).toContain('0000FF')
+  })
+
+  it('F10 — emits prstGeom prst="ellipse" on a <p:pic> with an ellipse mask', async () => {
+    const slides: Slide[] = singleSlide([
+      {
+        id: 'img1',
+        type: 'image',
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 200,
+        rotation: 0,
+        opacity: 1,
+        assetId: 'asset-1',
+        mask: { kind: 'ellipse' },
+      },
+    ])
+    const buf = await exportDeckToPptx(slides, {
+      assetLoader: async () => ({
+        bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+        mimeType: 'image/jpeg',
+      }),
+    })
+    const xml = await getSlide1Xml(buf)
+    // Find the picture's spPr — it should now carry an ellipse prstGeom.
+    expect(xml).toMatch(/<a:prstGeom prst="ellipse"/)
+  })
+
+  it('F11 — emits <a:effectLst><a:blur> for a shape with blur > 0', async () => {
+    const buf = await exportDeckToPptx(singleSlide([makeRect({ blur: 8 })]))
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toMatch(/<a:blur[^>]*rad="\d+"/)
+  })
+
+  it('F15 — splices per-run <a:r> into a table cell with rich Y.Text body', async () => {
+    const doc = new Y.Doc()
+    const yt = doc.getText('cell-text')
+    yt.insert(0, 'Hello world')
+    yt.format(0, 5, { fontWeight: 700, color: 0xff0000 })
+    const buf = await exportDeckToPptx(
+      makeTableSlide({
+        rows: [
+          [{ text: yt }, { text: '' }],
+          [{ text: '' }, { text: '' }],
+        ],
+      }),
+    )
+    const xml = await getSlide1Xml(buf)
+    // Two `<a:r>` runs inside the rich cell: one bold/red ("Hello"), one
+    // default (" world"). The XML splice replaces the single concatenated
+    // `<a:r>` pptxgenjs emitted with the per-run sequence.
+    const helloIdx = xml.indexOf('<a:t>Hello</a:t>')
+    const worldIdx = xml.indexOf('<a:t> world</a:t>')
+    expect(helloIdx).toBeGreaterThan(-1)
+    expect(worldIdx).toBeGreaterThan(-1)
+    expect(worldIdx).toBeGreaterThan(helloIdx)
+    // Bold marker on the first run.
+    expect(xml.slice(helloIdx - 200, helloIdx)).toMatch(/<a:rPr[^>]*b="1"/)
+    expect(xml.slice(helloIdx - 200, helloIdx).toUpperCase()).toContain('FF0000')
+  })
 })

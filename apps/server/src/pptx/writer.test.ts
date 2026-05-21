@@ -465,4 +465,171 @@ describe('buildDeckUpdate', () => {
     expect(objectsCreated).toBe(0)
     expect(skipped.images).toBe(1)
   })
+
+  // ─── M29 — table-specific writer tests ──────────────────────────────────────
+
+  it('lifts uniform cell typography into TableDefaults and strips redundant overrides', async () => {
+    // Every cell agrees on fontSize=24 + fontFamily=Inter + color=0xFF0000.
+    // After mapping, those values should land on TableDefaults and the cells
+    // should carry no override. align=center matches the defaults arg the
+    // writer's aggregator picks up too.
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'table',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 100,
+              rotation: 0,
+              sourceTag: 'a:tbl',
+              tableColWidths: [100, 100],
+              tableRowHeights: [50, 50],
+              tableCells: [
+                [
+                  {
+                    text: 'A1',
+                    fontSize: 24,
+                    fontFamily: 'Inter',
+                    color: 0xff0000,
+                    align: 'center',
+                  },
+                  {
+                    text: 'B1',
+                    fontSize: 24,
+                    fontFamily: 'Inter',
+                    color: 0xff0000,
+                    align: 'center',
+                  },
+                ],
+                [
+                  {
+                    text: 'A2',
+                    fontSize: 24,
+                    fontFamily: 'Inter',
+                    color: 0xff0000,
+                    align: 'center',
+                  },
+                  {
+                    text: 'B2',
+                    fontSize: 24,
+                    fontFamily: 'Inter',
+                    color: 0xff0000,
+                    align: 'center',
+                  },
+                ],
+              ],
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const table = doc.slides[0]!.objects[0]!
+    const defaults = table['defaults'] as Record<string, unknown>
+    // 24 * scale (1.5 because BASE slideWidth=1280 → target 1920) = 36.
+    expect(defaults['fontSize']).toBe(36)
+    expect(defaults['fontFamily']).toBe('Inter')
+    expect(defaults['color']).toBe(0xff0000)
+    expect(defaults['align']).toBe('center')
+    // Per-cell overrides were stripped because they matched defaults.
+    const rows = table['rows'] as Array<Array<Record<string, unknown>>>
+    expect(rows[0]![0]!['fontSize']).toBeUndefined()
+    expect(rows[0]![0]!['fontFamily']).toBeUndefined()
+    expect(rows[0]![0]!['color']).toBeUndefined()
+    expect(rows[0]![0]!['align']).toBeUndefined()
+  })
+
+  it('preserves a cell-level override when only one cell diverges', async () => {
+    // 2×1 table: cell [0][0] has fontSize=24, cell [0][1] has fontSize=36.
+    // Defaults can't be lifted (cells disagree); both cells retain their
+    // fontSize override.
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'table',
+              x: 0,
+              y: 0,
+              width: 200,
+              height: 50,
+              rotation: 0,
+              sourceTag: 'a:tbl',
+              tableColWidths: [100, 100],
+              tableRowHeights: [50],
+              tableCells: [
+                [
+                  { text: 'small', fontSize: 24 },
+                  { text: 'big', fontSize: 36 },
+                ],
+              ],
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const table = doc.slides[0]!.objects[0]!
+    const defaults = table['defaults'] as Record<string, unknown>
+    // No lift — defaults stay at the hardcoded fallback (18).
+    expect(defaults['fontSize']).toBe(18)
+    const rows = table['rows'] as Array<Array<Record<string, unknown>>>
+    expect(rows[0]![0]!['fontSize']).toBe(36) // 24 * 1.5
+    expect(rows[0]![1]!['fontSize']).toBe(54) // 36 * 1.5
+  })
+
+  it('maps a parsed cell fillGradient onto TableCell.fillStyle', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            {
+              kind: 'table',
+              x: 0,
+              y: 0,
+              width: 100,
+              height: 50,
+              rotation: 0,
+              sourceTag: 'a:tbl',
+              tableColWidths: [100],
+              tableRowHeights: [50],
+              tableCells: [
+                [
+                  {
+                    text: 'g',
+                    fillGradient: {
+                      kind: 'linearGradient',
+                      angleDeg: 90,
+                      stops: [
+                        { offset: 0, color: 0xff0000 },
+                        { offset: 1, color: 0x0000ff },
+                      ],
+                    },
+                  },
+                ],
+              ],
+            },
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const doc = applyToFreshDoc(state)
+    const table = doc.slides[0]!.objects[0]!
+    const rows = table['rows'] as Array<Array<Record<string, unknown>>>
+    const fillStyle = rows[0]![0]!['fillStyle'] as Record<string, unknown>
+    expect(fillStyle['kind']).toBe('linearGradient')
+    const stops = fillStyle['stops'] as Array<Record<string, unknown>>
+    expect(stops).toHaveLength(2)
+    expect(stops[0]!['color']).toBe(0xff0000)
+    expect(stops[1]!['color']).toBe(0x0000ff)
+  })
 })

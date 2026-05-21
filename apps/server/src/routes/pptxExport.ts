@@ -34,7 +34,7 @@ import {
   resolveTokenValue,
   isTokenRef,
 } from '@narrative/slide-model'
-import type { Slide, SlideObject, TokenRef } from '@narrative/shared'
+import type { Slide, SlideObject } from '@narrative/shared'
 import type { FolderTokensSnapshot } from '@narrative/slide-model'
 import type { Database } from '../db/client.js'
 import { decks, deckUpdates, mediaAssets, folderUpdates } from '../db/schema.js'
@@ -249,29 +249,63 @@ async function loadFolderTokens(
  * unchanged. Resolution failure (unknown token id) leaves the ref in
  * place; the export's `resolveColor` fallback then drops it to grey,
  * matching the pre-token-resolution behaviour.
+ *
+ * Token refs can sit at arbitrary depth: top-level (`obj.color`,
+ * `obj.fill`, `obj.stroke`), nested (`obj.shadow.color`,
+ * `table.defaults.color`, `table.defaults.border.color`), inside
+ * 2-D arrays (`table.rows[r][c].color`, `table.rows[r][c].border.top.color`),
+ * or inside record-shaped maps (`table.borderSegments['h:0:1'].color`).
+ * The walker descends through plain objects + arrays uniformly; Y.Text
+ * cell bodies are not plain objects (they're Y.Text instances), so the
+ * `Object.getPrototypeOf(v) === Object.prototype` guard skips them
+ * naturally.
  */
-function resolveSlideTokens(slide: Slide, tokens: FolderTokensSnapshot): Slide {
-  const objects = slide.objects.map((obj) => {
-    const next: Record<string, unknown> = { ...(obj as unknown as Record<string, unknown>) }
+export function resolveSlideTokens(slide: Slide, tokens: FolderTokensSnapshot): Slide {
+  const objects = slide.objects.map((obj) => resolveTokensDeep(obj, tokens) as SlideObject)
+  return { ...slide, objects }
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== 'object' || v === null) return false
+  const proto = Object.getPrototypeOf(v) as unknown
+  return proto === Object.prototype || proto === null
+}
+
+function resolveTokensDeep(value: unknown, tokens: FolderTokensSnapshot): unknown {
+  if (Array.isArray(value)) {
     let touched = false
-    for (const key of Object.keys(next)) {
-      const v = next[key]
-      if (isTokenRef(v as TokenRef)) {
-        const resolved = resolveTokenValue(v as TokenRef, tokens)
-        if (resolved !== null) {
-          // resolveTokenValue returns a hex string like '#ff0000'; convert
-          // to the 0xRRGGBB number every SlideObject color field expects.
-          const hex = resolved.replace(/^#/, '')
-          if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
-            next[key] = parseInt(hex, 16)
-            touched = true
-          }
-        }
+    const next: unknown[] = new Array(value.length)
+    for (let i = 0; i < value.length; i++) {
+      const resolved = resolveTokensDeep(value[i], tokens)
+      next[i] = resolved
+      if (resolved !== value[i]) touched = true
+    }
+    return touched ? next : value
+  }
+  if (!isPlainObject(value)) return value
+  // TokenRef itself — resolve to a hex number when possible. Leave the ref
+  // in place when the token id is unknown so the exporter's grey fallback
+  // matches pre-token-resolution behaviour.
+  if (isTokenRef(value)) {
+    const resolved = resolveTokenValue(value, tokens)
+    if (resolved !== null) {
+      const hex = resolved.replace(/^#/, '')
+      if (/^[0-9A-Fa-f]{6}$/.test(hex)) {
+        return parseInt(hex, 16)
       }
     }
-    return touched ? (next as unknown as SlideObject) : obj
-  })
-  return { ...slide, objects }
+    return value
+  }
+  // Plain object — recurse into every value.
+  let touched = false
+  const next: Record<string, unknown> = {}
+  for (const key of Object.keys(value)) {
+    const orig = value[key]
+    const resolved = resolveTokensDeep(orig, tokens)
+    next[key] = resolved
+    if (resolved !== orig) touched = true
+  }
+  return touched ? next : value
 }
 
 /** Drain a Readable into a Buffer. AWS SDK v3 returns Body as a Readable

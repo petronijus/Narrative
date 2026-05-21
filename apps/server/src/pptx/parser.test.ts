@@ -633,6 +633,88 @@ describe('parsePptx', () => {
     expect(border?.right).toBeUndefined()
   })
 
+  it('captures a `<a:tcPr>/<a:gradFill>` as the cell fillGradient', async () => {
+    const slideXml = `${SLIDE_OPEN}
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></p:xfrm>
+        <a:graphic>
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+            <a:tbl>
+              <a:tblPr/>
+              <a:tblGrid><a:gridCol w="914400"/></a:tblGrid>
+              <a:tr h="457200">
+                <a:tc>
+                  <a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>g</a:t></a:r></a:p></a:txBody>
+                  <a:tcPr>
+                    <a:gradFill>
+                      <a:gsLst>
+                        <a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs>
+                        <a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs>
+                      </a:gsLst>
+                      <a:lin ang="5400000" scaled="1"/>
+                    </a:gradFill>
+                  </a:tcPr>
+                </a:tc>
+              </a:tr>
+            </a:tbl>
+          </a:graphicData>
+        </a:graphic>
+      </p:graphicFrame>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const out = await parsePptx(buf)
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    const g = tbl.tableCells![0]![0]!.fillGradient
+    expect(g).toBeDefined()
+    expect(g!.kind).toBe('linearGradient')
+    expect(g!.stops).toHaveLength(2)
+    expect(g!.stops[0]!.color).toBe(0xff0000)
+    expect(g!.stops[1]!.color).toBe(0x0000ff)
+  })
+
+  it('captures cell typography (lineHeight + letterSpacing + textTransform)', async () => {
+    // Single cell with a `<a:pPr lnSpc>/<a:spcPct val="150000">` (1.5x
+    // line-height) and a run carrying `<a:rPr spc="200" cap="all">`
+    // (200/100 = 2 pt letter-spacing = 2.67 px @ PPTX_FONT_TO_PX,
+    // uppercase). Parser should land all three on ParsedTableCell.
+    const slideXml = `${SLIDE_OPEN}
+      <p:graphicFrame>
+        <p:nvGraphicFramePr><p:cNvPr id="2" name="tbl"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+        <p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></p:xfrm>
+        <a:graphic>
+          <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+            <a:tbl>
+              <a:tblPr/>
+              <a:tblGrid><a:gridCol w="914400"/></a:tblGrid>
+              <a:tr h="457200">
+                <a:tc>
+                  <a:txBody>
+                    <a:bodyPr/><a:lstStyle/>
+                    <a:p>
+                      <a:pPr><a:lnSpc><a:spcPct val="150000"/></a:lnSpc></a:pPr>
+                      <a:r><a:rPr lang="en-US" sz="1800" spc="200" cap="all"/><a:t>tex</a:t></a:r>
+                    </a:p>
+                  </a:txBody>
+                  <a:tcPr/>
+                </a:tc>
+              </a:tr>
+            </a:tbl>
+          </a:graphicData>
+        </a:graphic>
+      </p:graphicFrame>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const out = await parsePptx(buf)
+    const tbl = out.slides[0]!.shapes[0]!
+    expect(tbl.kind).toBe('table')
+    const cell = tbl.tableCells![0]![0]!
+    expect(cell.lineHeight).toBeCloseTo(1.5, 2)
+    expect(cell.letterSpacing).toBeGreaterThan(0)
+    expect(cell.textTransform).toBe('uppercase')
+  })
+
   // ─── <a:tblPr> presets ────────────────────────────────────────────────────
 
   it('applies a `<a:tblPr firstRow="1">` accent fill to the first row', async () => {
