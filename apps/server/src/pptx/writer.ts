@@ -348,6 +348,12 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
       obj.strokeWidth = round(s.strokeWidth * scale)
     }
+    if (s.cornerRadius !== undefined && s.cornerRadius > 0) {
+      // ParsedShape.cornerRadius is in slide-local px; Narrative's
+      // RectangleObject.cornerRadius accepts a number applied to all
+      // four corners. Scale to deck-canvas px in lockstep with x/y/w/h.
+      obj.cornerRadius = round(s.cornerRadius * scale)
+    }
     return obj
   }
 

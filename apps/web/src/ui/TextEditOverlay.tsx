@@ -42,6 +42,7 @@ import {
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
+import { cssFontFamily } from '../renderer/fontFallback.js'
 import { useTextEdit } from '../state/TextEditContext.js'
 
 export interface TextEditOverlayProps {
@@ -258,7 +259,14 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   // attribute. Box-wide values come from the TextObject.
   const baseStyle = useMemo<React.CSSProperties>(
     () => ({
-      fontFamily: obj.fontFamily ?? 'system-ui, -apple-system, sans-serif',
+      // Run the same CSS-safe stack the renderer uses for HTMLText, so
+      // edit mode and render mode share a font fallback chain. Without
+      // `cssFontFamily` the editor would render in raw `obj.fontFamily`
+      // (no quoting, no category fallback), which means an unknown
+      // PPTX face like "Northwind Sans ST Pro 36 Bold" falls all the
+      // way to the browser default serif — a jarring "doubleclick to
+      // edit, font changes" experience.
+      fontFamily: cssFontFamily(obj.fontFamily) ?? 'Arial, Helvetica, sans-serif',
       fontSize: `${obj.fontSize}px`,
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',

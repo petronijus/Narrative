@@ -189,6 +189,9 @@ export interface ParsedShape {
   strokeAlpha?: number
   /** Outline width in px. */
   strokeWidth?: number
+  /** Corner radius in px. Set by `extractGeometryUnderText` for
+   *  roundRect outlines split off a text frame. */
+  cornerRadius?: number
   /** Concatenated text content (one style per frame; per-run formatting deferred). */
   text?: string
   /** First-run text colour (0xRRGGBB) if set. */
@@ -2635,7 +2638,15 @@ function parseShape(
     }
     if (paraStrings.length > 0) {
       text = paraStrings.join('\n')
-      // Override geom-derived kind — a text-bearing shape IS a text frame.
+      // Override geom-derived kind — a text-bearing shape IS a text
+      // frame. Callers that need the original rect/roundRect outline
+      // (e.g. slide 8's lime-bordered "1 - AUGMENTATION" labels)
+      // recover it via `splitTextShapeWithGeometry` post-process,
+      // which uses the preserved `prst`, stroke, fill, and corner-
+      // radius on the returned shape to emit a sibling rectangle
+      // beneath the text frame. Narrative's TextObject schema only
+      // models stroke around glyph fills (textStroke), not around
+      // the bounding box.
       kind = 'text'
     }
     // Shape-inline lstStyle fallback: the text body's own `<a:lstStyle>/
@@ -2657,6 +2668,22 @@ function parseShape(
         // ~1.2 multiplier, overflows the autoFit-sized text box, and
         // the trailing line (`Jordan Example …`) gets clipped at the
         // frame bottom in vAlign='top' frames.
+        // Frame-level `algn` attribute on `<a:lvl1pPr>` carries the
+        // default text alignment for the whole frame when no
+        // paragraph-level `<a:pPr algn="…">` overrides it. Slide 4's
+        // ACME text and slide 5's "Native" badge both use this
+        // shape: the text is centered by the lstStyle, never by a
+        // per-paragraph pPr — so without picking it up here the
+        // text renders left-aligned and the first character of the
+        // ACME frame ends up off-slide (frame x is negative because
+        // the centered text overflows the slide width).
+        if (textAlign === undefined) {
+          const algn = getAttrs(lvl1)['@algn']
+          if (typeof algn === 'string') {
+            const mapped = mapAlgn(algn)
+            if (mapped !== undefined) textAlign = mapped
+          }
+        }
         if (frameLineHeight === undefined) {
           const lvl1Children = getChildren(lvl1, 'a:lvl1pPr')
           const lnSpc = findFirst(lvl1Children, 'a:lnSpc')
@@ -3641,6 +3668,77 @@ interface GroupTransform {
 }
 const IDENTITY_GROUP_TRANSFORM: GroupTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
 
+/**
+ * PPTX allows a single `<p:sp>` to carry BOTH a `prstGeom` outline
+ * (rect / roundRect / ellipse) AND a `<p:txBody>` with text. Narrative
+ * splits these — TextObject doesn't model a stroke around its bounding
+ * box, only around glyph fills. When the parser identified a text-
+ * bearing shape that ALSO has a real geometry (stroke, fill, or a
+ * roundRect prst), this helper returns the underlying outline as a
+ * separate ParsedShape that callers slot in BEHIND the text frame.
+ *
+ * Returns `null` when there's nothing to recover (no stroke, no real
+ * fill, and no rounded prst) — the common case for plain text
+ * placeholders, which should stay as a single shape.
+ *
+ * Slide 8's "1 - AUGMENTATION" etc. labels surface this code path:
+ * each is a `<p:sp prstGeom prst="roundRect">` with a lime-green
+ * stroke + the label text inside. Without the split the lime borders
+ * disappear and only the text remains.
+ */
+function extractGeometryUnderText(shape: ParsedShape): ParsedShape | null {
+  if (shape.kind !== 'text') return null
+  const prst = shape.prstGeom
+  const isRectLike = prst === 'rect' || prst === 'roundRect'
+  if (!isRectLike) return null
+  const hasStroke = shape.strokeColor !== undefined && (shape.strokeWidth ?? 0) > 0
+  const hasFill =
+    shape.fillColor !== undefined ||
+    shape.fillGradient !== undefined ||
+    shape.imagePath !== undefined
+  const wantsRoundedCorners = prst === 'roundRect'
+  if (!hasStroke && !hasFill && !wantsRoundedCorners) return null
+  const underlay: ParsedShape = {
+    kind: 'rectangle',
+    x: shape.x,
+    y: shape.y,
+    width: shape.width,
+    height: shape.height,
+    rotation: shape.rotation,
+    sourceTag: shape.sourceTag,
+  }
+  if (shape.fillColor !== undefined) underlay.fillColor = shape.fillColor
+  if (shape.fillAlpha !== undefined) underlay.fillAlpha = shape.fillAlpha
+  if (shape.fillGradient !== undefined) underlay.fillGradient = shape.fillGradient
+  if (shape.strokeColor !== undefined) underlay.strokeColor = shape.strokeColor
+  if (shape.strokeAlpha !== undefined) underlay.strokeAlpha = shape.strokeAlpha
+  if (shape.strokeWidth !== undefined) underlay.strokeWidth = shape.strokeWidth
+  if (shape.groupId !== undefined) underlay.groupId = shape.groupId
+  if (shape.shadow !== undefined) underlay.shadow = shape.shadow
+  if (shape.blur !== undefined) underlay.blur = shape.blur
+  if (wantsRoundedCorners) {
+    // PPTX roundRect carries the corner radius in
+    // `<a:avLst>/<a:gd name="adj" fmla="val N"/>` where N is 1/1000ths
+    // of the smaller dimension. Default 50000 (50%). We don't have
+    // the adj parsed at this point — use the PPTX default, which
+    // matches the vast majority of authored roundRects.
+    const halfMin = Math.min(shape.width, shape.height) / 2
+    underlay.cornerRadius = halfMin
+  }
+  // Strip the geometry properties from the text shape so the writer
+  // doesn't accidentally try to apply them to a TextObject (Narrative's
+  // TextObject schema doesn't model them and would emit them as no-ops,
+  // but the cleaner data shape avoids surprises downstream).
+  delete shape.fillColor
+  delete shape.fillAlpha
+  delete shape.fillGradient
+  delete shape.strokeColor
+  delete shape.strokeAlpha
+  delete shape.strokeWidth
+  delete shape.prstGeom
+  return underlay
+}
+
 function applyGroupTransform(shape: ParsedShape, t: GroupTransform): void {
   if (t === IDENTITY_GROUP_TRANSFORM) return
   shape.x = shape.x * t.scaleX + t.x
@@ -3772,6 +3870,16 @@ function flattenGroupShape(
         groupFill,
       )
       if (shape !== null) {
+        // Same text+geometry split as the slide-level traversal —
+        // see `extractGeometryUnderText`. Split BEFORE applying the
+        // group transform so both halves get the same translation +
+        // scaling; underlay first so the text renders on top.
+        const underlay = extractGeometryUnderText(shape)
+        if (underlay !== null) {
+          applyGroupTransform(underlay, newTransform)
+          if (underlay.groupId === undefined) underlay.groupId = groupId
+          out.push(underlay)
+        }
         applyGroupTransform(shape, newTransform)
         if (shape.groupId === undefined) shape.groupId = groupId
         out.push(shape)
@@ -3887,7 +3995,15 @@ function parseSlide(
         context.txStyles,
         hyperlinkRels,
       )
-      if (shape !== null) shapes.push(shape)
+      if (shape !== null) {
+        // Split text-with-geometry shapes: a `<p:sp>` whose prstGeom
+        // is rect / roundRect with a real stroke/fill AND text body
+        // becomes a rect underlay + text frame. Push the rect FIRST
+        // so the text renders ON TOP (children render in array order).
+        const underlay = extractGeometryUnderText(shape)
+        if (underlay !== null) shapes.push(underlay)
+        shapes.push(shape)
+      }
     } else if (tag === 'p:graphicFrame') {
       // Tables nest inside graphicFrame → graphicData → tbl. Charts use
       // the same graphicFrame envelope but with a `/chart` URI; we route
