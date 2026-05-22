@@ -79,12 +79,21 @@ export function ImportPptxDialog({
   // dismiss the warnings explicitly — they should know what changed
   // before they land on the deck.
   const importIssues = success === null ? [] : relevantIgnoredElements(success.ignoredElements)
+  // Surface the "fonts weren't embedded" advisory whenever a deck with
+  // content was imported but `<p:embeddedFontLst>` was empty. We can't
+  // tell at this point whether the deck actually references custom
+  // fonts (the API doesn't return the family list), but in practice
+  // decks without embedded fonts are the ones that benefit from the
+  // category-fallback explanation. Cheap to surface; cheaper to dismiss.
+  const fontFallbackAdvisory =
+    success !== null && success.objectsCreated > 0 && (success.embeddedFontCount ?? 0) === 0
+  const hasAnyNotice = importIssues.length > 0 || fontFallbackAdvisory
   useEffect(() => {
     if (success === null) return
-    if (importIssues.length > 0) return
+    if (hasAnyNotice) return
     const t = setTimeout(() => onSuccess(success), SUCCESS_DISPLAY_MS)
     return () => clearTimeout(t)
-  }, [success, importIssues.length, onSuccess])
+  }, [success, hasAnyNotice, onSuccess])
 
   const handleConfirm = async () => {
     setError(null)
@@ -166,11 +175,21 @@ export function ImportPptxDialog({
               </p>
               <p className="mt-0.5 text-muted-foreground">
                 {success.objectsCreated} object{success.objectsCreated === 1 ? '' : 's'} created
+                {success.embeddedFontCount !== undefined && success.embeddedFontCount > 0
+                  ? ` · ${success.embeddedFontCount} embedded font${
+                      success.embeddedFontCount === 1 ? '' : 's'
+                    } imported`
+                  : ''}
                 {success.skipped.images > 0 ? ` · ${success.skipped.images} image(s) skipped` : ''}
                 {success.skipped.unknownShapes > 0
                   ? ` · ${success.skipped.unknownShapes} unsupported shape(s) skipped`
                   : ''}
-                {importIssues.length === 0 ? '. Opening deck…' : '.'}
+                {success.skipped.fonts !== undefined && success.skipped.fonts > 0
+                  ? ` · ${success.skipped.fonts} font${
+                      success.skipped.fonts === 1 ? '' : 's'
+                    } couldn’t be parsed`
+                  : ''}
+                {!hasAnyNotice ? '. Opening deck…' : '.'}
               </p>
             </div>
           </div>
@@ -179,16 +198,17 @@ export function ImportPptxDialog({
         {/* Import compatibility warnings — surface the categories the
             parser flagged plus the static known-losses for each so the
             user can investigate after opening the deck. */}
-        {success !== null && importIssues.length > 0 && (
+        {success !== null && hasAnyNotice && (
           <div className="mb-4 space-y-2">
             <h3 className="flex items-center gap-1.5 text-xs font-medium text-foreground">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
               Some content couldn’t come through
             </h3>
             <ul className="space-y-2">
-              {IMPORT_KNOWN_LOSSES.filter((entry) =>
-                matchesIgnoredCategory(entry.id, importIssues),
-              ).map((entry) => (
+              {IMPORT_KNOWN_LOSSES.filter((entry) => {
+                if (entry.id === 'unembeddedFonts') return fontFallbackAdvisory
+                return matchesIgnoredCategory(entry.id, importIssues)
+              }).map((entry) => (
                 <li
                   key={entry.id}
                   className="rounded-md border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground"

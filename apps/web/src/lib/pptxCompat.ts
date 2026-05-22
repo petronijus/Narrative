@@ -262,6 +262,13 @@ export const IMPORT_KNOWN_LOSSES: ReadonlyArray<Omit<CompatWarning, 'count'>> = 
       'Master / layout placeholders are baked into each slide as concrete shapes. Edits to one slide no longer propagate via the layout system.',
     severity: 'simplified',
   },
+  {
+    id: 'unembeddedFonts',
+    title: 'Fonts referenced but not embedded',
+    detail:
+      'Some text uses custom font families that aren’t shipped inside the .pptx (PowerPoint’s “Embed fonts in the file” option was off when the deck was saved). Those runs render in a category-matched fallback (sans / serif / monospace) until you upload the real font in Folder settings.',
+    severity: 'simplified',
+  },
 ]
 
 /**
