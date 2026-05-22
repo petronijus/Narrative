@@ -302,6 +302,19 @@ export interface PathAnchor {
   cpIn?: { x: number; y: number }
   /** Outgoing control handle, relative to this anchor. */
   cpOut?: { x: number; y: number }
+  /**
+   * Marks the anchor as the *start of a new subpath* — the renderer
+   * emits a `moveTo` instead of a `lineTo` when stepping onto this
+   * anchor from the previous one. The first anchor of a path is
+   * implicitly a subpath start; this flag only matters for the 2nd+
+   * anchor (e.g. PPTX shapes that pack many disconnected sub-shapes
+   * into one `<a:custGeom>`, like a dot-grid icon).
+   *
+   * For Pen-tool authored paths in Narrative this is always undefined
+   * (single contiguous subpath). PPTX import sets it whenever a
+   * `<a:close/>` is followed by another `<a:moveTo>`.
+   */
+  moveTo?: boolean
 }
 
 export interface PathObject extends BaseSlideObject {

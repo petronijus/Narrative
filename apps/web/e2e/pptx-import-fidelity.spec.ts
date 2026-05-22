@@ -92,6 +92,17 @@ test.describe('PPTX import fidelity', () => {
       expect(slideCount).toBeGreaterThan(0)
       console.log(`[fidelity] import finished — ${slideCount} slides`)
 
+      // The dialog stays open when there are notices (missing fonts,
+      // compat warnings, font-fallback advisory). The harness isn't
+      // exercising the upload UI here — we want the raw fallback
+      // render — so dismiss whichever CTA is showing.
+      const dismissBtn = dialog.getByRole('button', {
+        name: /^(Open deck|Skip & open deck)$/,
+      })
+      if (await dismissBtn.isVisible().catch(() => false)) {
+        await dismissBtn.click()
+      }
+
       await page.waitForURL(/\/deck\/[A-Za-z0-9_-]+/, { timeout: 30_000 })
       deckId = /\/deck\/([A-Za-z0-9_-]+)/.exec(page.url())![1]!
       console.log(`[fidelity] deck id: ${deckId}`)

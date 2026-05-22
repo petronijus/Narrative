@@ -28,11 +28,42 @@ function getGraphics(n: PixiContainer): Graphics | undefined {
 function tracePath(g: Graphics, data: PathObject): void {
   const anchors = data.anchors
   if (anchors.length === 0) return
-  const first = anchors[0]!
-  g.moveTo(first.x, first.y)
+  // Subpath-aware tracing. PPTX `<a:custGeom>` can pack many
+  // disconnected closed subpaths into a single `<a:path>` (dot grids,
+  // multi-island icons). Each subpath begins at an anchor with
+  // `moveTo === true` (the very first anchor is implicitly a moveTo
+  // even without the flag). On entering a new subpath we close the
+  // previous one (if `data.closed` is true) and emit Graphics.moveTo
+  // instead of lineTo — otherwise the renderer draws straight
+  // connectors between sub-shapes (the "diagonal-shear" artefact).
+  const wantClose = data.closed === true
+  let subStart = anchors[0]!
+  g.moveTo(subStart.x, subStart.y)
   for (let i = 1; i < anchors.length; i++) {
     const prev = anchors[i - 1]!
     const cur = anchors[i]!
+    if (cur.moveTo === true) {
+      // Close the previous subpath if the path is overall closed.
+      if (wantClose) {
+        if (prev.cpOut !== undefined && subStart.cpIn !== undefined) {
+          g.bezierCurveTo(
+            prev.x + prev.cpOut.x,
+            prev.y + prev.cpOut.y,
+            subStart.x + subStart.cpIn.x,
+            subStart.y + subStart.cpIn.y,
+            subStart.x,
+            subStart.y,
+          )
+        } else {
+          g.lineTo(subStart.x, subStart.y)
+        }
+        g.closePath()
+      }
+      // Begin a fresh subpath at `cur`.
+      g.moveTo(cur.x, cur.y)
+      subStart = cur
+      continue
+    }
     if (prev.cpOut !== undefined && cur.cpIn !== undefined) {
       g.bezierCurveTo(
         prev.x + prev.cpOut.x,
@@ -46,19 +77,19 @@ function tracePath(g: Graphics, data: PathObject): void {
       g.lineTo(cur.x, cur.y)
     }
   }
-  if (data.closed === true) {
+  if (wantClose) {
     const last = anchors[anchors.length - 1]!
-    if (last.cpOut !== undefined && first.cpIn !== undefined) {
+    if (last.cpOut !== undefined && subStart.cpIn !== undefined) {
       g.bezierCurveTo(
         last.x + last.cpOut.x,
         last.y + last.cpOut.y,
-        first.x + first.cpIn.x,
-        first.y + first.cpIn.y,
-        first.x,
-        first.y,
+        subStart.x + subStart.cpIn.x,
+        subStart.y + subStart.cpIn.y,
+        subStart.x,
+        subStart.y,
       )
     } else {
-      g.lineTo(first.x, first.y)
+      g.lineTo(subStart.x, subStart.y)
     }
     g.closePath()
   }

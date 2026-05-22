@@ -416,6 +416,11 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       if (a.cpOut !== undefined) {
         out.cpOut = { x: round(a.cpOut.x * scale), y: round(a.cpOut.y * scale) }
       }
+      // Carry the subpath-start flag through. The renderer uses it to
+      // emit Graphics.moveTo for disconnected sub-shapes — PPTX
+      // `<a:custGeom>` icons (e.g. dot grids) pack hundreds of those
+      // into one path.
+      if (a.moveTo === true) out.moveTo = true
       return out
     })
     const obj: PathObject = {

@@ -135,6 +135,8 @@ export interface ParsedPathAnchor {
   y: number
   cpIn?: { x: number; y: number }
   cpOut?: { x: number; y: number }
+  /** Subpath start marker — see `PathAnchor.moveTo` in slide-model. */
+  moveTo?: boolean
 }
 
 /**
@@ -1112,6 +1114,15 @@ function parseCustGeomAnchors(
   let closed = false
   const pathChildren = getChildren(path, 'a:path')
   let cursor: { x: number; y: number } | undefined
+  // `<a:custGeom>` can pack many disconnected subpaths into a single
+  // `<a:path>` — each subpath is delimited by `<a:moveTo>` (start) and
+  // `<a:close/>` (end). Slide 8's dot-grid icons take this shape:
+  // ~1300 closed quads, one per dot, all in one <a:path>. Without
+  // subpath tracking the renderer would draw straight lines between
+  // each dot's closing corner and the next dot's start, producing the
+  // diagonal-shear artefact the user saw. The first anchor of a
+  // subpath gets a `moveTo: true` flag; the renderer's `tracePath`
+  // emits a Graphics.moveTo for those instead of a lineTo.
 
   for (const cmd of pathChildren) {
     const tag = getTag(cmd)
@@ -1120,7 +1131,12 @@ function parseCustGeomAnchors(
     if (tag === 'a:moveTo') {
       const p = toPx(ptNodes[0])
       if (p !== undefined) {
-        anchors.push({ x: p.x, y: p.y })
+        // First anchor of the whole path is implicitly a subpath start,
+        // so no flag needed (tracePath always emits moveTo for index 0).
+        // Subsequent moveTo's (post-close) DO need the flag.
+        const a: ParsedPathAnchor = { x: p.x, y: p.y }
+        if (anchors.length > 0) a.moveTo = true
+        anchors.push(a)
         cursor = p
       }
     } else if (tag === 'a:lnTo') {
@@ -2633,6 +2649,34 @@ function parseShape(
     if (lstStyleNode !== undefined) {
       const lvl1 = findFirst(getChildren(lstStyleNode, 'a:lstStyle'), 'a:lvl1pPr')
       if (lvl1 !== undefined) {
+        // Frame-level `<a:lnSpc>` lives as a child of `<a:lvl1pPr>`
+        // (sibling of `<a:defRPr>`) — NOT inside defRPr. Slide 1's
+        // author block ships its line spacing this way (`<a:spcPct
+        // val="90000"/>` at the lstStyle level) and without picking
+        // it up here the rendered text falls back to the default
+        // ~1.2 multiplier, overflows the autoFit-sized text box, and
+        // the trailing line (`Jordan Example …`) gets clipped at the
+        // frame bottom in vAlign='top' frames.
+        if (frameLineHeight === undefined) {
+          const lvl1Children = getChildren(lvl1, 'a:lvl1pPr')
+          const lnSpc = findFirst(lvl1Children, 'a:lnSpc')
+          if (lnSpc !== undefined) {
+            const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
+            const pct = findFirst(lnSpcChildren, 'a:spcPct')
+            if (pct !== undefined) {
+              const v = Number(getAttrs(pct)['@val'])
+              if (Number.isFinite(v)) frameLineHeight = v / 100000
+            } else {
+              const pts = findFirst(lnSpcChildren, 'a:spcPts')
+              if (pts !== undefined && fontSize !== undefined && fontSize > 0) {
+                const v = Number(getAttrs(pts)['@val'])
+                if (Number.isFinite(v)) {
+                  frameLineHeight = (v * PPTX_FONT_TO_PX) / fontSize
+                }
+              }
+            }
+          }
+        }
         const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
         if (defRPr !== undefined) {
           const a = getAttrs(defRPr)
@@ -3622,6 +3666,19 @@ function applyGroupTransform(shape: ParsedShape, t: GroupTransform): void {
         a.cpOut.y = a.cpOut.y * t.scaleY
       }
     }
+  }
+  // imageRect (from `<a:srcRect>` cropping) was computed in the same
+  // local coord system as shape.x/y/w/h — see parseShape's srcRect
+  // block. The group transform must apply to it too or the cropped
+  // sprite renders at pre-group coordinates while the shape's bounding
+  // box moves with the group → sprite lands far off-slide and looks
+  // "missing" to the user. Slide 2's ACME logo (image5.png with
+  // srcRect b="23%") was this case.
+  if (shape.imageRect !== undefined) {
+    shape.imageRect.x = shape.imageRect.x * t.scaleX + t.x
+    shape.imageRect.y = shape.imageRect.y * t.scaleY + t.y
+    shape.imageRect.width *= t.scaleX
+    shape.imageRect.height *= t.scaleY
   }
 }
 

@@ -1039,6 +1039,69 @@ describe('parsePptx', () => {
     // Cubic handles attached: previous-anchor cpOut + this-anchor cpIn.
     expect(shape.pathAnchors![1]!.cpOut).toBeDefined()
     expect(shape.pathAnchors![2]!.cpIn).toBeDefined()
+    // Single-subpath case: no anchor should carry a `moveTo` flag —
+    // the renderer treats index 0 as an implicit moveTo.
+    for (const a of shape.pathAnchors!) {
+      expect(a.moveTo).toBeUndefined()
+    }
+  })
+
+  it('parses multi-subpath `<a:custGeom>` (moveTo→close→moveTo) with subpath markers', async () => {
+    // Two disconnected closed squares packed into one <a:path> — the
+    // shape PPTX uses for dot-grid icons (slide 8 of the audit deck).
+    // Without subpath tracking the renderer draws a straight line
+    // from each subpath's close to the next moveTo, producing the
+    // diagonal-shear artefact. The parser must mark each anchor that
+    // begins a new subpath with `moveTo: true` so the renderer can
+    // emit Graphics.moveTo for it.
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="g"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:custGeom>
+              <a:pathLst>
+                <a:path w="200" h="200">
+                  <a:moveTo><a:pt x="0" y="0"/></a:moveTo>
+                  <a:lnTo><a:pt x="20" y="0"/></a:lnTo>
+                  <a:lnTo><a:pt x="20" y="20"/></a:lnTo>
+                  <a:lnTo><a:pt x="0" y="20"/></a:lnTo>
+                  <a:close/>
+                  <a:moveTo><a:pt x="100" y="100"/></a:moveTo>
+                  <a:lnTo><a:pt x="120" y="100"/></a:lnTo>
+                  <a:lnTo><a:pt x="120" y="120"/></a:lnTo>
+                  <a:lnTo><a:pt x="100" y="120"/></a:lnTo>
+                  <a:close/>
+                </a:path>
+              </a:pathLst>
+            </a:custGeom>
+            <a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>
+          </p:spPr>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('path')
+    expect(shape.pathClosed).toBe(true)
+    expect(shape.pathAnchors).toBeDefined()
+    // 8 anchors total — 4 per subpath.
+    expect(shape.pathAnchors).toHaveLength(8)
+    // Anchor 0 is the implicit subpath start (no flag, renderer infers).
+    expect(shape.pathAnchors![0]!.moveTo).toBeUndefined()
+    // Anchors 1-3 inside subpath 1 — no flag.
+    expect(shape.pathAnchors![1]!.moveTo).toBeUndefined()
+    expect(shape.pathAnchors![2]!.moveTo).toBeUndefined()
+    expect(shape.pathAnchors![3]!.moveTo).toBeUndefined()
+    // Anchor 4 starts the SECOND subpath — must carry the flag.
+    expect(shape.pathAnchors![4]!.moveTo).toBe(true)
+    expect(shape.pathAnchors![4]!.x).toBeCloseTo(48, 1) // 100/200 of 96 px
+    // Remaining anchors of subpath 2 — no flag.
+    expect(shape.pathAnchors![5]!.moveTo).toBeUndefined()
+    expect(shape.pathAnchors![6]!.moveTo).toBeUndefined()
+    expect(shape.pathAnchors![7]!.moveTo).toBeUndefined()
   })
 
   it('parses a `<p:pic>` with `<a:videoFile r:embed>` as kind=video with videoPath', async () => {
