@@ -32,6 +32,7 @@ import type { Database } from '../db/client.js'
 import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
+import { parseFontMetadata } from '../media/fontMetadata.js'
 import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
 
@@ -60,10 +61,13 @@ export interface ImportDeckResult {
   deckId: string
   slideCount: number
   objectsCreated: number
-  skipped: { images: number; unknownShapes: number }
+  skipped: { images: number; unknownShapes: number; fonts: number }
   ignoredElements: string[]
   slideWidth: number
   slideHeight: number
+  /** Number of embedded fonts (typeface × variant) lifted from the
+   *  PPTX's `<p:embeddedFontLst>` and stamped into `media_assets`. */
+  embeddedFontCount: number
 }
 
 /**
@@ -133,8 +137,14 @@ export async function importDeckFromPptxBytes(args: {
   const title = deriveTitle(filenameForTitle)
   const now = new Date()
 
-  const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages, videoTranscodeJobs } =
-    await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  const {
+    mediaAssetRows,
+    uploadedImageCount,
+    skippedUnsupportedImages,
+    uploadedFontCount,
+    skippedFontCount,
+    videoTranscodeJobs,
+  } = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
 
   const { state, slideCount, objectsCreated, skipped } = buildDeckUpdate(parsed)
 
@@ -203,6 +213,8 @@ export async function importDeckFromPptxBytes(args: {
       skippedImages: skipped.images + skippedUnsupportedImages,
       skippedUnknown: skipped.unknownShapes,
       uploadedImages: uploadedImageCount,
+      uploadedFonts: uploadedFontCount,
+      skippedFonts: skippedFontCount,
       ignored: parsed.ignoredElements,
     },
     'pptx-import: deck created',
@@ -217,10 +229,12 @@ export async function importDeckFromPptxBytes(args: {
       skipped: {
         images: skipped.images + skippedUnsupportedImages,
         unknownShapes: skipped.unknownShapes,
+        fonts: skippedFontCount,
       },
       ignoredElements: parsed.ignoredElements,
       slideWidth: parsed.slideWidth,
       slideHeight: parsed.slideHeight,
+      embeddedFontCount: uploadedFontCount,
     },
   }
 }
@@ -243,6 +257,8 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   mediaAssetRows: Array<typeof mediaAssets.$inferInsert>
   uploadedImageCount: number
   skippedUnsupportedImages: number
+  uploadedFontCount: number
+  skippedFontCount: number
   videoTranscodeJobs: Array<{
     assetId: string
     storageKey: string
@@ -261,6 +277,74 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   }> = []
   let uploadedImageCount = 0
   let skippedUnsupportedImages = 0
+
+  // ─── Embedded fonts ────────────────────────────────────────────────────
+  // Walk `<p:embeddedFontLst>` faces first — they're independent of the
+  // image/video pipeline and reach the deck via `/api/decks/:id/fonts`
+  // (which the editor's FolderFontLoader auto-subscribes to). One
+  // media_assets row per (typeface × variant) face. parseFontMetadata
+  // is the same opentype.js entry point the tus font-upload route uses;
+  // mismatched / corrupt bytes log + skip instead of crashing the
+  // entire import.
+  let uploadedFontCount = 0
+  let skippedFontCount = 0
+  for (const font of parsed.embeddedFonts) {
+    const assetId = nanoid(12)
+    const mimeType = 'font/ttf'
+    const storageKey = `decks/${deckId}/fonts/${assetId}/original.${font.ext}`
+    let metadata
+    try {
+      const ab = font.bytes.buffer.slice(
+        font.bytes.byteOffset,
+        font.bytes.byteOffset + font.bytes.byteLength,
+      ) as ArrayBuffer
+      metadata = parseFontMetadata(ab)
+    } catch (err) {
+      log.warn(
+        { err, zipPath: font.zipPath, typeface: font.typeface, variant: font.variant },
+        'pptx: parseFontMetadata failed, skipping font',
+      )
+      skippedFontCount++
+      continue
+    }
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: MEDIA_BUCKET,
+          Key: storageKey,
+          Body: font.bytes,
+          ContentType: mimeType,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      )
+    } catch (err) {
+      log.warn(
+        { err, zipPath: font.zipPath, typeface: font.typeface },
+        'pptx: MinIO font upload failed, skipping',
+      )
+      skippedFontCount++
+      continue
+    }
+    // The parser's `typeface` attr (`<p:font typeface="Druk Wide">`) is
+    // the family name slide content references. opentype.js's family
+    // name might differ (e.g. "Druk Wide Bold" vs "Druk Wide"). Prefer
+    // the PPTX-authored typeface so font-family CSS lookups resolve.
+    mediaAssetRows.push({
+      id: assetId,
+      deckId,
+      uploaderUserId: ownerUserId,
+      mimeType,
+      sizeBytes: font.bytes.byteLength,
+      storageKey,
+      originalFilename: font.zipPath.split('/').pop() ?? null,
+      kind: 'font',
+      fontFamily: font.typeface,
+      fontWeight: metadata.weight,
+      fontStyle: metadata.style,
+      fontPostscriptName: metadata.postscriptName,
+    })
+    uploadedFontCount++
+  }
 
   for (const [zipPath, media] of parsed.embeddedImages) {
     const isImage = SUPPORTED_IMAGE_MIME.has(media.mimeType)
@@ -329,7 +413,14 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
     }
   }
 
-  return { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages, videoTranscodeJobs }
+  return {
+    mediaAssetRows,
+    uploadedImageCount,
+    skippedUnsupportedImages,
+    uploadedFontCount,
+    skippedFontCount,
+    videoTranscodeJobs,
+  }
 }
 
 async function probeImageDims(

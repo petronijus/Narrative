@@ -55,6 +55,7 @@ const BASE: Omit<ParsedPptx, 'slides'> = {
   ignoredElements: [],
   distinctElementCount: 0,
   embeddedImages: new Map(),
+  embeddedFonts: [],
 }
 
 describe('buildDeckUpdate', () => {

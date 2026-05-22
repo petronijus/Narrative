@@ -210,10 +210,13 @@ export interface ImportPptxResult {
   deckId: string
   slideCount: number
   objectsCreated: number
-  skipped: { images: number; unknownShapes: number }
+  skipped: { images: number; unknownShapes: number; fonts?: number }
   ignoredElements: string[]
   slideWidth: number
   slideHeight: number
+  /** Number of embedded fonts lifted from the PPTX's `<p:embeddedFontLst>`
+   *  and stamped into media_assets. Field is missing on older servers. */
+  embeddedFontCount?: number
 }
 
 /** Summary returned by the append endpoint — same shape minus the deck-creation

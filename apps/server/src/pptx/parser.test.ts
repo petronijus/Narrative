@@ -1995,4 +1995,99 @@ describe('parsePptx', () => {
     expect(out.slides[0]!.shapes).toHaveLength(1)
     expect(out.slides[0]!.shapes[0]!.kind).toBe('text')
   })
+
+  // ─── Embedded fonts (F1) ─────────────────────────────────────────────────
+
+  it('extracts embedded fonts from <p:embeddedFontLst> with rels resolution', async () => {
+    // Use a real TrueType file from the system so opentype.js's later
+    // metadata parse (in importDeck) would succeed. We don't actually
+    // call parseFontMetadata here — that's tested in fontMetadata.test.ts.
+    // The parser's job is to find the bytes; metadata parsing happens
+    // downstream.
+    const { readFileSync } = await import('node:fs')
+    const ttfBytes = readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf')
+
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+  <p:embeddedFontLst>
+    <p:embeddedFont>
+      <p:font typeface="DejaVu Sans Condensed" panose="020F0506030104020404" pitchFamily="34" charset="0"/>
+      <p:regular r:id="rId10"/>
+      <p:bold r:id="rId11"/>
+    </p:embeddedFont>
+  </p:embeddedFontLst>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+  <Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font1.fntdata"/>
+  <Relationship Id="rId11" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font2.fntdata"/>
+</Relationships>`,
+    )
+    zip.file('ppt/slides/slide1.xml', `${SLIDE_OPEN}${SLIDE_CLOSE}`)
+    zip.file('ppt/fonts/font1.fntdata', ttfBytes)
+    zip.file('ppt/fonts/font2.fntdata', ttfBytes)
+
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    // Two variants surfaced under the same typeface; bytes preserved.
+    expect(out.embeddedFonts).toHaveLength(2)
+    const regular = out.embeddedFonts.find((f) => f.variant === 'regular')
+    const bold = out.embeddedFonts.find((f) => f.variant === 'bold')
+    expect(regular).toBeDefined()
+    expect(bold).toBeDefined()
+    expect(regular!.typeface).toBe('DejaVu Sans Condensed')
+    expect(regular!.bytes.length).toBe(ttfBytes.length)
+    // .fntdata extension is normalised to .ttf since the bytes are
+    // already raw TrueType — that's what the storage key gets.
+    expect(regular!.ext).toBe('ttf')
+  })
+
+  it('skips embedded fonts referenced by rId without a matching file', async () => {
+    // Same shape as the happy path but the rId points at a missing zip
+    // entry. The parser should log into ignoredElements and continue
+    // rather than crash.
+    const zip = new JSZip()
+    zip.file(
+      'ppt/presentation.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+  <p:sldSz cx="12192000" cy="6858000"/>
+  <p:embeddedFontLst>
+    <p:embeddedFont>
+      <p:font typeface="MissingFace"/>
+      <p:regular r:id="rId10"/>
+    </p:embeddedFont>
+  </p:embeddedFontLst>
+</p:presentation>`,
+    )
+    zip.file(
+      'ppt/_rels/presentation.xml.rels',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>
+  <Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/missing.fntdata"/>
+</Relationships>`,
+    )
+    zip.file('ppt/slides/slide1.xml', `${SLIDE_OPEN}${SLIDE_CLOSE}`)
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+    const out = await parsePptx(buf)
+    expect(out.embeddedFonts).toHaveLength(0)
+    expect(out.ignoredElements.some((s) => s.startsWith('embeddedFont:missing:'))).toBe(true)
+  })
+
+  it('returns an empty embeddedFonts array when the deck has no <p:embeddedFontLst>', async () => {
+    const buf = await makeFixture({ slideXml: `${SLIDE_OPEN}${SLIDE_CLOSE}` })
+    const out = await parsePptx(buf)
+    expect(out.embeddedFonts).toEqual([])
+  })
 })

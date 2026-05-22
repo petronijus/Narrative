@@ -414,6 +414,31 @@ export interface ParsedEmbeddedImage {
   ext: string
 }
 
+/**
+ * Embedded TrueType / OpenType font extracted from `<p:embeddedFontLst>`.
+ * PowerPoint emits one entry per (typeface × variant) combination — a
+ * deck that ships Druk Wide in regular + bold + italic + boldItalic
+ * produces four entries with the same `typeface` and four different
+ * `zipPath`s. The importer uploads each as its own `media_assets` row
+ * with `kind='font'` so the renderer's font registry picks up the
+ * correct face for the requested weight/style at runtime.
+ */
+export interface ParsedEmbeddedFont {
+  /** Zip-internal path of the font file (e.g. `ppt/fonts/font1.fntdata`). */
+  zipPath: string
+  /** Raw TrueType / OpenType bytes. Pre-deobfuscated when the source was
+   *  flagged as the OOXML `obfuscatedFont` content type. */
+  bytes: Buffer
+  /** Filename extension WITHOUT the dot — `ttf` / `otf` / `fntdata`. */
+  ext: string
+  /** Authored typeface name from the `<p:font typeface="…">` attribute.
+   *  This is the family name the slide content references. */
+  typeface: string
+  /** Which variant of the typeface this file represents. PPTX splits a
+   *  family into 4 separate variants; collapse to weight + italic flag. */
+  variant: 'regular' | 'bold' | 'italic' | 'boldItalic'
+}
+
 export interface ParsedPptx {
   /** PPTX slide dimensions in px (96 DPI). */
   slideWidth: number
@@ -427,6 +452,10 @@ export interface ParsedPptx {
    *  map, uploads each to MinIO, and then patches the matching shape
    *  `imagePath` references with the resulting `assetId`. */
   embeddedImages: Map<string, ParsedEmbeddedImage>
+  /** Embedded fonts from `<p:embeddedFontLst>` in ppt/presentation.xml.
+   *  Each entry is one typeface × variant cell; importDeck uploads
+   *  each as a `kind='font'` media_assets row keyed to the deck. */
+  embeddedFonts: ParsedEmbeddedFont[]
 }
 
 // ---------------------------------------------------------------------------
@@ -4315,6 +4344,161 @@ async function parsePresentationXml(zip: JSZip): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// Embedded fonts (`<p:embeddedFontLst>`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk ppt/presentation.xml's `<p:embeddedFontLst>` and pull every
+ * embedded font file out of the zip. PowerPoint emits one `<p:font>`
+ * per typeface with up to four variant children (`<p:regular>`,
+ * `<p:bold>`, `<p:italic>`, `<p:boldItalic>`), each carrying an
+ * `r:id` that resolves through `ppt/_rels/presentation.xml.rels` to
+ * a font file at e.g. `ppt/fonts/font1.fntdata`.
+ *
+ * Bytes are returned as-is when the file already looks like raw
+ * TrueType / OpenType (magic `\x00\x01\x00\x00`, `OTTO`, `true`,
+ * `typ1`, or `ttcf`). When the source was wrapped in OOXML's
+ * "obfuscatedFont" content type (a leftover from font subsetting),
+ * the first 32 bytes are XOR'd with a key derived from the GUID in
+ * the file name; we attempt deobfuscation and re-check the magic
+ * before keeping the entry.
+ *
+ * Missing / malformed files are logged into `ignored` and skipped —
+ * the import proceeds without that face, falling back to the font
+ * registry's category heuristic (see `renderer/fontFallback.ts`).
+ */
+async function parseEmbeddedFonts(zip: JSZip, ignored: Set<string>): Promise<ParsedEmbeddedFont[]> {
+  const presEntry = zip.file('ppt/presentation.xml')
+  const relsEntry = zip.file('ppt/_rels/presentation.xml.rels')
+  if (presEntry === null || relsEntry === null) return []
+  const presXml = await presEntry.async('string')
+  if (!presXml.includes('<p:embeddedFontLst')) return []
+
+  const xmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@',
+    preserveOrder: true,
+    ignoreDeclaration: true,
+  })
+  const presTree = xmlParser.parse(presXml) as XmlNode[]
+  const relsXml = await relsEntry.async('string')
+  const relsTree = xmlParser.parse(relsXml) as XmlNode[]
+
+  // rId → zip path lookup. The `Target` is relative to ppt/, so we
+  // prefix with `ppt/` when it's not absolute.
+  const fontRels = new Map<string, string>()
+  for (const node of walk(relsTree)) {
+    if (getTag(node) !== 'Relationship') continue
+    const a = getAttrs(node)
+    const id = a['@Id']
+    const target = a['@Target']
+    const type = a['@Type']
+    if (typeof id !== 'string' || typeof target !== 'string' || typeof type !== 'string') {
+      continue
+    }
+    if (!type.endsWith('/font')) continue
+    fontRels.set(id, target.startsWith('/') ? target.slice(1) : `ppt/${target}`)
+  }
+  if (fontRels.size === 0) return []
+
+  const out: ParsedEmbeddedFont[] = []
+  for (const node of walk(presTree)) {
+    if (getTag(node) !== 'p:embeddedFont') continue
+    const fontChildren = getChildren(node, 'p:embeddedFont')
+    const fontMeta = findFirst(fontChildren, 'p:font')
+    if (fontMeta === undefined) continue
+    const typeface = String(getAttrs(fontMeta)['@typeface'] ?? '').trim()
+    if (typeface === '') continue
+    const variants: ReadonlyArray<{
+      tag: string
+      variant: ParsedEmbeddedFont['variant']
+    }> = [
+      { tag: 'p:regular', variant: 'regular' },
+      { tag: 'p:bold', variant: 'bold' },
+      { tag: 'p:italic', variant: 'italic' },
+      { tag: 'p:boldItalic', variant: 'boldItalic' },
+    ]
+    for (const { tag, variant } of variants) {
+      const variantNode = findFirst(fontChildren, tag)
+      if (variantNode === undefined) continue
+      const rid = getAttrs(variantNode)['@r:id']
+      if (typeof rid !== 'string') continue
+      const path = fontRels.get(rid)
+      if (path === undefined) continue
+      const entry = zip.file(path)
+      if (entry === null) {
+        ignored.add(`embeddedFont:missing:${path}`)
+        continue
+      }
+      const raw = Buffer.from(await entry.async('nodebuffer'))
+      const decoded = decodeFontBytes(raw, path)
+      if (decoded === null) {
+        ignored.add(`embeddedFont:unrecognised:${path}`)
+        continue
+      }
+      const ext = (() => {
+        const dot = path.lastIndexOf('.')
+        return dot >= 0 ? path.slice(dot + 1).toLowerCase() : 'ttf'
+      })()
+      out.push({
+        zipPath: path,
+        bytes: decoded,
+        ext: ext === 'fntdata' ? 'ttf' : ext,
+        typeface,
+        variant,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Return the font bytes ready for opentype.js parsing. When the raw
+ * bytes already start with a recognised font magic, return as-is.
+ * Otherwise attempt OOXML obfuscated-font deobfuscation: the first 32
+ * bytes are XOR'd with a 16-byte key derived from the GUID portion of
+ * the file's basename (used by `application/vnd.openxmlformats-officedocument.obfuscatedFont`).
+ *
+ * Returns `null` when neither path produces a recognised font header —
+ * the importer then logs the file as unrecognised and skips it.
+ */
+function decodeFontBytes(raw: Buffer, zipPath: string): Buffer | null {
+  if (looksLikeFont(raw)) return raw
+  // GUID portion of the filename, e.g. `{1A2B3C4D-...}.fntdata` →
+  // hex pairs `1A2B3C4D...`, reversed to little-endian per the OOXML
+  // obfuscation algorithm.
+  const baseName = zipPath.split('/').pop() ?? zipPath
+  const guidMatch = /\{([0-9A-Fa-f-]{36})\}/.exec(baseName)
+  if (guidMatch === null) return null
+  const hex = guidMatch[1]!.replace(/-/g, '')
+  if (hex.length !== 32) return null
+  // Build a 16-byte key in the order the spec requires.
+  const key = Buffer.alloc(16)
+  for (let i = 0; i < 16; i++) {
+    key[15 - i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  }
+  const decoded = Buffer.from(raw)
+  for (let i = 0; i < 32 && i < decoded.length; i++) {
+    decoded[i] = decoded[i]! ^ key[i % 16]!
+  }
+  return looksLikeFont(decoded) ? decoded : null
+}
+
+/**
+ * Quick magic-header check for the OpenType / TrueType file formats
+ * we expect to see embedded in a .pptx. Supports the four canonical
+ * sfnt versions plus TTC collections.
+ */
+function looksLikeFont(buf: Buffer): boolean {
+  if (buf.length < 4) return false
+  const tag = buf.subarray(0, 4)
+  // TrueType: 0x00 0x01 0x00 0x00
+  if (tag[0] === 0x00 && tag[1] === 0x01 && tag[2] === 0x00 && tag[3] === 0x00) return true
+  const ascii = tag.toString('latin1')
+  return ascii === 'OTTO' || ascii === 'true' || ascii === 'typ1' || ascii === 'ttcf'
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -4417,6 +4601,14 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     embeddedImages.set(zipPath, { zipPath, bytes, mimeType, ext })
   }
 
+  // Embedded TrueType / OpenType faces from `<p:embeddedFontLst>`.
+  // Independent of the image extraction — fonts live in their own
+  // relationships namespace and don't appear anywhere in the slide
+  // bodies. importDeck uploads each as a `media_assets` row with
+  // `kind='font'`, and the deck's font registry (FolderFontLoader)
+  // picks them up on next render.
+  const embeddedFonts = await parseEmbeddedFonts(zip, ignored)
+
   return {
     slideWidth,
     slideHeight,
@@ -4424,6 +4616,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     ignoredElements: Array.from(ignored).sort(),
     distinctElementCount: distinctTags.size,
     embeddedImages,
+    embeddedFonts,
   }
 }
 
