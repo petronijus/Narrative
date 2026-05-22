@@ -99,6 +99,34 @@ export function ImportPptxDialog({
   // a family lands here we drop it from `missingFonts` so the row
   // collapses to a "✓ uploaded" state without a full page refresh.
   const [resolvedFamilies, setResolvedFamilies] = useState<Set<string>>(new Set())
+  // Lowercased family names already uploaded to the target folder
+  // BEFORE this import ran. Fetched once after the deck is created
+  // (we don't know which folder until then). Used to filter
+  // `missingFonts` so the dialog doesn't ask the user to re-upload a
+  // face the folder already has — important when re-importing the
+  // same .pptx into a folder where fonts were already added.
+  const [preExistingFolderFamilies, setPreExistingFolderFamilies] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (success === null) return
+    const folderId = importedFolderIdRef.current
+    if (folderId === null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const fonts = await api.listFolderFonts(folderId)
+        if (cancelled) return
+        setPreExistingFolderFamilies(new Set(fonts.map((f) => f.family.toLowerCase().trim())))
+      } catch {
+        // Silently leave the set empty — worst case the user sees an
+        // upload row for a font they already have, which is annoying
+        // but not breaking. 409 collision on the upload handler then
+        // treats it as success.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [success, api])
   // Detect which referenced families are "missing" — i.e. NOT a
   // well-known system font and NOT already uploaded by the user.
   //
@@ -122,9 +150,13 @@ export function ImportPptxDialog({
   const missingFonts = useMemo(() => {
     if (success === null) return [] as string[]
     return referencedFamilies.filter(
-      (fam) => !isCommonSystemFont(fam) && !resolvedFamilies.has(fam),
+      (fam) =>
+        !isCommonSystemFont(fam) &&
+        !resolvedFamilies.has(fam) &&
+        // Don't prompt for fonts the target folder already has.
+        !preExistingFolderFamilies.has(fam.toLowerCase().trim()),
     )
-  }, [success, referencedFamilies, resolvedFamilies])
+  }, [success, referencedFamilies, resolvedFamilies, preExistingFolderFamilies])
 
   const fontFallbackAdvisory =
     success !== null &&

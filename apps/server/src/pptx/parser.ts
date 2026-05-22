@@ -504,22 +504,6 @@ const PPTX_FONT_TO_PX = (1 / 100) * (96 / 72)
  */
 const PPTX_LINE_LEADING_FACTOR = 1.2
 
-/**
- * Fallback font size in px, used only by the autofit-height estimator
- * when a text frame has `<a:spAutoFit/>` but parser couldn't resolve
- * a fontSize through the master/layout/theme chain. Matches the
- * renderer's TextObject default.
- */
-const DEFAULT_TEXT_SIZE = 18
-
-/**
- * Multiplier the renderer applies when `data.lineHeight` is undefined
- * (see textRenderer.ts buildStyleOpts). Kept in lockstep here so the
- * autofit-height estimator's prediction matches what the renderer
- * actually rasterises.
- */
-const RENDERER_DEFAULT_LINE_HEIGHT = 1.2
-
 const HEX_RE = /^[0-9a-fA-F]{6}$/
 
 /** "0F172A" → 0x0F172A. Returns undefined on malformed input. */
@@ -2367,10 +2351,6 @@ function parseShape(
   let frameTextStrokeColor: number | undefined
   let frameTextStrokeAlpha: number | undefined
   let frameTextStrokeWidth: number | undefined
-  // `<a:spAutoFit/>` — set true when the source <a:bodyPr> declares
-  // the frame should resize to its text. Triggers a post-parse height
-  // recompute so we render the autofitted box, not the authored one.
-  let spAutoFitRequested = false
   const txBody = findFirst(children, 'p:txBody')
   if (txBody) {
     const txBodyChildren = getChildren(txBody, 'p:txBody')
@@ -2381,19 +2361,6 @@ function parseShape(
       if (typeof anchorRaw === 'string') {
         const va = mapBodyAnchor(anchorRaw)
         if (va !== undefined) textVerticalAlign = va
-      }
-      // `<a:spAutoFit/>` marks the frame as auto-sized to its text
-      // content. PowerPoint stores the AUTHORED cy (the user's drawn
-      // box) but renders at the AUTOFITTED cy (just tall enough for
-      // the text). We don't run a live layout pass in the renderer,
-      // so detect the flag here and bake the approximation into
-      // shape.height post-paragraph-parse. Without this, slide 4's
-      // "ACME" text (vAlign='ctr' inside a 1410px-tall stored frame)
-      // renders ~340px lower than the reference because we centre
-      // inside the unfitted box.
-      const bodyPrChildren = getChildren(bodyPr, 'a:bodyPr')
-      if (findFirst(bodyPrChildren, 'a:spAutoFit') !== undefined) {
-        spAutoFitRequested = true
       }
     }
     const paragraphs = findAll(txBodyChildren, 'a:p')
@@ -2891,75 +2858,6 @@ function parseShape(
       if (frameFontFamily === undefined && themeDef.fontFamily !== undefined) {
         frameFontFamily = themeDef.fontFamily
       }
-    }
-  }
-
-  // Bake `<a:spAutoFit/>` into shape.height. PowerPoint stores cy as
-  // authored but renders at autofit-resolved cy = just tall enough
-  // for the text. Without a live layout pass our renderer would
-  // vertically centre / bottom-align inside the authored (often
-  // much larger) box, which is what made slide 4's ACME text sit
-  // ~340px below where the reference put it.
-  //
-  // Estimate the rendered text height from:
-  //   - paragraph count        (parseInt(allRuns.text === '\u2029') + 1)
-  //   - soft-break line count  (parseInt(allRuns.text === '\n'))
-  //   - fontSize × lineHeight  (per visible line)
-  //   - paragraphSpaceBefore   (× (paragraphs - 1))
-  //
-  // We don't measure wrap — text that overflows the frame width is
-  // counted as one line. Good enough for the common "shrink to fit"
-  // case (one or two lines of large display type, e.g. titles); the
-  // worst-case underestimate is a 2-line description body, which
-  // still renders the autofit'd y much closer to PowerPoint than
-  // keeping the authored cy.
-  if (spAutoFitRequested && kind === 'text' && allRuns.length > 0) {
-    let paragraphCount = 1
-    let softBreakCount = 0
-    for (const r of allRuns) {
-      if (r.text === '\u2029') paragraphCount += 1
-      else if (r.text === '\n') softBreakCount += 1
-    }
-    const lineCount = paragraphCount + softBreakCount
-    const effFontSize = fontSize ?? DEFAULT_TEXT_SIZE
-    // Renderer fallback when lineHeight is undefined matches
-    // textRenderer.buildStyleOpts's default — keep them in lockstep
-    // so the baked-in height predicts the actual rasterised height.
-    const effLineHeight = frameLineHeight ?? RENDERER_DEFAULT_LINE_HEIGHT
-    // Tight line-height (e.g. spcPct=70000 -> 0.84) reflects line BOX
-    // spacing, not glyph extent. A single line of text at lineHeight
-    // 0.84 still renders glyphs ~1.0..1.2x the font size (ascender +
-    // descender + slack), so a frame sized to 0.84x would clip the
-    // visible characters. Floor per-line factor at 1.2 (same as the
-    // renderer default) so the autofit'd box always has room. Tighter
-    // explicit lnSpc still benefits from the bake, just not at the
-    // absolute minimum cy.
-    const safePerLine = effFontSize * Math.max(effLineHeight, 1.2)
-    const linesHeight = lineCount * safePerLine
-    const paragraphGapsHeight = (paragraphCount - 1) * (frameSpaceBefore ?? 0)
-    const fitted = linesHeight + paragraphGapsHeight
-    if (fitted > 0 && fitted !== height) {
-      // Shrink (or grow) the frame to the fitted text height. The
-      // anchor edge stays fixed — PowerPoint's spAutoFit collapses
-      // the OPPOSITE edge to meet the text:
-      //   anchor='t'   (top)    -> y unchanged, bottom moves up.
-      //   anchor='b'   (bottom) -> bottom unchanged, y moves down.
-      //   anchor='ctr' (middle) -> CENTER unchanged, both edges
-      //                            move toward the centre.
-      // Slide 4's ACME frame is anchor='ctr' with cy=1410 around
-      // an 800px-tall single line — keeping the centre preserves
-      // the authored visual position (text at slide's vertical
-      // mid-region), while just shrinking from the top would have
-      // dropped the text to the very top of the slide.
-      if (textVerticalAlign === 'middle') {
-        const oldCenter = y + height / 2
-        y = oldCenter - fitted / 2
-      } else if (textVerticalAlign === 'bottom') {
-        const oldBottom = y + height
-        y = oldBottom - fitted
-      }
-      // anchor='top' (default) -> y unchanged
-      height = fitted
     }
   }
 
