@@ -876,6 +876,18 @@ async function emitVideo(
     type: 'video',
     data: dataUrl,
   }
+  // Round-trip the authored poster (R2). pptxgenjs's `cover` option
+  // takes a data URL and emits a `<p:pic>/<p:blipFill>` referencing the
+  // poster bytes — exactly how PowerPoint authors a video. Without it,
+  // pptxgenjs falls back to a built-in "play button" placeholder, which
+  // would re-import as a generic poster instead of the original
+  // first-frame preview the deck carried.
+  if (typeof obj.posterAssetId === 'string' && obj.posterAssetId !== '') {
+    const posterAsset = await loader(obj.posterAssetId)
+    if (posterAsset !== null) {
+      opts['cover'] = `data:${posterAsset.mimeType};base64,${posterAsset.bytes.toString('base64')}`
+    }
+  }
   if (obj.rotation !== 0) opts['rotate'] = obj.rotation
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
@@ -1516,35 +1528,6 @@ function uniqueSorted(values: number[], tolerance: number): number[] {
   return out
 }
 
-/**
- * Walk the slide's objects and flag every ImageObject that the pptx-import
- * writer synthesised as a "video poster" — a sibling ImageObject at the
- * exact same bbox as a following VideoObject. pptxgenjs's `addMedia` will
- * auto-extract a poster from the video bytes during export, so emitting
- * both would double the `<p:pic>` count on every round-trip.
- *
- * Detection is intentionally strict: same x/y/width/height (within 0.5 px),
- * same rotation, no gap in the array between the poster and the video.
- * That matches what `writer.ts:mapShape` emits and avoids false positives
- * when a user has independently placed an image behind an unrelated video.
- */
-function collectVideoPosterDuplicates(objects: SlideObject[], consumed: Set<string>): void {
-  for (let i = 0; i < objects.length - 1; i++) {
-    const candidate = objects[i]!
-    const next = objects[i + 1]!
-    if (candidate.type !== 'image') continue
-    if (next.type !== 'video') continue
-    if (consumed.has(candidate.id) || consumed.has(next.id)) continue
-    const sameBbox =
-      Math.abs(candidate.x - next.x) < 0.5 &&
-      Math.abs(candidate.y - next.y) < 0.5 &&
-      Math.abs(candidate.width - next.width) < 0.5 &&
-      Math.abs(candidate.height - next.height) < 0.5 &&
-      Math.abs((candidate.rotation ?? 0) - (next.rotation ?? 0)) < 0.5
-    if (sameBbox) consumed.add(candidate.id)
-  }
-}
-
 async function emitObject(
   slide: PptxSlide,
   obj: SlideObject,
@@ -1785,15 +1768,9 @@ export async function exportDeckToPptx(
     // the per-object emit below. consumedIds collects shape ids the table
     // pass has already emitted, so the loop skips them.
     const consumedIds = emitGroupedTables(out, slide.objects ?? [])
-    // Suppress duplicate "video poster" ImageObjects. The pptx-import
-    // writer emits a sibling ImageObject (the blipFill poster) before
-    // every VideoObject so the slide stays visible during HLS
-    // transcode. pptxgenjs's `addMedia({ type: 'video' })` already
-    // auto-extracts a poster from the video bytes, so emitting both
-    // would double the slide's `<p:pic>` count per round-trip cycle.
-    // We skip any ImageObject that sits directly under a VideoObject
-    // at the same bbox.
-    collectVideoPosterDuplicates(slide.objects ?? [], consumedIds)
+    // R2 removed the sibling video-poster ImageObject — the poster
+    // now lives on `VideoObject.posterAssetId` and round-trips via
+    // pptxgenjs's `cover` option (see `emitVideo`). No de-dup needed.
     for (const obj of slide.objects ?? []) {
       if (consumedIds.has(obj.id)) continue
       await emitObject(out, obj, options.assetLoader, slideIndex, gradientFixups, slideIdToIndex)

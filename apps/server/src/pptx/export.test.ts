@@ -230,29 +230,19 @@ describe('exportDeckToPptx', () => {
     expect(xml).toContain('third line')
   })
 
-  it('skips an ImageObject sitting directly under a VideoObject at the same bbox (C2 bidirectional)', async () => {
-    // Parity test for the C2 import fix: the import writer emits a
-    // sibling ImageObject (poster) before every VideoObject so the slide
-    // stays visible while HLS transcodes. On export, pptxgenjs's
-    // `addMedia({ type: 'video' })` auto-extracts a poster — emitting
-    // both would balloon the `<p:pic>` count on every round-trip.
+  it('round-trips VideoObject.posterAssetId via pptxgenjs `cover` (R2 bidirectional)', async () => {
+    // Parity test for R2: the import writer now emits ONE VideoObject
+    // carrying `posterAssetId`, not a sibling ImageObject. On export,
+    // `emitVideo` resolves the poster's bytes via the AssetLoader and
+    // passes them to pptxgenjs as the `cover` option — pptxgenjs writes
+    // a `<p:pic>/<p:blipFill>` referencing the poster image alongside
+    // the `<a:videoFile>` rel. On re-import the parser sees the blip
+    // + videoFile and reconstructs the same VideoObject + posterAssetId,
+    // closing the loop without duplicating shapes per cycle.
     const slides: Slide[] = [
       {
         id: 's1',
         objects: [
-          {
-            id: 'poster',
-            type: 'image',
-            x: 100,
-            y: 100,
-            width: 400,
-            height: 300,
-            rotation: 0,
-            opacity: 1,
-            assetId: 'poster-asset',
-            variant: 'display',
-            fit: 'cover',
-          },
           {
             id: 'video',
             type: 'video',
@@ -263,6 +253,7 @@ describe('exportDeckToPptx', () => {
             rotation: 0,
             opacity: 1,
             assetId: 'video-asset',
+            posterAssetId: 'poster-asset',
             fit: 'contain',
             muted: true,
             autoplay: false,
@@ -272,24 +263,46 @@ describe('exportDeckToPptx', () => {
         transition: DEFAULT_TRANSITION,
       } as unknown as Slide,
     ]
+    // Identifiable poster bytes so we can confirm they landed in the
+    // embedded media (not just pptxgenjs's stock play-button cover).
+    const posterBytes = Buffer.from('NARRATIVE_POSTER_BYTES_R2_TEST_FIXTURE')
+    let posterLoaderHits = 0
     const buf = await exportDeckToPptx(slides, {
       assetLoader: async (id) => {
-        // Return tiny stub bytes so emitImage / emitVideo don't bail.
-        if (id === 'poster-asset')
-          return { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' }
+        if (id === 'poster-asset') {
+          posterLoaderHits++
+          return { bytes: posterBytes, mimeType: 'image/jpeg' }
+        }
         if (id === 'video-asset') return { bytes: Buffer.from([0, 0, 0, 0]), mimeType: 'video/mp4' }
         return null
       },
     })
+    // The loader must have been called for the poster — that's our
+    // signal that `emitVideo` actually picked up `posterAssetId`.
+    expect(posterLoaderHits).toBe(1)
     const xml = await getSlide1Xml(buf)
-    // Only the video should land as a top-level `<p:pic>` — the poster
-    // ImageObject was suppressed by collectVideoPosterDuplicates. The
-    // video itself is a `<p:pic>` (pptxgenjs wraps videos that way), so
-    // we expect exactly one such element on the slide.
-    const picCount = (xml.match(/<p:pic>/g) ?? []).length
-    expect(picCount).toBe(1)
-    // And the videoFile rel must still be present so playback works.
+    // The video lands as a `<p:pic>`; pptxgenjs `cover` writes the
+    // poster bytes into a media part referenced from `<p:blipFill>`.
     expect(xml.toLowerCase()).toContain('videofile')
+    expect(xml).toContain('<p:pic>')
+    // Confirm the poster bytes ended up in the zip's media folder. We
+    // can't easily search for "<p:blipFill" referencing the exact rId,
+    // but the presence of the poster bytes in any embedded media file
+    // tells us pptxgenjs accepted our cover data URL.
+    const zip = await JSZip.loadAsync(buf)
+    const mediaEntries = Object.values(zip.files).filter(
+      (entry) => entry.name.startsWith('ppt/media/') && !entry.dir,
+    )
+    expect(mediaEntries.length).toBeGreaterThan(0)
+    let foundPoster = false
+    for (const entry of mediaEntries) {
+      const bytes = await entry.async('nodebuffer')
+      if (bytes.includes(posterBytes)) {
+        foundPoster = true
+        break
+      }
+    }
+    expect(foundPoster, 'poster bytes were not embedded in the .pptx').toBe(true)
   })
 
   it('emits per-run formatting from a Y.Text body via toDelta', async () => {

@@ -611,6 +611,23 @@ export interface VideoObject extends BaseSlideObject {
    * Accessibility alt text / video description.
    */
   alt?: string
+  /**
+   * Authored poster asset ID — set when the source carried its own
+   * preview frame (PPTX `<p:blipFill>` next to `<a:videoFile>` is the
+   * canonical case). Independent of the HLS transcode's auto-generated
+   * poster: the renderer paints THIS texture immediately, before the
+   * transcode finishes, so the slide stays visible during processing
+   * and round-trips through PPTX export preserve the original preview.
+   *
+   * Resolution order in the renderer:
+   *   1. `posterAssetId` (authored) → load via `/api/media/<id>/...`
+   *   2. HLS transcode poster (when transcodeStatus === 'done')
+   *   3. Grey placeholder
+   *
+   * Empty string is treated the same as missing — the field tolerates
+   * "poster asset upload failed" without crashing.
+   */
+  posterAssetId?: string
 }
 
 // ---------------------------------------------------------------------------

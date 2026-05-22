@@ -113,8 +113,10 @@ test.describe('PPTX import fidelity', () => {
       } catch {
         // networkidle can flap when HLS keeps polling; not fatal.
       }
-      // Extra paint settle — animations + texture upload.
-      await page.waitForTimeout(800)
+      // Extra paint settle — animations + texture upload + video-poster
+      // imgproxy fetch (the imgproxy variant for a fresh asset takes ~1s
+      // to generate the first time).
+      await page.waitForTimeout(2500)
 
       await container.screenshot({
         path: join(OUTPUT_DIR, `Slide${i}.png`),

@@ -483,9 +483,10 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.assetId === undefined || s.assetId === '') return null
     // Imported videos default to muted + click-to-play — same convention
     // a user gets when uploading a video through the editor's tus flow.
-    // The HLS transcode kicks in async post-import, so the renderer will
-    // initially show a poster (which we leave to its asset-resolved poster
-    // logic) and then switch to playback when the master.m3u8 is ready.
+    // The HLS transcode kicks in async post-import; until it finishes,
+    // the renderer paints `posterAssetId` (the blipFill poster the PPTX
+    // carried alongside the videoFile) as the immediate preview frame
+    // so the slide stays visible from the moment the deck opens.
     const obj: VideoObject = {
       ...base,
       type: 'video',
@@ -493,6 +494,9 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       fit: 'contain',
       muted: true,
       autoplay: false,
+    }
+    if (s.posterAssetId !== undefined && s.posterAssetId !== '') {
+      obj.posterAssetId = s.posterAssetId
     }
     return obj
   }
@@ -891,30 +895,13 @@ function writeSlideShapes(
       skippedImages++
       continue
     }
-    // Video shapes that came in with a blipFill poster get a sibling
-    // ImageObject at the same bbox emitted FIRST. That keeps the slide
-    // visible during the HLS transcode window (which can be minutes for
-    // big files) and acts as a fallback when transcode fails.
-    if (shape.kind === 'video' && shape.posterAssetId !== undefined && shape.posterAssetId !== '') {
-      const { videoPath: _vp, posterAssetId: _pa, ...rest } = shape
-      const posterShape: ParsedShape = {
-        ...rest,
-        kind: 'image',
-        assetId: shape.posterAssetId,
-      }
-      const posterObj = mapShape(posterShape, scale)
-      if (posterObj !== null) {
-        try {
-          addObject(objCtx, posterObj)
-          objectsCreated++
-        } catch (err) {
-          console.warn(
-            `[pptx-import] poster addObject failed for ${shape.sourceTag}: ` +
-              `${err instanceof Error ? err.message : String(err)}`,
-          )
-        }
-      }
-    }
+    // Video shapes carry their blipFill poster as `posterAssetId` on the
+    // VideoObject itself (see mapShape's video branch). The renderer
+    // paints that poster immediately, before the HLS transcode finishes,
+    // so we don't need a sibling ImageObject anymore. Round-trip is
+    // cleaner too — export emits the poster as a `<p:blipFill>` on the
+    // same `<p:pic>` that carries `<a:videoFile>`, matching how
+    // PowerPoint authors it.
     const obj = mapShape(shape, scale)
     if (obj === null) {
       if (shape.kind === 'image') skippedImages++

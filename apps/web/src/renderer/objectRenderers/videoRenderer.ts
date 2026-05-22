@@ -32,6 +32,7 @@
 import { Container, Graphics, Sprite, Text, Texture, VideoSource } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import { getDefaultVideoInfoResolver } from '../videoInfo.js'
+import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit, applyCoverMask } from '../mediaFit.js'
 import { setThumbnailReady } from '../thumbnailReady.js'
@@ -486,6 +487,7 @@ function startPolling(
   assetId: string,
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
+  hasAuthoredPoster: boolean = false,
 ): void {
   // Clear any existing timer first.
   stopPolling(container)
@@ -501,7 +503,7 @@ function startPolling(
         const resolver = getDefaultVideoInfoResolver()
         const info = await resolver({ assetId })
         if (isAborted(container)) return
-        applyVideoInfoResult(container, info, box, fit)
+        applyVideoInfoResult(container, info, box, fit, hasAuthoredPoster)
       } catch {
         // Network error during poll — silently ignore, will retry next interval.
       }
@@ -535,11 +537,19 @@ function applyVideoInfoResult(
   },
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
+  hasAuthoredPoster: boolean = false,
 ): void {
   const status = info.transcodeStatus
 
   if (status === 'failed') {
     stopPolling(container)
+    if (hasAuthoredPoster) {
+      // Keep the authored poster visible — the slide content stays
+      // intact and the user just can't play the video. Don't paint a
+      // red "Failed" box over the author's preview.
+      removeProcessingLabel(container)
+      return
+    }
     // Release any previously acquired texture.
     releasePosterTexture(container)
     // Remove sprite wrap.
@@ -554,6 +564,14 @@ function applyVideoInfoResult(
   }
 
   if (status === 'pending' || status === 'processing') {
+    if (hasAuthoredPoster) {
+      // Authored poster is painting; skip the placeholder + processing
+      // label entirely so the slide stays visually clean while HLS
+      // catches up. We still start polling above so we can switch to
+      // the play-icon overlay once transcodeStatus === 'done'.
+      removeProcessingLabel(container)
+      return
+    }
     // Keep placeholder visible with loading style, start polling if not already.
     const ph = ensurePlaceholder(container)
     drawLoadingPlaceholder(ph, box.w, box.h)
@@ -572,6 +590,18 @@ function applyVideoInfoResult(
 
   const posterUrl = info.posterUrl ?? null
 
+  if (hasAuthoredPoster) {
+    // Authored poster (PPTX blipFill) is already painting. Don't tear
+    // it down to swap in the HLS auto-poster — `loadPosterTexture`
+    // releases the existing sprite BEFORE the new texture finishes
+    // decoding, so the slide blinks empty for ~100-200ms. The author's
+    // first-frame preview wins; the HLS poster is only useful when no
+    // authored one exists. We still wire up the play-icon affordance.
+    ensurePlayIcon(container, box)
+    markRenderDirty()
+    return
+  }
+
   if (posterUrl === null) {
     // Done but no poster — show gray placeholder with play icon.
     const ph = ensurePlaceholder(container)
@@ -581,7 +611,7 @@ function applyVideoInfoResult(
     return
   }
 
-  // Load poster texture.
+  // No authored poster — fall back to HLS auto-poster.
   void loadPosterTexture(container, posterUrl, box, fit)
 
   // P12b: this function flips placeholder visibility / spawns play icons /
@@ -743,6 +773,10 @@ function startLoad(container: Container, data: VideoObject): void {
   const { assetId } = data
   const fit = data.fit ?? 'contain'
   const box = { w: data.width, h: data.height }
+  const authoredPosterAssetId =
+    typeof data.posterAssetId === 'string' && data.posterAssetId !== ''
+      ? data.posterAssetId
+      : undefined
 
   // Stop any existing poll.
   stopPolling(container)
@@ -755,12 +789,25 @@ function startLoad(container: Container, data: VideoObject): void {
   removePlayIcon(container)
   removeProcessingLabel(container)
 
-  // Show loading placeholder.
-  const ph = ensurePlaceholder(container)
-  drawLoadingPlaceholder(ph, box.w, box.h)
-  ph.visible = true
+  // Show loading placeholder ONLY when we have no authored poster to
+  // fall back on. With `posterAssetId` set, we paint the author's
+  // preview frame immediately — no grey "Processing…" box ever covers
+  // the slide while the HLS transcode catches up.
+  if (authoredPosterAssetId === undefined) {
+    const ph = ensurePlaceholder(container)
+    drawLoadingPlaceholder(ph, box.w, box.h)
+    ph.visible = true
+  } else {
+    const ph = getPlaceholder(container)
+    if (ph !== undefined && !ph.destroyed) ph.visible = false
+    // Kick off the authored-poster load in parallel with the video-info
+    // resolve below. The two are independent — poster paints, transcode
+    // status drives playback availability.
+    void loadAuthoredPoster(container, authoredPosterAssetId, box, fit)
+  }
 
-  // Empty assetId — remain in placeholder state.
+  // Empty assetId — keep whatever the authored poster painted (or the
+  // placeholder if none) and bail before hitting the video-info API.
   if (assetId === '') return
 
   void (async () => {
@@ -770,20 +817,54 @@ function startLoad(container: Container, data: VideoObject): void {
       info = await resolver({ assetId })
     } catch {
       if (isAborted(container)) return
-      const ph2 = ensurePlaceholder(container)
-      drawFailedPlaceholder(ph2, box.w, box.h)
+      // When no authored poster is available, surface the failure state.
+      // With an authored poster, keep it visible and silently move on —
+      // the user can still see the slide content even if HLS metadata
+      // never resolves.
+      if (authoredPosterAssetId === undefined) {
+        const ph2 = ensurePlaceholder(container)
+        drawFailedPlaceholder(ph2, box.w, box.h)
+      }
       return
     }
 
     if (isAborted(container)) return
 
-    applyVideoInfoResult(container, info, box, fit)
+    applyVideoInfoResult(container, info, box, fit, authoredPosterAssetId !== undefined)
 
     // Start polling if transcode is still in progress.
     if (info.transcodeStatus === 'pending' || info.transcodeStatus === 'processing') {
-      startPolling(container, assetId, box, fit)
+      startPolling(container, assetId, box, fit, authoredPosterAssetId !== undefined)
     }
   })()
+}
+
+/**
+ * Async: resolve the authored poster's signed URL, acquire the texture,
+ * and paint it as the immediate preview frame. Independent of the HLS
+ * transcode path — runs whenever `posterAssetId` is present, regardless
+ * of `transcodeStatus`. Errors are swallowed: the HLS poster (or grey
+ * placeholder) takes over if this fails.
+ */
+async function loadAuthoredPoster(
+  container: Container,
+  posterAssetId: string,
+  box: { w: number; h: number },
+  fit: 'cover' | 'contain',
+): Promise<void> {
+  let posterUrl: string
+  try {
+    const resolver = getDefaultImageUrlResolver()
+    // Variant 'display' is the standard imgproxy resize (max 1600 long
+    // edge, WebP). Matches what `imageRenderer` uses for ImageObjects.
+    posterUrl = await resolver({ assetId: posterAssetId, variant: 'display' })
+  } catch {
+    return
+  }
+  if (isAborted(container)) return
+  // The live <video> path may have already painted; don't clobber.
+  if (getLive(container) !== undefined) return
+  await loadPosterTexture(container, posterUrl, box, fit)
 }
 
 // ---------------------------------------------------------------------------
@@ -796,9 +877,15 @@ export const videoRenderer = {
   mount(data: VideoObject): Container {
     const container = new Container()
 
-    // Initial gray placeholder visible while resolving.
+    // Initial gray placeholder visible while resolving. With an
+    // authored `posterAssetId`, `startLoad` immediately kicks off the
+    // poster paint and hides the placeholder — but we still mount the
+    // Graphics so `getPlaceholder` returns it when state transitions
+    // need it later (e.g. failed transcode with no authored poster).
     const placeholder = new Graphics()
     drawLoadingPlaceholder(placeholder, data.width, data.height)
+    const hasAuthoredPoster = typeof data.posterAssetId === 'string' && data.posterAssetId !== ''
+    placeholder.visible = !hasAuthoredPoster
     container.addChild(placeholder)
     setPlaceholder(container, placeholder)
 
@@ -839,18 +926,22 @@ export const videoRenderer = {
 
     const box = { w: next.width, h: next.height }
 
-    // Resize placeholder.
+    // Resize placeholder. Keep it hidden when an authored poster is
+    // covering us, otherwise the grey box would flash on every patch.
     const ph = getPlaceholder(node)
     if (ph !== undefined && !ph.destroyed) {
       drawLoadingPlaceholder(ph, box.w, box.h)
-      ph.visible = true
+      const hasAuthoredPoster = typeof next.posterAssetId === 'string' && next.posterAssetId !== ''
+      const hasSprite = getSprite(node) !== undefined
+      ph.visible = !hasAuthoredPoster && !hasSprite
     }
 
     const assetChanged = prev.assetId !== next.assetId
+    const posterAssetChanged = (prev.posterAssetId ?? '') !== (next.posterAssetId ?? '')
     const fitChanged = prev.fit !== next.fit
     const sizeChanged = prev.width !== next.width || prev.height !== next.height
 
-    if (assetChanged) {
+    if (assetChanged || posterAssetChanged) {
       startLoad(node, next)
       return
     }
