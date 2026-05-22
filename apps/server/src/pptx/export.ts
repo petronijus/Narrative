@@ -233,6 +233,23 @@ function emitText(
   if (obj.paragraphSpaceAfter !== undefined && obj.paragraphSpaceAfter > 0) {
     opts['paraSpaceAfter'] = (obj.paragraphSpaceAfter * 72) / PX_PER_IN
   }
+  // Text-transform → PPTX `<a:rPr cap>`. pptxgenjs's `addText` ignores
+  // a frame-level `cap` option, so we route through a post-process
+  // fixup keyed by the text frame's EMU bbox. The fixup walks the
+  // emitted slide XML and stamps `cap="all"` (or `cap="small"`) onto
+  // every `<a:rPr>` inside the matching `<p:sp>'s <p:txBody>`. Round-
+  // trips with `parser.ts`'s inherited / inline `cap` reader.
+  if (obj.textTransform === 'uppercase' || obj.textTransform === 'lowercase') {
+    fixups.push({
+      kind: 'textCap',
+      slideIndex,
+      xEmu: pxToEmu(obj.x),
+      yEmu: pxToEmu(obj.y),
+      cxEmu: pxToEmu(obj.width),
+      cyEmu: pxToEmu(obj.height),
+      cap: obj.textTransform === 'uppercase' ? 'all' : 'small',
+    })
+  }
   // Text stroke ("outline" in pptxgenjs).
   if (obj.stroke !== undefined && obj.strokeWidth !== undefined && obj.strokeWidth > 0) {
     opts['outline'] = {
@@ -328,6 +345,24 @@ interface ShapeGradientFixup {
   cxEmu: number
   cyEmu: number
   gradient: LinearGradientFill | RadialGradientFill
+}
+
+/**
+ * V2 bidirectional — text-frame `textTransform` (uppercase/lowercase).
+ * pptxgenjs's `addText` doesn't expose a `cap` option, so we record a
+ * fixup keyed by the text frame's EMU bbox and post-process the slide
+ * XML to stamp `cap="all"` / `cap="small"` onto every `<a:rPr>` inside
+ * the matching `<p:sp>'s <p:txBody>`. Round-trips with `parser.ts`'s
+ * `cap` reader.
+ */
+interface TextCapFixup {
+  kind: 'textCap'
+  slideIndex: number
+  xEmu: number
+  yEmu: number
+  cxEmu: number
+  cyEmu: number
+  cap: 'all' | 'small'
 }
 
 /**
@@ -452,6 +487,7 @@ interface SlideNumberFixup {
 
 type GradientFixup =
   | ShapeGradientFixup
+  | TextCapFixup
   | TableCellGradientFixup
   | SlideNumberFixup
   | BackgroundGradientFixup
@@ -1480,6 +1516,35 @@ function uniqueSorted(values: number[], tolerance: number): number[] {
   return out
 }
 
+/**
+ * Walk the slide's objects and flag every ImageObject that the pptx-import
+ * writer synthesised as a "video poster" — a sibling ImageObject at the
+ * exact same bbox as a following VideoObject. pptxgenjs's `addMedia` will
+ * auto-extract a poster from the video bytes during export, so emitting
+ * both would double the `<p:pic>` count on every round-trip.
+ *
+ * Detection is intentionally strict: same x/y/width/height (within 0.5 px),
+ * same rotation, no gap in the array between the poster and the video.
+ * That matches what `writer.ts:mapShape` emits and avoids false positives
+ * when a user has independently placed an image behind an unrelated video.
+ */
+function collectVideoPosterDuplicates(objects: SlideObject[], consumed: Set<string>): void {
+  for (let i = 0; i < objects.length - 1; i++) {
+    const candidate = objects[i]!
+    const next = objects[i + 1]!
+    if (candidate.type !== 'image') continue
+    if (next.type !== 'video') continue
+    if (consumed.has(candidate.id) || consumed.has(next.id)) continue
+    const sameBbox =
+      Math.abs(candidate.x - next.x) < 0.5 &&
+      Math.abs(candidate.y - next.y) < 0.5 &&
+      Math.abs(candidate.width - next.width) < 0.5 &&
+      Math.abs(candidate.height - next.height) < 0.5 &&
+      Math.abs((candidate.rotation ?? 0) - (next.rotation ?? 0)) < 0.5
+    if (sameBbox) consumed.add(candidate.id)
+  }
+}
+
 async function emitObject(
   slide: PptxSlide,
   obj: SlideObject,
@@ -1720,6 +1785,15 @@ export async function exportDeckToPptx(
     // the per-object emit below. consumedIds collects shape ids the table
     // pass has already emitted, so the loop skips them.
     const consumedIds = emitGroupedTables(out, slide.objects ?? [])
+    // Suppress duplicate "video poster" ImageObjects. The pptx-import
+    // writer emits a sibling ImageObject (the blipFill poster) before
+    // every VideoObject so the slide stays visible during HLS
+    // transcode. pptxgenjs's `addMedia({ type: 'video' })` already
+    // auto-extracts a poster from the video bytes, so emitting both
+    // would double the slide's `<p:pic>` count per round-trip cycle.
+    // We skip any ImageObject that sits directly under a VideoObject
+    // at the same bbox.
+    collectVideoPosterDuplicates(slide.objects ?? [], consumedIds)
     for (const obj of slide.objects ?? []) {
       if (consumedIds.has(obj.id)) continue
       await emitObject(out, obj, options.assetLoader, slideIndex, gradientFixups, slideIdToIndex)
@@ -1943,6 +2017,7 @@ async function applyGradientFixups(buf: Buffer, fixups: GradientFixup[]): Promis
     let touched = false
 
     const shapeFixups = slideFixups.filter((f): f is ShapeGradientFixup => f.kind === 'shape')
+    const textCapFixups = slideFixups.filter((f): f is TextCapFixup => f.kind === 'textCap')
     const cellFixups = slideFixups.filter(
       (f): f is TableCellGradientFixup => f.kind === 'tableCell',
     )
@@ -1991,7 +2066,7 @@ async function applyGradientFixups(buf: Buffer, fixups: GradientFixup[]): Promis
 
     for (const node of walkTree(tree)) {
       const tag = getElementName(node)
-      if (tag === 'p:sp' && shapeFixups.length > 0) {
+      if (tag === 'p:sp' && (shapeFixups.length > 0 || textCapFixups.length > 0)) {
         const spChildren = node['p:sp'] as Array<Record<string, unknown>>
         const spPr = findElement(spChildren, 'p:spPr')
         if (spPr === undefined) continue
@@ -2009,6 +2084,43 @@ async function applyGradientFixups(buf: Buffer, fixups: GradientFixup[]): Promis
         const yEmu = Number(offAttrs['@y'])
         const cxEmu = Number(extAttrs['@cx'])
         const cyEmu = Number(extAttrs['@cy'])
+
+        // Text-cap fixup — stamp `cap="all"|"small"` onto every <a:rPr>
+        // inside this sp's <p:txBody>. Done before the gradient swap so
+        // both can target the same `<p:sp>` if they want.
+        const capMatch = textCapFixups.find(
+          (f) => f.xEmu === xEmu && f.yEmu === yEmu && f.cxEmu === cxEmu && f.cyEmu === cyEmu,
+        )
+        if (capMatch !== undefined) {
+          const txBody = findElement(spChildren, 'p:txBody')
+          if (txBody !== undefined) {
+            const txBodyChildren = txBody['p:txBody'] as Array<Record<string, unknown>>
+            for (const child of txBodyChildren) {
+              if (getElementName(child) !== 'a:p') continue
+              const pChildren = child['a:p'] as Array<Record<string, unknown>>
+              for (const runOrBreak of pChildren) {
+                const t = getElementName(runOrBreak)
+                if (t !== 'a:r' && t !== 'a:fld' && t !== 'a:endParaRPr') continue
+                if (t === 'a:endParaRPr') {
+                  const attrs = (runOrBreak[':@'] as Record<string, string>) ?? {}
+                  attrs['@cap'] = capMatch.cap
+                  runOrBreak[':@'] = attrs
+                  continue
+                }
+                const runChildren = runOrBreak[t] as Array<Record<string, unknown>>
+                let rPr = findElement(runChildren, 'a:rPr')
+                if (rPr === undefined) {
+                  rPr = { 'a:rPr': [], ':@': {} }
+                  runChildren.unshift(rPr)
+                }
+                const attrs = (rPr[':@'] as Record<string, string>) ?? {}
+                attrs['@cap'] = capMatch.cap
+                rPr[':@'] = attrs
+              }
+            }
+            touched = true
+          }
+        }
 
         const match = shapeFixups.find(
           (f) => f.xEmu === xEmu && f.yEmu === yEmu && f.cxEmu === cxEmu && f.cyEmu === cyEmu,

@@ -195,6 +195,103 @@ describe('exportDeckToPptx', () => {
     expect(xml).toContain('<a:hlinkClick')
   })
 
+  it('emits cap="all" for a text object with textTransform="uppercase" (V2 bidirectional)', async () => {
+    // Parity test for the V2 import fix: parser inherits `cap="all"` from
+    // layout/master defaults. Export must mirror it back so a round-trip
+    // preserves the uppercase styling.
+    const buf = await exportDeckToPptx(
+      singleSlide([makeText({ text: 'Title', textTransform: 'uppercase' })]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('cap="all"')
+  })
+
+  it('emits cap="small" for textTransform="lowercase" (V2 bidirectional)', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([makeText({ text: 'Title', textTransform: 'lowercase' })]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('cap="small"')
+  })
+
+  it('preserves newline-separated paragraphs through pptxgenjs (C1 bidirectional)', async () => {
+    // Parity test for the C1 import fix: parser emits `\n` for `<a:br>`
+    // between author lines. Export should re-emit those `\n` boundaries
+    // as separate `<a:p>` paragraphs (pptxgenjs's native behavior), so
+    // a re-import lands them back as `\n` in the text.
+    const buf = await exportDeckToPptx(
+      singleSlide([makeText({ text: 'first line\nsecond line\nthird line' })]),
+    )
+    const xml = await getSlide1Xml(buf)
+    const paragraphCount = (xml.match(/<a:p>/g) ?? []).length
+    expect(paragraphCount).toBeGreaterThanOrEqual(3)
+    expect(xml).toContain('first line')
+    expect(xml).toContain('second line')
+    expect(xml).toContain('third line')
+  })
+
+  it('skips an ImageObject sitting directly under a VideoObject at the same bbox (C2 bidirectional)', async () => {
+    // Parity test for the C2 import fix: the import writer emits a
+    // sibling ImageObject (poster) before every VideoObject so the slide
+    // stays visible while HLS transcodes. On export, pptxgenjs's
+    // `addMedia({ type: 'video' })` auto-extracts a poster — emitting
+    // both would balloon the `<p:pic>` count on every round-trip.
+    const slides: Slide[] = [
+      {
+        id: 's1',
+        objects: [
+          {
+            id: 'poster',
+            type: 'image',
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 300,
+            rotation: 0,
+            opacity: 1,
+            assetId: 'poster-asset',
+            variant: 'display',
+            fit: 'cover',
+          },
+          {
+            id: 'video',
+            type: 'video',
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 300,
+            rotation: 0,
+            opacity: 1,
+            assetId: 'video-asset',
+            fit: 'contain',
+            muted: true,
+            autoplay: false,
+          },
+        ],
+        animations: [],
+        transition: DEFAULT_TRANSITION,
+      } as unknown as Slide,
+    ]
+    const buf = await exportDeckToPptx(slides, {
+      assetLoader: async (id) => {
+        // Return tiny stub bytes so emitImage / emitVideo don't bail.
+        if (id === 'poster-asset')
+          return { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: 'image/jpeg' }
+        if (id === 'video-asset') return { bytes: Buffer.from([0, 0, 0, 0]), mimeType: 'video/mp4' }
+        return null
+      },
+    })
+    const xml = await getSlide1Xml(buf)
+    // Only the video should land as a top-level `<p:pic>` — the poster
+    // ImageObject was suppressed by collectVideoPosterDuplicates. The
+    // video itself is a `<p:pic>` (pptxgenjs wraps videos that way), so
+    // we expect exactly one such element on the slide.
+    const picCount = (xml.match(/<p:pic>/g) ?? []).length
+    expect(picCount).toBe(1)
+    // And the videoFile rel must still be present so playback works.
+    expect(xml.toLowerCase()).toContain('videofile')
+  })
+
   it('emits per-run formatting from a Y.Text body via toDelta', async () => {
     // Y.Text.format() walks `this.doc.transact()` — the text has to be
     // integrated into a Y.Doc before `format` can apply attrs, otherwise

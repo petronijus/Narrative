@@ -101,6 +101,21 @@ const DEFAULT_TEXT_COLOR = 0x0f172a
 const DEFAULT_FILL = 0x4060e0
 const DEFAULT_TEXT_SIZE = 18
 
+/**
+ * Base fill color for a shape that has only a gradient (no explicit
+ * `<a:solidFill>`). Pixi's gradient renderer tints the gradient texture
+ * by the object's `fill` color, so we must default to white instead of
+ * the brand-blue `DEFAULT_FILL` — otherwise a black-to-white radial
+ * gradient ends up looking like a blue-tinted radial gradient.
+ */
+const NEUTRAL_GRADIENT_BASE_FILL = 0xffffff
+
+function pickFillForShape(s: ParsedShape): number {
+  if (s.fillColor !== undefined) return s.fillColor
+  if (s.fillGradient !== undefined) return NEUTRAL_GRADIENT_BASE_FILL
+  return DEFAULT_FILL
+}
+
 function round(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -324,7 +339,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     const obj: RectangleObject = {
       ...base,
       type: 'rectangle',
-      fill: s.fillColor ?? DEFAULT_FILL,
+      fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
@@ -340,7 +355,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     const obj: EllipseObject = {
       ...base,
       type: 'ellipse',
-      fill: s.fillColor ?? DEFAULT_FILL,
+      fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
@@ -356,7 +371,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     const obj: TriangleObject = {
       ...base,
       type: 'triangle',
-      fill: s.fillColor ?? DEFAULT_FILL,
+      fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
@@ -372,7 +387,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     const obj: PolygonObject = {
       ...base,
       type: 'polygon',
-      fill: s.fillColor ?? DEFAULT_FILL,
+      fill: pickFillForShape(s),
       sides: s.sides ?? 6, // hexagon fallback — polygon detection always sets sides
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
@@ -875,6 +890,30 @@ function writeSlideShapes(
     if (shape.kind === 'image' && (shape.assetId === undefined || shape.assetId === '')) {
       skippedImages++
       continue
+    }
+    // Video shapes that came in with a blipFill poster get a sibling
+    // ImageObject at the same bbox emitted FIRST. That keeps the slide
+    // visible during the HLS transcode window (which can be minutes for
+    // big files) and acts as a fallback when transcode fails.
+    if (shape.kind === 'video' && shape.posterAssetId !== undefined && shape.posterAssetId !== '') {
+      const { videoPath: _vp, posterAssetId: _pa, ...rest } = shape
+      const posterShape: ParsedShape = {
+        ...rest,
+        kind: 'image',
+        assetId: shape.posterAssetId,
+      }
+      const posterObj = mapShape(posterShape, scale)
+      if (posterObj !== null) {
+        try {
+          addObject(objCtx, posterObj)
+          objectsCreated++
+        } catch (err) {
+          console.warn(
+            `[pptx-import] poster addObject failed for ${shape.sourceTag}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
     }
     const obj = mapShape(shape, scale)
     if (obj === null) {

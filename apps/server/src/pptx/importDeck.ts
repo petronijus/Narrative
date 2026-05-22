@@ -307,19 +307,24 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
   }
 
   // Patch parsed shapes + backgrounds with their resolved assetIds.
+  // Video shapes get TWO ids: the video file lands on `assetId`, and the
+  // blipFill poster (when present) lands on `posterAssetId` so the writer
+  // can emit a sibling ImageObject — slides stay visible while the HLS
+  // transcode is still pending.
   for (const slide of parsed.slides) {
     if (slide.background.imagePath !== undefined) {
       const aid = mediaPathToAssetId.get(slide.background.imagePath)
       if (aid !== undefined) slide.background.assetId = aid
     }
     for (const sh of slide.shapes) {
-      if (sh.imagePath !== undefined) {
-        const aid = mediaPathToAssetId.get(sh.imagePath)
-        if (aid !== undefined) sh.assetId = aid
-      }
-      if (sh.videoPath !== undefined) {
-        const aid = mediaPathToAssetId.get(sh.videoPath)
-        if (aid !== undefined) sh.assetId = aid
+      const imageAid = sh.imagePath !== undefined ? mediaPathToAssetId.get(sh.imagePath) : undefined
+      const videoAid = sh.videoPath !== undefined ? mediaPathToAssetId.get(sh.videoPath) : undefined
+      if (sh.kind === 'video') {
+        if (videoAid !== undefined) sh.assetId = videoAid
+        if (imageAid !== undefined) sh.posterAssetId = imageAid
+      } else {
+        if (imageAid !== undefined) sh.assetId = imageAid
+        if (videoAid !== undefined) sh.assetId = videoAid
       }
     }
   }

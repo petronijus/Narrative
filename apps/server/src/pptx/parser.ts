@@ -267,6 +267,11 @@ export interface ParsedShape {
   videoPath?: string
   /** Sniffed MIME type of the embedded video bytes (e.g. `video/mp4`). */
   videoMimeType?: string
+  /** When `kind === 'video'`, the resolved assetId of the poster image
+   *  (the blipFill that PPTX stamps under the video for the first-frame
+   *  preview). Emitted by the writer as a sibling ImageObject so the
+   *  slide stays visible even while the HLS transcode is pending. */
+  posterAssetId?: string
   /** Drop shadow extracted from `<a:effectLst>/<a:outerShdw>`. PPTX stores
    *  the shadow in polar coords (dist + dir); we convert to Narrative's
    *  cartesian (offsetX/Y) at parse time. */
@@ -960,6 +965,10 @@ interface PlaceholderEntry {
   defaultColorAlpha?: number
   /** Default bold flag from `<a:lvl1pPr>/<a:defRPr b="1">`. */
   defaultBold?: boolean
+  /** Default text transform from `<a:lvl1pPr>/<a:defRPr cap="all|small">`.
+   *  Inherited by slide shapes whose own runs don't specify cap. Drives
+   *  the "title is always uppercase" pattern PowerPoint templates use. */
+  defaultTextTransform?: 'uppercase' | 'lowercase'
   /** Bullet marker from `<a:lvl1pPr>` (`<a:buChar>` / `<a:buAutoNum>` /
    *  `<a:buNone>`). 'none' = explicitly suppressed; missing = not declared. */
   defaultListStyle?: 'bullet' | 'numbered' | 'none'
@@ -1291,6 +1300,12 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
             const sz = defAttrs['@sz']
             if (typeof sz === 'string') entry.defaultFontSize100 = Number(sz)
             if (defAttrs['@b'] === '1' || defAttrs['@b'] === 'true') entry.defaultBold = true
+            // `cap="all"` on the layout/master `<a:defRPr>` is how templates
+            // express "this placeholder is always uppercase". Inherited by
+            // any slide shape whose runs don't override it.
+            const dcap = defAttrs['@cap']
+            if (dcap === 'all') entry.defaultTextTransform = 'uppercase'
+            else if (dcap === 'small') entry.defaultTextTransform = 'lowercase'
             // Run colour is inside `<a:defRPr>`'s subtree as `<a:solidFill>`.
             const defRPrChildren = getChildren(defRPr, 'a:defRPr')
             const dfSolid = findFirst(defRPrChildren, 'a:solidFill')
@@ -1778,6 +1793,19 @@ function txStylesBucketFor(phType: string | undefined): keyof TxStylesByBucket {
   return 'other'
 }
 
+/**
+ * Fill inherited from an enclosing `<p:grpSp>` — children that declare
+ * `<a:grpFill/>` (instead of an inline `<a:solidFill>` / `<a:gradFill>`)
+ * pull their fill from this. PowerPoint uses this pattern for vector
+ * logos baked as a `<p:grpSp>` of letterform `<p:sp>` paths: the group
+ * carries one `<a:solidFill>` so the whole logo recolors uniformly.
+ */
+interface GroupFill {
+  color?: number
+  alpha?: number
+  gradient?: ParsedGradient
+}
+
 function parseShape(
   sp: XmlNode,
   sourceTag: string,
@@ -1786,6 +1814,7 @@ function parseShape(
   imageRels: ImageRelMap,
   txStyles: TxStylesByBucket = {},
   hyperlinkRels: HyperlinkRelMap = new Map(),
+  inheritedGroupFill: GroupFill | undefined = undefined,
 ): ParsedShape | null {
   const children = getChildren(sp, sourceTag)
   const spPr = findFirst(children, 'p:spPr')
@@ -1945,6 +1974,22 @@ function parseShape(
   }
   const gradFill = findFirst(spPrChildren, 'a:gradFill')
   if (gradFill) fillGradient = parseGradient(gradFill, theme)
+  // `<a:grpFill/>` inherits the enclosing `<p:grpSp>`'s fill — common for
+  // vector logos baked as a group of letterform `<p:sp>` paths. Without
+  // this, every glyph renders fill-less and the logo becomes invisible.
+  if (
+    fillColor === undefined &&
+    fillGradient === undefined &&
+    inheritedGroupFill !== undefined &&
+    findFirst(spPrChildren, 'a:grpFill') !== undefined
+  ) {
+    if (inheritedGroupFill.color !== undefined) {
+      fillColor = inheritedGroupFill.color
+      if (inheritedGroupFill.alpha !== undefined) fillAlpha = inheritedGroupFill.alpha
+    } else if (inheritedGroupFill.gradient !== undefined) {
+      fillGradient = inheritedGroupFill.gradient
+    }
+  }
   let imagePath: string | undefined
   let imageAlpha: number | undefined
   // PPTX expresses image opacity as `<a:blip>/<a:alphaModFix amt="N">`
@@ -2370,10 +2415,30 @@ function parseShape(
         }
       }
 
-      const runs = findAll(pChildren, 'a:r')
+      // Walk paragraph children in document order. We handle three kinds
+      // of inline text-bearing elements:
+      //   a:r   — standard styled run
+      //   a:fld — text field (slide number, date, etc) — same internal shape
+      //   a:br  — soft line break — emits a '\n' run
+      // Anything else (a:pPr, a:endParaRPr) is skipped here; pPr is
+      // already handled above.
       const runStrings: string[] = []
-      for (const r of runs) {
-        const rChildren = getChildren(r, 'a:r')
+      for (const child of pChildren) {
+        const childTag = getTag(child)
+        if (childTag === 'a:br') {
+          // Soft line break inside a paragraph. PowerPoint authors hit
+          // Shift+Enter to insert one; PPTX serialises it as an empty
+          // `<a:br/>` sibling to the surrounding `<a:r>` runs. Preserve
+          // it as a `\n` in both the run array (so the rich-text body
+          // breaks at the same point) and the plain-string accumulator
+          // (so the fallback `text` field stays consistent).
+          allRuns.push({ text: '\n' })
+          runStrings.push('\n')
+          continue
+        }
+        if (childTag !== 'a:r' && childTag !== 'a:fld') continue
+        const r = child
+        const rChildren = getChildren(r, childTag)
         // Per-run style attrs — captured ONCE on the first run as the
         // "default" for the TextObject (top-level color / fontSize / bold)
         // AND captured per-run into `allRuns` for the Y.Text format pass.
@@ -2596,6 +2661,9 @@ function parseShape(
         }
       }
       if (!bold && inheritedPh.defaultBold === true) bold = true
+      if (frameTextTransform === undefined && inheritedPh.defaultTextTransform !== undefined) {
+        frameTextTransform = inheritedPh.defaultTextTransform
+      }
       if (listStyleResolved === undefined && inheritedPh.defaultListStyle !== undefined) {
         listStyleResolved = inheritedPh.defaultListStyle
       }
@@ -3493,6 +3561,26 @@ function applyGroupTransform(shape: ParsedShape, t: GroupTransform): void {
   shape.y = shape.y * t.scaleY + t.y
   shape.width = shape.width * t.scaleX
   shape.height = shape.height * t.scaleY
+  // Path anchors live in slide-local px (see parseCustGeomAnchors), so
+  // the group transform has to bake into them too — otherwise the writer
+  // subtracts the *transformed* shape origin from the *untransformed*
+  // anchor coords and the path explodes to the slide's top-left.
+  // Control-point deltas are relative to their anchor and only need
+  // scaling, not translation.
+  if (shape.pathAnchors !== undefined) {
+    for (const a of shape.pathAnchors) {
+      a.x = a.x * t.scaleX + t.x
+      a.y = a.y * t.scaleY + t.y
+      if (a.cpIn !== undefined) {
+        a.cpIn.x = a.cpIn.x * t.scaleX
+        a.cpIn.y = a.cpIn.y * t.scaleY
+      }
+      if (a.cpOut !== undefined) {
+        a.cpOut.x = a.cpOut.x * t.scaleX
+        a.cpOut.y = a.cpOut.y * t.scaleY
+      }
+    }
+  }
 }
 
 /**
@@ -3511,12 +3599,35 @@ function flattenGroupShape(
   imageRels: ImageRelMap,
   txStyles: TxStylesByBucket,
   hyperlinkRels: HyperlinkRelMap,
+  inheritedGroupFill: GroupFill | undefined = undefined,
 ): ParsedShape[] {
   const out: ParsedShape[] = []
   const grpChildren = getChildren(grpSp, 'p:grpSp')
   // Compose the group's xfrm with the parent.
   const grpSpPr = findFirst(grpChildren, 'p:grpSpPr')
   let newTransform = parentTransform
+  // Pull the group's own fill — used by any child that declares
+  // `<a:grpFill/>` instead of an inline solidFill / gradFill. Inner
+  // groups override outer groups (closest enclosing wins).
+  let groupFill: GroupFill | undefined = inheritedGroupFill
+  if (grpSpPr !== undefined) {
+    const grpSpPrChildren = getChildren(grpSpPr, 'p:grpSpPr')
+    const ownSolid = findFirst(grpSpPrChildren, 'a:solidFill')
+    if (ownSolid !== undefined) {
+      const c = parseColourAndAlphaFrom(ownSolid, theme)
+      if (c !== undefined) {
+        const next: GroupFill = { color: c.color }
+        if (c.alpha !== undefined) next.alpha = c.alpha
+        groupFill = next
+      }
+    } else {
+      const ownGrad = findFirst(grpSpPrChildren, 'a:gradFill')
+      if (ownGrad !== undefined) {
+        const gradient = parseGradient(ownGrad, theme)
+        if (gradient !== undefined) groupFill = { gradient }
+      }
+    }
+  }
   if (grpSpPr !== undefined) {
     const xfrm = findFirst(getChildren(grpSpPr, 'p:grpSpPr'), 'a:xfrm')
     if (xfrm !== undefined) {
@@ -3551,7 +3662,16 @@ function flattenGroupShape(
   for (const node of grpChildren) {
     const tag = getTag(node)
     if (tag === 'p:sp' || tag === 'p:pic' || tag === 'p:cxnSp') {
-      const shape = parseShape(node, tag, theme, placeholders, imageRels, txStyles, hyperlinkRels)
+      const shape = parseShape(
+        node,
+        tag,
+        theme,
+        placeholders,
+        imageRels,
+        txStyles,
+        hyperlinkRels,
+        groupFill,
+      )
       if (shape !== null) {
         applyGroupTransform(shape, newTransform)
         if (shape.groupId === undefined) shape.groupId = groupId
@@ -3590,6 +3710,7 @@ function flattenGroupShape(
           imageRels,
           txStyles,
           hyperlinkRels,
+          groupFill,
         ),
       )
     }
