@@ -1964,6 +1964,12 @@ function parseShape(
   let fillAlpha: number | undefined
   let fillGradient: ParsedGradient | undefined
   let blipRelId: string | undefined
+  // `<a:noFill/>` is the explicit "transparent" signal — common on
+  // stroke-only outline shapes (e.g. the concentric circle decoration
+  // on slide 5). Capture it as fillAlpha=0 so the writer doesn't fall
+  // back to DEFAULT_FILL (brand blue) and stamp a fully-opaque blue
+  // disc across the slide.
+  const noFillExplicit = findFirst(spPrChildren, 'a:noFill') !== undefined
   const solidFill = findFirst(spPrChildren, 'a:solidFill')
   if (solidFill) {
     const c = parseColourAndAlphaFrom(solidFill, theme)
@@ -1974,6 +1980,13 @@ function parseShape(
   }
   const gradFill = findFirst(spPrChildren, 'a:gradFill')
   if (gradFill) fillGradient = parseGradient(gradFill, theme)
+  // Apply the noFill signal AFTER reading solidFill/gradFill so an
+  // accidental "<a:noFill/><a:solidFill>red</a:solidFill>" pairing
+  // (malformed but observed in the wild) still picks the explicit
+  // color. The signal only kicks in when nothing else was set.
+  if (noFillExplicit && fillColor === undefined && fillGradient === undefined) {
+    fillAlpha = 0
+  }
   // `<a:grpFill/>` inherits the enclosing `<p:grpSp>`'s fill — common for
   // vector logos baked as a group of letterform `<p:sp>` paths. Without
   // this, every glyph renders fill-less and the logo becomes invisible.
