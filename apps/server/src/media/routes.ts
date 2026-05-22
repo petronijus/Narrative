@@ -98,24 +98,54 @@ function isImgproxyVariant(v: string): v is ImgproxyVariant {
 
 const MAX_FONT_BYTES = 10 * 1024 * 1024 // 10 MB
 
+// Browsers send WILDLY inconsistent MIME types for font files —
+// even within the same browser, the value depends on the OS's MIME
+// registry. macOS Safari sends 'font/otf' for .otf; Chrome on
+// Windows sends 'application/vnd.ms-opentype'; Firefox sometimes
+// sends 'application/font-sfnt' or 'application/x-font-opentype'
+// for the same file; Chrome on Linux often sends an empty string.
+// Be permissive: accept every spelling we've seen plus
+// octet-stream and an empty string (we re-validate the bytes via
+// opentype.js anyway, so the MIME is just metadata).
 const ALLOWED_FONT_MIME_TYPES = new Set([
   'font/ttf',
   'font/otf',
+  'font/woff',
   'font/woff2',
+  'font/sfnt',
+  'application/font-woff',
   'application/font-woff2',
+  'application/font-sfnt',
+  'application/vnd.ms-opentype',
+  'application/vnd.ms-fontobject',
   'application/x-font-ttf',
+  'application/x-font-otf',
   'application/x-font-opentype',
-  // Some clients send application/octet-stream; we check the extension too.
+  'application/x-font-truetype',
+  'application/x-font-woff',
+  'application/x-font-sfnt',
+  // Some clients send application/octet-stream or empty MIME;
+  // we check the extension too.
   'application/octet-stream',
+  '',
 ])
 
 const FONT_MIME_TO_EXT: Record<string, string> = {
   'font/ttf': 'ttf',
   'font/otf': 'otf',
+  'font/woff': 'woff',
   'font/woff2': 'woff2',
+  'font/sfnt': 'ttf',
+  'application/font-woff': 'woff',
   'application/font-woff2': 'woff2',
+  'application/font-sfnt': 'ttf',
+  'application/vnd.ms-opentype': 'otf',
   'application/x-font-ttf': 'ttf',
+  'application/x-font-otf': 'otf',
   'application/x-font-opentype': 'otf',
+  'application/x-font-truetype': 'ttf',
+  'application/x-font-woff': 'woff',
+  'application/x-font-sfnt': 'ttf',
 }
 
 function fontExtFromMime(mime: string, originalName?: string): string {
@@ -207,13 +237,29 @@ export async function registerMediaRoutes(
     payload.on('end', () => done(null, Buffer.concat(chunks)))
     payload.on('error', (err) => done(err))
   }
+  // Register a buffer-mode content-type parser for every MIME a
+  // browser might attach to a font file. Without a registered parser
+  // Fastify returns 415 BEFORE the route handler runs, so the route
+  // can't apply its own (more permissive) allowlist. Mirror the
+  // ALLOWED_FONT_MIME_TYPES set above so any MIME we accept at the
+  // route level also has a parser registered here.
   for (const mime of [
     'font/ttf',
     'font/otf',
+    'font/woff',
     'font/woff2',
+    'font/sfnt',
+    'application/font-woff',
     'application/font-woff2',
+    'application/font-sfnt',
+    'application/vnd.ms-opentype',
+    'application/vnd.ms-fontobject',
     'application/x-font-ttf',
+    'application/x-font-otf',
     'application/x-font-opentype',
+    'application/x-font-truetype',
+    'application/x-font-woff',
+    'application/x-font-sfnt',
     'application/octet-stream',
   ]) {
     try {

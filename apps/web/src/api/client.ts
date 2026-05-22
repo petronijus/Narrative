@@ -633,7 +633,24 @@ export function createApiClient(): ApiClient {
     },
 
     uploadFolderFont: async (folderId, file, opts) => {
-      const mime = file.type && file.type !== 'application/octet-stream' ? file.type : 'font/ttf'
+      // file.type is inconsistent across browsers + OSes for font
+      // files — Chrome/Windows sends 'application/vnd.ms-opentype'
+      // for .otf, Firefox 'application/font-sfnt', Linux often empty.
+      // Prefer extension-based inference so we hand the server a MIME
+      // it has a registered content-type parser for; fall back to
+      // file.type only when the extension is unrecognised. (The server
+      // re-validates the bytes via opentype.js, so this is just
+      // metadata to keep Fastify's parser layer happy.)
+      const ext = file.name.toLowerCase().split('.').pop() ?? ''
+      const extToMime: Record<string, string> = {
+        ttf: 'font/ttf',
+        otf: 'font/otf',
+        woff: 'font/woff',
+        woff2: 'font/woff2',
+      }
+      const mime =
+        extToMime[ext] ??
+        (file.type && file.type !== 'application/octet-stream' ? file.type : 'font/ttf')
       const arrayBuf = await file.arrayBuffer()
       // `familyOverride` reaches the server as a `?fontFamily=` query
       // param. The route uses it to stamp media_assets.font_family with
