@@ -372,7 +372,7 @@ export function buildStyleOpts(data: TextObject): any {
   opts.lineHeight =
     data.lineHeight !== undefined && data.lineHeight > 0
       ? data.lineHeight * data.fontSize
-      : data.fontSize * 1.4
+      : data.fontSize * 1.2
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
       color: hexToColorString(resolveColour(data.stroke)),

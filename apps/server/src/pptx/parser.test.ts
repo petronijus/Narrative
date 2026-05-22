@@ -829,7 +829,12 @@ describe('parsePptx', () => {
     const tbl = out.slides[0]!.shapes[0]!
     expect(tbl.kind).toBe('table')
     const cell = tbl.tableCells![0]![0]!
-    expect(cell.lineHeight).toBeCloseTo(1.5, 2)
+    // Source spcPct=150000 (1.5x raw). Parser applies the
+    // PPTX_LINE_LEADING_FACTOR (1.2) so the stored value reflects
+    // PowerPoint's effective single-line metric rather than a pure
+    // multiplier. 1.5 × 1.2 = 1.8. See parser.ts comment on the
+    // constant for the spcPct→CSS rationale.
+    expect(cell.lineHeight).toBeCloseTo(1.5 * 1.2, 2)
     expect(cell.letterSpacing).toBeGreaterThan(0)
     expect(cell.textTransform).toBe('uppercase')
   })
@@ -1240,7 +1245,9 @@ describe('parsePptx', () => {
     })
     const out = await parsePptx(buf)
     const shape = out.slides[0]!.shapes[0]!
-    expect(shape.lineHeight).toBeCloseTo(1.5, 3)
+    // 1.5 × PPTX_LINE_LEADING_FACTOR (1.2) = 1.8 — see parser
+    // PPTX_LINE_LEADING_FACTOR comment for the spcPct→CSS rationale.
+    expect(shape.lineHeight).toBeCloseTo(1.5 * 1.2, 3)
     // 1200 PPTX units = 12pt = 16 px @ 96 DPI
     expect(shape.paragraphSpaceBefore).toBeCloseTo(16, 1)
     expect(shape.paragraphSpaceAfter).toBeCloseTo(8, 1)

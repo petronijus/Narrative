@@ -477,6 +477,33 @@ const PPTX_ROT_PER_DEG = 60000
 /** PPTX font sizes are 100ths of a point. 1pt = 1/72 inch ≈ 1.333 px @ 96 DPI. */
 const PPTX_FONT_TO_PX = (1 / 100) * (96 / 72)
 
+/**
+ * PPTX→CSS line-spacing leading factor.
+ *
+ * `<a:lnSpc spcPct val="N"/>` declares line spacing as N/100000 of
+ * PowerPoint's "single line spacing" — which is the font's `hhea`
+ * ascent + descent + line gap (effectively the font's intrinsic em
+ * box plus a small leading slack). For typical sans-serif faces
+ * that's ~1.2× the font size.
+ *
+ * CSS `line-height: M * fontSize` is a PURE multiplier of font-size
+ * — no extra leading from font metrics. So mapping spcPct → CSS
+ * multiplier needs to *multiply* the parsed fraction by ~1.2 to
+ * reproduce the visual spacing PowerPoint draws.
+ *
+ * Example: `spcPct val="70000"` (slide 2 "DAWN OF DESIGN") =>
+ *   raw fraction = 0.7
+ *   CSS lineHeight  = 0.7 × 1.2 = 0.84   (matches LibreOffice's render)
+ *
+ * Without this scaling, our 0.7× was rendering "DAWN OF" and "DESIGN"
+ * cramped together while PowerPoint had visible breathing room.
+ *
+ * Only applied to the percentage form (`spcPct`). The absolute form
+ * (`spcPts` — fixed point size for the line height) is already in
+ * px and doesn't pass through this factor.
+ */
+const PPTX_LINE_LEADING_FACTOR = 1.2
+
 const HEX_RE = /^[0-9a-fA-F]{6}$/
 
 /** "0F172A" → 0x0F172A. Returns undefined on malformed input. */
@@ -2376,7 +2403,7 @@ function parseShape(
               const pct = findFirst(lnSpcChildren, 'a:spcPct')
               if (pct) {
                 const v = Number(getAttrs(pct)['@val'])
-                if (Number.isFinite(v)) frameLineHeight = v / 100000
+                if (Number.isFinite(v)) frameLineHeight = (v / 100000) * PPTX_LINE_LEADING_FACTOR
               } else {
                 const pts = findFirst(lnSpcChildren, 'a:spcPts')
                 if (pts && fontSize !== undefined && fontSize > 0) {
@@ -2703,7 +2730,7 @@ function parseShape(
             const pct = findFirst(lnSpcChildren, 'a:spcPct')
             if (pct !== undefined) {
               const v = Number(getAttrs(pct)['@val'])
-              if (Number.isFinite(v)) frameLineHeight = v / 100000
+              if (Number.isFinite(v)) frameLineHeight = (v / 100000) * PPTX_LINE_LEADING_FACTOR
             } else {
               const pts = findFirst(lnSpcChildren, 'a:spcPts')
               if (pts !== undefined && fontSize !== undefined && fontSize > 0) {

@@ -280,7 +280,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       // Default multiplier kept in lockstep with textRenderer.
       // buildStyleOpts (1.4) so edit + render mode share a baseline.
       // See the renderer's lineHeight default comment for rationale.
-      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.4) * obj.fontSize}px`,
+      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.2) * obj.fontSize}px`,
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),
