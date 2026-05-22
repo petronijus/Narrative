@@ -36,6 +36,7 @@ import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
 import { applyFlip } from './applyFlip.js'
 import { resolveColour } from '../colourResolver.js'
+import { cssFontFamily } from '../fontFallback.js'
 import { getRenderingSlideNumber } from '../slideNumberContext.js'
 
 /**
@@ -261,6 +262,10 @@ function colorWithAlpha(hex: number, alpha: number): string {
  * SVG — without depending on Pixi's text-scraping regex, which breaks
  * on family names containing whitespace.
  */
+// Unused after the switch to a CSS-quoted string (R2-mini font fix).
+// Kept so future work that wants per-run @font-face embeds has the
+// helper handy; remove if it gets stale.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function collectRunFontFamilies(data: TextObject): string[] {
   const t = data.text
   if (!(t instanceof Y.Text)) return []
@@ -291,17 +296,36 @@ export function buildStyleOpts(data: TextObject): any {
   // would never embed and the SVG would silently fall back to system.
   // Compose an explicit array of [box, ...runs] so each run-level
   // family produces a real @font-face inside the SVG.
-  const boxFamily = data.fontFamily ?? 'system-ui, -apple-system, sans-serif'
-  const runFamilies = collectRunFontFamilies(data)
-  const familyArray =
-    runFamilies.length > 0 ? Array.from(new Set([boxFamily, ...runFamilies])) : undefined
+  // Compose the family string for Pixi's HTMLText. The box family
+  // gets a category-appropriate generic stack appended via
+  // `cssFontFamily`, with multi-word names properly double-quoted —
+  // Pixi v8's textStyleToCSS embeds `style.fontFamily` verbatim into
+  // the SVG's CSS via raw template literal, so a PPTX face like
+  // "Northwind Sans ST Pro 36 Regular" needs CSS-side quoting or the
+  // browser drops to its default serif. See renderer/fontFallback.ts.
+  //
+  // Per-run fontFamily values land in the inline `<span style="font-
+  // family:X">` markup (richText.toHtml) — those still feed Pixi's
+  // `extractFontFamilies` regex for @font-face embeds, and the inline
+  // CSS itself doesn't need our fallback because if the run-level font
+  // isn't available the browser falls through to the box font defined
+  // here, which carries the stack.
+  const boxFamily =
+    cssFontFamily(data.fontFamily) ?? 'Arial, Helvetica, "Helvetica Neue", "Segoe UI", sans-serif'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
-    // Pixi v8's `fontStringFromTextStyle` auto-quotes unquoted multi-
-    // word family names (anything not in the CSS generic set), so we
-    // can pass `data.fontFamily` straight through. When run-level
-    // families exist we pass an array so all of them get embedded.
-    fontFamily: familyArray ?? boxFamily,
+    // Pass the CSS-safe family string. Pixi v8's textStyleToCSS uses
+    // `style.fontFamily` verbatim, so the string we hand it is what
+    // ends up in the SVG's `font-family:` rule — including our
+    // category fallback (`"Northwind Sans…", Arial, …, sans-serif`)
+    // when the authored font isn't installed.
+    //
+    // `extractFontFamilies` still picks up the inline `<span style=
+    // "font-family:X">` markers via its regex for run-level @font-face
+    // embeds, and reads the box font from this string too (the comma-
+    // list registers fails-to-embed entries as no-ops). Run-level
+    // fallback chains for installed runs live in the inline span CSS.
+    fontFamily: boxFamily,
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
