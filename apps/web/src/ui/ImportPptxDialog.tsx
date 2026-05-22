@@ -94,56 +94,36 @@ export function ImportPptxDialog({
   // case into a real folder id, and we stash it here for the
   // missing-fonts panel.
   const importedFolderIdRef = useRef<string | null>(null)
-  // Map of `family` → list of FontFace objects already loaded in the
-  // browser (system or document.fonts.add). Built lazily on success
-  // via `document.fonts.check` lookups. Re-runs when `success` flips.
-  const [installedFamilies, setInstalledFamilies] = useState<Set<string>>(new Set())
   // Family names the user has just uploaded through this dialog. Once
   // a family lands here we drop it from `missingFonts` so the row
   // collapses to a "✓ uploaded" state without a full page refresh.
   const [resolvedFamilies, setResolvedFamilies] = useState<Set<string>>(new Set())
-  // Detect which referenced families don't resolve to a real font. We
-  // can't read FolderFontLoader's state from here (it's mounted higher
-  // up the tree, around the deck view), so we use the most reliable
-  // browser primitive: `document.fonts.check(font, text)`. For each
-  // referenced family we ask the browser "would this CSS string render
-  // text in the named family or fall back?". `false` = missing.
+  // Detect which referenced families are "missing" — i.e. NOT a
+  // well-known system font and NOT already uploaded by the user.
+  //
+  // We intentionally do NOT use `document.fonts.check()` here.
+  // document.fonts.check returns true for any locally-installed font
+  // AND for any @font-face Pixi has registered, even when the
+  // referenced URL is broken or the font hasn't actually loaded.
+  // That made the original detection silently filter out genuinely
+  // missing PPTX fonts (the case the user reported: "advisory fired
+  // but no upload UI"). A hard-coded list of fonts that ship on every
+  // platform we support is more conservative — we'd rather show an
+  // upload row the user can skip than hide a real missing font.
+  //
+  // Whether a font is "really" available is determined post-upload by
+  // FolderFontLoader, not by us.
   const referencedFamilies = useMemo(
     () => normaliseFamilies(success?.referencedFontFamilies ?? []),
     [success],
   )
-  useEffect(() => {
-    if (success === null) return
-    let cancelled = false
-    const probe = (): void => {
-      if (cancelled) return
-      const installed = new Set<string>()
-      for (const fam of referencedFamilies) {
-        try {
-          if (document.fonts.check(`16px "${fam.replace(/"/g, '\\"')}"`)) {
-            installed.add(fam)
-          }
-        } catch {
-          // Malformed family string — treat as not installed.
-        }
-      }
-      setInstalledFamilies(installed)
-    }
-    // Initial sweep. document.fonts may load async (Pixi embeds via
-    // @font-face), so re-probe once the FontFaceSet finishes loading.
-    probe()
-    void document.fonts.ready.then(probe).catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [success, referencedFamilies])
 
   const missingFonts = useMemo(() => {
     if (success === null) return [] as string[]
     return referencedFamilies.filter(
-      (fam) => !installedFamilies.has(fam) && !resolvedFamilies.has(fam),
+      (fam) => !isCommonSystemFont(fam) && !resolvedFamilies.has(fam),
     )
-  }, [success, referencedFamilies, installedFamilies, resolvedFamilies])
+  }, [success, referencedFamilies, resolvedFamilies])
 
   const fontFallbackAdvisory =
     success !== null &&
@@ -514,12 +494,18 @@ export function ImportPptxDialog({
 
         {/* Actions */}
         <div className="mt-5 flex justify-end gap-2">
-          {success !== null && importIssues.length > 0 ? (
-            // Successful import that needs explicit user dismissal — single
-            // CTA jumps to the deck.
+          {success !== null && hasAnyNotice ? (
+            // Successful import that needs explicit user dismissal (any
+            // mix of compat warnings, font-fallback advisory, or missing
+            // font rows the user might still want to upload). The auto-
+            // advance is intentionally suppressed in this branch; the
+            // user clicks through when they're done acknowledging /
+            // uploading. The label flips to "Skip & open deck" when
+            // there are still unresolved fonts to remind the user they
+            // can upload later — the import itself is complete.
             <Button size="sm" onClick={() => onSuccess(success)} className="btn-brand gap-1.5">
               <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-              Open deck
+              {missingFonts.length > 0 ? 'Skip & open deck' : 'Open deck'}
             </Button>
           ) : (
             <>
@@ -583,6 +569,69 @@ function formatBytes(bytes: number): string {
  * environments. The `document.fonts.check` probe filters those out
  * for real, so this just cleans up obvious noise.
  */
+/**
+ * Names of fonts that ship with every major desktop OS (Windows,
+ * macOS, Linux distros via fontconfig). When a PPTX references one
+ * of these we don't ask the user to upload — the browser will pick
+ * it up natively. Anything else gets surfaced as "missing" so the
+ * user can decide to upload or skip. Lower-cased and trimmed before
+ * comparison so the lookup matches "ARIAL" / " arial " / "Arial".
+ *
+ * This is intentionally conservative — better to flag a font that
+ * happens to be installed locally (one extra upload row the user
+ * skips) than to silently miss a genuinely-absent face.
+ */
+const COMMON_SYSTEM_FONTS: ReadonlySet<string> = new Set(
+  [
+    // Cross-platform web-safe
+    'arial',
+    'arial black',
+    'arial narrow',
+    'helvetica',
+    'helvetica neue',
+    'times',
+    'times new roman',
+    'courier',
+    'courier new',
+    'georgia',
+    'verdana',
+    'tahoma',
+    'trebuchet ms',
+    'lucida sans',
+    'lucida grande',
+    'lucida console',
+    'palatino',
+    'palatino linotype',
+    'impact',
+    // Microsoft Office (shipped on Windows + bundled with macOS Office)
+    'calibri',
+    'cambria',
+    'candara',
+    'consolas',
+    'constantia',
+    'corbel',
+    'segoe ui',
+    // macOS / iOS native
+    'sf pro',
+    'sf pro display',
+    'sf pro text',
+    'sf mono',
+    'menlo',
+    'monaco',
+    // CSS generics
+    'sans-serif',
+    'serif',
+    'monospace',
+    'cursive',
+    'fantasy',
+    'system-ui',
+  ].map((s) => s.toLowerCase()),
+)
+
+function isCommonSystemFont(family: string): boolean {
+  return COMMON_SYSTEM_FONTS.has(family.trim().toLowerCase())
+}
+
 function normaliseFamilies(raw: ReadonlyArray<string>): string[] {
   const seen = new Set<string>()
   const out: string[] = []
