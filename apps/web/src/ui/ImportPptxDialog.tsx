@@ -21,6 +21,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { type FolderSummary, type ImportPptxResult, useApi } from '../api/client.js'
 import { IMPORT_KNOWN_LOSSES, relevantIgnoredElements } from '../lib/pptxCompat.js'
+import { invalidateFolderFontsCache } from '../state/useFolderFonts.js'
 
 interface ImportPptxDialogProps {
   file: File
@@ -201,6 +202,14 @@ export function ImportPptxDialog({
       })
       try {
         await api.uploadFolderFont(folderId, file, { familyOverride: family })
+        // Drop the shared folder-fonts cache for this folder so the
+        // deck's FolderFontsProvider re-fetches when it mounts after
+        // navigation. Without this, the dropdown in the typography
+        // inspector + the FolderFontLoader (which actually installs
+        // FontFace into document.fonts) silently keep using the stale
+        // pre-upload list and the user sees "I uploaded the font but
+        // it isn't in the inspector".
+        invalidateFolderFontsCache(folderId)
         setResolvedFamilies((prev) => {
           const next = new Set(prev)
           next.add(family)
@@ -218,6 +227,10 @@ export function ImportPptxDialog({
         // Treat that as success — the user's intent is satisfied either
         // way, and the font registry already has the bytes.
         if (status === 409) {
+          // Same cache-invalidation reasoning as the success path:
+          // the bytes ARE in this folder's font set; the deck just
+          // needs to refetch to see them.
+          invalidateFolderFontsCache(folderId)
           setResolvedFamilies((prev) => {
             const next = new Set(prev)
             next.add(family)

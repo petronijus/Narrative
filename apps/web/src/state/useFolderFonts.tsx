@@ -51,6 +51,19 @@ function invalidateCache(folderId: string): void {
   cache.delete(folderId)
 }
 
+/**
+ * External-trigger for the folder-fonts cache invalidation. Components
+ * that upload a font but don't live inside a `FolderFontsProvider`
+ * (e.g. the post-import missing-fonts panel on FoldersHome, where no
+ * deck is open yet) call this so the deck's provider re-fetches when
+ * it mounts after navigation. Inside-the-provider callers should
+ * prefer `useFolderFonts().refresh()` — it both invalidates AND
+ * re-fetches synchronously into the current context.
+ */
+export function invalidateFolderFontsCache(folderId: string): void {
+  invalidateCache(folderId)
+}
+
 // ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
