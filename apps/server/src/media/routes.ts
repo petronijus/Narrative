@@ -370,8 +370,18 @@ export async function registerMediaRoutes(
   // -------------------------------------------------------------------------
 
   // POST /api/folders/:folderId/fonts — upload a font file
+  //
+  // Optional `?fontFamily=<override>` query param: when present, the
+  // server stamps the media_assets row's `font_family` with the supplied
+  // value instead of the family name read from the file's `name` table.
+  // Used by the post-import missing-fonts dialog so a user-uploaded TTF
+  // binds to the PPTX-authored typeface name even when the file's
+  // internal name differs. Weight + style + postscript name still come
+  // from opentype.js — they describe the bytes themselves and can't be
+  // overridden without lying.
   app.post<{
     Params: { folderId: string }
+    Querystring: { fontFamily?: string }
   }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
     const { folderId } = request.params
     const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
@@ -464,6 +474,12 @@ export async function registerMediaRoutes(
       }),
     )
 
+    const familyOverride =
+      typeof request.query.fontFamily === 'string' && request.query.fontFamily.trim() !== ''
+        ? request.query.fontFamily.trim()
+        : null
+    const effectiveFamily = familyOverride ?? meta.family
+
     await db.insert(mediaAssets).values({
       id: assetId,
       deckId: null,
@@ -474,7 +490,7 @@ export async function registerMediaRoutes(
       storageKey,
       originalFilename: originalFilename ?? null,
       kind: 'font',
-      fontFamily: meta.family,
+      fontFamily: effectiveFamily,
       fontWeight: meta.weight,
       fontStyle: meta.style,
       fontPostscriptName: meta.postscriptName,
@@ -484,7 +500,7 @@ export async function registerMediaRoutes(
 
     return reply.status(201).send({
       assetId,
-      family: meta.family,
+      family: effectiveFamily,
       weight: meta.weight,
       style: meta.style,
       postscriptName: meta.postscriptName,

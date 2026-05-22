@@ -68,6 +68,13 @@ export interface ImportDeckResult {
   /** Number of embedded fonts (typeface × variant) lifted from the
    *  PPTX's `<p:embeddedFontLst>` and stamped into `media_assets`. */
   embeddedFontCount: number
+  /** Distinct `fontFamily` values referenced anywhere in the imported
+   *  deck (text frames, table defaults, per-cell + per-run overrides).
+   *  Filters out OOXML theme placeholders (`+mn-lt` / `+mj-lt`) and
+   *  empty strings. The post-import dialog reads this against the
+   *  list of fonts already available (system + embedded + folder) to
+   *  surface a "fonts referenced but missing" upload prompt. */
+  referencedFontFamilies: string[]
 }
 
 /**
@@ -205,6 +212,14 @@ export async function importDeckFromPptxBytes(args: {
     }
   }
 
+  // Walk the parsed shapes once to gather every font-family that any
+  // text / table / run references. This drives the "missing fonts"
+  // upload panel in the post-import dialog — the client compares this
+  // list against the deck's font registry (system + embedded fonts
+  // we just uploaded + already-uploaded folder fonts) and prompts the
+  // user to provide any face that's still unavailable.
+  const referencedFontFamilies = collectReferencedFontFamilies(parsed)
+
   log.info(
     {
       deckId,
@@ -215,6 +230,7 @@ export async function importDeckFromPptxBytes(args: {
       uploadedImages: uploadedImageCount,
       uploadedFonts: uploadedFontCount,
       skippedFonts: skippedFontCount,
+      referencedFonts: referencedFontFamilies.length,
       ignored: parsed.ignoredElements,
     },
     'pptx-import: deck created',
@@ -235,6 +251,7 @@ export async function importDeckFromPptxBytes(args: {
       slideWidth: parsed.slideWidth,
       slideHeight: parsed.slideHeight,
       embeddedFontCount: uploadedFontCount,
+      referencedFontFamilies,
     },
   }
 }
@@ -433,6 +450,47 @@ async function probeImageDims(
   } catch {
     return null
   }
+}
+
+/**
+ * Walk every parsed shape (and every run inside text frames + table
+ * cells) and collect the distinct `fontFamily` values the deck refers
+ * to. Used by the post-import dialog to drive the missing-fonts
+ * upload prompt.
+ *
+ * Filters:
+ *  - empty strings (no-ops)
+ *  - OOXML theme placeholders (`+mn-lt`, `+mj-lt`, …) — these are not
+ *    real font names but indirection through the theme's font scheme
+ */
+function collectReferencedFontFamilies(parsed: ParsedPptx): string[] {
+  const seen = new Set<string>()
+  const accept = (s: string | undefined): void => {
+    if (typeof s !== 'string') return
+    const t = s.trim()
+    if (t === '' || t.startsWith('+')) return
+    seen.add(t)
+  }
+  for (const slide of parsed.slides) {
+    for (const sh of slide.shapes) {
+      accept(sh.fontFamily)
+      if (Array.isArray(sh.textRuns)) {
+        for (const r of sh.textRuns) accept(r.fontFamily)
+      }
+      if (Array.isArray(sh.tableCells)) {
+        for (const row of sh.tableCells) {
+          for (const cell of row) {
+            if (cell === null) continue
+            accept(cell.fontFamily)
+            if (Array.isArray(cell.textRuns)) {
+              for (const r of cell.textRuns) accept(r.fontFamily)
+            }
+          }
+        }
+      }
+    }
+  }
+  return Array.from(seen).sort((a, b) => a.localeCompare(b))
 }
 
 /**

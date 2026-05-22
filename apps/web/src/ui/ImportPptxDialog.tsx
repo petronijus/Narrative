@@ -7,7 +7,7 @@
  * file they're about to ingest.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -16,9 +16,10 @@ import {
   FolderPlus,
   Info,
   Loader2,
+  Upload as UploadIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { FolderSummary, ImportPptxResult } from '../api/client.js'
+import { type FolderSummary, type ImportPptxResult, useApi } from '../api/client.js'
 import { IMPORT_KNOWN_LOSSES, relevantIgnoredElements } from '../lib/pptxCompat.js'
 
 interface ImportPptxDialogProps {
@@ -67,6 +68,14 @@ export function ImportPptxDialog({
   const [progress, setProgress] = useState(0)
   const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing'>('idle')
   const newNameInputRef = useRef<HTMLInputElement>(null)
+  const api = useApi()
+  // Per-family upload state: keyed by the missing family name.
+  // `busy` = upload in flight for THIS family, `error` = last error
+  // (cleared on retry). When upload succeeds the family moves to
+  // `resolvedFamilies` and disappears from the missing list.
+  const [familyUploads, setFamilyUploads] = useState<
+    Map<string, { busy: boolean; error: string | null }>
+  >(new Map())
 
   useEffect(() => {
     if (creatingNew) newNameInputRef.current?.focus()
@@ -79,15 +88,69 @@ export function ImportPptxDialog({
   // dismiss the warnings explicitly — they should know what changed
   // before they land on the deck.
   const importIssues = success === null ? [] : relevantIgnoredElements(success.ignoredElements)
-  // Surface the "fonts weren't embedded" advisory whenever a deck with
-  // content was imported but `<p:embeddedFontLst>` was empty. We can't
-  // tell at this point whether the deck actually references custom
-  // fonts (the API doesn't return the family list), but in practice
-  // decks without embedded fonts are the ones that benefit from the
-  // category-fallback explanation. Cheap to surface; cheaper to dismiss.
+  // Track the folderId used for the import so we know where to POST
+  // user-uploaded missing fonts. We can't read `selectedId` directly
+  // when "create new folder" was used — `handleConfirm` resolves that
+  // case into a real folder id, and we stash it here for the
+  // missing-fonts panel.
+  const importedFolderIdRef = useRef<string | null>(null)
+  // Map of `family` → list of FontFace objects already loaded in the
+  // browser (system or document.fonts.add). Built lazily on success
+  // via `document.fonts.check` lookups. Re-runs when `success` flips.
+  const [installedFamilies, setInstalledFamilies] = useState<Set<string>>(new Set())
+  // Family names the user has just uploaded through this dialog. Once
+  // a family lands here we drop it from `missingFonts` so the row
+  // collapses to a "✓ uploaded" state without a full page refresh.
+  const [resolvedFamilies, setResolvedFamilies] = useState<Set<string>>(new Set())
+  // Detect which referenced families don't resolve to a real font. We
+  // can't read FolderFontLoader's state from here (it's mounted higher
+  // up the tree, around the deck view), so we use the most reliable
+  // browser primitive: `document.fonts.check(font, text)`. For each
+  // referenced family we ask the browser "would this CSS string render
+  // text in the named family or fall back?". `false` = missing.
+  const referencedFamilies = useMemo(
+    () => normaliseFamilies(success?.referencedFontFamilies ?? []),
+    [success],
+  )
+  useEffect(() => {
+    if (success === null) return
+    let cancelled = false
+    const probe = (): void => {
+      if (cancelled) return
+      const installed = new Set<string>()
+      for (const fam of referencedFamilies) {
+        try {
+          if (document.fonts.check(`16px "${fam.replace(/"/g, '\\"')}"`)) {
+            installed.add(fam)
+          }
+        } catch {
+          // Malformed family string — treat as not installed.
+        }
+      }
+      setInstalledFamilies(installed)
+    }
+    // Initial sweep. document.fonts may load async (Pixi embeds via
+    // @font-face), so re-probe once the FontFaceSet finishes loading.
+    probe()
+    void document.fonts.ready.then(probe).catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [success, referencedFamilies])
+
+  const missingFonts = useMemo(() => {
+    if (success === null) return [] as string[]
+    return referencedFamilies.filter(
+      (fam) => !installedFamilies.has(fam) && !resolvedFamilies.has(fam),
+    )
+  }, [success, referencedFamilies, installedFamilies, resolvedFamilies])
+
   const fontFallbackAdvisory =
-    success !== null && success.objectsCreated > 0 && (success.embeddedFontCount ?? 0) === 0
-  const hasAnyNotice = importIssues.length > 0 || fontFallbackAdvisory
+    success !== null &&
+    success.objectsCreated > 0 &&
+    (success.embeddedFontCount ?? 0) === 0 &&
+    missingFonts.length === 0
+  const hasAnyNotice = importIssues.length > 0 || fontFallbackAdvisory || missingFonts.length > 0
   useEffect(() => {
     if (success === null) return
     if (hasAnyNotice) return
@@ -127,6 +190,7 @@ export function ImportPptxDialog({
       })
       // Leave `busy` true so the inputs stay disabled while the success
       // panel is showing — it's not "interactive" any more.
+      importedFolderIdRef.current = folderId
       setSuccess(result)
     } catch (err) {
       // Server returns a structured body on 4xx; pick out the most useful field.
@@ -136,6 +200,66 @@ export function ImportPptxDialog({
       setPhase('idle')
     }
   }
+
+  /**
+   * Upload a TTF/OTF file for one of the PPTX-referenced families that
+   * the browser couldn't resolve. Goes through the existing folder-
+   * font POST endpoint with a `?fontFamily=<override>` so the row
+   * binds to the family name the slide content actually references.
+   * On success the family is marked "resolved" so the missing list
+   * shrinks; the folder-font cache is invalidated so FolderFontLoader
+   * re-installs once the user lands on the deck.
+   */
+  const handleMissingFontUpload = useCallback(
+    async (family: string, file: File) => {
+      const folderId = importedFolderIdRef.current
+      if (folderId === null) return
+      setFamilyUploads((prev) => {
+        const next = new Map(prev)
+        next.set(family, { busy: true, error: null })
+        return next
+      })
+      try {
+        await api.uploadFolderFont(folderId, file, { familyOverride: family })
+        setResolvedFamilies((prev) => {
+          const next = new Set(prev)
+          next.add(family)
+          return next
+        })
+        setFamilyUploads((prev) => {
+          const next = new Map(prev)
+          next.delete(family)
+          return next
+        })
+      } catch (err: unknown) {
+        const body = (err as { body?: { error?: string }; status?: number }).body
+        const status = (err as { status?: number }).status
+        // 409 = postscript-name collision (font already in this folder).
+        // Treat that as success — the user's intent is satisfied either
+        // way, and the font registry already has the bytes.
+        if (status === 409) {
+          setResolvedFamilies((prev) => {
+            const next = new Set(prev)
+            next.add(family)
+            return next
+          })
+          setFamilyUploads((prev) => {
+            const next = new Map(prev)
+            next.delete(family)
+            return next
+          })
+          return
+        }
+        const msg = body?.error ?? (err instanceof Error ? err.message : 'Upload failed')
+        setFamilyUploads((prev) => {
+          const next = new Map(prev)
+          next.set(family, { busy: false, error: msg })
+          return next
+        })
+      }
+    },
+    [api],
+  )
 
   const sizeLabel = formatBytes(file.size)
 
@@ -230,6 +354,41 @@ export function ImportPptxDialog({
                   </code>
                   .
                 </span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Missing-fonts panel — for each PPTX-referenced family that
+            the browser couldn't resolve (system, document.fonts, or
+            folder registry), offer a file picker that uploads the
+            user's .ttf / .otf and binds it to the exact family name
+            the slide content references (via familyOverride). */}
+        {success !== null && missingFonts.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <h3 className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+              <UploadIcon className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
+              Missing fonts — upload to keep the original look
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              The deck references {missingFonts.length} font
+              {missingFonts.length === 1 ? '' : 's'} that aren’t installed in your browser or this
+              folder. Upload a `.ttf` / `.otf` for each and they’ll bind to the right family name
+              automatically. You can skip and keep the category fallback.
+            </p>
+            <ul className="space-y-1.5">
+              {missingFonts.map((family) => (
+                <MissingFontRow
+                  key={family}
+                  family={family}
+                  state={familyUploads.get(family)}
+                  onPick={(file) => void handleMissingFontUpload(family, file)}
+                />
+              ))}
+            </ul>
+            {resolvedFamilies.size > 0 && (
+              <p className="text-xs text-emerald-500">
+                {resolvedFamilies.size} font{resolvedFamilies.size === 1 ? '' : 's'} uploaded.
               </p>
             )}
           </div>
@@ -413,4 +572,91 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * Trim + dedupe a list of font family names and drop the obvious
+ * "system or generic" entries that the browser always provides. We
+ * still pass typical web-safe names like Arial through — the
+ * referenced-fonts list is meant to flag NAMES THE DECK USED, and
+ * even Arial may genuinely be missing in some constrained sandbox
+ * environments. The `document.fonts.check` probe filters those out
+ * for real, so this just cleans up obvious noise.
+ */
+function normaliseFamilies(raw: ReadonlyArray<string>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const f of raw) {
+    const t = f.trim()
+    if (t === '') continue
+    if (t.startsWith('+')) continue // OOXML theme placeholder, never a real family.
+    if (seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
+}
+
+interface MissingFontRowProps {
+  family: string
+  state: { busy: boolean; error: string | null } | undefined
+  onPick: (file: File) => void
+}
+
+/**
+ * One row of the missing-fonts panel. Renders the family name + a
+ * "Upload" button that opens a file picker. While the upload is in
+ * flight the button shows a spinner; on error we surface the message
+ * inline so the user can retry without losing context.
+ */
+function MissingFontRow({ family, state, onPick }: MissingFontRowProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const busy = state?.busy === true
+  const error = state?.error ?? null
+  return (
+    <li className="flex flex-col gap-1 rounded-md border border-border bg-surface-1 px-3 py-2 text-xs">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-foreground" title={family}>
+          {family}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+          className="h-7 gap-1 text-xs"
+        >
+          {busy ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              Uploading…
+            </>
+          ) : (
+            <>
+              <UploadIcon className="h-3 w-3" aria-hidden="true" />
+              Upload
+            </>
+          )}
+        </Button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".ttf,.otf,.woff2,font/ttf,font/otf,font/woff2"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) onPick(file)
+            // Reset so re-picking the same file fires onChange.
+            e.currentTarget.value = ''
+          }}
+        />
+      </div>
+      {error !== null && (
+        <p role="alert" className="text-xs text-red-500">
+          {error}
+        </p>
+      )}
+    </li>
+  )
 }

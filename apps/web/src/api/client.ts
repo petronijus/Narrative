@@ -138,7 +138,11 @@ export interface ApiClient {
    * Sends the raw file bytes as body with the file's MIME type as Content-Type.
    * Optional original filename via X-Filename header for extension detection.
    */
-  uploadFolderFont(folderId: string, file: File): Promise<FolderFontSummary>
+  uploadFolderFont(
+    folderId: string,
+    file: File,
+    opts?: { familyOverride?: string },
+  ): Promise<FolderFontSummary>
   /**
    * Delete a folder font by asset id.
    * Returns the number of decks the font was promoted to (deck-scoped clones)
@@ -217,6 +221,9 @@ export interface ImportPptxResult {
   /** Number of embedded fonts lifted from the PPTX's `<p:embeddedFontLst>`
    *  and stamped into media_assets. Field is missing on older servers. */
   embeddedFontCount?: number
+  /** Distinct fontFamily values referenced anywhere in the imported
+   *  deck. Drives the post-import "upload missing fonts" panel. */
+  referencedFontFamilies?: string[]
 }
 
 /** Summary returned by the append endpoint — same shape minus the deck-creation
@@ -625,10 +632,19 @@ export function createApiClient(): ApiClient {
       return data.fonts
     },
 
-    uploadFolderFont: async (folderId, file) => {
+    uploadFolderFont: async (folderId, file, opts) => {
       const mime = file.type && file.type !== 'application/octet-stream' ? file.type : 'font/ttf'
       const arrayBuf = await file.arrayBuffer()
-      const res = await request(`/api/folders/${folderId}/fonts`, {
+      // `familyOverride` reaches the server as a `?fontFamily=` query
+      // param. The route uses it to stamp media_assets.font_family with
+      // the PPTX-authored typeface name instead of the file's internal
+      // `name` table value — so a missing-font upload binds to the
+      // family the slide content actually references.
+      const url =
+        opts?.familyOverride !== undefined && opts.familyOverride !== ''
+          ? `/api/folders/${folderId}/fonts?fontFamily=${encodeURIComponent(opts.familyOverride)}`
+          : `/api/folders/${folderId}/fonts`
+      const res = await request(url, {
         method: 'POST',
         headers: {
           'Content-Type': mime,
