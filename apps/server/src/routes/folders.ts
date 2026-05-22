@@ -26,8 +26,7 @@ import { eq, inArray, sql, and } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { folders, decks } from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
-import { DeleteObjectCommand } from '@aws-sdk/client-s3'
-import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { purgeDeckBucketPrefix } from '../media/bucketCleanup.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { listUsersBySubs } from '../auth/users.js'
 
@@ -221,10 +220,9 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         return reply.status(409).send({ error: 'cannot_delete_drafts' })
       }
 
-      // Capture thumbnail keys so we can clean up MinIO blobs after the
-      // cascade. Loss-tolerant — orphaned blobs can be reaped later.
+      // Capture deck ids so we can sweep MinIO blobs after the cascade.
       const containedDecks = await db
-        .select({ id: decks.id, thumbnailKey: decks.thumbnailKey })
+        .select({ id: decks.id })
         .from(decks)
         .where(eq(decks.folderId, id))
 
@@ -236,21 +234,11 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
 
       await db.delete(folders).where(eq(folders.id, id))
 
-      // Best-effort thumbnail cleanup
-      const keys = containedDecks
-        .map((d) => d.thumbnailKey)
-        .filter((k): k is string => k != null && k !== '')
-      if (keys.length > 0) {
-        const s3 = buildS3Client()
-        await Promise.all(
-          keys.map(async (key) => {
-            try {
-              await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: key }))
-            } catch (err) {
-              request.log.warn({ err, key }, 'thumbnail delete failed (orphan left)')
-            }
-          }),
-        )
+      // Best-effort: sweep MinIO under decks/<id>/ for every contained
+      // deck. Covers thumbnails, originals, HLS bundles, folder fonts.
+      // Loss-tolerant — errors are logged and swallowed.
+      if (containedDecks.length > 0) {
+        await Promise.all(containedDecks.map((d) => purgeDeckBucketPrefix(d.id, request.log)))
       }
 
       return reply.status(204).send({ deletedDeckCount: containedDecks.length })

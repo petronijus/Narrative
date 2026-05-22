@@ -238,11 +238,10 @@ export const shareLinks = pgTable(
  * Lifecycle:
  *   - Row is inserted by the media agent on tus upload finalize (phase 2).
  *   - ON DELETE CASCADE from decks ensures rows are removed when a deck is deleted.
- *
- * KNOWN ISSUE (M11): When a deck is deleted, the cascade removes media_assets rows
- * but leaves the original files orphaned in MinIO. This is intentional for M11.
- * TODO(M29 or media phase 2): add a post-delete hook or periodic GC job to enqueue
- * bucket cleanup for all storageKey values belonging to the deleted deck.
+ *   - DELETE /decks/:id and DELETE /folders/:id both call
+ *     `purgeDeckBucketPrefix(deckId)` after the cascade so MinIO blobs
+ *     under `decks/<deckId>/` (originals, HLS bundles, thumbnails,
+ *     folder fonts, untracked HLS segments) are swept too.
  *
  * imgproxy variants (thumb, display, original) are generated on demand from the
  * original stored at storageKey — no variant rows needed here.

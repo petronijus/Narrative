@@ -35,8 +35,16 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
   }
 })
 
+// Mock the bucket cleanup helper so DELETE tests don't try to reach
+// MinIO. Each test can assert against `purgeDeckBucketPrefix` directly.
+vi.mock('../media/bucketCleanup.js', () => ({
+  purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+}))
+
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const resolveMock = resolveDeckAccess as ReturnType<typeof vi.fn>
+const { purgeDeckBucketPrefix } = await import('../media/bucketCleanup.js')
+const purgeMock = purgeDeckBucketPrefix as ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // Mock DB factory
@@ -283,6 +291,38 @@ describe('DELETE /decks/:id', () => {
 
     const res = await app.inject({ method: 'DELETE', url: '/decks/deck-del' })
     expect(res.statusCode).toBe(204)
+  })
+
+  it('sweeps the deck bucket prefix on successful delete', async () => {
+    const now = new Date()
+    const db = makeMockDb([
+      {
+        id: 'deck-purge',
+        title: 'To Purge',
+        ownerUserId: 'dev-user',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ])
+    resolveMock.mockResolvedValue({ role: 'owner', reason: 'direct' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({ method: 'DELETE', url: '/decks/deck-purge' })
+
+    expect(res.statusCode).toBe(204)
+    expect(purgeMock).toHaveBeenCalledOnce()
+    expect(purgeMock).toHaveBeenCalledWith('deck-purge', expect.anything())
+  })
+
+  it('does not sweep bucket when delete returns 404', async () => {
+    const db = makeMockDb([])
+    resolveMock.mockResolvedValue({ role: 'owner', reason: 'direct' })
+    const app = await buildApp(db)
+
+    const res = await app.inject({ method: 'DELETE', url: '/decks/missing' })
+
+    expect(res.statusCode).toBe(404)
+    expect(purgeMock).not.toHaveBeenCalled()
   })
 
   it('returns 403 when user is not owner (editor role)', async () => {

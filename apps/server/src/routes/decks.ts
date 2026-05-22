@@ -27,7 +27,7 @@
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
 import { eq, inArray, sql, and } from 'drizzle-orm'
-import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
 import { decks, deckPermissions, folders } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
@@ -35,6 +35,7 @@ import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
+import { purgeDeckBucketPrefix } from '../media/bucketCleanup.js'
 import { getOrProvisionDrafts } from './folders.js'
 
 interface CreateDeckBody {
@@ -406,32 +407,18 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     async (request, reply) => {
       const { id } = request.params
 
-      // Capture the thumbnail key before deletion so we can also remove
-      // the MinIO object — orphaned blobs would slowly fill the bucket.
-      const [existing] = await db
-        .select({ thumbnailKey: decks.thumbnailKey })
-        .from(decks)
-        .where(eq(decks.id, id))
-        .limit(1)
-
       const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
 
       if (deleted.length === 0) {
         return reply.status(404).send({ error: 'Deck not found' })
       }
 
-      if (existing?.thumbnailKey != null && existing.thumbnailKey !== '') {
-        const s3 = buildS3Client()
-        try {
-          await s3.send(
-            new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: existing.thumbnailKey }),
-          )
-        } catch (err) {
-          // Storage failure is non-fatal — the DB row is gone, the
-          // orphan can be reaped by a future cleanup pass.
-          request.log.warn({ err, deckId: id }, 'thumbnail delete failed (orphan left)')
-        }
-      }
+      // Sweep MinIO under decks/<id>/. Covers the deck thumbnail, every
+      // media_assets original (image / audio / video / PPTX-import), the
+      // HLS bundle for transcoded videos (including untracked segment
+      // files), and any folder fonts that were uploaded against the
+      // deck. Loss-tolerant: errors are logged and swallowed.
+      await purgeDeckBucketPrefix(id, request.log)
 
       return reply.status(204).send()
     },
