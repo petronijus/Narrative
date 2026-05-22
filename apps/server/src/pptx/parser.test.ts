@@ -506,7 +506,11 @@ describe('parsePptx', () => {
     })
     const out = await parsePptx(buf)
     const runs = out.slides[0]!.shapes[0]!.textRuns!
-    expect(runs.map((r) => r.text)).toEqual(['Line one', '\n', 'Line two'])
+    // PPTX <a:p> paragraph boundary emits U+2029 (PARAGRAPH SEPARATOR),
+    // not '\n'. That's the renderer-side signal to start a fresh bullet
+    // segment — soft-break '\n' (PPTX <a:br>) stays continuation. See
+    // parser.ts paragraph-break emission for the full rationale.
+    expect(runs.map((r) => r.text)).toEqual(['Line one', '\u2029', 'Line two'])
   })
 
   it('resolves <a:hlinkClick r:id> on a run to a TextObject hyperlink', async () => {

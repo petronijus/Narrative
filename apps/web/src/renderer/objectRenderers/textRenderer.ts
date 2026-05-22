@@ -211,15 +211,21 @@ export function buildHtml(data: TextObject): string {
  */
 function prependListMarkersHtml(html: string, style: TextObject['listStyle']): string {
   if (style === undefined) return html
-  const lines = html.split(/<br\s*\/?>(?![^<]*>)/i)
+  // PARAGRAPH breaks (<br data-pb="1">, emitted from a Y.Text U+2029)
+  // split list items. SOFT breaks (plain <br>, emitted from a Y.Text
+  // \n) are continuation lines inside one item — rendered under the
+  // bullet, unbulleted. Split only on the data-pb sentinel. Without
+  // this, every <br> got its own bullet ("bullet everywhere" bug on
+  // the audit deck's slide 5).
+  const segments = html.split(/<br\s+data-pb=["']1["']\s*\/?>/i)
   if (style === 'bullet') {
-    return lines.map((l) => (l.length > 0 ? `•&nbsp;&nbsp;${l}` : l)).join('<br>')
+    return segments.map((s) => (s.length > 0 ? `•&nbsp;&nbsp;${s}` : s)).join('<br>')
   }
   let n = 1
-  return lines
-    .map((l) => {
-      if (l.length === 0) return l
-      const out = `${n}.&nbsp;&nbsp;${l}`
+  return segments
+    .map((s) => {
+      if (s.length === 0) return s
+      const out = `${n}.&nbsp;&nbsp;${s}`
       n += 1
       return out
     })
@@ -355,10 +361,18 @@ export function buildStyleOpts(data: TextObject): any {
   // slightly down + getting taller while editing. Pinning both ends
   // to the same multiplier keeps live edit perfectly aligned with
   // the rendered text.
+  // Default line-height multiplier. 1.4 (rather than the CSS spec's
+  // 1.0 or the previous 1.2) matches PowerPoint's effective rendering
+  // of <a:lnSpc spcPct="100000"/> - PowerPoint's 100% line spacing
+  // includes the font's ascent + descent + line gap on top of the
+  // em box, so a CSS pure multiplier of 1.0 renders noticeably
+  // tighter than the PPT source. 1.4 is the sweet spot for the
+  // audit deck's Northwind Sans / Druk faces and matches Tailwind's
+  // leading-snug - looser than the cramped 1.2, tighter than 1.5.
   opts.lineHeight =
     data.lineHeight !== undefined && data.lineHeight > 0
       ? data.lineHeight * data.fontSize
-      : data.fontSize * 1.2
+      : data.fontSize * 1.4
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
       color: hexToColorString(resolveColour(data.stroke)),

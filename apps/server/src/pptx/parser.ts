@@ -2414,10 +2414,21 @@ function parseShape(
           }
         }
       }
-      // Insert a paragraph-break run between paragraphs (after the first).
-      // The Y.Text body lays paragraphs out as `run1run2\nrun3run4\nrun5`,
-      // matching how PowerPoint flattens its multi-paragraph frames.
-      if (pi > 0) allRuns.push({ text: '\n' })
+      // Paragraph-break separator uses Unicode U+2029 (PARAGRAPH
+      // SEPARATOR) so the renderer can tell apart:
+      //   - PPTX <a:br>  soft line breaks      -> '\n' (within a paragraph),
+      //   - PPTX <a:p>   paragraph boundaries  -> U+2029.
+      // Critical for bullet lists: each <a:p> carries its own
+      // <a:buChar>, but a <a:br> continuation line inside the same
+      // paragraph SHARES the bullet (visually the second line of
+      // one item, unbulleted under the bullet). Without a distinct
+      // separator the renderer would bullet every soft-break line
+      // (the 'bullet everywhere' bug on the audit deck slide 5).
+      //
+      // NEVER embed the literal U+2029 character in source - it is
+      // a JS line terminator and tsc splits single-line comments
+      // on it. The '\u2029' escape is the only safe form.
+      if (pi > 0) allRuns.push({ text: '\u2029' })
 
       // Per-paragraph default run properties from `<a:pPr>/<a:defRPr>` —
       // PowerPoint applies these to any run in THIS paragraph whose own

@@ -143,7 +143,19 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
     if (typeof a.fontSize === 'number' && a.fontSize > 0) {
       styleBits.push(`font-size:${a.fontSize}px`)
     }
-    let body = escapeHtml(op.insert).replace(/\n/g, '<br>')
+    // Two break flavors land here:
+    //   '\n'      soft line break (PPTX <a:br>, Shift-Enter in the
+    //             editor) - renders as plain <br>. Inside a bulleted
+    //             list this is a continuation line under the bullet,
+    //             NOT a new bullet.
+    //   '\u2029'  PARAGRAPH SEPARATOR (PPTX <a:p> boundary) - emits
+    //             a <br data-pb="1"> sentinel that the renderer's
+    //             prependListMarkersHtml uses to split bullet
+    //             segments. Browsers render it as a plain line
+    //             break (data attrs are inert).
+    let body = escapeHtml(op.insert)
+      .replace(/\u2029/g, '<br data-pb="1">')
+      .replace(/\n/g, '<br>')
     if (italic) body = `<i>${body}</i>`
     if (underline) body = `<u>${body}</u>`
     if (styleBits.length > 0) body = `<span style="${styleBits.join(';')}">${body}</span>`

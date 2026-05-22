@@ -177,9 +177,12 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
 
   // Test: does any run carry formatting (other than the run's own text)?
   // If every run is "plain text only", the existing string path suffices.
+  // Both '\n' (soft break) and '\u2029' (PPTX paragraph separator)
+  // are pure structural runs with no formatting attributes.
+  const isStructuralBreak = (t: string): boolean => t === '\n' || t === '\u2029'
   const hasRichRun = runs.some(
     (r) =>
-      r.text !== '\n' &&
+      !isStructuralBreak(r.text) &&
       (r.bold === true ||
         r.italic === true ||
         r.underline === true ||
@@ -194,9 +197,9 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
   for (const r of runs) {
     if (r.text.length === 0) continue
     yt.insert(cursor, r.text)
-    // Paragraph-break synthetic runs have text === '\n' and no formatting —
-    // skip the format pass entirely.
-    if (r.text === '\n') {
+    // Paragraph-break (U+2029) and soft-break ('\n') synthetic runs
+    // have no formatting - skip the format pass entirely.
+    if (isStructuralBreak(r.text)) {
       cursor += 1
       continue
     }

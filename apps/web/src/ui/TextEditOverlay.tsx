@@ -277,7 +277,10 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       // with otherwise small text balloons the line height — visible
       // as the line spacing growing while in edit mode and snapping
       // back smaller on exit.
-      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.2) * obj.fontSize}px`,
+      // Default multiplier kept in lockstep with textRenderer.
+      // buildStyleOpts (1.4) so edit + render mode share a baseline.
+      // See the renderer's lineHeight default comment for rationale.
+      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.4) * obj.fontSize}px`,
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),
