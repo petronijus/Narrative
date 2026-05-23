@@ -25,21 +25,32 @@ test('dump slide 5 ellipse fill state', async ({ page }) => {
     if (msg.type() === 'error') console.error(`[browser] ${msg.text()}`)
   })
 
-  // Editor mode — the test-api only attaches to the editor's sceneGraph,
-  // not the present-mode renderer. We pick slide 5 via SlidesPanel.
-  await page.goto(`/deck/${deckId}`)
-  await page.waitForSelector('[data-slide-index]', { timeout: 30_000 })
-  // Wait until the test API is attached.
-  await page.waitForFunction(
-    () =>
-      (window as unknown as { __narrative_scene_graph?: unknown }).__narrative_scene_graph !==
-      undefined,
-    null,
-    { timeout: 15_000 },
-  )
-  // Click the 5th slide thumb (index 4).
-  await page.locator('[data-slide-index="4"]').click()
-  await page.waitForTimeout(2_000)
+  // Default to editor mode (where __narrative_scene_graph is exposed).
+  // Pass DIAG_PRESENT=1 to drive present mode instead.
+  const present = process.env['DIAG_PRESENT'] === '1'
+  if (present) {
+    await page.goto(`/deck/${deckId}/present`)
+    await page.waitForSelector('[data-testid="slide-container"]', { timeout: 30_000 })
+    const idx = Number(process.env['DIAG_SLIDE_INDEX'] ?? 4)
+    for (let i = 0; i < idx; i++) {
+      await page.keyboard.press('ArrowRight')
+      await page.waitForTimeout(300)
+    }
+    await page.waitForTimeout(4_000)
+  } else {
+    await page.goto(`/deck/${deckId}`)
+    await page.waitForSelector('[data-slide-index]', { timeout: 30_000 })
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { __narrative_scene_graph?: unknown }).__narrative_scene_graph !==
+        undefined,
+      null,
+      { timeout: 15_000 },
+    )
+    const idx = Number(process.env['DIAG_SLIDE_INDEX'] ?? 4)
+    await page.locator(`[data-slide-index="${idx}"]`).click()
+    await page.waitForTimeout(4_000)
+  }
 
   // Reach into the Pixi scene and dump every ellipse-shaped child's
   // resolved fill state. We look at the Graphics' `context._fillStyle`
@@ -85,12 +96,14 @@ test('dump slide 5 ellipse fill state', async ({ page }) => {
       if (kids) for (const k of kids) yield* walk(k)
     }
 
+    const minSize = Number(
+      (window as unknown as { __diag_min_size?: number }).__diag_min_size ?? 100,
+    )
     const results: DumpEntry[] = []
     for (const node of walk(root as Record<string, unknown>)) {
       const w = Number(node['width']) || 0
       const h = Number(node['height']) || 0
-      // We're after the two ~1456px ellipses on slide 5.
-      if (w < 1200 || h < 1200) continue
+      if (w < minSize || h < minSize) continue
       const tnode = node as {
         x?: number
         y?: number
@@ -113,11 +126,61 @@ test('dump slide 5 ellipse fill state', async ({ page }) => {
       if (typeof tnode.tint === 'number') entry.tint = tnode.tint
       if (tnode.filters) entry.filters = tnode.filters.length
       const childList = tnode.children as Array<Record<string, unknown>> | undefined
+      const allChildren: Array<{
+        kind: string
+        visible: boolean
+        alpha: number
+        fillColor?: number
+        textureLabel?: string
+        textureWidth?: number
+        textureHeight?: number
+        spriteW?: number
+        spriteH?: number
+      }> = []
+      for (const c of childList ?? []) {
+        const k = (c.constructor as { name?: string }).name ?? 'unknown'
+        const cn = c as {
+          visible?: boolean
+          alpha?: number
+          context?: { _fillStyle?: Record<string, unknown> }
+          texture?: { width?: number; height?: number; label?: string }
+          width?: number
+          height?: number
+        }
+        const entry: {
+          kind: string
+          visible: boolean
+          alpha: number
+          fillColor?: number
+          textureLabel?: string
+          textureWidth?: number
+          textureHeight?: number
+          spriteW?: number
+          spriteH?: number
+        } = {
+          kind: k,
+          visible: cn.visible ?? true,
+          alpha: cn.alpha ?? 1,
+        }
+        const fs = cn.context?._fillStyle
+        if (fs) {
+          if (typeof fs['color'] === 'number') entry.fillColor = fs['color'] as number
+          const tex = fs['texture'] as { label?: string } | undefined
+          if (tex?.label !== undefined) entry.textureLabel = tex.label
+        }
+        if (k === '_Sprite' && cn.texture) {
+          entry.textureLabel = cn.texture.label
+          entry.textureWidth = cn.texture.width
+          entry.textureHeight = cn.texture.height
+          entry.spriteW = cn.width
+          entry.spriteH = cn.height
+        }
+        allChildren.push(entry)
+      }
       const first = childList?.[0]
       if (first) {
         const kind = (first.constructor as { name?: string }).name ?? 'unknown'
         const child: DumpEntry['childAt0'] = { kind }
-        // Pixi v8 Graphics has `.context._fillStyle` after a fill is set.
         const ctx = (first as { context?: { _fillStyle?: Record<string, unknown> } }).context
         const fs = ctx?._fillStyle
         if (fs) {
@@ -135,6 +198,7 @@ test('dump slide 5 ellipse fill state', async ({ page }) => {
         }
         entry.childAt0 = child
       }
+      ;(entry as DumpEntry & { allChildren?: typeof allChildren }).allChildren = allChildren
       results.push(entry)
     }
     return { results }
