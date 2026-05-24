@@ -86,8 +86,8 @@ importers:
         specifier: ^1.8.0
         version: 1.10.2
       bullmq:
-        specifier: ^5.77.2
-        version: 5.77.2
+        specifier: ^5.76.11
+        version: 5.76.11
       drizzle-orm:
         specifier: ^0.43.1
         version: 0.43.1(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.21.0)
@@ -159,8 +159,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
       bullmq:
-        specifier: ^5.77.2
-        version: 5.77.2
+        specifier: ^5.76.11
+        version: 5.76.11
       drizzle-orm:
         specifier: ^0.43.1
         version: 0.43.1(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.21.0)
@@ -4741,17 +4741,12 @@ packages:
         integrity: sha512-EHcyIPBQ4BSGlvjB16k5KgAJ27CIsHY/2JBmCRReo48y9rQ3MaUzWX3KVlBa4U7MyX02HdVj0K7C3WaB3ju7FQ==,
       }
 
-  bullmq@5.77.2:
+  bullmq@5.76.11:
     resolution:
       {
-        integrity: sha512-3I3LdL8vR8/hetgPZghwFvsxVFhRJdUfhjeA4kXTQtHehRwQRTndIVzxOBwo/Bv+bP2uBzHJo894Or7qAhbwDw==,
+        integrity: sha512-9gXmLLuMbF1RvF2mQlBANuQoCHleqrXHy7IdSDOghjflJ3QR97nRXABWne4Qngz8ZwZzCQPrelzNqwfKf8L3Xw==,
       }
     engines: { node: '>=12.22.0' }
-    peerDependencies:
-      redis: '>=5.0.0'
-    peerDependenciesMeta:
-      redis:
-        optional: true
 
   bytes-iec@3.1.1:
     resolution:
@@ -12776,7 +12771,7 @@ snapshots:
       base64-js: 1.5.1
       ieee754: 1.2.1
 
-  bullmq@5.77.2:
+  bullmq@5.76.11:
     dependencies:
       cron-parser: 4.9.0
       ioredis: 5.10.1
