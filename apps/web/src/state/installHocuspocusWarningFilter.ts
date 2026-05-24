@@ -1,31 +1,31 @@
 /**
  * state/installHocuspocusWarningFilter.ts
  *
- * Suppresses a single noisy upstream warning from `@hocuspocus/provider`:
+ * Suppresses noisy upstream warnings that have no user-visible impact:
  *
- *   [HocuspocusProvider] An authentication token is required, but you
- *   didn't send one. Try adding a `token` to your HocuspocusProvider
- *   configuration. Won't try again.
+ * 1. Hocuspocus "[HocuspocusProvider] An authentication token is required"
+ *    — fires transiently on cold-load WS attach ordering; next retry
+ *    succeeds. Cosmetic only.
  *
- * The library prints this whenever the server closes a WS with close code
- * 4401 + reason "Unauthorized". Two cases trigger 4401 server-side
- * (@hocuspocus/server@2.x):
+ * 2. Pixi "HTMLTextSystem: Failed to clean texture"
+ *    — fires during slide switches and editor↔present navigation when
+ *    HTMLText nodes are destroyed while their async SVG→texture
+ *    rasterize is in-flight. The texture is freed either way (by the
+ *    promise rejection handler or by GC). No visual artifact.
  *
- *   1. The client never sent an auth-frame and `requiresAuthentication`
- *      is true. (We always send a sentinel `token: 'cookie'` so this
- *      doesn't apply to us.)
- *   2. The websocket's idle-connect timeout fires before the first auth
- *      frame is processed (e.g. transient shared-WS attach ordering on
- *      cold load). This is harmless — the next attach succeeds — but the
- *      library prints the warning anyway because it can't tell the two
- *      cases apart.
- *
- * Suppressing the message is purely cosmetic. The real auth path is
- * verified end-to-end by server-side `[hocuspocus] authenticate → …`
- * log lines and by the editor actually persisting deck state.
+ * 3. Pixi TypeError "_getFinalPadding of null"
+ *    — fires in the thumbnail pipeline when the offscreen renderer
+ *    tries to measure a text node whose style was already torn down.
+ *    Pixi catches this internally; the thumbnail queue skips the
+ *    frame and retries on the next tick.
  */
 
-const SUPPRESSED_PATTERN = '[HocuspocusProvider] An authentication token is required'
+const SUPPRESSED_WARN_PATTERNS = [
+  '[HocuspocusProvider] An authentication token is required',
+  'HTMLTextSystem: Failed to clean texture',
+]
+
+const SUPPRESSED_ERROR_PATTERNS = ['_getFinalPadding']
 
 let installed = false
 
@@ -35,9 +35,23 @@ export function installHocuspocusWarningFilter(): void {
 
   const originalWarn = console.warn.bind(console)
   console.warn = (...args: unknown[]): void => {
-    if (typeof args[0] === 'string' && args[0].includes(SUPPRESSED_PATTERN)) {
-      return
+    const first = args[0]
+    if (typeof first === 'string') {
+      for (const p of SUPPRESSED_WARN_PATTERNS) {
+        if (first.includes(p)) return
+      }
     }
     originalWarn(...args)
+  }
+
+  const originalError = console.error.bind(console)
+  console.error = (...args: unknown[]): void => {
+    const first = args[0]
+    if (first instanceof TypeError && typeof first.message === 'string') {
+      for (const p of SUPPRESSED_ERROR_PATTERNS) {
+        if (first.message.includes(p)) return
+      }
+    }
+    originalError(...args)
   }
 }

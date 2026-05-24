@@ -118,7 +118,7 @@ export function renderWithProviders(
       tree = <SelectionProvider>{tree}</SelectionProvider>
     }
     if (enabled.slideDoc && SlideDocContext !== undefined) {
-      tree = <SlideDocContext.Provider value={slideDocResolved}>{tree}</SlideDocContext.Provider>
+      tree = <SlideDocContext value={slideDocResolved}>{tree}</SlideDocContext>
     }
     if (enabled.tooltip) {
       tree = <TooltipProvider>{tree}</TooltipProvider>
@@ -130,7 +130,7 @@ export function renderWithProviders(
     // any context value we'd provide anyway, so skipping the provider is
     // safe.
     if (enabled.auth && AuthContext !== undefined) {
-      tree = <AuthContext.Provider value={authValue}>{tree}</AuthContext.Provider>
+      tree = <AuthContext value={authValue}>{tree}</AuthContext>
     }
     if (enabled.router) {
       tree = <MemoryRouter initialEntries={routerEntries}>{tree}</MemoryRouter>

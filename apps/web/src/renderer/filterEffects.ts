@@ -126,23 +126,16 @@ function installFilterEffectsNow(
     }
     if (shadow !== undefined) {
       const blurPx = Math.max(0, shadow.blur)
+      // Pixi 8.17's optimized blur halves strength per pass; higher
+      // quality (more passes) eliminates visible banding in the
+      // shadow gradient.
       const filter = new DropShadowFilter({
         color: resolveColour(shadow.color),
         alpha: shadow.opacity,
         blur: blurPx,
         offset: { x: shadow.offsetX, y: shadow.offsetY },
-        // `quality` = number of blur passes. 4 already gives a clean
-        // gaussian for small blurs; for very wide blurs the kernel
-        // hits its sample limit and the shadow looks chunky / banded.
-        // Bumping to 6 above blur ~24 px doubles the effective kernel
-        // without exploding cost (still O(quality * width)).
-        quality: blurPx > 24 ? 6 : 4,
+        quality: blurPx > 16 ? 8 : 6,
       })
-      // Render the filter at the device's native resolution so the
-      // shadow's blurred texture isn't 1:1-sampled then upscaled by
-      // the canvas — the upsample is what makes big shadows look
-      // pixelated. Cap at 2 so a 3x DPR display doesn't quadruple
-      // the texture cost for marginal visual gain.
       filter.resolution = Math.min(2, window.devicePixelRatio || 1)
       slots.shadow = filter
       slots.shadowData = { ...shadow }
@@ -161,6 +154,10 @@ function installFilterEffectsNow(
         strength: blurPx,
         quality: blurPx > 24 ? 6 : 4,
       })
+      // Pixi 8.17's optimized blur halves strength per pass, spreading
+      // the gaussian wider than the auto-padding (strength * 2) covers.
+      // 3× strength matches the 3-sigma boundary of the effective kernel.
+      filter.padding = Math.ceil(blurPx * 3)
       filter.resolution = Math.min(2, window.devicePixelRatio || 1)
       slots.blur = filter
       slots.blurPx = blurPx

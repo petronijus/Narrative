@@ -15,7 +15,7 @@
  * DeckEditor a DeckPresent dědí Y.Doc přes SlideDocContext — žádný reconnect
  * při navigaci mezi těmito dvěma child routes.
  *
- * M6: Přidán CanvasInstanceContext.Provider (varianta B — state lifting).
+ * M6: Přidán CanvasInstanceContext  (varianta B — state lifting).
  * Canvas.tsx volá onReady(instance) po Pixi init → DeckShell uloží do state →
  * context je dostupný pro PresentLayout + EditorLayout bez přímé závislosti na Canvas.
  *
@@ -357,7 +357,7 @@ export function DeckShell() {
               <ActiveSlideProvider>
                 <MediaUploadProvider deckId={id}>
                   <RulersProvider>
-                    <CanvasInstanceContext.Provider value={canvasInstance}>
+                    <CanvasInstanceContext value={canvasInstance}>
                       {/* Propagates folder text-style token edits onto
                         every linked TextObject in this deck, skipping
                         per-object override fields. */}
@@ -367,7 +367,7 @@ export function DeckShell() {
                           { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
                         }
                       />
-                    </CanvasInstanceContext.Provider>
+                    </CanvasInstanceContext>
                   </RulersProvider>
                 </MediaUploadProvider>
               </ActiveSlideProvider>

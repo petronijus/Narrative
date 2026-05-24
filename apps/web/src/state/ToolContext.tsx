@@ -24,9 +24,7 @@ export function ToolProvider({ children }: { children: React.ReactNode }) {
     setActiveToolState(tool)
   }, [])
 
-  return (
-    <ToolContext.Provider value={{ activeTool, setActiveTool }}>{children}</ToolContext.Provider>
-  )
+  return <ToolContext value={{ activeTool, setActiveTool }}>{children}</ToolContext>
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

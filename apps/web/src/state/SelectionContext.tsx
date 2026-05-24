@@ -129,7 +129,7 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
     ],
   )
 
-  return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>
+  return <SelectionContext value={value}>{children}</SelectionContext>
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

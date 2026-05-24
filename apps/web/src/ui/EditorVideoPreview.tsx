@@ -371,7 +371,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           onMouseLeave={() => {
             hoverTimeoutRef.current = setTimeout(() => setHovered(false), 80)
           }}
-          className="absolute bottom-1.5 left-1/2 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-sm"
+          className="absolute bottom-1.5 left-1/2 flex items-center gap-1 rounded-md bg-black/60 px-2 py-1 backdrop-blur-xs"
         >
           <button
             type="button"

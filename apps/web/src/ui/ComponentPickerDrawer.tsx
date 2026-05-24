@@ -262,12 +262,12 @@ function ComponentRow({ component, onPick, onDragStart, onDragEnd }: ComponentRo
           <img
             src={component.thumbnailUrl}
             alt=""
-            className="h-10 w-14 flex-shrink-0 rounded-sm border border-border object-cover"
+            className="h-10 w-14 flex-shrink-0 rounded-xs border border-border object-cover"
             draggable={false}
           />
         ) : (
           <span
-            className="flex h-10 w-14 flex-shrink-0 items-center justify-center rounded-sm border border-[#6366f1]/40 bg-[#6366f1]/10 text-base text-[#6366f1]"
+            className="flex h-10 w-14 flex-shrink-0 items-center justify-center rounded-xs border border-[#6366f1]/40 bg-[#6366f1]/10 text-base text-[#6366f1]"
             aria-hidden="true"
           >
             ⌘

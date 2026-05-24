@@ -112,7 +112,7 @@ export function MoveToTargetOverlay({ obj, step, mutationCtx }: MoveToTargetOver
           to derive the CSS top-left. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute rounded-sm border border-dashed border-blue-400/80 bg-blue-400/5"
+        className="pointer-events-none absolute rounded-xs border border-dashed border-blue-400/80 bg-blue-400/5"
         style={{
           left: targetCx - w / 2,
           top: targetCy - h / 2,

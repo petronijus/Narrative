@@ -156,7 +156,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
               }}
               onBlur={commitNameRename}
               maxLength={200}
-              className="min-w-0 max-w-[240px] rounded-sm border border-border-strong bg-surface-1 px-1.5 py-0.5 text-sm font-semibold text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+              className="min-w-0 max-w-[240px] rounded-xs border border-border-strong bg-surface-1 px-1.5 py-0.5 text-sm font-semibold text-foreground outline-none focus:ring-1 focus:ring-ring/40"
               aria-label="Folder name"
             />
           ) : (
@@ -165,7 +165,7 @@ function FolderSettingsInner({ folderId }: { folderId: string }) {
                 setNameDraft(folder?.name ?? '')
                 setEditingName(true)
               }}
-              className="min-w-0 max-w-[240px] truncate rounded-sm px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              className="min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
               title="Click to rename folder"
             >
               {folder?.name ?? '…'}
@@ -775,7 +775,7 @@ function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardP
           }}
           onBlur={() => void commitRename()}
           maxLength={200}
-          className="w-full rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-center text-xs text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+          className="w-full rounded-xs border border-border-strong bg-surface-1 px-1 py-0.5 text-center text-xs text-foreground outline-none focus:ring-1 focus:ring-ring/40"
           aria-label="Component name"
         />
       ) : (
@@ -783,7 +783,7 @@ function ComponentCard({ component, onOpen, onRename, onDelete }: ComponentCardP
           type="button"
           onDoubleClick={() => setEditing(true)}
           title="Double-click to rename"
-          className="w-full truncate rounded-sm px-1 py-0.5 text-center text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+          className="w-full truncate rounded-xs px-1 py-0.5 text-center text-xs font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
         >
           {component.name}
         </button>
@@ -1047,7 +1047,7 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
           }}
           onBlur={commitName}
           maxLength={80}
-          className="w-full rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-center text-[11px] text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+          className="w-full rounded-xs border border-border-strong bg-surface-1 px-1 py-0.5 text-center text-[11px] text-foreground outline-none focus:ring-1 focus:ring-ring/40"
           aria-label="Color name"
         />
       ) : (
@@ -1055,7 +1055,7 @@ function ColorSwatch({ color, onUpdate, onDeleteRequest }: ColorSwatchProps) {
           type="button"
           onDoubleClick={() => setEditing(true)}
           title="Double-click to rename"
-          className="max-w-full truncate rounded-sm px-1 py-0.5 text-center text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+          className="max-w-full truncate rounded-xs px-1 py-0.5 text-center text-[11px] text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
         >
           {color.name}
         </button>
@@ -1531,7 +1531,7 @@ function TextStyleEditor({ style, colors, onUpdate }: TextStyleEditorProps) {
                   aria-label={`Use color token: ${c.name}`}
                   onClick={() => onUpdate({ color: c.value })}
                   className={[
-                    'h-5 w-5 rounded-sm border transition',
+                    'h-5 w-5 rounded-xs border transition',
                     colorValue === c.value
                       ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
                       : 'border-border hover:border-border-strong',
@@ -1619,7 +1619,7 @@ function DeleteTokenModal({
       role="dialog"
       aria-modal="true"
       aria-label={`Delete ${tokenName}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-xs"
       onClick={(e) => {
         if (e.target === e.currentTarget) onCancel()
       }}

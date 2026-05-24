@@ -128,7 +128,7 @@ export function FolderFontsProvider({ folderId, children }: FolderFontsProviderP
 
   const value: FolderFontsContextValue = { folderId, fonts, loading, error, refresh }
 
-  return <FolderFontsContext.Provider value={value}>{children}</FolderFontsContext.Provider>
+  return <FolderFontsContext value={value}>{children}</FolderFontsContext>
 }
 
 // ---------------------------------------------------------------------------

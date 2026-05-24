@@ -108,10 +108,10 @@ export function ComponentMasterEditor() {
                         <CropModeProvider>
                           <PathPointsModeProvider>
                             <RulersProvider>
-                              <CanvasInstanceContext.Provider value={canvasInstance}>
+                              <CanvasInstanceContext value={canvasInstance}>
                                 <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
                                 <ComponentThumbnailUploader componentId={componentId} />
-                              </CanvasInstanceContext.Provider>
+                              </CanvasInstanceContext>
                             </RulersProvider>
                           </PathPointsModeProvider>
                         </CropModeProvider>

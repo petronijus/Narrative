@@ -684,6 +684,14 @@ export class SceneGraph {
   /**
    * Uvolní všechny Pixi zdroje a vyprázdní scene graph.
    * Volat při unmount Canvas komponenty (před app.destroy).
+   *
+   * Text nodes are NOT destroyed here — their HTMLText texture
+   * rasterize may be in-flight and calling destroy() before
+   * HTMLTextSystem.destroy() triggers "Failed to clean texture"
+   * warnings. Instead we detach the root from the stage and let
+   * app.destroy({ children: true }) handle it: the system-level
+   * cleanup runs first and drains active texture promises with
+   * proper error handling, then the node tree is torn down.
    */
   destroy(): void {
     for (const id of [...this.nodes.keys()]) {

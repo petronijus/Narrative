@@ -107,13 +107,13 @@ describe('Inspector — no selection shows SlideInspector', () => {
     const ctxValue = createContextValue(deckCtx)
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+        </ActiveSlideContext>
+      </SlideDocContext>,
     )
 
     expect(screen.getByText('Transition')).toBeInTheDocument()
@@ -126,13 +126,13 @@ describe('Inspector — no selection shows SlideInspector', () => {
     const ctxValue = createContextValue(deckCtx)
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+        </ActiveSlideContext>
+      </SlideDocContext>,
     )
 
     expect(screen.getByText('No selection')).toBeInTheDocument()
@@ -150,13 +150,13 @@ describe('Inspector — no selection shows SlideInspector', () => {
     const ctxValue = createContextValue(deckCtx)
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+        </ActiveSlideContext>
+      </SlideDocContext>,
     )
 
     const kindSelect = screen.getByLabelText('Kind') as HTMLSelectElement
@@ -175,13 +175,13 @@ describe('Inspector — no selection shows SlideInspector', () => {
     const ctxValue = createContextValue(deckCtx)
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+        </ActiveSlideContext>
+      </SlideDocContext>,
     )
 
     expect(screen.getByLabelText('Direction')).toBeInTheDocument()
@@ -199,13 +199,13 @@ describe('Inspector — no selection shows SlideInspector', () => {
     const ctxValue = createContextValue(deckCtx)
 
     render(
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>,
+        </ActiveSlideContext>
+      </SlideDocContext>,
     )
 
     expect(screen.queryByLabelText('Direction')).not.toBeInTheDocument()
@@ -360,13 +360,13 @@ function renderWithSelection(obj: SlideObject) {
 
   return render(
     <MemoryRouter>
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <Inner />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>
+        </ActiveSlideContext>
+      </SlideDocContext>
     </MemoryRouter>,
   )
 }
@@ -519,13 +519,13 @@ describe('Inspector — multi-select placeholder', () => {
 
     render(
       <MemoryRouter>
-        <SlideDocContext.Provider value={ctxValue}>
-          <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+        <SlideDocContext value={ctxValue}>
+          <ActiveSlideContext value={createMockActiveSlide()}>
             <SelectionProvider>
               <MultiSelectInner />
             </SelectionProvider>
-          </ActiveSlideContext.Provider>
-        </SlideDocContext.Provider>
+          </ActiveSlideContext>
+        </SlideDocContext>
       </MemoryRouter>,
     )
 

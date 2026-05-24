@@ -60,7 +60,7 @@ export function TextEditProvider({ children }: { children: React.ReactNode }) {
     pendingRef.current = null
   }, [])
   return (
-    <TextEditContext.Provider
+    <TextEditContext
       value={{
         editingId,
         beginEdit,
@@ -70,7 +70,7 @@ export function TextEditProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-    </TextEditContext.Provider>
+    </TextEditContext>
   )
 }
 

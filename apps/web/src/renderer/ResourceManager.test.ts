@@ -27,12 +27,9 @@ describe('ResourceManager', () => {
   it('acquireTexture načte texturu a vrátí ji', async () => {
     const texture = await rm.acquireTexture('https://example.com/img.png')
     expect(texture).toBeDefined()
-    // Pixi v8: Assets.load takes an options object with `src` + `parser`.
-    // The implementation pins parser='loadTextures' to handle imgproxy
-    // URLs that lack a real file extension.
     expect(Assets.load).toHaveBeenCalledWith({
       src: 'https://example.com/img.png',
-      parser: 'loadTextures',
+      parser: 'texture',
     })
   })
 

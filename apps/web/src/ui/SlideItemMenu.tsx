@@ -14,7 +14,7 @@
  * Accessibility: button has aria-label + aria-expanded; menu has role="menu".
  */
 
-import { useRef, useState, useEffect, useCallback, useId } from 'react'
+import { useRef, useState, useEffect, useCallback, useId, type ReactElement } from 'react'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,7 +49,7 @@ export function SlideItemMenu({
   onRename,
   onToggleSkip,
   onOpenChange,
-}: SlideItemMenuProps): JSX.Element {
+}: SlideItemMenuProps): ReactElement {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     onOpenChange?.(open)

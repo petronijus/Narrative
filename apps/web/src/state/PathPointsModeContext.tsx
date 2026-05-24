@@ -21,9 +21,9 @@ export function PathPointsModeProvider({ children }: { children: React.ReactNode
   const enterPathPoints = useCallback((id: string) => setPathPointsId(id), [])
   const exitPathPoints = useCallback(() => setPathPointsId(null), [])
   return (
-    <PathPointsModeContext.Provider value={{ pathPointsId, enterPathPoints, exitPathPoints }}>
+    <PathPointsModeContext value={{ pathPointsId, enterPathPoints, exitPathPoints }}>
       {children}
-    </PathPointsModeContext.Provider>
+    </PathPointsModeContext>
   )
 }
 

@@ -203,17 +203,17 @@ function renderPresent(
   const ctxValue = createSlideDocValue()
 
   return render(
-    <SlideDocContext.Provider value={ctxValue}>
-      <ActiveSlideContext.Provider value={activeSlide}>
-        <CanvasInstanceContext.Provider value={canvasInstance}>
+    <SlideDocContext value={ctxValue}>
+      <ActiveSlideContext value={activeSlide}>
+        <CanvasInstanceContext value={canvasInstance}>
           <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
             <Routes>
               <Route path="/deck/:id/present" element={<PresentLayout />} />
             </Routes>
           </MemoryRouter>
-        </CanvasInstanceContext.Provider>
-      </ActiveSlideContext.Provider>
-    </SlideDocContext.Provider>,
+        </CanvasInstanceContext>
+      </ActiveSlideContext>
+    </SlideDocContext>,
     { providers: { router: false, slideDoc: false } },
   )
 }

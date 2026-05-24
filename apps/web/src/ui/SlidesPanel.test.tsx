@@ -113,13 +113,13 @@ function renderPanel(
   const ctxValue = createMockSlideDocValue({ deckCtx })
 
   return render(
-    <SlideDocContext.Provider value={ctxValue}>
-      <ActiveSlideContext.Provider value={activeSlide}>
+    <SlideDocContext value={ctxValue}>
+      <ActiveSlideContext value={activeSlide}>
         <SelectionProvider>
           <SlidesPanel />
         </SelectionProvider>
-      </ActiveSlideContext.Provider>
-    </SlideDocContext.Provider>,
+      </ActiveSlideContext>
+    </SlideDocContext>,
   )
 }
 

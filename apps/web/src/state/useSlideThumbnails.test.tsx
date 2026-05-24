@@ -130,9 +130,9 @@ function renderWithContext(initialSlideIds: string[]) {
   const setterRef: SetterRef = {}
 
   const { unmount } = render(
-    <SlideDocContext.Provider value={mockCtxValue}>
+    <SlideDocContext value={mockCtxValue}>
       <ThumbnailWrapper initialSlideIds={initialSlideIds} setterRef={setterRef} />
-    </SlideDocContext.Provider>,
+    </SlideDocContext>,
   )
 
   const getThumbnails = (): Record<string, string> => {

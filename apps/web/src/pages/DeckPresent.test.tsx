@@ -124,15 +124,15 @@ function renderDeckPresent(deckId = 'deck-123') {
   const mockActiveSlide = { activeSlideId: null, setActiveSlideId: vi.fn() }
 
   return render(
-    <SlideDocContext.Provider value={ctxValue}>
-      <ActiveSlideContext.Provider value={mockActiveSlide}>
+    <SlideDocContext value={ctxValue}>
+      <ActiveSlideContext value={mockActiveSlide}>
         <MemoryRouter initialEntries={[`/deck/${deckId}/present`]}>
           <Routes>
             <Route path="/deck/:id/present" element={<DeckPresent />} />
           </Routes>
         </MemoryRouter>
-      </ActiveSlideContext.Provider>
-    </SlideDocContext.Provider>,
+      </ActiveSlideContext>
+    </SlideDocContext>,
   )
 }
 

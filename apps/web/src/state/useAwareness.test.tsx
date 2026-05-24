@@ -98,9 +98,9 @@ describe('useAwareness', () => {
       awareness: fakeAwareness as unknown as Awareness,
     })
     return render(
-      <SlideDocContext.Provider value={ctxValue}>
+      <SlideDocContext value={ctxValue}>
         <AwarenessReadout />
-      </SlideDocContext.Provider>,
+      </SlideDocContext>,
     )
   }
 

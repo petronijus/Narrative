@@ -148,7 +148,7 @@ export function TableEditProvider({ children }: { children: React.ReactNode }) {
     ],
   )
 
-  return <TableEditContext.Provider value={value}>{children}</TableEditContext.Provider>
+  return <TableEditContext value={value}>{children}</TableEditContext>
 }
 
 export function useTableEdit(): TableEditContextValue {

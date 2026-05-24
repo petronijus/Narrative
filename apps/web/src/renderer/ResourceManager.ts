@@ -61,10 +61,10 @@ export class ResourceManager {
       // Pin the loader explicitly: imgproxy URLs end in `@webp` / `@jpg`
       // (format spec, not a file extension), so Pixi's extension-based
       // dispatch otherwise warns "could not be loaded as we don't know
-      // how to parse it" before falling back. `parser: 'loadTextures'`
+      // how to parse it" before falling back. `parser: 'texture'`
       // tells Pixi to use the bitmap/texture loader regardless of the
-      // URL's tail (Pixi 8 renamed `loadParser` → `parser`).
-      texture = await Assets.load<Texture>({ src: url, parser: 'loadTextures' })
+      // URL's tail.
+      texture = await Assets.load<Texture>({ src: url, parser: 'texture' })
     } catch {
       texture = null
     }

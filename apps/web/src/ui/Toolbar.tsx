@@ -436,7 +436,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               }
             }}
             aria-label="Back to presentation"
-            className="h-7 gap-1.5 rounded-full bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm shadow-blue-500/30 hover:bg-blue-500"
+            className="h-7 gap-1.5 rounded-full bg-blue-600 px-3 text-xs font-semibold text-white shadow-xs shadow-blue-500/30 hover:bg-blue-500"
           >
             <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
             Back to presentation
@@ -516,7 +516,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 }}
                 onBlur={commitTitleRename}
                 maxLength={200}
-                className="min-w-0 max-w-full rounded-sm border border-border-strong bg-surface-1 px-1.5 py-0.5 text-xs font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+                className="min-w-0 max-w-full rounded-xs border border-border-strong bg-surface-1 px-1.5 py-0.5 text-xs font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
                 aria-label="Deck title"
               />
             ) : (
@@ -529,7 +529,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   setTitleEditing(true)
                 }}
                 title={isViewer ? deckTitle : 'Click to rename deck'}
-                className="min-w-0 max-w-full truncate rounded-sm px-1.5 py-0.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
+                className="min-w-0 max-w-full truncate rounded-xs px-1.5 py-0.5 text-xs font-medium text-foreground hover:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
               >
                 {deckTitle}
               </button>

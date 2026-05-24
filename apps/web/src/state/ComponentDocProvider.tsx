@@ -102,7 +102,7 @@ export function ComponentDocProvider({ componentId, children }: ComponentDocProv
     }
   }, [])
 
-  return <ComponentDocContext.Provider value={value}>{children}</ComponentDocContext.Provider>
+  return <ComponentDocContext value={value}>{children}</ComponentDocContext>
 }
 
 // ---------------------------------------------------------------------------

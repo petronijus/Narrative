@@ -176,7 +176,7 @@ function TriggerIcon({ trigger }: { trigger: AnimationTrigger }) {
 
 function barBaseClass(selected: boolean, isViewer: boolean): string {
   return [
-    'absolute flex items-center gap-1 rounded text-[11px] text-white shadow-sm',
+    'absolute flex items-center gap-1 rounded text-[11px] text-white shadow-xs',
     isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
     'select-none overflow-hidden',
     'bg-gray-700 hover:bg-gray-600 transition-colors',
@@ -358,7 +358,7 @@ function VideoClipBar({
           : `Video starts at ${startSec.toFixed(2)}s — drag to retime`
       }
       className={[
-        'absolute flex items-center gap-1 overflow-hidden rounded text-[11px] text-white shadow-sm',
+        'absolute flex items-center gap-1 overflow-hidden rounded text-[11px] text-white shadow-xs',
         'bg-blue-700/80 hover:bg-blue-700 transition-colors',
         isViewer ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
         'select-none',

@@ -57,6 +57,12 @@ export default [
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/react-compiler': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/globals': 'off',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },

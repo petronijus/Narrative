@@ -69,9 +69,9 @@ function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCon
 function renderFoldersHome() {
   return render(
     <MemoryRouter>
-      <AuthContext.Provider value={createMockAuthValue()}>
+      <AuthContext value={createMockAuthValue()}>
         <FoldersHome />
-      </AuthContext.Provider>
+      </AuthContext>
     </MemoryRouter>,
     { providers: { router: false, auth: false } },
   )

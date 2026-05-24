@@ -62,7 +62,7 @@ export function PerfHudProvider({ children }: { children: ReactNode }) {
     [enabled, toggle, setEnabled],
   )
 
-  return <PerfHudContext.Provider value={value}>{children}</PerfHudContext.Provider>
+  return <PerfHudContext value={value}>{children}</PerfHudContext>
 }
 
 export function usePerfHud(): PerfHudContextValue {

@@ -43,7 +43,7 @@ interface TestAppOptions {
 function TestApp({ authValue, initialPath = '/' }: TestAppOptions) {
   return (
     <MemoryRouter initialEntries={[initialPath]}>
-      <AuthContext.Provider value={authValue}>
+      <AuthContext value={authValue}>
         <Routes>
           <Route path="/auth/login" element={<div data-testid="login-page">Login Page</div>} />
           <Route element={<ProtectedRoute />}>
@@ -51,7 +51,7 @@ function TestApp({ authValue, initialPath = '/' }: TestAppOptions) {
             <Route path="/deck/:id" element={<div data-testid="deck-content">Deck</div>} />
           </Route>
         </Routes>
-      </AuthContext.Provider>
+      </AuthContext>
     </MemoryRouter>
   )
 }

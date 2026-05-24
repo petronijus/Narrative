@@ -202,7 +202,7 @@ export function FoldersHome() {
 
       {/* Drag overlay — shown while a file is being dragged anywhere on the page */}
       {draggingPptx && (
-        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/40 backdrop-blur-sm">
+        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/40 backdrop-blur-xs">
           <div className="rounded-xl border-2 border-dashed border-foreground/40 bg-surface-1/80 px-10 py-8 text-center shadow-xl">
             <FileUp className="mx-auto mb-3 h-8 w-8 text-foreground" aria-hidden="true" />
             <p className="text-sm font-medium text-foreground">Drop a .pptx to import</p>
@@ -365,7 +365,7 @@ export function FoldersHome() {
           role="dialog"
           aria-modal="true"
           aria-label="Cannot delete folder"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-xs"
           onClick={(e) => {
             if (e.target === e.currentTarget) setDeleteBlockedId(null)
           }}
@@ -498,7 +498,7 @@ function FolderCard({
             }}
             onBlur={commitRename}
             maxLength={200}
-            className="min-w-0 flex-1 rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+            className="min-w-0 flex-1 rounded-xs border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
             aria-label="Folder name"
           />
         ) : (

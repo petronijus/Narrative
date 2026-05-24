@@ -16,8 +16,12 @@ import type { VideoTranscodeJobData } from '@narrative/shared'
 const { mockAdd, mockClose, MockQueue, MockIORedis } = vi.hoisted(() => {
   const mockAdd = vi.fn().mockResolvedValue({ id: 'job-1' })
   const mockClose = vi.fn().mockResolvedValue(undefined)
-  const MockQueue = vi.fn().mockImplementation(() => ({ add: mockAdd, close: mockClose }))
-  const MockIORedis = vi.fn().mockImplementation(() => ({}))
+  const MockQueue = vi.fn().mockImplementation(function () {
+    return { add: mockAdd, close: mockClose }
+  })
+  const MockIORedis = vi.fn().mockImplementation(function () {
+    return {}
+  })
   return { mockAdd, mockClose, MockQueue, MockIORedis }
 })
 

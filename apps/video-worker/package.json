@@ -12,18 +12,18 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1053.0",
     "@narrative/shared": "workspace:*",
-    "@aws-sdk/client-s3": "^3.776.0",
-    "bullmq": "^5.52.0",
+    "bullmq": "^5.77.2",
     "drizzle-orm": "^0.43.1",
     "ioredis": "^5.6.1",
-    "pg": "^8.14.1",
-    "pino": "^9.6.0"
+    "pg": "^8.21.0",
+    "pino": "^10.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.1",
     "@types/pg": "^8.11.11",
-    "typescript": "^5.8.3",
-    "vitest": "^3.1.2"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
   }
 }

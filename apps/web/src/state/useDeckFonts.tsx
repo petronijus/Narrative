@@ -89,7 +89,7 @@ export function DeckFontsProvider({ deckId, children }: DeckFontsProviderProps) 
 
   const value: DeckFontsContextValue = { deckId, fonts, loading, error, refresh }
 
-  return <DeckFontsContext.Provider value={value}>{children}</DeckFontsContext.Provider>
+  return <DeckFontsContext value={value}>{children}</DeckFontsContext>
 }
 
 export function useDeckFonts(): DeckFontsContextValue {

@@ -504,20 +504,16 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
 
   if (value === null) {
     return (
-      <FolderDocContext.Provider value={placeholderRef.current}>
-        <FolderMutationsContext.Provider value={mutations}>
-          {children}
-        </FolderMutationsContext.Provider>
-      </FolderDocContext.Provider>
+      <FolderDocContext value={placeholderRef.current}>
+        <FolderMutationsContext value={mutations}>{children}</FolderMutationsContext>
+      </FolderDocContext>
     )
   }
 
   return (
-    <FolderDocContext.Provider value={value}>
-      <FolderMutationsContext.Provider value={mutations}>
-        {children}
-      </FolderMutationsContext.Provider>
-    </FolderDocContext.Provider>
+    <FolderDocContext value={value}>
+      <FolderMutationsContext value={mutations}>{children}</FolderMutationsContext>
+    </FolderDocContext>
   )
 }
 

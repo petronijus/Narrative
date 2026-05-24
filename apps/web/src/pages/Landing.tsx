@@ -256,7 +256,7 @@ function DeckCard({ deck, thumbnail, onOpen, onDelete, onRename }: DeckCardProps
             }}
             onBlur={commit}
             maxLength={200}
-            className="min-w-0 flex-1 rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+            className="min-w-0 flex-1 rounded-xs border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
             aria-label="Deck title"
           />
         ) : (

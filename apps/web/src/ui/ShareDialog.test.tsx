@@ -112,9 +112,9 @@ function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCon
 
 function renderDialog(onClose = vi.fn()) {
   return render(
-    <AuthContext.Provider value={createMockAuthValue()}>
+    <AuthContext value={createMockAuthValue()}>
       <ShareDialog deckId="deck-123" onClose={onClose} />
-    </AuthContext.Provider>,
+    </AuthContext>,
   )
 }
 

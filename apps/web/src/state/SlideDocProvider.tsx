@@ -264,7 +264,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     )
   }
 
-  return <SlideDocContext.Provider value={fullValue}>{children}</SlideDocContext.Provider>
+  return <SlideDocContext value={fullValue}>{children}</SlideDocContext>
 }
 
 // ---------------------------------------------------------------------------
@@ -352,5 +352,5 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
   // underscore-prefix rename that would also leak into the type.
   void deckId
 
-  return <SlideDocContext.Provider value={value}>{children}</SlideDocContext.Provider>
+  return <SlideDocContext value={value}>{children}</SlideDocContext>
 }

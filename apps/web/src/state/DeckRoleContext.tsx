@@ -48,11 +48,7 @@ export function DeckRoleStaticProvider({
   folderId: string | null
   children: ReactNode
 }) {
-  return (
-    <DeckRoleContext.Provider value={{ role, folderId, isLoading: false }}>
-      {children}
-    </DeckRoleContext.Provider>
-  )
+  return <DeckRoleContext value={{ role, folderId, isLoading: false }}>{children}</DeckRoleContext>
 }
 
 interface DeckRoleProviderProps {
@@ -132,11 +128,7 @@ export function DeckRoleProvider({ deckId, children }: DeckRoleProviderProps) {
     }
   }, [deckId, user, api, location.search])
 
-  return (
-    <DeckRoleContext.Provider value={{ role, folderId, isLoading }}>
-      {children}
-    </DeckRoleContext.Provider>
-  )
+  return <DeckRoleContext value={{ role, folderId, isLoading }}>{children}</DeckRoleContext>
 }
 
 export function useDeckRole(): DeckRoleContextValue {

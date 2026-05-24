@@ -3219,7 +3219,7 @@ function GradientPreviewBar({
               onPointerDown={(e) => beginDrag(idx, e)}
               onDoubleClick={() => openPicker(idx)}
               className={[
-                'absolute inset-0 cursor-ew-resize rounded-sm border-2 border-white shadow ring-1 ring-black/40',
+                'absolute inset-0 cursor-ew-resize rounded-xs border-2 border-white shadow ring-1 ring-black/40',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               ].join(' ')}
               style={{
@@ -4860,7 +4860,7 @@ function TrimFilmstrip({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-primary"
+          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-xs bg-primary"
           style={{ left: `${startPct}%`, touchAction: 'none' }}
         >
           <div className="h-3 w-0.5 rounded bg-white/80" />
@@ -4876,7 +4876,7 @@ function TrimFilmstrip({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-primary"
+          className="absolute inset-y-0 z-10 flex w-3 -translate-x-1/2 cursor-ew-resize items-center justify-center rounded-xs bg-primary"
           style={{ left: `${endPct}%`, touchAction: 'none' }}
         >
           <div className="h-3 w-0.5 rounded bg-white/80" />

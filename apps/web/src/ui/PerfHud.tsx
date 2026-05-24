@@ -138,7 +138,7 @@ export function PerfHud() {
 
   return (
     <div
-      className="pointer-events-none fixed right-2 top-2 z-50 select-none rounded-md border border-white/10 bg-black/70 px-3 py-2 font-mono text-[11px] leading-tight text-white shadow-lg backdrop-blur-sm"
+      className="pointer-events-none fixed right-2 top-2 z-50 select-none rounded-md border border-white/10 bg-black/70 px-3 py-2 font-mono text-[11px] leading-tight text-white shadow-lg backdrop-blur-xs"
       role="status"
       aria-live="off"
     >

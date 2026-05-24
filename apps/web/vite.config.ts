@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { execSync } from 'node:child_process'
 
@@ -50,7 +51,7 @@ export default defineConfig(({ mode }) => ({
     __BUILD_VERSION__: JSON.stringify(process.env['VITE_BUILD_VERSION'] ?? resolveBuildVersion()),
     __BUILD_MODE__: JSON.stringify(mode),
   },
-  plugins: [react()],
+  plugins: [tailwindcss(), react()],
   resolve: {
     alias: {
       '@narrative/animation': path.resolve(__dirname, '../../packages/animation/src/index.ts'),
@@ -90,7 +91,7 @@ export default defineConfig(({ mode }) => ({
     // CLI (or release plugin) reads dist/**/*.map directly during deploy.
     sourcemap: 'hidden',
     chunkSizeWarningLimit: 800,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, hls.js, Radix,
         // Sentry, React all into their own chunks so the initial download is

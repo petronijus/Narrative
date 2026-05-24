@@ -249,7 +249,7 @@ function FolderDecksInner() {
                 }}
                 onBlur={commitFolderRename}
                 maxLength={200}
-                className="min-w-0 max-w-[240px] rounded-sm border border-border-strong bg-surface-1 px-1.5 py-0.5 text-sm font-semibold text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+                className="min-w-0 max-w-[240px] rounded-xs border border-border-strong bg-surface-1 px-1.5 py-0.5 text-sm font-semibold text-foreground outline-none focus:ring-1 focus:ring-ring/40"
                 aria-label="Folder name"
               />
             ) : (
@@ -258,7 +258,7 @@ function FolderDecksInner() {
                   setFolderNameDraft(folder?.name ?? '')
                   setEditingFolderName(true)
                 }}
-                className="min-w-0 max-w-[240px] truncate rounded-sm px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                className="min-w-0 max-w-[240px] truncate rounded-xs px-1.5 py-0.5 text-sm font-semibold text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                 aria-label="Rename folder (click to edit)"
                 title="Click to rename"
               >
@@ -473,7 +473,7 @@ function DeckCard({
             }}
             onBlur={commit}
             maxLength={200}
-            className="min-w-0 flex-1 rounded-sm border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
+            className="min-w-0 flex-1 rounded-xs border border-border-strong bg-surface-1 px-1 py-0.5 text-sm font-medium text-foreground outline-none focus:ring-1 focus:ring-ring/40"
             aria-label="Deck title"
           />
         ) : (
@@ -639,7 +639,7 @@ function ActiveEditorsBubbles({ users, className = '' }: ActiveEditorsBubblesPro
           <span
             key={u.userId}
             title={bubbleTooltip(u)}
-            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-background text-[10px] font-semibold leading-none text-white shadow-sm"
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-background text-[10px] font-semibold leading-none text-white shadow-xs"
             style={{ backgroundColor: colour }}
             aria-label={bubbleTooltip(u)}
           >
@@ -649,7 +649,7 @@ function ActiveEditorsBubbles({ users, className = '' }: ActiveEditorsBubblesPro
       })}
       {overflow > 0 && (
         <span
-          className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full border border-background bg-surface-3 px-1 text-[10px] font-semibold leading-none text-foreground shadow-sm"
+          className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full border border-background bg-surface-3 px-1 text-[10px] font-semibold leading-none text-foreground shadow-xs"
           title={`${overflow} more editor${overflow === 1 ? '' : 's'}`}
         >
           +{overflow}

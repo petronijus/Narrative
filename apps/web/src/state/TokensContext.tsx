@@ -94,7 +94,7 @@ export function TokensProvider({ tokens, children }: TokensProviderProps) {
     return { resolve }
   }, [tokens])
 
-  return <TokensContext.Provider value={value}>{children}</TokensContext.Provider>
+  return <TokensContext value={value}>{children}</TokensContext>
 }
 
 // ---------------------------------------------------------------------------

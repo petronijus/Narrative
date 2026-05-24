@@ -21,11 +21,7 @@ export function CropModeProvider({ children }: { children: React.ReactNode }) {
   const [cropImageId, setCropImageId] = useState<string | null>(null)
   const enterCrop = useCallback((id: string) => setCropImageId(id), [])
   const exitCrop = useCallback(() => setCropImageId(null), [])
-  return (
-    <CropModeContext.Provider value={{ cropImageId, enterCrop, exitCrop }}>
-      {children}
-    </CropModeContext.Provider>
-  )
+  return <CropModeContext value={{ cropImageId, enterCrop, exitCrop }}>{children}</CropModeContext>
 }
 
 export function useCropMode(): CropModeApi {

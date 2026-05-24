@@ -61,7 +61,7 @@ export function ExportPptxDialog({ slides, onExport, onClose }: ExportPptxDialog
       role="dialog"
       aria-modal="true"
       aria-label="Export to PowerPoint"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-xs"
       onClick={(e) => {
         if (e.target === e.currentTarget && !busy) onClose()
       }}

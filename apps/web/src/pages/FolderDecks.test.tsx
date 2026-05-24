@@ -102,12 +102,12 @@ function createMockAuthValue(overrides: Partial<AuthContextValue> = {}): AuthCon
 function renderFolderDecks(folderId = FOLDER_ID) {
   return render(
     <MemoryRouter initialEntries={[`/folder/${folderId}`]}>
-      <AuthContext.Provider value={createMockAuthValue()}>
+      <AuthContext value={createMockAuthValue()}>
         <Routes>
           <Route path="/folder/:folderId" element={<FolderDecks />} />
           <Route path="/" element={<div>Home</div>} />
         </Routes>
-      </AuthContext.Provider>
+      </AuthContext>
     </MemoryRouter>,
   )
 }

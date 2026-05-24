@@ -56,7 +56,7 @@ export function MoveDeckModal({
       aria-modal="true"
       aria-label={`Move ${deckIds.length === 1 ? 'deck' : `${deckIds.length} decks`} to folder`}
       tabIndex={-1}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-xs"
       onClick={handleBackdrop}
       onKeyDown={handleKeyDown}
     >

@@ -35,22 +35,22 @@ const mockHandle = vi
   })
 
 vi.mock('@tus/server', () => ({
-  Server: vi.fn().mockImplementation((opts: Record<string, unknown>) => {
+  Server: vi.fn().mockImplementation(function (opts: Record<string, unknown>) {
     capturedTusOptions = opts
-    return {
-      handle: mockHandle,
-    }
+    return { handle: mockHandle }
   }),
 }))
 
 vi.mock('@tus/s3-store', () => ({
-  S3Store: vi.fn().mockImplementation(() => ({})),
+  S3Store: vi.fn().mockImplementation(function () {
+    return {}
+  }),
 }))
 
 vi.mock('@aws-sdk/client-s3', () => ({
-  S3Client: vi.fn().mockImplementation(() => ({
-    send: vi.fn().mockResolvedValue({ ContentLength: 1024 }),
-  })),
+  S3Client: vi.fn().mockImplementation(function () {
+    return { send: vi.fn().mockResolvedValue({ ContentLength: 1024 }) }
+  }),
   GetObjectCommand: vi.fn(),
   HeadObjectCommand: vi.fn(),
 }))

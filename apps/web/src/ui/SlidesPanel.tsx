@@ -13,7 +13,7 @@
  *   any selected slide drags the whole selection (with descendants).
  */
 
-import { useRef, useState, useCallback, useEffect, useId, useMemo } from 'react'
+import { useRef, useState, useCallback, useEffect, useId, useMemo, type ReactElement } from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -433,7 +433,7 @@ interface SlidesPanelProps {
   onCollapse?: () => void
 }
 
-export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): JSX.Element {
+export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement {
   const slides = useSlides()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
   const { deckCtx } = useSlideDoc()

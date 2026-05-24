@@ -570,7 +570,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     [uploads, startUpload, cancelUpload, retryUpload, dismissUpload],
   )
 
-  return <MediaUploadContext.Provider value={value}>{children}</MediaUploadContext.Provider>
+  return <MediaUploadContext value={value}>{children}</MediaUploadContext>
 }
 
 // ---------------------------------------------------------------------------

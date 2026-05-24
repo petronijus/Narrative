@@ -11,7 +11,7 @@ import { MAX_ZOOM, MIN_ZOOM, useZoomLevel } from '../state/useZoomLevel.js'
 
 interface ZoomControlProps {
   /** Scroll container used to compute fit-to-screen. */
-  stageScrollRef: React.RefObject<HTMLDivElement>
+  stageScrollRef: React.RefObject<HTMLDivElement | null>
   /**
    * P15: live insets of the floating chrome (side panels, toolbar,
    * bottom panels). The stage scroll surface is full-bleed under
@@ -81,7 +81,7 @@ export function ZoomControl({ stageScrollRef, viewportInsets }: ZoomControlProps
 
   return (
     <div
-      className="group pointer-events-auto flex flex-col items-center rounded-md border border-border bg-surface-1/80 p-1.5 shadow-sm backdrop-blur"
+      className="group pointer-events-auto flex flex-col items-center rounded-md border border-border bg-surface-1/80 p-1.5 shadow-xs backdrop-blur"
       onPointerDown={(e) => e.stopPropagation()}
     >
       {/* Expanded controls — collapsed to zero-height by default,

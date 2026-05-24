@@ -117,9 +117,7 @@ export function ActiveSlideProvider({ children }: ActiveSlideProviderProps) {
   )
 
   return (
-    <ActiveSlideContext.Provider value={{ activeSlideId, setActiveSlideId }}>
-      {children}
-    </ActiveSlideContext.Provider>
+    <ActiveSlideContext value={{ activeSlideId, setActiveSlideId }}>{children}</ActiveSlideContext>
   )
 }
 

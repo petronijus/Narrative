@@ -172,14 +172,14 @@ function renderInspector(objects: SlideObject[]) {
 
   return render(
     <MemoryRouter>
-      <SlideDocContext.Provider value={ctxValue}>
-        <ActiveSlideContext.Provider value={createMockActiveSlide()}>
+      <SlideDocContext value={ctxValue}>
+        <ActiveSlideContext value={createMockActiveSlide()}>
           <SelectionProvider>
             <SelectionSetup ids={objects.map((o) => o.id)} />
             <Inspector />
           </SelectionProvider>
-        </ActiveSlideContext.Provider>
-      </SlideDocContext.Provider>
+        </ActiveSlideContext>
+      </SlideDocContext>
     </MemoryRouter>,
     { providers: { router: false, slideDoc: false, selection: false } },
   )

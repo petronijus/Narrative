@@ -55,7 +55,7 @@ function makeWrapper(fakeAwareness: ReturnType<typeof makeFakeAwareness>) {
     const ctxValue = createMockSlideDocValue({
       awareness: fakeAwareness as unknown as Awareness,
     })
-    return <SlideDocContext.Provider value={ctxValue}>{children}</SlideDocContext.Provider>
+    return <SlideDocContext value={ctxValue}>{children}</SlideDocContext>
   }
   return Wrapper
 }

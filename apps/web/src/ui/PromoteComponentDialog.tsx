@@ -76,7 +76,7 @@ export function PromoteComponentDialog({
   return createPortal(
     <>
       <div
-        className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm"
+        className="fixed inset-0 z-[200] bg-black/40 backdrop-blur-xs"
         aria-hidden="true"
         onClick={onCancel}
         data-testid="promote-component-backdrop"

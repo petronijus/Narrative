@@ -25,6 +25,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 
@@ -73,7 +74,7 @@ const BYPASS_USER: AuthUser = {
   email: 'dev@local',
 }
 
-export function AuthProvider({ children }: { children: ReactNode }): JSX.Element {
+export function AuthProvider({ children }: { children: ReactNode }): ReactElement {
   const bypass = isBypassEnabled()
   const [user, setUser] = useState<AuthUser | null>(bypass ? BYPASS_USER : null)
   const [isLoading, setIsLoading] = useState(!bypass)
@@ -148,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     [user, isLoading, login, logout],
   )
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+  return <AuthContext value={value}>{children}</AuthContext>
 }
 
 // ---------------------------------------------------------------------------

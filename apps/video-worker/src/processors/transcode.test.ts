@@ -33,7 +33,8 @@ const { mockS3Send, mockUpdateTranscodeStatus, mockUpdateVideoAssetOutputs, crea
      * exitCode!=0 → emits 'close' with that code.
      * probeJson   → emitted as stdout 'data' before close (for ffprobe calls).
      */
-    function createMockSpawn(exitCode = 0, probeJson?: string): ReturnType<typeof vi.fn> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function createMockSpawn(exitCode = 0, probeJson?: string): (...args: any[]) => any {
       return vi.fn().mockImplementation(() => {
         const events: Record<string, Array<(...a: unknown[]) => void>> = {}
 
@@ -97,9 +98,15 @@ vi.mock('node:stream/promises', () => ({
 }))
 
 vi.mock('@aws-sdk/client-s3', () => ({
-  S3Client: vi.fn().mockImplementation(() => ({ send: mockS3Send })),
-  GetObjectCommand: vi.fn().mockImplementation((input: unknown) => ({ input })),
-  PutObjectCommand: vi.fn().mockImplementation((input: unknown) => ({ input })),
+  S3Client: vi.fn().mockImplementation(function () {
+    return { send: mockS3Send }
+  }),
+  GetObjectCommand: vi.fn().mockImplementation(function (_input: unknown) {
+    return { input: _input }
+  }),
+  PutObjectCommand: vi.fn().mockImplementation(function (_input: unknown) {
+    return { input: _input }
+  }),
 }))
 
 vi.mock('../db.js', () => ({

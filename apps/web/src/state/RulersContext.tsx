@@ -37,9 +37,9 @@ export function RulersProvider({ children }: { children: ReactNode }) {
   }, [visible])
 
   return (
-    <RulersContext.Provider value={{ visible, toggle: () => setVisible((v) => !v), setVisible }}>
+    <RulersContext value={{ visible, toggle: () => setVisible((v) => !v), setVisible }}>
       {children}
-    </RulersContext.Provider>
+    </RulersContext>
   )
 }
 

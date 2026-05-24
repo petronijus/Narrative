@@ -278,7 +278,7 @@ export function ColorInput({
             {alphaEnabled || isEmpty ? (
               <span
                 aria-hidden="true"
-                className="block h-full w-full rounded-sm"
+                className="block h-full w-full rounded-xs"
                 style={{
                   backgroundImage: CHECKER_BG,
                   backgroundSize: CHECKER_SIZE,
@@ -287,7 +287,7 @@ export function ColorInput({
               >
                 <span
                   aria-hidden="true"
-                  className="block h-full w-full rounded-sm"
+                  className="block h-full w-full rounded-xs"
                   style={{
                     background: isEmpty ? 'transparent' : value,
                     opacity: isEmpty ? 0 : alphaVal,
@@ -297,7 +297,7 @@ export function ColorInput({
             ) : (
               <span
                 aria-hidden="true"
-                className="block h-full w-full rounded-sm"
+                className="block h-full w-full rounded-xs"
                 style={{ background: value }}
               />
             )}
@@ -463,7 +463,7 @@ export function ColorInput({
                             setOpen(false)
                           }}
                           className={[
-                            'h-5 w-5 rounded-sm border transition',
+                            'h-5 w-5 rounded-xs border transition',
                             isActive
                               ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
                               : 'border-border hover:border-border-strong',
@@ -491,7 +491,7 @@ export function ColorInput({
                       aria-label={`Recent color ${hex.toUpperCase()}`}
                       onClick={() => handleSwatchClick(hex)}
                       className={[
-                        'h-5 w-5 rounded-sm border transition',
+                        'h-5 w-5 rounded-xs border transition',
                         hex.toLowerCase() === value.toLowerCase()
                           ? 'border-foreground shadow-[0_0_0_1.5px_hsl(var(--background))_inset]'
                           : 'border-border hover:border-border-strong',
