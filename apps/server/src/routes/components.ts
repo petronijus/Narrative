@@ -28,8 +28,13 @@ import { authPreHandler } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 
-/** Hard cap on the data-URL payload — protects against giant uploads. */
-const MAX_THUMBNAIL_BYTES = 1_000_000 // 1 MB after base64 decode
+/**
+ * Hard cap on the data-URL payload — protects against giant uploads.
+ * Mirrors `routes/decks.ts:MAX_THUMBNAIL_BYTES` (6 MB after base64
+ * decode) so component master thumbnails don't get rejected on
+ * image-heavy designs the way deck thumbnails were before this bump.
+ */
+const MAX_THUMBNAIL_BYTES = 6 * 1024 * 1024
 
 /**
  * Parse a `data:image/(jpeg|png);base64,XXXX` URL into its mime + bytes.
@@ -248,7 +253,15 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   // -------------------------------------------------------------------------
   app.put<{ Params: { id: string }; Body: { dataUrl?: unknown } }>(
     '/components/:id/thumbnail',
-    { preHandler: authPreHandler },
+    {
+      preHandler: authPreHandler,
+      // Per-route bodyLimit override — same reasoning as the deck
+      // thumbnail route in `routes/decks.ts`. Without this, Fastify's
+      // 4 MB global limit rejects high-resolution component snapshots
+      // before our per-payload check (which returns a structured error)
+      // gets a chance to run.
+      bodyLimit: Math.floor(MAX_THUMBNAIL_BYTES * 1.5) + 1024,
+    },
     async (request, reply) => {
       const { id } = request.params
       const userId = request.user!.sub

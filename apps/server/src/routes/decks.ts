@@ -43,8 +43,18 @@ interface CreateDeckBody {
   folderId?: string
 }
 
-/** Hard cap on the data-URL payload — protects against giant uploads. */
-const MAX_THUMBNAIL_BYTES = 1_000_000 // 1 MB after base64 decode
+/**
+ * Hard cap on the data-URL payload — protects against giant uploads.
+ *
+ * Sized for high-resolution slides with embedded photos. Pixi extracts
+ * the thumbnail as PNG (lossless) so a 1920×1080 slide with a single
+ * full-bleed photo lands in the 2-4 MB range; collage / poster decks
+ * occasionally cross 4 MB. We picked 6 MB as a generous ceiling that
+ * covers every real deck we've seen without inviting abuse (a 6 MB
+ * PNG thumbnail is still under the per-deck media budget by orders
+ * of magnitude).
+ */
+const MAX_THUMBNAIL_BYTES = 6 * 1024 * 1024
 
 interface DeckRow {
   id: string
@@ -347,7 +357,18 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   // ---------------------------------------------------------------------------
   app.put<{ Params: { id: string }; Body: { dataUrl?: unknown } }>(
     '/decks/:id/thumbnail',
-    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    {
+      preHandler: [authPreHandler, requireDeckRole('editor')],
+      // Per-route override of Fastify's 4 MB global bodyLimit. The dataUrl
+      // payload is base64-encoded (1.34× the decoded size) plus a thin
+      // JSON wrapper, so the JSON body lands at ≈ MAX_THUMBNAIL_BYTES * 1.4
+      // + a few bytes of overhead. Round up to MAX_THUMBNAIL_BYTES * 1.5
+      // so Fastify lets the request through to our route's own decoded-
+      // bytes check (which returns a structured `{error: "thumbnail too
+      // large"}` rather than the bare `Content too large` Fastify writes
+      // when its global limit hits first).
+      bodyLimit: Math.floor(MAX_THUMBNAIL_BYTES * 1.5) + 1024,
+    },
     async (request, reply) => {
       const { id } = request.params
       const dataUrlRaw = request.body?.dataUrl
