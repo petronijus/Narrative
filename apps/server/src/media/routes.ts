@@ -86,7 +86,7 @@ export interface MediaRoutesOpts {
   db: Database
 }
 
-const ALLOWED_VARIANTS: ImgproxyVariant[] = ['thumb', 'display', 'original']
+const ALLOWED_VARIANTS: ImgproxyVariant[] = ['thumb', 'preview', 'display', 'original']
 
 function isImgproxyVariant(v: string): v is ImgproxyVariant {
   return (ALLOWED_VARIANTS as string[]).includes(v)

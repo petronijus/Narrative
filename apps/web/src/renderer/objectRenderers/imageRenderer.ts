@@ -748,9 +748,28 @@ export const imageRenderer = {
     const resolver = getDefaultImageUrlResolver()
 
     const ready = (async () => {
+      // The slide-panel thumbnail PNG is rendered at 200×113 px. Each
+      // image object inside that frame occupies a tiny region (typically
+      // 50-200 px). Source textures larger than 600 px on the long side
+      // are wasted GPU pixels.
+      //
+      // The 'thumb' imgproxy variant would be the right SIZE (400 wide)
+      // but its directive is `rs:fill:400:225:0/g:ce` — a center-crop
+      // to fixed 16:9. That mutates the aspect of any non-16:9 source
+      // image, producing a thumbnail that shows different content than
+      // the editor (which uses the aspect-preserving 'display' variant).
+      // The bug shows up on every cropped image (`imageRect` set) and
+      // on every uncropped image whose own aspect ≠ 16:9.
+      //
+      // 'preview' is purpose-built for this code path:
+      // `rs:fit:600:600:0` — fits within 600×600 while preserving
+      // aspect. 600 covers the 200-px PNG output even at 2-3× DPR and
+      // moderate user-resize of the slide panel, while staying bandwidth-
+      // comparable to 'thumb' (~30-80 KB WebP per image vs 'display''s
+      // ~200-400 KB at 1600 wide).
       let url: string
       try {
-        url = await resolver({ assetId, variant: 'thumb' })
+        url = await resolver({ assetId, variant: 'preview' })
       } catch {
         return
       }

@@ -15,13 +15,27 @@
  *
  * Variant → processing mapping:
  *   thumb   → rs:fill:400:225:0/g:ce  (400×225 cover crop, center gravity)
+ *   preview → rs:fit:600:600:0        (fit inside 600×600, preserve aspect)
  *   display → rs:fit:1600:1600:0      (fit inside 1600×1600, preserve aspect)
  *   original → (no resize directive)
+ *
+ * `thumb` exists for the deck-grid + component-master tiles where the
+ * tile geometry is uniform 16:9 and the source has already been
+ * rendered to that aspect — there the center-crop is the right call.
+ *
+ * `preview` is for per-object thumbnails inside the slides panel:
+ * arbitrary-aspect source images that must mirror the editor view,
+ * just at a smaller resolution. Aspect-preserving + 600 px on the
+ * long side covers the 200 CSS-px slide-panel default plus comfortable
+ * headroom for 2-3× DPR and user-resized panels, while staying
+ * comparable in bandwidth to `thumb`. Source textures above ~600 px
+ * are wasted pixels — Pixi downscales them into ~50-200 px regions
+ * of the 200×113 thumbnail PNG.
  */
 
 import { createHmac } from 'node:crypto'
 
-export type ImgproxyVariant = 'thumb' | 'display' | 'original'
+export type ImgproxyVariant = 'thumb' | 'preview' | 'display' | 'original'
 
 export interface SignImgproxyUrlArgs {
   /** S3 key relative to the bucket (no leading slash). */
@@ -54,6 +68,8 @@ function processingForVariant(variant: ImgproxyVariant): string {
   switch (variant) {
     case 'thumb':
       return 'rs:fill:400:225:0/g:ce'
+    case 'preview':
+      return 'rs:fit:600:600:0'
     case 'display':
       return 'rs:fit:1600:1600:0'
     case 'original':

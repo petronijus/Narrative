@@ -26,7 +26,7 @@
 export interface ResolveImageUrlOpts {
   assetId: string
   /** Defaults to 'display'. */
-  variant?: 'thumb' | 'display' | 'original'
+  variant?: 'thumb' | 'preview' | 'display' | 'original'
 }
 
 /**

@@ -54,7 +54,10 @@ export interface ApiClient {
   /** M12: Fetch video transcode status + URLs for a given asset. */
   getVideoInfo(assetId: string): Promise<VideoInfoResponse>
   /** M12: Get a display-variant URL for an image asset. */
-  getMediaUrl(assetId: string, variant?: 'thumb' | 'display' | 'original'): Promise<string>
+  getMediaUrl(
+    assetId: string,
+    variant?: 'thumb' | 'preview' | 'display' | 'original',
+  ): Promise<string>
   // ---------------------------------------------------------------------------
   // M16 P1 — Folder API
   // ---------------------------------------------------------------------------
