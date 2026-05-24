@@ -737,11 +737,25 @@ function emitPath(
   _fixups: GradientFixup[],
   hyperlink: Record<string, unknown> | undefined,
 ): void {
+  // Multi-subpath custGeom: parser tags every subpath-start anchor (past
+  // anchor 0) with `moveTo: true`. AFRY-style logos pack outer ring +
+  // inner cut-outs into one anchor list — the importer + renderer rely
+  // on those flags to perform hole detection. We must mirror them on
+  // export, otherwise pptxgenjs would emit a single tangled subpath and
+  // PowerPoint would draw a filled blob with no holes (lossy round-trip).
+  // For a closed path we also need a `<a:close/>` BEFORE each intermediate
+  // moveTo so the previous subpath terminates properly in OOXML.
   const points: Array<Record<string, unknown>> = []
+  const wantClose = obj.closed === true
   for (let i = 0; i < obj.anchors.length; i++) {
     const a = obj.anchors[i]!
     const abs = { x: px(obj.x + a.x), y: px(obj.y + a.y) }
     if (i === 0) {
+      points.push({ ...abs, moveTo: true })
+      continue
+    }
+    if (a.moveTo === true) {
+      if (wantClose) points.push({ close: true })
       points.push({ ...abs, moveTo: true })
       continue
     }
@@ -763,7 +777,7 @@ function emitPath(
       points.push(abs)
     }
   }
-  if (obj.closed === true) points.push({ close: true })
+  if (wantClose) points.push({ close: true })
 
   const opts: Record<string, unknown> = {
     x: px(obj.x),
