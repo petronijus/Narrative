@@ -25,7 +25,7 @@
  */
 
 import { Container } from 'pixi.js'
-import type { SlideObject, SlideTransition } from '@narrative/shared'
+import type { SlideBackground, SlideObject, SlideTransition } from '@narrative/shared'
 import {
   compileSlideTransition,
   type CompiledTransition,
@@ -35,6 +35,9 @@ import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import type { SceneGraph } from './SceneGraph.js'
 import { getDefaultRenderScheduler } from './RenderScheduler.js'
+import { applyBackground } from './ArtboardBackground.js'
+import { getDefaultImageUrlResolver } from './imageUrl.js'
+import { getDefaultResourceManager } from './ResourceManager.js'
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -46,6 +49,20 @@ export interface PlayTransitionArgs {
   incomingObjects: SlideObject[]
   /** Transition config — kind, durationMs, direction. */
   transition: SlideTransition
+  /**
+   * Incoming slide's artboard background. When set, the transition
+   * paints it onto a dedicated container inside `incomingRoot` so the
+   * GSAP timeline animates it together with the slide's objects. Without
+   * this, the OLD slide's background container (which still sits as
+   * child 0 of the outgoing root) stays visible until adoptSlideRoot
+   * runs at `onComplete` — causing a noticeable "background snaps,
+   * objects faded" desync.
+   *
+   * Undefined means "no incoming background to paint" — the post-
+   * adoption `applyBackground` call in Canvas.tsx will populate the
+   * fresh SceneGraph.backgroundContainer in that case.
+   */
+  incomingBackground?: SlideBackground
 }
 
 export interface PlayTransitionResult {
@@ -65,7 +82,7 @@ export interface PlayTransitionResult {
  * outgoing slide's nodes. Present mode doesn't edit, so that's a non-issue.
  */
 export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
-  const { sceneGraph, incomingObjects, transition } = args
+  const { sceneGraph, incomingObjects, transition, incomingBackground } = args
 
   const outgoingRoot = sceneGraph.getRoot()
   const app = sceneGraph.getApp()
@@ -73,6 +90,50 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
   // Build the incoming root off-stage, mount each slide object via the
   // registered renderer (same code path SceneGraph.addObject uses).
   const incomingRoot = new Container()
+
+  // Background goes in FIRST so it sits at child index 0 — same z-order
+  // convention as SceneGraph.ensureBackgroundContainer for the outgoing
+  // root. The GSAP timeline animates incomingRoot as a whole, so the
+  // background fades / slides / morphs in lock-step with the objects.
+  // Without this, the new slide's background only appears at
+  // onComplete (after adoptSlideRoot runs Canvas's applyBackground
+  // effect), producing the "background lags the transition" symptom.
+  let incomingBgContainer: Container | undefined
+  if (incomingBackground !== undefined) {
+    incomingBgContainer = new Container()
+    incomingBgContainer.eventMode = 'none'
+    incomingRoot.addChild(incomingBgContainer)
+    const resolver = (() => {
+      try {
+        return getDefaultImageUrlResolver()
+      } catch {
+        return null
+      }
+    })()
+    const rm = (() => {
+      try {
+        return getDefaultResourceManager()
+      } catch {
+        return null
+      }
+    })()
+    void applyBackground({
+      container: incomingBgContainer,
+      background: incomingBackground,
+      width: SLIDE_WIDTH,
+      height: SLIDE_HEIGHT,
+      ...(resolver !== null
+        ? { resolveAssetUrl: (assetId) => resolver({ assetId, variant: 'display' }) }
+        : {}),
+      ...(rm !== null
+        ? {
+            acquireTexture: (url) => rm.acquireTexture(url),
+            releaseTexture: (url) => rm.releaseTexture(url),
+          }
+        : {}),
+    })
+  }
+
   const incomingNodes: Array<{ id: string; container: Container; data: SlideObject }> = []
   for (const obj of incomingObjects) {
     const renderer = getRenderer(obj.type)
@@ -169,7 +230,11 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
       }
       // Adopt incoming as the new SceneGraph root. Destroys outgoing root +
       // children, clears node bookkeeping, installs incoming + its node map.
-      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes)
+      // Pass the bgContainer we built so SceneGraph rebinds to it instead
+      // of nulling — that keeps subsequent Canvas applyBackground calls
+      // (when the slide-change effect re-runs) operating on the already-
+      // painted, transition-survived container.
+      sceneGraph.adoptSlideRoot(incomingRoot, incomingNodes, incomingBgContainer)
       resolve()
     })
 

@@ -339,6 +339,14 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         sceneGraph: canvasInstance!.sceneGraph,
         incomingObjects: targetSlide.objects,
         transition: incomingTransition,
+        // BG2: feed the incoming background into the transition so it
+        // animates together with the slide's objects. Without this, the
+        // outgoing slide's background remains painted while objects
+        // fade / slide, then the new background snaps in only after
+        // adoptSlideRoot runs — visually jarring.
+        ...(targetSlide.background !== undefined
+          ? { incomingBackground: targetSlide.background }
+          : {}),
       })
       transitionInFlightRef.current = {
         abort: handle.abort,

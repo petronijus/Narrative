@@ -625,7 +625,11 @@ export class SceneGraph {
    *     keyed by id. SceneGraph trusts this mapping verbatim and does not
    *     re-scan.
    */
-  adoptSlideRoot(nextRoot: Container, nextNodes: Array<SceneNode & { id: string }>): void {
+  adoptSlideRoot(
+    nextRoot: Container,
+    nextNodes: Array<SceneNode & { id: string }>,
+    nextBackgroundContainer?: Container,
+  ): void {
     // Destroy the previous root and all its children (the outgoing slide's
     // nodes) in one pass. This also runs each renderer's destroy() path via
     // Container.destroy({ children: true }), because renderers only hang
@@ -656,9 +660,16 @@ export class SceneGraph {
       this.app.stage.addChild(nextRoot)
     }
     // Background container was a child of the OLD root and got destroyed
-    // with it. Drop the reference so the next `ensureBackgroundContainer()`
-    // call creates a fresh one on the new root.
-    this.backgroundContainer = null
+    // with it. When the caller provides an `nextBackgroundContainer` that's
+    // already parented inside `nextRoot` (the playTransition path — the
+    // incoming background is built as part of the animated root so it
+    // transitions together with the objects), claim it. Otherwise null
+    // so the next `ensureBackgroundContainer()` call creates a fresh one.
+    if (nextBackgroundContainer !== undefined && nextBackgroundContainer.parent === nextRoot) {
+      this.backgroundContainer = nextBackgroundContainer
+    } else {
+      this.backgroundContainer = null
+    }
 
     for (const entry of nextNodes) {
       const node = { container: entry.container, data: entry.data }
