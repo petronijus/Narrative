@@ -31,6 +31,7 @@ import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
 import { getThumbnailReady } from './thumbnailReady.js'
 import { stripFilterEffectsTree } from './filterEffects.js'
 import { applyBackground } from './ArtboardBackground.js'
+import { getDefaultImageUrlResolver } from './imageUrl.js'
 import { patchHTMLTextRace } from './patchHTMLTextRace.js'
 import { DEFAULT_BACKGROUND } from '@narrative/shared'
 import type { SlideBackground, SlideObject } from '@narrative/shared'
@@ -168,21 +169,50 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // didn't pass a background (pre-P2 slide), we fall back to
     // DEFAULT_BACKGROUND so the panel card shows the same artboard
     // area the editor does, not a transparent placeholder.
-    // `applyBackground` is synchronous for color + gradient kinds; image
-    // backgrounds start an async decode but the thumbnail renderer
-    // doesn't wait for it in this pass (the slide panel re-renders the
-    // thumbnail when the image data arrives — same cadence as slide
-    // changes).
+    //
+    // For IMAGE backgrounds we must:
+    //   1. Hand applyBackground a `resolveAssetUrl` — without one,
+    //      `mountImageBackground` silently returns and the slide panel
+    //      tile shows the bare slide content with no background.
+    //   2. Await the resulting promise so the async sprite mount lands
+    //      BEFORE the one-shot `extract.base64()` below. Otherwise the
+    //      PNG we capture has the background container empty.
+    //
+    // The thumbnail renderer doesn't share a ResourceManager with the
+    // main canvas (textures here are tied to this offscreen Pixi app's
+    // lifetime — destroyed alongside `app`), so the acquire/release
+    // hooks stay unset and `mountImageBackground` falls through to its
+    // direct `Image.decode() + Texture.from(img)` path.
+    // Collect async work that must finish before the one-shot extract.base64
+    // below: image-background decode + each object renderer's thumbnailMount
+    // ready promise. Declared above the bg block so the bg's promise can
+    // be pushed alongside the per-object ones.
+    const readyPromises: Promise<unknown>[] = []
+
     const effectiveBackground: SlideBackground = background ?? DEFAULT_BACKGROUND
+    const bgResolver = (() => {
+      try {
+        return getDefaultImageUrlResolver()
+      } catch {
+        return null
+      }
+    })()
     {
       const bgContainer = new Container()
       slideContainer.addChild(bgContainer)
-      applyBackground({
+      const bgReady = applyBackground({
         container: bgContainer,
         background: effectiveBackground,
         width: SLIDE_WIDTH,
         height: SLIDE_HEIGHT,
+        ...(bgResolver !== null
+          ? { resolveAssetUrl: (assetId) => bgResolver({ assetId, variant: 'display' }) }
+          : {}),
       })
+      // Wait for the image background's async decode before the one-shot
+      // render below. Color + gradient backgrounds resolve synchronously,
+      // so this is effectively a no-op for those.
+      readyPromises.push(bgReady)
     }
 
     // Mount each object through the registry (same path as the main SceneGraph).
@@ -191,7 +221,6 @@ export async function createThumbnailRenderer(opts?: ThumbnailOptions): Promise<
     // rasters or video posters, we must wait for those to resolve before
     // taking the one-shot render frame, otherwise the PNG captures only the
     // grey placeholder.
-    const readyPromises: Promise<void>[] = []
     // P12g: remember which renderer mounted each child so the destroy
     // pass below can route through `renderer.destroy()` instead of
     // Pixi's generic `Container.destroy({ children: true })`. Without

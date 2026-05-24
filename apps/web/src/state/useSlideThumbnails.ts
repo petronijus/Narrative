@@ -295,9 +295,22 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
       for (const slideId of affectedIds) {
         if (!tracked.has(slideId)) continue
 
-        // Fresh traversal — avoids stale Y.Array reference
+        // Fresh traversal — avoids stale Y.Array reference.
         const objects = readSlideObjects(deckCtxRef.current, slideId)
         latestObjectsRef.current.set(slideId, objects)
+
+        // Also refresh the cached background from the current useSlides
+        // snapshot (the deck event already fired, so slidesRef is up to
+        // date by the next microtask — but here we read whatever the
+        // ref has now, which is at minimum the previous snapshot; the
+        // background-watch effect below converges to the latest one).
+        // Without this read, background-only mutations re-render the
+        // thumbnail with a stale colour from the previous render's
+        // latestBackgroundRef state before the watch effect catches up.
+        const slide = slidesRef.current.find((s) => s.id === slideId)
+        if (slide !== undefined) {
+          latestBackgroundRef.current.set(slideId, slide.background)
+        }
 
         ensureDebouncer(slideId)
         const db = debouncersRef.current.get(slideId)
@@ -403,6 +416,18 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
       ensureDebouncer(id)
       const objects = readSlideObjects(deckCtx, id)
       latestObjectsRef.current.set(id, objects)
+      // ALSO seed the background from the current useSlides() snapshot
+      // (via slidesRef so this effect's deps don't have to include
+      // `allSlides`). Without this, the initial render reads
+      // `latestBackgroundRef.current.get(id) === undefined` and falls
+      // through to DEFAULT_BACKGROUND (white) — visible as every
+      // thumbnail flashing white on first paint, then re-painting with
+      // the real background once the separate `useEffect([allSlides…])`
+      // below populates the ref and fires a second scheduleRender.
+      const seedSlide = slidesRef.current.find((s) => s.id === id)
+      if (seedSlide !== undefined) {
+        latestBackgroundRef.current.set(id, seedSlide.background)
+      }
       // Schedule initial render immediately (not debounced) so thumbnails
       // appear as soon as the renderer is ready.
       scheduleRender(id)

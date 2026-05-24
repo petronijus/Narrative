@@ -188,23 +188,39 @@ export interface ApplyBackgroundArgs {
   releaseTexture?: (url: string) => void
 }
 
-export function applyBackground(args: ApplyBackgroundArgs): void {
+/**
+ * Paint the given background into the container. Returns a Promise that
+ * resolves once the paint is complete — synchronous for color + gradient
+ * kinds (resolves on the next microtask), async for image kinds (resolves
+ * after the source URL resolver, `decode()`, and sprite mount finish).
+ *
+ * Callers that don't need to gate on completion (e.g. the editor's Canvas
+ * useEffect) can ignore the returned promise; the function still mutates
+ * the container synchronously for the non-image branches and the async
+ * branch calls `markRenderDirty()` on completion so Pixi catches up
+ * automatically.
+ *
+ * Thumbnail extraction MUST await the promise, otherwise an image-kind
+ * background never paints into the PNG (the extract.base64 call fires
+ * before the decode resolves).
+ */
+export function applyBackground(args: ApplyBackgroundArgs): Promise<void> {
   const { container, background, width, height } = args
   const sig = signature(background, width, height)
-  if (sig === getSignature(container)) return
+  if (sig === getSignature(container)) return Promise.resolve()
 
   // Tear down current content.
   clearContainer(container, args.releaseTexture)
   setSignature(container, sig)
 
-  if (background === undefined) return
+  if (background === undefined) return Promise.resolve()
 
   if (background.kind === 'color') {
     const g = new Graphics()
     g.rect(0, 0, width, height)
     g.fill({ color: background.color, alpha: background.alpha ?? 1 })
     container.addChild(g)
-    return
+    return Promise.resolve()
   }
 
   if (background.kind === 'linearGradient' || background.kind === 'radialGradient') {
@@ -242,11 +258,12 @@ export function applyBackground(args: ApplyBackgroundArgs): void {
     sprite.width = width
     sprite.height = height
     container.addChild(sprite)
-    return
+    return Promise.resolve()
   }
 
-  // image
-  void mountImageBackground(container, background, width, height, args)
+  // image — fire the async mount and return the promise so callers that
+  // care (thumbnail extraction) can await it.
+  return mountImageBackground(container, background, width, height, args)
 }
 
 async function mountImageBackground(
