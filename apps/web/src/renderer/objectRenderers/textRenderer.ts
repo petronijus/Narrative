@@ -294,44 +294,51 @@ function collectRunFontFamilies(data: TextObject): string[] {
 /** Exported for the table renderer — same HTMLTextStyle options builder. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildStyleOpts(data: TextObject): any {
-  // Pixi v8 HTMLText's `extractFontFamilies` reads `style.fontFamily`
-  // and adds every entry of an Array directly to the @font-face embed
-  // list. Per-run families inserted via inline `<span>` only get picked
-  // up via a fragile regex (`font-family:([^;"\s]+)`) that drops
-  // anything past whitespace, so a family name like "Roboto Condensed"
-  // would never embed and the SVG would silently fall back to system.
-  // Compose an explicit array of [box, ...runs] so each run-level
-  // family produces a real @font-face inside the SVG.
-  // Compose the family string for Pixi's HTMLText. The box family
-  // gets a category-appropriate generic stack appended via
-  // `cssFontFamily`, with multi-word names properly double-quoted —
-  // Pixi v8's textStyleToCSS embeds `style.fontFamily` verbatim into
-  // the SVG's CSS via raw template literal, so a PPTX face like
-  // "Northwind Sans ST Pro 36 Regular" needs CSS-side quoting or the
-  // browser drops to its default serif. See renderer/fontFallback.ts.
+  // Pixi v8 HTMLText is doing two distinct things with `style.fontFamily`:
+  //
+  //  1. `extractFontFamilies(text, style)` reads the value and uses it
+  //     as the EXACT key into the asset Cache to find an `@font-face`
+  //     entry to embed in the SVG. When it's an Array, each entry is
+  //     used as its own key; when it's a string, the WHOLE string
+  //     (commas + spaces + quotes and all) is one key.
+  //
+  //  2. `textStyleToCSS(style)` interpolates the value verbatim into
+  //     the SVG's `font-family:` CSS rule via `${style.fontFamily}` —
+  //     no quoting, no validation.
+  //
+  // FolderFontLoader registers our uploaded fonts in the cache under
+  // the BARE family name (e.g. `Northwind Sans ST Pro 60 Black-and-url`).
+  // To make the cache lookup hit we must pass the bare name as
+  // `style.fontFamily`. But the bare name isn't valid CSS verbatim
+  // when it contains digits (e.g. `60`) or whitespace — the CSS
+  // tokeniser sees `Northwind Sans ST Pro 60 Black` as five identifiers
+  // followed by a number followed by an identifier, which can't form
+  // a single family-name value, so the rule is dropped and the
+  // browser falls back to its system default.
+  //
+  // The two-step trick: bare name for the cache lookup, then layer
+  // `cssOverrides` with a CSS-safe quoted form to win the cascade for
+  // the actual rendering rule. Later declarations override earlier
+  // ones inside the same `<style>` block, so the override is what the
+  // SVG renderer applies.
   //
   // Per-run fontFamily values land in the inline `<span style="font-
-  // family:X">` markup (richText.toHtml) — those still feed Pixi's
-  // `extractFontFamilies` regex for @font-face embeds, and the inline
-  // CSS itself doesn't need our fallback because if the run-level font
-  // isn't available the browser falls through to the box font defined
-  // here, which carries the stack.
-  const boxFamily =
+  // family:X">` markup (richText.toHtml) — those feed Pixi's
+  // `extractFontFamilies` regex separately; the run-level CSS in the
+  // inline span needs no override because the browser falls back to
+  // the box font (with our overridden stack) when a per-run font is
+  // missing.
+  const rawFamily = typeof data.fontFamily === 'string' ? data.fontFamily.trim() : ''
+  const cssStack =
     cssFontFamily(data.fontFamily) ?? 'Arial, Helvetica, "Helvetica Neue", "Segoe UI", sans-serif'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const opts: any = {
-    // Pass the CSS-safe family string. Pixi v8's textStyleToCSS uses
-    // `style.fontFamily` verbatim, so the string we hand it is what
-    // ends up in the SVG's `font-family:` rule — including our
-    // category fallback (`"Northwind Sans…", Arial, …, sans-serif`)
-    // when the authored font isn't installed.
-    //
-    // `extractFontFamilies` still picks up the inline `<span style=
-    // "font-family:X">` markers via its regex for run-level @font-face
-    // embeds, and reads the box font from this string too (the comma-
-    // list registers fails-to-embed entries as no-ops). Run-level
-    // fallback chains for installed runs live in the inline span CSS.
-    fontFamily: boxFamily,
+    // Bare family name → matches Pixi's cache key for embedded
+    // `@font-face` lookups. Single-ident families (e.g. `Inter`) render
+    // correctly even without the override; multi-word + digit families
+    // (e.g. `Northwind Sans ST Pro 60 Black`) get their CSS fixed by
+    // the cssOverrides entry below.
+    fontFamily: rawFamily.length > 0 ? rawFamily : 'Arial',
     fontSize: data.fontSize,
     fontWeight: data.fontWeight,
     fontStyle: data.italic === true ? 'italic' : 'normal',
@@ -380,6 +387,12 @@ export function buildStyleOpts(data: TextObject): any {
       width: data.strokeWidth ?? 1,
     }
   }
+  // Override the auto-generated `font-family:` rule with the CSS-safe
+  // quoted + fallback-stacked form. See the long comment near `rawFamily`
+  // above for why this trick is necessary. Pixi v8's HTMLTextStyle
+  // appends `cssOverrides` after the auto-generated declarations, so
+  // the later override wins the cascade.
+  opts.cssOverrides = [`font-family: ${cssStack}`]
   return opts
 }
 
