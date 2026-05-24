@@ -7,7 +7,7 @@
  * selection + transforms, same pivot convention as the other shapes.
  */
 
-import { Container, Graphics } from 'pixi.js'
+import { Container, Graphics, GraphicsPath } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
 import type { PathObject, PathAnchor } from '@narrative/shared'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
@@ -25,20 +25,33 @@ function getGraphics(n: PixiContainer): Graphics | undefined {
   return asAny(n)[GRAPHICS_TAG] as Graphics | undefined
 }
 
-function tracePath(g: Graphics, data: PathObject): void {
+function buildPath(data: PathObject): GraphicsPath | null {
   const anchors = data.anchors
-  if (anchors.length === 0) return
+  if (anchors.length === 0) return null
   // Subpath-aware tracing. PPTX `<a:custGeom>` can pack many
   // disconnected closed subpaths into a single `<a:path>` (dot grids,
-  // multi-island icons). Each subpath begins at an anchor with
-  // `moveTo === true` (the very first anchor is implicitly a moveTo
-  // even without the flag). On entering a new subpath we close the
-  // previous one (if `data.closed` is true) and emit Graphics.moveTo
-  // instead of lineTo — otherwise the renderer draws straight
-  // connectors between sub-shapes (the "diagonal-shear" artefact).
+  // multi-island icons, badges with inner holes). Each subpath begins
+  // at an anchor with `moveTo === true` (the very first anchor is
+  // implicitly a moveTo even without the flag). On entering a new
+  // subpath we close the previous one (if `data.closed` is true) and
+  // emit GraphicsPath.moveTo instead of lineTo — otherwise the
+  // renderer draws straight connectors between sub-shapes (the
+  // "diagonal-shear" artefact).
+  //
+  // We build a `GraphicsPath` (not inline `g.moveTo`/`g.lineTo`/...)
+  // with `checkForHoles = true` so Pixi v8's ShapePath.addPath performs
+  // non-zero-rule hole detection: any closed subpath whose anchors are
+  // fully contained inside an earlier subpath becomes a triangulated
+  // hole in that outer subpath (earcut with holes). Without this the
+  // outer fill and each inner fill draw independently in the same
+  // colour, producing a solid silhouette with no visible holes — the
+  // exact AFRY-badge bug. For multi-subpath shapes whose subpaths are
+  // NOT nested (dot grids on slide 8), containsPolygon's bounds check
+  // fast-rejects in O(1) per pair so the path renders as before.
   const wantClose = data.closed === true
+  const path = new GraphicsPath(undefined, /* signed = */ true)
   let subStart = anchors[0]!
-  g.moveTo(subStart.x, subStart.y)
+  path.moveTo(subStart.x, subStart.y)
   for (let i = 1; i < anchors.length; i++) {
     const prev = anchors[i - 1]!
     const cur = anchors[i]!
@@ -46,7 +59,7 @@ function tracePath(g: Graphics, data: PathObject): void {
       // Close the previous subpath if the path is overall closed.
       if (wantClose) {
         if (prev.cpOut !== undefined && subStart.cpIn !== undefined) {
-          g.bezierCurveTo(
+          path.bezierCurveTo(
             prev.x + prev.cpOut.x,
             prev.y + prev.cpOut.y,
             subStart.x + subStart.cpIn.x,
@@ -55,17 +68,17 @@ function tracePath(g: Graphics, data: PathObject): void {
             subStart.y,
           )
         } else {
-          g.lineTo(subStart.x, subStart.y)
+          path.lineTo(subStart.x, subStart.y)
         }
-        g.closePath()
+        path.closePath()
       }
       // Begin a fresh subpath at `cur`.
-      g.moveTo(cur.x, cur.y)
+      path.moveTo(cur.x, cur.y)
       subStart = cur
       continue
     }
     if (prev.cpOut !== undefined && cur.cpIn !== undefined) {
-      g.bezierCurveTo(
+      path.bezierCurveTo(
         prev.x + prev.cpOut.x,
         prev.y + prev.cpOut.y,
         cur.x + cur.cpIn.x,
@@ -74,13 +87,13 @@ function tracePath(g: Graphics, data: PathObject): void {
         cur.y,
       )
     } else {
-      g.lineTo(cur.x, cur.y)
+      path.lineTo(cur.x, cur.y)
     }
   }
   if (wantClose) {
     const last = anchors[anchors.length - 1]!
     if (last.cpOut !== undefined && subStart.cpIn !== undefined) {
-      g.bezierCurveTo(
+      path.bezierCurveTo(
         last.x + last.cpOut.x,
         last.y + last.cpOut.y,
         subStart.x + subStart.cpIn.x,
@@ -89,10 +102,11 @@ function tracePath(g: Graphics, data: PathObject): void {
         subStart.y,
       )
     } else {
-      g.lineTo(subStart.x, subStart.y)
+      path.lineTo(subStart.x, subStart.y)
     }
-    g.closePath()
+    path.closePath()
   }
+  return path
 }
 
 function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void {
@@ -103,11 +117,17 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
   const closed = data.closed === true
   const hasFill = closed && (data.fill !== undefined || data.fillStyle !== undefined)
 
-  // Fill pass: trace + g.fill(...). Mirrors polygonRenderer's image /
-  // gradient handling so closed paths share the parametric shapes'
-  // appearance pipeline (solid / linear / radial / image).
+  // Build the path once; feed it into the Graphics context via
+  // `g.path(...)` which routes through ShapePath.addPath and triggers
+  // hole detection on multi-subpath inputs (see buildPath comment).
+  const path = buildPath(data)
+  if (path === null) return
+
+  // Fill pass: g.path(path) + g.fill(...). Mirrors polygonRenderer's
+  // image / gradient handling so closed paths share the parametric
+  // shapes' appearance pipeline (solid / linear / radial / image).
   if (hasFill) {
-    tracePath(g, data)
+    g.path(path)
     if (data.fillStyle?.kind === 'image') {
       const texture = ensureImageFill(container, data.fillStyle, () => {
         const cachedData = asAny(container)[LATEST_DATA_TAG] as PathObject | undefined
@@ -146,10 +166,12 @@ function drawPath(g: Graphics, container: PixiContainer, data: PathObject): void
 
   asAny(container)[LATEST_DATA_TAG] = data
 
-  // Stroke pass: re-trace and stroke. (Pixi Graphics drops the path
-  // after fill() is committed; re-tracing is the canonical pattern.)
+  // Stroke pass: re-feed the path and stroke. (Pixi Graphics drops the
+  // active path after fill() is committed; re-feeding is the canonical
+  // pattern.) `g.path(path)` clones the GraphicsPath internally so the
+  // same instance is safe to reuse.
   if (data.strokeWidth > 0) {
-    tracePath(g, data)
+    g.path(path)
     g.stroke({
       color: resolveColour(data.stroke),
       alpha: data.strokeAlpha ?? 1,

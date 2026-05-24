@@ -116,6 +116,29 @@ function pickFillForShape(s: ParsedShape): number {
   return DEFAULT_FILL
 }
 
+/**
+ * True when the source `<p:spPr>` declared no fill at all (no
+ * `<a:solidFill>`, `<a:gradFill>`, `<a:blipFill>`, or any other fill
+ * variant). Distinct from "explicit `<a:noFill/>`" which the parser
+ * already flags via `fillAlpha === 0`.
+ *
+ * PowerPoint resolves "undeclared fill" against the theme + style +
+ * placeholder hierarchy, often landing on transparent for text boxes
+ * and slide-number placeholders. We don't run that resolution; instead
+ * we render the shape transparent so a layout placeholder doesn't
+ * surface as a `DEFAULT_FILL`-coloured rectangle on every imported
+ * deck — same symptom that turned slide 1's slide-number area into
+ * a stray blue band in the audit fixture.
+ */
+function sourceDeclaredNoFill(s: ParsedShape): boolean {
+  return (
+    s.fillColor === undefined &&
+    s.fillGradient === undefined &&
+    (s.imagePath === undefined || s.imagePath === '') &&
+    s.assetId === undefined
+  )
+}
+
 function round(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -345,6 +368,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
     if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
@@ -367,6 +391,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
     if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
@@ -383,6 +408,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       fill: pickFillForShape(s),
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
     if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
@@ -400,6 +426,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       sides: s.sides ?? 6, // hexagon fallback — polygon detection always sets sides
     }
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
     if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
@@ -432,13 +459,27 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       if (a.moveTo === true) out.moveTo = true
       return out
     })
+    // Source `<a:ln w="…">` declares a stroke WIDTH; the colour comes
+    // from a separate `<a:solidFill>` child (or `<a:lnRef>` style ref).
+    // A line with `<a:noFill/>` (or no fill child at all) means "draw
+    // no stroke" even though `w` is set — common on PPTX vector logos
+    // where the design is a pure silhouette (e.g. the AFRY letterforms
+    // in the audit fixture). The previous code fabricated a 0x111111
+    // stroke at the declared width whenever `strokeColor` was undefined,
+    // producing a thin near-black outline that thickened the imported
+    // glyphs vs the original. Fix: emit `strokeWidth: 0` when the
+    // parser found no colour, so the renderer skips the stroke pass.
+    const hasStrokeColor = s.strokeColor !== undefined
     const obj: PathObject = {
       ...base,
       type: 'path',
       anchors,
       stroke: s.strokeColor ?? 0x111111,
-      strokeWidth:
-        s.strokeWidth !== undefined && s.strokeWidth > 0 ? round(s.strokeWidth * scale) : 2,
+      strokeWidth: hasStrokeColor
+        ? s.strokeWidth !== undefined && s.strokeWidth > 0
+          ? round(s.strokeWidth * scale)
+          : 2
+        : 0,
     }
     if (s.fillColor !== undefined) obj.fill = s.fillColor
     if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
