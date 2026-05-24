@@ -9,6 +9,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, FileDown, Info, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { scanDeckForExportCompat, type CompatWarning } from '../lib/pptxCompat.js'
@@ -47,7 +48,15 @@ export function ExportPptxDialog({ slides, onExport, onClose }: ExportPptxDialog
   const lossy = warnings.filter((w) => w.severity === 'lossy')
   const simplified = warnings.filter((w) => w.severity === 'simplified')
 
-  return (
+  // Portal to document.body: the dialog mounts inside Toolbar, which sits
+  // under several editor-layout ancestors with `transform` / `filter` set
+  // (frosted-glass surfaces, present-mode anim layers). Those create a
+  // containing block for `position: fixed`, so `fixed inset-0` would
+  // anchor to the transformed ancestor instead of the viewport — pushing
+  // the dialog off the top of the screen. Portalling to <body> means the
+  // wrapper has no transformed ancestors and `inset-0` actually fills the
+  // viewport.
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
@@ -122,7 +131,8 @@ export function ExportPptxDialog({ slides, onExport, onClose }: ExportPptxDialog
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
