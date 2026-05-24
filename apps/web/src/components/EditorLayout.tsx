@@ -601,6 +601,22 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   /** Ref on the scroll container so we can centre the artboard on mount. */
   const stageScrollRef = useRef<HTMLDivElement>(null)
 
+  /**
+   * Pending cursor-pivot zoom target. Wheel handler stashes the
+   * slide-space point under the cursor + the cursor's viewport offset
+   * BEFORE calling setZoom; the recenter-on-zoom useLayoutEffect below
+   * consumes this and applies a pivot-aware scroll instead of recentring
+   * the artboard. Null for non-wheel zoom paths (keyboard, button,
+   * Cmd-0 reset) so they keep the recentre UX.
+   */
+  const pendingZoomPivotRef = useRef<{
+    slideX: number
+    slideY: number
+    cursorViewportX: number
+    cursorViewportY: number
+    targetZoom: number
+  } | null>(null)
+
   /** Hand-tool pan state — live while the pointer is held. */
   const panRef = useRef<{
     startX: number
@@ -811,6 +827,31 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     if (scroller === null || artboard === null) return
     const a = artboard.getBoundingClientRect()
     const s = scroller.getBoundingClientRect()
+
+    // Cursor-pivot path: a wheel handler asked us to keep the slide-space
+    // point under the cursor anchored. The artboard rect we just read is
+    // post-commit (useLayoutEffect runs after the DOM mutates), so its
+    // `.left` already reflects the new zoom + any centring/overflow flip.
+    // newAboardContentX = current visual left in content space; the slide
+    // point at slideX (in unscaled slide coords) is at slideX * zoom px
+    // from the artboard's top-left visually, so:
+    //   newCursorContentX = aboardContentX + slideX * zoom
+    //   newScrollLeft     = newCursorContentX - cursorViewportX
+    const pivot = pendingZoomPivotRef.current
+    if (pivot !== null && Math.abs(pivot.targetZoom - zoom) < 1e-6) {
+      pendingZoomPivotRef.current = null
+      const aboardContentX = a.left - s.left + scroller.scrollLeft
+      const aboardContentY = a.top - s.top + scroller.scrollTop
+      scroller.scrollLeft = Math.max(
+        0,
+        aboardContentX + pivot.slideX * zoom - pivot.cursorViewportX,
+      )
+      scroller.scrollTop = Math.max(0, aboardContentY + pivot.slideY * zoom - pivot.cursorViewportY)
+      return
+    }
+
+    // Default path: keyboard / button zoom — recentre the artboard in the
+    // visible channel (offsetting for the asymmetric chrome insets).
     const centerX = a.left - s.left + scroller.scrollLeft + a.width / 2
     const centerY = a.top - s.top + scroller.scrollTop + a.height / 2
     const channelOffsetX = (slidesInset - inspectorInset) / 2
@@ -1896,8 +1937,29 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // Per-tick step roughly matches the zoomIn/Out 1.25× factor but
       // scales smoothly with the wheel delta so trackpad pinch feels
       // natural too. clamp to MIN_ZOOM..MAX_ZOOM.
+      const prevZoom = zoomRef.current
       const factor = Math.exp(-e.deltaY / 200)
-      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current * factor))
+      const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, prevZoom * factor))
+      if (next === prevZoom) return
+
+      // Capture the slide-space point under the cursor + the cursor's
+      // viewport offset so the recentre-on-zoom useLayoutEffect can keep
+      // that slide point anchored to the cursor instead of jumping to
+      // the artboard centre. (Trackpad pinch-zoom expectation; keyboard
+      // and button zoom paths leave the pivot ref null and keep the
+      // recentre UX.)
+      const aboardEl = canvasContainerRef.current
+      if (aboardEl !== null) {
+        const aboardRect = aboardEl.getBoundingClientRect()
+        const scrollerRect = el.getBoundingClientRect()
+        pendingZoomPivotRef.current = {
+          slideX: (e.clientX - aboardRect.left) / prevZoom,
+          slideY: (e.clientY - aboardRect.top) / prevZoom,
+          cursorViewportX: e.clientX - scrollerRect.left,
+          cursorViewportY: e.clientY - scrollerRect.top,
+          targetZoom: next,
+        }
+      }
       setZoom(next)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
