@@ -24,7 +24,13 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Application } from 'pixi.js'
+import { Application, TextureSource } from 'pixi.js'
+
+// Enable mipmaps globally so large images (e.g. 4267×3200 imported logos)
+// downscale smoothly instead of showing aliased staircase edges. Without
+// mipmaps, Pixi's bilinear filtering samples only 4 texels per pixel
+// which isn't enough for significant downscaling.
+TextureSource.defaultOptions.autoGenerateMipmaps = true
 import { SceneGraph } from './SceneGraph'
 import { ResourceManager, setDefaultResourceManager } from './ResourceManager'
 import { OverlayCompositor } from './overlay/OverlayCompositor'
