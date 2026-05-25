@@ -136,6 +136,7 @@ function installFilterEffectsNow(
         offset: { x: shadow.offsetX, y: shadow.offsetY },
         quality: blurPx > 16 ? 8 : 6,
       })
+      filter.antialias = 'on'
       filter.resolution = Math.min(2, window.devicePixelRatio || 1)
       slots.shadow = filter
       slots.shadowData = { ...shadow }
@@ -154,6 +155,7 @@ function installFilterEffectsNow(
         strength: blurPx,
         quality: blurPx > 24 ? 6 : 4,
       })
+      filter.antialias = 'on'
       // Pixi 8.17's optimized blur halves strength per pass, spreading
       // the gaussian wider than the auto-padding (strength * 2) covers.
       // 3× strength matches the 3-sigma boundary of the effective kernel.
