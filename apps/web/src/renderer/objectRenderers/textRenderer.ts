@@ -392,7 +392,19 @@ export function buildStyleOpts(data: TextObject): any {
   // above for why this trick is necessary. Pixi v8's HTMLTextStyle
   // appends `cssOverrides` after the auto-generated declarations, so
   // the later override wins the cascade.
-  opts.cssOverrides = [`font-family: ${cssStack}`]
+  // Pixi's HTMLText SVG foreignObject uses `max-width` (from
+  // wordWrapWidth) which lets the inline-block container be narrower
+  // than the limit. This changes how the browser distributes subpixel
+  // remainders across wrapped lines compared to the contenteditable
+  // overlay (which uses a fixed `width: 100%`). The mismatch compounds
+  // across lines — the last characters get wrapped to a clipped line.
+  // Force a fixed `width` matching the contenteditable so both
+  // renderers use the same text layout algorithm.
+  opts.cssOverrides = [
+    `font-family: ${cssStack}`,
+    `width: ${data.width}px`,
+    `overflow-wrap: break-word`,
+  ]
   return opts
 }
 
