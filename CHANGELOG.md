@@ -4,6 +4,44 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.8.1 — Visual fidelity & rendering fixes (2026-05-25)
+
+Renderer quality pass focused on canvas sharpness, text fidelity, and
+filter antialiasing. Shipped after the major library upgrade (Pixi 8.18,
+TS 6, Vite 8, React 19, Tailwind 4) to leverage new Pixi v8 features.
+
+### Fixed
+
+- **Sharp canvas at zoom > 1** — dynamically scale renderer resolution
+  (`dpr × zoom`, capped by 25M-pixel budget) so CSS `transform:scale()`
+  doesn't upscale fixed-resolution pixels. Debounced 150 ms to avoid
+  Pixi's HTMLTextPipe `generatingTexture` race. `forceTextResolutionRefresh`
+  walks all HTMLText nodes (including table cells) to reset their GPU
+  cache key and trigger re-rasterization at the new resolution.
+- **Tab-switch repaint** — listen for `visibilitychange` and
+  `markDirty()` when the tab regains focus. With `autoStart: false` the
+  canvas never re-paints by itself, so backgrounded tabs came back with
+  a partially rendered or blank canvas.
+- **Filter FBO antialias** — set `antialias = 'on'` on DropShadowFilter
+  and BlurFilter. Pixi v8 defaults to `antialias: "off"` on filter
+  intermediate framebuffers, which stripped MSAA from shape edges when
+  a shadow or blur was applied.
+- **Global mipmaps** — set `TextureSource.defaultOptions.autoGenerateMipmaps = true`
+  so large imported images (e.g. 4267×3200 PPTX logos) downscale
+  smoothly instead of showing aliased staircase edges.
+- **Text word-wrap mismatch** — Pixi's SVG foreignObject used
+  `max-width` while the contenteditable overlay uses fixed `width`.
+  The subpixel measurement difference compounded across lines, clipping
+  the last characters. Fixed by injecting `width: Xpx` via cssOverrides.
+- **Paste line breaks lost** — Chrome wraps pasted lines in `<div>`
+  elements, but `getElementInnerText` only recognized `<br>` as line
+  breaks. Added `<div>`/`<p>` block-boundary detection.
+- **ResizeObserver** — uses `clientWidth`/`clientHeight` (CSS-transform-
+  independent) instead of `getBoundingClientRect()` which returned
+  scaled dimensions inside the zoom wrapper.
+
+---
+
 ## 0.8.0 — First-class TableObject (M29) (2026-05-18)
 
 Adds a native `TableObject` to the slide model + editor. Tables can be
