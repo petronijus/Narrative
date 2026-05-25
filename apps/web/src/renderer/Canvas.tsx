@@ -74,9 +74,17 @@ export interface CanvasProps {
    * fade. If omitted, falls back to the legacy nominal 1920×1080.
    */
   artboardSize?: { width: number; height: number }
+  /**
+   * Current editor zoom level. Drives dynamic renderer resolution so
+   * the canvas renders enough backing pixels for the CSS
+   * transform:scale(zoom) applied by EditorLayout — without this,
+   * zoom > 1 upscales fixed-resolution pixels and everything looks
+   * blurry. Resolution is capped at 4× to bound GPU memory.
+   */
+  zoom?: number
 }
 
-export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {}) {
+export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasProps = {}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const overlayRootRef = useRef<HTMLDivElement>(null)
 
@@ -411,7 +419,56 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
     instance.sceneGraph.setSlideBounds(artboardSize.width, artboardSize.height)
   }, [artboardSize?.width, artboardSize?.height, pixiReady])
 
-  // ResizeObserver — reaguje na změnu velikosti parent kontejneru
+  // Adjust renderer resolution when zoom changes so the canvas
+  // renders enough backing pixels for the CSS-scaled display. Without
+  // this, zoom > 1 upscales fixed-resolution pixels → blurry text and
+  // graphics.
+  //
+  // Resolution is capped by a pixel budget (25 M pixels ≈ 100 MB
+  // VRAM) rather than a fixed multiplier. This keeps the canvas safe
+  // on any display/zoom combination — on a 1× DPR display zoom=2
+  // gets full sharpness (resolution=2), while a 2× HiDPI display
+  // caps at ~2.2× instead of the 4× that would OOM.
+  //
+  // Debounced by 150 ms so rapid mousewheel zoom only commits the
+  // resolution change once after the zoom stabilizes. This avoids
+  // Pixi's HTMLTextPipe generatingTexture race where mid-flight
+  // rasterizations silently skip new resolution changes.
+  useEffect(() => {
+    const instance = instanceRef.current
+    if (instance === null) return
+
+    const dpr = window.devicePixelRatio || 1
+    const container = containerRef.current
+    const cw = container?.clientWidth ?? 1
+    const ch = container?.clientHeight ?? 1
+    const maxPixels = 25_000_000
+    const pixelCap = Math.sqrt(maxPixels / (cw * ch))
+    const effectiveRes = Math.min(pixelCap, dpr * Math.max(1, zoom))
+
+    const debounceTimer = setTimeout(() => {
+      const inst = instanceRef.current
+      if (inst === null) return
+      const renderer = inst.app.renderer
+      if (Math.abs(renderer.resolution - effectiveRes) < 0.01) return
+      renderer.resolution = effectiveRes
+      if (container !== null && cw > 0 && ch > 0) {
+        renderer.resize(cw, ch)
+      }
+      // Force all HTMLText nodes to re-rasterize at the new resolution.
+      // Pixi's async text pipeline + our wireRedrawOnAsyncTextureUpdate
+      // don't cover resolution-only changes — this resets each node's
+      // GPU cache key and catchup guard so the re-rasterization gets
+      // scheduled with follow-up render frames.
+      inst.sceneGraph.forceTextResolutionRefresh()
+    }, 150)
+
+    return () => clearTimeout(debounceTimer)
+  }, [zoom, pixiReady])
+
+  // ResizeObserver — reaguje na změnu velikosti parent kontejneru.
+  // Uses clientWidth/clientHeight (CSS-transform-independent) so the
+  // resize is correct when the container sits inside a scaled wrapper.
   useEffect(() => {
     const containerEl = containerRef.current
     if (containerEl === null) return
@@ -420,7 +477,8 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize }: CanvasProps = {})
       const instance = instanceRef.current
       if (instance === null) return
 
-      const { width, height } = containerEl.getBoundingClientRect()
+      const width = containerEl.clientWidth
+      const height = containerEl.clientHeight
       if (width > 0 && height > 0) {
         instance.app.renderer.resize(width, height)
       }

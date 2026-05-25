@@ -2458,7 +2458,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       transformOrigin: 'top left',
                     }}
                   >
-                    <Canvas onReady={onCanvasReady} bleedPx={400} artboardSize={canvasSize} />
+                    <Canvas
+                      onReady={onCanvasReady}
+                      bleedPx={400}
+                      artboardSize={canvasSize}
+                      zoom={zoom}
+                    />
 
                     {/* Artboard rim — drawn ABOVE the Pixi canvas since Pixi bleeds
                 beyond the artboard rect and would otherwise occlude a border

@@ -592,6 +592,53 @@ export class SceneGraph {
   }
 
   /**
+   * Force every HTMLText node in the scene to re-rasterize at the
+   * current renderer resolution. Called after a zoom-driven resolution
+   * change — Pixi's HTMLTextPipe detects the resolution mismatch and
+   * dispatches an async _updateGpuText, but our
+   * wireRedrawOnAsyncTextureUpdate catchup only fires on text/style
+   * changes, not resolution-only changes. This method resets each
+   * node's GPU cache key and catchup guard so the async texture gets
+   * follow-up frames to land into.
+   */
+  forceTextResolutionRefresh(): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rendererUid = (this.app.renderer as any).uid as number | undefined
+    let touched = 0
+
+    const refreshNode = (c: Container): void => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const node = c as any
+      // HTMLText nodes have .anchor (sprites) + ._didTextUpdate (text)
+      if (node.anchor !== undefined && '_didTextUpdate' in node) {
+        if (rendererUid !== undefined) {
+          const gpu = node._gpuData?.[rendererUid]
+          if (gpu !== undefined) gpu.currentKey = ''
+        }
+        node._didTextUpdate = true
+        // Reset catchup guard + last-key so the patched onViewUpdate
+        // triggers scheduleAsyncTextureCatchup for follow-up frames.
+        node.__narrativeCatchupActive = false
+        node.__narrativeLastKey = ''
+        if (typeof node.onViewUpdate === 'function') {
+          try {
+            node.onViewUpdate()
+          } catch {
+            /* safe */
+          }
+        }
+        touched++
+      }
+      for (const child of c.children) {
+        if (child instanceof Container) refreshNode(child)
+      }
+    }
+
+    refreshNode(this.root)
+    if (touched > 0) this.markDirty()
+  }
+
+  /**
    * P2: returns (and lazily creates) the artboard-background Container —
    * kept as the FIRST child of the active root so every slide object
    * stacks above it. Consumers call this from the background observer +
