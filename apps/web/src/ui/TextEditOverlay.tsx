@@ -208,6 +208,11 @@ function getElementInnerText(el: HTMLElement): string {
   // We avoid `el.innerText` because some browsers normalise whitespace
   // / collapse runs of spaces. Walk the tree and reconstruct the
   // plain string so it matches Y.Text.toString() byte-for-byte.
+  //
+  // Block-level elements (`<div>`, `<p>`) inserted by the browser on
+  // paste (Chrome wraps each pasted line in a `<div>`) are treated as
+  // line-break boundaries — without this, pasted multi-line text loses
+  // its `\n` characters before reaching Y.Text.
   let out = ''
   const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -217,6 +222,10 @@ function getElementInnerText(el: HTMLElement): string {
     if (node.nodeName === 'BR') {
       out += '\n'
       return
+    }
+    const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P'
+    if (isBlock && out.length > 0 && !out.endsWith('\n')) {
+      out += '\n'
     }
     for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]!)
   }
