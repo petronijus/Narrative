@@ -488,6 +488,19 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
     return () => observer.disconnect()
   }, [])
 
+  // Re-render when the tab regains visibility. Browsers can discard the
+  // WebGL backbuffer while the tab is backgrounded to save memory. With
+  // autoStart:false the canvas never re-paints by itself, so the user
+  // comes back to a partially rendered or blank canvas.
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.hidden) return
+      instanceRef.current?.scheduler.markDirty()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   return (
     // Wrapper je position:relative aby overlayRoot byl správně umístěn.
     // overflow:visible povolen aby bleed canvas/overlay vyčnívaly mimo
