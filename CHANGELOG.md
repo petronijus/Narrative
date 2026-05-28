@@ -4,6 +4,36 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased — Bug-hunt audit fixes (2026-05-29)
+
+Top findings from a whole-repo bug sweep. Details + remaining open
+findings in [`docs/handoff/bugfix-audit-2026-05-29.md`](docs/handoff/bugfix-audit-2026-05-29.md).
+
+### Fixed
+
+- **Texture/sprite leak on rapid asset swap** — image and video renderers
+  had no abort token for the _reload_ case, so swapping an object's asset
+  twice before the first decode finished leaked the first texture's
+  ResourceManager refcount (GPU memory) and orphaned its `Container`. Added
+  a per-container monotonic load-generation counter; every async
+  continuation now bails (releasing any acquired texture) when superseded.
+- **Animation panel desync after slide reorder/sync** —
+  `subscribeToSlideAnimations` never rebound after the slide's Y.Map was
+  deleted-and-reinserted under the same id (`moveSlide`, Hocuspocus sync),
+  so animation edits silently stopped reaching the timeline until a slide
+  switch. Added the same `ctx.slides` rebind its objects-sibling already had.
+- **Media upload provider unmount leak** — in-flight tus uploads and the
+  self-rescheduling transcode poll (every 2 s, forever, even on error) were
+  never cancelled on unmount, so navigating away mid-transcode left a
+  runaway loop calling `setUploads` on an unmounted component. Added unmount
+  cleanup + a disposed guard in the poll loop.
+- **Folder cascade-delete now transactional** — `DELETE /folders/:id` ran
+  the deck delete and folder delete as two separate statements; a crash
+  between them caused permanent partial data loss. Wrapped both in one
+  `db.transaction`.
+
+---
+
 ## 0.8.1 — Visual fidelity & rendering fixes (2026-05-25)
 
 Renderer quality pass focused on canvas sharpness, text fidelity, and

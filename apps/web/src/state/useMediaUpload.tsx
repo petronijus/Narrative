@@ -123,6 +123,12 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
   const onDoneCallbacksRef = useRef<Map<string, (entry: UploadEntry) => void>>(new Map())
   // Transcode poll interval IDs keyed by local upload id
   const transPollTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  // Set true once the provider unmounts so the self-rescheduling transcode
+  // poll stops looping and no setUploads runs on an unmounted component.
+  // Reset to false on (re)mount — React Strict Mode runs the unmount cleanup
+  // then re-runs the effect on the same instance, and refs persist across
+  // that double-invoke, so we must clear the flag in the effect body.
+  const disposedRef = useRef(false)
 
   // Keep the synchronous mirror in sync with committed state (runs once per
   // commit, not per Strict Mode double-invocation of the updater).
@@ -131,6 +137,29 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     for (const e of uploads) m.set(e.id, e)
     uploadsMapRef.current = m
   }, [uploads])
+
+  // Unmount cleanup: abort in-flight tus uploads and clear every pending
+  // transcode poll timer. Without this, navigating away from a deck while a
+  // video is transcoding leaves `startTranscodePoll` rescheduling itself
+  // forever (it even reschedules on network error), fetching /video-info
+  // every 2s and calling setUploads on an unmounted component. Refs are
+  // captured here so the closure reads the live maps at unmount time.
+  const tusUploads = tusUploadsRef.current
+  const transPollTimers = transPollTimersRef.current
+  useEffect(() => {
+    disposedRef.current = false
+    return () => {
+      disposedRef.current = true
+      for (const upload of tusUploads.values()) {
+        upload.abort().catch(() => undefined)
+      }
+      tusUploads.clear()
+      for (const timer of transPollTimers.values()) {
+        clearTimeout(timer)
+      }
+      transPollTimers.clear()
+    }
+  }, [tusUploads, transPollTimers])
 
   // ---------------------------------------------------------------------------
   // Internal helpers
@@ -165,9 +194,13 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
    */
   function startTranscodePoll(id: string, assetId: string) {
     async function poll() {
+      // Bail if the provider unmounted while a poll was scheduled or mid-flight
+      // — otherwise this loop reschedules itself forever after navigation.
+      if (disposedRef.current) return
       try {
         const url = `${API_URL}/api/media/${assetId}/video-info`
         const res = await fetch(url, { credentials: 'include' })
+        if (disposedRef.current) return
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON shape unknown at compile time
         const data = (await res.json()) as any
@@ -209,6 +242,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
           transPollTimersRef.current.set(id, timer)
         }
       } catch (err) {
+        if (disposedRef.current) return
         // Network error during poll — retry after interval
         const timer = setTimeout(() => {
           void poll()

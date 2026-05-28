@@ -35,6 +35,13 @@ const MASK_TAG = Symbol('imgMask')
 const SPRITE_WRAP_TAG = Symbol('imgSpriteWrap')
 const ABORTED_TAG = Symbol('imgAborted')
 const ACQUIRED_URL_TAG = Symbol('imgAcquiredUrl')
+/**
+ * Monotonic load-generation counter. Bumped at the start of every
+ * `startLoad` so a still-in-flight async load from a prior asset can
+ * detect that it has been superseded (rapid asset swap) and bail
+ * before clobbering tags / leaking its texture. See `isStale`.
+ */
+const LOAD_GEN_TAG = Symbol('imgLoadGen')
 /** Last imageRect applied (for surgical patch diffs / preserve-across-asset-swap). */
 const IMAGE_RECT_TAG = Symbol('imgImageRect')
 /** Last imageRotation applied. Same role as IMAGE_RECT_TAG. */
@@ -95,6 +102,23 @@ function getAcquiredUrl(node: Container): string | undefined {
 
 function setAcquiredUrl(node: Container, url: string | undefined): void {
   asAny(node)[ACQUIRED_URL_TAG] = url
+}
+
+/** Bump the load generation and return the new (captured) value. */
+function bumpLoadGen(node: Container): number {
+  const next = ((asAny(node)[LOAD_GEN_TAG] as number | undefined) ?? 0) + 1
+  asAny(node)[LOAD_GEN_TAG] = next
+  return next
+}
+
+/**
+ * A load is stale when the node has been destroyed (aborted) or a newer
+ * `startLoad` has bumped the generation past the one this closure
+ * captured. Either way the in-flight async work must abort without
+ * mutating container tags.
+ */
+function isStale(node: Container, myGen: number): boolean {
+  return isAborted(node) || (asAny(node)[LOAD_GEN_TAG] as number | undefined) !== myGen
 }
 
 function getStoredImageRect(node: Container): ImageObject['imageRect'] {
@@ -402,6 +426,12 @@ function startLoad(container: Container, data: ImageObject): void {
   const variant = data.variant ?? 'display'
   const box = { w: data.width, h: data.height }
 
+  // Invalidate any load still in flight from a previous asset. The older
+  // closure will observe the bumped generation after its next await and
+  // bail (releasing its texture) instead of clobbering our tags or
+  // orphaning a sprite wrap. Captured here so this load can self-check.
+  const myGen = bumpLoadGen(container)
+
   const resolver = getDefaultImageUrlResolver()
   const rm = getDefaultResourceManager()
 
@@ -439,7 +469,7 @@ function startLoad(container: Container, data: ImageObject): void {
     try {
       url = await resolver({ assetId, variant })
     } catch {
-      if (isAborted(container)) return
+      if (isStale(container, myGen)) return
       const errG = getPlaceholder(container)
       if (errG !== undefined) {
         drawErrorIndicator(errG, box.w, box.h)
@@ -447,13 +477,13 @@ function startLoad(container: Container, data: ImageObject): void {
       return
     }
 
-    if (isAborted(container)) return
+    if (isStale(container, myGen)) return
 
     let texture: Texture
     try {
       texture = await rm.acquireTexture(url)
     } catch {
-      if (isAborted(container)) return
+      if (isStale(container, myGen)) return
       const errG = getPlaceholder(container)
       if (errG !== undefined) {
         drawErrorIndicator(errG, box.w, box.h)
@@ -461,7 +491,9 @@ function startLoad(container: Container, data: ImageObject): void {
       return
     }
 
-    if (isAborted(container)) {
+    // Superseded by a newer load (or destroyed) while acquiring — release
+    // the ref we just took and bail before touching any container tag.
+    if (isStale(container, myGen)) {
       rm.releaseTexture(url)
       return
     }

@@ -589,23 +589,25 @@ export function subscribeToSlideAnimations(
   slideId: string,
   callback: (animations: AnimationStep[]) => void,
 ): () => void {
-  // Find the slide
-  let slideAnimationsArr: Y.Array<Y.Map<unknown>> | null = null
-  for (let i = 0; i < ctx.slides.length; i++) {
-    const m = ctx.slides.get(i)
-    if (m.get('id') === slideId) {
-      slideAnimationsArr = m.get('animations') as Y.Array<Y.Map<unknown>>
-      break
+  let unsubscribed = false
+
+  // Resolve the slide's animations Y.Array by id. Returns null if the
+  // slide isn't present (yet) or carries no animations array.
+  const resolveAnimationsArr = (): Y.Array<Y.Map<unknown>> | null => {
+    for (let i = 0; i < ctx.slides.length; i++) {
+      const m = ctx.slides.get(i)
+      if (m.get('id') === slideId) {
+        return (m.get('animations') as Y.Array<Y.Map<unknown>> | undefined) ?? null
+      }
     }
+    return null
   }
 
-  if (slideAnimationsArr === null) {
-    return () => {}
-  }
-
-  const animationsArr = slideAnimationsArr
+  // Current bound array — reassigned by the rebind path below.
+  let animationsArr: Y.Array<Y.Map<unknown>> | null = resolveAnimationsArr()
 
   const getSnapshot = (): AnimationStep[] => {
+    if (animationsArr === null) return []
     const result: AnimationStep[] = []
     for (let i = 0; i < animationsArr.length; i++) {
       try {
@@ -618,14 +620,44 @@ export function subscribeToSlideAnimations(
   }
 
   const observer = (): void => {
+    if (unsubscribed) return
     callback(getSnapshot())
   }
 
-  animationsArr.observeDeep(observer)
-  callback(getSnapshot())
+  if (animationsArr !== null) {
+    animationsArr.observeDeep(observer)
+  }
+
+  // P14: watch the deck's slides Y.Array for Y.Map replacement of this
+  // slide. Reordering siblings keeps the target Y.Map identity (no
+  // rebind), but replacing the target slide's Y.Map — delete + insert at
+  // the same id, which happens on moveSlide and on Hocuspocus sync
+  // swapping a locally hydrated empty Y.Map for the remote one — leaves
+  // our observer bound to a detached/stale animations Y.Array. Detach and
+  // rebind so the animations panel keeps seeing peer edits. Mirrors the
+  // rebind in subscribeToSlideObjectsWithFlush.
+  const slidesObserver = (): void => {
+    if (unsubscribed) return
+    const fresh = resolveAnimationsArr()
+    if (fresh === animationsArr) return
+    if (animationsArr !== null) animationsArr.unobserveDeep(observer)
+    animationsArr = fresh
+    if (animationsArr !== null) animationsArr.observeDeep(observer)
+    callback(getSnapshot())
+  }
+  ctx.slides.observe(slidesObserver)
+
+  // Initial synchronous emission. Only when the slide was actually found —
+  // a subscription for a not-yet-present slide stays silent until the
+  // rebind path binds it (preserving the original missing-slide contract).
+  if (animationsArr !== null) {
+    callback(getSnapshot())
+  }
 
   return (): void => {
-    animationsArr.unobserveDeep(observer)
+    unsubscribed = true
+    if (animationsArr !== null) animationsArr.unobserveDeep(observer)
+    ctx.slides.unobserve(slidesObserver)
   }
 }
 

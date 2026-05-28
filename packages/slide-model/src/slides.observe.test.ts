@@ -10,6 +10,7 @@ import { createSlideDoc } from './yDoc.js'
 import {
   addSlide,
   removeSlide,
+  moveSlide,
   updateSlideTransition,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
@@ -403,6 +404,41 @@ describe('subscribeToSlideAnimations', () => {
     const unsub = subscribeToSlideAnimations(ctx, 'ghost-id', cb)
 
     expect(cb).not.toHaveBeenCalled()
+    unsub()
+  })
+
+  it('keeps firing after the slide Y.Map is replaced by moveSlide (rebind)', () => {
+    // Regression: moveSlide deletes + reinserts the slide's Y.Map at the
+    // same id, so an observer bound to the old animations Y.Array goes
+    // stale. The subscription must rebind to the fresh array and keep
+    // delivering edits — otherwise the animations panel silently desyncs.
+    const ctx = makeCtx()
+    addSlide(ctx) // second slide so there's something to reorder past
+    const slideId = ctx.slides.get(0).get('id') as string
+
+    const cb = vi.fn()
+    const unsub = subscribeToSlideAnimations(ctx, slideId, cb)
+    cb.mockClear()
+
+    // Replace the tracked slide's Y.Map (move it to the end and back).
+    moveSlide(ctx, slideId, 1)
+    cb.mockClear()
+
+    // An edit on the SAME slide id, now backed by a fresh Y.Map/Y.Array,
+    // must still reach the subscriber.
+    const animCtx = getSlideAnimationsCtx(ctx, slideId)!
+    addAnimation(animCtx, {
+      objectId: 'obj-1',
+      preset: 'fadeIn',
+      trigger: 'onEnter',
+      duration: 0.5,
+      delay: 0,
+      easing: 'power2.out',
+    })
+
+    expect(cb).toHaveBeenCalled()
+    expect(cb.mock.calls.at(-1)![0]).toHaveLength(1)
+
     unsub()
   })
 

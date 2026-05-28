@@ -228,11 +228,15 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
 
       // Delete decks first (FK is ON DELETE RESTRICT). Cascades remove
       // deck_updates / deck_permissions / share_links / media_assets rows.
-      if (containedDecks.length > 0) {
-        await db.delete(decks).where(eq(decks.folderId, id))
-      }
-
-      await db.delete(folders).where(eq(folders.id, id))
+      // Both deletes run in one transaction so a crash between them can't
+      // leave the decks destroyed while the now-empty folder survives —
+      // an unrecoverable partial delete of user data.
+      await db.transaction(async (tx) => {
+        if (containedDecks.length > 0) {
+          await tx.delete(decks).where(eq(decks.folderId, id))
+        }
+        await tx.delete(folders).where(eq(folders.id, id))
+      })
 
       // Best-effort: sweep MinIO under decks/<id>/ for every contained
       // deck. Covers thumbnails, originals, HLS bundles, folder fonts.

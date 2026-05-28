@@ -51,6 +51,13 @@ const SPRITE_WRAP_TAG = Symbol('vidSpriteWrap')
 const PLAY_ICON_TAG = Symbol('vidPlayIcon')
 const ABORTED_TAG = Symbol('vidAborted')
 const ACQUIRED_URL_TAG = Symbol('vidAcquiredUrl')
+/**
+ * Monotonic load-generation counter. Bumped by every `startLoad` so a
+ * poster/video-info load still in flight from a prior asset can detect
+ * it has been superseded and bail before clobbering tags / leaking its
+ * texture / tearing down the newer load's sprite. See `isStale`.
+ */
+const LOAD_GEN_TAG = Symbol('vidLoadGen')
 const POLL_TIMER_TAG = Symbol('vidPollTimer')
 const LATEST_DATA_TAG = Symbol('vidLatestData')
 const LIVE_VIDEO_TAG = Symbol('vidLive')
@@ -363,6 +370,24 @@ function setAborted(node: Container): void {
   asAny(node)[ABORTED_TAG] = true
 }
 
+/** Bump the load generation and return the new (captured) value. */
+function bumpLoadGen(node: Container): number {
+  const next = ((asAny(node)[LOAD_GEN_TAG] as number | undefined) ?? 0) + 1
+  asAny(node)[LOAD_GEN_TAG] = next
+  return next
+}
+
+/**
+ * A poster load is stale when the node was destroyed (aborted) or a
+ * newer `startLoad` bumped the generation past the one this closure
+ * captured (rapid asset / posterAssetId swap, or a poll firing after a
+ * fresh startLoad). Stale work must abort without releasing the current
+ * poster, tearing down the live sprite wrap, or clobbering tags.
+ */
+function isStale(node: Container, myGen: number): boolean {
+  return isAborted(node) || (asAny(node)[LOAD_GEN_TAG] as number | undefined) !== myGen
+}
+
 function getAcquiredUrl(node: Container): string | undefined {
   return asAny(node)[ACQUIRED_URL_TAG] as string | undefined
 }
@@ -488,12 +513,16 @@ function startPolling(
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
   hasAuthoredPoster: boolean = false,
+  myGen: number,
 ): void {
   // Clear any existing timer first.
   stopPolling(container)
 
   const timer = setInterval(() => {
-    if (isAborted(container)) {
+    // Stop polling once destroyed or superseded by a newer load. A fresh
+    // startLoad also calls stopPolling, but a poll already mid-await when
+    // that happens is caught by the isStale check below.
+    if (isStale(container, myGen)) {
       stopPolling(container)
       return
     }
@@ -502,8 +531,8 @@ function startPolling(
       try {
         const resolver = getDefaultVideoInfoResolver()
         const info = await resolver({ assetId })
-        if (isAborted(container)) return
-        applyVideoInfoResult(container, info, box, fit, hasAuthoredPoster)
+        if (isStale(container, myGen)) return
+        applyVideoInfoResult(container, info, box, fit, hasAuthoredPoster, myGen)
       } catch {
         // Network error during poll — silently ignore, will retry next interval.
       }
@@ -538,7 +567,12 @@ function applyVideoInfoResult(
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
   hasAuthoredPoster: boolean = false,
+  myGen: number,
 ): void {
+  // A poll (or the initial info fetch) that resolves after a newer
+  // startLoad must not mutate the scene for the superseded asset.
+  if (isStale(container, myGen)) return
+
   const status = info.transcodeStatus
 
   if (status === 'failed') {
@@ -612,7 +646,7 @@ function applyVideoInfoResult(
   }
 
   // No authored poster — fall back to HLS auto-poster.
-  void loadPosterTexture(container, posterUrl, box, fit)
+  void loadPosterTexture(container, posterUrl, box, fit, myGen)
 
   // P12b: this function flips placeholder visibility / spawns play icons /
   // kicks off async poster loads — all of which mutate the scene without
@@ -708,7 +742,12 @@ async function loadPosterTexture(
   posterUrl: string,
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
+  myGen: number,
 ): Promise<void> {
+  // Bail before any teardown if a newer load already superseded us — we
+  // must not release the current poster or destroy the live sprite wrap.
+  if (isStale(container, myGen)) return
+
   // Release previous.
   releasePosterTexture(container)
   teardownSpriteWrap(container)
@@ -720,7 +759,7 @@ async function loadPosterTexture(
   try {
     texture = await rm.acquireTexture(posterUrl)
   } catch {
-    if (isAborted(container)) return
+    if (isStale(container, myGen)) return
     // Texture load failed — show error placeholder.
     const ph = ensurePlaceholder(container)
     drawFailedPlaceholder(ph, box.w, box.h)
@@ -728,7 +767,7 @@ async function loadPosterTexture(
     return
   }
 
-  if (isAborted(container)) {
+  if (isStale(container, myGen)) {
     rm.releaseTexture(posterUrl)
     return
   }
@@ -778,6 +817,10 @@ function startLoad(container: Container, data: VideoObject): void {
       ? data.posterAssetId
       : undefined
 
+  // Invalidate any poster / video-info load still in flight from a prior
+  // asset so it can't clobber this one's sprite or leak its texture.
+  const myGen = bumpLoadGen(container)
+
   // Stop any existing poll.
   stopPolling(container)
 
@@ -803,7 +846,7 @@ function startLoad(container: Container, data: VideoObject): void {
     // Kick off the authored-poster load in parallel with the video-info
     // resolve below. The two are independent — poster paints, transcode
     // status drives playback availability.
-    void loadAuthoredPoster(container, authoredPosterAssetId, box, fit)
+    void loadAuthoredPoster(container, authoredPosterAssetId, box, fit, myGen)
   }
 
   // Empty assetId — keep whatever the authored poster painted (or the
@@ -816,7 +859,7 @@ function startLoad(container: Container, data: VideoObject): void {
       const resolver = getDefaultVideoInfoResolver()
       info = await resolver({ assetId })
     } catch {
-      if (isAborted(container)) return
+      if (isStale(container, myGen)) return
       // When no authored poster is available, surface the failure state.
       // With an authored poster, keep it visible and silently move on —
       // the user can still see the slide content even if HLS metadata
@@ -828,13 +871,13 @@ function startLoad(container: Container, data: VideoObject): void {
       return
     }
 
-    if (isAborted(container)) return
+    if (isStale(container, myGen)) return
 
-    applyVideoInfoResult(container, info, box, fit, authoredPosterAssetId !== undefined)
+    applyVideoInfoResult(container, info, box, fit, authoredPosterAssetId !== undefined, myGen)
 
     // Start polling if transcode is still in progress.
     if (info.transcodeStatus === 'pending' || info.transcodeStatus === 'processing') {
-      startPolling(container, assetId, box, fit, authoredPosterAssetId !== undefined)
+      startPolling(container, assetId, box, fit, authoredPosterAssetId !== undefined, myGen)
     }
   })()
 }
@@ -851,6 +894,7 @@ async function loadAuthoredPoster(
   posterAssetId: string,
   box: { w: number; h: number },
   fit: 'cover' | 'contain',
+  myGen: number,
 ): Promise<void> {
   let posterUrl: string
   try {
@@ -861,10 +905,10 @@ async function loadAuthoredPoster(
   } catch {
     return
   }
-  if (isAborted(container)) return
+  if (isStale(container, myGen)) return
   // The live <video> path may have already painted; don't clobber.
   if (getLive(container) !== undefined) return
-  await loadPosterTexture(container, posterUrl, box, fit)
+  await loadPosterTexture(container, posterUrl, box, fit, myGen)
 }
 
 // ---------------------------------------------------------------------------
