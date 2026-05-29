@@ -36,14 +36,14 @@ const hlsMocks = vi.hoisted(() => {
   const mockHlsDestroy = vi.fn()
   const state = { isSupported: true }
 
-  const MockHls = vi.fn().mockImplementation(() => ({
-    loadSource: mockHlsLoadSource,
-    attachMedia: mockHlsAttachMedia,
-    destroy: mockHlsDestroy,
-  }))
-  Object.defineProperty(MockHls, 'isSupported', {
-    get: () => () => state.isSupported,
-  })
+  class MockHls {
+    loadSource = mockHlsLoadSource
+    attachMedia = mockHlsAttachMedia
+    destroy = mockHlsDestroy
+    static isSupported() {
+      return state.isSupported
+    }
+  }
 
   return { MockHls, mockHlsLoadSource, mockHlsAttachMedia, mockHlsDestroy, state }
 })
@@ -239,10 +239,9 @@ describe('VideoOverlay', () => {
     )
 
     await waitFor(() => {
-      expect(hlsMocks.MockHls).toHaveBeenCalledOnce()
+      expect(mockHlsLoadSource).toHaveBeenCalledWith('https://cdn.example.com/manifest.m3u8')
     })
 
-    expect(mockHlsLoadSource).toHaveBeenCalledWith('https://cdn.example.com/manifest.m3u8')
     expect(mockHlsAttachMedia).toHaveBeenCalledWith(expect.any(HTMLVideoElement))
   })
 

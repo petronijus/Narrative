@@ -2073,13 +2073,13 @@ describe('parsePptx', () => {
   // ─── Embedded fonts (F1) ─────────────────────────────────────────────────
 
   it('extracts embedded fonts from <p:embeddedFontLst> with rels resolution', async () => {
-    // Use a real TrueType file from the system so opentype.js's later
-    // metadata parse (in importDeck) would succeed. We don't actually
-    // call parseFontMetadata here — that's tested in fontMetadata.test.ts.
-    // The parser's job is to find the bytes; metadata parsing happens
-    // downstream.
-    const { readFileSync } = await import('node:fs')
-    const ttfBytes = readFileSync('/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf')
+    // Synthetic TrueType buffer — the parser only extracts raw bytes from
+    // the zip entry; it doesn't parse font tables. We just need *some*
+    // Buffer so we can assert the round-trip preserves length and content.
+    // The first 12 bytes are a valid TrueType offset-table header
+    // (sfVersion 0x00010000, numTables=0, searchRange/entry/range=0).
+    const ttfBytes = Buffer.alloc(64)
+    ttfBytes.writeUInt32BE(0x00010000, 0) // sfVersion — TrueType magic
 
     const zip = new JSZip()
     zip.file(

@@ -355,7 +355,7 @@ describe('imageRenderer', () => {
     }
   })
 
-  it('thumbnailMount: loads the `thumb` imgproxy variant async (bypasses shared RM)', async () => {
+  it('thumbnailMount: loads the `preview` imgproxy variant async (bypasses shared RM)', async () => {
     // jsdom's HTMLImageElement lacks .decode — patch it for the duration of
     // the test so the thumbnail flow resolves without a network fetch.
     const proto = HTMLImageElement.prototype as unknown as { decode?: () => Promise<void> }
@@ -369,7 +369,7 @@ describe('imageRenderer', () => {
 
     await new Promise((r) => setTimeout(r, 10))
     expect(resolver).toHaveBeenCalledWith(
-      expect.objectContaining({ assetId: baseImage.assetId, variant: 'thumb' }),
+      expect.objectContaining({ assetId: baseImage.assetId, variant: 'preview' }),
     )
     // Thumbnails MUST NOT go through the main ResourceManager — its textures
     // are bound to the main Canvas WebGL context and can't cross into the

@@ -21,38 +21,39 @@ interface MockProvider {
   off(event: string, cb: () => void): void
 }
 
-const providers: MockProvider[] = []
+const { providers } = vi.hoisted(() => {
+  const providers: MockProvider[] = []
+  return { providers }
+})
 
 vi.mock('@hocuspocus/provider', () => {
-  return {
-    HocuspocusProvider: vi.fn().mockImplementation(() => {
-      const p: MockProvider = {
-        destroyed: false,
-        listeners: new Map(),
-        on(event, cb) {
-          let set = this.listeners.get(event)
-          if (set === undefined) {
-            set = new Set()
-            this.listeners.set(event, set)
-          }
-          set.add(cb)
-        },
-        off(event, cb) {
-          this.listeners.get(event)?.delete(cb)
-        },
-        emit(event) {
-          const set = this.listeners.get(event)
-          if (set === undefined) return
-          for (const cb of set) cb()
-        },
-        destroy() {
-          this.destroyed = true
-        },
+  class MockHocuspocusProvider {
+    destroyed = false
+    listeners = new Map<string, Set<() => void>>()
+    on(event: string, cb: () => void) {
+      let set = this.listeners.get(event)
+      if (set === undefined) {
+        set = new Set()
+        this.listeners.set(event, set)
       }
-      providers.push(p)
-      return p
-    }),
+      set.add(cb)
+    }
+    off(event: string, cb: () => void) {
+      this.listeners.get(event)?.delete(cb)
+    }
+    emit(event: string) {
+      const set = this.listeners.get(event)
+      if (set === undefined) return
+      for (const cb of set) cb()
+    }
+    destroy() {
+      this.destroyed = true
+    }
+    constructor() {
+      providers.push(this as unknown as MockProvider)
+    }
   }
+  return { HocuspocusProvider: MockHocuspocusProvider }
 })
 
 import {

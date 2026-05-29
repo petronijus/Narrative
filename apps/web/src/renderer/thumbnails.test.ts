@@ -77,7 +77,12 @@ const { MockContainer, MockGraphics, mockExtract, mockRenderer, mockApp } = vi.h
 })
 
 vi.mock('pixi.js', () => ({
-  Application: vi.fn().mockImplementation(() => mockApp),
+  Application: class {
+    init = mockApp.init
+    stage = mockApp.stage
+    renderer = mockApp.renderer
+    destroy = mockApp.destroy
+  },
   Container: MockContainer,
   Graphics: MockGraphics,
 }))

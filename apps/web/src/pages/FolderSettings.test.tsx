@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { FolderSettings } from './FolderSettings'
-import * as FolderDocProviderModule from '../state/FolderDocProvider'
+import type * as React from 'react'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -38,23 +38,40 @@ const mockDeleteComponent = vi.fn().mockResolvedValue(undefined)
 // M16 P3 — Font API mocks (needed to avoid unmatched call errors)
 const mockListFolderFonts = vi.fn().mockResolvedValue([])
 
+const stableApi = {
+  listFolders: mockListFolders,
+  renameFolder: mockRenameFolder,
+  listComponents: mockListComponents,
+  renameComponent: mockRenameComponent,
+  deleteComponent: mockDeleteComponent,
+  listFolderFonts: mockListFolderFonts,
+  uploadFolderFont: vi.fn(),
+  deleteFolderFont: vi.fn(),
+}
+
 vi.mock('../api/client', () => ({
-  useApi: () => ({
-    listFolders: mockListFolders,
-    renameFolder: mockRenameFolder,
-    listComponents: mockListComponents,
-    renameComponent: mockRenameComponent,
-    deleteComponent: mockDeleteComponent,
-    listFolderFonts: mockListFolderFonts,
-    uploadFolderFont: vi.fn(),
-    deleteFolderFont: vi.fn(),
-  }),
+  useApi: () => stableApi,
 }))
 
 // Mock auth context
-vi.mock('../state/AuthContext', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../state/AuthContext')>()),
+vi.mock('../state/AuthContext', () => ({
   useAuth: () => ({ user: null, isLoading: false, login: vi.fn(), logout: vi.fn() }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
+}))
+
+// Mock heavy modules that pull in Pixi.js / CanvasInstanceContext
+vi.mock('../state/FolderFontLoader.js', () => ({
+  FolderFontLoader: () => null,
+}))
+
+vi.mock('../state/useFolderFonts.js', () => ({
+  FolderFontsProvider: ({ children }: { children: React.ReactNode }) => children,
+  useFolderFonts: () => ({ fonts: [], isLoading: false }),
+  useFolderFontsOptional: () => null,
+}))
+
+vi.mock('../ui/FontFamilySelect.js', () => ({
+  SYSTEM_FONTS: [],
 }))
 
 // ---------------------------------------------------------------------------
@@ -84,10 +101,8 @@ const mockTokenSnapshot = () => ({
   >,
 })
 
-vi.mock('../state/FolderDocProvider', async (importOriginal) => {
-  const actual = await importOriginal<typeof FolderDocProviderModule>()
+vi.mock('../state/FolderDocProvider', () => {
   return {
-    ...actual,
     FolderDocProvider: ({ children }: { folderId: string; children: React.ReactNode }) => children,
     useFolderTokens: () => mockTokenSnapshot(),
     useFolderMutations: () => ({
@@ -129,9 +144,15 @@ vi.mock('../state/FolderDocProvider', async (importOriginal) => {
         else if (category === 'effectStyles') delete mockEffectStyles[id]
       },
       listUsages: () => [],
+      markComponentDeleted: vi.fn(),
     }),
+    useTokenUsages: () => ({ usages: [], loading: false }),
   }
 })
+
+vi.mock('../state/useFolderComponents.js', () => ({
+  invalidateFolderComponentsCache: vi.fn(),
+}))
 
 // ---------------------------------------------------------------------------
 // Helpers

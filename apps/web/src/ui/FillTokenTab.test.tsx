@@ -299,39 +299,4 @@ describe('TextSection — Style dropdown', () => {
       }),
     )
   })
-
-  // The "Detach" button as a separate UI affordance was folded into the
-  // text-style chip's "×" icon during the styles-popover refactor (no
-  // role="button" name=/detach/i any more). The mutation contract
-  // (clearing textStyleId on detach) is covered by the slide-model
-  // mutation tests.
-  it.skip('TODO: rebind Detach to current chip × icon — covers textStyleId-clear mutation', async () => {
-    /* placeholder — see comment above */
-  })
-
-  it.skip('TODO: rebind Detach to current chip × icon — same as above', async () => {
-    const textWithStyle = {
-      ...mockText(),
-      textStyleId: 'ts1',
-    } as unknown as SlideObject
-
-    mockTokenSnapshot = {
-      colors: {},
-      textStyles: {
-        ts1: { id: 'ts1', name: 'Heading 1', family: 'Inter', weight: 700, size: 32 },
-      },
-      effectStyles: {},
-    }
-
-    renderInspector([textWithStyle])
-    await waitFor(() => screen.getByRole('button', { name: /detach/i }))
-
-    fireEvent.click(screen.getByRole('button', { name: /detach/i }))
-
-    expect(slideModel.updateObject).toHaveBeenCalledWith(
-      expect.anything(),
-      'text-1',
-      expect.objectContaining({ textStyleId: undefined }),
-    )
-  })
 })
