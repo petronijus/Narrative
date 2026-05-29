@@ -24,9 +24,13 @@ export function fadeOut(
   if (target.kind === 'pixi') {
     const proxy = target.proxy
     const applyFn = target.apply.bind(target)
+    // Fade from the object's AUTHORED alpha (the proxy is seeded from the
+    // container), not a hardcoded 1 — otherwise an object authored at
+    // alpha < 1 visibly pops to full opacity before fading out.
+    const baseAlpha = proxy.alpha
     tl.fromTo(
       proxy,
-      { alpha: 1 },
+      { alpha: baseAlpha },
       { alpha: 0, duration: step.duration, delay: step.delay, ease, onUpdate: applyFn },
       position,
     )

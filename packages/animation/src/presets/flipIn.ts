@@ -34,12 +34,14 @@ export function flipIn(
     const applyFn = target.apply.bind(target)
     const baseSx = proxy.scaleX || 1
     const baseSy = proxy.scaleY || 1
+    // Settle at the AUTHORED alpha, not a hardcoded 1.
+    const baseAlpha = proxy.alpha
     const from = axis === 'x' ? { scaleX: 0, scaleY: baseSy } : { scaleX: baseSx, scaleY: 0 }
     tl.fromTo(
       proxy,
       { alpha: 0, ...from },
       {
-        alpha: 1,
+        alpha: baseAlpha,
         scaleX: baseSx,
         scaleY: baseSy,
         duration: step.duration,

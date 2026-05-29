@@ -23,11 +23,13 @@ export function bounceIn(
   if (target.kind === 'pixi') {
     const proxy = target.proxy
     const applyFn = target.apply.bind(target)
+    // Settle at the AUTHORED alpha, not a hardcoded 1.
+    const baseAlpha = proxy.alpha
     tl.fromTo(
       proxy,
       { alpha: 0, scaleX: 0, scaleY: 0 },
       {
-        alpha: 1,
+        alpha: baseAlpha,
         scaleX: proxy.scaleX || 1,
         scaleY: proxy.scaleY || 1,
         duration: step.duration,

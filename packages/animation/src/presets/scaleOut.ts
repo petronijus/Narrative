@@ -21,9 +21,11 @@ export function scaleOut(
   if (target.kind === 'pixi') {
     const proxy = target.proxy
     const applyFn = target.apply.bind(target)
+    // Shrink/fade from the AUTHORED alpha, not a hardcoded 1.
+    const baseAlpha = proxy.alpha
     tl.fromTo(
       proxy,
-      { alpha: 1, scaleX: proxy.scaleX || 1, scaleY: proxy.scaleY || 1 },
+      { alpha: baseAlpha, scaleX: proxy.scaleX || 1, scaleY: proxy.scaleY || 1 },
       {
         alpha: 0,
         scaleX: 0,
