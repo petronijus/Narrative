@@ -243,9 +243,6 @@ export interface AppendPptxResult {
 
 // ---------------------------------------------------------------------------
 // M16 P5 — Folder component types
-// TODO(P5: state-sync) — align with server ComponentSummary shape once the
-// REST routes (GET/POST /folders/:id/components, PATCH/DELETE /components/:id)
-// are implemented by the state-sync agent.
 // ---------------------------------------------------------------------------
 
 export interface ComponentSummary {

@@ -558,7 +558,6 @@ function DeckCard({
                     </svg>
                     Move to&hellip;
                   </button>
-                  {/* TODO(M16-P1): Duplicate to… — not in P1 scope */}
                   <div className="my-1 border-t border-border" />
                   {confirmDelete ? (
                     <button

@@ -297,9 +297,7 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     draggingRef.current = false
   }, [])
 
-  // Mouse-wheel zoom around the cursor. TODO: support pinch / smooth
-  // wheel deltas — current implementation is the minimum-viable
-  // factor-based zoom requested in the spec.
+  // Mouse-wheel zoom around the cursor.
   const onImageWheel = useCallback(
     (e: React.WheelEvent<HTMLDivElement>) => {
       e.preventDefault()

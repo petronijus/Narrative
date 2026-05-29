@@ -2,25 +2,7 @@
  * renderer/Canvas.tsx
  *
  * React komponenta — mount/unmount Pixi Application.
- *
- * M2 fáze 2a: Přidán OverlayCompositor a overlayRoot div. Compositor je
- * instanciován po app.init() a uvolněn před app.destroy() při unmount.
- *
- * Compositor instance je exponována přes compositorRef prop (nebo React context
- * pokud editor-ui potřebuje přímý přístup — viz TODO níže).
- *
- * Pixi v8 API:
- * - new Application() + await app.init({ ... })
- * - app.canvas (ne app.view jako v Pixi v7)
- * - app.destroy(true, { children: true, texture: true }) při unmount
- *
- * DOM overlay vrstva:
- * - overlayRoot: <div> uvnitř stejného parent jako canvas, position:absolute;inset:0;pointer-events:none
- * - OverlayCompositor synchuje DOM elementy s Pixi world coords každý ticker tick
- * - editor-ui agent (fáze 2b) použije compositor pro text edit overlay a selection outlines
- *
- * TODO(M2-2b): Exportovat compositor přes React context aby editor-ui mohl registrovat overlays.
- *   Alternativně přijmout `onCompositorReady: (c: OverlayCompositor) => void` prop.
+ * Compositor is exposed via CanvasInstanceContext.
  */
 
 import { useEffect, useRef, useState } from 'react'

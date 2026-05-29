@@ -589,10 +589,6 @@ function FontRow({ font, onDelete }: FontRowProps) {
  *
  * P5: usage count is "—" (P7 wires real instance counting).
  * P6: thumbnail will be replaced with a live component snapshot.
- *
- * TODO(P5: state-sync) — api.listComponents / createComponent / renameComponent /
- * deleteComponent are currently stubs that return empty arrays until the server
- * routes land. Replace TODO comments in api/client.ts once the routes ship.
  */
 interface ComponentsTabProps {
   folderId: string

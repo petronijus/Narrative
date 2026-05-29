@@ -4,22 +4,7 @@
  * Client-side slide helper utilities (M9).
  *
  * duplicateSlide — deep-copies a slide's objects + animations into a new slide
- * inserted immediately after the source. This is a client-side helper because
- * slide-model mutations don't expose a bulk-copy primitive yet.
- *
- * TODO(M22): move duplicateSlide into @narrative/slide-model as a first-class mutation
- * (cleanup milestone). For now it lives here to keep state-sync out of scope for M9.
- *
- * Implementation notes:
- * - Reads source slide via listSlides() snapshot.
- * - Creates the new slide via addSlide() (correct transaction).
- * - Copies objects preserving their source IDs — object IDs are slide-local,
- *   and preserving them makes the duplicated slide a natural fixture for
- *   Magic Move transitions (M13) and keeps animation `objectId` references
- *   valid.
- * - All mutations run in individual doc.transact calls (addSlide, addObject,
- *   addAnimation). A single compound transaction would be cleaner — deferred
- *   to M22.
+ * inserted immediately after the source.
  */
 
 import {

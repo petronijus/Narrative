@@ -760,9 +760,6 @@ export class SceneGraph {
    *
    * Pro rotation=0 je výsledek identický s původním AABB chováním (backward compat).
    *
-   * TODO(M29 / ellipse polish): Striktní elliptic hit test v ellipse rovnici
-   * (x/a)²+(y/b)²≤1 místo AABB. Pro M7 editor UX je AABB dostatečně user-friendly.
-   *
    * Performance: scratch Point objekty jsou reused mezi voláními — žádný GC churn
    * na per-frame hot path.
    *
