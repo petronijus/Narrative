@@ -781,6 +781,29 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 })
 
   // ---------------------------------------------------------------------------
+  // Prune selection of ids that no longer exist before broadcasting it.
+  // A peer (or a local delete on another slide path) can remove a selected
+  // object; without this the stale id lingers in selectedIds, gets broadcast
+  // over awareness as a phantom, and downstream objects.find(...) returns
+  // undefined. Runs ahead of the awareness broadcast below so peers never see
+  // a deleted id.
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (selectedIds.size === 0) return
+    const present = new Set(objects.map((o) => o.id))
+    let hasStale = false
+    for (const id of selectedIds) {
+      if (!present.has(id)) {
+        hasStale = true
+        break
+      }
+    }
+    if (!hasStale) return
+    selectMany([...selectedIds].filter((id) => present.has(id)))
+  }, [objects, selectedIds, selectMany])
+
+  // ---------------------------------------------------------------------------
   // M8: Selection broadcast → awareness
   // ---------------------------------------------------------------------------
 
