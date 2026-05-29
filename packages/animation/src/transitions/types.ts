@@ -92,6 +92,13 @@ export interface ContainerProxy {
   scaleX: number
   scaleY: number
   alpha: number
+  /**
+   * Rotation in radians. Defaults to the container's current rotation, so
+   * transitions that don't tween it (fade, cube) write back an unchanged
+   * value (no-op). Magic Move tweens it through GSAP so it eases in lockstep
+   * with x/y/scale instead of lerping linearly off the timeline progress.
+   */
+  rotation: number
 }
 
 /**
@@ -110,6 +117,7 @@ export function makeContainerProxy(
     scaleX: 1,
     scaleY: 1,
     alpha: container.alpha,
+    rotation: container.rotation ?? 0,
     ...initial,
   }
 
@@ -117,6 +125,7 @@ export function makeContainerProxy(
     container.position.set(proxy.x, proxy.y)
     container.scale.set(proxy.scaleX, proxy.scaleY)
     container.alpha = proxy.alpha
+    container.rotation = proxy.rotation
   }
 
   return { proxy, applyProxy }

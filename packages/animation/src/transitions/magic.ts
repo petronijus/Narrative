@@ -214,9 +214,12 @@ export function magicTransition(
       scaleX: fromSx,
       scaleY: fromSy,
       alpha: from.alpha,
+      rotation: from.rotation,
     })
 
-    // Per-object morph tween.
+    // Per-object morph tween. Rotation rides the proxy so it eases with
+    // power2.inOut in lockstep with x/y/scale — previously it was lerped
+    // off the linear tl.progress(), desyncing from the eased transform.
     tl.to(
       proxy,
       {
@@ -225,17 +228,10 @@ export function magicTransition(
         scaleX: toSx,
         scaleY: toSy,
         alpha: to.alpha,
+        rotation: to.rotation,
         duration: durationSec,
         ease: 'power2.inOut',
-        onUpdate: () => {
-          applyProxy()
-          if (pair.incoming.rotation !== undefined) {
-            // Rotation is not on the proxy (to keep the structural shape
-            // simple). Lerp manually using the timeline's progress.
-            const p = tl.progress()
-            pair.incoming.rotation = from.rotation + (to.rotation - from.rotation) * p
-          }
-        },
+        onUpdate: applyProxy,
       },
       0,
     )
