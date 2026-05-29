@@ -555,6 +555,33 @@ describe('duplicateObject', () => {
 
     expect(fireCount).toBe(1)
   })
+
+  it('objekt bez x/y → duplikát nemá NaN coords (poloha zůstane absentní)', () => {
+    // 'rectangle' is already registered by the describe beforeEach; addObject
+    // does not merge defaults, so a literal without x/y yields a Y.Map with
+    // no x/y keys — the exact positionless case.
+    const ctx = makeCtx()
+    // Positionless object — x/y omitted entirely.
+    addObject(ctx, {
+      id: 'np1',
+      type: 'rectangle',
+      width: 10,
+      height: 10,
+      fill: 0,
+      rotation: 0,
+      opacity: 1,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+
+    const dup = duplicateObject(ctx, 'np1') as unknown as Record<string, unknown>
+
+    expect(dup).not.toBeNull()
+    // No NaN leaked in; absent position stays absent rather than `undefined + 20`.
+    expect(Number.isNaN(dup['x'] as number)).toBe(false)
+    expect(Number.isNaN(dup['y'] as number)).toBe(false)
+    expect('x' in dup).toBe(false)
+    expect('y' in dup).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -636,6 +663,48 @@ describe('bulkUpdateObjects', () => {
     bulkUpdateObjects(ctx, [])
 
     expect(fireCount).toBe(0)
+  })
+
+  it('text patch zachová Y.Text identitu (neklobbruje slot plain stringem)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    registerObjectType<any>({
+      type: 'text',
+      defaultProps: () => ({
+        x: 0,
+        y: 0,
+        width: 240,
+        height: 40,
+        text: 'Hello',
+        fontSize: 24,
+        rotation: 0,
+        opacity: 1,
+      }),
+    })
+    const ctx = makeCtx()
+    addObject(ctx, {
+      id: 't1',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 240,
+      height: 40,
+      text: 'Hello',
+      fontSize: 24,
+      rotation: 0,
+      opacity: 1,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+
+    const yTextBefore = ctx.objects.get(0).get('text')
+    expect(yTextBefore).toBeInstanceOf(Y.Text)
+
+    bulkUpdateObjects(ctx, [{ id: 't1', patch: { text: 'World' } as never }])
+
+    const yTextAfter = ctx.objects.get(0).get('text')
+    // Same CRDT instance (in-place edit), contents updated — not replaced
+    // with a plain string or a fresh Y.Text.
+    expect(yTextAfter).toBe(yTextBefore)
+    expect((yTextAfter as Y.Text).toString()).toBe('World')
   })
 
   it('undo vrátí celou batch v jednom kroku', () => {

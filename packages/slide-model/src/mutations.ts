@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid'
 import type { SlideObject, SlideObjectType, SlideObjectPatch, TableCell } from '@narrative/shared'
 import {
   plainObjectToYMap,
+  yMapToPlainObject,
   collectPendingCellTextInserts,
   type PendingCellTextInsert,
 } from './bindings.js'
@@ -236,11 +237,16 @@ export function duplicateObject(
   const sourcePlain = Object.fromEntries(sourceMap.entries()) as Record<string, unknown>
 
   const newId = nanoid()
+  // Position is optional on some object types — only apply the offset when
+  // x/y are actually numeric, otherwise `undefined + 20` would persist NaN
+  // coords (and absent position should stay absent on the duplicate).
+  const srcX = sourcePlain['x']
+  const srcY = sourcePlain['y']
   const clonedPlain: Record<string, unknown> = {
     ...sourcePlain,
     id: newId,
-    x: (sourcePlain['x'] as number) + offset.x,
-    y: (sourcePlain['y'] as number) + offset.y,
+    ...(typeof srcX === 'number' ? { x: srcX + offset.x } : {}),
+    ...(typeof srcY === 'number' ? { y: srcY + offset.y } : {}),
   }
 
   // Build a fresh Y.Map for the duplicate. Any Yjs CRDT values
@@ -299,9 +305,12 @@ export function duplicateObject(
     }
   }, LOCAL_ORIGIN)
 
-  // Vrátíme plain kopii — přečteme ze Y.Array (YMap je teď v doc kontextu)
+  // Vrátíme plain kopii — přečteme ze Y.Array (YMap je teď v doc kontextu).
+  // yMapToPlainObject unfolds nested CRDT (table rows/cols/defaults) to the
+  // plain SlideObject shape; a flat Object.fromEntries(entries()) would leak
+  // live Y.Array/Y.Map handles for a duplicated table.
   const insertedMap = ctx.objects.get(ctx.objects.length - 1)
-  return Object.fromEntries(insertedMap.entries()) as unknown as SlideObject
+  return yMapToPlainObject(insertedMap)
 }
 
 /**
@@ -333,7 +342,25 @@ export function bulkUpdateObjects(ctx: ObjectsMutationContext, updates: BulkUpda
       }
       const yMap = ctx.objects.get(idx)
       for (const [key, value] of Object.entries(patch)) {
-        yMap.set(key, value)
+        // Mirror updateObject's special-casing so a batched patch can't
+        // clobber CRDT identity. A `text` string must replace the existing
+        // Y.Text contents in place (not overwrite the slot with a plain
+        // string), and explicit undefined deletes the key.
+        if (key === 'text' && typeof value === 'string') {
+          const existing = yMap.get('text')
+          if (existing instanceof Y.Text) {
+            if (existing.length > 0) existing.delete(0, existing.length)
+            if (value.length > 0) existing.insert(0, value)
+          } else {
+            yMap.set('text', createTextValue(value))
+          }
+          continue
+        }
+        if (value === undefined) {
+          yMap.delete(key)
+        } else {
+          yMap.set(key, value)
+        }
       }
     }
   }, LOCAL_ORIGIN)
