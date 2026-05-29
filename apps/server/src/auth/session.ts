@@ -23,8 +23,17 @@
  * - Lifetime: 30 days sliding. Every `lookupSession()` bumps `last_used_at`
  *   AND `expires_at` to `now() + 30 days` so heavy users never need to log
  *   in again until they explicitly log out or stay away for 30 days.
- * - Cookie is HttpOnly + SameSite=Lax + Secure (in prod). CSRF is handled
- *   separately by a paired `narrative_csrf` token (see csrf.ts).
+ * - Cookie is HttpOnly + SameSite=Lax + Secure (in prod).
+ * - CSRF: the current defense is `SameSite=Lax` + `Secure` alone — the
+ *   browser does NOT attach the session cookie to cross-site non-GET
+ *   requests, and all state-changing routes are POST/PATCH/DELETE (no
+ *   mutating GET), so a cross-site form/fetch can't ride the session.
+ *   There is intentionally NO paired double-submit token today (an earlier
+ *   comment referenced a `csrf.ts` that was never built). A double-submit
+ *   `narrative_csrf` token is the planned hardening but is deferred — it
+ *   would need wiring through the auth callback, every mutating route, the
+ *   client, and the tus upload path (whose custom headers CORS strips), so
+ *   it's owned by the security-reviewer pass, not assumed to exist here.
  */
 
 import { randomBytes, createHash } from 'node:crypto'
