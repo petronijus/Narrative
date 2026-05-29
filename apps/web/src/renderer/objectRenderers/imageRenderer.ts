@@ -48,6 +48,14 @@ const IMAGE_RECT_TAG = Symbol('imgImageRect')
 const IMAGE_ROTATION_TAG = Symbol('imgImageRotation')
 /** Last mask snapshot applied — used to skip mask redraws when geometry is unchanged. */
 const MASK_SHAPE_TAG = Symbol('imgMaskShape')
+/**
+ * Texture created by `thumbnailMount` via `Texture.from(img)`. Thumbnails
+ * bypass the shared ResourceManager (their textures live on the offscreen
+ * thumbnail Canvas's WebGL context), so nothing else owns or releases this
+ * texture. `Sprite.destroy()` does NOT free textures by default — without
+ * this tag every thumbnail re-render would orphan a GPU texture + its source.
+ */
+const THUMB_TEXTURE_TAG = Symbol('imgThumbTexture')
 
 // ---------------------------------------------------------------------------
 // Type helpers
@@ -102,6 +110,14 @@ function getAcquiredUrl(node: Container): string | undefined {
 
 function setAcquiredUrl(node: Container, url: string | undefined): void {
   asAny(node)[ACQUIRED_URL_TAG] = url
+}
+
+function getThumbTexture(node: Container): Texture | undefined {
+  return asAny(node)[THUMB_TEXTURE_TAG] as Texture | undefined
+}
+
+function setThumbTexture(node: Container, texture: Texture | undefined): void {
+  asAny(node)[THUMB_TEXTURE_TAG] = texture
 }
 
 /** Bump the load generation and return the new (captured) value. */
@@ -756,7 +772,21 @@ export const imageRenderer = {
     }
 
     destroyFilterEffects(node)
+
+    // Thumbnail-owned texture (Texture.from(img)) — not tracked by the
+    // ResourceManager, so free it and its GPU source here. Destroy the
+    // sprite first (texture:false default), then the texture, so we don't
+    // double-free.
+    const thumbTexture = getThumbTexture(node)
     node.destroy({ children: true })
+    if (thumbTexture !== undefined && !thumbTexture.destroyed) {
+      try {
+        thumbTexture.destroy(true)
+      } catch {
+        // Source may already be gone if the thumbnail context was torn down.
+      }
+      setThumbTexture(node, undefined)
+    }
   },
 
   thumbnailMount(data: ImageObject): Container {
@@ -818,6 +848,9 @@ export const imageRenderer = {
       if (isAborted(container)) return
 
       const texture = Texture.from(img)
+      // This texture is owned solely by the thumbnail — tag it so destroy()
+      // can free it (Sprite.destroy doesn't release textures by default).
+      setThumbTexture(container, texture)
       const spriteWrap = new Container()
       const sprite = new Sprite(texture)
       // Reuse the same imageRect-aware layout so cropped thumbnails

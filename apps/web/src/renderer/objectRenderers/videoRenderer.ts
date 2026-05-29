@@ -61,6 +61,13 @@ const LOAD_GEN_TAG = Symbol('vidLoadGen')
 const POLL_TIMER_TAG = Symbol('vidPollTimer')
 const LATEST_DATA_TAG = Symbol('vidLatestData')
 const LIVE_VIDEO_TAG = Symbol('vidLive')
+/**
+ * Texture created by `thumbnailMount` via `Texture.from(img)`. Like the
+ * image renderer, thumbnails bypass the shared ResourceManager, so this
+ * texture is owned solely by the thumbnail and `Sprite.destroy()` won't free
+ * it. Tagged so `destroy()` can release it and its GPU source.
+ */
+const THUMB_TEXTURE_TAG = Symbol('vidThumbTexture')
 
 /**
  * Per-deck registry mapping object id → set of mounted Containers so the
@@ -394,6 +401,14 @@ function getAcquiredUrl(node: Container): string | undefined {
 
 function setAcquiredUrl(node: Container, url: string | undefined): void {
   asAny(node)[ACQUIRED_URL_TAG] = url
+}
+
+function getThumbTexture(node: Container): Texture | undefined {
+  return asAny(node)[THUMB_TEXTURE_TAG] as Texture | undefined
+}
+
+function setThumbTexture(node: Container, texture: Texture | undefined): void {
+  asAny(node)[THUMB_TEXTURE_TAG] = texture
 }
 
 function getPollTimer(node: Container): ReturnType<typeof setInterval> | undefined {
@@ -1158,7 +1173,19 @@ export const videoRenderer = {
       }
     }
 
+    // Thumbnail-owned texture (Texture.from(img)) — not tracked by the
+    // ResourceManager. Destroy the sprite first (texture:false default),
+    // then free the texture + GPU source.
+    const thumbTexture = getThumbTexture(node)
     node.destroy({ children: true })
+    if (thumbTexture !== undefined && !thumbTexture.destroyed) {
+      try {
+        thumbTexture.destroy(true)
+      } catch {
+        // Source may already be gone if the thumbnail context was torn down.
+      }
+      setThumbTexture(node, undefined)
+    }
   },
 
   thumbnailMount(data: VideoObject): Container {
@@ -1215,6 +1242,9 @@ export const videoRenderer = {
       if (isAborted(container)) return
 
       const texture = Texture.from(img)
+      // Thumbnail-owned texture — tag it so destroy() can free it (the
+      // ResourceManager doesn't track thumbnail textures).
+      setThumbTexture(container, texture)
 
       const spriteWrap = new Container()
       const sprite = new Sprite(texture)
