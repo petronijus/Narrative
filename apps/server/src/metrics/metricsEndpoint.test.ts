@@ -69,3 +69,69 @@ describe('GET /metrics endpoint', () => {
     expect(r1.body).toBe(r2.body)
   })
 })
+
+describe('GET /metrics — Bearer token auth', () => {
+  let app: FastifyInstance
+
+  beforeAll(async () => {
+    app = Fastify({ logger: false })
+    await registerMetricsEndpoint(app, { token: 'secret-token' })
+    await app.ready()
+  })
+
+  afterAll(async () => {
+    await app.close()
+  })
+
+  it('401 bez Authorization headeru', async () => {
+    const res = await app.inject({ method: 'GET', url: '/metrics' })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('401 se špatným tokenem', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      headers: { authorization: 'Bearer wrong' },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('200 se správným Bearer tokenem', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      headers: { authorization: 'Bearer secret-token' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toContain('text/plain')
+  })
+})
+
+describe('GET /metrics — loopback fallback when no token', () => {
+  let app: FastifyInstance
+
+  beforeAll(async () => {
+    app = Fastify({ logger: false })
+    await registerMetricsEndpoint(app, { token: '' })
+    await app.ready()
+  })
+
+  afterAll(async () => {
+    await app.close()
+  })
+
+  it('200 pro loopback klienta (inject → 127.0.0.1)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/metrics' })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('403 pro non-loopback klienta', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      remoteAddress: '10.0.0.5',
+    })
+    expect(res.statusCode).toBe(403)
+  })
+})
