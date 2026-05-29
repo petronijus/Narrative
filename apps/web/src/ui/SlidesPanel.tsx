@@ -59,6 +59,8 @@ const INDENT_STEP_PX = 24
 const INDENT_VISUAL_PX = 16
 const MAX_INDENT = 6
 const COLLAPSE_MS = 180
+/** Pointer travel (px) past which a gesture counts as a drag, not a click. */
+const DRAG_CLICK_THRESHOLD_PX = 4
 
 // ---------------------------------------------------------------------------
 // Outline helpers
@@ -500,6 +502,10 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const [dragState, setDragState] = useState<DragState | null>(null)
   const dragStateRef = useRef<DragState | null>(null)
+  // Set true once a pointer gesture moves past DRAG_CLICK_THRESHOLD_PX so the
+  // trailing synthetic `click` (which fires on the captured origin row) can be
+  // suppressed — otherwise reordering a multi-selection collapses it to one.
+  const didDragRef = useRef(false)
   const itemHeightRef = useRef<number>(90)
 
   // Panel-level multi-select (separate from the canvas SelectionContext).
@@ -538,6 +544,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const handleActivate = useCallback(
     (id: string, shift: boolean) => {
+      // Suppress the click that trails a drag gesture — without this, a
+      // reorder drag of a multi-selection ends with a plain click that
+      // collapses the selection to the single dragged slide.
+      if (didDragRef.current) {
+        didDragRef.current = false
+        return
+      }
       if (shift) {
         setSelectedIds((prev) => {
           const next = new Set(prev)
@@ -784,10 +797,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   // ---------------------------------------------------------------------------
 
   const handlePointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>, slideId: string, index: number) => {
+    (e: React.PointerEvent<HTMLDivElement>, slideId: string, _index: number) => {
       if (e.button !== 0) return
       const target = e.target as HTMLElement
       if (target.closest('[data-slide-menu]') !== null) return
+
+      // Fresh gesture — assume it's a click until movement proves otherwise.
+      didDragRef.current = false
 
       // Determine the ids that should travel together:
       // - If the slide is part of a multi-select, bring the whole
@@ -828,9 +844,8 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       }
       dragStateRef.current = state
       setDragState({ ...state })
-
-      // Suppress the accidental click-activation after a drag gesture.
-      void index
+      // Click suppression after a drag is handled via didDragRef (set in
+      // handlePointerMove, consumed in handleActivate).
     },
     [slides, selectedIds],
   )
@@ -839,6 +854,14 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
     (e: React.PointerEvent<HTMLElement>) => {
       const ds = dragStateRef.current
       if (ds === null) return
+      // Past the threshold this is a drag, not a click — flag it so the
+      // trailing click is suppressed (4px tolerates pointer jitter).
+      if (
+        Math.abs(e.clientX - ds.startX) > DRAG_CLICK_THRESHOLD_PX ||
+        Math.abs(e.clientY - ds.startY) > DRAG_CLICK_THRESHOLD_PX
+      ) {
+        didDragRef.current = true
+      }
       const next: DragState = { ...ds, currentX: e.clientX, currentY: e.clientY }
       const outcome = computeDragOutcome(next)
       next.insertAt = outcome.insertAt
