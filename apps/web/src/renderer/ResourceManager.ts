@@ -58,8 +58,8 @@ export class ResourceManager {
 
     let texture: Texture | null = null
     try {
-      // Pin the loader explicitly: imgproxy URLs end in `@webp` / `@jpg`
-      // (format spec, not a file extension), so Pixi's extension-based
+      // Pin the loader explicitly: imgproxy URLs end in `@avif` / `@webp`
+      // / `@jpg` (format spec, not a file extension), so Pixi's extension-based
       // dispatch otherwise warns "could not be loaded as we don't know
       // how to parse it" before falling back. `parser: 'texture'`
       // tells Pixi to use the bitmap/texture loader regardless of the

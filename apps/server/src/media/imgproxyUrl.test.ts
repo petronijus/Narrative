@@ -72,7 +72,7 @@ describe('signImgproxyUrl', () => {
 
   it('includes the correct processing segment for display variant', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY, variant: 'display' })
-    expect(url).toContain('rs:fit:1600:1600:0')
+    expect(url).toContain('rs:fit:2560:2560:0')
   })
 
   it('has no resize processing segment for original variant', () => {
@@ -96,9 +96,9 @@ describe('signImgproxyUrl', () => {
     expect(withDefault).toBe(explicit)
   })
 
-  it('defaults to webp extension when extension is omitted', () => {
+  it('defaults to avif extension when extension is omitted', () => {
     const url = signImgproxyUrl({ storageKey: STORAGE_KEY })
-    expect(url).toMatch(/@webp$/)
+    expect(url).toMatch(/@avif$/)
   })
 
   it('respects a custom extension', () => {

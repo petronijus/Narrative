@@ -827,8 +827,8 @@ export const imageRenderer = {
       // `rs:fit:600:600:0` — fits within 600×600 while preserving
       // aspect. 600 covers the 200-px PNG output even at 2-3× DPR and
       // moderate user-resize of the slide panel, while staying bandwidth-
-      // comparable to 'thumb' (~30-80 KB WebP per image vs 'display''s
-      // ~200-400 KB at 1600 wide).
+      // comparable to 'thumb' (a small AVIF per image vs 'display''s
+      // full 2560-px-cap render).
       let url: string
       try {
         url = await resolver({ assetId, variant: 'preview' })

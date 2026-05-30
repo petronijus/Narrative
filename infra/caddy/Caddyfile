@@ -58,8 +58,13 @@ http://{$DOMAIN:localhost} {
   # Browser requests signed imgproxy URLs via this route.
   # URL signing is implemented in apps/server (media agent, phase 2).
   # Example: /imgproxy/sig/rs:fit:400:0/plain/s3://narrative-media/decks/x/uploads/y/original.jpg
+  #
+  # Routed through the nginx disk cache (imgproxy-cache), NOT imgproxy
+  # directly: open-source imgproxy has no result cache, so each cold
+  # request would re-encode from scratch. AVIF encoding is CPU-heavy —
+  # the cache makes each (asset, variant, format) encode exactly once.
   handle_path /imgproxy/* {
-    reverse_proxy imgproxy:8080
+    reverse_proxy imgproxy-cache:80
   }
 
   # ── Health check ────────────────────────────────────────────────────────────

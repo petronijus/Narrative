@@ -170,11 +170,47 @@ services:
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       IMGPROXY_CORS_ALLOW_ORIGIN: '*'
+      # AVIF tuning — the editor serves AVIF by default (smaller than WebP
+      # at equal quality, current-Chrome target). AVIF_SPEED is 0 (slowest,
+      # smallest) … 9 (fastest); 8 keeps encode cheap on a modest CPU while
+      # the nginx cache (imgproxy-cache) ensures each variant encodes once.
+      # FORMAT_QUALITY pins AVIF quality (~63 ≈ WebP 80) so files stay lean.
+      IMGPROXY_AVIF_SPEED: ${IMGPROXY_AVIF_SPEED:-8}
+      IMGPROXY_FORMAT_QUALITY: ${IMGPROXY_FORMAT_QUALITY:-avif=63}
+      # Max SOURCE megapixels imgproxy will decode (decompression-bomb
+      # guard). 50 MP is imgproxy's default and covers any realistic deck
+      # image; set explicitly so the limit is visible/tunable.
+      IMGPROXY_MAX_SRC_RESOLUTION: ${IMGPROXY_MAX_SRC_RESOLUTION:-50}
     depends_on:
       minio:
         condition: service_healthy
     ports:
       - '${IMGPROXY_PORT:-8080}:8080'
+
+  # ─── imgproxy disk cache (nginx) ─────────────────────────────────────────────
+  # Open-source imgproxy has no result cache, so this nginx sidecar caches
+  # each encoded variant on disk. Caddy routes /imgproxy/* here, not at
+  # imgproxy directly. See infra/imgproxy-cache/nginx.conf for the rationale
+  # (one-time AVIF encode instead of per-request — essential on a weak CPU).
+  imgproxy-cache:
+    image: nginx:1.27-alpine
+    container_name: narrative-imgproxy-cache
+    restart: unless-stopped
+    depends_on:
+      - imgproxy
+    volumes:
+      - ./imgproxy-cache/nginx.conf:/etc/nginx/nginx.conf:ro
+      - imgproxy_cache:/var/cache/imgproxy
+    ports:
+      - '${IMGPROXY_CACHE_PORT:-8088}:80'
+    healthcheck:
+      # imgproxy serves /health; nginx proxies it through location /.
+      # busybox wget (-O -) is the portable form in nginx:alpine.
+      test: ['CMD', 'wget', '-q', '-O', '-', 'http://localhost/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   postgres_data:
@@ -182,4 +218,6 @@ volumes:
   minio_data:
     driver: local
   media_redis_data:
+    driver: local
+  imgproxy_cache:
     driver: local

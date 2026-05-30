@@ -53,8 +53,19 @@ services:
       # Suppress verbose download error logs in prod; errors still tracked via Sentry (M29)
       IMGPROXY_REPORT_DOWNLOADING_ERRORS: 'false'
     ports:
-      # Bind to localhost — Caddy proxies /imgproxy/* to this port
+      # Bind to localhost — the imgproxy-cache sidecar proxies to this port
       - '127.0.0.1:${IMGPROXY_PORT:-8080}:8080'
+
+  imgproxy-cache:
+    restart: always
+    volumes:
+      # ZFS dataset mount for the encoded-variant cache — set
+      # IMGPROXY_CACHE_DATA_PATH in .env.prod (survives container recreation).
+      # Example: IMGPROXY_CACHE_DATA_PATH=/mnt/tank/narrative/imgproxy-cache
+      - ${IMGPROXY_CACHE_DATA_PATH:-imgproxy_cache}:/var/cache/imgproxy
+    ports:
+      # Bind to localhost — Caddy proxies /imgproxy/* to this port
+      - '127.0.0.1:${IMGPROXY_CACHE_PORT:-8088}:80'
 
   # ─── Media queue Redis prod overrides (M12) ──────────────────────────────────
   media-redis:
@@ -102,7 +113,9 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      imgproxy:
+      # Caddy reverse-proxies /imgproxy/* to the cache sidecar, not imgproxy
+      # directly — wait on the cache so the first image request isn't a 502.
+      imgproxy-cache:
         condition: service_started
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:80/health || exit 1']
@@ -143,4 +156,7 @@ volumes:
   caddy_config:
     driver: local
   web_static:
+    driver: local
+  # Named fallback for the imgproxy cache when IMGPROXY_CACHE_DATA_PATH is unset.
+  imgproxy_cache:
     driver: local

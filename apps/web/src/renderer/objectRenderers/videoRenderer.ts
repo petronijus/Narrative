@@ -914,8 +914,8 @@ async function loadAuthoredPoster(
   let posterUrl: string
   try {
     const resolver = getDefaultImageUrlResolver()
-    // Variant 'display' is the standard imgproxy resize (max 1600 long
-    // edge, WebP). Matches what `imageRenderer` uses for ImageObjects.
+    // Variant 'display' is the standard imgproxy resize (max 2560 long
+    // edge, AVIF). Matches what `imageRenderer` uses for ImageObjects.
     posterUrl = await resolver({ assetId: posterAssetId, variant: 'display' })
   } catch {
     return
