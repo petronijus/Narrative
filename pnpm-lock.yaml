@@ -255,9 +255,6 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      hls.js:
-        specifier: ^1.5.0
-        version: 1.6.16
       idb:
         specifier: ^8.0.0
         version: 8.0.3
@@ -6155,12 +6152,6 @@ packages:
     resolution:
       {
         integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==,
-      }
-
-  hls.js@1.6.16:
-    resolution:
-      {
-        integrity: sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA==,
       }
 
   hoist-non-react-statics@3.3.2:
@@ -13646,8 +13637,6 @@ snapshots:
   hermes-parser@0.25.1:
     dependencies:
       hermes-estree: 0.25.1
-
-  hls.js@1.6.16: {}
 
   hoist-non-react-statics@3.3.2:
     dependencies:
