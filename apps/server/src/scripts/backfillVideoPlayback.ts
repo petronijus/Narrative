@@ -25,10 +25,8 @@
  */
 
 import { and, eq, isNull } from 'drizzle-orm'
-import { Pool } from 'pg'
-import process from 'node:process'
 
-import { createDb } from '../db.js'
+import { db, pool } from '../db/client.js'
 import { mediaAssets } from '../db/schema.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
 import { updateTranscodeStatus } from '../media/assets.js'
@@ -36,9 +34,6 @@ import { updateTranscodeStatus } from '../media/assets.js'
 async function main(): Promise<void> {
   const apply = process.argv.includes('--apply')
   const all = process.argv.includes('--all')
-
-  const pool = new Pool({ connectionString: process.env['POSTGRES_URL'] })
-  const db = createDb(pool)
 
   // Target videos. Default: only those missing a playback_key (the post-0014
   // backfill case). --all: every video row.
