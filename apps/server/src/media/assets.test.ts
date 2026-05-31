@@ -44,7 +44,7 @@ const sampleAsset: MediaAsset = {
   // M12 additions — image defaults
   kind: 'image',
   durationSec: null,
-  hlsManifestKey: null,
+  playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
   transcodeStatus: null,
@@ -69,7 +69,7 @@ const sampleVideoAsset: MediaAsset = {
   createdAt: now,
   kind: 'video',
   durationSec: null,
-  hlsManifestKey: null,
+  playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
   transcodeStatus: 'pending',
@@ -360,7 +360,7 @@ describe('getVideoAsset', () => {
     expect(result!.id).toBe('asset-vid-001')
     expect(result!.mimeType).toBe('video/mp4')
     expect(result!.transcodeStatus).toBe('pending')
-    expect(result!.hlsManifestKey).toBeNull()
+    expect(result!.playbackKey).toBeNull()
   })
 
   it('returns null when no row found (e.g., image asset queried as video)', async () => {
@@ -379,7 +379,7 @@ describe('getVideoAsset', () => {
       width: 1920,
       height: 1080,
       durationSec: 142,
-      hlsManifestKey: 'decks/deck-1/videos/asset-vid-done/master.m3u8',
+      playbackKey: 'decks/deck-1/videos/asset-vid-done/playback.mp4',
       posterKey: 'decks/deck-1/videos/asset-vid-done/poster.jpg',
       thumbnailKey: 'decks/deck-1/videos/asset-vid-done/thumb.jpg',
       transcodeStatus: 'done',
@@ -391,7 +391,7 @@ describe('getVideoAsset', () => {
 
     expect(result).not.toBeNull()
     expect(result!.durationSec).toBe(142)
-    expect(result!.hlsManifestKey).toBe('decks/deck-1/videos/asset-vid-done/master.m3u8')
+    expect(result!.playbackKey).toBe('decks/deck-1/videos/asset-vid-done/playback.mp4')
     expect(result!.posterKey).toBe('decks/deck-1/videos/asset-vid-done/poster.jpg')
     expect(result!.thumbnailKey).toBe('decks/deck-1/videos/asset-vid-done/thumb.jpg')
     expect(result!.transcodeStatus).toBe('done')
@@ -455,7 +455,7 @@ describe('updateVideoAssetOutputs', () => {
   beforeEach(() => vi.clearAllMocks())
 
   const outputs = {
-    hlsManifestKey: 'decks/deck-1/videos/asset-vid-001/master.m3u8',
+    playbackKey: 'decks/deck-1/videos/asset-vid-001/playback.mp4',
     posterKey: 'decks/deck-1/videos/asset-vid-001/poster.jpg',
     thumbnailKey: 'decks/deck-1/videos/asset-vid-001/thumb.jpg',
     durationSec: 90,
@@ -470,7 +470,7 @@ describe('updateVideoAssetOutputs', () => {
 
     expect(setMock).toHaveBeenCalledOnce()
     const setArg = setMock.mock.calls[0]?.[0] as Record<string, unknown>
-    expect(setArg['hlsManifestKey']).toBe(outputs.hlsManifestKey)
+    expect(setArg['playbackKey']).toBe(outputs.playbackKey)
     expect(setArg['posterKey']).toBe(outputs.posterKey)
     expect(setArg['thumbnailKey']).toBe(outputs.thumbnailKey)
     expect(setArg['durationSec']).toBe(90)

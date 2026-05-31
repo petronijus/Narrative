@@ -40,8 +40,8 @@ describe('purgeDeckBucketPrefix', () => {
         Contents: [
           { Key: 'decks/abc/thumb.jpg' },
           { Key: 'decks/abc/uploads/x/original.png' },
-          { Key: 'decks/abc/videos/y/master.m3u8' },
-          { Key: 'decks/abc/videos/y/segment_000.ts' },
+          { Key: 'decks/abc/videos/y/playback.mp4' },
+          { Key: 'decks/abc/videos/y/poster.jpg' },
         ],
         IsTruncated: false,
       })
@@ -67,8 +67,8 @@ describe('purgeDeckBucketPrefix', () => {
     expect(deleteCall.input.Delete?.Objects).toEqual([
       { Key: 'decks/abc/thumb.jpg' },
       { Key: 'decks/abc/uploads/x/original.png' },
-      { Key: 'decks/abc/videos/y/master.m3u8' },
-      { Key: 'decks/abc/videos/y/segment_000.ts' },
+      { Key: 'decks/abc/videos/y/playback.mp4' },
+      { Key: 'decks/abc/videos/y/poster.jpg' },
     ])
     expect(deleteCall.input.Delete?.Quiet).toBe(true)
 

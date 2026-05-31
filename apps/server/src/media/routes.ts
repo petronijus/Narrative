@@ -9,7 +9,7 @@
  *     Cache-Control: max-age=600 (10 min). Signed URLs are stable so caching is safe.
  *
  *   GET  /api/media/:assetId/video-info
- *     Returns transcode status + signed poster/thumbnail URLs + HLS manifest URL.
+ *     Returns transcode status + signed poster/thumbnail URLs + progressive MP4 playback URL.
  *     Auth: JWT required. Deck access: viewer or above.
  *     Poll this endpoint at 2 s intervals until transcodeStatus === 'done'.
  *
@@ -30,7 +30,8 @@
  * Security notes:
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
  *   - Deck ownership verified via getMediaAsset → deckId → resolveDeckAccess chain.
- *   - hlsManifestUrl uses direct MinIO URL (public bucket policy for dev).
+ *   - playbackUrl uses direct MinIO URL (public bucket policy for dev). MinIO
+ *     serves byte-range requests so a plain <video> can seek without HLS.
  *     TODO(M29): switch to MinIO presigned URLs when bucket becomes private.
  */
 
@@ -62,17 +63,16 @@ import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 
 /**
  * Returns the public MinIO base URL for direct object access.
- * Used for HLS manifest URLs (M12 dev: public bucket policy).
+ * Used for the progressive MP4 playback URL (M12 dev: public bucket policy).
  *
  * MINIO_PUBLIC_URL can be:
  *   - absolute (`http://localhost:9100`) — for Vite-independent clients
  *   - path-only  (`/storage`)            — same-origin via Vite proxy (dev)
  *
- * Default is `/storage` so the browser fetches the manifest same-origin
- * through Vite's dev proxy (configured in apps/web/vite.config.ts). The
- * manifest's relative variant playlist and segment paths then resolve
- * against `/storage/...` and also go through the proxy, which keeps
- * hls.js happy without MinIO CORS.
+ * Default is `/storage` so the browser fetches the MP4 same-origin through
+ * Vite's dev proxy (configured in apps/web/vite.config.ts). MinIO honours
+ * HTTP byte-range requests, so a plain <video src> can seek without CORS
+ * headaches.
  *
  * TODO(M29): replace with presigned URL generation for private buckets.
  */
@@ -318,7 +318,7 @@ export async function registerMediaRoutes(
   // -------------------------------------------------------------------------
   // GET /api/media/:assetId/video-info
   //
-  // Returns transcode state + signed image URLs + HLS manifest URL for a video.
+  // Returns transcode state + signed image URLs + progressive MP4 playback URL.
   // Poll at 2 s intervals until transcodeStatus === 'done'.
   // -------------------------------------------------------------------------
   app.get<{
@@ -348,11 +348,10 @@ export async function registerMediaRoutes(
       ? signImgproxyUrl({ storageKey: asset.thumbnailKey, variant: 'thumb', extension: 'jpg' })
       : null
 
-    // HLS manifest: direct MinIO URL (public bucket for M12 dev).
+    // Progressive MP4: direct MinIO URL (public bucket for M12 dev). MinIO
+    // serves byte-range requests so a plain <video src> seeks fine.
     // TODO(M29): generate presigned URL for private bucket policy.
-    const hlsManifestUrl = asset.hlsManifestKey
-      ? `${publicMinioBaseUrl()}/${asset.hlsManifestKey}`
-      : null
+    const playbackUrl = asset.playbackKey ? `${publicMinioBaseUrl()}/${asset.playbackKey}` : null
 
     return reply.send({
       assetId: asset.id,
@@ -362,7 +361,7 @@ export async function registerMediaRoutes(
       height: asset.height,
       posterUrl,
       thumbnailUrl,
-      hlsManifestUrl,
+      playbackUrl,
       transcodeError: asset.transcodeError ?? null,
     })
   })

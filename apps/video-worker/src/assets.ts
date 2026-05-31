@@ -38,7 +38,7 @@ export async function updateVideoAssetOutputs(
   db: Database,
   id: string,
   outputs: {
-    hlsManifestKey: string
+    playbackKey: string
     posterKey: string
     thumbnailKey: string
     durationSec: number
@@ -49,7 +49,7 @@ export async function updateVideoAssetOutputs(
   await db
     .update(mediaAssets)
     .set({
-      hlsManifestKey: outputs.hlsManifestKey,
+      playbackKey: outputs.playbackKey,
       posterKey: outputs.posterKey,
       thumbnailKey: outputs.thumbnailKey,
       durationSec: Math.round(outputs.durationSec),

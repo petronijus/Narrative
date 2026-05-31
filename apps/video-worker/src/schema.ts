@@ -34,7 +34,7 @@ export const mediaAssets = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     kind: mediaAssetKindEnum('kind').notNull().default('image'),
     durationSec: integer('duration_sec'),
-    hlsManifestKey: text('hls_manifest_key'),
+    playbackKey: text('playback_key'),
     posterKey: text('poster_key'),
     thumbnailKey: text('thumbnail_key'),
     transcodeStatus: transcodeStatusEnum('transcode_status'),

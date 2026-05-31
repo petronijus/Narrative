@@ -36,7 +36,7 @@ function makeResult(overrides: Partial<VideoInfoResult> = {}): VideoInfoResult {
     height: 1080,
     posterUrl: 'https://imgproxy.example.com/poster.jpg',
     thumbnailUrl: 'https://imgproxy.example.com/thumb.jpg',
-    hlsManifestUrl: 'https://minio.example.com/hls/manifest.m3u8',
+    playbackUrl: 'https://minio.example.com/videos/playback.mp4',
     transcodeError: null,
     ...overrides,
   }
@@ -221,7 +221,7 @@ describe('createVideoInfoResolver', () => {
     expect(info.height).toBeNull()
     expect(info.posterUrl).toBeNull()
     expect(info.thumbnailUrl).toBeNull()
-    expect(info.hlsManifestUrl).toBeNull()
+    expect(info.playbackUrl).toBeNull()
     expect(info.transcodeError).toBeNull()
   })
 })

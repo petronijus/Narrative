@@ -67,9 +67,15 @@ const { mockS3Send, mockUpdateTranscodeStatus, mockUpdateVideoAssetOutputs, crea
 // Module mocks
 // ---------------------------------------------------------------------------
 
-const PROBE_JSON = JSON.stringify({
-  streams: [{ width: 1280, height: 720, duration: '10.5', codec_type: 'video' }],
-})
+function makeProbeJson(codecName = 'h264'): string {
+  return JSON.stringify({
+    streams: [
+      { width: 1280, height: 720, duration: '10.5', codec_type: 'video', codec_name: codecName },
+    ],
+  })
+}
+
+const PROBE_JSON = makeProbeJson('h264')
 
 // Default spawn: ffprobe returns valid JSON, all other calls succeed
 let mockSpawnImpl = createMockSpawn(0, PROBE_JSON)
@@ -172,7 +178,7 @@ describe('transcodeProcessor', () => {
       expect.anything(),
       'asset-01',
       expect.objectContaining({
-        hlsManifestKey: expect.stringContaining('master.m3u8'),
+        playbackKey: expect.stringContaining('playback.mp4'),
         posterKey: expect.stringContaining('poster.jpg'),
         thumbnailKey: expect.stringContaining('thumb.jpg'),
         durationSec: expect.any(Number),
@@ -187,7 +193,7 @@ describe('transcodeProcessor', () => {
     const result = await transcodeProcessor(job)
 
     expect(result.assetId).toBe('asset-01')
-    expect(result.hlsManifestKey).toContain('master.m3u8')
+    expect(result.playbackKey).toContain('playback.mp4')
     expect(result.posterKey).toContain('poster.jpg')
     expect(result.thumbnailKey).toContain('thumb.jpg')
     expect(result.width).toBe(1280)
@@ -199,7 +205,7 @@ describe('transcodeProcessor', () => {
     const job = makeJob({ deckId: 'deck-special' })
     const result = await transcodeProcessor(job)
 
-    expect(result.hlsManifestKey).toContain('deck-special')
+    expect(result.playbackKey).toContain('deck-special')
     expect(result.posterKey).toContain('deck-special')
     expect(result.thumbnailKey).toContain('deck-special')
   })
@@ -216,8 +222,52 @@ describe('transcodeProcessor', () => {
     const job = makeJob()
     await transcodeProcessor(job)
 
-    // At minimum: poster + thumb + master manifest (variant segments are directory-walked, returns [])
+    // playback.mp4 + poster.jpg + thumb.jpg → 3 PutObjectCommand uploads.
     expect(PutObjectCommand).toHaveBeenCalled()
+  })
+
+  it('runs exactly 3 ffmpeg invocations (remux + poster + thumb)', async () => {
+    const spawnSpy = vi.fn().mockImplementation(createMockSpawn(0, PROBE_JSON))
+    mockSpawnImpl = spawnSpy
+
+    const job = makeJob()
+    await transcodeProcessor(job)
+
+    // 1 ffprobe + 3 ffmpeg = 4 total spawns. Filter to ffmpeg only.
+    const ffmpegCalls = spawnSpy.mock.calls.filter((c) => c[0] === 'ffmpeg')
+    expect(ffmpegCalls).toHaveLength(3)
+  })
+
+  it('h264 source uses lossless stream copy (-c copy)', async () => {
+    const spawnSpy = vi.fn().mockImplementation(createMockSpawn(0, makeProbeJson('h264')))
+    mockSpawnImpl = spawnSpy
+
+    const job = makeJob()
+    await transcodeProcessor(job)
+
+    const ffmpegArgArrays = spawnSpy.mock.calls
+      .filter((c) => c[0] === 'ffmpeg')
+      .map((c) => c[1] as string[])
+    // One of the ffmpeg invocations (the remux) must contain '-c copy'.
+    const hasCopy = ffmpegArgArrays.some((args) => args.includes('copy'))
+    expect(hasCopy).toBe(true)
+    // And none should re-encode with libx264.
+    const hasLibx264 = ffmpegArgArrays.some((args) => args.includes('libx264'))
+    expect(hasLibx264).toBe(false)
+  })
+
+  it('non-web codec (prores) triggers a libx264 re-encode', async () => {
+    const spawnSpy = vi.fn().mockImplementation(createMockSpawn(0, makeProbeJson('prores')))
+    mockSpawnImpl = spawnSpy
+
+    const job = makeJob()
+    await transcodeProcessor(job)
+
+    const ffmpegArgArrays = spawnSpy.mock.calls
+      .filter((c) => c[0] === 'ffmpeg')
+      .map((c) => c[1] as string[])
+    const hasLibx264 = ffmpegArgArrays.some((args) => args.includes('libx264'))
+    expect(hasLibx264).toBe(true)
   })
 
   it('cleans up work directory via fs.rm after success', async () => {

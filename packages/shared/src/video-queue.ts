@@ -25,8 +25,8 @@ export interface VideoTranscodeResult {
   posterKey: string
   /** decks/<deckId>/videos/<assetId>/thumb.jpg */
   thumbnailKey: string
-  /** decks/<deckId>/videos/<assetId>/master.m3u8 */
-  hlsManifestKey: string
+  /** decks/<deckId>/videos/<assetId>/playback.mp4 (progressive faststart MP4) */
+  playbackKey: string
   durationSec: number
   width: number
   height: number

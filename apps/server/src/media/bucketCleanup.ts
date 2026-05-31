@@ -3,14 +3,13 @@
  *
  * Best-effort sweep of every MinIO object under a deck's prefix.
  *
- * All deck-scoped media — uploads, transcoded HLS bundles, deck thumbnail,
- * folder font originals stored under the deck — lives under the single
- * key prefix `decks/<deckId>/`. Listing and batch-deleting that prefix is
- * the simplest way to leave zero blobs behind when a deck is deleted,
- * without needing to enumerate every storage_key / hls_manifest_key /
- * poster_key / thumbnail_key column on `media_assets`. It also catches
- * untracked HLS segment files (`segment_000.ts`, etc.) that aren't stored
- * in any DB column.
+ * All deck-scoped media — uploads, the transcoded playback MP4 +
+ * poster/thumb, deck thumbnail, folder font originals stored under the
+ * deck — lives under the single key prefix `decks/<deckId>/`. Listing and
+ * batch-deleting that prefix is the simplest way to leave zero blobs
+ * behind when a deck is deleted, without needing to enumerate every
+ * storage_key / playback_key / poster_key / thumbnail_key column on
+ * `media_assets`.
  *
  * Loss-tolerant: every S3 error is logged and swallowed. The DB cascade
  * has already removed the corresponding rows by the time this runs, so

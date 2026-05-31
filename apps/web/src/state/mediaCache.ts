@@ -6,11 +6,10 @@
  * Stores:
  *   - imgproxy image URLs → Blob (PNG/JPG)
  *   - video poster URLs → Blob
- *   - HLS master manifests → string (text)
  *
  * Limitations:
- *   - HLS segments are NOT cached — hls.js handles its own buffering.
- *     The manifest cache reduces first-manifest-fetch latency; segments still stream on demand.
+ *   - The progressive playback MP4 is NOT cached here — it streams on demand
+ *     via MinIO byte-range requests (useMediaPreload only warms its first range).
  *   - Cache uses idb package (lightweight IndexedDB wrapper).
  *   - TTL is 24 hours per entry. Expired entries are returned as null (re-fetch on next access).
  *
@@ -28,12 +27,12 @@ import type { IDBPDatabase } from 'idb'
 // Types
 // ---------------------------------------------------------------------------
 
-export type MediaCacheKind = 'image' | 'video-poster' | 'hls-manifest'
+export type MediaCacheKind = 'image' | 'video-poster'
 
 export interface CachedMedia {
   url: string
   kind: MediaCacheKind
-  /** Blob for image/video-poster, string for hls-manifest */
+  /** Blob for image / video-poster entries */
   content: Blob | string
   cachedAt: number
   /** Unix ms timestamp after which this entry is considered stale */

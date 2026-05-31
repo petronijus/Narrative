@@ -167,7 +167,7 @@ function makeDoneResult(posterUrl = 'https://imgproxy.example.com/poster.jpg') {
     height: 1080,
     posterUrl,
     thumbnailUrl: 'https://imgproxy.example.com/thumb.jpg',
-    hlsManifestUrl: 'https://minio.example.com/hls/manifest.m3u8',
+    playbackUrl: 'https://minio.example.com/videos/playback.mp4',
     transcodeError: null,
   }
 }
@@ -181,7 +181,7 @@ function makePendingResult() {
     height: null,
     posterUrl: null,
     thumbnailUrl: null,
-    hlsManifestUrl: null,
+    playbackUrl: null,
     transcodeError: null,
   }
 }
@@ -195,7 +195,7 @@ function makeFailedResult() {
     height: null,
     posterUrl: null,
     thumbnailUrl: null,
-    hlsManifestUrl: null,
+    playbackUrl: null,
     transcodeError: 'Transcode timeout',
   }
 }

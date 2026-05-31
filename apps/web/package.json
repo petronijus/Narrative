@@ -50,13 +50,7 @@
       "gzip": true
     },
     {
-      "name": "hls.js vendor chunk (lazy-loaded if you reintroduce dynamic import)",
-      "path": "dist/assets/vendor-hls-*.js",
-      "limit": "170 KB",
-      "gzip": true
-    },
-    {
-      "name": "Total first-paint payload (excludes vendor-hls — only loads when a video plays)",
+      "name": "Total first-paint payload",
       "path": [
         "dist/assets/index-*.js",
         "dist/assets/vendor-pixi-*.js",
@@ -66,7 +60,6 @@
         "dist/assets/vendor-gsap-*.js",
         "dist/assets/vendor-radix-*.js",
         "dist/assets/vendor-*.js",
-        "!dist/assets/vendor-hls-*.js",
         "!dist/assets/vendor-sentry-*.js"
       ],
       "limit": "800 KB",
@@ -96,7 +89,6 @@
     "@tiptap/starter-kit": "^3.23.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "hls.js": "^1.5.0",
     "idb": "^8.0.0",
     "lucide-react": "^1.16.0",
     "nanoid": "^5.1.11",

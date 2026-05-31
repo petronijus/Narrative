@@ -28,11 +28,6 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
-// hls.js stays as a static import here — manual-chunks splits it into its
-// own vendor file (vendor-hls) so it doesn't bloat the main app chunk, but
-// importing eagerly preserves the original sync attach-order that the
-// videoRenderer relies on.
-import Hls from 'hls.js'
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
 import type { VideoObject, SlideObjectPatch } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
@@ -59,7 +54,6 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   const isPresent = mode === 'present'
   const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const hlsRef = useRef<Hls | null>(null)
   const { objectsCtx } = useSlideObjects()
   // Editor only — counter-scales the hover bar so it stays a constant
   // size in viewport pixels regardless of artboard zoom. In present mode
@@ -110,9 +104,9 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     }
   }, [])
 
-  // Latest trim / poster values held in refs so the HLS-attach effect's
+  // Latest trim / poster values held in refs so the playback-attach effect's
   // listeners always read the current value WITHOUT re-running (which
-  // would tear down HLS and rewind the video to the start — that's
+  // would tear down the video source and rewind to the start — that's
   // exactly what made trim-end-handle scrubs jump to the wrong frame).
   const trimStartRef = useRef(videoObject.trimStart ?? 0)
   const trimEndRef = useRef(videoObject.trimEnd ?? 0)
@@ -123,11 +117,11 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     posterTimeRef.current = videoObject.posterTime ?? 0
   }, [videoObject.trimStart, videoObject.trimEnd, videoObject.posterTime])
 
-  // Wire up HLS the moment we have a hlsManifestUrl.
+  // Wire up the progressive MP4 the moment we have a playbackUrl.
   useEffect(() => {
     if (info?.transcodeStatus !== 'done') return
-    const hlsUrl = info.hlsManifestUrl
-    if (hlsUrl === null) return
+    const playbackUrl = info.playbackUrl
+    if (playbackUrl === null) return
     const videoEl = videoRef.current
     if (videoEl === null) return
 
@@ -136,22 +130,15 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.volume = Math.max(0, Math.min(1, videoObject.volume ?? 1))
     }
 
-    if (Hls.isSupported()) {
-      const hls = new Hls()
-      hlsRef.current = hls
-      hls.loadSource(hlsUrl)
-      hls.attachMedia(videoEl)
-    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-      videoEl.src = hlsUrl
-    }
+    videoEl.src = playbackUrl
 
     // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
     // the renderer rebuilds the sprite from a live VideoSource so the
     // video lives inside the Pixi scene graph (and therefore respects
     // Y.Array layer order). Used in BOTH editor and present mode so the
     // visible representation is always the Pixi sprite. The DOM <video>
-    // stays around (invisible) so hls.js / VideoSource can decode into
-    // it and audio plays normally.
+    // stays around (invisible) so VideoSource can decode into it and
+    // audio plays normally.
     const onCanPlay = (): void => {
       attachLiveVideoToRenderer(videoObject.id, videoEl)
     }
@@ -248,16 +235,12 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('seeked', onTime)
       delete currents[videoObject.id]
       detachLiveVideoFromRenderer(videoObject.id)
-      if (hlsRef.current !== null) {
-        hlsRef.current.destroy()
-        hlsRef.current = null
-      }
     }
     // Trim / poster deps intentionally omitted — we read them from refs
-    // inside the listeners so updates don't tear down HLS.
+    // inside the listeners so updates don't tear down the video source.
   }, [
     info?.transcodeStatus,
-    info?.hlsManifestUrl,
+    info?.playbackUrl,
     videoObject.id,
     videoObject.autoplay,
     videoObject.volume,
@@ -335,7 +318,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
           background: 'transparent',
           // The Pixi sprite is the visible representation in both modes,
           // so always hide this <video> — keeping it in DOM is required
-          // for hls.js / VideoSource to decode into and for audio.
+          // for VideoSource to decode into and for audio.
           opacity: 0,
         }}
       />

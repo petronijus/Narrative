@@ -40,7 +40,7 @@ export interface VideoAssetRow {
   width: number | null
   height: number | null
   durationSec: number | null
-  hlsManifestKey: string | null
+  playbackKey: string | null
   posterKey: string | null
   thumbnailKey: string | null
   transcodeStatus: TranscodeStatus | null
@@ -166,7 +166,7 @@ export async function getVideoAsset(db: Database, id: string): Promise<VideoAsse
     width: row.width,
     height: row.height,
     durationSec: row.durationSec,
-    hlsManifestKey: row.hlsManifestKey,
+    playbackKey: row.playbackKey,
     posterKey: row.posterKey,
     thumbnailKey: row.thumbnailKey,
     transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
@@ -196,7 +196,7 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
       width: row.width,
       height: row.height,
       durationSec: row.durationSec,
-      hlsManifestKey: row.hlsManifestKey,
+      playbackKey: row.playbackKey,
       posterKey: row.posterKey,
       thumbnailKey: row.thumbnailKey,
       transcodeStatus: row.transcodeStatus as TranscodeStatus | null,
@@ -393,7 +393,7 @@ export async function updateVideoAssetOutputs(
   db: Database,
   id: string,
   outputs: {
-    hlsManifestKey: string
+    playbackKey: string
     posterKey: string
     thumbnailKey: string
     durationSec: number
@@ -404,7 +404,7 @@ export async function updateVideoAssetOutputs(
   await db
     .update(mediaAssets)
     .set({
-      hlsManifestKey: outputs.hlsManifestKey,
+      playbackKey: outputs.playbackKey,
       posterKey: outputs.posterKey,
       thumbnailKey: outputs.thumbnailKey,
       durationSec: outputs.durationSec,

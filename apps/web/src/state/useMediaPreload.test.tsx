@@ -180,12 +180,12 @@ describe('useMediaPreload', () => {
     )
   })
 
-  it('preloads video poster and HLS manifest', async () => {
+  it('preloads video poster and warms the progressive MP4 range', async () => {
     mockGetVideoInfo.mockResolvedValue({
       assetId: 'vid-asset',
       transcodeStatus: 'done',
       posterUrl: 'https://cdn.example.com/poster.jpg',
-      hlsManifestUrl: 'https://cdn.example.com/manifest.m3u8',
+      playbackUrl: 'https://cdn.example.com/playback.mp4',
       durationSec: null,
       width: null,
       height: null,
@@ -194,7 +194,11 @@ describe('useMediaPreload', () => {
     })
     mockFetch
       .mockResolvedValueOnce({ ok: true, blob: () => Promise.resolve(new Blob(['poster'])) })
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('#EXTM3U') })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+      })
 
     let state: TestState | null = null
     render(
@@ -215,7 +219,7 @@ describe('useMediaPreload', () => {
       expect(state!.progress.isDone).toBe(true)
     })
 
-    expect(state!.progress.total).toBe(2) // poster + manifest
+    expect(state!.progress.total).toBe(2) // poster + playback range warm
     expect(state!.progress.completed).toBe(2)
   })
 

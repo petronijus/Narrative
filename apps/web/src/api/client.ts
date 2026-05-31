@@ -378,7 +378,7 @@ export interface VideoInfoResponse {
   height: number | null
   posterUrl: string | null
   thumbnailUrl: string | null
-  hlsManifestUrl: string | null
+  playbackUrl: string | null
   transcodeError: string | null
 }
 

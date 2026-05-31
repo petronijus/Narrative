@@ -6,7 +6,7 @@
  * Flow:
  *   1. Walk all slides' objects. Extract:
  *      - ImageObject: fetch display URL via /api/media/:id/url?variant=display
- *      - VideoObject: fetch /video-info → poster URL + HLS manifest URL
+ *      - VideoObject: fetch /video-info → poster URL + progressive MP4 playback URL
  *   2. For each URL:
  *      - Check IndexedDB cache — if found and not expired, skip
  *      - Fetch URL, store in IndexedDB
@@ -17,8 +17,9 @@
  * (implemented by the caller — PresentLayout has its own timeout).
  *
  * Limitations:
- *   - HLS segments are NOT cached — only the master manifest text.
- *     hls.js handles its own segment buffering.
+ *   - The progressive MP4 is NOT downloaded in full. We only warm the first
+ *     byte-range so the browser's HTTP cache + the <video> element can start
+ *     playback fast; the rest streams on demand via range requests.
  */
 
 import { useState, useCallback, useRef } from 'react'
@@ -72,9 +73,11 @@ export function useMediaPreload(): {
         const cache = await openMediaCache()
 
         // ---------- Collect URLs to preload ----------
+        // 'video-playback' is a preload-only marker (range-warm, never stored)
+        // so it lives outside MediaCacheKind, which only covers cached blobs.
         interface PreloadItem {
           url: string
-          kind: MediaCacheKind
+          kind: MediaCacheKind | 'video-playback'
         }
 
         // P12d: resolve all media URLs in parallel. The previous serial
@@ -105,8 +108,8 @@ export function useMediaPreload(): {
                       if (info.posterUrl !== null) {
                         out.push({ url: info.posterUrl, kind: 'video-poster' })
                       }
-                      if (info.hlsManifestUrl !== null && info.transcodeStatus === 'done') {
-                        out.push({ url: info.hlsManifestUrl, kind: 'hls-manifest' })
+                      if (info.playbackUrl !== null && info.transcodeStatus === 'done') {
+                        out.push({ url: info.playbackUrl, kind: 'video-playback' })
                       }
                       return out
                     })
@@ -150,11 +153,17 @@ export function useMediaPreload(): {
               // narrative_session cookie when the URL is on our origin (or
               // same-site in dev). For MinIO presigned URLs the credentials
               // header is ignored — the URL signature is the auth.
-              if (item.kind === 'hls-manifest') {
-                const res = await fetch(item.url, { credentials: 'include' })
-                if (!res.ok) throw new Error(`HTTP ${res.status}`)
-                const text = await res.text()
-                await cache.put(item.url, text, 'hls-manifest')
+              if (item.kind === 'video-playback') {
+                // Don't pull the whole MP4 into IndexedDB — it can be tens of
+                // MB. Warm only the first byte-range so the browser HTTP cache
+                // + <video> start fast; the rest streams via range requests.
+                const res = await fetch(item.url, {
+                  credentials: 'include',
+                  headers: { Range: 'bytes=0-65535' },
+                })
+                if (!res.ok && res.status !== 206) throw new Error(`HTTP ${res.status}`)
+                // Drain the body so the connection completes; we don't cache it.
+                await res.arrayBuffer()
               } else {
                 const res = await fetch(item.url, { credentials: 'include' })
                 if (!res.ok) throw new Error(`HTTP ${res.status}`)

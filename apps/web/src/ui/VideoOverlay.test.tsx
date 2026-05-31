@@ -4,12 +4,12 @@
  * Tests for VideoOverlay component.
  *
  * Strategy:
- *   - Mock Hls.isSupported + Hls constructor.
  *   - Mock OverlayCompositor (registerOverlay / destroy).
  *   - Mock useVideoInfo.
  *   - Mock openMediaCache.
  *   - Assert: overlay registered on mount when transcode done.
- *   - Assert: hls.destroy() + handle.destroy() called on unmount.
+ *   - Assert: <video> src set to playbackUrl when transcode done.
+ *   - Assert: handle.destroy() called on unmount.
  *   - Assert: nothing rendered while transcoding pending.
  */
 
@@ -18,44 +18,6 @@ import { render, waitFor, act } from '@testing-library/react'
 import { VideoOverlay } from './VideoOverlay'
 import type { VideoObject } from '@narrative/shared'
 import type { VideoInfoResponse } from '../api/client'
-
-// ---------------------------------------------------------------------------
-// Mock hls.js
-//
-// vi.mock factories are hoisted above ALL imports, including this file's own
-// `import VideoOverlay`. Vitest 3 evaluates the factory before any module-
-// level `let MockHls = …` runs, so referencing such a binding inside the
-// factory throws TDZ ("Cannot access 'MockHls' before initialization").
-// vi.hoisted runs its initializer at the same hoisted moment as vi.mock, so
-// the binding is alive by the time the factory needs it.
-// ---------------------------------------------------------------------------
-
-const hlsMocks = vi.hoisted(() => {
-  const mockHlsLoadSource = vi.fn()
-  const mockHlsAttachMedia = vi.fn()
-  const mockHlsDestroy = vi.fn()
-  const state = { isSupported: true }
-
-  class MockHls {
-    loadSource = mockHlsLoadSource
-    attachMedia = mockHlsAttachMedia
-    destroy = mockHlsDestroy
-    static isSupported() {
-      return state.isSupported
-    }
-  }
-
-  return { MockHls, mockHlsLoadSource, mockHlsAttachMedia, mockHlsDestroy, state }
-})
-
-const { mockHlsLoadSource, mockHlsAttachMedia, mockHlsDestroy } = hlsMocks
-const setMockHlsIsSupported = (v: boolean): void => {
-  hlsMocks.state.isSupported = v
-}
-
-vi.mock('hls.js', () => ({
-  default: hlsMocks.MockHls,
-}))
 
 // ---------------------------------------------------------------------------
 // Mock mediaCache
@@ -149,7 +111,7 @@ function makeVideoInfo(
     height: 1080,
     posterUrl: 'https://cdn.example.com/poster.jpg',
     thumbnailUrl: null,
-    hlsManifestUrl: 'https://cdn.example.com/manifest.m3u8',
+    playbackUrl: 'https://cdn.example.com/playback.mp4',
     transcodeError: null,
     ...overrides,
   }
@@ -162,7 +124,6 @@ function makeVideoInfo(
 beforeEach(() => {
   vi.clearAllMocks()
   mockVideoInfo = null
-  setMockHlsIsSupported(true)
 })
 
 describe('VideoOverlay', () => {
@@ -224,9 +185,8 @@ describe('VideoOverlay', () => {
     expect(opts?.['interactive']).toBe(true)
   })
 
-  it('initializes hls.js when Hls.isSupported returns true', async () => {
+  it('sets <video> src to playbackUrl when transcode is done', async () => {
     mockVideoInfo = makeVideoInfo('done')
-    setMockHlsIsSupported(true)
 
     render(
       <VideoOverlay
@@ -239,13 +199,17 @@ describe('VideoOverlay', () => {
     )
 
     await waitFor(() => {
-      expect(mockHlsLoadSource).toHaveBeenCalledWith('https://cdn.example.com/manifest.m3u8')
+      expect(mockRegisterOverlay).toHaveBeenCalledOnce()
     })
 
-    expect(mockHlsAttachMedia).toHaveBeenCalledWith(expect.any(HTMLVideoElement))
+    const call = (
+      mockRegisterOverlay.mock.calls as unknown as Array<[Record<string, unknown>]>
+    )[0]?.[0]
+    const videoEl = call?.['domElement'] as HTMLVideoElement
+    expect(videoEl.src).toContain('https://cdn.example.com/playback.mp4')
   })
 
-  it('destroys hls and overlay handle on unmount', async () => {
+  it('destroys overlay handle on unmount', async () => {
     mockVideoInfo = makeVideoInfo('done')
 
     const { unmount } = render(
@@ -266,7 +230,6 @@ describe('VideoOverlay', () => {
       unmount()
     })
 
-    expect(mockHlsDestroy).toHaveBeenCalledOnce()
     expect(mockOverlayHandleDestroy).toHaveBeenCalledOnce()
   })
 

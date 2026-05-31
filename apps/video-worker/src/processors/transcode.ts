@@ -1,29 +1,37 @@
 /**
  * processors/transcode.ts
  *
- * Real ffmpeg HLS transcoding pipeline for M12 phase 2.
+ * Full-quality video remux pipeline.
+ *
+ * We no longer downscale to 360/720/1080p HLS variants. The goal is to keep
+ * the source quality verbatim and serve a single progressive MP4 (faststart)
+ * via a plain <video> element over MinIO byte-range requests.
  *
  * Flow per job:
  *   1. updateTranscodeStatus → 'processing'
  *   2. Download original from MinIO to /tmp/narrative-transcode/<assetId>/input.<ext>
- *   3. ffprobe: get width, height, duration_sec
- *   4. ffmpeg: encode 360p, 720p, 1080p (skipped when source height < variant height)
- *      Each variant produces: variant/playlist.m3u8 + variant/seg_NNN.ts
- *   5. Write master.m3u8 referencing all produced variants
- *   6. ffmpeg: extract poster.jpg at 1 s mark
- *   7. ffmpeg: extract thumb.jpg (400 px wide) at 1 s mark
- *   8. Upload all outputs to MinIO under decks/<deckId>/videos/<assetId>/
- *   9. updateVideoAssetOutputs → sets transcode_status='done'
- *  10. Cleanup /tmp/narrative-transcode/<assetId>/ (always, via finally)
+ *   3. ffprobe: get width, height, duration_sec, codec_name
+ *   4. Build playback.mp4 (source resolution — no downscale):
+ *        - codec already web-playable ({h264, vp9, av1, vp8}) → lossless stream
+ *          copy: `ffmpeg -i input -c copy -movflags +faststart playback.mp4`
+ *        - otherwise (ProRes, mpeg2, hevc, …) → re-encode at source resolution
+ *          with libx264 + aac and faststart.
+ *      (H.265/hevc copies fine into MP4 for storage but Chrome playback is
+ *      unreliable, so hevc is deliberately re-encoded.)
+ *   5. ffmpeg: extract poster.jpg at the 1 s mark (-q:v 2)
+ *   6. ffmpeg: extract thumb.jpg (400 px wide) at the 1 s mark (-q:v 3)
+ *   7. Upload playback.mp4 + poster.jpg + thumb.jpg to MinIO under
+ *      decks/<deckId>/videos/<assetId>/
+ *   8. updateVideoAssetOutputs → sets transcode_status='done'
+ *   9. Cleanup /tmp/narrative-transcode/<assetId>/ (always, via finally)
  *
  * Error handling:
  *   - ffmpeg/ffprobe failure → throw; BullMQ retries up to 3×.
  *   - On final failure the worker 'failed' event calls updateTranscodeStatus('failed', err.message).
  *
  * Constraints:
- *   - CPU x264 only (no GPU). M29 polish if needed.
+ *   - CPU x264 only (no GPU) for the re-encode path. M29 polish if needed.
  *   - No audio normalization or colour grading.
- *   - HLS segment duration: 4 s.
  *   - Poster at the 1 s mark (or 0 s if video is shorter than 1 s).
  */
 
@@ -71,7 +79,14 @@ const BUCKET = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
 // ---------------------------------------------------------------------------
 
 const TMP_BASE = process.env['TRANSCODE_TMP_DIR'] ?? '/tmp/narrative-transcode'
-const HLS_SEGMENT_DURATION = 4 // seconds
+
+/**
+ * Codecs that browsers can play directly inside a progressive MP4, so we can
+ * stream-copy them losslessly instead of re-encoding. NOTE: hevc (H.265) is
+ * intentionally excluded — it muxes fine but Chrome playback is unreliable,
+ * so we force a re-encode for it.
+ */
+const COPY_ELIGIBLE_CODECS = new Set(['h264', 'vp9', 'av1', 'vp8'])
 
 // Cap ffmpeg's per-process worker threads. Without -threads, libx264 spawns
 // (cpu_count * 1.5) threads, so two concurrent jobs saturate the box (and
@@ -83,26 +98,6 @@ const FFMPEG_THREADS = (() => {
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n > 0 ? n : 2
 })()
-
-interface HlsVariant {
-  label: string
-  height: number
-  videoBitrate: string
-  audioBitrate: string
-  bandwidth: number // bps for master manifest BANDWIDTH field
-}
-
-const VARIANTS: HlsVariant[] = [
-  { label: '360p', height: 360, videoBitrate: '800k', audioBitrate: '96k', bandwidth: 928_000 },
-  { label: '720p', height: 720, videoBitrate: '2500k', audioBitrate: '128k', bandwidth: 2_688_000 },
-  {
-    label: '1080p',
-    height: 1080,
-    videoBitrate: '5000k',
-    audioBitrate: '192k',
-    bandwidth: 5_248_000,
-  },
-]
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,9 +142,10 @@ interface ProbeResult {
   width: number
   height: number
   durationSec: number
+  codecName: string
 }
 
-/** Run ffprobe and extract video stream dimensions + duration. */
+/** Run ffprobe and extract video stream dimensions, duration + codec name. */
 async function ffprobe(inputPath: string): Promise<ProbeResult> {
   const stdout = await run('ffprobe', [
     '-v',
@@ -168,6 +164,7 @@ async function ffprobe(inputPath: string): Promise<ProbeResult> {
     duration?: string
     tags?: { DURATION?: string }
     codec_type?: string
+    codec_name?: string
   }
   type FfprobeOutput = { streams?: FfprobeStream[] }
   const data = JSON.parse(stdout) as FfprobeOutput
@@ -179,6 +176,7 @@ async function ffprobe(inputPath: string): Promise<ProbeResult> {
 
   const width = stream.width ?? 0
   const height = stream.height ?? 0
+  const codecName = (stream.codec_name ?? '').toLowerCase()
 
   // Duration can be in the stream or as a tag (some containers).
   let durationSec = stream.duration !== undefined ? parseFloat(stream.duration) : NaN
@@ -206,7 +204,7 @@ async function ffprobe(inputPath: string): Promise<ProbeResult> {
     durationSec = parseFloat(fmtData.format?.duration ?? '0')
   }
 
-  return { width, height, durationSec }
+  return { width, height, durationSec, codecName }
 }
 
 /**
@@ -227,48 +225,6 @@ async function uploadFile(
       Body: body,
       ContentLength: stat.size,
       ContentType: contentType,
-    }),
-  )
-}
-
-/**
- * Upload a text/string buffer to MinIO (used for .m3u8 manifest files).
- */
-async function uploadText(content: string, storageKey: string): Promise<void> {
-  const buf = Buffer.from(content, 'utf8')
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: storageKey,
-      Body: buf,
-      ContentLength: buf.byteLength,
-      ContentType: 'application/x-mpegURL',
-    }),
-  )
-}
-
-/**
- * Recursively upload all files under a local directory to MinIO under a key prefix.
- * Preserves the relative directory structure.
- */
-async function uploadDirectory(localDir: string, s3Prefix: string): Promise<void> {
-  const entries = await fs.readdir(localDir, { withFileTypes: true })
-  await Promise.all(
-    entries.map(async (entry) => {
-      const localPath = path.join(localDir, entry.name)
-      const s3Key = `${s3Prefix}/${entry.name}`
-      if (entry.isDirectory()) {
-        await uploadDirectory(localPath, s3Key)
-      } else {
-        const ext = path.extname(entry.name).toLowerCase()
-        const contentType =
-          ext === '.m3u8'
-            ? 'application/x-mpegURL'
-            : ext === '.ts'
-              ? 'video/MP2T'
-              : 'application/octet-stream'
-        await uploadFile(localPath, s3Key, contentType)
-      }
     }),
   )
 }
@@ -303,29 +259,28 @@ export async function transcodeProcessor(
     console.log(`[transcode] downloaded to ${inputPath}`)
 
     // 3. ffprobe
-    const { width, height, durationSec } = await ffprobe(inputPath)
-    console.log(`[transcode] probe: ${width}x${height} duration=${durationSec.toFixed(2)}s`)
+    const { width, height, durationSec, codecName } = await ffprobe(inputPath)
+    console.log(
+      `[transcode] probe: ${width}x${height} duration=${durationSec.toFixed(2)}s codec=${codecName}`,
+    )
 
-    // 4. HLS transcode — only produce variants whose height <= source height
     const outputDir = path.join(workDir, 'output')
     await fs.mkdir(outputDir, { recursive: true })
 
-    const producedVariants: HlsVariant[] = []
+    // 4. Build playback.mp4 — keep full source resolution. Stream-copy when the
+    //    source codec is web-playable, otherwise re-encode with libx264.
+    const playbackPath = path.join(outputDir, 'playback.mp4')
+    const canCopy = COPY_ELIGIBLE_CODECS.has(codecName)
 
-    for (const variant of VARIANTS) {
-      if (height < variant.height) {
-        console.log(
-          `[transcode] skipping ${variant.label} (source ${height}p < ${variant.height}p)`,
-        )
-        continue
-      }
-
-      const variantDir = path.join(outputDir, variant.label)
-      await fs.mkdir(variantDir, { recursive: true })
-
-      const segmentPattern = path.join(variantDir, 'seg_%03d.ts')
-      const playlistPath = path.join(variantDir, 'playlist.m3u8')
-
+    if (canCopy) {
+      console.log(`[transcode] codec=${codecName} is web-playable → lossless stream copy`)
+      await run(
+        'ffmpeg',
+        ['-i', inputPath, '-c', 'copy', '-movflags', '+faststart', '-y', playbackPath],
+        { cwd: workDir },
+      )
+    } else {
+      console.log(`[transcode] codec=${codecName} not web-safe → re-encode (libx264, source res)`)
       await run(
         'ffmpeg',
         [
@@ -333,65 +288,33 @@ export async function transcodeProcessor(
           String(FFMPEG_THREADS),
           '-i',
           inputPath,
-          '-vf',
-          `scale=-2:${variant.height}`,
           '-c:v',
           'libx264',
           '-preset',
           'fast',
           '-crf',
-          '23',
-          '-b:v',
-          variant.videoBitrate,
-          '-maxrate',
-          variant.videoBitrate,
-          '-bufsize',
-          `${parseInt(variant.videoBitrate, 10) * 2}k`,
+          '20',
+          '-pix_fmt',
+          'yuv420p',
+          '-movflags',
+          '+faststart',
           '-c:a',
           'aac',
+          '-b:a',
+          '192k',
           '-ar',
           '48000',
           '-ac',
           '2',
-          '-b:a',
-          variant.audioBitrate,
-          '-hls_time',
-          String(HLS_SEGMENT_DURATION),
-          '-hls_playlist_type',
-          'vod',
-          '-hls_segment_filename',
-          segmentPattern,
-          playlistPath,
+          '-y',
+          playbackPath,
         ],
         { cwd: workDir },
       )
-
-      producedVariants.push(variant)
-      console.log(`[transcode] encoded ${variant.label}`)
     }
+    console.log(`[transcode] playback.mp4 ready`)
 
-    if (producedVariants.length === 0) {
-      throw new Error(
-        `[transcode] No variants produced — source height=${height} is below minimum (360p)`,
-      )
-    }
-
-    // 5. Write master.m3u8
-    const masterLines: string[] = ['#EXTM3U', '#EXT-X-VERSION:3']
-    for (const v of producedVariants) {
-      // Resolution field: use the actual output height; width calculated from -2:height scaling
-      const scaledWidth = Math.round((width / height) * v.height)
-      const safeWidth = scaledWidth % 2 === 0 ? scaledWidth : scaledWidth + 1
-      masterLines.push(
-        `#EXT-X-STREAM-INF:BANDWIDTH=${v.bandwidth},RESOLUTION=${safeWidth}x${v.height},CODECS="avc1.42e01e,mp4a.40.2"`,
-        `${v.label}/playlist.m3u8`,
-      )
-    }
-    const masterContent = masterLines.join('\n') + '\n'
-    const masterLocalPath = path.join(outputDir, 'master.m3u8')
-    await fs.writeFile(masterLocalPath, masterContent, 'utf8')
-
-    // 6 & 7. Poster frame + thumbnail
+    // 5 & 6. Poster frame + thumbnail
     const seekTime = durationSec >= 1 ? '1' : '0'
 
     const posterPath = path.join(outputDir, 'poster.jpg')
@@ -424,29 +347,24 @@ export async function transcodeProcessor(
       thumbPath,
     ])
 
-    // 8. Upload all outputs to MinIO
+    // 7. Upload all outputs to MinIO
     const s3VideoPrefix = `decks/${deckId}/videos/${assetId}`
 
-    // Upload variant dirs (segments + playlists), master playlist, poster and
-    // thumbnail in parallel — each variant directory is independent S3 ops.
-    const hlsManifestKey = `${s3VideoPrefix}/master.m3u8`
+    const playbackKey = `${s3VideoPrefix}/playback.mp4`
     const posterKey = `${s3VideoPrefix}/poster.jpg`
     const thumbnailKey = `${s3VideoPrefix}/thumb.jpg`
 
     await Promise.all([
-      ...producedVariants.map((v) =>
-        uploadDirectory(path.join(outputDir, v.label), `${s3VideoPrefix}/${v.label}`),
-      ),
-      uploadText(masterContent, hlsManifestKey),
+      uploadFile(playbackPath, playbackKey, 'video/mp4'),
       uploadFile(posterPath, posterKey, 'image/jpeg'),
       uploadFile(thumbPath, thumbnailKey, 'image/jpeg'),
     ])
 
     console.log(`[transcode] uploads complete, assetId=${assetId}`)
 
-    // 9. Update DB
+    // 8. Update DB
     await updateVideoAssetOutputs(db, assetId, {
-      hlsManifestKey,
+      playbackKey,
       posterKey,
       thumbnailKey,
       durationSec,
@@ -460,13 +378,13 @@ export async function transcodeProcessor(
       assetId,
       posterKey,
       thumbnailKey,
-      hlsManifestKey,
+      playbackKey,
       durationSec,
       width,
       height,
     }
   } finally {
-    // 10. Cleanup working directory regardless of success or failure
+    // 9. Cleanup working directory regardless of success or failure
     try {
       await fs.rm(workDir, { recursive: true, force: true })
     } catch (cleanErr) {

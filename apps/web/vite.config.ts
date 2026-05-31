@@ -73,9 +73,9 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/imgproxy/, ''),
       },
-      // MinIO direct access for HLS manifests + segments. Same-origin via Vite
-      // avoids CORS headaches and keeps hls.js happy with the server-returned
-      // manifest URL (variant playlists and segments resolve relative to it).
+      // MinIO direct access for the progressive playback MP4 + poster/thumb.
+      // Same-origin via Vite avoids CORS headaches; MinIO honours HTTP
+      // byte-range requests so a plain <video src> can seek through the proxy.
       '/storage': {
         target: `http://localhost:${process.env['MINIO_API_PORT'] ?? '9100'}`,
         changeOrigin: true,
@@ -93,7 +93,7 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 800,
     rolldownOptions: {
       output: {
-        // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, hls.js, Radix,
+        // Vendor splitting: Pixi, GSAP, Tiptap+ProseMirror, Yjs, Radix,
         // Sentry, React all into their own chunks so the initial download is
         // smaller and a change to any one of them doesn't bust the app cache
         // for the others. Rollup will still hoist common deps out into a
@@ -118,12 +118,6 @@ export default defineConfig(({ mode }) => ({
             /[\\/]node_modules[\\/](yjs|y-prosemirror|@hocuspocus|y-protocols|lib0)[\\/]/.test(id)
           ) {
             return 'vendor-yjs'
-          }
-          // hls.js — only loaded when a video plays, but currently statically
-          // imported. Splitting out keeps the main chunk smaller; consider
-          // converting to dynamic import in a follow-up.
-          if (/[\\/]node_modules[\\/]hls\.js[\\/]/.test(id)) {
-            return 'vendor-hls'
           }
           // Radix primitives — many small packages, group as one
           if (/[\\/]node_modules[\\/]@radix-ui[\\/]/.test(id)) {

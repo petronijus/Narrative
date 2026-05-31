@@ -5,30 +5,20 @@
  *
  * Architecture:
  *   - Positioned via OverlayCompositor over the Pixi VideoObject container.
- *   - Uses hls.js for HLS playback (non-Safari browsers).
- *     Safari natively supports HLS via <video src>.
+ *   - Plays the progressive MP4 directly via <video src=playbackUrl>.
+ *     MinIO serves byte-range requests so seeking works without HLS.
  *   - Honors VideoObject.autoplay, loop, muted props.
  *   - Only renders if transcodeStatus === 'done' (renderer shows poster otherwise).
- *
- * HLS manifest caching:
- *   The IndexedDB cache stores the manifest text but NOT HLS segments.
- *   Cached manifests reduce first-fetch latency; segments still stream on demand.
- *   We create an object URL from the cached manifest blob (if available) and pass it
- *   to hls.js. Segment URLs within the manifest still point to the server.
  *
  * Accessibility:
  *   - <video> has aria-label from VideoObject.alt.
  *   - pointer-events: auto in present mode (user can interact with controls if added later).
  *
  * Cleanup:
- *   - hls.destroy() on unmount.
  *   - overlay handle.destroy() on unmount.
  */
 
 import { useEffect, useRef } from 'react'
-// Eager import preserves the same sync attach-order the editor relies on.
-// hls.js still lands in its own vendor-hls chunk via vite manualChunks.
-import Hls from 'hls.js'
 import type { Container } from 'pixi.js'
 import type { VideoObject } from '@narrative/shared'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
@@ -57,16 +47,15 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
   const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const hlsRef = useRef<Hls | null>(null)
   const overlayHandleRef = useRef<ReturnType<typeof compositor.registerOverlay> | null>(null)
   const objectUrlRef = useRef<string | null>(null)
 
   // Effect: set up video element when transcode is done
   useEffect(() => {
     if (info?.transcodeStatus !== 'done') return
-    if (info.hlsManifestUrl === null) return
+    if (info.playbackUrl === null) return
 
-    const hlsUrl = info.hlsManifestUrl
+    const playbackUrl = info.playbackUrl
 
     // The Pixi scene may not yet have created a node for this video when we
     // mount (edit → present navigation can reach React render before the
@@ -76,20 +65,6 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     let cancelled = false
     let retries = 0
     const MAX_RETRIES = 60 // ~1 s at 60 fps
-
-    function attachHls(videoEl: HTMLVideoElement): void {
-      if (Hls.isSupported()) {
-        const hls = new Hls()
-        hlsRef.current = hls
-        hls.loadSource(hlsUrl)
-        hls.attachMedia(videoEl)
-      } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari — native HLS support
-        videoEl.src = hlsUrl
-      } else {
-        console.warn('[VideoOverlay] HLS not supported in this browser')
-      }
-    }
 
     function mount(pixiContainer: Container): void {
       // Build video element
@@ -184,12 +159,12 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       })
 
       videoRef.current = videoEl
-      attachHls(videoEl)
+      videoEl.src = playbackUrl
 
       // Hand the videoEl to the Pixi videoRenderer so the visible
       // representation lives inside the scene graph (layer order works
       // naturally). The DOM <video> stays invisible — kept around for
-      // hls.js / VideoSource to decode into and for click-to-toggle.
+      // VideoSource to decode into and for click-to-toggle.
       videoEl.style.opacity = '0'
       const onCanPlayAttach = (): void => {
         attachLiveVideoToRenderer(videoObject.id, videoEl)
@@ -227,10 +202,6 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
       cancelled = true
       if (raf !== 0) cancelAnimationFrame(raf)
       detachLiveVideoFromRenderer(videoObject.id)
-      if (hlsRef.current !== null) {
-        hlsRef.current.destroy()
-        hlsRef.current = null
-      }
       if (overlayHandleRef.current !== null) {
         overlayHandleRef.current.destroy()
         overlayHandleRef.current = null
@@ -258,7 +229,7 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     info?.transcodeStatus,
-    info?.hlsManifestUrl,
+    info?.playbackUrl,
     videoObject.id,
     videoObject.width,
     videoObject.height,

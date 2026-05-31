@@ -4,7 +4,7 @@
  * M5: Present mode fullscreen shell.
  * M6: Animation runtime integration.
  * M9: Slide navigation.
- * M12: Media preloading pipeline + VideoOverlay for HLS playback.
+ * M12: Media preloading pipeline + VideoOverlay for progressive MP4 playback.
  *
  * Preload flow (M12):
  *   1. On mount, start media preload for all slides.
@@ -14,8 +14,8 @@
  *
  * VideoOverlay (M12):
  *   For each VideoObject on the active slide, a VideoOverlay component is rendered.
- *   VideoOverlay uses hls.js + OverlayCompositor to position a DOM <video> element
- *   over the Pixi canvas at the correct world coordinates.
+ *   VideoOverlay uses OverlayCompositor to position a DOM <video> element (sourced
+ *   from the progressive MP4) over the Pixi canvas at the correct world coordinates.
  *
  * Architecture:
  * - Žádný toolbar, sidebar, inspector — čistý fullscreen render.

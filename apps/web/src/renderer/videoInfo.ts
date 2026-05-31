@@ -32,7 +32,7 @@ export interface VideoInfoResult {
   height: number | null
   posterUrl: string | null
   thumbnailUrl: string | null
-  hlsManifestUrl: string | null
+  playbackUrl: string | null
   transcodeError: string | null
 }
 
@@ -106,7 +106,7 @@ export function createVideoInfoResolver(apiBaseUrl: string): VideoInfoResolver {
         height: json.height ?? null,
         posterUrl: json.posterUrl ?? null,
         thumbnailUrl: json.thumbnailUrl ?? null,
-        hlsManifestUrl: json.hlsManifestUrl ?? null,
+        playbackUrl: json.playbackUrl ?? null,
         transcodeError: json.transcodeError ?? null,
       }
 

@@ -57,7 +57,7 @@ const FIXTURE_VIDEO_PENDING: VideoAssetRow = {
   width: null,
   height: null,
   durationSec: null,
-  hlsManifestKey: null,
+  playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
   transcodeStatus: 'pending',
@@ -74,7 +74,7 @@ const FIXTURE_VIDEO_DONE: VideoAssetRow = {
   width: 1920,
   height: 1080,
   durationSec: 120,
-  hlsManifestKey: 'decks/deck-alpha/videos/video-done-01/master.m3u8',
+  playbackKey: 'decks/deck-alpha/videos/video-done-01/playback.mp4',
   posterKey: 'decks/deck-alpha/videos/video-done-01/poster.jpg',
   thumbnailKey: 'decks/deck-alpha/videos/video-done-01/thumb.jpg',
   transcodeStatus: 'done',
@@ -97,7 +97,7 @@ const FIXTURE_ASSET: MediaAsset = {
   // M12 additions — image defaults
   kind: 'image',
   durationSec: null,
-  hlsManifestKey: null,
+  playbackKey: null,
   posterKey: null,
   thumbnailKey: null,
   transcodeStatus: null,
@@ -348,11 +348,11 @@ describe('GET /api/media/:assetId/video-info', () => {
     expect(body['transcodeStatus']).toBe('pending')
     expect(body['posterUrl']).toBeNull()
     expect(body['thumbnailUrl']).toBeNull()
-    expect(body['hlsManifestUrl']).toBeNull()
+    expect(body['playbackUrl']).toBeNull()
     expect(body['assetId']).toBe('video-pending-01')
   })
 
-  it('returns done status with signed URLs and hlsManifestUrl when transcode is complete', async () => {
+  it('returns done status with signed URLs and playbackUrl when transcode is complete', async () => {
     vi.mocked(getVideoAsset).mockResolvedValue(FIXTURE_VIDEO_DONE)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
     vi.mocked(roleAtLeast).mockReturnValue(true)
@@ -373,9 +373,9 @@ describe('GET /api/media/:assetId/video-info', () => {
     expect(body['posterUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
     expect(body['thumbnailUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
 
-    // HLS URL contains the manifest key
-    expect(typeof body['hlsManifestUrl']).toBe('string')
-    expect(body['hlsManifestUrl'] as string).toContain('master.m3u8')
+    // Playback URL contains the MP4 key
+    expect(typeof body['playbackUrl']).toBe('string')
+    expect(body['playbackUrl'] as string).toContain('playback.mp4')
   })
 
   it('includes transcodeError field in response', async () => {

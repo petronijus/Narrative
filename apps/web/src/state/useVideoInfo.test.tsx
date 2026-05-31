@@ -62,7 +62,7 @@ function makeVideoInfo(
     height: null,
     posterUrl: null,
     thumbnailUrl: null,
-    hlsManifestUrl: null,
+    playbackUrl: null,
     transcodeError: null,
     ...overrides,
   }
@@ -103,7 +103,7 @@ describe('useVideoInfo', () => {
   })
 
   it('returns info when fetch resolves', async () => {
-    const info = makeVideoInfo('done', { hlsManifestUrl: 'https://cdn/manifest.m3u8' })
+    const info = makeVideoInfo('done', { playbackUrl: 'https://cdn/playback.mp4' })
     mockGetVideoInfo.mockResolvedValue(info)
 
     render(<TestComponent assetId="asset-123" onResult={() => undefined} />)

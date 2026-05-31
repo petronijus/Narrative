@@ -81,18 +81,18 @@ describe('mediaCache', () => {
     expect(result!.url).toBe('https://example.com/img.jpg')
   })
 
-  it('put and get round-trip for string (hls-manifest)', async () => {
+  it('put and get round-trip for video-poster Blob', async () => {
     if (!idbAvailable) return
 
     const cache = await openMediaCache()
-    const manifest = '#EXTM3U\n#EXT-X-VERSION:3\n...'
-    await cache.put('https://cdn.example.com/master.m3u8', manifest, 'hls-manifest')
+    const blob = new Blob(['poster'], { type: 'image/jpeg' })
+    await cache.put('https://cdn.example.com/poster.jpg', blob, 'video-poster')
 
-    const result = await cache.get('https://cdn.example.com/master.m3u8')
+    const result = await cache.get('https://cdn.example.com/poster.jpg')
     expect(result).not.toBeNull()
-    expect(result!.kind).toBe('hls-manifest')
-    expect(typeof result!.content).toBe('string')
-    expect(result!.content).toBe(manifest)
+    expect(result!.kind).toBe('video-poster')
+    expect(result!.content).toBeTruthy()
+    expect(result!.url).toBe('https://cdn.example.com/poster.jpg')
   })
 
   it('returns null for unknown URL', async () => {
@@ -141,7 +141,7 @@ describe('mediaCache', () => {
     await cache.put('https://example.com/x.jpg', new Blob(['x']), 'image')
     expect(await cache.size()).toBe(1)
 
-    await cache.put('https://example.com/y.m3u8', '#EXTM3U', 'hls-manifest')
+    await cache.put('https://example.com/poster2.jpg', new Blob(['y']), 'video-poster')
     expect(await cache.size()).toBe(2)
   })
 

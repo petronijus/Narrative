@@ -278,8 +278,8 @@ export const mediaAssets = pgTable(
     kind: mediaAssetKindEnum('kind').notNull().default('image'),
     /** Video duration in seconds — populated by ffmpeg probe after transcode. */
     durationSec: integer('duration_sec'),
-    /** S3/MinIO key for the HLS master playlist: decks/<deckId>/videos/<id>/master.m3u8 */
-    hlsManifestKey: text('hls_manifest_key'),
+    /** S3/MinIO key for the progressive playback MP4: decks/<deckId>/videos/<id>/playback.mp4 */
+    playbackKey: text('playback_key'),
     /** S3/MinIO key for the poster frame: decks/<deckId>/videos/<id>/poster.jpg */
     posterKey: text('poster_key'),
     /** S3/MinIO key for the sidebar thumbnail: decks/<deckId>/videos/<id>/thumb.jpg */
