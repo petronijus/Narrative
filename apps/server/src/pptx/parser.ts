@@ -16,6 +16,8 @@
 
 import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
+import type { ParagraphAttrs, ListNumberFormat } from '@narrative/shared'
+import { MAX_LIST_LEVEL } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -203,8 +205,21 @@ export interface ParsedShape {
   /** List marker for the first paragraph (PowerPoint resolves per-paragraph;
    *  v1 maps Narrative's frame-wide `listStyle` to the first paragraph's
    *  marker). Falls through slide pPr → placeholder lvl1pPr → master
-   *  `<p:txStyles>` lvl1pPr. Missing ⇒ no bullet. */
+   *  `<p:txStyles>` lvl1pPr. Missing ⇒ no bullet.
+   *
+   *  LEGACY: superseded by per-paragraph `paragraphs[]` below. Still set on
+   *  parse for diagnostics / backward-compat, but the writer no longer maps
+   *  it onto `TextObject.listStyle` — the per-paragraph block attrs win. */
   listStyle?: 'bullet' | 'numbered'
+  /** Per-paragraph block attributes — one entry per source `<a:p>`, in
+   *  document order. Each carries the paragraph's resolved list kind, nesting
+   *  level, custom bullet glyph, autonum format + startAt. An entry with no
+   *  `list` (and no `level`) is a plain paragraph. The writer attaches these
+   *  to the Y.Text body's paragraph-separator characters via
+   *  `blockAttrsToInsertAttrs`. Present only for `kind === 'text'` shapes that
+   *  carry at least one paragraph with list / level data; absent on plain
+   *  un-listed frames so the writer's string fast-path still applies. */
+  paragraphs?: ParagraphAttrs[]
   /** Vertical anchor of the text box: `t` / `ctr` / `b` → top / middle /
    *  bottom. Inherits from the placeholder's `<a:bodyPr anchor>` when the
    *  slide's own bodyPr is empty. Default = top. */
@@ -1260,6 +1275,95 @@ function detectBulletDecl(
     if (t === 'a:buAutoNum') return 'numbered'
   }
   return undefined
+}
+
+/**
+ * OOXML `<a:buAutoNum type="…">` token → Narrative {@link ListNumberFormat}.
+ * Covers the period + right-paren variants we round-trip; the two-sided
+ * `arabicParenBoth` (e.g. `(1)`) collapses to `decimalParen` since Narrative
+ * models only a trailing delimiter. Unknown / unmapped tokens fall back to
+ * `decimal` so an exotic numbering scheme still imports as an ordered list.
+ */
+const BU_AUTONUM_TYPE_MAP: Record<string, ListNumberFormat> = {
+  arabicPeriod: 'decimal',
+  arabicParenR: 'decimalParen',
+  arabicParenBoth: 'decimalParen',
+  alphaLcPeriod: 'lowerAlpha',
+  alphaLcParenR: 'lowerAlphaParen',
+  alphaUcPeriod: 'upperAlpha',
+  alphaUcParenR: 'upperAlphaParen',
+  romanLcPeriod: 'lowerRoman',
+  romanUcPeriod: 'upperRoman',
+}
+
+function mapBuAutoNumType(raw: string | undefined): ListNumberFormat {
+  if (typeof raw === 'string' && BU_AUTONUM_TYPE_MAP[raw] !== undefined) {
+    return BU_AUTONUM_TYPE_MAP[raw]!
+  }
+  return 'decimal'
+}
+
+/**
+ * A fully-detailed bullet declaration extracted from a `<a:pPr>` /
+ * `<a:lvlNpPr>` node. Distinct from {@link detectBulletDecl} (which only
+ * returns the coarse kind) — this carries the glyph / autonum format /
+ * startAt so the per-paragraph importer can populate {@link ParagraphAttrs}
+ * with full fidelity. `kind === 'none'` is an explicit `<a:buNone/>` that
+ * vetoes an inherited bullet; `undefined` means "no declaration here".
+ */
+interface BulletDecl {
+  kind: 'bullet' | 'numbered' | 'none'
+  /** Glyph from `<a:buChar char="…">` (bullet kind only). */
+  bulletChar?: string
+  /** Mapped format from `<a:buAutoNum type="…">` (numbered kind only). */
+  numberFormat?: ListNumberFormat
+  /** `<a:buAutoNum startAt="N">` when present and ≥ 1 (numbered kind only). */
+  startAt?: number
+}
+
+/**
+ * Like {@link detectBulletDecl} but returns the full declaration (glyph /
+ * autonum format / startAt) rather than just the coarse kind. First matching
+ * child wins (buNone / buChar / buAutoNum are mutually exclusive in valid
+ * OOXML).
+ */
+function extractBulletDecl(pPrLike: XmlNode, tag: string): BulletDecl | undefined {
+  for (const ch of getChildren(pPrLike, tag)) {
+    const t = getTag(ch)
+    if (t === 'a:buNone') return { kind: 'none' }
+    if (t === 'a:buChar') {
+      const ch2 = getAttrs(ch)['@char']
+      const out: BulletDecl = { kind: 'bullet' }
+      if (typeof ch2 === 'string' && ch2.length > 0) out.bulletChar = ch2
+      return out
+    }
+    if (t === 'a:buAutoNum') {
+      const a = getAttrs(ch)
+      const out: BulletDecl = {
+        kind: 'numbered',
+        numberFormat: mapBuAutoNumType(
+          typeof a['@type'] === 'string' ? (a['@type'] as string) : undefined,
+        ),
+      }
+      const startRaw = a['@startAt']
+      if (typeof startRaw === 'string') {
+        const n = Number(startRaw)
+        if (Number.isFinite(n) && n >= 1) out.startAt = Math.floor(n)
+      }
+      return out
+    }
+  }
+  return undefined
+}
+
+/** Read the `lvl` attribute off a `<a:pPr>` and clamp to 0..MAX_LIST_LEVEL. */
+function readParagraphLevel(pPr: XmlNode | undefined): number {
+  if (pPr === undefined) return 0
+  const raw = getAttrs(pPr)['@lvl']
+  if (typeof raw !== 'string') return 0
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.min(MAX_LIST_LEVEL, Math.floor(n))
 }
 
 /** Map PPTX `<a:bodyPr anchor>` enum to TextObject.vAlign. PPTX values:
@@ -2328,8 +2432,24 @@ function parseShape(
   let textVerticalAlign: 'top' | 'middle' | 'bottom' | undefined
   /** Bullet resolution holds the explicit decl from the highest-priority
    *  layer that set one; consumers downstream of the resolution chain skip
-   *  emitting `listStyle` when this lands as 'none' or stays undefined. */
+   *  emitting `listStyle` when this lands as 'none' or stays undefined.
+   *  LEGACY frame-wide field — kept for the `shape.listStyle` diagnostic and
+   *  derived from the FIRST paragraph's resolved decl (see post-loop). */
   let listStyleResolved: 'bullet' | 'numbered' | 'none' | undefined
+  /** Per-paragraph bullet declaration parsed from each `<a:p>/<a:pPr>`. One
+   *  entry per source paragraph, in document order. `undefined` = the
+   *  paragraph carried no own buChar/buAutoNum/buNone, so it falls back to
+   *  the inherited (placeholder/master/txStyles) declaration. */
+  const paraBulletDecls: (BulletDecl | undefined)[] = []
+  /** Per-paragraph nesting level from each `<a:p>/<a:pPr lvl="N">`. 0 = no
+   *  indent. Index-aligned with `paraBulletDecls`. */
+  const paraLevels: number[] = []
+  /** Bullet kind inherited from the placeholder / master-txStyles chain.
+   *  Only a coarse kind ('bullet' | 'numbered' | 'none') is recoverable from
+   *  those layers (they store no glyph / autonum detail). Applied per
+   *  paragraph post-loop to any paragraph that didn't declare its own bullet,
+   *  matching PowerPoint's "inherit lvl1pPr bullet" behaviour. */
+  let inheritedBulletKind: 'bullet' | 'numbered' | 'none' | undefined
   /** Per-run rich-text breakdown — populated alongside the existing
    *  paragraph string accumulator; survives to the shape output so the
    *  writer can lay it onto a Y.Text. */
@@ -2369,6 +2489,17 @@ function parseShape(
     for (let pi = 0; pi < paragraphs.length; pi++) {
       const p = paragraphs[pi]!
       const pChildren = getChildren(p, 'a:p')
+      // ─── Per-paragraph list resolution ──────────────────────────────────
+      // Capture THIS paragraph's own bullet declaration + nesting level so
+      // the writer can stamp per-paragraph block attrs onto the Y.Text. The
+      // inheritance fallback (placeholder/master/txStyles → only a coarse
+      // kind is available there) is applied post-loop, once per paragraph,
+      // for any paragraph that didn't declare its own bullet here.
+      {
+        const ownPPr = findFirst(pChildren, 'a:pPr')
+        paraBulletDecls.push(ownPPr ? extractBulletDecl(ownPPr, 'a:pPr') : undefined)
+        paraLevels.push(readParagraphLevel(ownPPr))
+      }
       // First-paragraph explicit `<a:pPr algn="..">` wins over layout defaults.
       // Bullet decl on first paragraph likewise wins over any inherited default.
       // Line height + paragraph space are also paragraph-level; we capture
@@ -2818,6 +2949,9 @@ function parseShape(
       if (listStyleResolved === undefined && inheritedPh.defaultListStyle !== undefined) {
         listStyleResolved = inheritedPh.defaultListStyle
       }
+      if (inheritedBulletKind === undefined && inheritedPh.defaultListStyle !== undefined) {
+        inheritedBulletKind = inheritedPh.defaultListStyle
+      }
     }
     // Master `<p:txStyles>` is the FINAL fallback for placeholder text — only
     // consulted when the slide has a `<p:ph>` and none of the layout/master
@@ -2837,6 +2971,9 @@ function parseShape(
         if (!bold && bucket.bold === true) bold = true
         if (listStyleResolved === undefined && bucket.listStyle !== undefined) {
           listStyleResolved = bucket.listStyle
+        }
+        if (inheritedBulletKind === undefined && bucket.listStyle !== undefined) {
+          inheritedBulletKind = bucket.listStyle
         }
       }
     }
@@ -2919,6 +3056,38 @@ function parseShape(
   // just bloat the parser JSON in debug dumps.
   if (kind === 'text') {
     if (allRuns.length > 0) shape.textRuns = allRuns
+    // ─── Per-paragraph block attributes ──────────────────────────────────
+    // Resolve each source paragraph's effective list kind/level/glyph/format.
+    // Own `<a:pPr>` declaration wins; absent ⇒ fall back to the inherited
+    // (placeholder/master/txStyles) coarse kind. An explicit `<a:buNone/>`
+    // (own or inherited-vetoed) yields a plain paragraph. `level` is carried
+    // even on plain paragraphs (PPTX `lvl` is an indent, not list-only).
+    const paraAttrs: ParagraphAttrs[] = paraBulletDecls.map((own, i) => {
+      const attrs: ParagraphAttrs = {}
+      const level = paraLevels[i] ?? 0
+      if (level > 0) attrs.level = level
+      // Effective declaration: own veto/decl beats inherited; absent own decl
+      // inherits the coarse kind. An own 'none' suppresses inheritance.
+      const decl =
+        own ?? (inheritedBulletKind !== undefined ? { kind: inheritedBulletKind } : undefined)
+      if (decl !== undefined && decl.kind !== 'none') {
+        if (decl.kind === 'bullet') {
+          attrs.list = 'bullet'
+          if (decl.bulletChar !== undefined) attrs.bulletChar = decl.bulletChar
+        } else {
+          attrs.list = 'number'
+          if (decl.numberFormat !== undefined) attrs.numberFormat = decl.numberFormat
+          if (decl.startAt !== undefined) attrs.startAt = decl.startAt
+        }
+      }
+      return attrs
+    })
+    // Only attach when at least one paragraph carries list / level data —
+    // a wholly plain frame keeps `paragraphs` undefined so the writer's
+    // string fast-path (no per-paragraph separators) still applies.
+    if (paraAttrs.some((a) => a.list !== undefined || a.level !== undefined)) {
+      shape.paragraphs = paraAttrs
+    }
     if (firstHyperlinkHref !== undefined) shape.hyperlink = { href: firstHyperlinkHref }
     if (frameFontFamily !== undefined) shape.fontFamily = frameFontFamily
     if (frameLetterSpacing !== undefined) shape.letterSpacing = frameLetterSpacing

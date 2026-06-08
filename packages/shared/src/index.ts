@@ -23,6 +23,10 @@ export type {
   FontWeight,
   TextVerticalAlign,
   TextListStyle,
+  ListKind,
+  ListNumberFormat,
+  ParagraphAttrs,
+  ParagraphAttrKey,
   ImageObject,
   VideoObject,
   TableObject,
@@ -50,6 +54,7 @@ export type {
 } from './slide.js'
 
 export { TEXT_STYLE_OVERRIDE_KEYS, isTextStyleOverrideKey } from './slide.js'
+export { MAX_LIST_LEVEL } from './slide.js'
 export { hSegKey, vSegKey, getEffectiveBorderSegment } from './slide.js'
 
 export type {

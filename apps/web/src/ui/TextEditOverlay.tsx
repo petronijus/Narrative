@@ -35,12 +35,22 @@ import { isTokenRef } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
 import {
   type ObjectsMutationContext,
-  toDelta,
-  toHtml,
-  type HtmlDefaults,
+  buildListedHtml,
+  getParagraphDeltas,
+  getParagraphs,
+  blockAttrsToInsertAttrs,
+  applyParagraphPatch,
+  indentParagraphs,
+  PARAGRAPH_SEP,
+  type ListedHtmlOptions,
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
+import {
+  getElementInnerText,
+  domPositionToCharIndex,
+  charIndexToDomPosition,
+} from './textEditDom.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { cssFontFamily } from '../renderer/fontFallback.js'
 import { useTextEdit } from '../state/TextEditContext.js'
@@ -62,35 +72,59 @@ function hexToCss(n: number | TokenRef): string {
 }
 
 /**
- * Build an HTML string for the contenteditable mirroring exactly what
- * `textRenderer.buildHtml` produces for Pixi. Done locally rather than
- * imported from the renderer so this overlay never depends on
- * Pixi-side state.
+ * Shared list/paragraph HTML options for a TextObject. Mirrors the Pixi
+ * renderer's `listedHtmlOptionsFor` (kept local so the overlay never
+ * imports Pixi-side state) so edit mode and render mode draw identical
+ * markers, indents, and paragraph spacing.
  */
-function buildOverlayHtml(obj: TextObject): string {
-  const defaults: HtmlDefaults = {}
-  if (obj.italic === true) defaults.italic = true
-  if (obj.underline === true) defaults.underline = true
-  const t = obj.text
-  if (t instanceof Y.Text) {
-    const delta = toDelta(t)
-    return toHtml(delta, defaults)
+function listedOptionsFor(obj: TextObject): ListedHtmlOptions {
+  const o: ListedHtmlOptions = {}
+  if (obj.italic === true) o.italic = true
+  if (obj.underline === true) o.underline = true
+  if (typeof obj.paragraphSpaceBefore === 'number' && obj.paragraphSpaceBefore > 0) {
+    o.paragraphSpaceBefore = obj.paragraphSpaceBefore
   }
-  const escaped = (typeof t === 'string' ? t : '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return toHtml([{ insert: escaped }], defaults)
+  if (typeof obj.paragraphSpaceAfter === 'number' && obj.paragraphSpaceAfter > 0) {
+    o.paragraphSpaceAfter = obj.paragraphSpaceAfter
+  }
+  if (obj.listStyle !== undefined) o.legacyListStyle = obj.listStyle
+  return o
 }
 
 /**
- * Read the body content as a plain string regardless of whether the
- * underlying schema slot is a Y.Text or a legacy plain string. Used
- * by the diff-on-input path so the incoming DOM innerText can be
- * compared against the current Y.Text snapshot.
+ * Build the contenteditable HTML — the SAME `buildListedHtml` output the
+ * Pixi renderer uses, so markers, numbering, nesting indent, and paragraph
+ * blocks are WYSIWYG while editing. Each paragraph is a `<div data-pb>`;
+ * markers are `<span data-marker contenteditable="false">`; empty
+ * paragraphs carry `<br data-empty>`. The DOM↔char helpers below know to
+ * treat those structurally.
  */
-function readPlainText(t: TextObject['text']): string {
-  if (t instanceof Y.Text) return t.toString()
+function buildOverlayHtml(obj: TextObject): string {
+  const t = obj.text
+  const paras =
+    t instanceof Y.Text
+      ? getParagraphDeltas(t)
+      : (typeof t === 'string' ? t : '')
+          .split(PARAGRAPH_SEP)
+          .map((seg) => ({ ops: seg.length > 0 ? [{ insert: seg }] : [], attrs: {} }))
+  return buildListedHtml(paras, listedOptionsFor(obj))
+}
+
+/**
+ * The editable string projection of the body: paragraphs joined by the
+ * U+2029 separator, WITHOUT the trailing-separator the list model keeps to
+ * anchor the final paragraph's block attrs. The contenteditable DOM holds
+ * exactly this projection (N paragraphs ⇒ N−1 visible separators), so the
+ * diff path and caret math operate in these coordinates. Y.Text indices
+ * map 1:1 to editable indices across [0, editableLength]; the trailing
+ * separator (when present) sits at Y.Text index editableLength, beyond the
+ * editable range, so inserts at the end land before it automatically.
+ */
+function editableString(t: TextObject['text']): string {
+  if (t instanceof Y.Text)
+    return getParagraphs(t)
+      .map((p) => p.text)
+      .join(PARAGRAPH_SEP)
   if (typeof t === 'string') return t
   return ''
 }
@@ -117,122 +151,6 @@ function attrsAtIndex(yText: Y.Text, index: number): Record<string, any> {
   return {}
 }
 
-/**
- * Convert a DOM Range endpoint (node, offset) inside `root` to a
- * character index in the plain-text projection where each text node
- * contributes its length and each `<br>` contributes one '\n'.
- */
-function domPositionToCharIndex(root: Node, containerNode: Node, containerOffset: number): number {
-  let count = 0
-  let found = false
-  const walk = (node: Node): boolean => {
-    if (found) return true
-    if (node === containerNode) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        count += containerOffset
-      } else {
-        // Element-level offset: count chars inside the first
-        // `containerOffset` children.
-        for (let i = 0; i < containerOffset && i < node.childNodes.length; i++) {
-          walk(node.childNodes[i]!)
-        }
-      }
-      found = true
-      return true
-    }
-    if (node.nodeType === Node.TEXT_NODE) {
-      count += (node.nodeValue ?? '').length
-      return false
-    }
-    if (node.nodeName === 'BR') {
-      count += 1
-      return false
-    }
-    for (let i = 0; i < node.childNodes.length; i++) {
-      if (walk(node.childNodes[i]!)) return true
-    }
-    return false
-  }
-  walk(root)
-  return count
-}
-
-/**
- * Convert a character index back into a DOM (node, offset) pair so we
- * can place the caret / selection after a innerHTML rebuild.
- */
-function charIndexToDomPosition(root: Node, index: number): { node: Node; offset: number } {
-  let remaining = index
-  let result: { node: Node; offset: number } = { node: root, offset: 0 }
-  let done = false
-  const walk = (node: Node): void => {
-    if (done) return
-    if (node.nodeType === Node.TEXT_NODE) {
-      const len = (node.nodeValue ?? '').length
-      if (remaining <= len) {
-        result = { node, offset: remaining }
-        done = true
-        return
-      }
-      remaining -= len
-      return
-    }
-    if (node.nodeName === 'BR') {
-      if (remaining === 0) {
-        // Place caret right before the <br> via the parent.
-        const parent = node.parentNode
-        if (parent !== null) {
-          const idx = Array.prototype.indexOf.call(parent.childNodes, node)
-          result = { node: parent, offset: idx }
-          done = true
-        }
-        return
-      }
-      remaining -= 1
-      return
-    }
-    for (let i = 0; i < node.childNodes.length; i++) {
-      walk(node.childNodes[i]!)
-      if (done) return
-    }
-  }
-  walk(root)
-  if (!done) {
-    // Past the end — place caret after the last child.
-    result = { node: root, offset: root.childNodes.length }
-  }
-  return result
-}
-
-function getElementInnerText(el: HTMLElement): string {
-  // We avoid `el.innerText` because some browsers normalise whitespace
-  // / collapse runs of spaces. Walk the tree and reconstruct the
-  // plain string so it matches Y.Text.toString() byte-for-byte.
-  //
-  // Block-level elements (`<div>`, `<p>`) inserted by the browser on
-  // paste (Chrome wraps each pasted line in a `<div>`) are treated as
-  // line-break boundaries — without this, pasted multi-line text loses
-  // its `\n` characters before reaching Y.Text.
-  let out = ''
-  const walk = (node: Node): void => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      out += node.nodeValue ?? ''
-      return
-    }
-    if (node.nodeName === 'BR') {
-      out += '\n'
-      return
-    }
-    const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P'
-    if (isBlock && out.length > 0 && !out.endsWith('\n')) {
-      out += '\n'
-    }
-    for (let i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]!)
-  }
-  walk(el)
-  return out
-}
-
 export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
   const editorRef = useRef<HTMLDivElement>(null)
   const canvas = useCanvasInstance()
@@ -250,7 +168,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   /** Plain-text snapshot of Y.Text content. Updated on every successful
    *  diff-apply so the next input event diffs against the just-committed
    *  state, not the stale pre-input snapshot. */
-  const lastPlainRef = useRef<string>(readPlainText(obj.text))
+  const lastPlainRef = useRef<string>(editableString(obj.text))
   /** When true, suppress the Y.Text observer's innerHTML rebuild —
    *  used to skip the rebuild we'd otherwise do for our own diff-applied
    *  insertions / deletions, which would needlessly disrupt the caret. */
@@ -345,7 +263,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   // next user keystroke would diff against stale text and produce
   // spurious insert/delete ops.
   useEffect(() => {
-    lastPlainRef.current = readPlainText(obj.text)
+    lastPlainRef.current = editableString(obj.text)
   }, [obj.text])
 
   // ── Y.Text → DOM observer (peer edits + Inspector inline format) ─────
@@ -377,7 +295,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
         savedEnd = domPositionToCharIndex(el, r.endContainer, r.endOffset)
       }
       el.innerHTML = buildOverlayHtml(obj)
-      lastPlainRef.current = yText.toString()
+      lastPlainRef.current = editableString(obj.text)
       if (savedStart !== null && savedEnd !== null) {
         const a = charIndexToDomPosition(el, savedStart)
         const b = charIndexToDomPosition(el, savedEnd)
@@ -507,6 +425,166 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     lastPlainRef.current = next
   }
 
+  // ── Structural list/paragraph edits (Enter / Tab) ────────────────────
+  // These mutate Y.Text directly (insert a U+2029 separator carrying block
+  // attrs, or shift paragraph levels) then rebuild the overlay HTML and
+  // restore the caret by char index — the diff path can't express a
+  // separator with block attributes.
+
+  /** Current selection as editable-string char indices, or null. */
+  const getCaretRange = (): { start: number; end: number } | null => {
+    const el = editorRef.current
+    const sel = window.getSelection()
+    if (el === null || sel === null || sel.rangeCount === 0) return null
+    if (!el.contains(sel.anchorNode)) return null
+    const r = sel.getRangeAt(0)
+    const a = domPositionToCharIndex(el, r.startContainer, r.startOffset)
+    const b = domPositionToCharIndex(el, r.endContainer, r.endOffset)
+    return { start: Math.min(a, b), end: Math.max(a, b) }
+  }
+
+  const restoreCaret = (start: number, end: number): void => {
+    const el = editorRef.current
+    const sel = window.getSelection()
+    if (el === null || sel === null) return
+    const a = charIndexToDomPosition(el, start)
+    const b = charIndexToDomPosition(el, end)
+    const r = document.createRange()
+    try {
+      r.setStart(a.node, a.offset)
+      r.setEnd(b.node, b.offset)
+      sel.removeAllRanges()
+      sel.addRange(r)
+    } catch {
+      /* defensive — DOM shape edge cases */
+    }
+  }
+
+  const runStructural = (mutate: (yText: Y.Text) => { start: number; end: number }): void => {
+    const el = editorRef.current
+    const yText = obj.text instanceof Y.Text ? obj.text : null
+    if (el === null || yText === null) return
+    localEditRef.current = true
+    let caret = { start: 0, end: 0 }
+    try {
+      mutationCtxRef.current.doc.transact(() => {
+        caret = mutate(yText)
+      })
+    } finally {
+      localEditRef.current = false
+    }
+    el.innerHTML = buildOverlayHtml(obj)
+    lastPlainRef.current = editableString(obj.text)
+    restoreCaret(caret.start, caret.end)
+  }
+
+  /** Enter: split the paragraph (new list item continues the list), or on an
+   *  empty list item outdent / end the list. */
+  const handleEnter = (): void => {
+    const yText = obj.text instanceof Y.Text ? obj.text : null
+    if (yText === null) {
+      document.execCommand('insertLineBreak')
+      return
+    }
+    const range = getCaretRange()
+    if (range === null) return
+    clearSelectAllOnEnter()
+    runStructural((yt) => {
+      if (range.end > range.start) yt.delete(range.start, range.end - range.start)
+      const pos = range.start
+      const paras = getParagraphs(yt)
+      const para = paras.find((p) => p.start <= pos && pos <= p.end) ?? paras[paras.length - 1]!
+      if (para.text.length === 0 && para.attrs.list !== undefined) {
+        // Empty list item: outdent one level, or convert to a plain
+        // paragraph once at level 0 (Keynote/PowerPoint behavior).
+        if ((para.attrs.level ?? 0) > 0) {
+          indentParagraphs(yt, pos, pos, -1)
+        } else {
+          applyParagraphPatch(yt, pos, pos, {
+            list: null,
+            level: null,
+            bulletChar: null,
+            numberFormat: null,
+            startAt: null,
+          })
+        }
+        return { start: pos, end: pos }
+      }
+      // Split: the inserted separator carries this paragraph's block attrs
+      // so the new paragraph continues the list at the same kind/level.
+      const blockAttrs = blockAttrsToInsertAttrs(para.attrs)
+      const insertSep = (at: number): void => {
+        if (blockAttrs !== undefined) yt.insert(at, PARAGRAPH_SEP, blockAttrs)
+        else yt.insert(at, PARAGRAPH_SEP)
+      }
+      insertSep(pos)
+      // Splitting at the very end leaves the new (empty) paragraph with no
+      // terminator, which `getParagraphs` would collapse away — so it would
+      // never render and the caret would fall back into the previous block.
+      // Append a terminator so the trailing empty paragraph actually exists.
+      if (pos + 1 === yt.length) insertSep(yt.length)
+      return { start: pos + 1, end: pos + 1 }
+    })
+  }
+
+  /** Tab / Shift+Tab: indent / outdent the covered paragraphs. */
+  const handleIndent = (delta: number): void => {
+    const yText = obj.text instanceof Y.Text ? obj.text : null
+    if (yText === null) return
+    const range = getCaretRange()
+    if (range === null) return
+    runStructural((yt) => {
+      indentParagraphs(yt, range.start, range.end, delta)
+      return range
+    })
+  }
+
+  /**
+   * Backspace at the very start of a list/indented paragraph. Native
+   * contenteditable refuses to merge across the leading non-editable marker
+   * span, so we handle it structurally (Keynote/PowerPoint progression):
+   * outdent if nested, strip the list on the first item, else merge into the
+   * previous paragraph. Returns true when handled (caller preventDefaults).
+   */
+  const handleListBackspace = (): boolean => {
+    const yText = obj.text instanceof Y.Text ? obj.text : null
+    if (yText === null) return false
+    const range = getCaretRange()
+    if (range === null || range.start !== range.end) return false
+    const pos = range.start
+    const paras = getParagraphs(yText)
+    const idx = paras.findIndex((p) => p.start <= pos && pos <= p.end)
+    if (idx < 0) return false
+    const para = paras[idx]!
+    // Only intervene at the very start of a paragraph; mid-paragraph delete is
+    // plain and handled by the diff path.
+    if (pos !== para.start) return false
+    // Plain, non-indented paragraphs merge natively — leave them alone.
+    if (para.attrs.list === undefined && (para.attrs.level ?? 0) === 0) return false
+    if ((para.attrs.level ?? 0) > 0) {
+      handleIndent(-1)
+      return true
+    }
+    if (idx === 0) {
+      runStructural((yt) => {
+        applyParagraphPatch(yt, pos, pos, {
+          list: null,
+          level: null,
+          bulletChar: null,
+          numberFormat: null,
+          startAt: null,
+        })
+        return { start: pos, end: pos }
+      })
+      return true
+    }
+    runStructural((yt) => {
+      yt.delete(pos - 1, 1)
+      return { start: pos - 1, end: pos - 1 }
+    })
+    return true
+  }
+
   const wrapperStyle = useMemo<React.CSSProperties>(
     () => ({
       position: 'absolute',
@@ -567,12 +645,33 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
             return
           }
           if (e.key === 'Enter' && !e.shiftKey) {
-            // contenteditable's default Enter inserts a <div> in
-            // Chrome (or <p> elsewhere) which our diff doesn't see
-            // as a newline. Use insertLineBreak so a <br> lands and
-            // getElementInnerText counts it as '\n'.
+            // Enter starts a new paragraph (= new list item / <a:p>) by
+            // inserting a U+2029 separator that carries the paragraph's
+            // block attributes. Handled explicitly rather than via
+            // contenteditable's default (which inserts a bare <div>).
+            e.preventDefault()
+            handleEnter()
+            return
+          }
+          if (e.key === 'Enter' && e.shiftKey) {
+            // Shift+Enter is a soft line break (continuation line inside
+            // the same paragraph / list item) — a plain <br> = '\n'.
             e.preventDefault()
             document.execCommand('insertLineBreak')
+            return
+          }
+          if (e.key === 'Tab') {
+            // Tab / Shift+Tab indent / outdent the current paragraph(s).
+            e.preventDefault()
+            handleIndent(e.shiftKey ? -1 : 1)
+            return
+          }
+          if (e.key === 'Backspace') {
+            // Structural backspace at the start of a list/indented paragraph
+            // (native can't merge across the marker span). Falls through to
+            // the diff path for everything else.
+            if (handleListBackspace()) e.preventDefault()
+            return
           }
         }}
         onBlur={(e) => {

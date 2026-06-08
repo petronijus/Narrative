@@ -30,7 +30,16 @@
 
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle, TextStyle } from 'pixi.js'
 import * as Y from 'yjs'
-import { toDelta, toHtml, type HtmlDefaults } from '@narrative/slide-model'
+import {
+  toDelta,
+  toHtml,
+  buildListedHtml,
+  getParagraphDeltas,
+  PARAGRAPH_SEP,
+  type HtmlDefaults,
+  type ParagraphDelta,
+  type ListedHtmlOptions,
+} from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
@@ -139,16 +148,34 @@ export function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
  * Legacy plain-string text (decks predating Phase A) is HTML-escaped
  * and rendered as a single run.
  */
+/**
+ * Build the shared `ListedHtmlOptions` for a TextObject — used by this
+ * renderer and (mirrored) by the edit overlay so the two never drift.
+ */
+export function listedHtmlOptionsFor(data: TextObject): ListedHtmlOptions {
+  const o: ListedHtmlOptions = {}
+  if (data.italic === true) o.italic = true
+  if (data.underline === true) o.underline = true
+  if (typeof data.paragraphSpaceBefore === 'number' && data.paragraphSpaceBefore > 0) {
+    o.paragraphSpaceBefore = data.paragraphSpaceBefore
+  }
+  if (typeof data.paragraphSpaceAfter === 'number' && data.paragraphSpaceAfter > 0) {
+    o.paragraphSpaceAfter = data.paragraphSpaceAfter
+  }
+  if (data.listStyle !== undefined) o.legacyListStyle = data.listStyle
+  return o
+}
+
+/** Turn a legacy plain `string` body into paragraph deltas (split on U+2029). */
+function stringToParagraphDeltas(s: string): ParagraphDelta[] {
+  return s.split(PARAGRAPH_SEP).map((seg) => ({
+    ops: seg.length > 0 ? [{ insert: seg }] : [],
+    attrs: {},
+  }))
+}
+
 /** Exported for the table renderer — same HTML build pipeline for cells. */
 export function buildHtml(data: TextObject): string {
-  // Defaults handed to toHtml only carry the field types that need
-  // structural HTML (i.e. <i> / <u>). Pixi's TextStyle applies the
-  // default fontWeight + color directly on the SVG root, and per-run
-  // overrides from Y.Text format attributes are emitted as inline
-  // styles inside <span>.
-  const defaults: HtmlDefaults = {}
-  if (data.italic === true) defaults.italic = true
-  if (data.underline === true) defaults.underline = true
   const t = data.text
   let inner: string
   if (data.isSlideNumber === true) {
@@ -157,41 +184,23 @@ export function buildHtml(data: TextObject): string {
     // ignored; only style fields apply. When no slide context is
     // available (e.g. the master editor with no host slide, or a
     // skipped slide) we render an empty string so the user still sees
-    // their styled box.
+    // their styled box. Slide-number fields never carry list structure.
     const n = getRenderingSlideNumber()
     const value = typeof n === 'number' ? String(n) : ''
+    const defaults: HtmlDefaults = {}
+    if (data.italic === true) defaults.italic = true
+    if (data.underline === true) defaults.underline = true
     inner = toHtml([{ insert: value }], defaults)
-  } else if (t instanceof Y.Text) {
-    const delta = toDelta(t)
-    inner = toHtml(delta, defaults)
   } else {
-    // Legacy string — escape and pass through the same toHtml renderer
-    // so the inherited defaults still apply.
-    const escaped = (typeof t === 'string' ? t : '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-    inner = toHtml([{ insert: escaped }], defaults)
-  }
-  inner = prependListMarkersHtml(inner, data.listStyle)
-  // Paragraph spacing — when either margin is non-zero, split the
-  // single-string output on `<br>` boundaries and re-emit each segment
-  // as a `<div style="margin-top:Xpx;margin-bottom:Ypx">` so the
-  // foreignObject layout inserts the requested gap between blocks.
-  // Each Enter in the editor produces a `<br>`, so a "line break" maps
-  // 1:1 to a "paragraph break" in this model.
-  const psB = data.paragraphSpaceBefore
-  const psA = data.paragraphSpaceAfter
-  if ((typeof psB === 'number' && psB > 0) || (typeof psA === 'number' && psA > 0)) {
-    const lines = inner.split(/<br\s*\/?>(?![^<]*>)/i)
-    const top = typeof psB === 'number' && psB > 0 ? psB : 0
-    const bottom = typeof psA === 'number' && psA > 0 ? psA : 0
-    inner = lines
-      .map(
-        (l) =>
-          `<div style="margin-top:${top}px;margin-bottom:${bottom}px">${l.length > 0 ? l : '&nbsp;'}</div>`,
-      )
-      .join('')
+    // Both Y.Text and legacy-string bodies render through the shared
+    // paragraph/list builder so per-paragraph bullets, numbering, nesting
+    // indent, and paragraph spacing are produced identically here and in
+    // the edit overlay.
+    const paras =
+      t instanceof Y.Text
+        ? getParagraphDeltas(t)
+        : stringToParagraphDeltas(typeof t === 'string' ? t : '')
+    inner = buildListedHtml(paras, listedHtmlOptionsFor(data))
   }
   // Visual case transform — wrap in a span with the corresponding CSS
   // so the underlying text stays editable in its original casing while
@@ -202,34 +211,6 @@ export function buildHtml(data: TextObject): string {
     return `<span style="text-transform:${tt}">${inner}</span>`
   }
   return inner
-}
-
-/**
- * Prepend list markers (• / 1. / 2. …) to each line break in an HTML
- * string. Markers are inserted as plain text — they aren't part of
- * Y.Text content so editing doesn't have to strip them.
- */
-function prependListMarkersHtml(html: string, style: TextObject['listStyle']): string {
-  if (style === undefined) return html
-  // PARAGRAPH breaks (<br data-pb="1">, emitted from a Y.Text U+2029)
-  // split list items. SOFT breaks (plain <br>, emitted from a Y.Text
-  // \n) are continuation lines inside one item — rendered under the
-  // bullet, unbulleted. Split only on the data-pb sentinel. Without
-  // this, every <br> got its own bullet ("bullet everywhere" bug on
-  // the audit deck's slide 5).
-  const segments = html.split(/<br\s+data-pb=["']1["']\s*\/?>/i)
-  if (style === 'bullet') {
-    return segments.map((s) => (s.length > 0 ? `•&nbsp;&nbsp;${s}` : s)).join('<br>')
-  }
-  let n = 1
-  return segments
-    .map((s) => {
-      if (s.length === 0) return s
-      const out = `${n}.&nbsp;&nbsp;${s}`
-      n += 1
-      return out
-    })
-    .join('<br>')
 }
 
 /** Tag for the Pixi Text node stored on its parent Container. */
@@ -676,7 +657,16 @@ export const textRenderer = {
     // instance). The cost is one HTML string concatenation per update;
     // Pixi's HTMLText only re-rasterises when the string actually
     // differs.
+    const prevText = textNode.text
     textNode.text = buildHtmlForNode(textNode, next)
+    // A content change (e.g. a per-paragraph list toggle from the Inspector,
+    // which arrives as a `{ text }` patch with the same Y.Text instance)
+    // rasterises its SVG asynchronously. Without a follow-up render the new
+    // texture lands after the single applyChanges frame and never paints —
+    // schedule the same catch-up cascade mount uses.
+    if (textNode.text !== prevText) {
+      scheduleAsyncTextureCatchup(textNode as unknown as { __narrativeCatchupActive?: boolean })
+    }
 
     const styleChanged =
       prev.fontSize !== next.fontSize ||
@@ -834,7 +824,15 @@ export const textRenderer = {
       // The HTML always tracks the merged data — text changes,
       // listStyle, italic / underline / weight defaults all affect
       // the emitted markup.
+      const prevText = textNode.text
       textNode.text = buildHtmlForNode(textNode, merged)
+      // List toggles from the Inspector arrive as a `{ text }` patch on the
+      // same Y.Text instance; their re-rasterised SVG lands after the single
+      // applyChanges frame, so force the async texture catch-up or the new
+      // markers/numbering never paint on the live canvas.
+      if (textNode.text !== prevText) {
+        scheduleAsyncTextureCatchup(textNode as unknown as { __narrativeCatchupActive?: boolean })
+      }
       if (patch.width !== undefined) {
         const dataX = node.x - node.pivot.x
         const newPivotX = patch.width / 2

@@ -85,6 +85,14 @@ import {
   clearActiveSelectionAttrs,
   clearAllInlineRunAttrs,
 } from './textEditSelection.js'
+import {
+  currentParagraphAttrs,
+  setListKind,
+  setBulletChar,
+  setNumberFormat,
+  setStartAt,
+  indentList,
+} from './textListOps.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
@@ -137,6 +145,7 @@ import type {
   ImageObject,
   TextObject,
   TextStyleOverrideKey,
+  ListNumberFormat,
   VideoObject,
   SlideObjectPatch,
   AnimationStep,
@@ -3753,6 +3762,21 @@ interface TypographySectionProps {
   features?: TypographyFeatures
 }
 
+/** Quick-pick bullet glyphs for the Inspector. `null` = per-level default. */
+const LIST_BULLET_GLYPHS: ReadonlyArray<string | null> = [null, '•', '◦', '▪', '–', '‣', '★', '→']
+
+/** Numbering formats offered in the Inspector, with sample labels. */
+const LIST_NUMBER_FORMATS: ReadonlyArray<[ListNumberFormat, string]> = [
+  ['decimal', '1.'],
+  ['decimalParen', '1)'],
+  ['lowerAlpha', 'a.'],
+  ['lowerAlphaParen', 'a)'],
+  ['upperAlpha', 'A.'],
+  ['upperAlphaParen', 'A)'],
+  ['lowerRoman', 'i.'],
+  ['upperRoman', 'I.'],
+]
+
 interface FontSizeFieldProps {
   obj: TextObject
   patch: (p: SlideObjectPatch<TextObject>) => void
@@ -3950,6 +3974,10 @@ export function TypographySection({
   const effectiveBold = selAttrs?.fontWeight !== undefined ? selAttrs.fontWeight >= 600 : boxBold
   const effectiveItalic = selAttrs?.italic !== undefined ? selAttrs.italic : boxItalic
   const effectiveUnderline = selAttrs?.underline !== undefined ? selAttrs.underline : boxUnderline
+  // Per-paragraph list state for the targeted paragraph(s) — recomputed on
+  // selection change (activeSel dep above triggers the re-render).
+  const paraAttrs = currentParagraphAttrs(obj)
+  void activeSel
 
   // M16 P2: linked text style — stored in textStyleId field (cast via unknown
   // because the shared type doesn't have this field yet; state-sync agent owns schema).
@@ -4477,28 +4505,116 @@ export function TypographySection({
           </div>
         </div>
 
-        {/* List style — placed at the bottom of the typographic
-            controls, just above the Stroke row. Gated behind
-            listStyle — table cells render single-flow text without
-            list markers. */}
+        {/* Lists — per-paragraph bullet / numbering with nesting level,
+            glyph and numbering-format pickers. Operates on the paragraph(s)
+            under the caret/selection while editing, else the whole box.
+            Gated behind listStyle — table cells render single-flow text
+            without list markers. */}
         {features.listStyle && (
-          <div className="flex items-center gap-2">
-            <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
-            <select
-              value={obj.listStyle ?? ''}
-              onChange={(e) =>
-                patch({
-                  listStyle:
-                    e.target.value === '' ? undefined : (e.target.value as 'bullet' | 'numbered'),
-                } as unknown as SlideObjectPatch<TextObject>)
-              }
-              className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              title="List style"
-            >
-              <option value="">No list</option>
-              <option value="bullet">• Bullet</option>
-              <option value="numbered">1. Numbered</option>
-            </select>
+          <div className="flex flex-col gap-1.5" data-text-edit-keep-focus>
+            <div className="flex items-center gap-2">
+              <span className="w-16 flex-shrink-0 text-xs text-muted-foreground">List</span>
+              <select
+                value={paraAttrs.list ?? ''}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setListKind(obj, v === '' ? null : (v as 'bullet' | 'number'), patch)
+                  refocusActiveTextEdit(obj.id)
+                }}
+                className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                title="List style"
+              >
+                <option value="">No list</option>
+                <option value="bullet">• Bullet</option>
+                <option value="number">1. Numbered</option>
+              </select>
+              {paraAttrs.list !== undefined && (
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    className="rounded-l-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground hover:bg-accent"
+                    title="Outdent (Shift+Tab)"
+                    onClick={() => {
+                      indentList(obj, -1, patch)
+                      refocusActiveTextEdit(obj.id)
+                    }}
+                  >
+                    ⇤
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-r-md border-y border-r border-input field-surface px-1.5 py-0.5 text-xs text-foreground hover:bg-accent"
+                    title="Indent (Tab)"
+                    onClick={() => {
+                      indentList(obj, 1, patch)
+                      refocusActiveTextEdit(obj.id)
+                    }}
+                  >
+                    ⇥
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {paraAttrs.list === 'bullet' && (
+              <div className="flex items-center gap-1 pl-[4.5rem]">
+                {LIST_BULLET_GLYPHS.map((g) => {
+                  const active =
+                    g === null ? paraAttrs.bulletChar === undefined : paraAttrs.bulletChar === g
+                  return (
+                    <button
+                      key={g ?? 'default'}
+                      type="button"
+                      title={g === null ? 'Default (per level)' : `Bullet ${g}`}
+                      onClick={() => {
+                        setBulletChar(obj, g, patch)
+                        refocusActiveTextEdit(obj.id)
+                      }}
+                      className={`h-6 w-6 rounded-md border text-xs ${
+                        active
+                          ? 'border-ring bg-accent text-foreground'
+                          : 'border-input field-surface text-muted-foreground hover:bg-accent'
+                      }`}
+                    >
+                      {g ?? '–'}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {paraAttrs.list === 'number' && (
+              <div className="flex items-center gap-2 pl-[4.5rem]">
+                <select
+                  value={paraAttrs.numberFormat ?? 'decimal'}
+                  onChange={(e) => {
+                    setNumberFormat(obj, e.target.value as ListNumberFormat, patch)
+                    refocusActiveTextEdit(obj.id)
+                  }}
+                  className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  title="Numbering format"
+                >
+                  {LIST_NUMBER_FORMATS.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="start"
+                  value={paraAttrs.startAt ?? ''}
+                  onChange={(e) => {
+                    const n = e.target.value === '' ? null : parseInt(e.target.value, 10)
+                    setStartAt(obj, n !== null && Number.isFinite(n) ? n : null, patch)
+                    refocusActiveTextEdit(obj.id)
+                  }}
+                  className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                  title="Start numbering at"
+                />
+              </div>
+            )}
           </div>
         )}
 

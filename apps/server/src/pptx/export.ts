@@ -22,7 +22,9 @@ import JSZip from 'jszip'
 import { XMLParser, XMLBuilder } from 'fast-xml-parser'
 import * as Y from 'yjs'
 import { SLIDE_WIDTH, getEffectiveBorderSegment, hSegKey, vSegKey } from '@narrative/shared'
-import { toDelta } from '@narrative/slide-model'
+import { toDelta, getParagraphDeltas } from '@narrative/slide-model'
+import type { RichDeltaOp } from '@narrative/slide-model'
+import type { ParagraphAttrs, ListNumberFormat } from '@narrative/shared'
 import type {
   Slide,
   SlideObject,
@@ -155,6 +157,160 @@ function buildHyperlinkOpt(
 }
 
 // ---------------------------------------------------------------------------
+// Per-paragraph list → pptxgenjs bullet mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Inverse of the import-side autonum reader: map Narrative's
+ * `ListNumberFormat` to the PPTX `<a:buAutoNum type="…">` token that
+ * pptxgenjs accepts as `bullet.style`. Verified end-to-end (see
+ * export.test.ts "numbered list with non-decimal format") — pptxgenjs
+ * passes the token straight through to `type=` on `<a:buAutoNum>`.
+ *
+ * NOTE: Narrative models `lowerRoman` / `upperRoman` but not the paren
+ * variants, so both roman entries map to the `*Period` token. Everything
+ * else has a 1:1 PPTX counterpart.
+ */
+const NUMBER_FORMAT_TO_PPTX: Record<ListNumberFormat, string> = {
+  decimal: 'arabicPeriod',
+  decimalParen: 'arabicParenR',
+  lowerAlpha: 'alphaLcPeriod',
+  lowerAlphaParen: 'alphaLcParenR',
+  upperAlpha: 'alphaUcPeriod',
+  upperAlphaParen: 'alphaUcParenR',
+  lowerRoman: 'romanLcPeriod',
+  upperRoman: 'romanUcPeriod',
+}
+
+/**
+ * Convert a custom bullet glyph string to the upper-case hex code point
+ * pptxgenjs's `bullet.characterCode` expects (it emits `<a:buChar
+ * char="…">` by decoding the hex back to the glyph — verified in the
+ * probe). We take the FIRST code point; a multi-glyph bulletChar is not
+ * expressible as a single `<a:buChar char>` so the leading glyph wins.
+ */
+function bulletCharToHex(glyph: string): string | undefined {
+  const cp = glyph.codePointAt(0)
+  if (cp === undefined) return undefined
+  return cp.toString(16).toUpperCase().padStart(4, '0')
+}
+
+/**
+ * Build the pptxgenjs paragraph-level `bullet` + `indentLevel` options for
+ * one paragraph's block attributes. Returns the keys to merge onto the
+ * run that BEGINS the paragraph (pptxgenjs reads paragraph options off the
+ * first run of each `breakLine`-delimited paragraph).
+ *
+ * Every list feature here goes through the pptxgenjs high-level API — the
+ * probe (apps/server/probe.mjs during development) confirmed it emits
+ * correct `<a:pPr lvl>`, `<a:buChar char>`, and `<a:buAutoNum type startAt>`
+ * for all of: default bullet, custom-glyph bullet, every autonum token,
+ * `startAt`, nested `indentLevel`, and `bullet:false` (→ `<a:buNone/>`).
+ * No zip fixup is needed for lists.
+ */
+function buildParagraphBulletOpts(attrs: ParagraphAttrs): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  // Nesting level — PPTX `lvl` is 0-based and matches Narrative's `level`
+  // (the parser reads `<a:pPr lvl>` straight into `level`). readBlockAttrs
+  // only stores level > 0, so level 0 / undefined emits no `indentLevel`.
+  if (typeof attrs.level === 'number' && attrs.level > 0) {
+    out['indentLevel'] = attrs.level
+  }
+
+  if (attrs.list === 'bullet') {
+    if (typeof attrs.bulletChar === 'string' && attrs.bulletChar !== '') {
+      const hex = bulletCharToHex(attrs.bulletChar)
+      out['bullet'] = hex !== undefined ? { characterCode: hex } : { code: '2022' }
+    } else {
+      out['bullet'] = { code: '2022' } // • U+2022
+    }
+  } else if (attrs.list === 'number') {
+    const bullet: Record<string, unknown> = {
+      type: 'number',
+      style: NUMBER_FORMAT_TO_PPTX[attrs.numberFormat ?? 'decimal'],
+    }
+    if (typeof attrs.startAt === 'number' && attrs.startAt >= 1) {
+      bullet['startAt'] = attrs.startAt
+    }
+    out['bullet'] = bullet
+  } else {
+    // Plain paragraph — suppress any bullet a placeholder/lstStyle default
+    // might otherwise inherit. pptxgenjs emits `<a:buNone/>` for this.
+    out['bullet'] = false
+  }
+  return out
+}
+
+/**
+ * Map one paragraph's inline runs (from getParagraphDeltas) into the
+ * pptxgenjs `{ text, options }` run array. The first run of the paragraph
+ * carries the paragraph-level bullet + indent (built by
+ * buildParagraphBulletOpts) plus `breakLine: true`; soft `'\n'` line breaks
+ * inside the paragraph become their own zero-bullet runs with `breakLine`.
+ *
+ * `isLast` controls whether the final run gets `breakLine` — pptxgenjs adds
+ * an `<a:p>` boundary on every `breakLine`, so the last paragraph omits it
+ * to avoid a spurious trailing empty paragraph.
+ */
+function paragraphToRuns(
+  ops: RichDeltaOp[],
+  paraOpts: Record<string, unknown>,
+  isLast: boolean,
+): Array<{ text: string; options: Record<string, unknown> }> {
+  // Split each op's text on soft line breaks ('\n' = <a:br>) so each visual
+  // line is its own run; pptxgenjs turns a `breakLine` run into a line
+  // break, and a paragraph boundary only happens when the paragraph option
+  // changes — which we control via paraOpts on the first run.
+  const runs: Array<{ text: string; options: Record<string, unknown> }> = []
+  const flat: Array<{ text: string; inline?: RichDeltaOp['attributes']; hardBreak: boolean }> = []
+  for (const op of ops) {
+    const parts = op.insert.split('\n')
+    for (let i = 0; i < parts.length; i++) {
+      flat.push({ text: parts[i] ?? '', inline: op.attributes, hardBreak: i < parts.length - 1 })
+    }
+  }
+  // An empty paragraph still needs one run so the bullet/indent lands.
+  if (flat.length === 0) flat.push({ text: '', hardBreak: false })
+
+  for (let i = 0; i < flat.length; i++) {
+    const f = flat[i]!
+    const runOpts: Record<string, unknown> = inlineAttrsToRunOpts(f.inline)
+    if (i === 0) Object.assign(runOpts, paraOpts)
+    // breakLine on every run except the very last run of the very last
+    // paragraph: a soft break (hardBreak) becomes <a:br>; the paragraph's
+    // last run gets breakLine to close the <a:p>.
+    const isParaLastRun = i === flat.length - 1
+    if (f.hardBreak || !isParaLastRun || !isLast) runOpts['breakLine'] = true
+    runs.push({ text: f.text, options: runOpts })
+  }
+  return runs
+}
+
+/** Map a delta op's inline attributes to pptxgenjs per-run options. */
+function inlineAttrsToRunOpts(a: RichDeltaOp['attributes']): Record<string, unknown> {
+  const runOpts: Record<string, unknown> = {}
+  if (a === undefined) return runOpts
+  if (a.fontWeight !== undefined) runOpts['bold'] = a.fontWeight >= 600
+  if (a.italic === true) runOpts['italic'] = true
+  if (a.underline === true) runOpts['underline'] = { style: 'sng' }
+  if (a.color !== undefined) runOpts['color'] = hex6(a.color)
+  if (a.fontSize !== undefined) runOpts['fontSize'] = fontPxToPt(a.fontSize)
+  if (a.fontFamily !== undefined) runOpts['fontFace'] = a.fontFamily
+  return runOpts
+}
+
+/**
+ * True when ANY paragraph in the Y.Text carries a per-paragraph list
+ * attribute. Drives the "new model vs legacy fallback" decision in
+ * emitText: if even one paragraph is listed we trust the per-paragraph
+ * data wholesale; otherwise we fall back to the legacy frame-wide
+ * `obj.listStyle`.
+ */
+function hasPerParagraphList(paras: ReturnType<typeof getParagraphDeltas>): boolean {
+  return paras.some((p) => p.attrs.list !== undefined)
+}
+
+// ---------------------------------------------------------------------------
 // Per-object emitters
 // ---------------------------------------------------------------------------
 
@@ -259,6 +415,42 @@ function emitText(
   }
   // Drop shadow on text frames — same helper as shapes.
   applyShadowAndBlur(opts, obj, slideIndex, fixups)
+  // Object-level hyperlink lands on the addText opts; pptxgenjs writes it
+  // as `<a:hlinkClick r:id="…"/>` on every run inside the frame. URL
+  // hyperlinks map directly; slide-jump hyperlinks resolve through the
+  // deck-wide slide-id → 1-based-index map.
+  const link = buildHyperlinkOpt(obj.hyperlink, slideIdToIndex)
+  if (link !== undefined) opts['hyperlink'] = link
+
+  // Per-paragraph list path: the new data model stores each paragraph's
+  // bullet / level / glyph / autonum format on the terminating separator
+  // char inside the Y.Text. We read it via getParagraphDeltas and emit
+  // pptxgenjs's text-array API with paragraph-level `bullet` + `indentLevel`
+  // on each paragraph's first run (separated by `breakLine`). Every list
+  // feature goes through the high-level API — no zip fixup (verified the
+  // emitted `<a:pPr lvl>` / `<a:buChar char>` / `<a:buAutoNum type startAt>`
+  // directly; see buildParagraphBulletOpts).
+  if (!isSlideNumberField && obj.text instanceof Y.Text) {
+    const paras = getParagraphDeltas(obj.text)
+    if (hasPerParagraphList(paras)) {
+      // Strip undefined keys before the array call (pptxgenjs treats a
+      // present-but-undefined key as set-to-undefined).
+      for (const k of Object.keys(opts)) {
+        if (opts[k] === undefined) delete opts[k]
+      }
+      const runs: Array<{ text: string; options: Record<string, unknown> }> = []
+      for (let i = 0; i < paras.length; i++) {
+        const p = paras[i]!
+        const paraOpts = buildParagraphBulletOpts(p.attrs)
+        runs.push(...paragraphToRuns(p.ops, paraOpts, i === paras.length - 1))
+      }
+      slide.addText(runs, opts)
+      return
+    }
+  }
+
+  // Legacy fallback — frame-wide bullet from `obj.listStyle` for decks that
+  // pre-date the per-paragraph model (no paragraph carries `attrs.list`).
   // pptxgenjs `bullet: true` emits `<a:buChar char="•">` on every paragraph;
   // `bullet: { type: 'number' }` emits `<a:buAutoNum type="arabicPeriod">`.
   if (obj.listStyle === 'bullet') {
@@ -266,12 +458,6 @@ function emitText(
   } else if (obj.listStyle === 'numbered') {
     opts['bullet'] = { type: 'number' }
   }
-  // Object-level hyperlink lands on the addText opts; pptxgenjs writes it
-  // as `<a:hlinkClick r:id="…"/>` on every run inside the frame. URL
-  // hyperlinks map directly; slide-jump hyperlinks resolve through the
-  // deck-wide slide-id → 1-based-index map.
-  const link = buildHyperlinkOpt(obj.hyperlink, slideIdToIndex)
-  if (link !== undefined) opts['hyperlink'] = link
   // Strip undefined keys — pptxgenjs treats them as set-to-undefined.
   for (const k of Object.keys(opts)) {
     if (opts[k] === undefined) delete opts[k]
@@ -285,19 +471,10 @@ function emitText(
   if (obj.text instanceof Y.Text) {
     const delta = toDelta(obj.text)
     if (delta.length > 0 && delta.some((op) => op.attributes !== undefined)) {
-      const runs = delta.map((op) => {
-        const runOpts: Record<string, unknown> = {}
-        const a = op.attributes
-        if (a !== undefined) {
-          if (a.fontWeight !== undefined) runOpts['bold'] = a.fontWeight >= 600
-          if (a.italic === true) runOpts['italic'] = true
-          if (a.underline === true) runOpts['underline'] = { style: 'sng' }
-          if (a.color !== undefined) runOpts['color'] = hex6(a.color)
-          if (a.fontSize !== undefined) runOpts['fontSize'] = fontPxToPt(a.fontSize)
-          if (a.fontFamily !== undefined) runOpts['fontFace'] = a.fontFamily
-        }
-        return { text: op.insert, options: runOpts }
-      })
+      const runs = delta.map((op) => ({
+        text: op.insert,
+        options: inlineAttrsToRunOpts(op.attributes),
+      }))
       slide.addText(runs, opts)
       return
     }
