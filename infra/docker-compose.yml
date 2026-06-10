@@ -206,7 +206,9 @@ services:
     healthcheck:
       # imgproxy serves /health; nginx proxies it through location /.
       # busybox wget (-O -) is the portable form in nginx:alpine.
-      test: ['CMD', 'wget', '-q', '-O', '-', 'http://localhost/health']
+      # 127.0.0.1, NOT localhost — getaddrinfo orders ::1 first and our
+      # nginx.conf listens IPv4-only (`listen 80;`), so localhost refuses.
+      test: ['CMD', 'wget', '-q', '-O', '-', 'http://127.0.0.1/health']
       interval: 30s
       timeout: 5s
       retries: 3

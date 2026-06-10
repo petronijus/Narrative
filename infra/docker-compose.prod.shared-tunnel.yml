@@ -47,6 +47,8 @@ services:
     ports: !reset []
   imgproxy:
     ports: !reset []
+  imgproxy-cache:
+    ports: !reset []
   server:
     ports: !reset []
     # OIDC + auth env passthrough. The base compose's `environment` block
