@@ -104,6 +104,8 @@ jobs:
           IMGPROXY_KEY: ci-stub
           IMGPROXY_SALT: ci-stub
           DOMAIN: ci.example.com
+          CLOUDFLARE_TUNNEL_TOKEN: ci-stub
+          CLOUDFLARED_VERSION: '2024.10.1'
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet

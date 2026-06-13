@@ -53,6 +53,11 @@ function makeDataTransfer(files: File[]): Partial<DataTransfer> {
     items: items as unknown as DataTransferItemList,
     files: files as unknown as FileList,
     dropEffect: 'none' as DataTransfer['dropEffect'],
+    // A real DataTransfer always exposes getData; onDrop reads the
+    // component-drag MIME via it. These are file drops, so return '' —
+    // omitting it made `getData is not a function` throw inside event
+    // dispatch and trip vitest's exit code (all assertions still passed).
+    getData: (_type: string) => '',
   }
 }
 
