@@ -68,7 +68,7 @@ import type {
   RadialGradientFill,
   FillStyle,
 } from '@narrative/shared'
-import { SLIDE_WIDTH, SLIDE_HEIGHT } from '@narrative/shared'
+import { SLIDE_WIDTH, SLIDE_HEIGHT, sanitizeHref } from '@narrative/shared'
 import type {
   ParsedPptx,
   ParsedShape,
@@ -336,7 +336,13 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       obj.listStyle = s.listStyle
     }
     if (s.hyperlink !== undefined) {
-      obj.hyperlink = { kind: 'url', href: s.hyperlink.href, target: '_blank' }
+      // Sanitise at the import boundary: a crafted .pptx can carry a
+      // `javascript:`/`data:` hlinkClick target. Drop anything that isn't
+      // an allowed scheme so we never persist a dangerous href into the doc.
+      const href = sanitizeHref(s.hyperlink.href)
+      if (href !== null) {
+        obj.hyperlink = { kind: 'url', href, target: '_blank' }
+      }
     }
     // Frame-level text fine attrs.
     if (s.fontFamily !== undefined) obj.fontFamily = s.fontFamily

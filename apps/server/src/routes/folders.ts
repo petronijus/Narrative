@@ -22,11 +22,11 @@
 
 import type { FastifyInstance } from 'fastify'
 import { nanoid } from 'nanoid'
-import { eq, inArray, sql, and } from 'drizzle-orm'
+import { eq, inArray, sql, and, or } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { folders, decks } from '../db/schema.js'
+import { folders, decks, mediaAssets } from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
-import { purgeDeckBucketPrefix } from '../media/bucketCleanup.js'
+import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { activeEditorsByDeck } from '../hocuspocus/presence.js'
 import { listUsersBySubs } from '../auth/users.js'
 
@@ -225,6 +225,31 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         .select({ id: decks.id })
         .from(decks)
         .where(eq(decks.folderId, id))
+      const deckIds = containedDecks.map((d) => d.id)
+
+      // Collect storage keys for every contained deck's assets AND the
+      // folder's own fonts (deckId NULL, folderId = id) BEFORE the cascade
+      // removes the media_assets rows. tus originals + folder fonts use a
+      // compound storage key outside any decks/<id>/ prefix, so the prefix
+      // sweep alone would orphan them.
+      const assetRows = await db
+        .select({
+          storageKey: mediaAssets.storageKey,
+          playbackKey: mediaAssets.playbackKey,
+          posterKey: mediaAssets.posterKey,
+          thumbnailKey: mediaAssets.thumbnailKey,
+        })
+        .from(mediaAssets)
+        .where(
+          deckIds.length > 0
+            ? or(inArray(mediaAssets.deckId, deckIds), eq(mediaAssets.folderId, id))
+            : eq(mediaAssets.folderId, id),
+        )
+      const explicitKeys = assetRows.flatMap((r) =>
+        [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+          (k): k is string => typeof k === 'string' && k !== '',
+        ),
+      )
 
       // Delete decks first (FK is ON DELETE RESTRICT). Cascades remove
       // deck_updates / deck_permissions / share_links / media_assets rows.
@@ -238,12 +263,14 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         await tx.delete(folders).where(eq(folders.id, id))
       })
 
-      // Best-effort: sweep MinIO under decks/<id>/ for every contained
-      // deck. Covers thumbnails, originals, HLS bundles, folder fonts.
-      // Loss-tolerant — errors are logged and swallowed.
-      if (containedDecks.length > 0) {
-        await Promise.all(containedDecks.map((d) => purgeDeckBucketPrefix(d.id, request.log)))
-      }
+      // Best-effort MinIO cleanup. Pass 1: decks/<id>/ prefix sweep per
+      // contained deck (thumbnails + worker video outputs). Pass 2:
+      // explicit compound keys (tus originals + folder fonts + .info
+      // sidecars). Loss-tolerant — errors are logged and swallowed.
+      await Promise.all([
+        ...containedDecks.map((d) => purgeDeckBucketPrefix(d.id, request.log)),
+        purgeExplicitKeys(explicitKeys, request.log),
+      ])
 
       return reply.status(204).send({ deletedDeckCount: containedDecks.length })
     },

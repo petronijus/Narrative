@@ -29,13 +29,13 @@ import { nanoid } from 'nanoid'
 import { eq, inArray, sql, and } from 'drizzle-orm'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { decks, deckPermissions, folders } from '../db/schema.js'
+import { decks, deckPermissions, folders, mediaAssets } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { resolveDeckAccess } from '../auth/permissions.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
-import { purgeDeckBucketPrefix } from '../media/bucketCleanup.js'
+import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { getOrProvisionDrafts } from './folders.js'
 
 interface CreateDeckBody {
@@ -428,18 +428,40 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     async (request, reply) => {
       const { id } = request.params
 
+      // Collect every storage key BEFORE the cascade removes the
+      // media_assets rows. tus-uploaded originals live at a compound key
+      // (`<assetId>:<deckId>:<base64>`) outside the decks/<id>/ prefix, so
+      // the prefix sweep alone would orphan them — pass them to
+      // purgeExplicitKeys below.
+      const assetRows = await db
+        .select({
+          storageKey: mediaAssets.storageKey,
+          playbackKey: mediaAssets.playbackKey,
+          posterKey: mediaAssets.posterKey,
+          thumbnailKey: mediaAssets.thumbnailKey,
+        })
+        .from(mediaAssets)
+        .where(eq(mediaAssets.deckId, id))
+
       const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
 
       if (deleted.length === 0) {
         return reply.status(404).send({ error: 'Deck not found' })
       }
 
-      // Sweep MinIO under decks/<id>/. Covers the deck thumbnail, every
-      // media_assets original (image / audio / video / PPTX-import), the
-      // HLS bundle for transcoded videos (including untracked segment
-      // files), and any folder fonts that were uploaded against the
-      // deck. Loss-tolerant: errors are logged and swallowed.
-      await purgeDeckBucketPrefix(id, request.log)
+      const explicitKeys = assetRows.flatMap((r) =>
+        [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+          (k): k is string => typeof k === 'string' && k !== '',
+        ),
+      )
+
+      // Pass 1: sweep decks/<id>/ (deck thumbnail + worker video outputs).
+      // Pass 2: explicit keys (tus originals + their .info sidecars).
+      // Both loss-tolerant: errors are logged and swallowed.
+      await Promise.all([
+        purgeDeckBucketPrefix(id, request.log),
+        purgeExplicitKeys(explicitKeys, request.log),
+      ])
 
       return reply.status(204).send()
     },

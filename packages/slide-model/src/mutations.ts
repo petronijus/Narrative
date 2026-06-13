@@ -102,19 +102,7 @@ export function addObject(ctx: ObjectsMutationContext, obj: SlideObject): void {
         )
       }
     }
-    if (tablePendingInserts.length > 0) {
-      const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
-      if (rowsY !== undefined) {
-        for (const p of tablePendingInserts) {
-          const rowY = rowsY.get(p.r) as Y.Array<Y.Map<unknown>> | undefined
-          if (rowY === undefined) continue
-          const cellY = rowY.get(p.c) as Y.Map<unknown> | undefined
-          if (cellY === undefined) continue
-          const yt = cellY.get('text')
-          if (yt instanceof Y.Text) yt.insert(0, p.initial)
-        }
-      }
-    }
+    applyPendingCellTextInserts(yMap, tablePendingInserts)
   }, LOCAL_ORIGIN)
 }
 
@@ -741,6 +729,16 @@ export function addObjects(ctx: ObjectsMutationContext, objects: ReadonlyArray<S
           prepared = { ...prepared, text: createTextValue(t) } as SlideObject
         }
       }
+      // Tables: string cell texts become EMPTY Y.Texts in plainObjectToYMap
+      // (deep-nested standalone Y.Text `_pending` ops don't survive
+      // integration). Mirror addObject: capture them here and replay them
+      // onto the integrated map below, inside this same transact.
+      let tablePendingInserts: PendingCellTextInsert[] = []
+      if (prepared.type === 'table') {
+        tablePendingInserts = collectPendingCellTextInserts(
+          prepared as unknown as { rows: TableCell[][] },
+        )
+      }
       const yMap = plainObjectToYMap(prepared)
       ctx.objects.push([yMap])
       if (richOps !== null) {
@@ -755,6 +753,7 @@ export function addObjects(ctx: ObjectsMutationContext, objects: ReadonlyArray<S
           )
         }
       }
+      applyPendingCellTextInserts(yMap, tablePendingInserts)
     }
   }, LOCAL_ORIGIN)
 }
@@ -762,6 +761,27 @@ export function addObjects(ctx: ObjectsMutationContext, objects: ReadonlyArray<S
 // ---------------------------------------------------------------------------
 // Interní helper
 // ---------------------------------------------------------------------------
+
+/**
+ * Replay initial cell-text strings (collected via
+ * collectPendingCellTextInserts BEFORE plainObjectToYMap) onto the
+ * now-integrated table Y.Map. Must run inside the same transact() that
+ * pushed the map — see bindings.ts buildTableCellYMap for why cell
+ * texts need this two-phase init.
+ */
+function applyPendingCellTextInserts(yMap: Y.Map<unknown>, inserts: PendingCellTextInsert[]): void {
+  if (inserts.length === 0) return
+  const rowsY = yMap.get('rows') as Y.Array<Y.Array<Y.Map<unknown>>> | undefined
+  if (rowsY === undefined) return
+  for (const p of inserts) {
+    const rowY = rowsY.get(p.r) as Y.Array<Y.Map<unknown>> | undefined
+    if (rowY === undefined) continue
+    const cellY = rowY.get(p.c) as Y.Map<unknown> | undefined
+    if (cellY === undefined) continue
+    const yt = cellY.get('text')
+    if (yt instanceof Y.Text) yt.insert(0, p.initial)
+  }
+}
 
 function findIndexById(objects: Y.Array<Y.Map<unknown>>, id: string): number {
   for (let i = 0; i < objects.length; i++) {

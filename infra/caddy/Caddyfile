@@ -26,6 +26,15 @@
 
 http://{$DOMAIN:localhost} {
 
+  # ── Security headers (site-wide baseline) ──────────────────────────────────
+  # A full Content-Security-Policy for the SPA is deliberately deferred until
+  # verified on staging — see docs/audits/2026-06-12-security-perf-quality-audit.md.
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
     reverse_proxy server:3001 {
@@ -51,6 +60,16 @@ http://{$DOMAIN:localhost} {
   # tus-node-server in apps/server talks to MinIO directly on the internal
   # Docker network (minio:9000) — this route is for external presigned URL access.
   handle_path /storage/* {
+    # User-uploaded objects must never render as a same-origin document
+    # (SVG/HTML smuggling → script on the app origin). `Content-Disposition:
+    # attachment` affects direct navigation only — <img>/<video>/@font-face
+    # subresource loads are unaffected. `sandbox` CSP neutralises script even
+    # if a response is still rendered inline somewhere.
+    header {
+      X-Content-Type-Options nosniff
+      Content-Security-Policy sandbox
+      Content-Disposition attachment
+    }
     reverse_proxy minio:9000
   }
 

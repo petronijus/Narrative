@@ -35,6 +35,7 @@ import { enqueueVideoTranscode } from '../media/enqueue.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
+import { sanitizeFontFamily } from '@narrative/slide-model'
 
 const require = createRequire(import.meta.url)
 interface ProbeResult {
@@ -355,7 +356,11 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       storageKey,
       originalFilename: font.zipPath.split('/').pop() ?? null,
       kind: 'font',
-      fontFamily: font.typeface,
+      // Sanitise the PPTX-authored typeface at the import boundary — it
+      // becomes a font-family CSS value on the client. A legit typeface is
+      // plain letters/spaces and survives untouched; a hostile one is
+      // stripped (null → client falls back to a default family).
+      fontFamily: sanitizeFontFamily(font.typeface) ?? null,
       fontWeight: metadata.weight,
       fontStyle: metadata.style,
       fontPostscriptName: metadata.postscriptName,

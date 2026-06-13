@@ -30,7 +30,7 @@ import { createUndoManager } from './undo.js'
 import { yMapToPlainObject } from './bindings.js'
 import { getSlideObjectsCtx } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
-import type { RectangleObject, ImageObject, VideoObject } from '@narrative/shared'
+import type { RectangleObject, ImageObject, VideoObject, TableObject } from '@narrative/shared'
 
 /**
  * Creates an ObjectsMutationContext scoped to slide-0 in a fresh doc.
@@ -981,5 +981,76 @@ describe('P6 object operations', () => {
     expect(ctx.objects.length).toBe(3)
     expect(ctx.objects.get(0).get('id')).toBe('x')
     expect(ctx.objects.get(2).get('id')).toBe('z')
+  })
+})
+
+describe('table cell text survives insertion (two-phase Y.Text init)', () => {
+  // Plain TableObject with string cell texts — the shape the clipboard
+  // produces on copy (Y.Text serialised to string) and PPTX import emits.
+  // buildTableCellYMap promotes strings to EMPTY Y.Texts; content must be
+  // re-inserted post-integration or every pasted cell comes back blank.
+  const mkTable = (id: string): TableObject => ({
+    id,
+    type: 'table',
+    x: 0,
+    y: 0,
+    width: 300,
+    height: 200,
+    rotation: 0,
+    opacity: 1,
+    colWidths: [150, 150],
+    rowHeights: [100, 100],
+    rows: [
+      [{ text: 'A1' }, { text: 'B1' }],
+      [{ text: 'A2' }, { text: '' }],
+    ],
+    defaults: {
+      fontSize: 14,
+      fontWeight: 400,
+      color: 0x000000,
+      align: 'left',
+      vAlign: 'top',
+      padding: { top: 4, right: 4, bottom: 4, left: 4 },
+    },
+  })
+
+  const readCellText = (ctx: ObjectsMutationContext, id: string, r: number, c: number): string => {
+    for (let i = 0; i < ctx.objects.length; i++) {
+      const m = ctx.objects.get(i)
+      if (m.get('id') !== id) continue
+      const t = yMapToPlainObject<TableObject>(m)
+      const cellText = t.rows[r]![c]!.text
+      return cellText instanceof Y.Text ? cellText.toString() : cellText
+    }
+    throw new Error(`readCellText: id ${id} not found`)
+  }
+
+  it('addObject preserves string cell texts', () => {
+    const ctx = makeCtx()
+    addObject(ctx, mkTable('t1'))
+    expect(readCellText(ctx, 't1', 0, 0)).toBe('A1')
+    expect(readCellText(ctx, 't1', 0, 1)).toBe('B1')
+    expect(readCellText(ctx, 't1', 1, 0)).toBe('A2')
+    expect(readCellText(ctx, 't1', 1, 1)).toBe('')
+  })
+
+  it('addObjects (bulk paste path) preserves string cell texts', () => {
+    const ctx = makeCtx()
+    addObjects(ctx, [mkTable('t1'), mkTable('t2')])
+    expect(ctx.objects.length).toBe(2)
+    for (const id of ['t1', 't2']) {
+      expect(readCellText(ctx, id, 0, 0)).toBe('A1')
+      expect(readCellText(ctx, id, 0, 1)).toBe('B1')
+      expect(readCellText(ctx, id, 1, 0)).toBe('A2')
+      expect(readCellText(ctx, id, 1, 1)).toBe('')
+    }
+  })
+
+  it('addObjects mixing a table with other object types keeps both intact', () => {
+    const ctx = makeCtx()
+    addObjects(ctx, [{ ...sampleRect, id: 'rx' }, mkTable('t1')])
+    expect(ctx.objects.length).toBe(2)
+    expect(ctx.objects.get(0).get('id')).toBe('rx')
+    expect(readCellText(ctx, 't1', 0, 0)).toBe('A1')
   })
 })

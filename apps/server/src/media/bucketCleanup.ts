@@ -1,15 +1,25 @@
 /**
  * media/bucketCleanup.ts
  *
- * Best-effort sweep of every MinIO object under a deck's prefix.
+ * Best-effort cleanup of a deck's MinIO objects.
  *
- * All deck-scoped media — uploads, the transcoded playback MP4 +
- * poster/thumb, deck thumbnail, folder font originals stored under the
- * deck — lives under the single key prefix `decks/<deckId>/`. Listing and
- * batch-deleting that prefix is the simplest way to leave zero blobs
- * behind when a deck is deleted, without needing to enumerate every
- * storage_key / playback_key / poster_key / thumbnail_key column on
- * `media_assets`.
+ * Two complementary passes are needed:
+ *
+ *  1. `purgeDeckBucketPrefix` sweeps the `decks/<deckId>/` prefix. This
+ *     catches the deck thumbnail and the worker-produced video outputs
+ *     (playback MP4 / poster / thumb), which DO live under that prefix.
+ *
+ *  2. `purgeExplicitKeys` deletes a caller-supplied list of keys. This is
+ *     REQUIRED for tus-uploaded originals: @tus/s3-store keys each object
+ *     by the upload id, which is the compound string
+ *     `<assetId>:<deckId>:<base64url(path)>` — NOT the `decks/<deckId>/…`
+ *     path — so the prefix sweep never sees them. The caller reads the
+ *     `storage_key` (and video output keys) from `media_assets` BEFORE the
+ *     DB cascade removes those rows, then passes them here. Each upload
+ *     object also has a `<key>.info` metadata sidecar, which we delete too.
+ *
+ * Folder-level fonts (deckId NULL, folderId set) are uploaded the same way
+ * and likewise need pass 2.
  *
  * Loss-tolerant: every S3 error is logged and swallowed. The DB cascade
  * has already removed the corresponding rows by the time this runs, so
@@ -104,6 +114,64 @@ export async function purgeDeckBucketPrefix(
 
   if (log.info && (totalDeleted > 0 || errors > 0)) {
     log.info({ deckId, deleted: totalDeleted, pages, errors }, 'deck bucket prefix purge complete')
+  }
+
+  return { deleted: totalDeleted, pages, errors }
+}
+
+/**
+ * Delete an explicit list of S3 keys (plus each key's `<key>.info` tus
+ * sidecar), batched at the DeleteObjects 1000-key limit. Loss-tolerant:
+ * S3 errors are logged and swallowed so the user-visible delete still
+ * succeeds. Used for tus-uploaded originals whose compound storage key
+ * isn't reachable by the deck-prefix sweep.
+ */
+export async function purgeExplicitKeys(
+  keys: ReadonlyArray<string>,
+  log: MinimalLogger,
+): Promise<PurgeResult> {
+  const unique = new Set<string>()
+  for (const k of keys) {
+    if (typeof k !== 'string' || k === '') continue
+    unique.add(k)
+    unique.add(`${k}.info`)
+  }
+
+  let totalDeleted = 0
+  let pages = 0
+  let errors = 0
+
+  if (unique.size === 0) return { deleted: 0, pages: 0, errors: 0 }
+
+  const s3 = buildS3Client()
+  const all = [...unique]
+
+  for (let i = 0; i < all.length; i += 1000) {
+    const batch = all.slice(i, i + 1000).map((Key) => ({ Key }))
+    pages++
+    try {
+      const res = await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: MEDIA_BUCKET,
+          Delete: { Objects: batch, Quiet: true },
+        }),
+      )
+      totalDeleted += batch.length
+      if (res.Errors && res.Errors.length > 0) {
+        errors += res.Errors.length
+        log.warn(
+          { perObjectErrors: res.Errors },
+          'explicit key batch delete returned per-object errors (orphans left)',
+        )
+      }
+    } catch (err) {
+      log.warn({ err, batchSize: batch.length }, 'explicit key batch delete failed (orphans left)')
+      errors++
+    }
+  }
+
+  if (log.info && (totalDeleted > 0 || errors > 0)) {
+    log.info({ deleted: totalDeleted, pages, errors }, 'explicit key purge complete')
   }
 
   return { deleted: totalDeleted, pages, errors }

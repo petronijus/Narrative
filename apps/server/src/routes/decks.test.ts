@@ -39,12 +39,14 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
 // MinIO. Each test can assert against `purgeDeckBucketPrefix` directly.
 vi.mock('../media/bucketCleanup.js', () => ({
   purgeDeckBucketPrefix: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
+  purgeExplicitKeys: vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 }),
 }))
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const resolveMock = resolveDeckAccess as ReturnType<typeof vi.fn>
-const { purgeDeckBucketPrefix } = await import('../media/bucketCleanup.js')
+const { purgeDeckBucketPrefix, purgeExplicitKeys } = await import('../media/bucketCleanup.js')
 const purgeMock = purgeDeckBucketPrefix as ReturnType<typeof vi.fn>
+const purgeKeysMock = purgeExplicitKeys as ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // Mock DB factory
@@ -77,12 +79,19 @@ function makeMockDb(initialDecks: MockDeck[] = []) {
   const db = {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
-          limit: vi
-            .fn()
-            .mockImplementation(() => Promise.resolve(deckStore.length > 0 ? [deckStore[0]] : [])),
-        }),
+        // `where()` is both awaitable (the DELETE handler's media-asset
+        // key query awaits it directly → resolves to [] = no assets) and
+        // carries orderBy/limit for the deck list/detail queries.
+        where: vi.fn().mockReturnValue(
+          Object.assign(Promise.resolve([]), {
+            orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
+            limit: vi
+              .fn()
+              .mockImplementation(() =>
+                Promise.resolve(deckStore.length > 0 ? [deckStore[0]] : []),
+              ),
+          }),
+        ),
         orderBy: vi.fn().mockImplementation(() => Promise.resolve(deckStore)),
         limit: vi
           .fn()

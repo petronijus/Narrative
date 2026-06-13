@@ -220,7 +220,14 @@ function getElementInnerText(el: HTMLElement): string {
       return
     }
     if (node.nodeName === 'BR') {
-      out += '\n'
+      // A paragraph-separator sentinel (`<br data-pb="1">`, emitted by
+      // toHtml for U+2029) must round-trip back to '\u2029' so this
+      // plain-text projection matches Y.Text.toString(); a plain `<br>`
+      // (soft break from Enter/paste) maps to '\n'. Collapsing both to
+      // '\n' made `next` differ from `prev` at every paragraph boundary,
+      // so the first keystroke on imported multi-paragraph text deleted
+      // and flat-reinserted everything between the first and last break.
+      out += (node as Element).getAttribute('data-pb') === '1' ? '\u2029' : '\n'
       return
     }
     const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P'

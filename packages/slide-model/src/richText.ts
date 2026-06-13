@@ -120,6 +120,37 @@ function colorHex(n: number): string {
   return '#' + n.toString(16).padStart(6, '0')
 }
 
+// ---------------------------------------------------------------------------
+// Style-value sanitisation
+// ---------------------------------------------------------------------------
+// toHtml output lands in two innerHTML sinks (the TextEditOverlay preview
+// and Pixi HTMLText's SVG <foreignObject>), so any string interpolated
+// into the style="" attribute must not be able to close the attribute or
+// open a new CSS declaration. Numeric attributes (fontWeight / color /
+// fontSize) are formatted by us and are inert; fontFamily is the only
+// user-controlled string (settable by any collaborator via
+// Y.Text.format() and by PPTX import) and must pass the allowlist below.
+
+/**
+ * Characters allowed in a font-family value. Deliberately tight: letters,
+ * digits, space, underscore, comma (stack separator), apostrophe, hyphen.
+ * Everything else — `"`, `;`, `<`, `>`, `\`, `(`, `)`, `{`, `}`, `:`,
+ * `&`, … — is stripped so the value can't terminate the style attribute,
+ * smuggle markup, or inject extra CSS declarations.
+ */
+const FONT_FAMILY_DISALLOWED = /[^A-Za-z0-9 _,'-]/g
+
+/**
+ * Sanitise a user-controlled font-family value by stripping every
+ * character outside the allowlist. Returns undefined when nothing
+ * survives. Exported for reuse at other trust boundaries (PPTX import
+ * sanitises `<p:font typeface>` through this same allowlist).
+ */
+export function sanitizeFontFamily(raw: string): string | undefined {
+  const cleaned = raw.replace(FONT_FAMILY_DISALLOWED, '').trim()
+  return cleaned === '' ? undefined : cleaned
+}
+
 /**
  * Render a delta into an HTML string suitable for Pixi.HTMLText.
  *
@@ -138,7 +169,13 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
     if (typeof weight === 'number' && weight !== 400) styleBits.push(`font-weight:${weight}`)
     if (typeof color === 'number') styleBits.push(`color:${colorHex(color)}`)
     if (typeof a.fontFamily === 'string' && a.fontFamily !== '') {
-      styleBits.push(`font-family:${a.fontFamily}`)
+      // Emit the sanitised value UNQUOTED — it goes inside a double-quoted
+      // style="" attribute, and the allowlist guarantees no `"` (which
+      // would break the attribute) and no `;`/`<`/`>` (which would inject
+      // CSS or markup). Quoting it would put `"` back into a `"`-delimited
+      // attribute and break multi-word families.
+      const family = sanitizeFontFamily(a.fontFamily)
+      if (family !== undefined) styleBits.push(`font-family:${family}`)
     }
     if (typeof a.fontSize === 'number' && a.fontSize > 0) {
       styleBits.push(`font-size:${a.fontSize}px`)

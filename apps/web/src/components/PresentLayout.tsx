@@ -54,6 +54,7 @@ import { PresenterOverlay } from '../ui/PresenterOverlay.js'
 import type { AnimationRuntime } from '@narrative/animation'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { VideoObject } from '@narrative/shared'
+import { sanitizeHref } from '@narrative/shared'
 
 /** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
 function computeScale(viewportW: number, viewportH: number): number {
@@ -410,14 +411,15 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
         if (link.kind === 'slide') {
           if (link.slideId !== '') setActiveSlideId(link.slideId)
         } else {
-          // Normalise href: bare 'google.com' must become 'https://google.com'
-          // — browsers without a protocol resolve it relative to the
-          // current location (so we'd land on /deck/.../google.com).
-          let href = link.href.trim()
-          if (href !== '' && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('//')) {
-            href = `https://${href}`
+          // Sanitise before navigating: sanitizeHref allows only
+          // http/https/mailto (bare hosts get https:// prepended) and
+          // returns null for javascript:/data:/vbscript:/protocol-relative
+          // targets, which would otherwise execute on the app origin via
+          // window.open. null → do not navigate.
+          const href = sanitizeHref(link.href)
+          if (href !== null) {
+            window.open(href, link.target ?? '_blank', 'noopener,noreferrer')
           }
-          window.open(href, link.target ?? '_blank')
         }
         return
       }

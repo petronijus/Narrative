@@ -34,6 +34,21 @@ import type { PeerInfo } from '@narrative/shared'
 // ---------------------------------------------------------------------------
 
 /**
+ * Whitelist of safe CSS color forms. `color` reaches an innerHTML SVG
+ * `fill="..."` attribute and is peer-controllable via awareness state, so
+ * a value like `red" onload="alert(1)` would break out of the attribute.
+ * We accept only hex (`#rgb`..`#rrggbbaa`), the rgb/hsl function forms with
+ * a numeric/percent/comma/slash body, and bare keyword names (letters).
+ * Anything else — quotes, angle brackets, `;` — is rejected.
+ */
+const SAFE_CSS_COLOR = /^#[0-9a-fA-F]{3,8}$|^(?:rgb|rgba|hsl|hsla)\([0-9.,%/\s]+\)$|^[a-zA-Z]+$/
+
+function safeCssColor(raw: string): string {
+  const c = raw.trim()
+  return SAFE_CSS_COLOR.test(c) ? c : '#888888'
+}
+
+/**
  * Vytvoří SVG šipku (cursor pointer) ve specifikované barvě.
  * Viewbox: 14×18, origin v tip pointeru (top-left).
  */
@@ -42,10 +57,11 @@ function createCursorSvg(color: string): string {
   // so `hsl(142, 70%, 55%)` and `rgba(...)` work as-is. Earlier code wrapped
   // these in encodeURIComponent which produced `hsl(142%2C%2070%25...)` —
   // an invalid CSS color, so the path painted with no fill/stroke and
-  // the cursor was effectively invisible.
+  // the cursor was effectively invisible. `color` is validated by
+  // safeCssColor() before it reaches the attribute to prevent breakout.
   return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="22" viewBox="0 0 14 18" fill="none">
     <path d="M2 2L2 14L5.5 10.5L8 16L10 15L7.5 9.5L12 9.5L2 2Z"
-      fill="${color}" stroke-linejoin="round"/>
+      fill="${safeCssColor(color)}" stroke-linejoin="round"/>
   </svg>`
 }
 

@@ -67,4 +67,40 @@ describe('richText helpers', () => {
     const html = toHtml(toDelta(yt), { italic: true })
     expect(html).toBe('<i>one </i>two')
   })
+
+  it('toHtml emits a plain single-word fontFamily unquoted', () => {
+    const yt = attach()
+    yt.insert(0, 'hi')
+    applyFormat(yt, 0, 2, { fontFamily: 'Arial' })
+    expect(toHtml(toDelta(yt), {})).toBe('<span style="font-family:Arial">hi</span>')
+  })
+
+  it('toHtml emits a multi-word fontFamily unquoted (safe inside a double-quoted attr)', () => {
+    const yt = attach()
+    yt.insert(0, 'hi')
+    applyFormat(yt, 0, 2, { fontFamily: 'Druk Wide' })
+    // No quotes: a `"` here would break the surrounding style="" attribute.
+    expect(toHtml(toDelta(yt), {})).toBe('<span style="font-family:Druk Wide">hi</span>')
+  })
+
+  it('toHtml strips a hostile fontFamily so it cannot break out of the style attribute', () => {
+    const yt = attach()
+    yt.insert(0, 'pwn')
+    // Classic attribute-breakout payload set via a malicious collaborator
+    // or crafted .pptx: must not yield a `"` or `<` in the output.
+    applyFormat(yt, 0, 3, { fontFamily: 'x"><img src=q onerror=alert(1)>' })
+    const html = toHtml(toDelta(yt), {})
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('onerror=')
+    // No quote/angle-bracket survives the allowlist; chars left are inert.
+    expect(html).toBe('<span style="font-family:ximg srcq onerroralert1">pwn</span>')
+  })
+
+  it('toHtml drops a fontFamily that sanitises to nothing', () => {
+    const yt = attach()
+    yt.insert(0, 'hi')
+    applyFormat(yt, 0, 2, { fontFamily: '";:{}<>' })
+    // No font-family bit at all — nothing survived the allowlist.
+    expect(toHtml(toDelta(yt), {})).toBe('hi')
+  })
 })

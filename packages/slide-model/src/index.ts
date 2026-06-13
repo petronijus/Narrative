@@ -131,6 +131,7 @@ export {
   clearFormat,
   toDelta,
   toHtml,
+  sanitizeFontFamily,
 } from './richText.js'
 export type { RichAttrs, RichDeltaOp, HtmlDefaults } from './richText.js'
 
