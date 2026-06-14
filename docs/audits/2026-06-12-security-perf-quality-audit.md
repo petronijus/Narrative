@@ -49,6 +49,50 @@ Deferred (need product/staging decision, not started):
 - **Site-wide CSP** for the SPA — needs staging verification before shipping.
 - All P1 perf items, P1 security remainder (CONN-1/TUS-1/IDOR-1/DOS-1), P2 list.
 
+### Deployed to prod — 2026-06-14
+
+All P0 fixes above shipped to the prod VM (Proxmox 103 `narrative`,
+commits b5ba00a…5174d03 on `main`) and verified live: server on new image,
+Caddy security headers on `/` and `/storage/*`, migration 0014 applied,
+thumbnails 200. Two infra bugs surfaced + fixed during the deploy
+(imgproxy-cache host-port `!reset`, healthcheck `127.0.0.1`, deploy.sh +x).
+See project `CLAUDE.md` → "Deployment & prod access".
+
+---
+
+## Round 2 — backlog burn-down (started 2026-06-14)
+
+Status legend: ☐ todo · ◐ in progress · ☑ done
+
+**Performance**
+
+- ☑ **PERF-1** re-render storm — `subscribeToSlides` now rAF-coalesces
+  (one callback/frame, not one per Yjs transaction; mirrors the sibling
+  subscribers' pattern, observeDeep kept, no collab-event loss) +
+  `SlideItem` is `React.memo`'d with a stabilized prop (`slideObserve.ts`,
+  `SlidesPanel.tsx`, test in `slides.observe.test.ts`). Remaining tail
+  (the `useSlides`/`listSlides` per-render identity churn → a
+  `useSlideSummaries` migration) is a separate follow-up, noted in code.
+- ☐ PERF-2 full-doc persistence (`onStoreDocument` snapshot every flush)
+- ☐ PERF-3 thumbnail localStorage blob rewrite
+- ☐ PERF-4 table keystroke restyle / SceneGraph O(n²) / main.tsx Sentry TLA
+- ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
+  - idle/conn timeouts, env-overridable) · ☐ `media_assets` composite indexes
+    (BLOCKED — drizzle `meta/` snapshots are stale, so `db:generate` emits a
+    destructive full-schema migration, not an incremental `CREATE INDEX`; needs
+    a hand-written migration + a snapshot re-sync — latent landmine) · ☐ async
+    PPTX · ☐ route code-split
+
+**Security (deferred set)**
+
+- ☐ SVG content sanitization (DOMPurify) · ☐ MEDIA-1 private bucket+presign
+- ☐ site-wide CSP · ☐ CONN-1 · ☐ TUS-1 · ☐ IDOR-1 · ☐ DOS-1
+- ☐ ops: BYPASS_AUTH hard-fail · METRICS_TOKEN · CSRF token · animation DSL clamp
+
+**Quality P2**
+
+- ☐ dedupe `parseDataUrl` · ☐ `no-console` + logger · ☐ dead `packages/ui`
+
 ---
 
 ## P0 — fix before any external exposure

@@ -63,6 +63,17 @@ export interface SlideSummary {
  *
  * Callback is called synchronously on subscribe with current state.
  *
+ * PERF-1: post-subscribe emissions are coalesced via requestAnimationFrame —
+ * one callback per frame, not one per Yjs transaction. Without this, a
+ * pointer-move drag (120+ transactions/s on high-Hz mice) or a burst of
+ * keystrokes fires the observer once per transaction, and the consumer
+ * (`useSlides`) does a full `listSlides` deep-convert each time → editor-wide
+ * re-render storm. Coalescing changes only TIMING (trailing-edge, next frame);
+ * the payload shape is unchanged (still a fresh SlideSummary[]). The initial
+ * emission stays synchronous to preserve the documented subscribe contract.
+ * Mirrors the rAF batching of subscribeToSlideObjects / subscribeToDeckSlideEvents
+ * in this file, including the no-rAF (node/SSR) microtask fallback.
+ *
  * @returns unsubscribe function
  */
 export function subscribeToSlides(
@@ -88,25 +99,57 @@ export function subscribeToSlides(
     return result
   }
 
-  const observer = (): void => {
+  let rafHandle = -1
+  let unsubscribed = false
+
+  // Trailing-edge flush — recomputes the snapshot once after the frame's
+  // transactions have all landed, then emits a single callback. Matches the
+  // siblings: many observer fires within a frame collapse into one emit.
+  const flush = (): void => {
+    rafHandle = -1
+    if (unsubscribed) return
     callback(getSnapshot())
   }
 
-  // observeDeep catches slide array changes AND nested transition map changes
+  const scheduleFlush = (): void => {
+    if (rafHandle !== -1) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raf = (globalThis as any).requestAnimationFrame as
+      | ((cb: () => void) => number)
+      | undefined
+    if (raf !== undefined) {
+      rafHandle = raf(flush)
+    } else {
+      rafHandle = 0
+      Promise.resolve().then(flush)
+    }
+  }
+
+  // observeDeep catches slide array changes AND nested transition map changes.
+  // The observer no longer emits directly — it just schedules a coalesced flush.
+  const observer = (): void => {
+    if (unsubscribed) return
+    scheduleFlush()
+  }
   ctx.slides.observeDeep(observer)
 
-  // Synchronous initial emission
+  // Synchronous initial emission (contract: callback runs once on subscribe).
   callback(getSnapshot())
 
   // P12g: guard against double-unsubscribe. Yjs silently ignores an
   // `unobserveDeep` of an already-removed handler, but a stale closure
   // calling unsubscribe twice in quick succession is a sign of a deps
   // bug — defensive flag here avoids debugging surprise later.
-  let unsubscribed = false
   return (): void => {
     if (unsubscribed) return
     unsubscribed = true
     ctx.slides.unobserveDeep(observer)
+    // Cancel any frame queued but not yet flushed so no stale emit lands
+    // after the consumer has torn down (mirrors the sibling cleanup).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const caf = (globalThis as any).cancelAnimationFrame as ((id: number) => void) | undefined
+    if (rafHandle !== -1 && rafHandle !== 0 && caf !== undefined) caf(rafHandle)
+    rafHandle = -1
   }
 }
 

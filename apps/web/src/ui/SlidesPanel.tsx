@@ -13,7 +13,16 @@
  *   any selected slide drags the whole selection (with descendants).
  */
 
-import { useRef, useState, useCallback, useEffect, useId, useMemo, type ReactElement } from 'react'
+import {
+  memo,
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  type ReactElement,
+} from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -58,6 +67,12 @@ function placeholderColour(index: number): string {
 const INDENT_STEP_PX = 24
 const INDENT_VISUAL_PX = 16
 const MAX_INDENT = 6
+
+// PERF-1: stable no-op so the memoised SlideItem's `onPointerDown` prop keeps
+// the same identity across renders in read-only (viewer) mode. An inline
+// `() => {}` at the call site would allocate a fresh function every render and
+// defeat React.memo for every row.
+const NOOP_POINTER_DOWN = (): void => {}
 const COLLAPSE_MS = 180
 /** Pointer travel (px) past which a gesture counts as a drag, not a click. */
 const DRAG_CLICK_THRESHOLD_PX = 4
@@ -144,7 +159,7 @@ interface SlideItemProps {
   onConsumeEditRequest: () => void
 }
 
-function SlideItem({
+function SlideItemImpl({
   slide,
   index,
   indent,
@@ -424,6 +439,25 @@ function SlideItem({
     </>
   )
 }
+
+/**
+ * PERF-1: memoised so a render of the parent SlidesPanel doesn't re-render
+ * every row in the `.map`. With React.memo the row only re-renders when one
+ * of its own props changes by shallow comparison — all handler props are
+ * `useCallback`-stable and the remaining props are primitives.
+ *
+ * Caveat: the `slide` prop's identity still churns on every SlidesPanel
+ * render because `useSlides` rebuilds the array via `listSlides` (a fresh
+ * deep-convert). Change 1 (rAF-coalescing subscribeToSlides) cuts how OFTEN
+ * that happens — from once per Yjs transaction to once per frame — but the
+ * per-render identity churn of `slide` is a separate follow-up (ref-stable
+ * SlideSummary projection / structural memo). This memo still pays off: it
+ * skips the rows whose `slide` reference is unchanged within a render pass
+ * (e.g. parent re-renders driven by selection/drag/thumbnail state that
+ * don't touch `useSlides`), and once the identity-stability follow-up lands
+ * the memo becomes fully effective.
+ */
+const SlideItem = memo(SlideItemImpl)
 
 // ---------------------------------------------------------------------------
 // SlidesPanel
@@ -1111,7 +1145,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                     readOnly={isViewer}
                     onActivate={handleActivate}
                     onToggleCollapsed={handleToggleCollapsed}
-                    onPointerDown={isViewer ? () => {} : handlePointerDown}
+                    onPointerDown={isViewer ? NOOP_POINTER_DOWN : handlePointerDown}
                     onDuplicate={handleDuplicate}
                     onDelete={handleDelete}
                     onTransition={handleTransition}

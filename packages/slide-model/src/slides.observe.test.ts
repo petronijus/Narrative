@@ -44,6 +44,12 @@ const makeRect = (id: string): RectangleObject => ({
   opacity: 1,
 })
 
+// PERF-1: subscribeToSlides coalesces post-subscribe emissions onto the next
+// frame. The node test env has no requestAnimationFrame, so the subscriber
+// falls back to a microtask (Promise.resolve().then(flush)). Draining the
+// microtask queue is enough to flush the coalesced callback deterministically.
+const tick = (): Promise<void> => Promise.resolve()
+
 // ---------------------------------------------------------------------------
 // subscribeToSlides
 // ---------------------------------------------------------------------------
@@ -60,20 +66,23 @@ describe('subscribeToSlides', () => {
     unsub()
   })
 
-  it('emits when a slide is added', () => {
+  it('emits when a slide is added', async () => {
     const ctx = makeCtx()
     const cb = vi.fn()
     const unsub = subscribeToSlides(ctx, cb)
     cb.mockClear()
 
     addSlide(ctx)
+    // PERF-1: post-subscribe emit is coalesced — fires on the next tick, not sync.
+    expect(cb).not.toHaveBeenCalled()
+    await tick()
     expect(cb).toHaveBeenCalledOnce()
     expect(cb.mock.calls[0]![0]).toHaveLength(2)
 
     unsub()
   })
 
-  it('emits when a slide is removed', () => {
+  it('emits when a slide is removed', async () => {
     const ctx = makeCtx()
     addSlide(ctx)
     const cb = vi.fn()
@@ -82,12 +91,13 @@ describe('subscribeToSlides', () => {
 
     const slideId = ctx.slides.get(0).get('id') as string
     removeSlide(ctx, slideId)
+    await tick()
     expect(cb).toHaveBeenCalledOnce()
 
     unsub()
   })
 
-  it('emits when a transition is updated', () => {
+  it('emits when a transition is updated', async () => {
     const ctx = makeCtx()
     const cb = vi.fn()
     const unsub = subscribeToSlides(ctx, cb)
@@ -95,12 +105,48 @@ describe('subscribeToSlides', () => {
 
     const slideId = ctx.slides.get(0).get('id') as string
     updateSlideTransition(ctx, slideId, { kind: 'fade', durationMs: 300 })
+    await tick()
     expect(cb).toHaveBeenCalledOnce()
 
     unsub()
   })
 
-  it('does not emit after unsubscribe', () => {
+  it('coalesces N synchronous mutations within one frame into a single callback', async () => {
+    const ctx = makeCtx()
+    const cb = vi.fn()
+    const unsub = subscribeToSlides(ctx, cb)
+    cb.mockClear()
+
+    // Simulate a burst of transactions in one frame (e.g. a drag emitting many
+    // transition/array updates). The observer fires once per transaction, but
+    // the rAF/microtask coalescing must collapse them into a SINGLE callback.
+    addSlide(ctx)
+    addSlide(ctx)
+    const slideId = ctx.slides.get(0).get('id') as string
+    updateSlideTransition(ctx, slideId, { kind: 'fade', durationMs: 100 })
+    updateSlideTransition(ctx, slideId, { kind: 'push', durationMs: 200, direction: 'left' })
+
+    // Nothing emitted synchronously — all collapsed into the pending frame.
+    expect(cb).not.toHaveBeenCalled()
+
+    await tick()
+
+    // Exactly one callback for the whole burst, carrying the final state.
+    expect(cb).toHaveBeenCalledOnce()
+    const summary = cb.mock.calls[0]![0] as Array<{
+      id: string
+      transition: { kind: string; durationMs: number; direction?: string }
+    }>
+    expect(summary).toHaveLength(3) // 1 initial + 2 added
+    const first = summary.find((s) => s.id === slideId)!
+    expect(first.transition.kind).toBe('push')
+    expect(first.transition.durationMs).toBe(200)
+    expect(first.transition.direction).toBe('left')
+
+    unsub()
+  })
+
+  it('does not emit after unsubscribe', async () => {
     const ctx = makeCtx()
     const cb = vi.fn()
     const unsub = subscribeToSlides(ctx, cb)
@@ -108,6 +154,21 @@ describe('subscribeToSlides', () => {
     unsub()
 
     addSlide(ctx)
+    await tick()
+    expect(cb).not.toHaveBeenCalled()
+  })
+
+  it('cancels a pending coalesced emit when unsubscribed mid-frame', async () => {
+    const ctx = makeCtx()
+    const cb = vi.fn()
+    const unsub = subscribeToSlides(ctx, cb)
+    cb.mockClear()
+
+    // Schedule a flush, then tear down before the frame fires.
+    addSlide(ctx)
+    unsub()
+    await tick()
+    // The queued flush must be a no-op after unsubscribe — no stale emit.
     expect(cb).not.toHaveBeenCalled()
   })
 
