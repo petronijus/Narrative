@@ -81,3 +81,39 @@ specific UI redesign lands or have an e2e replacement noted.
 - Never `--no-verify` or force-push.
 - Always read before editing a file.
 - Conventional commits: `test:`, `fix:`, `feat:`, `chore:`, `perf:`.
+
+## Deployment & prod access (verified 2026-06-14)
+
+**Where prod runs:** a dedicated Proxmox VM `103 narrative` @ **`192.0.2.147`**
+(subnet `192.0.2.x`, **NOT on Tailscale** — only reachable through the `pve`
+jump host). 8 containers via Docker Compose, all healthy: `narrative-server`,
+`-caddy`, `-postgres`, `-minio`, `-imgproxy`, `-imgproxy-cache`, `-video-worker`,
+`-media-redis`. Public via an **external Cloudflare tunnel** (shared-tunnel mode).
+
+**How to get in (SSH aliases in `~/.ssh/config`, keys served by the 1Password
+SSH agent — approve the Touch ID popup on connect):**
+
+```bash
+ssh narrative          # → petr@192.0.2.147, ProxyJump pve (the only path in)
+ssh pve                # → root@100.64.0.100 (Proxmox host + jump host, Tailscale)
+```
+
+- Login user on the narrative VM is **`petr`** (in `sudo` + `docker`), NOT root/petronijus.
+- `pve` (Tailscale `100.64.0.100`) is the Proxmox hypervisor; auth works via the
+  1P agent as root. The Tailscale host `docker` (`100.64.0.101`, alias `docker-vm`)
+  is an **unrelated** homelab box — Narrative does NOT live there.
+
+**Deploy layout & procedure:**
+
+- Code lives at **`/opt/narrative`** (owner `petr`) — **this is NOT a git checkout**,
+  it's copied files. So there's no `git pull`; new code must be synced in (rsync from
+  a local checkout of `main`, or convert the dir to a git checkout once).
+- Prod secrets: **`/opt/narrative/infra/.env.prod`** — never commit, never print.
+- Compose runs with three overlays (`docker-compose.yml` + `.prod.yml` +
+  `.prod.shared-tunnel.yml`, i.e. `USE_SHARED_TUNNEL=1`).
+- Deploy command, run **on the VM**: `cd /opt/narrative && ./infra/scripts/deploy.sh prod`
+  (builds images → DB migrate → `compose up -d` → healthchecks). The script forbids
+  being run remotely from CI; pushing to `main` triggers CI but CI does NOT gate the deploy.
+
+**Connecting to these hosts needs Petr's explicit per-host consent** (the auto-mode
+classifier blocks agent-inferred prod SSH targets).
