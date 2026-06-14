@@ -30,7 +30,16 @@ export function createDb(): Database {
   if (!url) {
     throw new Error('POSTGRES_URL environment variable is required for video-worker')
   }
-  const pool = new Pool({ connectionString: url })
+  // Bounded pool. The worker only needs a handful of connections (it runs
+  // WORKER_CONCURRENCY jobs); cap it so the worker pool + the server pool
+  // (PG_POOL_MAX) stay under Postgres `max_connections`. Default small.
+  const max = Number.parseInt(process.env['WORKER_PG_POOL_MAX'] ?? '', 10)
+  const pool = new Pool({
+    connectionString: url,
+    max: Number.isFinite(max) && max > 0 ? max : 5,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  })
   const db = drizzle(pool, { schema })
   cached = { db, pool }
   return db
