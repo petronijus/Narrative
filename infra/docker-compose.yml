@@ -50,6 +50,19 @@ services:
       HOST: 0.0.0.0
       LOG_LEVEL: ${LOG_LEVEL:-info}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      # Media (M11/M12/MEDIA-1): the server signs imgproxy URLs and short-TTL
+      # presigned MinIO URLs (video playback + fonts). MINIO_ENDPOINT is the
+      # INTERNAL address used to talk to MinIO; MINIO_PUBLIC_URL is the
+      # browser-facing `/storage` base the presigned URLs are signed against
+      # (must match the host Caddy serves, NOT the internal endpoint).
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-https://${DOMAIN:-localhost}/storage}
+      MEDIA_BUCKET: ${MEDIA_BUCKET:-narrative-media}
+      IMGPROXY_KEY: ${IMGPROXY_KEY}
+      IMGPROXY_SALT: ${IMGPROXY_SALT}
+      IMGPROXY_ENDPOINT: ${IMGPROXY_ENDPOINT:-https://${DOMAIN:-localhost}/imgproxy}
     ports:
       - '${API_PORT:-3001}:3001'
       - '${HOCUSPOCUS_PORT:-3002}:3002'
@@ -99,12 +112,18 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       BUCKET_NAME: ${MEDIA_BUCKET:-narrative-media}
+    # MEDIA-1: the bucket is PRIVATE — we intentionally do NOT grant any
+    # anonymous policy. All media is served through short-TTL presigned URLs
+    # (video playback, fonts) or imgproxy (images/posters/thumbnails, which
+    # read MinIO server-side via s3://). A bare GET of /storage/<key> with no
+    # X-Amz-* signature now 403s. Re-add `mc anonymous set download` here only
+    # if you deliberately want a world-readable bucket again.
     entrypoint: >
       /bin/sh -c "
         mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
         (mc ls local/$$BUCKET_NAME || mc mb local/$$BUCKET_NAME) &&
-        mc anonymous set download local/$$BUCKET_NAME &&
-        echo 'Bucket ready: '$$BUCKET_NAME
+        mc anonymous set none local/$$BUCKET_NAME &&
+        echo 'Bucket ready (private, presigned-only): '$$BUCKET_NAME
       "
     restart: 'no'
 

@@ -14,7 +14,7 @@
  * sees the current canvas (even if it spins up after fonts have loaded).
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Cache } from 'pixi.js'
 import { useFolderFonts } from './useFolderFonts.js'
 import { useDeckFontsOptional } from './useDeckFonts.js'
@@ -78,7 +78,7 @@ interface InstalledFont {
  * each change to the folder font list.
  */
 export function FolderFontLoader(): null {
-  const { fonts: folderFonts } = useFolderFonts()
+  const { fonts: folderFonts, refresh: refreshFolderFonts } = useFolderFonts()
   // When mounted inside a deck, also pull deck-scoped promoted fonts so
   // they install through the same Pixi cache pipeline. Outside a deck
   // (e.g. folder grid preload), useDeckFontsOptional returns null.
@@ -87,6 +87,23 @@ export function FolderFontLoader(): null {
     deckCtx === null ? folderFonts : [...folderFonts, ...deckCtx.fonts]
   const canvas = useCanvasInstance()
   const installedRef = useRef<Map<string, InstalledFont>>(new Map())
+
+  // MEDIA-1: font `url`s are short-TTL presigned MinIO URLs. If a FontFace
+  // load fails (most likely an expired URL on a deck left open > the URL TTL
+  // before first paint), re-list the folder fonts ONCE to obtain freshly
+  // presigned URLs, which re-triggers this effect with valid URLs. Throttled
+  // so a genuinely broken font file can't spin a refresh loop.
+  const refreshRef = useRef(refreshFolderFonts)
+  refreshRef.current = refreshFolderFonts
+  const lastRefreshAtRef = useRef(0)
+  const requestUrlRefresh = useCallback((): void => {
+    const now = Date.now()
+    // At most one refresh per 30 s — comfortably below the 1 h URL TTL and
+    // the 5 min list cache TTL, but enough to stop a tight retry loop.
+    if (now - lastRefreshAtRef.current < 30_000) return
+    lastRefreshAtRef.current = now
+    void refreshRef.current().catch(() => undefined)
+  }, [])
 
   // Live ref to the canvas so the async IIFE below always reads the
   // CURRENT instance — without this, the closure captures whatever
@@ -156,6 +173,9 @@ export function FolderFontLoader(): null {
           installed.delete(font.assetId)
           pendingIds.delete(font.assetId)
           console.warn('[FolderFontLoader] failed to install', font.assetId, err)
+          // MEDIA-1: likely an expired presigned URL — pull a fresh list so
+          // the next effect run loads with a valid URL.
+          requestUrlRefresh()
         }
       })()
     }

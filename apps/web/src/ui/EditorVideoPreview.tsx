@@ -52,8 +52,11 @@ export interface EditorVideoPreviewProps {
 
 export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPreviewProps) {
   const isPresent = mode === 'present'
-  const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
+  const { info, refresh } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  // MEDIA-1: refresh via ref so the playback effect's dep array stays stable.
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
   const { objectsCtx } = useSlideObjects()
   // Editor only — counter-scales the hover bar so it stays a constant
   // size in viewport pixels regardless of artboard zoom. In present mode
@@ -131,6 +134,44 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     }
 
     videoEl.src = playbackUrl
+
+    // MEDIA-1: recover from an expired short-TTL presigned playback URL. If a
+    // byte-range request 403s after the URL's TTL lapses, the <video> fires
+    // `error`; re-fetch a freshly-signed URL once and re-point src, restoring
+    // the play position. Guarded so a truly broken asset doesn't loop.
+    let refreshing = false
+    const onSrcError = (): void => {
+      if (refreshing) return
+      const code = videoEl.error?.code
+      if (
+        code !== MediaError.MEDIA_ERR_NETWORK &&
+        code !== MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+      ) {
+        return
+      }
+      refreshing = true
+      const resumeAt = videoEl.currentTime
+      const wasPlaying = !videoEl.paused
+      void refreshRef
+        .current()
+        .then((fresh) => {
+          if (fresh?.playbackUrl == null) return
+          videoEl.src = fresh.playbackUrl
+          videoEl.addEventListener(
+            'loadedmetadata',
+            () => {
+              if (resumeAt > 0) videoEl.currentTime = resumeAt
+              if (wasPlaying) void videoEl.play().catch(() => undefined)
+            },
+            { once: true },
+          )
+          videoEl.load()
+        })
+        .finally(() => {
+          refreshing = false
+        })
+    }
+    videoEl.addEventListener('error', onSrcError)
 
     // Hand the videoEl to the Pixi videoRenderer the moment it's ready —
     // the renderer rebuilds the sprite from a live VideoSource so the
@@ -233,6 +274,7 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
       videoEl.removeEventListener('timeupdate', onTimeUpdate)
       videoEl.removeEventListener('timeupdate', onTime)
       videoEl.removeEventListener('seeked', onTime)
+      videoEl.removeEventListener('error', onSrcError)
       delete currents[videoObject.id]
       detachLiveVideoFromRenderer(videoObject.id)
     }

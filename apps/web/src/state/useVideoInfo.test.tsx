@@ -208,6 +208,61 @@ describe('useVideoInfo', () => {
     expect(mockGetVideoInfo).not.toHaveBeenCalled()
   })
 
+  it('refresh() re-fetches and yields a fresh playbackUrl (MEDIA-1 expiry recovery)', async () => {
+    // First load returns a presigned URL; refresh returns a rotated one.
+    mockGetVideoInfo
+      .mockResolvedValueOnce(
+        makeVideoInfo('done', { playbackUrl: '/storage/m/k?X-Amz-Signature=OLD' }),
+      )
+      .mockResolvedValueOnce(
+        makeVideoInfo('done', { playbackUrl: '/storage/m/k?X-Amz-Signature=NEW' }),
+      )
+
+    let captured: ReturnType<typeof useVideoInfo> | null = null
+    render(
+      <TestComponent
+        assetId="asset-123"
+        onResult={(r) => {
+          captured = r
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(captured!.info?.playbackUrl).toContain('OLD')
+    })
+
+    let refreshed: VideoInfoResponse | null = null
+    await act(async () => {
+      refreshed = await captured!.refresh()
+    })
+
+    expect(refreshed!.playbackUrl).toContain('NEW')
+    // State updated so the <video src> effect re-runs with the fresh URL.
+    await waitFor(() => {
+      expect(captured!.info?.playbackUrl).toContain('NEW')
+    })
+    expect(mockGetVideoInfo).toHaveBeenCalledTimes(2)
+  })
+
+  it('refresh() returns null and does not throw when assetId is null', async () => {
+    let captured: ReturnType<typeof useVideoInfo> | null = null
+    render(
+      <TestComponent
+        assetId={null}
+        onResult={(r) => {
+          captured = r
+        }}
+      />,
+    )
+    let refreshed: VideoInfoResponse | null = makeVideoInfo('done')
+    await act(async () => {
+      refreshed = await captured!.refresh()
+    })
+    expect(refreshed).toBeNull()
+    expect(mockGetVideoInfo).not.toHaveBeenCalled()
+  })
+
   it('sets error when fetch throws', async () => {
     mockGetVideoInfo.mockRejectedValue(new Error('Network failure'))
 

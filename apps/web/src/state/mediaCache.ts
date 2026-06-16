@@ -13,6 +13,15 @@
  *   - Cache uses idb package (lightweight IndexedDB wrapper).
  *   - TTL is 24 hours per entry. Expired entries are returned as null (re-fetch on next access).
  *
+ * MEDIA-1 INVARIANT — entries are keyed by `url`, so this cache is ONLY safe
+ * for STABLE URLs. Image / poster URLs are imgproxy-signed (HMAC over the
+ * path, NO expiry) and therefore stable across the 24h window — caching them
+ * by URL is a guaranteed hit. NEVER `put()` a short-TTL presigned MinIO URL
+ * (video playback, fonts): it rotates server-side, so the next 24h-window
+ * lookup would either miss (new URL) or — worse — return a blob fetched from
+ * an already-expired URL. If a presigned asset ever needs offline caching,
+ * key it by a STABLE id (assetId / storageKey), not by the rotating URL.
+ *
  * Usage:
  *   const cache = await openMediaCache()
  *   await cache.put(url, blob, 'image')

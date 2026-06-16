@@ -89,6 +89,23 @@ describe('createVideoInfoResolver', () => {
     expect(fetch).toHaveBeenCalledOnce()
   })
 
+  it('forceRefresh bypasses the permanent done cache (MEDIA-1 — rotates playbackUrl)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetch(makeResult({ transcodeStatus: 'done', playbackUrl: '/storage/k?sig=1' })),
+    )
+
+    const resolver = createVideoInfoResolver('')
+    await resolver({ assetId: 'asset-done' })
+    await resolver({ assetId: 'asset-done' }) // cached — no extra fetch
+    expect(fetch).toHaveBeenCalledOnce()
+
+    // forceRefresh must re-hit the network so the new presigned playbackUrl
+    // replaces the (now-expired) cached one.
+    await resolver({ assetId: 'asset-done', forceRefresh: true })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('failed status: cached permanently', async () => {
     vi.stubGlobal(
       'fetch',

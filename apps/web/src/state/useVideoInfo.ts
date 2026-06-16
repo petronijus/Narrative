@@ -10,7 +10,7 @@
  * Stable: polling restarts only when assetId changes.
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { VideoInfoResponse } from '../api/client.js'
 import { useApi } from '../api/client.js'
 
@@ -22,6 +22,13 @@ export interface UseVideoInfoResult {
   info: VideoInfoResponse | null
   isLoading: boolean
   error: Error | null
+  /**
+   * MEDIA-1: force a re-fetch of video-info, yielding a freshly-presigned
+   * `playbackUrl`. Call this when the <video> element 403s / stalls because
+   * its short-TTL playback URL expired during a long session. Resolves to the
+   * new info (or null if the asset is unset / the fetch failed).
+   */
+  refresh: () => Promise<VideoInfoResponse | null>
 }
 
 export function useVideoInfo(assetId: string | null): UseVideoInfoResult {
@@ -34,6 +41,28 @@ export function useVideoInfo(assetId: string | null): UseVideoInfoResult {
   // Ref to track the latest assetId inside async callbacks — avoids stale closure issues.
   const assetIdRef = useRef<string | null>(assetId)
   assetIdRef.current = assetId
+
+  // MEDIA-1: imperative refresh. Bypasses the resolver cache so the new
+  // response carries a freshly-signed playbackUrl, and pushes it into state
+  // so the <video src> effect re-runs with the new URL.
+  const refresh = useCallback(async (): Promise<VideoInfoResponse | null> => {
+    const id = assetIdRef.current
+    if (id === null || id === '') return null
+    try {
+      // api.getVideoInfo always does a live GET (no client-side cache), so
+      // the response already carries a freshly-signed playbackUrl.
+      const result = await api.getVideoInfo(id)
+      // Ignore a stale result if the asset changed mid-flight.
+      if (assetIdRef.current !== id) return null
+      setInfo(result)
+      setError(null)
+      return result
+    } catch (err) {
+      if (assetIdRef.current !== id) return null
+      setError(err instanceof Error ? err : new Error(String(err)))
+      return null
+    }
+  }, [api])
 
   useEffect(() => {
     if (assetId === null) {
@@ -85,5 +114,5 @@ export function useVideoInfo(assetId: string | null): UseVideoInfoResult {
     }
   }, [assetId]) // eslint-disable-line react-hooks/exhaustive-deps -- api reference is stable per token
 
-  return { info, isLoading, error }
+  return { info, isLoading, error, refresh }
 }

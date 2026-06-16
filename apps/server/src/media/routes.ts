@@ -14,8 +14,9 @@
  *     Poll this endpoint at 2 s intervals until transcodeStatus === 'done'.
  *
  *   GET  /api/media/:assetId/font-url
- *     Returns the raw MinIO URL for a font asset's bytes plus parsed metadata.
- *     M16 P3: only resolves folder-scoped fonts now (kind='font', folder_id IS NOT NULL,
+ *     Returns a short-TTL presigned MinIO URL for a font asset's bytes plus
+ *     parsed metadata (MEDIA-1: bucket is private). M16 P3: only resolves
+ *     folder-scoped fonts now (kind='font', folder_id IS NOT NULL,
  *     deck_id IS NULL). Auth: caller must own the folder.
  *
  *   POST   /api/folders/:folderId/fonts
@@ -30,9 +31,13 @@
  * Security notes:
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
  *   - Deck ownership verified via getMediaAsset → deckId → resolveDeckAccess chain.
- *   - playbackUrl uses direct MinIO URL (public bucket policy for dev). MinIO
- *     serves byte-range requests so a plain <video> can seek without HLS.
- *     TODO(M29): switch to MinIO presigned URLs when bucket becomes private.
+ *   - MEDIA-1: the MinIO bucket is PRIVATE (no anonymous download policy).
+ *     Every media URL handed to a client is either an imgproxy-signed URL
+ *     (images, posters, thumbnails — stable HMAC) or a short-TTL S3 presigned
+ *     URL (video playback, font bytes). Access re-authorizes on each fetch,
+ *     so a revoked share/permission can't keep fetching media past the TTL.
+ *     MinIO still serves byte-range requests against a presigned URL so a
+ *     plain <video> can seek without HLS.
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
@@ -61,26 +66,34 @@ import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the public MinIO base URL for direct object access.
- * Used for the progressive MP4 playback URL (M12 dev: public bucket policy).
- *
- * MINIO_PUBLIC_URL can be:
- *   - absolute (`http://localhost:9100`) — for Vite-independent clients
- *   - path-only  (`/storage`)            — same-origin via Vite proxy (dev)
- *
- * Default is `/storage` so the browser fetches the MP4 same-origin through
- * Vite's dev proxy (configured in apps/web/vite.config.ts). MinIO honours
- * HTTP byte-range requests, so a plain <video src> can seek without CORS
- * headaches.
- *
- * TODO(M29): replace with presigned URL generation for private buckets.
- */
-function publicMinioBaseUrl(): string {
-  const endpoint = process.env['MINIO_PUBLIC_URL'] ?? '/storage'
-  const bucket = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
-  return `${endpoint}/${bucket}`
-}
+// ---------------------------------------------------------------------------
+// Presigned-URL TTLs (MEDIA-1)
+// ---------------------------------------------------------------------------
+//
+// The media bucket is private; clients reach video/font bytes only through
+// short-lived S3 presigned URLs. The TTL must be long enough that a single
+// consumption session never sees a mid-use 403, but short enough that a
+// revoked share/permission loses access reasonably quickly.
+//
+// VIDEO playback: a <video> element issues many byte-range GETs against the
+// SAME presigned URL over the lifetime of playback. If the URL expires while
+// a presentation is still running, later ranges 403 and playback stalls. We
+// therefore pick a TTL that comfortably exceeds any realistic single
+// presentation (long keynote + Q&A) — 6 h. The client also re-fetches a
+// fresh URL on demand (useVideoInfo refresh), so this is a safety floor, not
+// the only line of defence.
+//
+// FONT bytes: fetched ONCE by FontFace.load() at install time; the decoded
+// face then lives in memory for the session, so the URL only needs to be
+// valid at the moment of fetch. 1 h is ample. Folder/deck font LIST endpoints
+// reuse this via presignGetUrl's default; the client re-lists (and re-presigns)
+// whenever the editor remounts the font set.
+const VIDEO_PLAYBACK_URL_TTL_SEC = Number(
+  process.env['MEDIA_VIDEO_URL_TTL_SEC'] ?? 6 * 60 * 60, // 6 hours
+)
+const FONT_URL_TTL_SEC = Number(
+  process.env['MEDIA_FONT_URL_TTL_SEC'] ?? 60 * 60, // 1 hour
+)
 
 export interface MediaRoutesOpts {
   db: Database
@@ -348,10 +361,13 @@ export async function registerMediaRoutes(
       ? signImgproxyUrl({ storageKey: asset.thumbnailKey, variant: 'thumb', extension: 'jpg' })
       : null
 
-    // Progressive MP4: direct MinIO URL (public bucket for M12 dev). MinIO
-    // serves byte-range requests so a plain <video src> seeks fine.
-    // TODO(M29): generate presigned URL for private bucket policy.
-    const playbackUrl = asset.playbackKey ? `${publicMinioBaseUrl()}/${asset.playbackKey}` : null
+    // Progressive MP4: short-TTL presigned URL (MEDIA-1, private bucket).
+    // MinIO serves byte-range requests against a presigned URL so a plain
+    // <video src> seeks fine; the TTL is sized to outlast a presentation
+    // session (see VIDEO_PLAYBACK_URL_TTL_SEC).
+    const playbackUrl = asset.playbackKey
+      ? await presignGetUrl(asset.playbackKey, VIDEO_PLAYBACK_URL_TTL_SEC)
+      : null
 
     return reply.send({
       assetId: asset.id,
@@ -395,11 +411,14 @@ export async function registerMediaRoutes(
     const ok = await requireFolderOwner(db, asset.folderId, userId, reply)
     if (!ok) return
 
-    // Raw MinIO URL — bucket is public for M12 dev; M29 will swap to
-    // a presigned URL the same way HLS will.
-    const url = `${publicMinioBaseUrl()}/${asset.storageKey}`
+    // Short-TTL presigned URL (MEDIA-1, private bucket). The font bytes are
+    // fetched once by FontFace.load(); the URL only needs to be valid at
+    // fetch time. NOTE: the response is no longer immutable-cacheable — the
+    // presigned URL rotates per TTL, so we cap browser caching well under
+    // FONT_URL_TTL_SEC and mark it private (the URL embeds auth).
+    const url = await presignGetUrl(asset.storageKey, FONT_URL_TTL_SEC)
 
-    return reply.header('Cache-Control', 'public, max-age=31536000, immutable').send({
+    return reply.header('Cache-Control', 'private, max-age=300').send({
       assetId: asset.id,
       url,
       family: asset.fontFamily,

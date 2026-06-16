@@ -36,7 +36,16 @@ export interface VideoInfoResult {
   transcodeError: string | null
 }
 
-export type VideoInfoResolver = (opts: { assetId: string }) => Promise<VideoInfoResult>
+export type VideoInfoResolver = (opts: {
+  assetId: string
+  /**
+   * MEDIA-1: bypass the cache and re-fetch. The `playbackUrl` is a short-TTL
+   * presigned MinIO URL that rotates server-side; a 'done' entry is otherwise
+   * cached permanently and would hand back an expired URL. Callers that hit a
+   * 403 / stall on the <video> pass `forceRefresh: true` to get a fresh URL.
+   */
+  forceRefresh?: boolean
+}) => Promise<VideoInfoResult>
 
 // ---------------------------------------------------------------------------
 // TTL for non-terminal states
@@ -63,8 +72,18 @@ export function createVideoInfoResolver(apiBaseUrl: string): VideoInfoResolver {
 
   const cache = new Map<string, CacheEntry>()
 
-  return function resolveVideoInfo(opts: { assetId: string }): Promise<VideoInfoResult> {
+  return function resolveVideoInfo(opts: {
+    assetId: string
+    forceRefresh?: boolean
+  }): Promise<VideoInfoResult> {
     const cacheKey = opts.assetId
+
+    // MEDIA-1: a forced refresh drops any cached entry (even a permanent
+    // 'done' one) so the next fetch returns a freshly-presigned playbackUrl.
+    if (opts.forceRefresh === true) {
+      cache.delete(cacheKey)
+    }
+
     const existing = cache.get(cacheKey)
 
     if (existing !== undefined) {

@@ -54,6 +54,7 @@ vi.mock('../auth/permissions.js', () => ({
 
 import { getMediaAsset, getVideoAsset, deleteMediaAsset, getFolderFontAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
+import { presignGetUrl } from './s3Client.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 
 // ---------------------------------------------------------------------------
@@ -538,9 +539,14 @@ describe('GET /api/media/:assetId/video-info', () => {
     expect(body['posterUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
     expect(body['thumbnailUrl']).toBe('http://imgproxy.test/SIGNED/path/to/image@webp')
 
-    // Playback URL contains the MP4 key
-    expect(typeof body['playbackUrl']).toBe('string')
-    expect(body['playbackUrl'] as string).toContain('playback.mp4')
+    // MEDIA-1: playbackUrl is a short-TTL presigned URL (NOT a raw MinIO URL).
+    // The mocked presignGetUrl returns a deterministic signed URL.
+    expect(body['playbackUrl']).toBe('http://minio.test/signed')
+    // Signed against the playback key with the long video TTL (6 h default).
+    expect(vi.mocked(presignGetUrl)).toHaveBeenCalledWith(
+      FIXTURE_VIDEO_DONE.playbackKey,
+      6 * 60 * 60,
+    )
   })
 
   it('includes transcodeError field in response', async () => {

@@ -44,11 +44,15 @@ interface VideoOverlayProps {
 // ---------------------------------------------------------------------------
 
 export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverlayProps) {
-  const { info } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
+  const { info, refresh } = useVideoInfo(videoObject.assetId !== '' ? videoObject.assetId : null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const overlayHandleRef = useRef<ReturnType<typeof compositor.registerOverlay> | null>(null)
   const objectUrlRef = useRef<string | null>(null)
+  // MEDIA-1: `refresh` via ref so the playback effect (with its large dep
+  // array) doesn't re-run just because the callback identity changed.
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
 
   // Effect: set up video element when transcode is done
   useEffect(() => {
@@ -160,6 +164,44 @@ export function VideoOverlay({ videoObject, sceneGraph, compositor }: VideoOverl
 
       videoRef.current = videoEl
       videoEl.src = playbackUrl
+
+      // MEDIA-1: the playback URL is a short-TTL presigned MinIO URL. Over a
+      // long present session it can expire, so a later byte-range request
+      // 403s and the <video> fires `error` (MEDIA_ERR_NETWORK / SRC). Recover
+      // by re-fetching a freshly-signed URL once and re-pointing src at the
+      // same playback position. Guard so a genuinely broken asset doesn't loop.
+      let refreshing = false
+      const onError = (): void => {
+        if (refreshing || cancelled) return
+        // Only attempt recovery for network/src errors — a decode error on a
+        // corrupt file won't be fixed by a new URL.
+        const code = videoEl.error?.code
+        if (
+          code !== MediaError.MEDIA_ERR_NETWORK &&
+          code !== MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+        ) {
+          return
+        }
+        refreshing = true
+        const resumeAt = videoEl.currentTime
+        const wasPlaying = !videoEl.paused
+        void refreshRef
+          .current()
+          .then((fresh) => {
+            if (cancelled || fresh?.playbackUrl == null) return
+            videoEl.src = fresh.playbackUrl
+            const onMeta = (): void => {
+              if (resumeAt > 0) videoEl.currentTime = resumeAt
+              if (wasPlaying) void videoEl.play().catch(() => undefined)
+            }
+            videoEl.addEventListener('loadedmetadata', onMeta, { once: true })
+            videoEl.load()
+          })
+          .finally(() => {
+            refreshing = false
+          })
+      }
+      videoEl.addEventListener('error', onError)
 
       // Hand the videoEl to the Pixi videoRenderer so the visible
       // representation lives inside the scene graph (layer order works
