@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  undici-types@>=7.28.0: 7.27.2
+
 importers:
   .:
     devDependencies:
@@ -9227,10 +9230,10 @@ packages:
         integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==,
       }
 
-  undici-types@7.28.0:
+  undici-types@7.27.2:
     resolution:
       {
-        integrity: sha512-LJAfY+2w6HGeT8d8J1wNQsUGUEGio6NWWpwdwurQe4f6oojzCFuGLizl1KSve4irsTxyLly1QhEeE6iapdaIvQ==,
+        integrity: sha512-cH9f42mHuljpNuoS47sWDDWXVxWnJgYCzHVUlr3tn7+HVx0L6QSO+VG5qgzT4kXkR2K8ZsReaT5bupam6RNAEQ==,
       }
 
   unicorn-magic@0.3.0:
@@ -12388,7 +12391,7 @@ snapshots:
       '@types/node': 22.19.17
       '@types/tough-cookie': 4.0.5
       parse5: 8.0.1
-      undici-types: 7.28.0
+      undici-types: 7.27.2
 
   '@types/json-schema@7.0.15': {}
 
@@ -15438,7 +15441,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@7.28.0: {}
+  undici-types@7.27.2: {}
 
   unicorn-magic@0.3.0: {}
 

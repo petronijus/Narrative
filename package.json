@@ -52,6 +52,9 @@
       "esbuild",
       "@swc/core",
       "msgpackr-extract"
-    ]
+    ],
+    "overrides": {
+      "undici-types@>=7.28.0": "7.27.2"
+    }
   }
 }
