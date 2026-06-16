@@ -34,10 +34,17 @@ const mockHandle = vi
     res.end()
   })
 
+// TUS-1: onIncomingRequest now loads the stored upload via
+// `tusServer.datastore.getUpload(id)` to recover its creator + deck binding.
+// The mock exposes a configurable datastore so PATCH/DELETE tests can hand
+// back an upload with arbitrary stored metadata.
+let mockStoredUpload: Record<string, unknown> = {}
+const mockGetUpload = vi.fn().mockImplementation(async () => mockStoredUpload)
+
 vi.mock('@tus/server', () => ({
   Server: vi.fn().mockImplementation(function (opts: Record<string, unknown>) {
     capturedTusOptions = opts
-    return { handle: mockHandle }
+    return { handle: mockHandle, datastore: { getUpload: mockGetUpload } }
   }),
 }))
 
@@ -417,6 +424,11 @@ describe('onIncomingRequest hook', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     capturedTusOptions = {}
+    mockStoredUpload = {}
+    // Permissive deck access by default; creator-binding tests override the
+    // stored upload's creatorUserId to force a mismatch instead.
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
   })
 
   it('throws 401 on PATCH without auth when auth is not bypassed', async () => {
@@ -436,6 +448,74 @@ describe('onIncomingRequest hook', () => {
     const res = buildResponse()
     await expect(hook(req, res, '')).resolves.toBeUndefined()
   })
+
+  // TUS-1: a PATCH from a user who is NOT the upload's creator must be
+  // rejected even when they hold a valid session. Bypass mode resolves the
+  // live user to 'dev-user'; we store a *different* creator so the binding
+  // check fails.
+  it('throws 403 on PATCH when requester is not the upload creator', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+
+    mockStoredUpload = {
+      id: 'asset-x:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png', creatorUserId: 'someone-else' },
+    }
+
+    const req = buildRequest({ method: 'PATCH' })
+    await expect(hook(req, buildResponse(), 'asset-x:deck-1:abc')).rejects.toMatchObject({
+      status_code: 403,
+    })
+  })
+
+  // TUS-1: fail closed when the stored upload has no recorded creator (a
+  // legacy in-flight upload created before this binding existed).
+  it('throws 403 on PATCH when the upload has no recorded creator', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+
+    mockStoredUpload = {
+      id: 'asset-y:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png' },
+    }
+
+    const req = buildRequest({ method: 'PATCH' })
+    await expect(hook(req, buildResponse(), 'asset-y:deck-1:abc')).rejects.toMatchObject({
+      status_code: 403,
+    })
+  })
+
+  // TUS-1: even the correct creator is rejected if deck access was revoked.
+  it('throws 403 on PATCH when creator matches but deck access was revoked', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+
+    vi.mocked(resolveDeckAccess).mockResolvedValue(null)
+
+    mockStoredUpload = {
+      id: 'asset-z:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png', creatorUserId: 'dev-user' },
+    }
+
+    const req = buildRequest({ method: 'PATCH' })
+    await expect(hook(req, buildResponse(), 'asset-z:deck-1:abc')).rejects.toMatchObject({
+      status_code: 403,
+    })
+  })
+
+  // TUS-1: the happy path — correct creator with live editor access proceeds.
+  it('resolves on PATCH for the creator with live editor access', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+
+    mockStoredUpload = {
+      id: 'asset-ok:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png', creatorUserId: 'dev-user' },
+    }
+
+    const req = buildRequest({ method: 'PATCH' })
+    await expect(hook(req, buildResponse(), 'asset-ok:deck-1:abc')).resolves.toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -446,6 +526,12 @@ describe('onUploadFinish hook', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     capturedTusOptions = {}
+    // TUS-1: onUploadFinish now re-runs the creator + deck-access check
+    // before writing the media_assets row. Default the access mocks to
+    // "editor allowed" so the happy-path tests exercise the insert; the
+    // creator binding is supplied per-test via upload.metadata.creatorUserId.
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
   })
 
   it('calls createMediaAsset with correct storageKey and assetId', async () => {
@@ -473,7 +559,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 2048,
       offset: 2048,
-      metadata: { deckId, 'content-type': 'image/jpeg' },
+      metadata: { deckId, 'content-type': 'image/jpeg', creatorUserId: 'dev-user' },
     }
 
     const res = buildResponse()
@@ -508,7 +594,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 4096,
       offset: 4096,
-      metadata: { deckId },
+      metadata: { deckId, creatorUserId: 'dev-user' },
     }
 
     const res = buildResponse()
@@ -519,6 +605,33 @@ describe('onUploadFinish hook', () => {
     expect(body['assetId']).toBe(assetId)
     // storageKey is the full upload.id — that's what @tus/s3-store wrote to S3.
     expect(body['storageKey']).toBe(uploadId)
+  })
+
+  // TUS-1: onUploadFinish must reject a finalize from a non-creator so it
+  // never writes a media_assets row against a deck the requester didn't
+  // create the upload under. Bypass resolves the live user to 'dev-user';
+  // we store a different creator to force the mismatch.
+  it('throws 403 and does NOT insert when finalizer is not the creator', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+
+    const assetId = 'asset-notmine'
+    const deckId = 'deck-victim'
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.jpg`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(decodedPath).toString('base64url')}`
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/jpeg' }),
+    })
+    const upload = {
+      id: uploadId,
+      size: 2048,
+      offset: 2048,
+      metadata: { deckId, 'content-type': 'image/jpeg', creatorUserId: 'someone-else' },
+    }
+
+    await expect(hook(req, buildResponse(), upload)).rejects.toMatchObject({ status_code: 403 })
+    expect(createMediaAsset).not.toHaveBeenCalled()
   })
 
   it('throws 500 if upload id is malformed', async () => {
@@ -554,7 +667,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 10_000_000,
       offset: 10_000_000,
-      metadata: { deckId, 'content-type': 'video/mp4' },
+      metadata: { deckId, 'content-type': 'video/mp4', creatorUserId: 'dev-user' },
     }
 
     const res = buildResponse()
@@ -596,7 +709,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 5_000_000,
       offset: 5_000_000,
-      metadata: { deckId },
+      metadata: { deckId, creatorUserId: 'dev-user' },
     }
 
     const res = buildResponse()
@@ -624,7 +737,12 @@ describe('onUploadFinish hook', () => {
     const req = buildRequest({
       uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/svg+xml', filename: 'x.svg' }),
     })
-    const upload = { id: uploadId, size: 200, offset: 200, metadata: { deckId } }
+    const upload = {
+      id: uploadId,
+      size: 200,
+      offset: 200,
+      metadata: { deckId, creatorUserId: 'dev-user' },
+    }
 
     const result = (await hook(req, buildResponse(), upload)) as { status_code: number }
     expect(result.status_code).toBe(200)
@@ -655,7 +773,12 @@ describe('onUploadFinish hook', () => {
     const req = buildRequest({
       uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/svg+xml' }),
     })
-    const upload = { id: uploadId, size: 25, offset: 25, metadata: { deckId } }
+    const upload = {
+      id: uploadId,
+      size: 25,
+      offset: 25,
+      metadata: { deckId, creatorUserId: 'dev-user' },
+    }
 
     await expect(hook(req, buildResponse(), upload)).rejects.toMatchObject({ status_code: 400 })
     const deleteCall = lastS3Send.mock.calls.find(

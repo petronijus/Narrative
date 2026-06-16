@@ -27,10 +27,24 @@ vi.mock('./assets.js', () => ({
   getMediaAsset: vi.fn(),
   getVideoAsset: vi.fn(),
   deleteMediaAsset: vi.fn(),
+  // IDOR-1 folder-font DELETE path needs these resolvable.
+  getFontAsset: vi.fn(),
+  getFolderFontAsset: vi.fn(),
+  listFolderFontAssets: vi.fn(),
+  listDeckFontAssets: vi.fn(),
+  folderFontPostscriptCollides: vi.fn(),
 }))
 
 vi.mock('./imgproxyUrl.js', () => ({
   signImgproxyUrl: vi.fn(() => 'http://imgproxy.test/SIGNED/path/to/image@webp'),
+}))
+
+// s3Client is only exercised by the folder-font routes; stub it so the
+// DELETE clone test doesn't reach a real MinIO.
+vi.mock('./s3Client.js', () => ({
+  buildS3Client: vi.fn(() => ({ send: vi.fn().mockResolvedValue({}) })),
+  presignGetUrl: vi.fn().mockResolvedValue('http://minio.test/signed'),
+  MEDIA_BUCKET: 'narrative-media',
 }))
 
 vi.mock('../auth/permissions.js', () => ({
@@ -38,7 +52,7 @@ vi.mock('../auth/permissions.js', () => ({
   roleAtLeast: vi.fn(),
 }))
 
-import { getMediaAsset, getVideoAsset, deleteMediaAsset } from './assets.js'
+import { getMediaAsset, getVideoAsset, deleteMediaAsset, getFolderFontAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 
@@ -294,6 +308,157 @@ describe('DELETE /api/media/:assetId', () => {
     })
 
     expect(res.statusCode).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: DELETE /api/folders/:folderId/fonts/:assetId — IDOR-1 clone scoping
+// ---------------------------------------------------------------------------
+
+describe('DELETE /api/folders/:folderId/fonts/:assetId — clone scoping (IDOR-1)', () => {
+  /**
+   * Recursively scans a drizzle SQL condition for a column whose SQL name
+   * matches `name`. Drizzle conditions are SQL objects whose `queryChunks`
+   * carry Column instances (with a `.name` property). This lets us assert
+   * the folderDecks WHERE clause is scoped by `owner_user_id` without
+   * depending on the SQL dialect.
+   */
+  function conditionMentionsColumn(
+    node: unknown,
+    name: string,
+    seen: Set<object> = new Set(),
+  ): boolean {
+    if (!node || typeof node !== 'object') return false
+    if (seen.has(node)) return false
+    seen.add(node)
+    const n = node as Record<string, unknown>
+    if (typeof n['name'] === 'string' && n['name'] === name) return true
+    for (const key of Object.keys(n)) {
+      const v = n[key]
+      if (Array.isArray(v)) {
+        if (v.some((child) => conditionMentionsColumn(child, name, seen))) return true
+      } else if (v && typeof v === 'object') {
+        if (conditionMentionsColumn(v, name, seen)) return true
+      }
+    }
+    return false
+  }
+
+  const FOLDER_ID = 'folder-shared'
+  const FONT_ASSET = {
+    id: 'font-asset-01',
+    uploaderUserId: 'dev-user',
+    mimeType: 'font/ttf',
+    sizeBytes: 1234,
+    storageKey: `fonts/${FOLDER_ID}/font-asset-01/original.ttf`,
+    originalFilename: 'MyFont.ttf',
+    fontFamily: 'MyFont',
+    fontWeight: 400,
+    fontStyle: 'normal',
+    fontPostscriptName: 'MyFont-Regular',
+  }
+
+  /**
+   * Builds an app whose db:
+   *   - returns a folder owned by 'dev-user' (passes requireFolderOwner),
+   *   - returns `ownedDecks` from the decks select (simulating the DB having
+   *     already filtered to caller-owned decks — we ALSO capture the WHERE
+   *     condition to prove the owner scope is present),
+   *   - records the rows passed to insert(mediaAssets).
+   */
+  function buildScopedApp(ownedDecks: { id: string }[]) {
+    const captured: { whereCondition?: unknown; insertedRows?: unknown[] } = {}
+    let selectCall = 0
+
+    const mockDb = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn((cond: unknown) => {
+            selectCall += 1
+            // 1st select = requireFolderOwner (folders); 2nd = folderDecks.
+            if (selectCall === 1) {
+              return {
+                limit: vi.fn().mockResolvedValue([{ id: FOLDER_ID, ownerUserId: 'dev-user' }]),
+              }
+            }
+            captured.whereCondition = cond
+            // The decks select is awaited directly (no .limit()).
+            return Promise.resolve(ownedDecks)
+          }),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn((rows: unknown[]) => {
+          captured.insertedRows = rows
+          return Promise.resolve(undefined)
+        }),
+      })),
+      delete: vi.fn(() => ({
+        where: vi.fn().mockResolvedValue(undefined),
+      })),
+    } as unknown as Database
+
+    return { mockDb, captured }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('scopes the deck-font clone to caller-owned decks via owner_user_id', async () => {
+    // Only ONE of the folder's decks is owned by the caller; the DB filter
+    // (decks.ownerUserId = caller) returns just that one.
+    const ownedDecks = [{ id: 'deck-mine' }]
+    const { mockDb, captured } = buildScopedApp(ownedDecks)
+
+    vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
+
+    const app = Fastify({ logger: false })
+    registerAuthPlugin(app, { bypass: true, db: mockDb })
+    await registerMediaRoutes(app, { db: mockDb })
+    await app.ready()
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/folders/${FOLDER_ID}/fonts/font-asset-01`,
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ promotedToDeckCount: 1 })
+
+    // The folderDecks WHERE clause must constrain by owner_user_id (IDOR-1).
+    expect(conditionMentionsColumn(captured.whereCondition, 'owner_user_id')).toBe(true)
+    // And it must still constrain by folder_id.
+    expect(conditionMentionsColumn(captured.whereCondition, 'folder_id')).toBe(true)
+
+    // Clones are created only for the caller-owned deck — never the foreign one.
+    const rows = (captured.insertedRows ?? []) as { deckId: string }[]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.deckId).toBe('deck-mine')
+
+    await app.close()
+  })
+
+  it('promotes to zero decks when the caller owns none in the folder', async () => {
+    const { mockDb, captured } = buildScopedApp([])
+    vi.mocked(getFolderFontAsset).mockResolvedValue(FONT_ASSET as never)
+
+    const app = Fastify({ logger: false })
+    registerAuthPlugin(app, { bypass: true, db: mockDb })
+    await registerMediaRoutes(app, { db: mockDb })
+    await app.ready()
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/folders/${FOLDER_ID}/fonts/font-asset-01`,
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ promotedToDeckCount: 0 })
+    // No insert issued when there are no caller-owned decks.
+    expect(captured.insertedRows).toBeUndefined()
+
+    await app.close()
   })
 })
 

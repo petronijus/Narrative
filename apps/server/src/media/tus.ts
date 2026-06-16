@@ -325,6 +325,93 @@ async function resolveUserIdFromReq(
   return session?.userSub ?? null
 }
 
+/**
+ * TUS-1: metadata key under which we persist the id of the user who created
+ * the upload. tus stores the metadata returned from `onUploadCreate` in the
+ * `.info` sidecar alongside the S3 object, so it survives to every later
+ * PATCH/DELETE and to `onUploadFinish`. We re-check it on each of those so a
+ * second authenticated user who guesses an in-flight upload id can't append,
+ * terminate, or finalize someone else's upload.
+ */
+const CREATOR_META_KEY = 'creatorUserId'
+
+/**
+ * TUS-1: re-authorize a request that targets an already-created upload
+ * (PATCH / DELETE / finish). Throws a tus-shaped `{ status_code, body }` on
+ * any failure; resolves silently when the caller is allowed to proceed.
+ *
+ * Requires BOTH:
+ *   (a) the live session user equals the upload's stored creator, AND
+ *   (b) the creator still has the access the upload was created under —
+ *       editor on the encoded deck for media uploads, or folder ownership
+ *       for transient pptx imports.
+ *
+ * Fails closed (403) when the creator id can't be recovered from the upload
+ * metadata — e.g. a legacy in-flight upload created before this binding
+ * existed. Such uploads must be re-created by the client.
+ */
+async function requireUploadCreatorAndAccess(
+  req: IncomingMessage,
+  upload: Upload,
+  db: Database,
+  app: AppWithAuthOpts,
+): Promise<void> {
+  const userId = await resolveUserIdFromReq(req, db, app)
+  if (!userId) {
+    throw { status_code: 401, body: 'Unauthorized' }
+  }
+
+  // (a) creator binding — must match the user who created this upload.
+  const creatorUserId = upload.metadata?.[CREATOR_META_KEY] ?? null
+  if (!creatorUserId) {
+    // Fail closed: a legacy in-flight upload with no recorded creator can't
+    // be safely re-authorized. The client must re-create it.
+    throw {
+      status_code: 403,
+      body: 'Forbidden: upload is not bound to a creator; please restart the upload',
+    }
+  }
+  if (creatorUserId !== userId) {
+    throw { status_code: 403, body: 'Forbidden: not the creator of this upload' }
+  }
+
+  // (b) still-valid access. Recover deckId/folderId from the upload metadata
+  // and the compound id, mirroring what onUploadCreate validated.
+  const mime =
+    upload.metadata?.['content-type'] ??
+    upload.metadata?.['mimeType'] ??
+    upload.metadata?.['mimetype'] ??
+    ''
+  const idParts = upload.id.split(':')
+  const deckIdFromId = idParts[1] && idParts[1] !== 'unknown' ? idParts[1] : null
+  const deckId = upload.metadata?.['deckId'] ?? deckIdFromId
+  const folderId = upload.metadata?.['folderId'] ?? null
+
+  if (mime === PPTX_MIME) {
+    // pptx imports are folder-scoped: re-assert folder ownership.
+    if (!folderId) {
+      throw { status_code: 403, body: 'Forbidden: pptx upload missing folder binding' }
+    }
+    const [folder] = await db
+      .select({ id: folders.id, ownerUserId: folders.ownerUserId })
+      .from(folders)
+      .where(eq(folders.id, folderId))
+      .limit(1)
+    if (!folder || folder.ownerUserId !== userId) {
+      throw { status_code: 403, body: 'Forbidden: folder access revoked' }
+    }
+    return
+  }
+
+  if (!deckId) {
+    throw { status_code: 403, body: 'Forbidden: upload missing deck binding' }
+  }
+  const access = await resolveDeckAccess(db, { deckId, userId, shareToken: null })
+  if (!access || !roleAtLeast(access.role, 'editor')) {
+    throw { status_code: 403, body: 'Forbidden: editor access to the deck revoked' }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Plugin opts
 // ---------------------------------------------------------------------------
@@ -438,6 +525,22 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         )
       }
 
+      // TUS-1: persist the creating user (and the resolved deck/folder/mime
+      // bindings the access check relies on) into the upload metadata. tus
+      // stores what we return here in the `.info` sidecar via @tus/s3-store,
+      // so it survives to every later PATCH/DELETE and to onUploadFinish.
+      // We re-check it there so a second authenticated user who guesses an
+      // in-flight upload id can't append/terminate/finalize someone else's
+      // upload. Persisting the resolved bindings (not just the header values)
+      // makes the re-check robust even if the client omits them on PATCH.
+      const persistedMetadata: Upload['metadata'] = {
+        ...(upload.metadata ?? {}),
+        [CREATOR_META_KEY]: userId,
+        ...(deckId ? { deckId } : {}),
+        ...(folderId ? { folderId } : {}),
+        ...(mime ? { 'content-type': mime } : {}),
+      }
+
       // ─── PPTX import branch ────────────────────────────────────────────
       // Different metadata model: pptx imports create a NEW deck inside a
       // folder, so they require `folderId` (not `deckId`) and we check
@@ -469,7 +572,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         if (folder.ownerUserId !== userId) {
           throw { status_code: 403, body: 'Forbidden: only the folder owner may import' }
         }
-        return { res }
+        return { res, metadata: persistedMetadata }
       }
 
       // ─── Existing media upload branch ─────────────────────────────────
@@ -518,7 +621,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         throw { status_code: 403, body: 'Forbidden: editor or owner role required to upload' }
       }
 
-      return { res }
+      return { res, metadata: persistedMetadata }
     },
 
     // -----------------------------------------------------------------------
@@ -527,16 +630,25 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     onIncomingRequest: async (
       req: IncomingMessage,
       _res: ServerResponse,
-      _uploadId: string,
+      uploadId: string,
     ): Promise<void> => {
       const method = req.method?.toUpperCase() ?? ''
       // Only enforce on PATCH (data chunks) and DELETE (termination)
       if (method !== 'PATCH' && method !== 'DELETE') return
 
-      const userId = await resolveUserIdFromReq(req, db, appWithAuth)
-      if (!userId) {
-        throw { status_code: 401, body: 'Unauthorized' }
+      // TUS-1: load the upload's stored metadata (the `.info` sidecar) so we
+      // can verify the requester is the original creator AND still has access
+      // to the deck/folder the upload was created under. onIncomingRequest
+      // only receives the id string, so we resolve the Upload via the
+      // datastore the tus server is using.
+      let upload: Upload
+      try {
+        upload = await tusServer.datastore.getUpload(uploadId)
+      } catch {
+        // Unknown / unreadable upload id — let tus produce its own 404.
+        return
       }
+      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth)
     },
 
     // -----------------------------------------------------------------------
@@ -565,6 +677,15 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         throw { status_code: 500, body: 'Internal error: upload id malformed' }
       }
       const storageKey = upload.id
+
+      // TUS-1: re-authorize before doing any S3 read or DB write. The compound
+      // id encodes deckId, but the finish hook previously trusted it blindly —
+      // any authenticated user who reached finish on someone else's upload id
+      // would have a media_assets row written against the encoded deck. Require
+      // the live session user to be the upload's creator AND still hold
+      // editor/folder access. (Bypass mode: creator was stored as 'dev-user'
+      // and resolveUserIdFromReq returns 'dev-user', so the check passes.)
+      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth)
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
       const userId = (await resolveUserIdFromReq(req, db, appWithAuth)) ?? 'unknown'

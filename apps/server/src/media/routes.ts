@@ -36,7 +36,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
 import { decks, folders, mediaAssets } from '../db/schema.js'
@@ -601,10 +601,17 @@ export async function registerMediaRoutes(
       // cloning to all decks in the folder is the safe deterministic
       // option (storage is shared via the same MinIO key, so the only
       // cost is N media_assets rows).
+      //
+      // IDOR-1: a deck can sit in this folder while being owned by another
+      // user (folder membership != deck ownership). Cloning a media_assets
+      // row onto a deck the caller doesn't own is cross-tenant row creation.
+      // Scope the clone to decks the CALLER owns — the caller is already the
+      // verified folder owner (requireFolderOwner above), so this writes only
+      // rows the caller is entitled to create.
       const folderDecks = await db
         .select({ id: decks.id })
         .from(decks)
-        .where(eq(decks.folderId, folderId))
+        .where(and(eq(decks.folderId, folderId), eq(decks.ownerUserId, userId)))
 
       let promotedToDeckCount = 0
       if (folderDecks.length > 0) {
