@@ -17,6 +17,92 @@ import { gsap } from 'gsap'
 import type { AnimationStep, AnimationContext, CompiledTimeline } from './types.js'
 import { getPresetFactory } from './presets/index.js'
 
+// ---------------------------------------------------------------------------
+// Safety clamps (client-side DoS guard)
+// ---------------------------------------------------------------------------
+//
+// An editor (or a hostile/legacy DSL) can author an effectively-infinite or
+// extreme-duration animation that ships to every viewer, causing a runaway
+// rAF / GSAP timeline (client-side DoS). The compiler is the single choke
+// point through which every animation passes, so we clamp here. Clamping is
+// SILENT — a bad value is capped, never thrown — so legacy decks keep playing.
+
+/** Max duration for a single step, in seconds (10 min — well past any sane slide animation). */
+export const MAX_STEP_DURATION_S = 600
+/** Max delay before a single step starts, in seconds. */
+export const MAX_STEP_DELAY_S = 600
+/**
+ * Max total timeline duration (sum of clamped per-step duration + delay), in
+ * seconds. Once exceeded, further steps are clamped to zero so the timeline
+ * can never grow past this bound (~20 min of authored animation).
+ */
+export const MAX_TIMELINE_DURATION_S = 1200
+/**
+ * Max repeat count for any step carrying `params.repeat`. `-1` is GSAP's
+ * "repeat forever" sentinel — that and any value above this bound collapse to
+ * MAX_REPEAT, so an infinite loop becomes a finite (large) one.
+ */
+export const MAX_REPEAT = 20
+
+/**
+ * Clamp a numeric value into [min, max].
+ *   - +Infinity → max (an "infinite" duration is the worst case we cap hardest)
+ *   - -Infinity → min
+ *   - NaN / non-number → min (treat garbage as the safe lower bound)
+ */
+function clampNumber(value: unknown, min: number, max: number): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return min
+  if (value < min) return min
+  if (value > max) return max
+  return value
+}
+
+/**
+ * Returns a step whose duration/delay/params.repeat are clamped to sane
+ * maxima, plus how much of the timeline budget it consumes. `budgetLeft` is
+ * the remaining MAX_TIMELINE_DURATION_S; once it hits zero, this step's
+ * duration+delay are forced to zero so the cumulative timeline stays bounded.
+ *
+ * Returns the original step object unchanged when nothing needed clamping, to
+ * avoid churning allocations on the common (well-behaved) path.
+ */
+export function clampStep(
+  step: AnimationStep,
+  budgetLeft: number = MAX_TIMELINE_DURATION_S,
+): { step: AnimationStep; cost: number } {
+  let duration = clampNumber(step.duration, 0, MAX_STEP_DURATION_S)
+  let delay = clampNumber(step.delay, 0, MAX_STEP_DELAY_S)
+
+  // Bound the cumulative timeline length.
+  const wanted = duration + delay
+  if (wanted > budgetLeft) {
+    const scale = budgetLeft <= 0 ? 0 : budgetLeft / wanted
+    duration *= scale
+    delay *= scale
+  }
+
+  // Clamp params.repeat when present (GSAP's -1 == repeat forever).
+  let repeatClamped = false
+  let repeat: number | undefined
+  const rawRepeat = step.params?.['repeat']
+  if (rawRepeat !== undefined) {
+    const r = typeof rawRepeat === 'number' && Number.isFinite(rawRepeat) ? rawRepeat : 0
+    repeat = r < 0 || r > MAX_REPEAT ? MAX_REPEAT : Math.floor(r)
+    repeatClamped = repeat !== rawRepeat
+  }
+
+  const changed = duration !== step.duration || delay !== step.delay || repeatClamped
+  if (!changed) {
+    return { step, cost: duration + delay }
+  }
+
+  const next: AnimationStep = { ...step, duration, delay }
+  if (repeat !== undefined) {
+    next.params = { ...(step.params ?? {}), repeat }
+  }
+  return { step: next, cost: duration + delay }
+}
+
 /**
  * Interní state pro jeden step s onClick triggerem.
  * Drží label (pro seek) a unsubscribe funkci pro InputBridge.
@@ -51,11 +137,18 @@ export function compileSteps(steps: AnimationStep[], ctx: AnimationContext): Com
   const tl = gsap.timeline({ paused: true })
   const clickPauseEntries: ClickPauseEntry[] = []
   const disposers: Array<() => void> = []
+  let timelineBudget = MAX_TIMELINE_DURATION_S
 
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i]
+    const rawStep = steps[i]
     // TypeScript strict — steps[i] může být undefined (noUncheckedIndexedAccess)
-    if (step === undefined) continue
+    if (rawStep === undefined) continue
+
+    // Silently clamp extreme/infinite durations & repeats before they reach
+    // GSAP. Consumes from the shared timeline budget so a sequence can't sum
+    // to an unbounded total.
+    const { step, cost } = clampStep(rawStep, timelineBudget)
+    timelineBudget = Math.max(0, timelineBudget - cost)
 
     const target = ctx.targetResolver.resolve(step.objectId)
     if (target === null) {

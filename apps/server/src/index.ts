@@ -40,21 +40,35 @@ import { registerAuthRoutes } from './routes/auth.js'
 import { registerTusPlugin } from './media/tus.js'
 import { registerMediaRoutes } from './media/routes.js'
 import { closeQueueConnection } from './media/enqueue.js'
-import { registerMetricsEndpoint } from './metrics/index.js'
+import { registerMetricsEndpoint, metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
-import { registerAuthPlugin } from './auth/fastifyAuth.js'
+import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
 
 const API_PORT = Number(process.env['API_PORT'] ?? process.env['PORT'] ?? 3001)
 const HOCUSPOCUS_PORT = Number(process.env['HOCUSPOCUS_PORT'] ?? 3002)
 const HOST = process.env['HOST'] ?? '0.0.0.0'
-const isDev = process.env['NODE_ENV'] !== 'production'
+const nodeEnv = process.env['NODE_ENV']
+const isProd = nodeEnv === 'production'
+const isDev = !isProd
 
 // ---------------------------------------------------------------------------
 // Auth config
 // ---------------------------------------------------------------------------
 
 const bypassAuth = process.env['BYPASS_AUTH'] === 'true'
+
+// Boot-time safety guard. Throws (refuses to start) if BYPASS_AUTH leaks into
+// a production deploy — that would grant unauthenticated full access to every
+// request. Also tells us when NODE_ENV is unset so we can warn loudly that
+// dev-mode auth fallbacks are silently active.
+const { nodeEnvUnset } = assertAuthBootSafety({ bypassAuth, nodeEnv })
+if (nodeEnvUnset) {
+  console.warn(
+    '[server] NODE_ENV is not set — running in DEV mode (dev-mode auth ' +
+      'fallbacks active). Set NODE_ENV=production for production deployments.',
+  )
+}
 
 const allowedEmails = (process.env['OIDC_ALLOWED_EMAILS'] ?? '')
   .split(',')
@@ -181,9 +195,22 @@ app.get('/health', async (_request, _reply) => {
   return { status: 'ok' }
 })
 
-// Prometheus metrics endpoint
-// TODO(M29): add Bearer token auth or IP allowlist
-await registerMetricsEndpoint(app)
+// Prometheus metrics endpoint.
+// /metrics leaks connection counts / doc sizes. In production it MUST be
+// gated by METRICS_TOKEN. If the token is unset/empty in prod we refuse to
+// register the route at all (rather than exposing it or boot-failing) — the
+// server keeps running, metrics are simply not reachable until a token is
+// configured. Dev keeps the loopback-only fallback (handled inside the
+// endpoint) so local scraping still works without a token.
+const metricsDecision = metricsRegistrationDecision({
+  nodeEnv,
+  metricsToken: process.env['METRICS_TOKEN'],
+})
+if (metricsDecision.register) {
+  await registerMetricsEndpoint(app)
+} else {
+  app.log.warn(metricsDecision.reason)
+}
 
 // Deck routes
 await registerDeckRoutes(app, db)
@@ -223,7 +250,7 @@ await registerPptxExportRoutes(app, db)
     verifier,
     spaOrigin,
     redirectUri,
-    isProd: !isDev,
+    isProd,
     allowlist: allowlistConfig,
   })
 }

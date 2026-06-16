@@ -19,7 +19,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import cookie from '@fastify/cookie'
-import { registerAuthPlugin, authPreHandler, requireDeckRole } from './fastifyAuth.js'
+import {
+  registerAuthPlugin,
+  authPreHandler,
+  requireDeckRole,
+  assertAuthBootSafety,
+} from './fastifyAuth.js'
 import { SESSION_COOKIE_NAME } from './session.js'
 import type { Database } from '../db/client.js'
 import type { DeckRole, DeckAccessResult } from './permissions.js'
@@ -250,5 +255,37 @@ describe('requireDeckRole (cookie-based)', () => {
     })
 
     expect(res.statusCode).toBe(401)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// assertAuthBootSafety — fail-fast guard against BYPASS_AUTH in production
+// ---------------------------------------------------------------------------
+
+describe('assertAuthBootSafety', () => {
+  it('THROWS when BYPASS_AUTH is on AND NODE_ENV=production', () => {
+    expect(() => assertAuthBootSafety({ bypassAuth: true, nodeEnv: 'production' })).toThrowError(
+      /BYPASS_AUTH.*production/i,
+    )
+  })
+
+  it('does NOT throw with BYPASS_AUTH on in dev (NODE_ENV=development)', () => {
+    expect(() => assertAuthBootSafety({ bypassAuth: true, nodeEnv: 'development' })).not.toThrow()
+  })
+
+  it('does NOT throw with BYPASS_AUTH on when NODE_ENV is unset (treated as dev)', () => {
+    const result = assertAuthBootSafety({ bypassAuth: true, nodeEnv: undefined })
+    expect(result.nodeEnvUnset).toBe(true)
+  })
+
+  it('does NOT throw in production when BYPASS_AUTH is off', () => {
+    const result = assertAuthBootSafety({ bypassAuth: false, nodeEnv: 'production' })
+    expect(result.nodeEnvUnset).toBe(false)
+  })
+
+  it('reports nodeEnvUnset=false when NODE_ENV is set', () => {
+    expect(assertAuthBootSafety({ bypassAuth: false, nodeEnv: 'development' }).nodeEnvUnset).toBe(
+      false,
+    )
   })
 })

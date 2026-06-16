@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
-import { registerMetricsEndpoint, metrics } from './index.js'
+import { registerMetricsEndpoint, metrics, metricsRegistrationDecision } from './index.js'
 
 describe('GET /metrics endpoint', () => {
   let app: FastifyInstance
@@ -133,5 +133,55 @@ describe('GET /metrics — loopback fallback when no token', () => {
       remoteAddress: '10.0.0.5',
     })
     expect(res.statusCode).toBe(403)
+  })
+})
+
+describe('metricsRegistrationDecision — prod must require a token', () => {
+  it('REFUSES registration in production when METRICS_TOKEN is unset', () => {
+    const d = metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: undefined })
+    expect(d.register).toBe(false)
+    if (!d.register) expect(d.reason).toMatch(/METRICS_TOKEN/)
+  })
+
+  it('REFUSES registration in production when METRICS_TOKEN is empty/whitespace', () => {
+    expect(metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: '' }).register).toBe(
+      false,
+    )
+    expect(
+      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: '   ' }).register,
+    ).toBe(false)
+  })
+
+  it('ALLOWS registration in production when METRICS_TOKEN is set', () => {
+    expect(
+      metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: 'secret' }).register,
+    ).toBe(true)
+  })
+
+  it('ALLOWS registration in dev even without a token (loopback fallback covers it)', () => {
+    expect(
+      metricsRegistrationDecision({ nodeEnv: 'development', metricsToken: undefined }).register,
+    ).toBe(true)
+  })
+
+  it('ALLOWS registration when NODE_ENV is unset (treated as dev)', () => {
+    expect(
+      metricsRegistrationDecision({ nodeEnv: undefined, metricsToken: undefined }).register,
+    ).toBe(true)
+  })
+})
+
+describe('GET /metrics — not registered without a token in prod (404)', () => {
+  it('returns 404 when the route was skipped (prod + no token)', async () => {
+    // Simulate the index.ts decision: in prod with no token we skip
+    // registerMetricsEndpoint entirely, so the route does not exist.
+    const decision = metricsRegistrationDecision({ nodeEnv: 'production', metricsToken: '' })
+    const app = Fastify({ logger: false })
+    if (decision.register) await registerMetricsEndpoint(app)
+    await app.ready()
+
+    const res = await app.inject({ method: 'GET', url: '/metrics' })
+    expect(res.statusCode).toBe(404)
+    await app.close()
   })
 })

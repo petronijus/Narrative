@@ -39,6 +39,40 @@ declare module 'fastify' {
 }
 
 // ---------------------------------------------------------------------------
+// Boot-time safety guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail-fast guard against shipping a dev auth bypass to production.
+ *
+ * BYPASS_AUTH=true synthesizes a `dev-user` principal for EVERY request — a
+ * total auth bypass. `isDev = NODE_ENV !== 'production'` also means an UNSET
+ * NODE_ENV is treated as dev, so a prod deploy that forgets NODE_ENV silently
+ * runs in dev-auth mode.
+ *
+ * Call this at boot (before the server starts listening):
+ *   - throws if BYPASS_AUTH is truthy AND NODE_ENV === 'production'
+ *   - returns `{ nodeEnvUnset }` so the caller can log a loud warning when
+ *     NODE_ENV is unset (= dev-mode auth in effect)
+ *
+ * Kept as a pure function (no process.env / console reads) so it is unit
+ * testable without booting the whole server.
+ */
+export function assertAuthBootSafety(opts: { bypassAuth: boolean; nodeEnv: string | undefined }): {
+  nodeEnvUnset: boolean
+} {
+  const isProd = opts.nodeEnv === 'production'
+  if (opts.bypassAuth && isProd) {
+    throw new Error(
+      'FATAL: BYPASS_AUTH is enabled while NODE_ENV=production. This would ' +
+        'grant unauthenticated full access to every request. Refusing to start. ' +
+        'Unset BYPASS_AUTH before deploying to production.',
+    )
+  }
+  return { nodeEnvUnset: !opts.nodeEnv }
+}
+
+// ---------------------------------------------------------------------------
 // Plugin registration
 // ---------------------------------------------------------------------------
 

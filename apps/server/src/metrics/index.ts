@@ -35,6 +35,36 @@ export interface MetricsEndpointOptions {
   loopbackOnlyWhenUnset?: boolean
 }
 
+/**
+ * Decides whether the /metrics route may be registered.
+ *
+ * /metrics leaks connection counts / doc sizes, so in production it MUST be
+ * gated by a token. If NODE_ENV=production and no METRICS_TOKEN is configured,
+ * we refuse to register the route at all (rather than exposing it or
+ * boot-failing): the server keeps running, /metrics is simply unreachable
+ * until a token is set. In non-prod the loopback fallback inside the endpoint
+ * keeps local scraping working, so registration is always allowed.
+ *
+ * Returns `{ register: false, reason }` to skip registration, else
+ * `{ register: true }`.
+ */
+export function metricsRegistrationDecision(opts: {
+  nodeEnv: string | undefined
+  metricsToken: string | undefined
+}): { register: true } | { register: false; reason: string } {
+  const isProd = opts.nodeEnv === 'production'
+  const token = (opts.metricsToken ?? '').trim()
+  if (isProd && token === '') {
+    return {
+      register: false,
+      reason:
+        'METRICS_TOKEN is unset in production — /metrics endpoint NOT registered. ' +
+        'Set METRICS_TOKEN to expose Prometheus metrics.',
+    }
+  }
+  return { register: true }
+}
+
 /** Length-safe constant-time string compare (timingSafeEqual throws on length mismatch). */
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a, 'utf8')
