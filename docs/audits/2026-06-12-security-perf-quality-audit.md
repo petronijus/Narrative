@@ -102,7 +102,15 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 - ☑ SVG content sanitization — `svgSanitize.ts`: DOMPurify (svg profile,
   forbid `script`/`foreignObject`/`on*`, `href` clamped to `#frag`/`data:image`)
   - sniff renamed SVGs + raster magic-byte check, wired into `tus.ts`
-    onUploadFinish (sanitize→rewrite, or reject+delete). · ☐ MEDIA-1 private bucket+presign
+    onUploadFinish (sanitize→rewrite, or reject+delete).
+- ☑ **MEDIA-1** private bucket + presigned URLs — minio-init `mc anonymous set
+none`; video playbackUrl (6h) + font-url (1h) presigned (`presignGetUrl`
+  reworked to sign against the public origin so SigV4 Host/path match post-Caddy
+  strip); images/thumbnails stay on imgproxy (server-side s3://, no expiry);
+  client made expiry-safe (video re-fetch on `<video error>`, font re-list,
+  mediaCache never caches presigned URLs). **HIGH blast radius — needs the
+  manual checklist run immediately on deploy (committed `9140ef4`, NOT yet
+  deployed).**
 - ☐ site-wide CSP
 - ☑ **CONN-1** Hocuspocus closes the revoked principal's live WS on share/
   permission/session revoke (`hocuspocus/connections.ts`, targeted — not
