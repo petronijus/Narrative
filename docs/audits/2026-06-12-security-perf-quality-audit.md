@@ -78,8 +78,9 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
   doc in one tx, `id < newId`), collapsing storage + cold-load from
   O(edits×doc) to O(doc). Load unchanged (applies all rows; full snapshots are
   idempotent → old multi-row decks load fine, compact on next store).
-  `persistence.ts` + `docs/adr/0006`. Pre-deploy: run one real-Postgres
-  store+load cycle (tests use a mock).
+  `persistence.ts` + `docs/adr/0006`. **Deployed** — server reloaded clean on
+  real data (no persistence errors, deck rows intact); compaction (N rows → 1)
+  triggers on each deck's first edit post-deploy.
 - ☐ PERF-3 thumbnail localStorage blob rewrite
 - ☐ PERF-4 table keystroke restyle / SceneGraph O(n²) / main.tsx Sentry TLA
 - ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
@@ -108,6 +109,31 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 **Quality P2**
 
 - ☐ dedupe `parseDataUrl` · ☐ `no-console` + logger · ☐ dead `packages/ui`
+
+### Deployed to prod — 2026-06-16
+
+Round-2 batch shipped to the prod VM (commits through `74be7b8` on `main`) and
+verified live: server/video-worker on new images, **PERF-1 + PERF-2 + pg pool
+sizing + migration 0015 (kind indexes) + SVG sanitization** all live, deck data
+intact, `/health` + `/storage` headers + thumbnails 200.
+
+Infra/build issues surfaced + fixed during these deploys (each was a latent
+landmine for every future deploy):
+
+- ☑ **`USE_SHARED_TUNNEL=1` missing from prod `.env.prod`** — deploy.sh ran
+  without the shared-tunnel overlay → internal services kept `127.0.0.1` host
+  ports → hit the Docker 29.4 stale-port bind bug on every redeploy. Root cause
+  of the 2026-06-14 port saga. Added to `.env.prod` + documented in
+  `.env.prod.example`.
+- ☑ **prod secrets now in the encrypted flow** — `infra/.env.prod` is SOPS-
+  encrypted as `env.prod.sops` in the private overlay; `secrets-decrypt.sh` /
+  `secrets-edit.sh` take a `[dev|prod]` target (was VM-only, no source of truth).
+- ☑ **`undici-types` pinned to 7.27.2** — `@types/jsdom@28` (SVG devDep) pulled
+  a <24h-old version that tripped pnpm's `minimumReleaseAge` supply-chain policy
+  in the Docker build.
+- ☑ **pnpm pinned to 9.15.4** (Dockerfiles + `packageManager`) — builds used
+  `corepack prepare pnpm@latest` ≠ the lockfile's generator, so adding an
+  `overrides` block broke the frozen install (`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`).
 
 ---
 
