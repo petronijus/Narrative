@@ -81,12 +81,17 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
   `persistence.ts` + `docs/adr/0006`. **Deployed** — server reloaded clean on
   real data (no persistence errors, deck rows intact); compaction (N rows → 1)
   triggers on each deck's first edit post-deploy.
-- ☐ PERF-3 thumbnail localStorage blob rewrite
-- ☐ PERF-4 table keystroke restyle / SceneGraph O(n²) / main.tsx Sentry TLA
+- ☑ PERF-3 thumbnail localStorage — per-deck keys + in-memory map +
+  migrate-on-read (was a ~2 MB blob rewrite per 500 ms thumbnail refresh)
+- ☑ PERF-4 — table per-cell restyle (fingerprint skip; only the edited cell
+  re-measures, not all N), SceneGraph child-order resync gated on add/remove
+  - id→index map (was O(n²)/frame on drag), textRenderer text-only patches
+    skip the HTMLTextStyle rebuild, main.tsx Sentry TLA → fire-and-forget
 - ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
   - idle/conn timeouts, env-overridable) · ☑ `media_assets` composite indexes
-    (hand-written migration `0015` + journal entry; applies at next `db:migrate`)
-    · ☐ async PPTX · ☐ route code-split
+    (hand-written migration `0015`) · ☑ route code-split (lazy editor/present
+    routes — main entry chunk ~772 KB → ~208 KB / 50 KB gzip) · ☐ async PPTX
+    (BullMQ — the one remaining perf item; feature-level refactor)
 - ☑ **drizzle-meta landmine** (surfaced by the indexes) — root cause: this repo
   hand-writes migrations + uses a custom per-statement-transaction migrator
   (`migrate.ts`, needed because drizzle's built-in single-tx migrator breaks
