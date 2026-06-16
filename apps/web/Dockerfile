@@ -2,7 +2,7 @@
 # Sestaví Vite produkční build (výstup do apps/web/dist/)
 FROM node:22-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 WORKDIR /app
 
