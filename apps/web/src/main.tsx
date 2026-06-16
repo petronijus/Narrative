@@ -104,21 +104,6 @@ window.addEventListener('blur', () => {
 // Declare global injected by Vite define
 declare const __BUILD_VERSION__: string
 
-// Sentry init — dev-gated, tiché bez DSN
-const sentryDsn = import.meta.env['VITE_SENTRY_DSN'] as string | undefined
-if (sentryDsn) {
-  // Lazy import — Sentry se nenačte pokud DSN není set (tree-shakeable)
-  const { init, browserTracingIntegration } = await import('@sentry/react')
-  init({
-    dsn: sentryDsn,
-    environment: import.meta.env.MODE,
-    integrations: [browserTracingIntegration()],
-    tracesSampleRate: 0.1,
-    release: __BUILD_VERSION__,
-  })
-  console.log('[sentry] Initialized (client)')
-}
-
 const rootEl = document.getElementById('root')
 if (!rootEl) {
   throw new Error('Root element #root not found')
@@ -129,3 +114,32 @@ createRoot(rootEl).render(
     <App />
   </StrictMode>,
 )
+
+// Sentry init — dev-gated, tiché bez DSN.
+//
+// PERF-4: fire-and-forget AFTER render. Previously this was a top-level
+// `await import('@sentry/react')` which — despite the "lazy" comment —
+// blocked createRoot().render() until the Sentry chunk downloaded + the
+// SDK initialised (~100–300 ms added to FCP/TTI). We now kick the import
+// off without awaiting it, so first paint never waits on Sentry. Sentry
+// installs its global error/unhandledrejection handlers on init(), so any
+// error thrown in the narrow window before init resolves simply isn't
+// captured — an acceptable trade for not delaying first paint.
+const sentryDsn = import.meta.env['VITE_SENTRY_DSN'] as string | undefined
+if (sentryDsn) {
+  // Lazy import — Sentry se nenačte pokud DSN není set (tree-shakeable).
+  void import('@sentry/react')
+    .then(({ init, browserTracingIntegration }) => {
+      init({
+        dsn: sentryDsn,
+        environment: import.meta.env.MODE,
+        integrations: [browserTracingIntegration()],
+        tracesSampleRate: 0.1,
+        release: __BUILD_VERSION__,
+      })
+      console.log('[sentry] Initialized (client)')
+    })
+    .catch((err) => {
+      console.warn('[sentry] init failed', err)
+    })
+}
