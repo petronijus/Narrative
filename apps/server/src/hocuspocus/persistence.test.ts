@@ -26,7 +26,7 @@
  *   - routing: folder:/component:/legacy-bare deck → správná "tabulka"
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as Y from 'yjs'
 import { PostgresPersistence } from './persistence.js'
 
@@ -401,5 +401,91 @@ describe('PostgresPersistence', () => {
     )
 
     expect(db._rowCountFor('viewer-block')).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // DOS-1: document size cap
+  // -------------------------------------------------------------------------
+  describe('DOS-1 size cap', () => {
+    const ORIGINAL_MAX = process.env['MAX_DOC_BYTES']
+
+    afterEach(() => {
+      if (ORIGINAL_MAX === undefined) delete process.env['MAX_DOC_BYTES']
+      else process.env['MAX_DOC_BYTES'] = ORIGINAL_MAX
+    })
+
+    /** Inflate a doc above `targetBytes` worth of encoded state. */
+    function inflate(d: Y.Doc, targetBytes: number) {
+      const arr = d.getArray<string>('blob')
+      d.transact(() => {
+        // ~1 KB per push; loop until encoded size clears the target.
+        while (Y.encodeStateAsUpdate(d).byteLength <= targetBytes) {
+          arr.push(['x'.repeat(1024)])
+        }
+      })
+    }
+
+    it('rejects a store whose growth exceeds MAX_DOC_BYTES and leaves the table untouched', async () => {
+      process.env['MAX_DOC_BYTES'] = '4096' // 4 KB cap
+      const db = makeFakeDb()
+      const persistence = new PostgresPersistence({ db: db as never })
+
+      inflate(doc, 8192) // ~8 KB > cap
+      await persistence.onStoreDocument(makePayload('deck:too-big', doc) as never)
+
+      // Nothing persisted — growth past the cap is refused.
+      expect(db._rowCountFor('too-big')).toBe(0)
+    })
+
+    it('persists a doc that stays under the cap', async () => {
+      process.env['MAX_DOC_BYTES'] = String(1024 * 1024) // 1 MB cap
+      const db = makeFakeDb()
+      const persistence = new PostgresPersistence({ db: db as never })
+
+      addObject(doc, 'small')
+      await persistence.onStoreDocument(makePayload('deck:small-ok', doc) as never)
+
+      expect(db._rowCountFor('small-ok')).toBe(1)
+    })
+
+    it('keeps an already-over-limit doc loadable: shrinking edits still persist', async () => {
+      // Cap is small; seed the growth baseline via onLoadDocument so the doc
+      // is treated as pre-existing/over-limit rather than fresh growth.
+      process.env['MAX_DOC_BYTES'] = '4096'
+      const db = makeFakeDb()
+      const persistence = new PostgresPersistence({ db: db as never })
+
+      // Build a >cap doc and seed a stored row representing it.
+      const big = new Y.Doc()
+      inflate(big, 8192)
+      db._seedRow('over-limit', Y.encodeStateAsUpdate(big))
+
+      // Load it — this seeds lastStoredBytes with the (over-cap) size.
+      const loaded = new Y.Doc()
+      await persistence.onLoadDocument(makePayload('deck:over-limit', loaded) as never)
+
+      // A re-store at the SAME (still over-cap) size is allowed because it is
+      // not growth — the doc must stay savable so an editor can shrink it.
+      await persistence.onStoreDocument(makePayload('deck:over-limit', loaded) as never)
+      const afterEqual = db._rowCountFor('over-limit')
+      expect(afterEqual).toBe(1) // compacted to a single snapshot, still persisted
+
+      // Now FURTHER growth past the already-over-cap baseline is refused.
+      inflate(loaded, Y.encodeStateAsUpdate(loaded).byteLength + 2048)
+      await persistence.onStoreDocument(makePayload('deck:over-limit', loaded) as never)
+      // Row count unchanged — the growth store was rejected.
+      expect(db._rowCountFor('over-limit')).toBe(afterEqual)
+    })
+
+    it('defaults to 32 MB when MAX_DOC_BYTES is unset', async () => {
+      delete process.env['MAX_DOC_BYTES']
+      const db = makeFakeDb()
+      const persistence = new PostgresPersistence({ db: db as never })
+
+      // A normal small doc must persist under the generous default.
+      addObject(doc, 'normal')
+      await persistence.onStoreDocument(makePayload('deck:default-cap', doc) as never)
+      expect(db._rowCountFor('default-cap')).toBe(1)
+    })
   })
 })

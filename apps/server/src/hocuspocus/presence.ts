@@ -27,6 +27,16 @@ export function setHocuspocusInstance(instance: Hocuspocus): void {
   serverInstance = instance
 }
 
+/**
+ * The live Hocuspocus instance, or null if the sync server has not been
+ * created yet (e.g. unit tests that only exercise HTTP routes). Used by
+ * connection-teardown helpers that need to enumerate live connections on
+ * access revocation (CONN-1).
+ */
+export function getHocuspocusInstance(): Hocuspocus | null {
+  return serverInstance
+}
+
 function isTrackable(userId: unknown): userId is string {
   if (typeof userId !== 'string' || userId.length === 0) return false
   // Share-token connections have no stable identity worth surfacing.

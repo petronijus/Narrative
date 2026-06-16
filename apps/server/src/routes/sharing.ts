@@ -32,6 +32,7 @@ import {
   type DeckRole,
 } from '../auth/permissions.js'
 import { createShareLink, revokeShareLink, listShareLinks } from '../auth/shareLinks.js'
+import { closeDeckConnections } from '../hocuspocus/connections.js'
 import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
 import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
 import { sendEmail } from '../email/client.js'
@@ -156,6 +157,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
           role,
           grantedBy: inviterSub,
         })
+
+        // CONN-1: a role change (editor → viewer downgrade in particular)
+        // doesn't re-run onAuthenticate on the already-open WS, so the user
+        // would keep their old (higher) access until reconnect. Close their
+        // live connections on this deck — they immediately reconnect and pick
+        // up the new role (read-only for viewers). Closing on an UPGRADE is
+        // harmless (a brief reconnect), so we don't bother distinguishing.
+        closeDeckConnections(id, { userId: existingUser.sub })
+
         return reply.status(200).send({
           kind: 'granted',
           user: {
@@ -261,6 +271,12 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
       }
 
       await revokePermission(db, { deckId: id, userId })
+
+      // CONN-1: kick the revoked user's live editing connections on this deck
+      // so they can't keep read-writing until they happen to disconnect.
+      // Targeted by userId — other collaborators and the owner stay connected.
+      closeDeckConnections(id, { userId })
+
       return reply.status(204).send()
     },
   )

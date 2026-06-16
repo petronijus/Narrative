@@ -175,6 +175,20 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
 
       data.context.role = access.role
 
+      // CONN-1: record the principal that authorised this connection so a
+      // later revocation can target exactly the right live connections.
+      //   - share-token connections carry the full token (userId is only the
+      //     truncated `share:<8>` display id, not enough to disambiguate).
+      //   - authenticated connections carry the real userId via displayId.
+      if (shareToken) {
+        data.context.shareToken = shareToken
+      }
+      // Resolve the bare deck id (strip the optional `deck:` prefix) so
+      // revoke sites can match on the same id the DB / routes use.
+      data.context.deckIdResolved = documentName.startsWith('deck:')
+        ? documentName.slice('deck:'.length)
+        : documentName
+
       // Mark connection as readOnly for viewer role.
       // Hocuspocus won't accept update messages from readOnly connections.
       connection.readOnly = access.role === 'viewer'

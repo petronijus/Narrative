@@ -40,6 +40,7 @@ import { randomBytes, createHash } from 'node:crypto'
 import { and, eq, gt, isNull, lt, or } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { sessions, type Session } from '../db/schema.js'
+import { closeUserConnections } from '../hocuspocus/connections.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -165,7 +166,22 @@ export function readCookieFromHeader(
 export async function revokeSession(db: Database, rawId: string): Promise<void> {
   if (!rawId) return
   const idHash = hashId(rawId)
-  await db.update(sessions).set({ revokedAt: new Date() }).where(eq(sessions.idHash, idHash))
+  // RETURNING the userSub lets us tear down that user's live WS connections.
+  const rows = await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(eq(sessions.idHash, idHash))
+    .returning({ userSub: sessions.userSub })
+
+  // CONN-1: a revoked session must not keep an already-open Hocuspocus
+  // connection alive. We can't map a specific session to a specific WS (the
+  // WS carries the cookie but we don't index connections by it), so we close
+  // ALL of this user's live connections. Coarseness: if the user is logged in
+  // on two devices and logs out of one, the other device's editor reconnects
+  // (its still-valid cookie re-authenticates immediately). That brief reconnect
+  // is an acceptable trade for guaranteeing the revoked device loses access.
+  const userSub = rows[0]?.userSub
+  if (userSub) closeUserConnections(userSub)
 }
 
 /** Revoke every active session for a given user (e.g. on allowlist removal). */
@@ -174,6 +190,11 @@ export async function revokeAllSessionsForUser(db: Database, userSub: string): P
     .update(sessions)
     .set({ revokedAt: new Date() })
     .where(and(eq(sessions.userSub, userSub), isNull(sessions.revokedAt)))
+
+  // CONN-1: every session for this user is now dead — close all their live
+  // connections across all docs. Their cookies are revoked so reconnect will
+  // fail at onAuthenticate.
+  closeUserConnections(userSub)
 }
 
 /**

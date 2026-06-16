@@ -48,6 +48,32 @@ import * as Y from 'yjs'
 import { and, eq, lt } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
+import { closeConnectionsForDocument } from './connections.js'
+
+// ---------------------------------------------------------------------------
+// DOS-1: per-document size cap.
+//
+// Any authenticated editor can stream unbounded updates, inflating both the
+// persisted snapshot and server memory without bound. We cap the encoded doc
+// size. The cap is on GROWTH, not absolute size, so we never lock an existing
+// over-limit doc out of being saved/shrunk:
+//
+//   reject a store iff  size > MAX_DOC_BYTES  AND  size > lastStoredSize
+//
+// i.e. a doc already above the limit may still be persisted as long as it is
+// not growing — an editor deleting content to get back under budget always
+// succeeds. A doc under the limit is always fine. Only net growth past the
+// limit is refused, and the offending connection(s) are disconnected.
+// ---------------------------------------------------------------------------
+
+function resolveMaxDocBytes(): number {
+  const raw = process.env['MAX_DOC_BYTES']
+  if (raw !== undefined) {
+    const n = Number.parseInt(raw, 10)
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return 32 * 1024 * 1024 // 32 MB default
+}
 
 // ---------------------------------------------------------------------------
 // Internal: parse doc name to determine storage backend
@@ -141,8 +167,22 @@ const BINDINGS: Record<DocKind, TableBinding> = {
 export class PostgresPersistence implements Extension {
   private readonly db: Database
 
+  /** DOS-1 cap (bytes). Resolved once at construction from MAX_DOC_BYTES. */
+  private readonly maxDocBytes: number
+
+  /**
+   * DOS-1: last successfully-persisted encoded size per document name. Drives
+   * the growth check — a store larger than BOTH the cap AND the last stored
+   * size is refused. Seeded on load (so a doc that was already over-limit when
+   * loaded isn't treated as "growth" on its first save). Bounded by the live
+   * document set: entries for unloaded docs are stale but harmless (a tiny
+   * string→number map) and re-seeded on next load.
+   */
+  private readonly lastStoredBytes = new Map<string, number>()
+
   constructor(opts: { db: Database }) {
     this.db = opts.db
+    this.maxDocBytes = resolveMaxDocBytes()
   }
 
   async onLoadDocument(data: onLoadDocumentPayload): Promise<Y.Doc | void> {
@@ -193,6 +233,12 @@ export class PostgresPersistence implements Extension {
     console.log(
       `[persistence] Loaded ${applied}/${rows.length} snapshot row(s) for ${target.kind}=${target.id}`,
     )
+
+    // DOS-1: seed the growth baseline with the freshly-loaded size, so a doc
+    // that is ALREADY over the cap at load time is not treated as "growth" on
+    // its first store (only further net growth past the cap is refused).
+    this.lastStoredBytes.set(data.documentName, Y.encodeStateAsUpdate(doc).byteLength)
+
     return doc
   }
 
@@ -217,6 +263,30 @@ export class PostgresPersistence implements Extension {
     // state, not a diff). This is what makes snapshot-compaction safe: the row
     // we are about to write fully supersedes every older row.
     const update = Y.encodeStateAsUpdate(data.document)
+
+    // DOS-1: refuse to persist net growth past the cap, and disconnect the
+    // editor(s) flooding this doc. We compare against BOTH the cap and the
+    // last persisted size so an already-over-limit doc can still be saved as
+    // long as it isn't growing (shrinking edits always succeed). We do NOT
+    // touch the existing rows — the doc stays loadable at its last good size.
+    const size = update.byteLength
+    const lastStored = this.lastStoredBytes.get(data.documentName)
+    if (size > this.maxDocBytes && (lastStored === undefined || size > lastStored)) {
+      console.error(
+        `[persistence] DOS-1 size cap hit for ${target.kind}=${target.id}: ` +
+          `${size} bytes > cap ${this.maxDocBytes} (last stored ${lastStored ?? 'none'}). ` +
+          `Refusing to persist growth and disconnecting connections on this doc.`,
+      )
+      // Kick the connection(s) on this doc so the flood stops. The client may
+      // reconnect, but it loads the last GOOD (≤ last-stored) snapshot, so it
+      // can't immediately re-flush the oversized state it just lost.
+      try {
+        closeConnectionsForDocument(data.documentName)
+      } catch (err) {
+        console.error(`[persistence] DOS-1 disconnect failed for ${data.documentName}:`, err)
+      }
+      return
+    }
 
     // Wrap the whole store in try/catch so a transient DB error (network blip,
     // pool exhaustion, deadlock) doesn't propagate up to Hocuspocus and
@@ -244,6 +314,9 @@ export class PostgresPersistence implements Extension {
         const count = (res as { rowCount?: number } | undefined)?.rowCount
         return typeof count === 'number' ? count : undefined
       })
+
+      // DOS-1: record the size we just persisted as the new growth baseline.
+      this.lastStoredBytes.set(data.documentName, size)
 
       const compactNote =
         deletedOlder === undefined ? '' : `, compacted ${deletedOlder} older row(s)`
