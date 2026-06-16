@@ -4,9 +4,34 @@
  * Custom Hocuspocus Extension pro Postgres persistence.
  * Implementuje onLoadDocument a onStoreDocument hooks.
  *
- * Strategy (M4 — append-only):
- *   onLoadDocument: načte všechny update rows pro dokument, aplikuje sekvenčně
- *   onStoreDocument: uloží Y.encodeStateAsUpdate() jako nový row
+ * Strategy (PERF-2 — snapshot-compaction; supersedes the M4 append-only log):
+ *   Every stored row is a *full, self-contained snapshot* of the doc — we call
+ *   `Y.encodeStateAsUpdate(doc)` with NO target state vector, which encodes the
+ *   entire document state, not a diff. The previous code appended one such
+ *   snapshot per debounced flush and never deleted anything, so the updates
+ *   table grew ~quadratically per editing session and cold-load replayed the
+ *   whole history (O(total-edits × doc-size)).
+ *
+ *   onStoreDocument now, inside a single DB transaction:
+ *     1. inserts the new full snapshot row, and
+ *     2. deletes every OLDER row for that doc (id < the just-inserted id).
+ *   This collapses storage and cold-load to O(doc-size) while keeping each row
+ *   self-contained — there is no fragile diff chain to corrupt.
+ *
+ *   onLoadDocument still applies *all* remaining rows sequentially. Because
+ *   each row is a full snapshot and Yjs updates are idempotent/commutative,
+ *   applying one-or-many full snapshots always yields the same state. This is
+ *   what makes the load backward-compatible: decks written by the old
+ *   append-only code hold many full-snapshot rows today, and they load
+ *   correctly; the FIRST store after deploy compacts them down to one row.
+ *
+ * Atomicity guarantee:
+ *   The insert-new + delete-old pair runs in one `db.transaction`. The delete
+ *   is keyed on `id < newId`, so it can never remove the row written in the
+ *   same transaction. A crash (or rolled-back tx) at any point leaves either
+ *   the full prior set of rows (tx never committed) or the prior set PLUS the
+ *   new snapshot (delete portion is part of the same atomic commit). There is
+ *   no window in which the doc has zero rows or an unloadable state.
  *
  * Hocuspocus volá onStoreDocument debounced (default 2s po posledním onChange),
  * takže při aktivní editaci neukladáme po každém znaku.
@@ -14,15 +39,13 @@
  * Doc name routing (M16 P2):
  *   `deck:<id>`   → deck_updates table, deckId column
  *   `folder:<id>` → folder_updates table, folderId column
+ *   `component:<id>` → component_updates table, componentId column
  *   Anything else is treated as a legacy bare deckId (backward compat).
- *
- * TODO(M29): kompakce — po N updatech sloučit do jednoho snapshot row
- *            (loadDocument je teď O(N) updates, pro tisíce updates zpomalí)
  */
 
 import type { Extension, onLoadDocumentPayload, onStoreDocumentPayload } from '@hocuspocus/server'
 import * as Y from 'yjs'
-import { eq } from 'drizzle-orm'
+import { and, eq, lt } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
 
@@ -30,10 +53,9 @@ import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
 // Internal: parse doc name to determine storage backend
 // ---------------------------------------------------------------------------
 
-type DocTarget =
-  | { kind: 'deck'; id: string }
-  | { kind: 'folder'; id: string }
-  | { kind: 'component'; id: string }
+type DocKind = 'deck' | 'folder' | 'component'
+
+type DocTarget = { kind: DocKind; id: string }
 
 function parseDocName(name: string): DocTarget {
   if (name.startsWith('folder:')) {
@@ -45,6 +67,71 @@ function parseDocName(name: string): DocTarget {
   // deck:<id> prefix OR legacy bare deck id (backward compat)
   const id = name.startsWith('deck:') ? name.slice('deck:'.length) : name
   return { kind: 'deck', id }
+}
+
+// ---------------------------------------------------------------------------
+// Internal: per-kind table binding. Each kind maps to its updates table plus
+// the typed column accessors we need (the FK id column and the serial id).
+// Collapsing the three near-identical branches into one config table keeps the
+// load/store/compaction logic single-sourced — adding a fourth doc kind is one
+// entry here, not three copy-pasted blocks.
+// ---------------------------------------------------------------------------
+
+type Tx = Parameters<Parameters<Database['transaction']>[0]>[0]
+type DbOrTx = Database | Tx
+
+interface TableBinding {
+  /** Run `fn` for the matching kind; returns its result. */
+  insertRow(db: DbOrTx, id: string, update: Uint8Array): Promise<{ id: number }[]>
+  selectRows(db: DbOrTx, id: string): Promise<{ update: Uint8Array }[]>
+  /** Delete every row for this doc with serial id strictly less than `keepFromId`. */
+  deleteOlder(db: DbOrTx, id: string, keepFromId: number): Promise<unknown>
+}
+
+const BINDINGS: Record<DocKind, TableBinding> = {
+  deck: {
+    insertRow: (db, id, update) =>
+      db.insert(deckUpdates).values({ deckId: id, update }).returning({ id: deckUpdates.id }),
+    selectRows: (db, id) =>
+      db
+        .select({ update: deckUpdates.update })
+        .from(deckUpdates)
+        .where(eq(deckUpdates.deckId, id))
+        .orderBy(deckUpdates.id),
+    deleteOlder: (db, id, keepFromId) =>
+      db.delete(deckUpdates).where(and(eq(deckUpdates.deckId, id), lt(deckUpdates.id, keepFromId))),
+  },
+  folder: {
+    insertRow: (db, id, update) =>
+      db.insert(folderUpdates).values({ folderId: id, update }).returning({ id: folderUpdates.id }),
+    selectRows: (db, id) =>
+      db
+        .select({ update: folderUpdates.update })
+        .from(folderUpdates)
+        .where(eq(folderUpdates.folderId, id))
+        .orderBy(folderUpdates.id),
+    deleteOlder: (db, id, keepFromId) =>
+      db
+        .delete(folderUpdates)
+        .where(and(eq(folderUpdates.folderId, id), lt(folderUpdates.id, keepFromId))),
+  },
+  component: {
+    insertRow: (db, id, update) =>
+      db
+        .insert(componentUpdates)
+        .values({ componentId: id, update })
+        .returning({ id: componentUpdates.id }),
+    selectRows: (db, id) =>
+      db
+        .select({ update: componentUpdates.update })
+        .from(componentUpdates)
+        .where(eq(componentUpdates.componentId, id))
+        .orderBy(componentUpdates.id),
+    deleteOlder: (db, id, keepFromId) =>
+      db
+        .delete(componentUpdates)
+        .where(and(eq(componentUpdates.componentId, id), lt(componentUpdates.id, keepFromId))),
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -61,11 +148,18 @@ export class PostgresPersistence implements Extension {
   async onLoadDocument(data: onLoadDocumentPayload): Promise<Y.Doc | void> {
     const target = parseDocName(data.documentName)
     const doc = data.document
+    const binding = BINDINGS[target.kind]
 
     // Apply rows individually wrapped in try/catch so a single corrupt
     // update buffer doesn't fail the entire load and drop the WS connection.
     // Corrupted rows are logged and skipped; the doc is still returned with
     // the largest possible recoverable state.
+    //
+    // Each row is a full, self-contained snapshot (see module header). After
+    // the first store under the compaction strategy there is normally exactly
+    // one row; old decks may still hold many. Applying all of them is always
+    // correct — Yjs updates are idempotent and commutative, so replaying N
+    // full snapshots yields the same state as replaying only the newest.
     const applyAll = (rows: ReadonlyArray<{ update: Uint8Array }>): number => {
       let applied = 0
       let skipped = 0
@@ -88,55 +182,23 @@ export class PostgresPersistence implements Extension {
       return applied
     }
 
-    if (target.kind === 'folder') {
-      const rows = await this.db
-        .select({ update: folderUpdates.update })
-        .from(folderUpdates)
-        .where(eq(folderUpdates.folderId, target.id))
-        .orderBy(folderUpdates.id)
-
-      if (rows.length === 0) return
-
-      const applied = applyAll(rows)
-      console.log(`[persistence] Loaded ${applied}/${rows.length} updates for folder=${target.id}`)
-      return doc
-    }
-
-    if (target.kind === 'component') {
-      const rows = await this.db
-        .select({ update: componentUpdates.update })
-        .from(componentUpdates)
-        .where(eq(componentUpdates.componentId, target.id))
-        .orderBy(componentUpdates.id)
-
-      if (rows.length === 0) return
-
-      const applied = applyAll(rows)
-      console.log(
-        `[persistence] Loaded ${applied}/${rows.length} updates for component=${target.id}`,
-      )
-      return doc
-    }
-
-    // deck (legacy bare id or deck:<id> prefix)
-    const rows = await this.db
-      .select({ update: deckUpdates.update })
-      .from(deckUpdates)
-      .where(eq(deckUpdates.deckId, target.id))
-      .orderBy(deckUpdates.id)
+    const rows = await binding.selectRows(this.db, target.id)
 
     if (rows.length === 0) {
-      // Prázdný deck — vrátíme void, Hocuspocus použije fresh Y.Doc
+      // Prázdný doc — vrátíme void, Hocuspocus použije fresh Y.Doc
       return
     }
 
     const applied = applyAll(rows)
-    console.log(`[persistence] Loaded ${applied}/${rows.length} updates for deck=${target.id}`)
+    console.log(
+      `[persistence] Loaded ${applied}/${rows.length} snapshot row(s) for ${target.kind}=${target.id}`,
+    )
     return doc
   }
 
   async onStoreDocument(data: onStoreDocumentPayload): Promise<void> {
     const target = parseDocName(data.documentName)
+    const binding = BINDINGS[target.kind]
     const ctx = data.context as { role?: string; userId?: string } | undefined
 
     // Defense-in-depth: skip persistence for viewer connections.
@@ -151,49 +213,50 @@ export class PostgresPersistence implements Extension {
       return
     }
 
+    // Full self-contained snapshot of the doc (no target state vector → entire
+    // state, not a diff). This is what makes snapshot-compaction safe: the row
+    // we are about to write fully supersedes every older row.
     const update = Y.encodeStateAsUpdate(data.document)
 
-    // Wrap the insert in try/catch so a transient DB error (network blip,
+    // Wrap the whole store in try/catch so a transient DB error (network blip,
     // pool exhaustion, deadlock) doesn't propagate up to Hocuspocus and
     // tear down the WebSocket connection — clients then have to reconnect
     // and lose the in-flight transaction. We log loudly so failures are
     // visible; future TODO is to push the update to a DLQ for replay.
     try {
-      if (target.kind === 'folder') {
-        await this.db.insert(folderUpdates).values({
-          folderId: target.id,
-          update,
-        })
-        console.log(
-          `[persistence] Stored update for folder=${target.id} (${update.byteLength} bytes)`,
-        )
-        return
-      }
-
-      if (target.kind === 'component') {
-        await this.db.insert(componentUpdates).values({
-          componentId: target.id,
-          update,
-        })
-        console.log(
-          `[persistence] Stored update for component=${target.id} (${update.byteLength} bytes)`,
-        )
-        return
-      }
-
-      await this.db.insert(deckUpdates).values({
-        deckId: target.id,
-        update,
+      // Atomic compaction: insert the new full snapshot, then delete every
+      // OLDER row in the SAME transaction. The delete is bounded by
+      // `id < newId`, so it can never remove the row we just inserted, and the
+      // commit is all-or-nothing — there is no window where the doc has zero
+      // rows. If the tx rolls back, the prior rows remain intact and the next
+      // debounced store retries.
+      const deletedOlder = await this.db.transaction(async (tx) => {
+        const inserted = await binding.insertRow(tx, target.id, update)
+        const newId = inserted[0]?.id
+        if (newId === undefined) {
+          // Should never happen (RETURNING on a successful insert), but if the
+          // driver gives us no id we must NOT run an unbounded delete — bail
+          // out of compaction and keep the row we just wrote.
+          throw new Error(`insert returned no id for ${target.kind}=${target.id}`)
+        }
+        const res = await binding.deleteOlder(tx, target.id, newId)
+        // node-postgres exposes rowCount on the result; best-effort for logging.
+        const count = (res as { rowCount?: number } | undefined)?.rowCount
+        return typeof count === 'number' ? count : undefined
       })
 
-      console.log(`[persistence] Stored update for deck=${target.id} (${update.byteLength} bytes)`)
+      const compactNote =
+        deletedOlder === undefined ? '' : `, compacted ${deletedOlder} older row(s)`
+      console.log(
+        `[persistence] Stored snapshot for ${target.kind}=${target.id} (${update.byteLength} bytes${compactNote})`,
+      )
     } catch (err) {
       // CRITICAL: a swallowed persistence error means the in-memory Y.Doc
       // diverges from the database. Hocuspocus retries onStoreDocument on
       // the next debounce window, so a transient DB error usually self-
       // heals. A persistent error is still data loss — surface it loudly.
       console.error(
-        `[persistence] FAILED to store update for ${target.kind}=${target.id} (${update.byteLength} bytes):`,
+        `[persistence] FAILED to store snapshot for ${target.kind}=${target.id} (${update.byteLength} bytes):`,
         err,
       )
     }

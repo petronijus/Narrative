@@ -264,11 +264,29 @@ describe('PostgresPersistence — viewer write blocking', () => {
     expect(mockDb.insert).not.toHaveBeenCalled()
   })
 
-  it('persists when context.role is editor', async () => {
-    const mockInsert = vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue([]) })
-    const mockDb = { insert: mockInsert }
+  // PERF-2: onStoreDocument now runs the insert+compaction-delete inside
+  // db.transaction(). This mock models the transactional store path: the tx
+  // exposes insert().values().returning() and delete().where(). We assert the
+  // non-viewer write actually reaches the insert inside the transaction.
+  function makeTxDb() {
+    const mockInsert = vi.fn().mockReturnValue({
+      values: vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([{ id: 1 }]),
+      }),
+    })
+    const mockDelete = vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue({ rowCount: 0 }),
+    })
+    const tx = { insert: mockInsert, delete: mockDelete }
+    const db = {
+      transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    }
+    return { db, mockInsert }
+  }
 
-    const persistence = new PostgresPersistence({ db: mockDb as unknown as Database })
+  it('persists when context.role is editor', async () => {
+    const { db, mockInsert } = makeTxDb()
+    const persistence = new PostgresPersistence({ db: db as unknown as Database })
     const doc = new Y.Doc()
 
     const payload: onStoreDocumentPayload = {
@@ -283,10 +301,8 @@ describe('PostgresPersistence — viewer write blocking', () => {
   })
 
   it('persists when context.role is owner', async () => {
-    const mockInsert = vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue([]) })
-    const mockDb = { insert: mockInsert }
-
-    const persistence = new PostgresPersistence({ db: mockDb as unknown as Database })
+    const { db, mockInsert } = makeTxDb()
+    const persistence = new PostgresPersistence({ db: db as unknown as Database })
     const doc = new Y.Doc()
 
     const payload: onStoreDocumentPayload = {
@@ -301,10 +317,8 @@ describe('PostgresPersistence — viewer write blocking', () => {
   })
 
   it('persists when context is undefined (unauthenticated server-side write)', async () => {
-    const mockInsert = vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue([]) })
-    const mockDb = { insert: mockInsert }
-
-    const persistence = new PostgresPersistence({ db: mockDb as unknown as Database })
+    const { db, mockInsert } = makeTxDb()
+    const persistence = new PostgresPersistence({ db: db as unknown as Database })
     const doc = new Y.Doc()
 
     const payload: onStoreDocumentPayload = {

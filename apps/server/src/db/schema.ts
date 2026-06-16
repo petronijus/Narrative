@@ -9,13 +9,18 @@
  *   deck_permissions — per-deck role per user (M10)
  *   share_links      — view/edit tokens for public sharing (M10)
  *
- * Persistence strategy (M4):
- *   onLoadDocument  → load all updates for a deck and apply sequentially
- *   onStoreDocument → save current Y.Doc state as a new update row
+ * Persistence strategy (PERF-2 — snapshot-compaction; supersedes M4 append-only):
+ *   Every *_updates row is a full, self-contained Y.Doc snapshot
+ *   (`Y.encodeStateAsUpdate(doc)` with no target state vector).
+ *   onStoreDocument  → insert the new snapshot, then delete older rows for that
+ *                      doc in the SAME transaction (keep only the latest).
+ *   onLoadDocument   → apply all remaining rows (normally one). Full snapshots
+ *                      are idempotent/commutative, so old multi-row decks still
+ *                      load correctly and compact on the next store.
+ *   No schema change was needed for PERF-2; the tables stay append-shaped, the
+ *   write path just prunes superseded rows. See docs/adr/0006-*.
  *
- * TODO(M22): version history — more sophisticated snapshot strategy
- * TODO(M29): compaction strategy — merge N old updates into 1 snapshot row
- *            so loadDocument is O(1) for decks with thousands of updates
+ * TODO(M22): version history — retain N snapshots / periodic checkpoints.
  */
 
 import {

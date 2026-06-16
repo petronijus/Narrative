@@ -34,17 +34,47 @@ import type { Database } from '../db/client.js'
 
 function makeMockDb() {
   const insertCalls: unknown[] = []
+  // Minimal fluent fake that satisfies the PERF-2 store path:
+  //   db.transaction(tx => tx.insert(...).values(...).returning() ;
+  //                        tx.delete(...).where(...))
+  // and the load path: db.select(...).from(...).where(...).orderBy(...).
+  // onLoadDocument returns no rows; onStoreDocument's insert/delete are no-ops
+  // (returning() yields a synthetic id so compaction's delete stays bounded).
+  let nextId = 1
+  // SELECT chain: select().from().where().orderBy() → []
+  function selectChain() {
+    const c: Record<string, unknown> = {}
+    c['from'] = vi.fn(() => c)
+    c['where'] = vi.fn(() => c)
+    c['orderBy'] = vi.fn().mockResolvedValue([])
+    return c
+  }
+  // INSERT chain: insert().values().returning() → [{ id }]
+  function insertChain() {
+    const c: Record<string, unknown> = {}
+    c['values'] = vi.fn((vals: unknown) => {
+      insertCalls.push(vals)
+      return c
+    })
+    c['returning'] = vi.fn(() => Promise.resolve([{ id: nextId++ }]))
+    return c
+  }
+  // DELETE chain: delete().where() → { rowCount }
+  function deleteChain() {
+    const c: Record<string, unknown> = {}
+    c['where'] = vi.fn(() => Promise.resolve({ rowCount: 0 }))
+    return c
+  }
+  function makeRunner() {
+    return {
+      select: vi.fn(() => selectChain()),
+      insert: vi.fn(() => insertChain()),
+      delete: vi.fn(() => deleteChain()),
+    }
+  }
   const db = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockResolvedValue([]),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockImplementation((vals: unknown) => {
-        insertCalls.push(vals)
-        return Promise.resolve()
-      }),
-    }),
+    ...makeRunner(),
+    transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(makeRunner())),
     _insertCalls: insertCalls,
   }
   return db as unknown as Database & { _insertCalls: unknown[] }
