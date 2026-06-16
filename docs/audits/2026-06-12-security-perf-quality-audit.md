@@ -201,6 +201,29 @@ frame-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`. Derived
   Sentry** (needs a worker DSN) · **CSRF token** (until SameSite relaxed / M24
   iframe embeds).
 
+### Verification — round 3 (2026-06-17)
+
+- **Static + unit**: `pnpm typecheck` (6 packages) ✅ · `pnpm lint` 0 errors ✅ ·
+  full unit/integration suite **1453 passing** (shared 13, video-worker 12,
+  slide-model 273 incl. new `shapeMask.test.ts`, animation 144, server 460 incl.
+  new zip-bomb tests, web 551 incl. the faithful playTransition mock) ✅ ·
+  `pnpm --filter web build` ✅. CSP verified against a real `caddy` run +
+  `caddy validate`.
+- **e2e (Playwright, local dev stack)**: ran the specs covering the changed
+  paths. Specs that self-create their deck and exercise the changes **pass** —
+  `slide-transition` (playTransition + animation compiler), `present-layout`,
+  `inspector-flows` rectangle/fill/text (editor + the applyShapeMask-importing
+  inspector loads & mutates correctly). The remaining failures are **not
+  attributable to these changes**: the `text-edit-*` / `htmltext-live-update`
+  specs hard-navigate to **pre-seeded fixture decks** (`GoYLg0H4-wSp`,
+  `FsVfor6N8cI0`) that don't exist in a fresh dev DB (confirmed 0 present) → the
+  editor never loads → `waitForTestApi` times out; and `object-context-menu`
+  fails on the right-click menu not opening, a path that executes none of the
+  changed code (consistent across 3 retries → pre-existing/environmental, not a
+  regression). Known gap: a local e2e run needs the fixture decks seeded.
+- Known pre-existing (unrelated to this round): Tiptap/ProseMirror vendor chunk
+  12.6 kB over its 120 kB size-limit budget — flagged, not silently bumped.
+
 ### Deployed to prod — 2026-06-16
 
 Round-2 batch shipped to the prod VM (commits through `74be7b8` on `main`) and
