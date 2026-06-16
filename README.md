@@ -437,9 +437,37 @@ Add to cron for automated backups:
 
 ## Secrets
 
-`.env` is gitignored and kept SOPS-encrypted in the private overlay
-(`private/config/env.sops`) so it syncs across machines without plaintext in
-git. With the overlay cloned into `./private` and the 1Password CLI signed in,
-run `./scripts/secrets-decrypt.sh` to materialize `.env` (the age private key is
-fetched from 1Password), or `./scripts/secrets-edit.sh` to change it.
-Prereqs: `brew install sops age`.
+Both the dev `.env` and the prod `infra/.env.prod` are gitignored and kept
+SOPS-encrypted in the private overlay so they sync across machines without
+plaintext in git:
+
+| Target | Encrypted (overlay)            | Materializes to     |
+| ------ | ------------------------------ | ------------------- |
+| `dev`  | `private/config/env.sops`      | `./.env`            |
+| `prod` | `private/config/env.prod.sops` | `./infra/.env.prod` |
+
+With the overlay cloned into `./private` and the 1Password CLI signed in:
+
+```bash
+./scripts/secrets-decrypt.sh [dev|prod]   # materialize the env file (default dev)
+./scripts/secrets-edit.sh    [dev|prod]   # decrypt → $EDITOR → re-encrypt in place
+```
+
+The age private key is fetched from 1Password at runtime (never written to
+disk); the public recipient lives in the overlay's `.sops.yaml`. After editing,
+commit the updated `*.sops` in the **private overlay** repo. Prereqs:
+`brew install sops age`.
+
+**Prod note:** `secrets-decrypt.sh prod` writes `infra/.env.prod` _locally_ — it
+still has to reach the VM. After changing a prod secret:
+
+```bash
+./scripts/secrets-edit.sh prod                  # edit + re-encrypt; commit in ./private
+./scripts/secrets-decrypt.sh prod               # materialize infra/.env.prod locally
+scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod
+ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
+```
+
+The encrypted `env.prod.sops` is the source of truth — ad-hoc edits made
+directly on the VM (e.g. `USE_SHARED_TUNNEL=1`) should be folded back into it via
+`secrets-edit.sh prod` so they aren't lost on a rebuild.
