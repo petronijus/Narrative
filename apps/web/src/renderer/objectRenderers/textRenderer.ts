@@ -829,8 +829,18 @@ export const textRenderer = {
             return { ...fallback, ...patch } as TextObject
           })()
 
-    if (textChanged || listChanged || needsStyleRebuild) {
+    // PERF-4: split the style rebuild from the text/list refresh. The
+    // file header promises "text-only → set textNode.text only, NO style
+    // rebuild", but the old single branch reassigned
+    // `textNode.style = new HTMLTextStyle(...)` on EVERY keystroke. The
+    // styleKey is unchanged so Pixi doesn't re-raster the glyph atlas,
+    // but the `.style` setter still forces an extra text measure per
+    // keystroke. We now rebuild the style only when a typography field
+    // actually changed; a pure text/list edit just updates `.text`.
+    if (needsStyleRebuild) {
       textNode.style = new HTMLTextStyle(buildStyleOpts(merged))
+    }
+    if (textChanged || listChanged || needsStyleRebuild) {
       // The HTML always tracks the merged data — text changes,
       // listStyle, italic / underline / weight defaults all affect
       // the emitted markup.

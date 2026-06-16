@@ -121,6 +121,20 @@ interface CellNode {
   clip: Container
   mask: Graphics
   htmlText: HTMLText
+  /**
+   * PERF-4: fingerprint of every input that `updateCellNode` consumes —
+   * the resolved bbox, the resolved cell style, and the rendered HTML
+   * string. A single cell Y.Text edit is emitted by state-sync as a
+   * whole-`rows` patch, so `reconcileCells` walks EVERY cell. Without a
+   * fingerprint each visit ran `new HTMLTextStyle(...)` + `buildHtml`
+   * (Y.Text toDelta walk) + `applyVerticalAlign` (which reads
+   * `htmlText.height`, forcing a Pixi/DOM measure). An 80-cell table
+   * therefore re-measured 80 cells per keystroke. With the fingerprint
+   * we skip `updateCellNode` for every cell whose resolved
+   * bbox+style+html is byte-identical to the previous render, so only
+   * the actually-edited cell pays the restyle + measure cost.
+   */
+  fingerprint: string
 }
 
 function resolveBorderColour(b: TableBorderStyle | undefined, fallback: number): number {
@@ -776,6 +790,49 @@ function strokeEdge(
 }
 
 /**
+ * PERF-4: fingerprint of every input `updateCellNode` consumes. A whole-
+ * `rows` patch (state-sync emits one for a single cell Y.Text edit)
+ * walks every cell; this string lets `reconcileCells` skip the restyle
+ * + measure for cells whose visual inputs are unchanged.
+ *
+ * Inputs:
+ *   - bbox geometry (drives clip position, mask, wordWrap width, vAlign)
+ *   - the resolved style fields that feed `buildStyleOpts` /
+ *     `applyHorizontalAlign` / `applyVerticalAlign`
+ *   - the rendered HTML (captures Y.Text content + per-run formatting,
+ *     which never surface as a `cell` field diff because they mutate
+ *     inside the same Y.Text instance)
+ *
+ * The HTML is the load-bearing part for the typing path: an edit to one
+ * cell's Y.Text changes only that cell's `html`, so only that cell's
+ * fingerprint moves and only it gets re-styled.
+ */
+function cellRenderFingerprint(
+  bbox: { x: number; y: number; w: number; h: number },
+  style: ResolvedCellStyle,
+  html: string,
+): string {
+  const geom = `${bbox.x.toFixed(2)},${bbox.y.toFixed(2)},${bbox.w.toFixed(2)},${bbox.h.toFixed(2)}`
+  const pad = `${style.padding.top},${style.padding.right},${style.padding.bottom},${style.padding.left}`
+  const sty = [
+    style.fontSize,
+    style.fontWeight,
+    style.italic ? 1 : 0,
+    style.underline ? 1 : 0,
+    style.lineHeight,
+    style.letterSpacing,
+    style.textTransform,
+    style.paragraphSpaceBefore,
+    style.paragraphSpaceAfter,
+    style.color,
+    style.align,
+    style.vAlign,
+    style.fontFamily,
+  ].join('|')
+  return `${geom}|${pad}|${sty}|${html}`
+}
+
+/**
  * Mount a fresh HTMLText subtree for one cell. Returns the CellNode
  * so the caller can store it for cross-update reuse.
  */
@@ -792,11 +849,12 @@ function mountCellNode(
   const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
   const syn = syntheticCellTextObject(cellId, cell, style, innerW, innerH)
 
+  const html = buildHtml(syn)
   const htmlText = new HTMLText({ text: '', style: new HTMLTextStyle(buildStyleOpts(syn)) })
   // Per-cell uid prefix avoids Pixi's HTMLText global texture cache
   // collision when two cells happen to carry byte-identical content
   // (same comment as in textRenderer.buildHtmlForNode).
-  htmlText.text = `<!--n:${htmlText.uid}-->${buildHtml(syn)}`
+  htmlText.text = `<!--n:${htmlText.uid}-->${html}`
   wireRedrawOnAsyncTextureUpdate(htmlText)
   scheduleAsyncTextureCatchup(
     htmlText as unknown as { __narrativeCatchupActive?: boolean; destroyed?: boolean },
@@ -817,7 +875,13 @@ function mountCellNode(
   clip.mask = mask
   parent.addChild(clip)
 
-  return { yText: cell.text, clip, mask, htmlText }
+  return {
+    yText: cell.text,
+    clip,
+    mask,
+    htmlText,
+    fingerprint: cellRenderFingerprint(bbox, style, html),
+  }
 }
 
 /**
@@ -825,6 +889,14 @@ function mountCellNode(
  * containing bbox changed. Reuses the HTMLText so its async raster
  * lifecycle isn't disrupted — Pixi's HTMLText only re-rasterises when
  * the `text` string actually differs.
+ *
+ * PERF-4: returns early when the cell's resolved bbox + style + html is
+ * byte-identical to the last render (`node.fingerprint`). This is the
+ * hot-path win on the typing flow — a one-cell edit arrives as a whole-
+ * `rows` patch, so every cell is visited, but only the edited cell's
+ * fingerprint actually moves. The `new HTMLTextStyle(...)` +
+ * `applyVerticalAlign` (which reads `htmlText.height`, forcing a
+ * Pixi/DOM measure) now run for that single cell instead of all N.
  */
 function updateCellNode(
   node: CellNode,
@@ -838,7 +910,11 @@ function updateCellNode(
   const innerH = Math.max(1, bbox.h - style.padding.top - style.padding.bottom)
   const syn = syntheticCellTextObject(cellId, cell, style, innerW, innerH)
 
-  node.htmlText.text = `<!--n:${node.htmlText.uid}-->${buildHtml(syn)}`
+  const html = buildHtml(syn)
+  const fingerprint = cellRenderFingerprint(bbox, style, html)
+  if (fingerprint === node.fingerprint) return
+
+  node.htmlText.text = `<!--n:${node.htmlText.uid}-->${html}`
   node.htmlText.style = new HTMLTextStyle(buildStyleOpts(syn))
   applyHorizontalAlign(node.htmlText, syn)
   applyVerticalAlign(node.htmlText, syn)
@@ -849,6 +925,8 @@ function updateCellNode(
   node.clip.y = bbox.y
   node.mask.clear()
   node.mask.rect(0, 0, bbox.w, bbox.h).fill({ color: 0xffffff })
+
+  node.fingerprint = fingerprint
 }
 
 /**

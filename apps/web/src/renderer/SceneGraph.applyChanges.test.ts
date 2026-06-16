@@ -173,6 +173,51 @@ describe('SceneGraph.applyChanges()', () => {
     })
   })
 
+  describe('PERF-4 child-order resync gating', () => {
+    it('skips the resync entirely on update-only change sets', () => {
+      sg.applyChanges({ ...emptyChangeSet(), added: [rect1, rect2] })
+      const spy = vi.spyOn(
+        sg.rootContainer as unknown as { setChildIndex: (...a: unknown[]) => void },
+        'setChildIndex',
+      )
+
+      // Pure {x,y} drag patch — order provably can't have changed, so
+      // the O(n) snapshot walk + getChildIndex scans must not run.
+      sg.applyChanges({
+        ...emptyChangeSet([rect1, rect2]),
+        updated: [{ id: 'r1', patch: { x: 10 } }],
+      })
+
+      expect(spy).not.toHaveBeenCalled()
+      spy.mockRestore()
+    })
+
+    it('reorders on add when the snapshot order differs from insertion order', () => {
+      // Add r1 then r2 (insertion order: r1, r2 → child indices 0, 1).
+      sg.applyChanges({ ...emptyChangeSet(), added: [rect1] })
+
+      const spy = vi.spyOn(
+        sg.rootContainer as unknown as { setChildIndex: (...a: unknown[]) => void },
+        'setChildIndex',
+      )
+
+      // Now add r2 but the snapshot places it BEFORE r1 (a send-to-back
+      // style insert). The resync must move r2 to index 0.
+      sg.applyChanges({
+        ...emptyChangeSet([rect2, rect1]),
+        added: [rect2],
+      })
+
+      expect(spy).toHaveBeenCalled()
+      // r2's container should end up before r1's in the child list.
+      const r2c = sg.getNode('r2')!.container
+      const r1c = sg.getNode('r1')!.container
+      const children = sg.rootContainer.children as unknown as Container[]
+      expect(children.indexOf(r2c)).toBeLessThan(children.indexOf(r1c))
+      spy.mockRestore()
+    })
+  })
+
   describe('nodeTypes tracking', () => {
     it('render() plní nodeTypes správně — backward compat', () => {
       sg.render([rect1, rect2])

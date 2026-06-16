@@ -308,17 +308,17 @@ export class SceneGraph {
     // added X" would leave X drawn on top even though Y.Doc moved it
     // to the back. The artboard-background container (P2) is pinned at
     // child 0, so object containers live from `bgOffset` onward.
-    const bgOffset = this.backgroundContainer !== null ? 1 : 0
-    for (let i = 0; i < changes.snapshot.length; i++) {
-      const obj = changes.snapshot[i]
-      if (obj === undefined) continue
-      const node = this.nodes.get(obj.id)
-      if (node === undefined) continue
-      const targetIdx = i + bgOffset
-      const currentIdx = this.root.getChildIndex(node.container)
-      if (currentIdx !== targetIdx && targetIdx < this.root.children.length) {
-        this.root.setChildIndex(node.container, targetIdx)
-      }
+    //
+    // PERF-4: a layer reorder ALWAYS expresses as remove+add (Y.Array
+    // move = delete + reinsert), so the snapshot's relative order can
+    // only have changed when this change set added or removed something.
+    // Pure `{x,y}` drag patches (the per-frame hot path) carry no
+    // add/remove, so we skip the resync entirely for them — on a
+    // 300-object slide the old unconditional loop ran ~300
+    // `getChildIndex` (`Array.indexOf`, O(n)) scans = ~90k comparisons
+    // per dragged frame for an order that provably can't have moved.
+    if (changes.added.length > 0 || changes.removed.length > 0) {
+      this.resyncChildOrder(changes.snapshot)
     }
 
     // 4. Update (patch-based)
@@ -366,6 +366,54 @@ export class SceneGraph {
 
     if (changes.removed.length > 0 || changes.added.length > 0 || changes.updated.length > 0) {
       this.markDirty()
+    }
+  }
+
+  /**
+   * PERF-4: re-sync Pixi child order to match `snapshot`, building a
+   * single Container→currentIndex map up front so each entry is an O(1)
+   * lookup instead of `root.getChildIndex` (an `Array.indexOf`, O(n)).
+   *
+   * `setChildIndex` mutates `root.children`, which invalidates the
+   * cached indices, so the map is rebuilt lazily only when a move
+   * actually happens. In the common case where the snapshot already
+   * matches the live child order (e.g. an add that appended in the
+   * right place) no moves fire and the map is built exactly once.
+   */
+  private resyncChildOrder(snapshot: readonly (SlideObject | undefined)[]): void {
+    const bgOffset = this.backgroundContainer !== null ? 1 : 0
+    const childCount = this.root.children.length
+
+    // Container → current index, built once (O(n)).
+    let indexOf = new Map<Container, number>()
+    for (let i = 0; i < this.root.children.length; i++) {
+      const child = this.root.children[i]
+      if (child !== undefined) indexOf.set(child, i)
+    }
+
+    let dirty = false
+    for (let i = 0; i < snapshot.length; i++) {
+      const obj = snapshot[i]
+      if (obj === undefined) continue
+      const node = this.nodes.get(obj.id)
+      if (node === undefined) continue
+      const targetIdx = i + bgOffset
+      if (targetIdx >= childCount) continue
+      // A previous setChildIndex this pass invalidated the cached map;
+      // rebuild before reading so we don't move based on stale indices.
+      if (dirty) {
+        indexOf = new Map<Container, number>()
+        for (let j = 0; j < this.root.children.length; j++) {
+          const child = this.root.children[j]
+          if (child !== undefined) indexOf.set(child, j)
+        }
+        dirty = false
+      }
+      const currentIdx = indexOf.get(node.container)
+      if (currentIdx !== undefined && currentIdx !== targetIdx) {
+        this.root.setChildIndex(node.container, targetIdx)
+        dirty = true
+      }
     }
   }
 

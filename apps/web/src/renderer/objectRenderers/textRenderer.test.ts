@@ -24,8 +24,13 @@
  * regression these tests prevent.
  */
 
-import { describe, it, expect } from 'vitest'
-import { buildStyleOpts } from './textRenderer.js'
+import { describe, it, expect, vi } from 'vitest'
+import { pixiMock } from '../../test/pixiMock'
+
+vi.mock('pixi.js', () => pixiMock())
+
+import { Container, HTMLText } from 'pixi.js'
+import { buildStyleOpts, textRenderer } from './textRenderer.js'
 import type { TextObject } from '@narrative/shared'
 
 function makeText(overrides: Partial<TextObject> = {}): TextObject {
@@ -100,5 +105,76 @@ describe('buildStyleOpts — Pixi HTMLText cache + CSS bridge', () => {
     // another generic — cssFontFamily detects the comma and returns the
     // input unchanged.
     expect(opts.cssOverrides[0]).toContain('Roboto, sans-serif')
+  })
+})
+
+/**
+ * PERF-4 — text-only patches must NOT rebuild the HTMLTextStyle.
+ *
+ * The file header promises "text-only → set textNode.text only, NO
+ * style rebuild", but the old single branch reassigned
+ * `textNode.style = new HTMLTextStyle(...)` on every keystroke. Even
+ * though the styleKey is unchanged (so no GPU re-raster), the `.style`
+ * setter forces an extra text measure per keystroke. These tests lock
+ * the split: only a typography change swaps the style instance.
+ */
+describe('textRenderer.applyPatch — PERF-4 style-rebuild gating', () => {
+  function makeText(overrides: Partial<TextObject> = {}): TextObject {
+    return {
+      id: 't1',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 60,
+      rotation: 0,
+      opacity: 1,
+      text: 'hi',
+      fontSize: 18,
+      fontWeight: 'normal',
+      color: 0x111111,
+      align: 'left',
+      ...overrides,
+    } as TextObject
+  }
+
+  function getTextNode(node: Container): HTMLText {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const child = node.children.find((c) => (c as any).anchor !== undefined)
+    return child as unknown as HTMLText
+  }
+
+  it('does NOT swap the style instance on a text-only patch', () => {
+    const node = textRenderer.mount(makeText())
+    const textNode = getTextNode(node)
+    const styleBefore = textNode.style
+    const htmlBefore = textNode.text
+
+    textRenderer.applyPatch(node, { text: 'hello there' })
+
+    // Same HTMLTextStyle reference — not rebuilt.
+    expect(textNode.style).toBe(styleBefore)
+    // But the HTML body DID update.
+    expect(textNode.text).not.toBe(htmlBefore)
+  })
+
+  it('does NOT swap the style instance on a transform-only patch', () => {
+    const node = textRenderer.mount(makeText())
+    const textNode = getTextNode(node)
+    const styleBefore = textNode.style
+
+    textRenderer.applyPatch(node, { x: 42, y: 7 })
+
+    expect(textNode.style).toBe(styleBefore)
+  })
+
+  it('DOES swap the style instance when a typography field changes', () => {
+    const node = textRenderer.mount(makeText())
+    const textNode = getTextNode(node)
+    const styleBefore = textNode.style
+
+    textRenderer.applyPatch(node, { fontSize: 36 })
+
+    expect(textNode.style).not.toBe(styleBefore)
   })
 })
