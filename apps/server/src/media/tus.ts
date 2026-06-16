@@ -40,9 +40,10 @@ import { Server as TusServer } from '@tus/server'
 import type { Upload } from '@tus/server'
 import { S3Store } from '@tus/s3-store'
 import type { S3ClientConfig } from '@aws-sdk/client-s3'
-import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
 import { createMediaAsset } from './assets.js'
+import { sanitizeSvg, sniffIsSvg, magicBytesMatch, MAGIC_CHECKED_MIMES } from './svgSanitize.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { parseFontMetadata } from './fontMetadata.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
@@ -276,6 +277,17 @@ async function deleteMinIOObject(s3: S3Client, storageKey: string): Promise<void
   } catch (err) {
     console.warn('[tus] DeleteObject failed for', storageKey, err)
   }
+}
+
+/** Reads the full S3 object at storageKey into a Buffer. Throws on failure. */
+async function getObjectBytes(s3: S3Client, storageKey: string): Promise<Buffer> {
+  const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: storageKey }))
+  if (!obj.Body) throw new Error(`S3 returned empty body for ${storageKey}`)
+  const chunks: Buffer[] = []
+  for await (const chunk of obj.Body as Readable) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
+  }
+  return Buffer.concat(chunks)
 }
 
 // `decks` is imported up top to satisfy the unused-import lint; the
@@ -774,8 +786,93 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       }
 
       // -----------------------------------------------------------------------
-      // Image branch: probe dimensions, insert row with kind='image'
+      // Image branch: validate content, then probe dimensions + insert row.
+      //
+      // XSS-3 defense-in-depth: an uploaded "image" can be (a) an SVG carrying
+      // active content, or (b) a raster MIME whose bytes are actually something
+      // else (a script / PE binary renamed .png). We read the head bytes, and:
+      //   - if it sniffs as SVG (declared image/svg+xml OR `.png`-renamed SVG),
+      //     sanitize the full bytes through DOMPurify and write the cleaned
+      //     version back to the SAME key/content-type, or reject if nothing
+      //     usable survives;
+      //   - else, for a declared raster MIME we magic-check, reject when the
+      //     signature doesn't match the declared type.
+      // This runs BEFORE the media_assets row is created, so a rejected upload
+      // never produces a DB record (and the stored object is deleted).
       // -----------------------------------------------------------------------
+      {
+        let headBytes: Buffer
+        try {
+          // First ~64 KB is enough to sniff SVG/XML and any raster signature.
+          const obj = await s3.send(
+            new GetObjectCommand({ Bucket: BUCKET, Key: storageKey, Range: 'bytes=0-65535' }),
+          )
+          if (!obj.Body) throw new Error('empty body')
+          const chunks: Buffer[] = []
+          for await (const chunk of obj.Body as Readable) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
+          }
+          headBytes = Buffer.concat(chunks)
+        } catch (err) {
+          console.error('[tus] image content read failed:', err)
+          await deleteMinIOObject(s3, storageKey)
+          throw { status_code: 400, body: 'Failed to read uploaded image for validation.' }
+        }
+
+        const declaredMime = mimeRaw.toLowerCase()
+        const looksSvg = declaredMime === 'image/svg+xml' || sniffIsSvg(headBytes)
+
+        if (looksSvg) {
+          // Sanitize the FULL object (not just the 64 KB head) so we never
+          // truncate a large legitimate SVG. Re-read in full.
+          let fullBytes: Buffer
+          try {
+            fullBytes = await getObjectBytes(s3, storageKey)
+          } catch (err) {
+            console.error('[tus] SVG full read failed:', err)
+            await deleteMinIOObject(s3, storageKey)
+            throw { status_code: 400, body: 'Failed to read uploaded SVG for sanitization.' }
+          }
+
+          const cleaned = sanitizeSvg(fullBytes)
+          if (!cleaned) {
+            await deleteMinIOObject(s3, storageKey)
+            throw {
+              status_code: 400,
+              body: 'SVG rejected: no valid graphic content after sanitization.',
+            }
+          }
+
+          // Only rewrite when sanitization actually changed the bytes.
+          if (!cleaned.equals(fullBytes)) {
+            try {
+              await s3.send(
+                new PutObjectCommand({
+                  Bucket: BUCKET,
+                  Key: storageKey,
+                  Body: cleaned,
+                  ContentType: 'image/svg+xml',
+                }),
+              )
+              sizeBytes = cleaned.byteLength
+            } catch (err) {
+              console.error('[tus] sanitized SVG PutObject failed:', err)
+              await deleteMinIOObject(s3, storageKey)
+              throw { status_code: 500, body: 'Failed to store sanitized SVG.' }
+            }
+          }
+        } else if (
+          MAGIC_CHECKED_MIMES.has(declaredMime) &&
+          !magicBytesMatch(declaredMime, headBytes)
+        ) {
+          // Declared a raster type whose actual signature disagrees — reject.
+          await deleteMinIOObject(s3, storageKey)
+          throw {
+            status_code: 400,
+            body: `Upload rejected: file content does not match declared type ${mimeRaw}.`,
+          }
+        }
+      }
 
       // Probe image dimensions (non-fatal if probe fails)
       let dims: { width: number; height: number } | undefined

@@ -47,12 +47,83 @@ vi.mock('@tus/s3-store', () => ({
   }),
 }))
 
+// Valid signatures so the image-branch magic-byte check passes for the
+// existing image upload tests. We return bytes whose signature matches the
+// object key's extension (the storageKey ends in original.<ext>), so a
+// .jpg upload reads back JPEG bytes and a .png reads back PNG bytes. The
+// dedicated rejection-path coverage lives in svgSanitize.test.ts.
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00])
+const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])
+
+// A hostile SVG returned for .svg keys so the onUploadFinish SVG path can be
+// exercised end-to-end (sanitize → PutObject). Overridable per-test.
+let svgBytesForGet: Buffer = Buffer.from(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script><rect width="10" height="10" onload="x()"/></svg>`,
+  'utf8',
+)
+
+// The S3 Key is the compound upload id `assetId:deckId:<base64url(path)>`;
+// the real file extension lives in the base64url-encoded path segment, so we
+// decode it to decide which signature bytes to hand back.
+function decodedExt(key: string | undefined): string {
+  if (!key) return ''
+  const seg = key.split(':')[2]
+  if (!seg) return key // not a compound id — match against raw key
+  try {
+    return Buffer.from(seg, 'base64url').toString('utf8')
+  } catch {
+    return key
+  }
+}
+
+function bytesForKey(key: string | undefined): Buffer {
+  const path = decodedExt(key)
+  if (/\.svg$/i.test(path)) return svgBytesForGet
+  if (/\.jpe?g$/i.test(path)) return JPEG_BYTES
+  return PNG_BYTES
+}
+
+// Last-built S3 send mock, so tests can inspect PutObject/DeleteObject calls.
+let lastS3Send: ReturnType<typeof vi.fn>
+
+// Discriminate command instances by a `__type` tag set in the constructor mock
+// so the shared `send` can answer Head vs Get vs Put vs Delete appropriately.
+function makeS3Send() {
+  const send = vi.fn().mockImplementation(async (cmd: { __type?: string; Key?: string }) => {
+    switch (cmd?.__type) {
+      case 'get': {
+        const { Readable } = await import('node:stream')
+        const bytes = bytesForKey(cmd.Key)
+        return { ContentLength: bytes.length, Body: Readable.from([bytes]) }
+      }
+      case 'put':
+      case 'delete':
+        return {}
+      case 'head':
+      default:
+        return { ContentLength: 1024 }
+    }
+  })
+  lastS3Send = send
+  return send
+}
+
 vi.mock('@aws-sdk/client-s3', () => ({
   S3Client: vi.fn().mockImplementation(function () {
-    return { send: vi.fn().mockResolvedValue({ ContentLength: 1024 }) }
+    return { send: makeS3Send() }
   }),
-  GetObjectCommand: vi.fn(),
-  HeadObjectCommand: vi.fn(),
+  GetObjectCommand: vi.fn().mockImplementation(function (input: Record<string, unknown>) {
+    return { __type: 'get', ...input }
+  }),
+  HeadObjectCommand: vi.fn().mockImplementation(function (input: Record<string, unknown>) {
+    return { __type: 'head', ...input }
+  }),
+  PutObjectCommand: vi.fn().mockImplementation(function (input: Record<string, unknown>) {
+    return { __type: 'put', ...input }
+  }),
+  DeleteObjectCommand: vi.fn().mockImplementation(function (input: Record<string, unknown>) {
+    return { __type: 'delete', ...input }
+  }),
 }))
 
 vi.mock('./assets.js', () => ({
@@ -538,6 +609,65 @@ describe('onUploadFinish hook', () => {
         storageKey: uploadId,
         mimeType: 'video/mp4',
       }),
+    )
+  })
+
+  it('svg upload: sanitizes hostile SVG and writes cleaned bytes back via PutObject', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+
+    const assetId = 'asset-svg01'
+    const deckId = 'deck-svg'
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.svg`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(decodedPath).toString('base64url')}`
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/svg+xml', filename: 'x.svg' }),
+    })
+    const upload = { id: uploadId, size: 200, offset: 200, metadata: { deckId } }
+
+    const result = (await hook(req, buildResponse(), upload)) as { status_code: number }
+    expect(result.status_code).toBe(200)
+
+    // A PutObject with sanitized (script-free) SVG must have been issued.
+    const putCall = lastS3Send.mock.calls.find(
+      (c) => (c[0] as { __type?: string }).__type === 'put',
+    )
+    expect(putCall).toBeDefined()
+    const body = (putCall![0] as { Body: Buffer }).Body.toString('utf8').toLowerCase()
+    expect(body).not.toContain('<script')
+    expect(body).not.toContain('onload')
+    expect(body).toContain('<svg')
+    expect(createMediaAsset).toHaveBeenCalled()
+  })
+
+  it('svg upload: rejects (400) and deletes object when SVG sanitizes to nothing', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+
+    svgBytesForGet = Buffer.from('<script>alert(1)</script>', 'utf8')
+
+    const assetId = 'asset-svg02'
+    const deckId = 'deck-svg2'
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.svg`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(decodedPath).toString('base64url')}`
+
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId, 'content-type': 'image/svg+xml' }),
+    })
+    const upload = { id: uploadId, size: 25, offset: 25, metadata: { deckId } }
+
+    await expect(hook(req, buildResponse(), upload)).rejects.toMatchObject({ status_code: 400 })
+    const deleteCall = lastS3Send.mock.calls.find(
+      (c) => (c[0] as { __type?: string }).__type === 'delete',
+    )
+    expect(deleteCall).toBeDefined()
+    expect(createMediaAsset).not.toHaveBeenCalled()
+
+    // restore default hostile-but-valid SVG for subsequent tests
+    svgBytesForGet = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>`,
+      'utf8',
     )
   })
 })

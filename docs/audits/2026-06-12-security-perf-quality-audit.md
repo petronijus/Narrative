@@ -73,7 +73,13 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
   `SlidesPanel.tsx`, test in `slides.observe.test.ts`). Remaining tail
   (the `useSlides`/`listSlides` per-render identity churn → a
   `useSlideSummaries` migration) is a separate follow-up, noted in code.
-- ☐ PERF-2 full-doc persistence (`onStoreDocument` snapshot every flush)
+- ☑ **PERF-2** full-doc persistence — `onStoreDocument` now does atomic
+  snapshot-compaction (insert new full snapshot + delete older rows for the
+  doc in one tx, `id < newId`), collapsing storage + cold-load from
+  O(edits×doc) to O(doc). Load unchanged (applies all rows; full snapshots are
+  idempotent → old multi-row decks load fine, compact on next store).
+  `persistence.ts` + `docs/adr/0006`. Pre-deploy: run one real-Postgres
+  store+load cycle (tests use a mock).
 - ☐ PERF-3 thumbnail localStorage blob rewrite
 - ☐ PERF-4 table keystroke restyle / SceneGraph O(n²) / main.tsx Sentry TLA
 - ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
@@ -92,7 +98,10 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 
 **Security (deferred set)**
 
-- ☐ SVG content sanitization (DOMPurify) · ☐ MEDIA-1 private bucket+presign
+- ☑ SVG content sanitization — `svgSanitize.ts`: DOMPurify (svg profile,
+  forbid `script`/`foreignObject`/`on*`, `href` clamped to `#frag`/`data:image`)
+  - sniff renamed SVGs + raster magic-byte check, wired into `tus.ts`
+    onUploadFinish (sanitize→rewrite, or reject+delete). · ☐ MEDIA-1 private bucket+presign
 - ☐ site-wide CSP · ☐ CONN-1 · ☐ TUS-1 · ☐ IDOR-1 · ☐ DOS-1
 - ☐ ops: BYPASS_AUTH hard-fail · METRICS_TOKEN · CSRF token · animation DSL clamp
 
