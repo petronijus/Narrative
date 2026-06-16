@@ -108,9 +108,9 @@ none`; video playbackUrl (6h) + font-url (1h) presigned (`presignGetUrl`
   reworked to sign against the public origin so SigV4 Host/path match post-Caddy
   strip); images/thumbnails stay on imgproxy (server-side s3://, no expiry);
   client made expiry-safe (video re-fetch on `<video error>`, font re-list,
-  mediaCache never caches presigned URLs). **HIGH blast radius — needs the
-  manual checklist run immediately on deploy (committed `9140ef4`, NOT yet
-  deployed).**
+  mediaCache never caches presigned URLs). **Deployed + validated 2026-06-16**: bucket private (bare `/storage` → 403),
+  presigned URLs serve end-to-end (live curl: 200 + correct body through
+  Caddy→MinIO; signature Host/path assumption confirmed).
 - ☐ site-wide CSP
 - ☑ **CONN-1** Hocuspocus closes the revoked principal's live WS on share/
   permission/session revoke (`hocuspocus/connections.ts`, targeted — not
