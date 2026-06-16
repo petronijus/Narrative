@@ -48,8 +48,14 @@ export const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presenta
  * upload path (already used by general media uploads but not yet wired
  * for pptx). Until then, this cap is "supported up to the limit your
  * machine can hold."
+ *
+ * The on-the-wire size cap stays at 2 GB by product requirement (large
+ * decks must import). DoS protection comes from the parser's decompression-
+ * bomb guard (`assertNotZipBomb`), which rejects *pathological* archives
+ * (absurd compression ratios / entry counts) without limiting legitimate
+ * large files — NOT from a low byte cap.
  */
-export const MAX_PPTX_BYTES = 2 * 1024 * 1024 * 1024
+export const MAX_PPTX_BYTES = Number(process.env['MAX_PPTX_BYTES'] ?? 2 * 1024 * 1024 * 1024)
 
 export async function registerPptxImportRoutes(app: FastifyInstance, db: Database): Promise<void> {
   // ─── Content-type parser ─────────────────────────────────────────────────

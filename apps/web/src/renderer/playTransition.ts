@@ -87,6 +87,25 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
   const outgoingRoot = sceneGraph.getRoot()
   const app = sceneGraph.getApp()
 
+  // Snapshot the outgoing root's baseline transform BEFORE the timeline mutates
+  // it. The transition tweens this root (slide/push/fade/zoom all animate
+  // position / scale / rotation / alpha), and on abort the incoming root is
+  // destroyed while the OUTGOING root stays as the SceneGraph root — so without
+  // restoring this baseline a mid-flight abort (spam arrow keys) leaves the
+  // surviving slide frozen offset/dimmed. We restore to the captured values,
+  // NOT to identity, because the slide root carries a legitimate viewport-fit
+  // transform that identity would clobber.
+  const outgoingBaseline = {
+    x: outgoingRoot.x,
+    y: outgoingRoot.y,
+    scaleX: outgoingRoot.scale.x,
+    scaleY: outgoingRoot.scale.y,
+    rotation: outgoingRoot.rotation,
+    alpha: outgoingRoot.alpha,
+    pivotX: outgoingRoot.pivot.x,
+    pivotY: outgoingRoot.pivot.y,
+  }
+
   // Build the incoming root off-stage, mount each slide object via the
   // registered renderer (same code path SceneGraph.addObject uses).
   const incomingRoot = new Container()
@@ -257,6 +276,17 @@ export function playTransition(args: PlayTransitionArgs): PlayTransitionResult {
       if (compiled !== undefined) {
         compiled.timeline.kill()
         compiled.dispose()
+      }
+      // Restore the outgoing root's pre-transition transform. It survives the
+      // abort as the SceneGraph root, so undo the partial tween or it stays
+      // frozen mid-transition (offset / scaled / dimmed) on screen.
+      if (!outgoingRoot.destroyed) {
+        outgoingRoot.position.set(outgoingBaseline.x, outgoingBaseline.y)
+        outgoingRoot.scale.set(outgoingBaseline.scaleX, outgoingBaseline.scaleY)
+        outgoingRoot.rotation = outgoingBaseline.rotation
+        outgoingRoot.alpha = outgoingBaseline.alpha
+        outgoingRoot.pivot.set(outgoingBaseline.pivotX, outgoingBaseline.pivotY)
+        getDefaultRenderScheduler()?.markDirty()
       }
       // P12g: route every incoming node through its renderer's
       // destroy hook BEFORE destroying the root. A bare

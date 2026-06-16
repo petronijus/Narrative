@@ -31,6 +31,7 @@ export {
   groupObjects,
   ungroupObjects,
   getGroupMembers,
+  spliceRichText,
 } from './mutations.js'
 export type {
   ObjectsMutationContext,
@@ -127,6 +128,7 @@ export type {
 export {
   createTextValue,
   getPlainString,
+  richAttrsAtIndex,
   applyFormat,
   clearFormat,
   toDelta,
@@ -151,6 +153,15 @@ export type { PromoteToComponentPlan } from './components.js'
 
 // Component stamp helper (refactor: components-as-stamps)
 export { stampComponent } from './stampComponent.js'
+
+// Shape-as-image-mask mutation (moved out of apps/web — mutations live here)
+export {
+  applyShapeMask,
+  isMaskableShape,
+  buildMaskFromShape,
+  computeMaskedImagePatch,
+} from './shapeMask.js'
+export type { MaskableShape } from './shapeMask.js'
 
 // Design tokens (M16 P2)
 export { isTokenRef, resolveTokenValue } from './tokens.js'

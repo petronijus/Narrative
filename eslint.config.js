@@ -66,6 +66,22 @@ export default [
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  // Server runtime code must log through pino (structured, leveled, parseable
+  // by the prod log pipeline), NOT bare `console.*`. The exceptions below are
+  // process bootstrap and CLI tools, which run before/outside the request
+  // lifecycle and legitimately write to stdout/stderr directly.
+  {
+    files: ['apps/server/src/**/*.ts'],
+    ignores: [
+      'apps/server/src/index.ts', // process bootstrap (banner/fatal before app.log exists)
+      'apps/server/src/observability/sentry.ts', // observability init, may log before pino
+      'apps/server/src/db/migrate.ts', // migration CLI — stdout progress is the UX
+      'apps/server/src/scripts/**/*.ts', // one-shot CLI scripts — console is the output
+    ],
+    rules: {
+      'no-console': 'error',
+    },
+  },
   // Relax rules for test files — inline `import()` type annotations and scratch
   // unused helpers are fine in tests (vi.hoisted mocks use this pattern).
   {
@@ -76,6 +92,7 @@ export default [
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      'no-console': 'off',
     },
   },
 ]

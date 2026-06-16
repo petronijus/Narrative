@@ -37,6 +37,7 @@ import {
   type ObjectsMutationContext,
   toDelta,
   toHtml,
+  spliceRichText,
   type HtmlDefaults,
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
@@ -93,28 +94,6 @@ function readPlainText(t: TextObject['text']): string {
   if (t instanceof Y.Text) return t.toString()
   if (typeof t === 'string') return t
   return ''
-}
-
-/**
- * Read the format attributes that a fresh insertion at `index` should
- * inherit. Walks the Y.Text delta and returns the attributes of the
- * run that contains `index`. Returns an empty object when the
- * insertion lands in an unformatted run, or before the first run.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function attrsAtIndex(yText: Y.Text, index: number): Record<string, any> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const delta = yText.toDelta() as Array<{ insert: unknown; attributes?: Record<string, any> }>
-  let pos = 0
-  for (const op of delta) {
-    const insert = typeof op.insert === 'string' ? op.insert : ''
-    const next = pos + insert.length
-    if (index <= next) {
-      return { ...(op.attributes ?? {}) }
-    }
-    pos = next
-  }
-  return {}
 }
 
 /**
@@ -495,19 +474,10 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
 
     localEditRef.current = true
     try {
-      mutationCtxRef.current.doc.transact(() => {
-        if (removeLen > 0) yText.delete(pStart, removeLen)
-        if (insertText.length > 0) {
-          // Inherit the format of the run at the insertion point so
-          // typing inside a bolded word stays bold.
-          const attrs = attrsAtIndex(yText, pStart)
-          if (Object.keys(attrs).length > 0) {
-            yText.insert(pStart, insertText, attrs)
-          } else {
-            yText.insert(pStart, insertText)
-          }
-        }
-      })
+      // Delegate the Y.Text splice to slide-model (mutations live there). We
+      // pass NO origin — the localEditRef flag above is what suppresses the
+      // observer echo for this in-place edit, matching the prior inline behavior.
+      spliceRichText(mutationCtxRef.current.doc, yText, pStart, removeLen, insertText)
     } finally {
       localEditRef.current = false
     }

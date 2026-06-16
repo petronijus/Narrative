@@ -33,6 +33,9 @@ import {
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { setHocuspocusInstance } from './presence.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('hocuspocus')
 
 export interface HocuspocusServerOptions {
   port: number
@@ -122,8 +125,9 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
         // Folders are always read-write for the owner.
         connection.readOnly = false
 
-        console.log(
-          `[hocuspocus] authenticate → doc=${documentName} user=${userId} role=${access.role} reason=${access.reason}`,
+        log.info(
+          { doc: documentName, user: userId, role: access.role, reason: access.reason },
+          'authenticate',
         )
         return
       }
@@ -147,8 +151,9 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
 
         connection.readOnly = false
 
-        console.log(
-          `[hocuspocus] authenticate → doc=${documentName} user=${userId} role=${access.role} reason=${access.reason}`,
+        log.info(
+          { doc: documentName, user: userId, role: access.role, reason: access.reason },
+          'authenticate',
         )
         return
       }
@@ -193,8 +198,9 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       // Hocuspocus won't accept update messages from readOnly connections.
       connection.readOnly = access.role === 'viewer'
 
-      console.log(
-        `[hocuspocus] authenticate → doc=${documentName} user=${displayId} role=${access.role} reason=${access.reason}`,
+      log.info(
+        { doc: documentName, user: displayId, role: access.role, reason: access.reason },
+        'authenticate',
       )
     },
 
@@ -202,14 +208,14 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
       metrics.incConnections()
       // userId is populated by onAuthenticate (which runs AFTER
       // onConnect), so presence registration happens there instead.
-      console.log(`[hocuspocus] connect → doc=${data.documentName}`)
+      log.info({ doc: data.documentName }, 'connect')
     },
 
     async onDisconnect(data) {
       const ctx = data.context as { userId?: string }
       const userId = ctx.userId ?? 'unknown'
       metrics.decConnections()
-      console.log(`[hocuspocus] disconnect → doc=${data.documentName} user=${userId}`)
+      log.info({ doc: data.documentName, user: userId }, 'disconnect')
     },
 
     async onChange(data) {

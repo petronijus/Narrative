@@ -53,6 +53,26 @@ export function getPlainString(yt: Y.Text): string {
   return yt.toString()
 }
 
+/**
+ * Returns the formatting attributes of the run that contains `index` — used
+ * to inherit the run's format when inserting at that position (so typing
+ * inside a bold word stays bold). Returns an empty object when the insertion
+ * lands in an unformatted run, or before the first run.
+ */
+export function richAttrsAtIndex(yt: Y.Text, index: number): Record<string, unknown> {
+  const delta = yt.toDelta() as Array<{ insert: unknown; attributes?: Record<string, unknown> }>
+  let pos = 0
+  for (const op of delta) {
+    const insert = typeof op.insert === 'string' ? op.insert : ''
+    const next = pos + insert.length
+    if (index <= next) {
+      return { ...(op.attributes ?? {}) }
+    }
+    pos = next
+  }
+  return {}
+}
+
 /** Apply (or override) the given attributes on the range [start, start+length). */
 export function applyFormat(yt: Y.Text, start: number, length: number, attrs: RichAttrs): void {
   if (length <= 0) return
@@ -117,7 +137,12 @@ function escapeHtml(s: string): string {
 }
 
 function colorHex(n: number): string {
-  return '#' + n.toString(16).padStart(6, '0')
+  // Clamp to a valid 24-bit RGB int so the result is ALWAYS exactly 6 hex
+  // digits. Without this, a negative int (`-1` → "-1" → "#0000-1") or an
+  // out-of-range int (`0x1000000` → "1000000" → "#1000000") produces invalid
+  // CSS that breaks the whole style attribute. NaN/non-finite → black.
+  const clamped = Number.isFinite(n) ? Math.max(0, Math.min(0xffffff, Math.trunc(n))) : 0
+  return '#' + clamped.toString(16).padStart(6, '0')
 }
 
 // ---------------------------------------------------------------------------

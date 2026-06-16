@@ -30,10 +30,41 @@ import type { SlideObject, SlideTransition } from '@narrative/shared'
 // ---------------------------------------------------------------------------
 
 const hoisted = vi.hoisted(() => {
+  // Minimal ObservablePoint stand-in: real Pixi `scale`/`pivot`/`position`
+  // expose `.x`/`.y` and a `.set(x, y?)`.
+  class MockPoint {
+    x: number
+    y: number
+    constructor(x = 0, y = 0) {
+      this.x = x
+      this.y = y
+    }
+    set(x: number, y?: number): void {
+      this.x = x
+      this.y = y ?? x
+    }
+  }
   class MockContainer {
     children: MockContainer[] = []
     destroyed = false
     parent: MockContainer | null = null
+    // Transform props a real Pixi Container always has — playTransition snapshots
+    // these on the outgoing root and restores them on abort.
+    x = 0
+    y = 0
+    rotation = 0
+    alpha = 1
+    scale = new MockPoint(1, 1)
+    pivot = new MockPoint(0, 0)
+    position: MockPoint = Object.assign(new MockPoint(0, 0), {
+      // Keep top-level x/y in sync so a snapshot-then-restore round-trips.
+      set: (x: number, y?: number) => {
+        this.x = x
+        this.y = y ?? x
+        this.position.x = this.x
+        this.position.y = this.y
+      },
+    })
     addChild(c: MockContainer): MockContainer {
       this.children.push(c)
       c.parent = this

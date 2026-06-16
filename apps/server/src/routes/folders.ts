@@ -7,7 +7,7 @@
  *   GET    /folders                     → list folders for the authenticated user (with deck counts)
  *   POST   /folders                     → create a new folder
  *   PATCH  /folders/:id                 → rename a folder (owner only)
- *   DELETE /folders/:id                 → delete folder (only if empty; cannot delete "Drafts")
+ *   DELETE /folders/:id                 → delete folder + all contained decks (cannot delete "Drafts")
  *   POST   /folders/:id/move-decks      → bulk-move decks between folders (caller must own all)
  *
  * Auth:
@@ -272,7 +272,10 @@ export async function registerFolderRoutes(app: FastifyInstance, db: Database): 
         purgeExplicitKeys(explicitKeys, request.log),
       ])
 
-      return reply.status(204).send({ deletedDeckCount: containedDecks.length })
+      // 200 (not 204): a 204 No Content response MUST NOT carry a body, so the
+      // `deletedDeckCount` was being silently dropped. The client only checks
+      // `res.ok`, so 200 is safe and actually delivers the count.
+      return reply.status(200).send({ deletedDeckCount: containedDecks.length })
     },
   )
 

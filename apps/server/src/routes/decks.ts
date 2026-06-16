@@ -36,6 +36,7 @@ import { resolveDeckAccess } from '../auth/permissions.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
+import { parseDataUrl } from '../media/dataUrl.js'
 import { getOrProvisionDrafts } from './folders.js'
 
 interface CreateDeckBody {
@@ -85,24 +86,6 @@ function withThumbnailUrl(row: DeckRow): DeckRow & { thumbnailUrl: string | null
     thumbnailUrl = v > 0 ? `${base}?v=${v}` : base
   }
   return { ...row, thumbnailUrl }
-}
-
-/**
- * Parse a `data:image/(jpeg|png);base64,XXXX` URL into its mime + bytes.
- * Returns null on any parse failure or unsupported mime.
- */
-function parseDataUrl(input: string): { mime: 'image/jpeg' | 'image/png'; bytes: Buffer } | null {
-  const m = /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(input)
-  if (m === null) return null
-  const mime = m[1] as 'image/jpeg' | 'image/png'
-  let bytes: Buffer
-  try {
-    bytes = Buffer.from(m[2] ?? '', 'base64')
-  } catch {
-    return null
-  }
-  if (bytes.byteLength === 0) return null
-  return { mime, bytes }
 }
 
 export async function registerDeckRoutes(app: FastifyInstance, db: Database): Promise<void> {

@@ -101,15 +101,14 @@ for (const scenario of scenarios) {
   console.error(`Running: ${scenario.name}`)
   console.error('='.repeat(60))
 
-  const result = spawnSync(
-    'node',
-    ['--loader', 'ts-node/esm', path.join(__dirname, scenario.file)],
-    {
-      stdio: ['ignore', 'pipe', 'inherit'],
-      env: { ...process.env },
-      cwd: __dirname,
-    },
-  )
+  // Run the TS scenario through tsx (the repo-standard TS loader). `tests/load`
+  // is not a workspace member, so its old `ts-node` devDep was never installed;
+  // `tsx` is hoisted at the repo root and `--import tsx` resolves it from there.
+  const result = spawnSync('node', ['--import', 'tsx', path.join(__dirname, scenario.file)], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+    env: { ...process.env },
+    cwd: __dirname,
+  })
 
   let parsed = null
   let pass = false

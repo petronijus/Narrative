@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
+    "test:e2e": "playwright test",
     "preview": "vite preview",
     "size": "size-limit"
   },

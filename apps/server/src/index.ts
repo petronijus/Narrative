@@ -310,6 +310,19 @@ const shutdown = async (signal: string) => {
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
 
+// Last-resort process guards. A stray unhandled rejection (e.g. a floated
+// async write that rejects) or uncaught exception would otherwise—on recent
+// Node defaults—terminate the API + Hocuspocus process, dropping every live
+// editing connection. We log loudly via pino and keep serving; per-request
+// errors are already handled by Fastify's error handler, so reaching here
+// means a background task, not a request. (Mirrors the video-worker guards.)
+process.on('unhandledRejection', (reason) => {
+  app.log.error({ reason }, 'unhandledRejection')
+})
+process.on('uncaughtException', (err) => {
+  app.log.error({ err }, 'uncaughtException')
+})
+
 // ---------------------------------------------------------------------------
 // Start both servers in parallel
 // ---------------------------------------------------------------------------

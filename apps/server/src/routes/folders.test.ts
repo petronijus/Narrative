@@ -10,7 +10,7 @@
  *   GET  /folders                  → returns folders for dev-user (with deckCount)
  *   POST /folders                  → creates folder owned by dev-user
  *   PATCH /folders/:id             → renames own folder; 403 for other user's folder; 404 missing
- *   DELETE /folders/:id            → 204 on empty folder; 409 on non-empty; 409 on Drafts; 403 foreign
+ *   DELETE /folders/:id            → 200 {deletedDeckCount} (cascades decks); 409 on Drafts; 403 foreign
  *   POST /folders/:id/move-decks   → moves decks; 400 bad args; 403 foreign; 404 missing folder
  *
  * Also tests deck endpoint changes (M16 integration):
@@ -444,7 +444,7 @@ describe('PATCH /folders/:id', () => {
 describe('DELETE /folders/:id', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('returns 204 when folder is empty and owned by user', async () => {
+  it('returns 200 with deletedDeckCount when folder is empty and owned by user', async () => {
     const now = new Date()
     const folder: MockFolder = {
       id: 'f-empty',
@@ -487,7 +487,11 @@ describe('DELETE /folders/:id', () => {
 
     const app = await buildApp(db)
     const res = await app.inject({ method: 'DELETE', url: '/folders/f-empty' })
-    expect(res.statusCode).toBe(204)
+    // 200 (not 204): a 204 must not carry a body, so the count is returned with
+    // 200. (The shared select mock conflates the count/rows queries, so we
+    // assert the response contract — a numeric deletedDeckCount — not its value.)
+    expect(res.statusCode).toBe(200)
+    expect(typeof res.json().deletedDeckCount).toBe('number')
   })
 
   // M16 P1 follow-up: DELETE /folders/:id now cascades contained decks

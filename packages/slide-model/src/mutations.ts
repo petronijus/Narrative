@@ -18,7 +18,7 @@ import {
   type PendingCellTextInsert,
 } from './bindings.js'
 import { getObjectTypeDef } from './registry.js'
-import { createTextValue } from './richText.js'
+import { createTextValue, richAttrsAtIndex } from './richText.js'
 import type { RichDeltaOp } from './richText.js'
 
 /**
@@ -42,6 +42,40 @@ export interface ObjectsMutationContext {
  * @deprecated Use ObjectsMutationContext. Alias kept for backward compat — removed in M10.
  */
 export type MutationContext = ObjectsMutationContext
+
+/**
+ * Splice a Y.Text body: delete `removeLen` chars at `start`, then insert
+ * `insertText` there, inheriting the formatting of the run at the insertion
+ * point (so typing inside a bold word stays bold). Wrapped in one
+ * `doc.transact` so the edit is a single atomic step.
+ *
+ * Moved out of `apps/web/src/ui/TextEditOverlay.tsx` (which spliced the Y.Text
+ * inline) so the raw `Y.Text` mutation lives in slide-model per the "mutations
+ * live here" invariant. `origin` is forwarded to `doc.transact` and defaults to
+ * UNDEFINED — the contenteditable typing path intentionally uses no origin
+ * (its own `localEditRef` flag suppresses the observer echo, not the origin),
+ * so callers must opt in to LOCAL_ORIGIN if they want undo-tracking semantics.
+ */
+export function spliceRichText(
+  doc: Y.Doc,
+  yText: Y.Text,
+  start: number,
+  removeLen: number,
+  insertText: string,
+  origin?: unknown,
+): void {
+  doc.transact(() => {
+    if (removeLen > 0) yText.delete(start, removeLen)
+    if (insertText.length > 0) {
+      const attrs = richAttrsAtIndex(yText, start)
+      if (Object.keys(attrs).length > 0) {
+        yText.insert(start, insertText, attrs)
+      } else {
+        yText.insert(start, insertText)
+      }
+    }
+  }, origin)
+}
 
 /**
  * Přidá SlideObject do Y.Array.

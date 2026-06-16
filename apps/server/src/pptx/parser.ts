@@ -4710,6 +4710,69 @@ function looksLikeFont(buf: Buffer): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Zip-bomb guards (DoS hardening)
+//
+// A `.pptx` is a ZIP, and ZIP decompresses lazily in JSZip: each `.async()`
+// inflates one entry on demand. A maliciously crafted archive can be a few KB
+// on the wire yet declare terabytes of uncompressed content ("42.zip" class).
+// We refuse such archives up front using the per-entry sizes recorded in the
+// ZIP central directory (cheap — no inflation needed).
+//
+// IMPORTANT: the on-the-wire import cap stays at 2 GB by product requirement
+// (large decks must import). These guards must therefore NOT impose a smaller
+// size limit on legitimate files — the total/entry-count bounds are pure
+// anti-bomb BACKSTOPS set far above any realistic 2 GB deck's decompression
+// (a 2 GB deck is mostly already-compressed media → expands to ~5-15 GB). The
+// meaningful detector is the per-entry COMPRESSION-RATIO check: a >1 MB entry
+// declaring >200:1 expansion is the decompression-bomb signature and never
+// occurs in a real deck (JPEG/PNG/MP4 ≈ 1:1, XML ≈ 5-10:1).
+// ---------------------------------------------------------------------------
+
+/** Backstop entry count. Real decks: low thousands; bombs: tens of thousands+. */
+const MAX_ZIP_ENTRIES = 200_000
+/** Backstop total *declared* uncompressed size — far above any legit 2 GB deck. */
+const MAX_TOTAL_UNCOMPRESSED_BYTES = 32 * 1024 * 1024 * 1024 // 32 GiB
+/** Max declared compression ratio (uncompressed / compressed) for any one entry. */
+const MAX_ENTRY_COMPRESSION_RATIO = 200
+/** Only ratio-check entries above this size — tiny files have noisy ratios. */
+const RATIO_CHECK_MIN_BYTES = 1024 * 1024
+
+/** Throws if the loaded archive looks like a decompression bomb. */
+function assertNotZipBomb(zip: JSZip): void {
+  const names = Object.keys(zip.files)
+  if (names.length > MAX_ZIP_ENTRIES) {
+    throw new Error(`Archive has too many entries (${names.length} > ${MAX_ZIP_ENTRIES})`)
+  }
+  let totalUncompressed = 0
+  for (const name of names) {
+    // `_data` carries the central-directory sizes; absent for synthetic dirs.
+    const data = (
+      zip.files[name] as unknown as {
+        _data?: { uncompressedSize?: number; compressedSize?: number }
+      }
+    )._data
+    const uncompressed = data?.uncompressedSize ?? 0
+    const compressed = data?.compressedSize ?? 0
+    totalUncompressed += uncompressed
+    if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) {
+      throw new Error(
+        `Archive uncompressed size exceeds backstop (> ${MAX_TOTAL_UNCOMPRESSED_BYTES} bytes) — refusing to expand`,
+      )
+    }
+    // A single tiny-compressed/huge-uncompressed entry is the bomb signature.
+    if (
+      compressed > 0 &&
+      uncompressed > RATIO_CHECK_MIN_BYTES &&
+      uncompressed / compressed > MAX_ENTRY_COMPRESSION_RATIO
+    ) {
+      throw new Error(
+        `Archive entry "${name}" has a suspicious compression ratio (${Math.round(uncompressed / compressed)}:1) — refusing to expand`,
+      )
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -4725,6 +4788,8 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   }
 
   const zip = await JSZip.loadAsync(buffer)
+  // DoS: reject decompression bombs before touching any entry contents.
+  assertNotZipBomb(zip)
   if (
     zip.file('ppt/presentation.xml') === null &&
     Object.keys(zip.files).every((n) => !/^ppt\//.test(n))

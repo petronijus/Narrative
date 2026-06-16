@@ -22,6 +22,9 @@
  */
 
 import { Resend } from 'resend'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('email')
 
 export interface SendEmailInput {
   to: string
@@ -69,11 +72,14 @@ export async function sendEmail(input: SendEmailInput): Promise<string | null> {
     // No API key — log the would-be email and bail. This lets us run
     // dev + initial prod without crashing the invite path while DNS
     // verification is in flight.
-    console.log('[email] RESEND_API_KEY missing — would-be email:', {
-      to: input.to,
-      subject: input.subject,
-      text: input.text.slice(0, 200) + (input.text.length > 200 ? '…' : ''),
-    })
+    log.info(
+      {
+        to: input.to,
+        subject: input.subject,
+        text: input.text.slice(0, 200) + (input.text.length > 200 ? '…' : ''),
+      },
+      'RESEND_API_KEY missing — would-be email',
+    )
     return null
   }
 
@@ -87,12 +93,12 @@ export async function sendEmail(input: SendEmailInput): Promise<string | null> {
       ...(input.replyTo ? { replyTo: input.replyTo } : {}),
     })
     if (error) {
-      console.warn('[email] resend rejected', { to: input.to, error })
+      log.warn({ to: input.to, error }, 'resend rejected')
       return null
     }
     return data?.id ?? null
   } catch (err) {
-    console.warn('[email] send threw', { to: input.to, err })
+    log.warn({ to: input.to, err }, 'send threw')
     return null
   }
 }

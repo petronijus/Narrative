@@ -28,6 +28,9 @@ import { nanoid } from 'nanoid'
 import type { Database } from '../db/client.js'
 import { deckInvites, deckPermissions, type DeckInvite } from '../db/schema.js'
 import type { DeckRole } from './permissions.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('invites')
 
 /** 30 days — matches `SESSION_LIFETIME_MS`. */
 const INVITE_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000
@@ -194,7 +197,7 @@ export async function consumePendingInvitesForEmail(
     } catch (err) {
       // Non-fatal — log and continue with the next invite. The user can
       // re-trigger by signing in again if any rows remain pending.
-      console.warn('[invites] failed to consume invite', { id: invite.id, err })
+      log.warn({ id: invite.id, err }, 'failed to consume invite')
     }
   }
 

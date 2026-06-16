@@ -49,6 +49,9 @@ import { and, eq, lt } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { deckUpdates, folderUpdates, componentUpdates } from '../db/schema.js'
 import { closeConnectionsForDocument } from './connections.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('persistence')
 
 // ---------------------------------------------------------------------------
 // DOS-1: per-document size cap.
@@ -209,14 +212,16 @@ export class PostgresPersistence implements Extension {
           applied++
         } catch (err) {
           skipped++
-          console.error(
-            `[persistence] Corrupt update row for doc=${data.documentName}: ${err instanceof Error ? err.message : String(err)} — skipping`,
+          log.error(
+            { doc: data.documentName, err: err instanceof Error ? err.message : String(err) },
+            'corrupt update row — skipping',
           )
         }
       }
       if (skipped > 0) {
-        console.warn(
-          `[persistence] doc=${data.documentName}: applied=${applied} skipped=${skipped} (corrupt updates)`,
+        log.warn(
+          { doc: data.documentName, applied, skipped },
+          'applied with corrupt updates skipped',
         )
       }
       return applied
@@ -230,8 +235,9 @@ export class PostgresPersistence implements Extension {
     }
 
     const applied = applyAll(rows)
-    console.log(
-      `[persistence] Loaded ${applied}/${rows.length} snapshot row(s) for ${target.kind}=${target.id}`,
+    log.info(
+      { kind: target.kind, id: target.id, applied, total: rows.length },
+      'loaded snapshot rows',
     )
 
     // DOS-1: seed the growth baseline with the freshly-loaded size, so a doc
@@ -253,8 +259,9 @@ export class PostgresPersistence implements Extension {
     // This guard handles any edge-cases (e.g. server-side writes accidentally routed
     // through a viewer-context document).
     if (ctx?.role === 'viewer') {
-      console.warn(
-        `[persistence] Blocked write from viewer userId=${ctx.userId ?? 'unknown'} doc=${data.documentName}`,
+      log.warn(
+        { userId: ctx.userId ?? 'unknown', doc: data.documentName },
+        'blocked write from viewer',
       )
       return
     }
@@ -272,10 +279,15 @@ export class PostgresPersistence implements Extension {
     const size = update.byteLength
     const lastStored = this.lastStoredBytes.get(data.documentName)
     if (size > this.maxDocBytes && (lastStored === undefined || size > lastStored)) {
-      console.error(
-        `[persistence] DOS-1 size cap hit for ${target.kind}=${target.id}: ` +
-          `${size} bytes > cap ${this.maxDocBytes} (last stored ${lastStored ?? 'none'}). ` +
-          `Refusing to persist growth and disconnecting connections on this doc.`,
+      log.error(
+        {
+          kind: target.kind,
+          id: target.id,
+          size,
+          cap: this.maxDocBytes,
+          lastStored: lastStored ?? null,
+        },
+        'DOS-1 size cap hit — refusing to persist growth and disconnecting connections on this doc',
       )
       // Kick the connection(s) on this doc so the flood stops. The client may
       // reconnect, but it loads the last GOOD (≤ last-stored) snapshot, so it
@@ -283,7 +295,7 @@ export class PostgresPersistence implements Extension {
       try {
         closeConnectionsForDocument(data.documentName)
       } catch (err) {
-        console.error(`[persistence] DOS-1 disconnect failed for ${data.documentName}:`, err)
+        log.error({ doc: data.documentName, err }, 'DOS-1 disconnect failed')
       }
       return
     }
@@ -318,19 +330,23 @@ export class PostgresPersistence implements Extension {
       // DOS-1: record the size we just persisted as the new growth baseline.
       this.lastStoredBytes.set(data.documentName, size)
 
-      const compactNote =
-        deletedOlder === undefined ? '' : `, compacted ${deletedOlder} older row(s)`
-      console.log(
-        `[persistence] Stored snapshot for ${target.kind}=${target.id} (${update.byteLength} bytes${compactNote})`,
+      log.info(
+        {
+          kind: target.kind,
+          id: target.id,
+          bytes: update.byteLength,
+          compactedOlderRows: deletedOlder ?? null,
+        },
+        'stored snapshot',
       )
     } catch (err) {
       // CRITICAL: a swallowed persistence error means the in-memory Y.Doc
       // diverges from the database. Hocuspocus retries onStoreDocument on
       // the next debounce window, so a transient DB error usually self-
       // heals. A persistent error is still data loss — surface it loudly.
-      console.error(
-        `[persistence] FAILED to store snapshot for ${target.kind}=${target.id} (${update.byteLength} bytes):`,
-        err,
+      log.error(
+        { kind: target.kind, id: target.id, bytes: update.byteLength, err },
+        'FAILED to store snapshot',
       )
     }
   }

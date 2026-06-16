@@ -27,8 +27,12 @@
 http://{$DOMAIN:localhost} {
 
   # ── Security headers (site-wide baseline) ──────────────────────────────────
-  # A full Content-Security-Policy for the SPA is deliberately deferred until
-  # verified on staging — see docs/audits/2026-06-12-security-perf-quality-audit.md.
+  # nosniff / X-Frame-Options / Referrer-Policy are safe on every response
+  # (HTML, JSON, images, objects). The SPA Content-Security-Policy is set
+  # separately on the SPA `handle {}` block below — NOT here — so it can never
+  # override the stricter `Content-Security-Policy sandbox` that the /storage/*
+  # block puts on user-uploaded objects (CSP only meaningfully governs document
+  # contexts, and the SPA HTML is the only document this origin serves).
   header {
     X-Content-Type-Options nosniff
     X-Frame-Options DENY
@@ -93,6 +97,25 @@ http://{$DOMAIN:localhost} {
 
   # ── Static SPA (React) ──────────────────────────────────────────────────────
   handle {
+    # Content-Security-Policy for the SPA document. The app is entirely
+    # same-origin (apps/web CSP audit — see
+    # docs/audits/2026-06-12-security-perf-quality-audit.md):
+    #   script-src 'self'      — Vite emits only an external module bundle
+    #                            (esnext target → no inline polyfill); no
+    #                            eval/wasm anywhere.
+    #   style-src  'unsafe-inline' — required by React `style={{}}` and Pixi v8
+    #                            HTMLText's generated inline <style>/attrs
+    #                            (nonces impractical for both).
+    #   img-src    data: blob: — base64 slide thumbnails + CSS SVG data-URIs,
+    #                            canvas snapshots; plus same-origin imgproxy/storage.
+    #   media/font 'self'      — same-origin /storage presigned + bundled /assets.
+    #   connect-src 'self'     — /api, same-origin wss /ws, /storage, /imgproxy
+    #                            ('self' covers same-origin wss). If
+    #                            VITE_SENTRY_DSN is set in prod, append the DSN's
+    #                            ingest host (e.g. https://oNNN.ingest.us.sentry.io)
+    #                            — Sentry POSTs envelopes directly there, no tunnel.
+    #   no workers, iframes, plugins; base-uri/frame-ancestors locked down.
+    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
     root * /srv/web
     # SPA fallback — client-side routes return index.html
     try_files {path} /index.html

@@ -52,6 +52,9 @@ import { folders, decks } from '../db/schema.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('tus')
 
 // probe-image-size is CommonJS — import via createRequire so ESM build works
 const require = createRequire(import.meta.url)
@@ -75,9 +78,13 @@ const MAX_IMAGE_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_00
 /** Max size for video uploads. */
 const MAX_VIDEO_UPLOAD_SIZE = Number(process.env['MAX_VIDEO_UPLOAD_SIZE'] ?? 500_000_000)
 /**
- * Max size for `.pptx` imports. Default 2 GB. The pptx path doesn't
- * create a `media_assets` row; instead the `onUploadFinish` hook runs
- * the full deck-import pipeline against the freshly-uploaded blob.
+ * Max size for `.pptx` imports. Default 2 GB (kept high by product
+ * requirement — large decks must import). The pptx path doesn't create a
+ * `media_assets` row; instead the `onUploadFinish` hook runs the full
+ * deck-import pipeline against the freshly-uploaded blob. DoS protection
+ * comes from the parser's decompression-bomb guard (`assertNotZipBomb`),
+ * which rejects pathological archives without limiting legitimate large
+ * files — not from this on-the-wire cap.
  */
 const MAX_PPTX_UPLOAD_SIZE = Number(process.env['MAX_PPTX_UPLOAD_SIZE'] ?? 2 * 1024 * 1024 * 1024)
 /** tus server-level maxSize — set to the largest of the four; per-MIME enforcement is in onUploadCreate. */
@@ -260,7 +267,7 @@ async function probeImageDimensions(
 
     return { width: result.width, height: result.height }
   } catch (err) {
-    console.warn('[tus] Image probe failed for', storageKey, err)
+    log.warn({ storageKey, err }, 'image probe failed')
     return undefined
   }
 }
@@ -275,7 +282,7 @@ async function deleteMinIOObject(s3: S3Client, storageKey: string): Promise<void
   try {
     await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: storageKey }))
   } catch (err) {
-    console.warn('[tus] DeleteObject failed for', storageKey, err)
+    log.warn({ storageKey, err }, 'DeleteObject failed')
   }
 }
 
@@ -518,10 +525,9 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         ''
 
       if (!mime) {
-        console.warn(
-          '[tus] onUploadCreate: no MIME in metadata; headers=%o upload.metadata=%o',
-          meta,
-          upload.metadata,
+        log.warn(
+          { headers: meta, uploadMetadata: upload.metadata },
+          'onUploadCreate: no MIME in metadata',
         )
       }
 
@@ -673,7 +679,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       const deckId = parts[1]
 
       if (!assetId || !deckId) {
-        console.error('[tus] onUploadFinish: malformed upload id', upload.id)
+        log.error({ uploadId: upload.id }, 'onUploadFinish: malformed upload id')
         throw { status_code: 500, body: 'Internal error: upload id malformed' }
       }
       const storageKey = upload.id
@@ -706,7 +712,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         const head = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: storageKey }))
         sizeBytes = head.ContentLength ?? sizeBytes
       } catch (err) {
-        console.warn('[tus] HeadObject failed, using tus-reported size:', err)
+        log.warn({ err }, 'HeadObject failed, using tus-reported size')
       }
 
       // ─── PPTX import branch ────────────────────────────────────────────
@@ -729,7 +735,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           }
           pptxBytes = Buffer.concat(chunks)
         } catch (err) {
-          console.error('[tus] pptx GetObject failed:', err)
+          log.error({ err }, 'pptx GetObject failed')
           await deleteMinIOObject(s3, storageKey)
           throw { status_code: 500, body: 'Failed to read uploaded pptx from storage' }
         }
@@ -741,8 +747,8 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           ...(typeof filename === 'string' ? { filenameForTitle: filename } : {}),
           db,
           log: {
-            info: (o, m) => console.info('[tus-pptx]', m ?? '', o),
-            warn: (o, m) => console.warn('[tus-pptx]', m ?? '', o),
+            info: (o, m) => log.info(o, m ?? 'pptx import'),
+            warn: (o, m) => log.warn(o, m ?? 'pptx import'),
           },
         })
 
@@ -805,7 +811,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
           metadata = parseFontMetadata(ab as ArrayBuffer)
         } catch (err) {
-          console.error('[tus] parseFontMetadata failed:', err)
+          log.error({ err }, 'parseFontMetadata failed')
           throw {
             status_code: 400,
             body: `Failed to parse font file. Make sure it's a valid TTF or OTF.`,
@@ -828,7 +834,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
             fontPostscriptName: metadata.postscriptName,
           })
         } catch (err) {
-          console.error('[tus] createMediaAsset (font) failed:', err)
+          log.error({ err }, 'createMediaAsset (font) failed')
           throw { status_code: 500, body: 'Failed to persist font asset metadata' }
         }
 
@@ -871,7 +877,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
             transcodeStatus: 'pending',
           })
         } catch (err) {
-          console.error('[tus] createMediaAsset (video) failed:', err)
+          log.error({ err }, 'createMediaAsset (video) failed')
           throw { status_code: 500, body: 'Failed to persist video asset metadata' }
         }
 
@@ -884,7 +890,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
             mimeType: mimeRaw,
           })
         } catch (err) {
-          console.error('[tus] enqueueVideoTranscode failed:', err)
+          log.error({ err }, 'enqueueVideoTranscode failed')
           // Asset row already exists — log the failure but don't rollback.
           // Operator can re-enqueue manually. Do not fail the upload response.
         }
@@ -935,7 +941,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           }
           headBytes = Buffer.concat(chunks)
         } catch (err) {
-          console.error('[tus] image content read failed:', err)
+          log.error({ err }, 'image content read failed')
           await deleteMinIOObject(s3, storageKey)
           throw { status_code: 400, body: 'Failed to read uploaded image for validation.' }
         }
@@ -950,7 +956,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           try {
             fullBytes = await getObjectBytes(s3, storageKey)
           } catch (err) {
-            console.error('[tus] SVG full read failed:', err)
+            log.error({ err }, 'SVG full read failed')
             await deleteMinIOObject(s3, storageKey)
             throw { status_code: 400, body: 'Failed to read uploaded SVG for sanitization.' }
           }
@@ -977,7 +983,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
               )
               sizeBytes = cleaned.byteLength
             } catch (err) {
-              console.error('[tus] sanitized SVG PutObject failed:', err)
+              log.error({ err }, 'sanitized SVG PutObject failed')
               await deleteMinIOObject(s3, storageKey)
               throw { status_code: 500, body: 'Failed to store sanitized SVG.' }
             }
@@ -999,7 +1005,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       let dims: { width: number; height: number } | undefined
       dims = await probeImageDimensions(s3, storageKey)
       if (!dims) {
-        console.warn('[tus] probe-image-size returned no result for', storageKey)
+        log.warn({ storageKey }, 'probe-image-size returned no result')
         // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
       }
 
@@ -1017,7 +1023,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           kind: 'image',
         })
       } catch (err) {
-        console.error('[tus] createMediaAsset failed:', err)
+        log.error({ err }, 'createMediaAsset failed')
         throw { status_code: 500, body: 'Failed to persist media asset metadata' }
       }
 

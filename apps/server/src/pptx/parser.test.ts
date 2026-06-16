@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { randomBytes } from 'node:crypto'
 import JSZip from 'jszip'
 import { parsePptx } from './parser.js'
 
@@ -2163,5 +2164,47 @@ describe('parsePptx', () => {
     const buf = await makeFixture({ slideXml: `${SLIDE_OPEN}${SLIDE_CLOSE}` })
     const out = await parsePptx(buf)
     expect(out.embeddedFonts).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// DoS hardening — decompression-bomb guards (assertNotZipBomb)
+//
+// The on-the-wire 2 GB import cap is intentionally NOT reduced (large decks
+// must import); protection is the per-entry compression-ratio guard, which
+// catches the decompression-bomb signature without limiting legitimate large
+// files. The total-size / entry-count bounds are backstops set far above any
+// realistic deck, so they're not exercised here (a 200k-entry fixture would be
+// impractically slow); the ratio guard is the meaningful, testable one.
+// ---------------------------------------------------------------------------
+describe('parsePptx — zip-bomb guards', () => {
+  it('rejects an entry with a bomb-like compression ratio', async () => {
+    // A single ~4 MB run of one byte compresses to a few KB — ratio well past
+    // the 200:1 cap — which is the classic decompression-bomb signature.
+    const zip = new JSZip()
+    zip.file('ppt/presentation.xml', '<x/>')
+    zip.file('ppt/bomb.bin', 'A'.repeat(4 * 1024 * 1024))
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))
+    await expect(parsePptx(buf)).rejects.toThrow(/compression ratio/i)
+  })
+
+  it('does NOT false-positive on a large but low-ratio entry (legit big media)', async () => {
+    // ~3 MB of true random bytes (incompressible, like JPEG/MP4) — over the
+    // 1 MB ratio-check threshold but ~1:1 ratio, so it must pass the guard.
+    const noise = randomBytes(3 * 1024 * 1024)
+    const zip = new JSZip()
+    zip.file('ppt/presentation.xml', '<x/>')
+    zip.file('ppt/media/image1.bin', noise)
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))
+    // The ppt/ tree exists but there are no slides → parsePptx returns an empty
+    // deck rather than throwing. The point is the bomb guard does NOT fire.
+    await expect(parsePptx(buf)).resolves.toBeTruthy()
+  })
+
+  it('accepts a normal small deck (guard does not false-positive)', async () => {
+    const buf = await makeFixture({ slideXml: `${SLIDE_OPEN}${SLIDE_CLOSE}` })
+    // Should parse without throwing — well under every cap.
+    const out = await parsePptx(buf)
+    expect(out.slides.length).toBeGreaterThan(0)
   })
 })

@@ -77,6 +77,9 @@ import type {
   ParsedBackground,
   ParsedTableCell,
 } from './parser.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('pptx-import')
 
 // ---------------------------------------------------------------------------
 // Output
@@ -974,9 +977,13 @@ function writeSlideShapes(
       if (shape.spId !== undefined) spIdToObjectId.set(shape.spId, obj.id)
       objectsCreated++
     } catch (err) {
-      console.warn(
-        `[pptx-import] addObject failed for ${shape.sourceTag} (${shape.kind}): ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+      log.warn(
+        {
+          sourceTag: shape.sourceTag,
+          kind: shape.kind,
+          err: err instanceof Error ? err.message : String(err),
+        },
+        'addObject failed',
       )
       skippedUnknown++
     }

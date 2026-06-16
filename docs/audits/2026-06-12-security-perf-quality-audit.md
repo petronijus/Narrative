@@ -90,8 +90,20 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 - ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
   - idle/conn timeouts, env-overridable) · ☑ `media_assets` composite indexes
     (hand-written migration `0015`) · ☑ route code-split (lazy editor/present
-    routes — main entry chunk ~772 KB → ~208 KB / 50 KB gzip) · ☐ async PPTX
-    (BullMQ — the one remaining perf item; feature-level refactor)
+    routes — main entry chunk ~772 KB → ~208 KB / 50 KB gzip) · ◐ async PPTX —
+    **DoS dimension hardened via the parser, NOT a size cap**: the 2 GB import
+    cap is kept by product requirement (large decks must import — `MAX_PPTX_BYTES`
+    / `MAX_PPTX_UPLOAD_SIZE` stay 2 GB). Instead the parser rejects decompression
+    bombs up front (`assertNotZipBomb` in `parser.ts`): the meaningful guard is a
+    **200:1 per-entry compression-ratio** check on entries >1 MB (the bomb
+    signature — real JPEG/PNG/MP4 ≈ 1:1, XML ≈ 5-10:1, so it never trips a legit
+    deck), plus 32 GiB total-uncompressed and 200 k-entry BACKSTOPS set far above
+    any realistic 2 GB deck. All read from the ZIP central directory (no
+    inflation); tests in `parser.test.ts` (bomb rejected, large-incompressible-
+    media NOT false-positived). ☐ The BullMQ **off-event-loop move** itself is
+    deferred — large feature refactor (the whole `pptx/` subsystem + slide-model
+    would move into the worker / a shared package), the item both prior agents
+    stalled on; tracked as its own task.
 - ☑ **drizzle-meta landmine** (surfaced by the indexes) — root cause: this repo
   hand-writes migrations + uses a custom per-statement-transaction migrator
   (`migrate.ts`, needed because drizzle's built-in single-tx migrator breaks
@@ -116,7 +128,17 @@ none`; video playbackUrl (6h) + font-url (1h) presigned (`presignGetUrl`
   mediaCache never caches presigned URLs). **Deployed + validated 2026-06-16**: bucket private (bare `/storage` → 403),
   presigned URLs serve end-to-end (live curl: 200 + correct body through
   Caddy→MinIO; signature Host/path assumption confirmed).
-- ☐ site-wide CSP
+- ☑ site-wide CSP — SPA `Content-Security-Policy` set on the Caddy SPA
+  `handle {}` block (NOT site-wide, so it can't override the stricter
+  `sandbox` CSP on `/storage/*`): `default-src 'self'`, `script-src 'self'`
+  (no eval/wasm/inline — Vite esnext bundle is fully external), `style-src
+'self' 'unsafe-inline'` (React inline styles + Pixi HTMLText), `img-src
+'self' data: blob:`, `media/font/connect-src 'self'`, `worker/object/
+frame-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`. Derived
+  from a dedicated apps/web CSP audit (every load path traced to same-origin;
+  only external is optional Sentry ingest, off by default — noted inline).
+  Verified with a real `caddy` run: SPA → full policy, `/storage` keeps
+  `sandbox`, `/api` unaffected; repo Caddyfile passes `caddy validate`.
 - ☑ **CONN-1** Hocuspocus closes the revoked principal's live WS on share/
   permission/session revoke (`hocuspocus/connections.ts`, targeted — not
   the kick-everyone built-in) · ☑ **TUS-1** uploads bound to creator+deck,
@@ -127,9 +149,57 @@ none`; video playbackUrl (6h) + font-url (1h) presigned (`presignGetUrl`
   in prod · ☑ animation DSL clamp (duration/timeline/repeat) · ☐ CSRF token
   (deferred until SameSite relaxed / M24 iframe embeds)
 
-**Quality P2**
+**Quality P2** (all done this round unless noted)
 
-- ☐ dedupe `parseDataUrl` · ☐ `no-console` + logger · ☐ dead `packages/ui`
+- ☑ dedupe `parseDataUrl` — extracted to `media/dataUrl.ts`, both routes
+  (`decks.ts`, `components.ts`) import it · ☑ `no-console` + logger — shared
+  pino `observability/logger.ts` (`subsystemLogger(name)`, pretty in dev,
+  JSON in prod, silent under Vitest); converted the runtime subsystems
+  (tus, persistence, hocuspocus index/connections, email, pptx writer,
+  invites) off `console.*`; `no-console: error` for `apps/server/src/**`
+  with bootstrap/CLI exempt (`index.ts`, `sentry.ts`, `db/migrate.ts`,
+  `scripts/**`) · ☑ dead `packages/ui` deleted (empty `export {}` stub,
+  imported nowhere; removed from workspace + lockfile)
+- ☑ **broken documented workflows** — added `apps/web` `"test:e2e":
+"playwright test"` (CLAUDE.md referenced it in 7 rows, 38 specs existed,
+  no script); switched the load harness off the never-installed `ts-node`
+  to repo-standard `tsx` (`node --import tsx`) in root + `tests/load`
+  `package.json` + `runAll.mjs` — verified `tsx` transpiles a scenario +
+  its `.ts` imports (fails only on the absent server, as expected).
+- ☑ **worker/process resilience** — `unhandledRejection` + `uncaughtException`
+  guards added to BOTH the server (`index.ts`, via pino) and the video-worker;
+  the `failed` handler's `void updateTranscodeStatus(...)` is now `await`ed
+  inside its try/catch (a floated rejection would have crashed the worker).
+- ☑ **invariant leaks (the only two)** — the raw-Y-mutation sites moved into
+  slide-model: `applyShapeMask` → `slide-model/src/shapeMask.ts` (web keeps a
+  re-export shim so imports + test mocks are untouched; new `shapeMask.test.ts`,
+  4 cases) and the `TextEditOverlay` typing splice → `spliceRichText` +
+  `richAttrsAtIndex` in slide-model (origin semantics preserved exactly — the
+  contenteditable path still passes NO origin, relying on its `localEditRef`
+  echo-suppression). Render/typing behavior unchanged.
+- ☑ **animation nit** — `compiler.ts` onClick pause: anchor the `addPause` AND
+  `addLabel` to the same `tl.duration()` so the pause can't land mid-animation
+  when an earlier `withPrevious` tween runs long.
+- ☑ **present-mode polish** — `playTransition` abort now restores the outgoing
+  root's pre-transition transform (snapshotted up front: position/scale/
+  rotation/alpha/pivot) so spam-arrow aborts no longer leave the surviving
+  slide frozen offset/dimmed. (Mock made faithful to a Pixi Container.)
+- ☑ smalls: `folders` DELETE returned a body with **204** (invalid — body
+  dropped); now **200** so `deletedDeckCount` is delivered (client only checks
+  `res.ok`) · `colorHex` clamps out-of-range/NaN ints to a valid 6-hex-digit
+  RGB (was emitting invalid CSS like `#1000000` / `#0000-1` that broke the
+  whole style attr).
+- ☐ deferred (rationale): **async-PPTX BullMQ move** (large refactor — see
+  PERF-5 above; DoS already hardened) · **Drafts-folder provisioning race**
+  (`folders.ts` SELECT-then-INSERT — correct fix needs a partial-unique-index
+  migration that could fail on any pre-existing duplicates, or an advisory-lock
+  with uncertain test-mock blast radius; rare race on a brand-new user's
+  concurrent first deck creations, deferred to avoid migration risk in the
+  consolidation deploy) · **`asAny` Pixi-internals consolidation** (cosmetic,
+  ~12 sites — pure churn, no runtime impact) · **CRDT reorder note** &
+  **fractional-ordering** (architecture-level, document-only) · **video-worker
+  Sentry** (needs a worker DSN) · **CSRF token** (until SameSite relaxed / M24
+  iframe embeds).
 
 ### Deployed to prod — 2026-06-16
 

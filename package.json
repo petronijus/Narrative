@@ -20,9 +20,9 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
     "prepare": "husky",
     "load:all": "node tests/load/runAll.mjs",
-    "load:hotedit": "node --loader ts-node/esm tests/load/hotEdit.ts",
-    "load:awareness": "node --loader ts-node/esm tests/load/awarenessFlood.ts",
-    "load:growth": "node --loader ts-node/esm tests/load/docGrowth.ts"
+    "load:hotedit": "tsx tests/load/hotEdit.ts",
+    "load:awareness": "tsx tests/load/awarenessFlood.ts",
+    "load:growth": "tsx tests/load/docGrowth.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

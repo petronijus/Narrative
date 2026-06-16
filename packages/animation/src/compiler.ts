@@ -174,8 +174,15 @@ export function compileSteps(steps: AnimationStep[], ctx: AnimationContext): Com
       // 2. Vlož animaci za label
       // 3. Při playback: timeline se zastaví na labelu, advance() ji pokračuje
       const labelName = `click:${step.id}`
-      tl.addPause(position, undefined, undefined)
-      tl.addLabel(labelName)
+      // Anchor the pause AND the label to the SAME explicit time. Previously
+      // the pause used `position` ('>' = end of the last-ADDED tween) while the
+      // label defaulted to the timeline END (end of ALL content). Those differ
+      // when an earlier `withPrevious` tween extends past the last-added one,
+      // landing the pause mid-animation. `tl.duration()` is the timeline end
+      // for both; position 0 (an onClick that is the first step) stays at 0.
+      const at = position === 0 ? 0 : tl.duration()
+      tl.addPause(at, undefined, undefined)
+      tl.addLabel(labelName, at)
       factory(step, target, tl, labelName)
 
       clickPauseEntries.push({ stepId: step.id, labelName, unsubscribe: null })

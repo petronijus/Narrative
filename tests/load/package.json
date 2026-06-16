@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Synthetic load harness for Narrative server stress testing.",
   "scripts": {
-    "hotedit": "node --loader ts-node/esm hotEdit.ts",
-    "awareness": "node --loader ts-node/esm awarenessFlood.ts",
-    "growth": "node --loader ts-node/esm docGrowth.ts",
+    "hotedit": "node --import tsx hotEdit.ts",
+    "awareness": "node --import tsx awarenessFlood.ts",
+    "growth": "node --import tsx docGrowth.ts",
     "all": "node runAll.mjs"
   },
   "dependencies": {
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@types/node": "^22.14.1",
     "@types/ws": "^8.5.14",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.19.2",
     "typescript": "^5.8.3"
   }
 }

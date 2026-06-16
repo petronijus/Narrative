@@ -47,15 +47,17 @@ worker.on('completed', (job, result) => {
   console.log(`[video-worker] job=${job.id} completed assetId=${result.assetId}`)
 })
 
-worker.on('failed', (job, err) => {
+worker.on('failed', async (job, err) => {
   console.error(`[video-worker] job=${job?.id} failed:`, err)
   if (job?.data.assetId) {
-    // Update DB so the UI can display the error state.
+    // Update DB so the UI can display the error state. AWAIT the write (was
+    // `void`-floated): a floated rejection here escapes the try/catch and
+    // surfaces as an unhandledRejection, which would crash the worker process.
     // createDb() may fail if POSTGRES_URL is not set — log and swallow.
     try {
       const db = createDb()
       const message = err instanceof Error ? err.message : String(err)
-      void updateTranscodeStatus(db, job.data.assetId, 'failed', message.slice(0, 1000))
+      await updateTranscodeStatus(db, job.data.assetId, 'failed', message.slice(0, 1000))
     } catch (dbErr) {
       console.error('[video-worker] Failed to update transcode status in DB:', dbErr)
     }
@@ -76,3 +78,16 @@ async function shutdown(signal: string) {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'))
 process.on('SIGINT', () => void shutdown('SIGINT'))
+
+// Last-resort process guards. Without these, a stray unhandled rejection
+// (e.g. a floated DB/S3 write that rejects) or uncaught exception in a worker
+// callback prints a warning and—on recent Node defaults—can terminate the
+// process, silently stopping all transcoding. We log loudly and keep running;
+// BullMQ will retry in-flight jobs, and a genuinely fatal state still surfaces
+// via the failed-job handler. (Mirrors the server's process guards.)
+process.on('unhandledRejection', (reason) => {
+  console.error('[video-worker] unhandledRejection:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[video-worker] uncaughtException:', err)
+})

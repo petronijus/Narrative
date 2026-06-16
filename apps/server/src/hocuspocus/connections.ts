@@ -34,6 +34,9 @@
  */
 
 import { getHocuspocusInstance } from './presence.js'
+import { subsystemLogger } from '../observability/logger.js'
+
+const log = subsystemLogger('hocuspocus')
 
 /**
  * Close-event sent to revoked connections. 4403 mirrors Hocuspocus'
@@ -94,8 +97,9 @@ export function closeConnectionsWhere(
       conn.close(REVOKED_CLOSE_EVENT)
       closed++
     } catch (err) {
-      console.error(
-        `[hocuspocus] failed to close revoked connection: ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        'failed to close revoked connection',
       )
     }
   }
