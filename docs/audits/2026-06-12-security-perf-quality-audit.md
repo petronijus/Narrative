@@ -103,8 +103,16 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
   forbid `script`/`foreignObject`/`on*`, `href` clamped to `#frag`/`data:image`)
   - sniff renamed SVGs + raster magic-byte check, wired into `tus.ts`
     onUploadFinish (sanitize→rewrite, or reject+delete). · ☐ MEDIA-1 private bucket+presign
-- ☐ site-wide CSP · ☐ CONN-1 · ☐ TUS-1 · ☐ IDOR-1 · ☐ DOS-1
-- ☐ ops: BYPASS_AUTH hard-fail · METRICS_TOKEN · CSRF token · animation DSL clamp
+- ☐ site-wide CSP
+- ☑ **CONN-1** Hocuspocus closes the revoked principal's live WS on share/
+  permission/session revoke (`hocuspocus/connections.ts`, targeted — not
+  the kick-everyone built-in) · ☑ **TUS-1** uploads bound to creator+deck,
+  re-checked on PATCH/finish · ☑ **IDOR-1** folder-font clone scoped to
+  caller-owned decks · ☑ **DOS-1** `MAX_DOC_BYTES` net-growth cap (32 MB) +
+  disconnect
+- ops: ☑ BYPASS_AUTH hard-fails in prod · ☑ /metrics gated on `METRICS_TOKEN`
+  in prod · ☑ animation DSL clamp (duration/timeline/repeat) · ☐ CSRF token
+  (deferred until SameSite relaxed / M24 iframe embeds)
 
 **Quality P2**
 
