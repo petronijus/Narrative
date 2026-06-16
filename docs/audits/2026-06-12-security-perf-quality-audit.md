@@ -77,11 +77,18 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 - ☐ PERF-3 thumbnail localStorage blob rewrite
 - ☐ PERF-4 table keystroke restyle / SceneGraph O(n²) / main.tsx Sentry TLA
 - ◐ PERF-5: ☑ pg pool sizing (`db/client.ts` + worker `db.ts` — bounded `max`
-  - idle/conn timeouts, env-overridable) · ☐ `media_assets` composite indexes
-    (BLOCKED — drizzle `meta/` snapshots are stale, so `db:generate` emits a
-    destructive full-schema migration, not an incremental `CREATE INDEX`; needs
-    a hand-written migration + a snapshot re-sync — latent landmine) · ☐ async
-    PPTX · ☐ route code-split
+  - idle/conn timeouts, env-overridable) · ☑ `media_assets` composite indexes
+    (hand-written migration `0015` + journal entry; applies at next `db:migrate`)
+    · ☐ async PPTX · ☐ route code-split
+- ☑ **drizzle-meta landmine** (surfaced by the indexes) — root cause: this repo
+  hand-writes migrations + uses a custom per-statement-transaction migrator
+  (`migrate.ts`, needed because drizzle's built-in single-tx migrator breaks
+  `ALTER TYPE … ADD VALUE`); `drizzle-kit generate` was never used so snapshots
+  were never maintained → `db:generate` emitted a destructive full-schema
+  migration. Fix: `db:generate` now guarded to fail loudly, stale lone snapshot
+  deleted, convention documented in `apps/server/drizzle/README.md`. (NOT a
+  re-baseline — that would push toward the built-in migrator and reintroduce
+  the enum bug the custom migrator deliberately avoids.)
 
 **Security (deferred set)**
 

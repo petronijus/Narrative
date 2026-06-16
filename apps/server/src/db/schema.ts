@@ -306,6 +306,10 @@ export const mediaAssets = pgTable(
   (t) => [
     index('media_assets_deck_idx').on(t.deckId),
     index('media_assets_folder_id_idx').on(t.folderId),
+    // Composite (parent, kind) — hot-path lookups filter by (deck/folder,
+    // kind). Created by migration 0015 (hand-written; see drizzle/README.md).
+    index('media_assets_deck_kind_idx').on(t.deckId, t.kind),
+    index('media_assets_folder_kind_idx').on(t.folderId, t.kind),
   ],
 )
 
