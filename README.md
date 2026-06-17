@@ -471,3 +471,10 @@ ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
 The encrypted `env.prod.sops` is the source of truth — ad-hoc edits made
 directly on the VM (e.g. `USE_SHARED_TUNNEL=1`) should be folded back into it via
 `secrets-edit.sh prod` so they aren't lost on a rebuild.
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](./LICENSE) — source-available for
+**noncommercial** use (personal, research, evaluation). Commercial use is not
+granted. See [`NOTICE`](./NOTICE), which also covers the GSAP dependency's
+separate (non-open-source) license.

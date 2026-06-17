@@ -1,0 +1,17 @@
+Narrative
+Copyright (c) 2026 Petr Parkan Janda
+
+Licensed under the PolyForm Noncommercial License 1.0.0 — see LICENSE.
+This is a source-available, NONCOMMERCIAL license: you may use, modify and
+share it for noncommercial purposes; commercial use is not granted.
+
+Third-party dependencies
+------------------------
+- GSAP (https://gsap.com) — used via npm by @narrative/animation. GSAP ships
+  under the GSAP Standard "No Charge" License, which is NOT an open-source
+  license: free for commercial and noncommercial use, but it may not be resold
+  or used to build a competing product (https://gsap.com/standard-license).
+  GSAP is installed from npm and is not redistributed by this repository.
+- All other dependencies are under permissive open-source licenses (MIT,
+  Apache-2.0, BSD-2/3-Clause, ISC, 0BSD, OFL-1.1, Unlicense). Run
+  `pnpm licenses list --prod` for the authoritative list.

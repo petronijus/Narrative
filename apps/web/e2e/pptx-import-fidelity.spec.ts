@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { test, expect } from '@playwright/test'
@@ -25,12 +26,19 @@ import { test, expect } from '@playwright/test'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = join(__dirname, '..', '..', '..')
 
-const DECK_NAME = 'sample-deck'
+// Diagnostic fixture is kept out of the public repo (real-world deck lives in
+// the private overlay). Point PPTX_FIDELITY_DECK at your own .pptx under
+// tests/fixtures/pptx/ to run this; otherwise the test skips.
+const DECK_NAME = process.env['PPTX_FIDELITY_DECK'] ?? 'sample-deck'
 const FIXTURE_PATH = join(REPO_ROOT, 'tests', 'fixtures', 'pptx', `${DECK_NAME}.pptx`)
 const OUTPUT_DIR = join(REPO_ROOT, 'tests', 'pptx-import', 'imported', DECK_NAME)
 
 test.describe('PPTX import fidelity', () => {
   test('captures one screenshot per imported slide in present mode', async ({ page }) => {
+    test.skip(
+      !process.env['FIDELITY_DECK_ID'] && !existsSync(FIXTURE_PATH),
+      `fidelity fixture ${DECK_NAME}.pptx not present (kept in the private overlay; set PPTX_FIDELITY_DECK)`,
+    )
     test.setTimeout(600_000) // 10 min — 52 MB upload + parse + present-mode render
 
     // 1920×1080 to match the LibreOffice reference PNGs (which are 1920×1081

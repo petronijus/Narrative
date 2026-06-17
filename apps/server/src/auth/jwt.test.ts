@@ -202,7 +202,9 @@ describe('isAllowedByEnv', () => {
 
   it('accepts a domain-matched email when emailVerified=true', () => {
     const cfg = { allowedEmails: [], allowedDomain: 'example.com' }
-    expect(isAllowedByEnv({ sub: 'u', email: 'a@example.com', emailVerified: true }, cfg)).toBe(true)
+    expect(isAllowedByEnv({ sub: 'u', email: 'a@example.com', emailVerified: true }, cfg)).toBe(
+      true,
+    )
   })
 
   it('rejects a domain-matched email when emailVerified is missing or false', () => {
