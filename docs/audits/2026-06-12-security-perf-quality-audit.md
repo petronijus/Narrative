@@ -224,6 +224,36 @@ frame-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`. Derived
 - Known pre-existing (unrelated to this round): Tiptap/ProseMirror vendor chunk
   12.6 kB over its 120 kB size-limit budget — flagged, not silently bumped.
 
+### Deployed to prod — 2026-06-17
+
+Round-3 batch shipped to the prod VM (commits through `7537198` on `main`) and
+verified live at `https://narrative.example.com`. Code synced via rsync to
+`/opt/narrative` (`.env.prod` preserved), then `./infra/scripts/deploy.sh prod`
+(server + video-worker images rebuilt, all 8 containers healthy, API + Caddy
+healthchecks OK). Smoke verified:
+
+- **SPA `/`** now carries the full round-3 `Content-Security-Policy`
+  (`default-src 'self'` … `frame-ancestors 'none'`); the JS bundle + vendor
+  chunks load 200 under `script-src 'self'` (app shell not broken).
+- **`/storage/*`** still returns its stricter `Content-Security-Policy: sandbox`
+  - `Content-Disposition: attachment` (bare key → 403, private bucket) — the
+    SPA CSP did NOT override it.
+- `/health` 200.
+
+Two deploy-time landmines surfaced + fixed (both latent for any future deploy):
+
+- ☑ **Dockerfiles still `COPY packages/ui/package.json`** after `packages/ui`
+  was deleted → `"/packages/ui/package.json": not found` build failure. Local
+  typecheck/lint/build/unit don't exercise the Docker COPY layers. Removed from
+  `apps/server/Dockerfile` (×2 stages) + `apps/web/Dockerfile` (`7537198`).
+- ☑ **rsync + file bind-mount inode trap**: rsync replaces a file via atomic
+  rename → new inode, but Caddy's `:/etc/caddy/Caddyfile` bind mount is pinned
+  to the old inode, so the container kept serving the old config (no SPA CSP)
+  even after `caddy reload`. Fix: `docker compose up -d --force-recreate caddy`
+  re-resolves the bind mount to the current inode. **Future deploys that change
+  the Caddyfile must force-recreate (or restart) `caddy`** — `deploy.sh` only
+  recreates services whose image/def changed, which Caddy's isn't.
+
 ### Deployed to prod — 2026-06-16
 
 Round-2 batch shipped to the prod VM (commits through `74be7b8` on `main`) and
