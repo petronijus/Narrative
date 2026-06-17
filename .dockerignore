@@ -18,6 +18,10 @@ build
 .env.*
 !.env.example
 
+# Private overlay (SOPS secrets + non-public fixtures — never into the build context)
+private
+**/private
+
 # Dev / editor
 .claude
 .vscode
