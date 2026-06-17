@@ -12,7 +12,6 @@ COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
-COPY packages/ui/package.json            packages/ui/package.json
 
 # --ignore-scripts přeskočí "prepare: husky" v root package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts
@@ -39,7 +38,6 @@ COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
-COPY packages/ui/package.json            packages/ui/package.json
 
 # Instalace jen prod deps, bez lifecycle scripts (husky není potřeba v runtime)
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts

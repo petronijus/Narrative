@@ -12,7 +12,6 @@ COPY apps/web/package.json               apps/web/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
-COPY packages/ui/package.json            packages/ui/package.json
 
 # --ignore-scripts skips esbuild's postinstall (just verifies platform binary
 # exists — not needed since @esbuild/* platform packages bundle the binary).
