@@ -79,28 +79,27 @@ if [[ "${ENV}" == "prod" ]]; then
   fi
 fi
 
-# ── Build ──────────────────────────────────────────────────────────────────────
-log "Stavíme Docker images..."
-${COMPOSE} build --pull
+# ── Pull prebuilt images ─────────────────────────────────────────────────────
+# Images are BUILT LOCALLY and pushed to GHCR (infra/scripts/build-push.sh) —
+# the VM no longer builds from source. Requires a one-time `docker login ghcr.io`
+# on this host (GHCR packages are private). Tag selected via NARRATIVE_TAG.
+NARRATIVE_TAG="${NARRATIVE_TAG:-latest}"
+export NARRATIVE_TAG
+log "Stahuji prebuilt images z GHCR (tag: ${NARRATIVE_TAG})..."
+${COMPOSE} pull
 
 # ── Web static build ───────────────────────────────────────────────────────────
 # Web se buildí jako Docker image, ale statické soubory potřebujeme v volume
 # který Caddy mountuje. Extrahujeme je z image.
 log "Extrakce statických souborů web..."
 
-WEB_IMAGE="narrative-web-static"
-# Note: VITE_OIDC_* args removed in 2026-05 cutover to server-driven auth.
-docker build \
-  --target runtime \
-  --build-arg VITE_API_URL="https://${DOMAIN}/api" \
-  --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
-  --build-arg VITE_IMGPROXY_URL="${VITE_IMGPROXY_URL:-https://${DOMAIN}/imgproxy}" \
-  --tag "${WEB_IMAGE}:latest" \
-  --file "${REPO_DIR}/apps/web/Dockerfile" \
-  "${REPO_DIR}"
+# The web image is prebuilt locally with the prod VITE_* args baked in
+# (build-push.sh reads them from .env.prod) and pushed to GHCR — just pull it.
+WEB_IMAGE="ghcr.io/petronijus/narrative-web:${NARRATIVE_TAG}"
+docker pull "${WEB_IMAGE}"
 
 # Vytvoříme tmp container a zkopírujeme /srv/web do web_static volume
-WEB_CONTAINER=$(docker create "${WEB_IMAGE}:latest")
+WEB_CONTAINER=$(docker create "${WEB_IMAGE}")
 # Zajistíme existenci volume
 docker volume create narrative_web_static 2>/dev/null || true
 # Zkopírujeme přes tar pipe

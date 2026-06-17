@@ -34,6 +34,7 @@ services:
       start_period: 10s
 
   server:
+    image: ghcr.io/petronijus/narrative-server:${NARRATIVE_TAG:-latest}
     build:
       context: ../
       dockerfile: apps/server/Dockerfile
@@ -154,6 +155,7 @@ services:
   # Phase 1a: container wired up, transcodeProcessor is a placeholder stub.
   # Phase 2 (media agent): replaces stub with real ffmpeg pipeline.
   video-worker:
+    image: ghcr.io/petronijus/narrative-video-worker:${NARRATIVE_TAG:-latest}
     build:
       context: ../
       dockerfile: apps/video-worker/Dockerfile

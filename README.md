@@ -389,25 +389,44 @@ rsync -av --exclude='.git' --exclude='node_modules' \
   ./ user@server:/opt/narrative/
 ```
 
-**On the target server:**
+**Build the images locally and push to GHCR** (the VM does not build from
+source — see _Why local builds_ below):
+
+```bash
+# on your build machine, with Docker running and infra/.env.prod present
+echo "$GHCR_PAT" | docker login ghcr.io -u petronijus --password-stdin
+infra/scripts/build-push.sh           # builds server + video-worker + web, pushes to GHCR
+```
+
+**On the target server** (pulls the prebuilt images):
 
 ```bash
 cd /opt/narrative/infra
 cp .env.prod.example .env.prod
 # Edit .env.prod — fill DOMAIN, POSTGRES_PASSWORD, PG_DATA_PATH
+docker login ghcr.io -u petronijus       # one-time (GHCR packages are private)
 
 chmod +x scripts/deploy.sh scripts/backup.sh
-./scripts/deploy.sh prod
+NARRATIVE_TAG=latest ./scripts/deploy.sh prod
 ```
 
 The deploy script:
 
 1. Takes a ZFS snapshot (if `ZFS_DATASET` is set)
-2. Builds Docker images
-3. Builds the React SPA and copies static files into the Caddy volume
+2. **Pulls** the prebuilt images from GHCR (`narrative-{server,video-worker,web}`)
+3. Extracts the React SPA static files (from the pulled `narrative-web` image) into the Caddy volume
 4. Runs DB migrations (Drizzle)
 5. Starts all services with `docker compose up -d`
 6. Runs health checks
+
+#### Why local builds (not on the VM)
+
+Images are three single-purpose containers — **server** (API + Hocuspocus),
+**video-worker** (background video rendering), and **web** (static SPA, served
+by Caddy). They are built on a dev machine via `infra/scripts/build-push.sh` and
+pushed to **private GHCR packages**; the VM only pulls. This keeps build load off
+the production host and removes the need for a source checkout / `git pull` there.
+The images are private (the source is published under a noncommercial license).
 
 ### DB migrations
 
