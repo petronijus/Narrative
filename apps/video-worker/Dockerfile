@@ -58,3 +58,6 @@ COPY --from=builder /app/apps/video-worker/dist/packages/shared/src   packages/s
 RUN sed -i 's|./src/index.ts|./src/index.js|g' packages/shared/package.json
 
 CMD ["node", "apps/video-worker/dist/apps/video-worker/src/index.js"]
+
+# Link this GHCR package to its source repo (auto-connects on push)
+LABEL org.opencontainers.image.source=https://github.com/petronijus/Narrative

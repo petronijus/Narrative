@@ -47,3 +47,6 @@ COPY --from=builder /app/apps/web/dist /srv/web/
 EXPOSE 80 443
 
 CMD ["caddy", "file-server", "--root", "/srv/web", "--listen", ":80"]
+
+# Link this GHCR package to its source repo (auto-connects on push)
+LABEL org.opencontainers.image.source=https://github.com/petronijus/Narrative

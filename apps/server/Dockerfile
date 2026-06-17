@@ -74,3 +74,6 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
 # tsc emits with workspace-root rootDir (cross-package imports pull files from
 # outside apps/server), so the actual entry is dist/apps/server/src/index.js.
 CMD ["node", "apps/server/dist/apps/server/src/index.js"]
+
+# Link this GHCR package to its source repo (auto-connects on push)
+LABEL org.opencontainers.image.source=https://github.com/petronijus/Narrative
