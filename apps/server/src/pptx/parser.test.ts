@@ -1907,7 +1907,10 @@ describe('parsePptx', () => {
       ${SLIDE_CLOSE}`,
     })
     const out = await parsePptx(buf)
+    // Legacy frame-wide field still derived from the first paragraph.
     expect(out.slides[0]!.shapes[0]!.listStyle).toBe('bullet')
+    // Per-paragraph block attrs carry the glyph.
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([{ list: 'bullet', bulletChar: '•' }])
   })
 
   it('maps a slide-side <a:buAutoNum> to listStyle="numbered"', async () => {
@@ -1933,6 +1936,156 @@ describe('parsePptx', () => {
     })
     const out = await parsePptx(buf)
     expect(out.slides[0]!.shapes[0]!.listStyle).toBe('numbered')
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([
+      { list: 'number', numberFormat: 'decimal' },
+    ])
+  })
+
+  it('maps every buAutoNum type token to the right numberFormat', async () => {
+    // One paragraph per OOXML autonum token; assert the mapping table.
+    const cases: Array<[string, string]> = [
+      ['arabicPeriod', 'decimal'],
+      ['arabicParenR', 'decimalParen'],
+      ['arabicParenBoth', 'decimalParen'],
+      ['alphaLcPeriod', 'lowerAlpha'],
+      ['alphaLcParenR', 'lowerAlphaParen'],
+      ['alphaUcPeriod', 'upperAlpha'],
+      ['alphaUcParenR', 'upperAlphaParen'],
+      ['romanLcPeriod', 'lowerRoman'],
+      ['romanUcPeriod', 'upperRoman'],
+      ['someUnknownToken', 'decimal'], // fallback
+    ]
+    const paras = cases
+      .map(
+        ([token], i) =>
+          `<a:p><a:pPr><a:buAutoNum type="${token}"/></a:pPr>` +
+          `<a:r><a:rPr lang="en-US"/><a:t>Item ${i}</a:t></a:r></a:p>`,
+      )
+      .join('')
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/>${paras}</p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const got = out.slides[0]!.shapes[0]!.paragraphs!.map((p) => p.numberFormat)
+    expect(got).toEqual(cases.map(([, fmt]) => fmt))
+  })
+
+  it('captures buAutoNum startAt when present and ≥ 1', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/>
+            <a:p>
+              <a:pPr><a:buAutoNum type="arabicPeriod" startAt="5"/></a:pPr>
+              <a:r><a:rPr lang="en-US"/><a:t>Five</a:t></a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([
+      { list: 'number', numberFormat: 'decimal', startAt: 5 },
+    ])
+  })
+
+  it('captures per-paragraph lvl as nesting level (multi-level list)', async () => {
+    const paras = [0, 1, 2, 1]
+      .map(
+        (lvl, i) =>
+          `<a:p><a:pPr lvl="${lvl}"><a:buChar char="•"/></a:pPr>` +
+          `<a:r><a:rPr lang="en-US"/><a:t>L${i}</a:t></a:r></a:p>`,
+      )
+      .join('')
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/>${paras}</p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    const got = out.slides[0]!.shapes[0]!.paragraphs!
+    // level 0 omitted; 1/2 carried.
+    expect(got.map((p) => p.level ?? 0)).toEqual([0, 1, 2, 1])
+    expect(got.every((p) => p.list === 'bullet')).toBe(true)
+    expect(got.every((p) => p.bulletChar === '•')).toBe(true)
+  })
+
+  it('keeps a Wingdings-style custom buChar glyph verbatim', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/>
+            <a:p>
+              <a:pPr><a:buChar char="▪"/></a:pPr>
+              <a:r><a:rPr lang="en-US"/><a:t>Square bullet</a:t></a:r>
+            </a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([{ list: 'bullet', bulletChar: '▪' }])
+  })
+
+  it('mixes bulleted, plain, and numbered paragraphs in one box', async () => {
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}
+        <p:sp>
+          <p:nvSpPr><p:cNvPr id="2" name="t"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+          <p:spPr>
+            <a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+            <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+            <a:noFill/>
+          </p:spPr>
+          <p:txBody><a:bodyPr/><a:lstStyle/>
+            <a:p><a:pPr><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>Bullet</a:t></a:r></a:p>
+            <a:p><a:pPr><a:buNone/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>Plain</a:t></a:r></a:p>
+            <a:p><a:pPr><a:buAutoNum type="arabicParenR"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>Numbered</a:t></a:r></a:p>
+          </p:txBody>
+        </p:sp>
+      ${SLIDE_CLOSE}`,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([
+      { list: 'bullet', bulletChar: '•' },
+      {}, // buNone → plain paragraph
+      { list: 'number', numberFormat: 'decimalParen' },
+    ])
   })
 
   it("inherits master <p:bodyStyle>'s <a:buChar> default for a body placeholder", async () => {
@@ -1979,6 +2132,8 @@ describe('parsePptx', () => {
     const buf = await makeFixture({ slideXml, layoutXml, masterXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
     expect(out.slides[0]!.shapes[0]!.listStyle).toBe('bullet')
+    // Inherited bullet has only a coarse kind (no glyph from txStyles layer).
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toEqual([{ list: 'bullet' }])
   })
 
   it('lets slide-side <a:buNone> suppress an inherited body-style bullet', async () => {
@@ -2019,6 +2174,8 @@ describe('parsePptx', () => {
     const buf = await makeFixture({ slideXml, layoutXml, masterXml, themeXml: OFFICE_THEME })
     const out = await parsePptx(buf)
     expect(out.slides[0]!.shapes[0]!.listStyle).toBeUndefined()
+    // buNone veto ⇒ plain paragraph ⇒ no per-paragraph list data emitted.
+    expect(out.slides[0]!.shapes[0]!.paragraphs).toBeUndefined()
   })
 
   it('honours showMasterSp="0" on the slide to suppress master shapes', async () => {

@@ -12,8 +12,40 @@
 
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
+import { getParagraphs, PARAGRAPH_SEP } from '@narrative/slide-model'
 import { buildDeckUpdate, buildDeckAppendUpdate } from './writer.js'
-import type { ParsedPptx, ParsedSlide } from './parser.js'
+import type { ParsedPptx, ParsedSlide, ParsedShape } from './parser.js'
+
+/**
+ * Decode a deck-update buffer and return the live Y.Text body of the object
+ * at `[slideIndex][objIndex]`. The per-paragraph list model lives as block
+ * attributes on the Y.Text's paragraph-separator chars, which `toJSON()`
+ * flattens away — so list assertions must read the live Y.Text and run it
+ * through `getParagraphs`.
+ */
+function objectYText(state: Buffer, slideIndex: number, objIndex: number): Y.Text {
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, new Uint8Array(state))
+  const yslides = doc.getArray<Y.Map<unknown>>('slides')
+  const slide = yslides.get(slideIndex)
+  const objects = slide.get('objects') as Y.Array<Y.Map<unknown>>
+  const obj = objects.get(objIndex)
+  return obj.get('text') as Y.Text
+}
+
+/** A fully-specified text ParsedShape with sensible geometry defaults. */
+function textShape(overrides: Partial<ParsedShape>): ParsedShape {
+  return {
+    kind: 'text',
+    x: 0,
+    y: 0,
+    width: 200,
+    height: 100,
+    rotation: 0,
+    sourceTag: 'p:sp',
+    ...overrides,
+  }
+}
 
 function emptySlide(overrides: Partial<ParsedSlide> = {}): ParsedSlide {
   return {
@@ -191,30 +223,169 @@ describe('buildDeckUpdate', () => {
     expect(bg['color']).toBe(0xabcdef)
   })
 
-  it('copies listStyle="bullet" through to the emitted TextObject', async () => {
+  // ─── Per-paragraph list block attributes ─────────────────────────────────
+  // The legacy frame-wide `listStyle` is no longer written on import — the
+  // per-paragraph model stores list kind/level/glyph/format as block attrs on
+  // each paragraph's Y.Text separator. These tests read the live Y.Text via
+  // `getParagraphs` to assert that fidelity.
+
+  it('stamps per-paragraph bullet attrs onto the Y.Text (single bullet)', async () => {
     const parsed: ParsedPptx = {
       ...BASE,
       slides: [
         emptySlide({
           shapes: [
-            {
-              kind: 'text',
-              x: 0,
-              y: 0,
-              width: 200,
-              height: 100,
-              rotation: 0,
+            textShape({
               text: 'Item',
-              listStyle: 'bullet',
-              sourceTag: 'p:sp',
-            },
+              textRuns: [{ text: 'Item' }],
+              paragraphs: [{ list: 'bullet' }],
+            }),
           ],
         }),
       ],
     }
     const { state } = buildDeckUpdate(parsed)
+    // Legacy field is intentionally NOT written anymore.
     const doc = applyToFreshDoc(state)
-    expect(doc.slides[0]!.objects[0]!['listStyle']).toBe('bullet')
+    expect(doc.slides[0]!.objects[0]!['listStyle']).toBeUndefined()
+    // Block attrs ride on the paragraph separator.
+    const yt = objectYText(state, 0, 0)
+    const paras = getParagraphs(yt)
+    expect(paras.map((p) => p.text)).toEqual(['Item'])
+    expect(paras[0]!.attrs).toEqual({ list: 'bullet' })
+  })
+
+  it('preserves a custom buChar glyph per paragraph', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({
+              text: 'Dash item',
+              textRuns: [{ text: 'Dash item' }],
+              paragraphs: [{ list: 'bullet', bulletChar: '–' }],
+            }),
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const paras = getParagraphs(objectYText(state, 0, 0))
+    expect(paras[0]!.attrs).toEqual({ list: 'bullet', bulletChar: '–' })
+  })
+
+  it('carries numberFormat + startAt for numbered paragraphs', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({
+              text: 'Step',
+              textRuns: [{ text: 'Step' }],
+              paragraphs: [{ list: 'number', numberFormat: 'lowerAlphaParen', startAt: 3 }],
+            }),
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const paras = getParagraphs(objectYText(state, 0, 0))
+    expect(paras[0]!.attrs).toEqual({
+      list: 'number',
+      numberFormat: 'lowerAlphaParen',
+      startAt: 3,
+    })
+  })
+
+  it('carries multi-level nesting (level) on each paragraph', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({
+              // Three <a:p>: level 0, 1, 2 — separators between, trailing on last.
+              text: 'A\nB\nC',
+              textRuns: [
+                { text: 'A' },
+                { text: PARAGRAPH_SEP },
+                { text: 'B' },
+                { text: PARAGRAPH_SEP },
+                { text: 'C' },
+              ],
+              paragraphs: [
+                { list: 'bullet' },
+                { list: 'bullet', level: 1 },
+                { list: 'bullet', level: 2 },
+              ],
+            }),
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const paras = getParagraphs(objectYText(state, 0, 0))
+    expect(paras.map((p) => p.text)).toEqual(['A', 'B', 'C'])
+    expect(paras.map((p) => p.attrs.level ?? 0)).toEqual([0, 1, 2])
+    expect(paras.every((p) => p.attrs.list === 'bullet')).toBe(true)
+  })
+
+  it('handles a mixed box: bullet, plain, numbered paragraphs', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({
+              text: 'Bullet\nPlain\nNumber',
+              textRuns: [
+                { text: 'Bullet' },
+                { text: PARAGRAPH_SEP },
+                { text: 'Plain' },
+                { text: PARAGRAPH_SEP },
+                { text: 'Number' },
+              ],
+              paragraphs: [
+                { list: 'bullet' },
+                {}, // plain paragraph — no list, no level
+                { list: 'number', numberFormat: 'decimal' },
+              ],
+            }),
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const paras = getParagraphs(objectYText(state, 0, 0))
+    expect(paras.map((p) => p.text)).toEqual(['Bullet', 'Plain', 'Number'])
+    expect(paras[0]!.attrs).toEqual({ list: 'bullet' })
+    expect(paras[1]!.attrs).toEqual({}) // plain
+    expect(paras[2]!.attrs).toEqual({ list: 'number', numberFormat: 'decimal' })
+  })
+
+  it('leaves a plain (non-list) frame without paragraph separators', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [
+            textShape({
+              text: 'Just text',
+              textRuns: [{ text: 'Just text' }],
+              // No `paragraphs` → string fast-path, no trailing separator.
+            }),
+          ],
+        }),
+      ],
+    }
+    const { state } = buildDeckUpdate(parsed)
+    const yt = objectYText(state, 0, 0)
+    expect(yt.toString()).toBe('Just text')
+    const paras = getParagraphs(yt)
+    expect(paras).toHaveLength(1)
+    expect(paras[0]!.attrs).toEqual({})
   })
 
   it('preserves master → layout → slide paint order in the resulting object list', async () => {

@@ -11,6 +11,8 @@ import { describe, it, expect } from 'vitest'
 import JSZip from 'jszip'
 import * as Y from 'yjs'
 import { exportDeckToPptx } from './export.js'
+import { applyParagraphPatch } from '@narrative/slide-model'
+import type { ParagraphPatch } from '@narrative/slide-model'
 import { DEFAULT_TRANSITION } from '@narrative/shared'
 import type { Slide, TextObject, RectangleObject } from '@narrative/shared'
 
@@ -172,6 +174,181 @@ describe('exportDeckToPptx', () => {
   it('emits <a:buAutoNum> for a text object with listStyle="numbered"', async () => {
     const buf = await exportDeckToPptx(
       singleSlide([makeText({ text: 'step 1\nstep 2', listStyle: 'numbered' })]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:buAutoNum')
+  })
+
+  // -------------------------------------------------------------------------
+  // Per-paragraph list fidelity (new data model). Each paragraph terminates
+  // with U+2029 carrying its own block attrs; getParagraphDeltas reads them
+  // on export and emitText maps each to pptxgenjs paragraph-level bullet +
+  // indentLevel options. We unzip and assert the produced <a:pPr> XML.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Build a Y.Text from `paras` (one string per paragraph), apply each
+   * paragraph's block patch, and return it cast to the TextObject.text slot.
+   * Every paragraph is U+2029-terminated so its attrs have a home.
+   */
+  function listedText(paras: Array<{ text: string; patch?: ParagraphPatch }>): TextObject['text'] {
+    const PS = ' '
+    const doc = new Y.Doc()
+    const yt = doc.getText('t')
+    const body = paras.map((p) => p.text + PS).join('')
+    yt.insert(0, body)
+    // Separator index of the Nth paragraph (0-based).
+    const sepIndex = (n: number): number => {
+      let count = -1
+      for (let i = 0; i < body.length; i++) {
+        if (body[i] === PS) {
+          count += 1
+          if (count === n) return i
+        }
+      }
+      return -1
+    }
+    doc.transact(() => {
+      paras.forEach((p, i) => {
+        if (p.patch === undefined) return
+        const at = sepIndex(i)
+        applyParagraphPatch(yt, at, at, p.patch)
+      })
+    })
+    return yt as unknown as TextObject['text']
+  }
+
+  it('per-paragraph: single-level bullet emits <a:buChar char="•">', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          text: listedText([
+            { text: 'one', patch: { list: 'bullet' } },
+            { text: 'two', patch: { list: 'bullet' } },
+          ]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    // U+2022 is emitted as the numeric entity &#x2022;.
+    expect(xml).toContain('<a:buChar char="&#x2022;"')
+    // Two bulleted paragraphs → two buChar declarations.
+    expect(xml.match(/<a:buChar/g)?.length).toBe(2)
+  })
+
+  it('per-paragraph: custom glyph rides through bullet.characterCode', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          text: listedText([{ text: 'star', patch: { list: 'bullet', bulletChar: '★' } }]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    // ★ = U+2605, emitted as &#x2605;.
+    expect(xml).toContain('<a:buChar char="&#x2605;"')
+  })
+
+  it('per-paragraph: numbered list with a non-decimal format maps the autonum token', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          text: listedText([
+            { text: 'a', patch: { list: 'number', numberFormat: 'lowerAlphaParen' } },
+          ]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    // lowerAlphaParen → alphaLcParenR.
+    expect(xml).toContain('<a:buAutoNum type="alphaLcParenR"')
+  })
+
+  it('per-paragraph: nested levels emit <a:pPr lvl="N"> via indentLevel', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          text: listedText([
+            { text: 'top', patch: { list: 'bullet' } },
+            { text: 'child', patch: { list: 'bullet', level: 1 } },
+            { text: 'grand', patch: { list: 'bullet', level: 2 } },
+          ]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('lvl="1"')
+    expect(xml).toContain('lvl="2"')
+    // Top level (level 0/undefined) must NOT carry an lvl attr.
+    expect(xml).not.toContain('lvl="0"')
+  })
+
+  it('per-paragraph: startAt rides through to <a:buAutoNum startAt="N">', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          text: listedText([
+            { text: 'five', patch: { list: 'number', numberFormat: 'decimal', startAt: 5 } },
+          ]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:buAutoNum type="arabicPeriod" startAt="5"')
+  })
+
+  it('per-paragraph: a mixed box carries bullet, number, plain, and nested in one frame', async () => {
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          height: 240,
+          text: listedText([
+            { text: 'plain' }, // no list → <a:buNone/>
+            { text: 'bul', patch: { list: 'bullet' } },
+            { text: 'num', patch: { list: 'number', numberFormat: 'upperRoman' } },
+            { text: 'deep', patch: { list: 'bullet', level: 3 } },
+          ]),
+        }),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    // Plain paragraph suppresses inherited bullets.
+    expect(xml).toContain('<a:buNone/>')
+    // Bullet + number coexist in the same txBody.
+    expect(xml).toContain('<a:buChar char="&#x2022;"')
+    expect(xml).toContain('<a:buAutoNum type="romanUcPeriod"')
+    // Nested bullet keeps its level.
+    expect(xml).toContain('lvl="3"')
+    // Exactly four paragraphs — no spurious trailing empty <a:p>.
+    expect(xml.match(/<a:p>/g)?.length).toBe(4)
+  })
+
+  it('per-paragraph data overrides the legacy frame-wide listStyle', async () => {
+    // Even though listStyle='numbered' is set, a paragraph carrying its own
+    // bullet attrs takes precedence (no frame-wide buAutoNum on every para).
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          listStyle: 'numbered',
+          text: listedText([{ text: 'b', patch: { list: 'bullet' } }]),
+        } as Partial<TextObject>),
+      ]),
+    )
+    const xml = await getSlide1Xml(buf)
+    expect(xml).toContain('<a:buChar char="&#x2022;"')
+    expect(xml).not.toContain('<a:buAutoNum')
+  })
+
+  it('legacy frame-wide listStyle still applies when no paragraph carries list attrs', async () => {
+    // Un-migrated deck: Y.Text with paragraphs but zero block attrs → the
+    // exporter falls back to obj.listStyle.
+    const buf = await exportDeckToPptx(
+      singleSlide([
+        makeText({
+          listStyle: 'numbered',
+          text: listedText([{ text: 'x' }, { text: 'y' }]),
+        } as Partial<TextObject>),
+      ]),
     )
     const xml = await getSlide1Xml(buf)
     expect(xml).toContain('<a:buAutoNum')

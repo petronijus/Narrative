@@ -134,8 +134,29 @@ export {
   toDelta,
   toHtml,
   sanitizeFontFamily,
+  PARAGRAPH_SEP,
+  getParagraphs,
+  getParagraphDeltas,
+  updateParagraphsInRange,
+  applyParagraphPatch,
+  toggleListKind,
+  indentParagraphs,
+  readParagraphAttrsForRange,
+  computeMarkers,
+  formatListNumber,
+  defaultBulletGlyph,
+  buildListedHtml,
+  blockAttrsToInsertAttrs,
 } from './richText.js'
-export type { RichAttrs, RichDeltaOp, HtmlDefaults } from './richText.js'
+export type {
+  RichAttrs,
+  RichDeltaOp,
+  HtmlDefaults,
+  ParagraphInfo,
+  ParagraphDelta,
+  ParagraphPatch,
+  ListedHtmlOptions,
+} from './richText.js'
 
 // Bindings — animations (M6)
 export {

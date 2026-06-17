@@ -42,6 +42,8 @@ import {
   updateSlideBackground,
   updateSlideTransition,
   listSlides,
+  PARAGRAPH_SEP,
+  blockAttrsToInsertAttrs,
 } from '@narrative/slide-model'
 import type {
   SlideObject,
@@ -201,11 +203,19 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
   const runs = s.textRuns
   if (runs === undefined || runs.length === 0) return null
 
+  // Per-paragraph block attributes (list / level / glyph / autonum). When
+  // present, the Y.Text MUST be rebuilt so each block attr can ride on the
+  // paragraph-separator character that terminates its paragraph \u2014 even when
+  // the runs themselves carry no inline formatting (a plain bullet list).
+  const paragraphs = s.paragraphs
+  const hasBlockAttrs =
+    paragraphs !== undefined && paragraphs.some((p) => blockAttrsToInsertAttrs(p) !== undefined)
+
   // Test: does any run carry formatting (other than the run's own text)?
   // If every run is "plain text only", the existing string path suffices.
-  // Both '\n' (soft break) and '\u2029' (PPTX paragraph separator)
-  // are pure structural runs with no formatting attributes.
-  const isStructuralBreak = (t: string): boolean => t === '\n' || t === '\u2029'
+  // Both '\n' (soft break) and PARAGRAPH_SEP (PPTX paragraph separator)
+  // are pure structural runs with no inline formatting attributes.
+  const isStructuralBreak = (t: string): boolean => t === '\n' || t === PARAGRAPH_SEP
   const hasRichRun = runs.some(
     (r) =>
       !isStructuralBreak(r.text) &&
@@ -216,16 +226,51 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
         r.fontSize !== undefined ||
         r.fontFamily !== undefined),
   )
-  if (!hasRichRun) return null
+  // Nothing to preserve beyond plain text \u2192 let the string fast-path win.
+  if (!hasRichRun && !hasBlockAttrs) return null
+
+  // Yjs `insert` with no `attributes` argument INHERITS the formatting of the
+  // character to its left. A formatted separator therefore bleeds its block
+  // attrs onto the following plain run AND onto the next separator. To stop
+  // that, every separator is inserted with an EXPLICIT record that sets each
+  // block key to either its value or `null` (a null clears the key), fully
+  // overriding whatever was inherited. Inline keys on the separator are left
+  // out — separators never carry inline run formatting.
+  const BLOCK_KEYS = ['list', 'level', 'bulletChar', 'numberFormat', 'startAt'] as const
+  const clearBlockKeys = (): Record<string, unknown> => {
+    const rec: Record<string, unknown> = {}
+    for (const k of BLOCK_KEYS) rec[k] = null
+    return rec
+  }
+  const separatorAttrs = (paraIndex: number): Record<string, unknown> => {
+    const set = paragraphs?.[paraIndex]
+      ? (blockAttrsToInsertAttrs(paragraphs[paraIndex]!) ?? {})
+      : {}
+    const rec: Record<string, unknown> = {}
+    for (const k of BLOCK_KEYS) rec[k] = k in set ? set[k] : null
+    return rec
+  }
 
   const yt = new Y.Text()
   let cursor = 0
+  let paraIndex = 0
   for (const r of runs) {
     if (r.text.length === 0) continue
-    yt.insert(cursor, r.text)
-    // Paragraph-break (U+2029) and soft-break ('\n') synthetic runs
-    // have no formatting - skip the format pass entirely.
-    if (isStructuralBreak(r.text)) {
+    // Paragraph separator: insert it carrying THIS paragraph's block attrs
+    // (explicit, with nulls clearing unset keys), then advance.
+    if (r.text === PARAGRAPH_SEP) {
+      yt.insert(cursor, PARAGRAPH_SEP, separatorAttrs(paraIndex))
+      cursor += 1
+      paraIndex += 1
+      continue
+    }
+    // Insert the run/soft-break with block keys explicitly cleared so it does
+    // NOT inherit a preceding formatted separator's list attrs (those belong
+    // on separators only). Inline formatting is applied via `format` below.
+    yt.insert(cursor, r.text, hasBlockAttrs ? clearBlockKeys() : undefined)
+    // Soft-break ('\n') synthetic runs carry no inline formatting \u2014 skip the
+    // format pass but DON'T advance the paragraph index (still same <a:p>).
+    if (r.text === '\n') {
       cursor += 1
       continue
     }
@@ -240,6 +285,16 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
       yt.format(cursor, r.text.length, attrs)
     }
     cursor += r.text.length
+  }
+  // Trailing separator for the FINAL paragraph. The run stream only carries
+  // inter-paragraph separators (N-1 of them for N paragraphs), so the last
+  // paragraph has no terminator yet. The per-paragraph list model stores a
+  // paragraph's block attrs on its terminating separator, so the final
+  // paragraph needs one when ANY paragraph in the frame carries block attrs
+  // (preserving the slide-model trailing-separator invariant). Plain decks
+  // with no list formatting keep the legacy no-trailing-separator shape.
+  if (hasBlockAttrs) {
+    yt.insert(cursor, PARAGRAPH_SEP, separatorAttrs(paraIndex))
   }
   return yt
 }
@@ -335,9 +390,13 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.textVerticalAlign === 'middle' || s.textVerticalAlign === 'bottom') {
       obj.vAlign = s.textVerticalAlign
     }
-    if (s.listStyle === 'bullet' || s.listStyle === 'numbered') {
-      obj.listStyle = s.listStyle
-    }
+    // Per-paragraph list fidelity supersedes the legacy frame-wide
+    // `listStyle`. Block attrs (list kind / level / glyph / autonum) ride on
+    // the Y.Text paragraph separators via `buildRichTextBody` →
+    // `blockAttrsToInsertAttrs`, so we intentionally leave `obj.listStyle`
+    // unset on import. (The legacy field stays defined on the schema for
+    // backward-compat with pre-multi-level decks; the slide-model migrates
+    // it to per-paragraph attrs on first edit.)
     if (s.hyperlink !== undefined) {
       // Sanitise at the import boundary: a crafted .pptx can carry a
       // `javascript:`/`data:` hlinkClick target. Drop anything that isn't

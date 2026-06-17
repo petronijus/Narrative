@@ -7,6 +7,13 @@
  * categories track the deferred items in `apps/server/src/pptx/export.ts`
  * (F7/F8/F12/F13/F14 + the F9 partial-fidelity case).
  *
+ * Multi-level lists are NOT a loss category: the per-paragraph list model
+ * (kind / level / custom glyph / autonum format / startAt) round-trips
+ * fully through both the exporter (pptxgenjs paragraph-level `bullet` +
+ * `indentLevel`, see `emitText`) and the importer (`paragraphs[]` block
+ * attrs). The exporter no longer flattens lists to a frame-wide bullet, so
+ * there is deliberately no list-flattening warning here.
+ *
  * Used by `ExportPptxDialog` to surface a pre-export "you'll lose…"
  * checklist; the user can decide to proceed anyway.
  *

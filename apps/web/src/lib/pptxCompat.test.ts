@@ -182,6 +182,16 @@ describe('scanDeckForExportCompat', () => {
     expect(w!.severity).toBe('simplified')
   })
 
+  it('does not warn about multi-level lists (they now round-trip fully)', () => {
+    // Per-paragraph list attrs live inside the Y.Text body, which the scanner
+    // doesn't even inspect — but assert explicitly that no list-flattening
+    // warning is surfaced for a text frame that uses lists.
+    const out = scanDeckForExportCompat([
+      wrap([{ ...baseText, listStyle: 'numbered' } as unknown as SlideObject]),
+    ])
+    expect(out.some((w) => /list/i.test(w.id) || /list/i.test(w.title))).toBe(false)
+  })
+
   it('flags textTransform capitalize', () => {
     const out = scanDeckForExportCompat([wrap([{ ...baseText, textTransform: 'capitalize' }])])
     const w = findById(out, 'textTransformCapitalize')

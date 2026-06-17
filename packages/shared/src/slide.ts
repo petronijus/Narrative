@@ -346,7 +346,58 @@ export interface PathObject extends BaseSlideObject {
 export type FontWeight = 'normal' | 'bold' | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
 
 export type TextVerticalAlign = 'top' | 'middle' | 'bottom'
+
+/**
+ * Legacy frame-wide list flag. Superseded by per-paragraph
+ * {@link ParagraphAttrs} stored inside the Y.Text. Kept so decks written
+ * before the multi-level list work keep loading; the slide-model migrates
+ * a frame-wide `listStyle` into per-paragraph block attrs on first edit.
+ */
 export type TextListStyle = 'bullet' | 'numbered'
+
+/** Kind of list a paragraph belongs to. Absent ⇒ plain paragraph. */
+export type ListKind = 'bullet' | 'number'
+
+/**
+ * Numbering scheme for ordered (`number`) list paragraphs. Names mirror
+ * the OOXML `<a:buAutoNum type="…">` tokens we round-trip through PPTX so
+ * import/export stays lossless. The `*Paren` variants use a single
+ * trailing `)`; the rest use a trailing `.`.
+ */
+export type ListNumberFormat =
+  | 'decimal' // 1. 2. 3.    (arabicPeriod)
+  | 'decimalParen' // 1) 2) 3)    (arabicParenR)
+  | 'lowerAlpha' // a. b. c.    (alphaLcPeriod)
+  | 'lowerAlphaParen' // a) b) c)    (alphaLcParenR)
+  | 'upperAlpha' // A. B. C.    (alphaUcPeriod)
+  | 'upperAlphaParen' // A) B) C)    (alphaUcParenR)
+  | 'lowerRoman' // i. ii. iii. (romanLcPeriod)
+  | 'upperRoman' // I. II. III. (romanUcPeriod)
+
+/** Highest list nesting level (PowerPoint exposes nine: 0..8). */
+export const MAX_LIST_LEVEL = 8
+
+/**
+ * Per-paragraph block attributes. Stored as Quill-style *block*
+ * formatting on the U+2029 paragraph-separator character inside a
+ * TextObject's Y.Text body (see slide-model `richText`). A paragraph with
+ * no `list` is a plain paragraph; `level` still applies as a left indent.
+ */
+export interface ParagraphAttrs {
+  /** List kind. Absent ⇒ not a list item (plain paragraph). */
+  list?: ListKind
+  /** Indent / nesting level, 0..{@link MAX_LIST_LEVEL}. Default 0. */
+  level?: number
+  /** Custom bullet glyph for `list: 'bullet'`. Absent ⇒ per-level default. */
+  bulletChar?: string
+  /** Numbering scheme for `list: 'number'`. Absent ⇒ 'decimal'. */
+  numberFormat?: ListNumberFormat
+  /** Restart numbering at this value on this paragraph. Absent ⇒ continue. */
+  startAt?: number
+}
+
+/** Keys carried by {@link ParagraphAttrs} when serialised into Y.Text. */
+export type ParagraphAttrKey = keyof ParagraphAttrs
 
 export interface TextObject extends BaseSlideObject {
   type: 'text'
@@ -413,8 +464,11 @@ export interface TextObject extends BaseSlideObject {
    */
   underline?: boolean
   /**
-   * List marker — 'bullet' for •, 'numbered' for 1. 2. 3. Missing ⇒
-   * plain paragraph. Renderer prepends the glyph per line.
+   * Legacy frame-wide list marker — 'bullet' for •, 'numbered' for
+   * 1. 2. 3. Superseded by per-paragraph {@link ParagraphAttrs} block
+   * attributes stored inside the Y.Text body. Still read by the renderer
+   * as a fallback for un-migrated decks and migrated into block attrs on
+   * the first list edit. New code should set per-paragraph attrs instead.
    */
   listStyle?: TextListStyle
   /** Optional stroke on glyphs. May be a token ref. */
