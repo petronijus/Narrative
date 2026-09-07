@@ -121,11 +121,31 @@ http://{$DOMAIN:localhost} {
     #                            VITE_SENTRY_DSN is set in prod, append the DSN's
     #                            ingest host (e.g. https://oNNN.ingest.us.sentry.io)
     #                            — Sentry POSTs envelopes directly there, no tunnel.
-    #   no workers, iframes, plugins; base-uri/frame-ancestors locked down.
-    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
+    #   worker-src 'self' blob: — Pixi v8 decodes textures in a Worker it
+    #                            builds from a blob URL. With worker-src 'none'
+    #                            that worker is killed and Assets.load() never
+    #                            settles, so images silently never appear on the
+    #                            canvas (slide thumbnails, which decode via
+    #                            Image.decode(), kept working and masked it).
+    #   no iframes or plugins; base-uri/frame-ancestors locked down.
+    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
     root * /srv/web
     # SPA fallback — client-side routes return index.html
     try_files {path} /index.html
+
+    # index.html names the content-hashed bundles, so a cached copy pins the
+    # browser to the previous deploy's JS — a deploy then looks like it did
+    # nothing until someone hits Ctrl+Shift+R. Nothing set a Cache-Control on
+    # it, which leaves the browser free to cache heuristically off
+    # Last-Modified, and that is exactly what happened. Force revalidation on
+    # every document (`try_files` serves index.html for /deck/… too, so match
+    # on "not an asset" rather than on the /index.html path). The files under
+    # /assets/* are content-hashed and keep whatever caching they had.
+    @spa_document {
+      not path /assets/*
+    }
+    header @spa_document Cache-Control "no-cache"
+
     file_server
   }
 

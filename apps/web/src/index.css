@@ -170,10 +170,16 @@
 
 /* ── Custom utilities (Tailwind v4: @utility instead of @layer utilities) */
 
+/* NOTE: do not hand-write `-webkit-backdrop-filter` here. Lightning CSS (the
+   engine behind Tailwind v4) treats the prefixed and unprefixed property as one
+   and keeps the last declaration, so a manual `-webkit-` line silently DELETES
+   the standard `backdrop-filter` from the production build — Chrome then drops
+   the blur entirely, while dev (unminified) still shows it. Let the build add
+   whatever prefixes its targets need, exactly as it does for Tailwind's own
+   `backdrop-blur-*` utilities. */
 @utility glass {
   background-color: var(--glass-bg);
   backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   border: 1px solid var(--glass-border);
   box-shadow: var(--inner-rim);
 }
@@ -181,7 +187,6 @@
 @utility panel {
   background-color: hsl(var(--surface-1) / 0.8);
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--inner-rim);
 }
 
