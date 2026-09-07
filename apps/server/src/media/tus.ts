@@ -432,27 +432,32 @@ export interface TusPluginOpts {
 // ---------------------------------------------------------------------------
 
 /**
- * Build the absolute URL a tus client must send the upload's PATCH requests
- * to, as seen from the browser rather than from the upstream.
+ * Build the URL a tus client must send the upload's PATCH requests to.
  *
- * `forwardedPrefix` is the `X-Forwarded-Prefix` header value: the path prefix
- * a reverse proxy stripped before forwarding (Caddy's `handle_path /api/*`).
- * Missing header (dev, direct hit) → no prefix, i.e. the tus default.
+ * Deliberately **relative** (`/api/api/uploads/<id>`): the browser resolves it
+ * against the origin it is already talking to, so scheme and host are correct
+ * by construction. An absolute URL cannot be built reliably here — Caddy
+ * rewrites `Host` to the upstream hostport, and it overwrites
+ * `X-Forwarded-Proto` with `http` because the Cloudflare tunnel terminates TLS
+ * and speaks plain HTTP to it, which produced a mixed-content URL the browser
+ * refused to call.
+ *
+ * The one thing the upstream genuinely cannot know is the path prefix the
+ * proxy stripped (Caddy's `handle_path /api/*`); it arrives as
+ * `X-Forwarded-Prefix`. Missing header (dev, direct hit) → no prefix.
  */
 export function buildPublicUploadUrl(opts: {
-  proto: string
-  host: string
   path: string
   id: string
   forwardedPrefix?: string | string[] | undefined
 }): string {
-  const { proto, host, path, id, forwardedPrefix } = opts
+  const { path, id, forwardedPrefix } = opts
   const rawPrefix = Array.isArray(forwardedPrefix) ? forwardedPrefix[0] : forwardedPrefix
   // Normalise: leading slash, no trailing slash, empty when absent or '/'.
   let prefix = (rawPrefix ?? '').trim()
   if (prefix.endsWith('/')) prefix = prefix.slice(0, -1)
   if (prefix !== '' && !prefix.startsWith('/')) prefix = `/${prefix}`
-  return `${proto}://${host}${prefix}${path}/${id}`
+  return `${prefix}${path}/${id}`
 }
 
 // ---------------------------------------------------------------------------
@@ -481,29 +486,25 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     // -----------------------------------------------------------------------
     // Public upload URLs (Location header)
     //
-    // tus answers the creation POST with an absolute URL the client PATCHes
-    // the bytes to. By default it builds that URL from the *upstream* view of
-    // the request, which is wrong behind our reverse proxy on two counts:
+    // tus answers the creation POST with the URL the client PATCHes the bytes
+    // to. Its default — absolute, built from the upstream's own view of the
+    // request — is wrong behind our reverse proxy on every component:
     //
-    //   1. Caddy rewrites `Host` to the upstream hostport, so the default
-    //      Location came back as `http://server:3001/api/uploads/<id>` — a
-    //      Docker-internal name the browser cannot resolve (tus-js-client
-    //      reports it as "failed to resume upload … [object ProgressEvent]").
-    //   2. Caddy mounts the API with `handle_path /api/*`, which STRIPS the
-    //      `/api` prefix. The path we see is therefore one segment shorter
-    //      than the path the browser must call back.
+    //   1. Caddy rewrites `Host` to the upstream hostport, so the URL came
+    //      back as `http://server:3001/...`, a Docker-internal name the
+    //      browser cannot resolve.
+    //   2. Caddy overwrites `X-Forwarded-Proto` with `http` (the Cloudflare
+    //      tunnel terminates TLS and speaks plain HTTP to Caddy), so even with
+    //      the right host the URL was mixed content and the browser blocked it.
+    //   3. Caddy mounts the API with `handle_path /api/*`, which STRIPS the
+    //      prefix — the path we see is one segment short of the public one.
     //
-    // `respectForwardedHeaders` fixes the scheme + host from the standard
-    // X-Forwarded-Proto / X-Forwarded-Host pair, and `X-Forwarded-Prefix`
-    // (set by Caddy on the same block that strips it) restores the prefix.
-    // In dev nothing sets those headers, so this degrades to exactly the
-    // default behaviour: `http://localhost:3001/api/uploads/<id>`.
+    // Answering with a RELATIVE URL settles (1) and (2) by construction: the
+    // browser resolves it against the origin it already uses. Only the
+    // stripped prefix has to be restored, from `X-Forwarded-Prefix`.
     // -----------------------------------------------------------------------
-    respectForwardedHeaders: true,
-    generateUrl: (req, { proto, host, path, id }) =>
+    generateUrl: (req, { path, id }) =>
       buildPublicUploadUrl({
-        proto,
-        host,
         path,
         id,
         forwardedPrefix: req.headers['x-forwarded-prefix'],
