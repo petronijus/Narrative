@@ -5,6 +5,14 @@
  * Compositor is exposed via CanvasInstanceContext.
  */
 
+// Pixi generates shader/uniform sync code with `new Function`, which the
+// production CSP (`script-src 'self'`, no `unsafe-eval`) blocks — the renderer
+// then throws "Current environment does not allow unsafe-eval" during
+// `app.init()` and the canvas stays empty. This side-effect import swaps that
+// codegen for Pixi's official eval-free polyfills. It MUST be evaluated before
+// any `Application` is constructed, hence the module-level import here.
+// Dev has no CSP, so this only ever mattered in prod.
+import 'pixi.js/unsafe-eval'
 import { useEffect, useRef, useState } from 'react'
 import { Application, TextureSource } from 'pixi.js'
 

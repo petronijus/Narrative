@@ -44,6 +44,7 @@ import { registerMetricsEndpoint, metricsRegistrationDecision } from './metrics/
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
+import { registerBodylessRequestCompat } from './http/bodylessCompat.js'
 
 const API_PORT = Number(process.env['API_PORT'] ?? process.env['PORT'] ?? 3001)
 const HOCUSPOCUS_PORT = Number(process.env['HOCUSPOCUS_PORT'] ?? 3002)
@@ -136,6 +137,11 @@ const app = Fastify({
   // call — Fastify's content-type parser bodyLimit overrides the global.
   bodyLimit: 4 * 1024 * 1024,
 })
+
+// Cloudflare Tunnel re-frames bodyless POSTs (Content-Length: 0 → chunked),
+// which makes Fastify demand a parser for the absent Content-Type and answer
+// 415 before the route runs. Registered first so every route inherits it.
+registerBodylessRequestCompat(app)
 
 // CORS_ORIGIN may be a single origin or a comma-separated allowlist.
 // fastify/cors accepts string[] for the allowlist case.
