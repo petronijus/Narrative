@@ -25,6 +25,14 @@
  * - resolution=1 is intentional — thumbnails are cheap display-only assets.
  */
 
+// Pixi generates shader/uniform sync code with `new Function`, which the
+// production CSP (`script-src 'self'`, no `unsafe-eval`) blocks — the renderer
+// then throws "Current environment does not allow unsafe-eval" during
+// `app.init()` and the canvas stays empty. This side-effect import swaps that
+// codegen for Pixi's official eval-free polyfills. It MUST be evaluated before
+// any `Application` is constructed, hence the module-level import here.
+// Dev has no CSP, so this only ever mattered in prod.
+import 'pixi.js/unsafe-eval'
 import { Application, Container, Graphics } from 'pixi.js'
 import { getRenderer } from './objectRenderers/index.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from './constants.js'
