@@ -428,6 +428,34 @@ export interface TusPluginOpts {
 }
 
 // ---------------------------------------------------------------------------
+// Public upload URL
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the absolute URL a tus client must send the upload's PATCH requests
+ * to, as seen from the browser rather than from the upstream.
+ *
+ * `forwardedPrefix` is the `X-Forwarded-Prefix` header value: the path prefix
+ * a reverse proxy stripped before forwarding (Caddy's `handle_path /api/*`).
+ * Missing header (dev, direct hit) → no prefix, i.e. the tus default.
+ */
+export function buildPublicUploadUrl(opts: {
+  proto: string
+  host: string
+  path: string
+  id: string
+  forwardedPrefix?: string | string[] | undefined
+}): string {
+  const { proto, host, path, id, forwardedPrefix } = opts
+  const rawPrefix = Array.isArray(forwardedPrefix) ? forwardedPrefix[0] : forwardedPrefix
+  // Normalise: leading slash, no trailing slash, empty when absent or '/'.
+  let prefix = (rawPrefix ?? '').trim()
+  if (prefix.endsWith('/')) prefix = prefix.slice(0, -1)
+  if (prefix !== '' && !prefix.startsWith('/')) prefix = `/${prefix}`
+  return `${proto}://${host}${prefix}${path}/${id}`
+}
+
+// ---------------------------------------------------------------------------
 // registerTusPlugin
 // ---------------------------------------------------------------------------
 
@@ -449,6 +477,37 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   const tusServer = new TusServer({
     path: '/api/uploads',
     maxSize: MAX_UPLOAD_SIZE,
+
+    // -----------------------------------------------------------------------
+    // Public upload URLs (Location header)
+    //
+    // tus answers the creation POST with an absolute URL the client PATCHes
+    // the bytes to. By default it builds that URL from the *upstream* view of
+    // the request, which is wrong behind our reverse proxy on two counts:
+    //
+    //   1. Caddy rewrites `Host` to the upstream hostport, so the default
+    //      Location came back as `http://server:3001/api/uploads/<id>` — a
+    //      Docker-internal name the browser cannot resolve (tus-js-client
+    //      reports it as "failed to resume upload … [object ProgressEvent]").
+    //   2. Caddy mounts the API with `handle_path /api/*`, which STRIPS the
+    //      `/api` prefix. The path we see is therefore one segment shorter
+    //      than the path the browser must call back.
+    //
+    // `respectForwardedHeaders` fixes the scheme + host from the standard
+    // X-Forwarded-Proto / X-Forwarded-Host pair, and `X-Forwarded-Prefix`
+    // (set by Caddy on the same block that strips it) restores the prefix.
+    // In dev nothing sets those headers, so this degrades to exactly the
+    // default behaviour: `http://localhost:3001/api/uploads/<id>`.
+    // -----------------------------------------------------------------------
+    respectForwardedHeaders: true,
+    generateUrl: (req, { proto, host, path, id }) =>
+      buildPublicUploadUrl({
+        proto,
+        host,
+        path,
+        id,
+        forwardedPrefix: req.headers['x-forwarded-prefix'],
+      }),
 
     datastore: new S3Store({
       s3ClientConfig: {

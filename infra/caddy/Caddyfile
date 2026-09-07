@@ -44,6 +44,16 @@ http://{$DOMAIN:localhost} {
     reverse_proxy server:3001 {
       # Forward original host (for CORS matching)
       header_up Host {upstream_hostport}
+
+      # `handle_path` strips the /api prefix and the Host override above hides
+      # the public hostname, so the upstream cannot reconstruct a browser-facing
+      # URL on its own. tus needs one for the `Location` header it answers the
+      # upload-creation POST with — without these it hands the browser
+      # `http://server:3001/api/uploads/<id>`, which resolves nowhere outside
+      # the Docker network. The server reads them via `respectForwardedHeaders`
+      # + `X-Forwarded-Prefix` (see apps/server/src/media/tus.ts).
+      header_up X-Forwarded-Host {http.request.host}
+      header_up X-Forwarded-Prefix /api
     }
   }
 
