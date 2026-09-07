@@ -4,7 +4,50 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased — Bug-hunt audit fixes (2026-05-29)
+## 0.9.0 — Production hardening: it actually runs behind Cloudflare (2026-09-07)
+
+First tagged release since 0.8.1. It carries everything merged in between —
+multi-level lists (Keynote/PowerPoint), the .pptx import/export work, the
+public-release prep (PolyForm-NC license, PII genericised) and the move to
+GHCR-built images — plus the fixes below, which is where the release name
+comes from: five defects that only ever appeared on the deployed stack and
+were invisible in `pnpm dev`. Full change set: `git log 0.8.1..v0.9.0`.
+
+### Fixed — production-only breakage
+
+- **415 on every upload and on logout** — Cloudflare re-frames a bodyless
+  POST (`Content-Length: 0`) as `Transfer-Encoding: chunked`. Fastify's
+  `isEmptyBody` check then fails, it looks for a parser for the absent
+  `Content-Type` and answers `415 FST_ERR_CTP_INVALID_MEDIA_TYPE` before any
+  route or hook runs. A `'*'` fallback parser accepts a genuinely empty body
+  and still returns 415 for a real unsupported payload.
+- **tus uploads died on the first HEAD** — Caddy rewrites `Host` to the
+  upstream hostport and `handle_path /api/*` strips the prefix, so tus
+  answered with `Location: http://server:3001/api/uploads/<id>`: a
+  Docker-internal name, one path segment short. Answered relative now, so
+  scheme and host come from the browser; the stripped prefix is restored from
+  `X-Forwarded-Prefix`.
+- **Imported decks rendered nothing** — Pixi v8 generates shader code with
+  `new Function`, which the CSP (`script-src 'self'`) blocks, so `app.init()`
+  threw and the renderer never started. Fixed with Pixi's own eval-free
+  polyfill instead of loosening the policy.
+- **Images never appeared on the canvas** — `worker-src 'none'` killed the
+  Worker Pixi decodes textures in, so `Assets.load()` never settled. Slide
+  thumbnails use a direct `Image.decode()` path and kept working, which
+  masked it. Now `worker-src 'self' blob:`.
+- **Backdrop blur missing under the side panels** — a hand-written
+  `-webkit-backdrop-filter` made Lightning CSS drop the standard
+  `backdrop-filter` from the minified build; dev, unminified, looked fine.
+- **Deploys looked like they did nothing** — nothing set `Cache-Control` on
+  the SPA document, so browsers cached `index.html` heuristically off
+  `Last-Modified` and kept serving the previous bundle until a hard reload.
+
+### Changed
+
+- **GitHub Actions removed.** Both workflows are gone; checks run locally
+  (`pnpm typecheck`, `pnpm lint`, `pnpm -r test`) per CLAUDE.md.
+
+### Fixed — bug-hunt audit (2026-05-29)
 
 Top findings from a whole-repo bug sweep. Details + remaining open
 findings in [`docs/handoff/bugfix-audit-2026-05-29.md`](docs/handoff/bugfix-audit-2026-05-29.md).
