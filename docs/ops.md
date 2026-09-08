@@ -1,6 +1,84 @@
 # Narrative — Operations Runbook
 
-Stav: **M6 baseline**. Full runbook v M29.
+Status: **M6 observability baseline + the 0.9.x production checks**. Full
+runbook still lands with M30 (Prometheus/Grafana, alerting, restore drill).
+
+Deploy procedure lives in [`deploy.md`](./deploy.md); this file is what to
+look at when something is already running.
+
+_(Rewritten in English 2026-09-09 — was Czech; the M29 `/metrics` TODO below is
+resolved, and the production section is new.)_
+
+---
+
+## Production at a glance
+
+Four checks answer "is the deployed thing the thing I think it is". Run them
+against the public URL — not against the VM, and not against the repo.
+
+```bash
+# 1. Which version is live
+curl -s https://narrative.bastla.com/version.json
+# {"version":"v0.9.3+00454ec"}     ← matches a git tag + package.json version
+
+# 2. The document must be revalidated on every load
+curl -sI https://narrative.bastla.com | grep -i cache-control
+# cache-control: no-cache
+
+# 3. The live CSP (the Caddyfile on disk is NOT evidence — see below)
+curl -sI https://narrative.bastla.com | grep -i content-security-policy
+
+# 4. API health
+curl -s https://narrative.bastla.com/api/health
+# {"status":"ok"}
+```
+
+On the VM (`ssh narrative`, user `petr`, only reachable via the `pve` jump
+host):
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+docker ps --format "{{.Names}}|{{.Image}}"     # image tags must match the release
+```
+
+### Version discipline
+
+`package.json` version = git tag = GHCR image tag = `/version.json`. A
+divergence means someone bypassed the pipeline by hand — treat it as a bug, not
+a nuance. Rationale:
+[ADR 0008](./adr/0008-release-and-image-tag-discipline.md).
+
+Config-only changes (Caddyfile, compose) ship without a version bump and do
+**not** move `/version.json`. Verify those against the served header or the
+running mount.
+
+### 🚨 The Caddy config trap
+
+Compose mounts the **directory** `./caddy:/etc/caddy:ro`, not the Caddyfile.
+A single-file bind mount is pinned to the file's inode, and the deploy syncs
+config in with rsync, which replaces files rather than rewriting them in place
+— so the container kept reading the old, unlinked inode while the host file,
+`caddy validate` and `caddy reload` all looked correct. That cost a full
+debugging round on 2026-09-09 (fixed in `e6b4042`). Do not convert the mount
+back to a single file, and always confirm a config change with `curl -sI`
+against the public URL.
+
+### The CSP is a renderer constraint
+
+The SPA policy is deliberately same-origin and tight. Four separate rendering
+failures in 0.9.x came from it, and **a CSP denial is silent to the
+application**: a blocked worker leaves a promise that never settles, a blocked
+font leaves a plausible wrong-looking result. If the canvas misbehaves in
+production and not in dev, read the header first.
+[ADR 0007](./adr/0007-csp-as-a-renderer-constraint.md) explains which
+directives exist for which Pixi behaviour and why `script-src` never gets
+`'unsafe-eval'` or `'unsafe-inline'`.
+
+Known, deliberate noise: Cloudflare injects an inline script plus
+`static.cloudflareinsights.com/beacon.min.js` downstream of Caddy. The
+`index.html` on disk carries neither, and the CSP blocks both. Silence it by
+turning Web Analytics off in the Cloudflare dashboard — not by widening
+`script-src`.
 
 ---
 
@@ -11,92 +89,104 @@ Stav: **M6 baseline**. Full runbook v M29.
 curl http://localhost:3001/health
 # → { "status": "ok" }
 
-# Prometheus metriky
-curl http://localhost:3001/metrics
-# → Prometheus text format (viz níže)
+# Prometheus metrics (token-gated — see below)
+curl -H "Authorization: Bearer $METRICS_TOKEN" http://localhost:3001/metrics
 ```
 
-Pro produkci nahraď `localhost:3001` svou doménou / interní adresou.
+In production replace `localhost:3001` with the domain or the internal address.
 
 ---
 
-## Metriky (/metrics)
+## Metrics (`/metrics`)
 
-Endpoint vrací Prometheus text format (version 0.0.4).
+The endpoint returns Prometheus text format (version 0.0.4).
 
-| Metrika                            | Typ     | Popis                                                               |
-| ---------------------------------- | ------- | ------------------------------------------------------------------- |
-| `narrative_ws_connections`         | gauge   | Aktuální aktivní Hocuspocus WebSocket connections                   |
-| `narrative_updates_ingested_total` | counter | Celkový počet Yjs document flush operací (per-flush, ne per-update) |
-| `narrative_updates_bytes_total`    | counter | Celkový počet bytů Yjs updates uložených do Postgres                |
+| Metric                             | Type    | Meaning                                                   |
+| ---------------------------------- | ------- | --------------------------------------------------------- |
+| `narrative_ws_connections`         | gauge   | Currently active Hocuspocus WebSocket connections         |
+| `narrative_updates_ingested_total` | counter | Yjs document flush operations (per flush, not per update) |
+| `narrative_updates_bytes_total`    | counter | Bytes of Yjs updates written to Postgres                  |
 
-**Interpretace**:
+**Reading them**:
 
-- `narrative_ws_connections` > 0 = klienti připojeni; 0 = žádný aktivní editor
-- `narrative_updates_ingested_total` roste s každým save flushem (defaultně debounced 2s po posledním Yjs update)
-- Vysoké `narrative_updates_bytes_total` = velké dokumenty nebo intenzivní editace
+- `narrative_ws_connections` > 0 = clients connected; 0 = no active editor.
+- `narrative_updates_ingested_total` rises with every save flush (debounced 2 s
+  after the last Yjs update by default).
+- A high `narrative_updates_bytes_total` means large documents or heavy editing.
 
-**TODO(M29)**: Přidat auth (Bearer token nebo IP allowlist) na `/metrics` před expozicí na veřejný internet.
+**Access control** (was a TODO for M29; **done** in the 2026-06-12 audit,
+commit `c45faf4`): `/metrics` leaks connection counts and document sizes, so in
+production it is gated by `METRICS_TOKEN` — scrape with
+`Authorization: Bearer <token>`. If `NODE_ENV=production` and `METRICS_TOKEN`
+is unset or empty, the endpoint is **not registered at all**: the server keeps
+running and metrics are simply unreachable until a token is configured. See
+`apps/server/src/metrics/index.ts`.
 
 ---
 
 ## Sentry
 
-Error tracking — dev-gated (žádný init bez DSN).
+Error tracking — dev-gated (no init without a DSN).
 
-| Env var              | Popis                                                          |
-| -------------------- | -------------------------------------------------------------- |
-| `SENTRY_DSN`         | Server DSN — pokud prázdné, Sentry se neinicializuje           |
-| `VITE_SENTRY_DSN`    | Client (browser) DSN — pokud prázdné, Sentry se neinicializuje |
-| `VITE_BUILD_VERSION` | Release string pro Sentry (např. git sha); default `dev`       |
+| Env var              | Meaning                                                     |
+| -------------------- | ----------------------------------------------------------- |
+| `SENTRY_DSN`         | Server DSN — empty means Sentry never initialises           |
+| `VITE_SENTRY_DSN`    | Client (browser) DSN — empty means Sentry never initialises |
+| `VITE_BUILD_VERSION` | Release string (tag + short sha); default `dev`             |
 
-**Chování bez DSN**: tiché, žádný overhead, žádné errors. Dev-friendly.
+**Without a DSN**: silent, no overhead, no errors. Dev-friendly.
 
-**Nastavení pro produkci**:
+`VITE_BUILD_VERSION` is not only a Sentry release marker — since 0.9.3 it is
+the value the version guard compares against `/version.json`, and
+`build-push.sh` sets it explicitly because a Docker build context has no
+`.git`. Do not remove it thinking it is Sentry-only.
 
-1. Vytvoř projekt v Sentry (sentry.io nebo self-hosted)
-2. Zkopíruj DSN do `.env` (server) a jako Vite build arg (client)
-3. Restart server / rebuild frontend
+**Production setup**:
+
+1. Create a project in Sentry (sentry.io or self-hosted).
+2. Copy the DSN into `.env` (server) and pass it as a Vite build arg (client).
+3. Restart the server / rebuild the frontend.
 
 ---
 
 ## Synthetic load harness
 
-Pro stress testování serveru lokálně nebo v CI:
+For stress-testing the server locally:
 
 ```bash
-# Spusť server (dev nebo prod build)
+# Start the server (dev or a prod build)
 pnpm --filter server dev
 
-# Spusť všechny load scénáře
+# All load scenarios
 pnpm load:all
 
-# Jednotlivé scénáře
+# Individual scenarios
 pnpm load:hotedit    # 5 clients × 200 mutations
-pnpm load:awareness  # 15 clients × 30 Hz × 30s
-pnpm load:growth     # 1000 objects initial sync
+pnpm load:awareness  # 15 clients × 30 Hz × 30 s
+pnpm load:growth     # 1000 objects, initial sync
 ```
 
-**Očekávaná čísla** (ze spike B, 2026-04-19, localhost):
+**Expected numbers** (from spike B, 2026-04-19, localhost):
 
-- Hot edit observer latency avg: ~0.02ms (threshold: < 20ms)
-- Awareness latency avg: ~4.5ms (threshold: < 100ms)
-- Doc sync 1000 objects: ~18ms (threshold: < 3000ms)
-- Encoded doc size: ~228KB (threshold: < 1MB)
+- Hot-edit observer latency, avg: ~0.02 ms (threshold: < 20 ms)
+- Awareness latency, avg: ~4.5 ms (threshold: < 100 ms)
+- Doc sync, 1000 objects: ~18 ms (threshold: < 3000 ms)
+- Encoded doc size: ~228 KB (threshold: < 1 MB)
 
-Viz `docs/handoff/spike-b-yjs-scale.md` pro detailní breakdown.
+`tests/load/runAll.mjs` also compares against `tests/load/baselines.json` and
+warns on > 20 % drift. Breakdown: `docs/handoff/spike-b-yjs-scale.md`.
 
 ---
 
 ## Client-side performance overlay (DEV only)
 
-V dev buildu: stiskni **Ctrl+Shift+M** v editoru pro zobrazení overlay s:
+In a dev build press **Ctrl+Shift+M** in the editor for an overlay with:
 
-- FPS (rolling 1s average)
+- FPS (rolling 1 s average)
 - Frame time (avg, p99)
 - WebSocket connection status
 
-Overlay se nezobrazí v produkčním buildu (`import.meta.env.DEV === false`).
+It does not appear in a production build (`import.meta.env.DEV === false`).
 
 ---
 
@@ -106,32 +196,41 @@ Overlay se nezobrazí v produkčním buildu (`import.meta.env.DEV === false`).
 # Dev
 docker compose up -d
 
-# Prod (s override)
-docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+# Prod — three overlays; the third is shared-tunnel mode (USE_SHARED_TUNNEL=1)
+docker compose -f infra/docker-compose.yml \
+               -f infra/docker-compose.prod.yml \
+               -f infra/docker-compose.prod.shared-tunnel.yml up -d
 ```
 
-Viz `infra/docker-compose.yml` pro detaily.
+See `infra/docker-compose.yml` for the details.
 
 ---
 
 ## Postgres
 
 ```bash
-# Dev migrace (automatické při server startu v dev mode)
+# Dev migrations (run automatically when the server starts in dev mode)
 pnpm --filter server db:migrate
 
-# Manuální migrace (prod)
+# Manual migration (prod) — normally run by deploy.sh
 pnpm --filter server db:migrate
 ```
 
+Migrations are forward-only. To undo one, write a new migration; do not drop
+tables by hand.
+
+Backups: `infra/scripts/backup.sh` (gzip'd `pg_dump`, retention `RETAIN_DAYS`,
+cron'd daily at 03:00 on the VM).
+
 ---
 
-## Incident response (TODO M29)
+## Incident response (still TODO for M30)
 
-M29 přidá:
+M30 adds:
 
 - Prometheus + Grafana dashboards
 - Alerting rules (connections, error rate, latency)
-- Pagerduty / webhook integrace
-- Runbook pro common incidents (DB down, OOM, WS storm)
-- Backup restore drill postup
+- PagerDuty / webhook integration
+- Runbooks for common incidents (DB down, OOM, WS storm)
+- A backup **restore** drill procedure — the backups are not proven until one
+  has been restored

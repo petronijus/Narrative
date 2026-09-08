@@ -45,7 +45,13 @@ both Linux (Ubuntu desktop) and macOS workstations as the deploy client.
   `http://192.0.2.147:80`. Caddy then reverse-proxies to internal services.
 - **Auth**: Google OIDC with server-side code exchange. `OIDC_CLIENT_SECRET`
   stays server-only. Gated by `OIDC_ALLOWED_EMAILS`.
-- **No git on the server** — code is rsynced from the local checkout.
+- **No git on the server** — `/opt/narrative` is an **rsync of a working
+  tree**, not a checkout. `git log` there means nothing, and there is no
+  `git pull`. The directory carries config + scripts; the versioned artifact is
+  the **image**.
+- **Images are built locally and pushed to GHCR** (since 2026-09-07); the VM
+  only pulls. See _Build & push images_ below and
+  [ADR 0008](./adr/0008-release-and-image-tag-discipline.md).
 
 ## Prerequisites (deploy client)
 
@@ -80,6 +86,13 @@ already set up on both machines.
 From the project root (`~/Documents/Dev/Narrative`):
 
 ```bash
+# 0. Build the images locally and push them to GHCR (the VM does not build).
+#    Requires Docker running, infra/.env.prod present, and a GHCR login.
+echo "$GHCR_PAT" | docker login ghcr.io -u petronijus --password-stdin
+NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh
+#    → ghcr.io/petronijus/narrative-{server,video-worker,web}:{v0.9.3,latest}
+#    Omit NARRATIVE_TAG and the tag defaults to the git short sha.
+
 # 1. Sync files to production VM
 rsync -avz --delete \
   --exclude .git --exclude node_modules --exclude dist \
@@ -88,13 +101,16 @@ rsync -avz --delete \
   --exclude '*.tsbuildinfo' --exclude 'proxmox_mcp.log' \
   ./ petr@192.0.2.147:/opt/narrative/
 
-# 2. Build + deploy on the VM
+# 2. Pull + deploy on the VM
 ssh petr@192.0.2.147 'chmod +x /opt/narrative/infra/scripts/*.sh &&
-  cd /opt/narrative && USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
+  cd /opt/narrative && NARRATIVE_TAG=v0.9.3 USE_SHARED_TUNNEL=1 \
+  ./infra/scripts/deploy.sh prod'
 ```
 
-That's it. The script builds Docker images, extracts the SPA static files,
+That's it. The script pulls the prebuilt images, extracts the SPA static files,
 runs DB migrations, starts all services, and runs healthchecks.
+`NARRATIVE_TAG` defaults to `latest` if unset — pass the release tag explicitly
+so the deployed image is identifiable afterwards.
 
 Expected output at the end:
 
@@ -114,9 +130,15 @@ Deploy dokončen.
 
 1. Validates `infra/.env.prod` exists (with `DOMAIN` and `POSTGRES_PASSWORD`)
 2. Takes a ZFS snapshot before prod deploys (skipped if ZFS unavailable)
-3. Builds Docker images (`docker compose build --pull`)
-4. Builds the web SPA with prod `VITE_*` args, extracts static files into
-   the `narrative_web_static` Docker volume
+3. **Pulls** the prebuilt images from GHCR at `NARRATIVE_TAG` (default
+   `latest`) — it does **not** build (was `docker compose build --pull` before
+   2026-09-07); needs a one-time `docker login ghcr.io` on the host, the
+   packages are private
+4. Pulls `ghcr.io/petronijus/narrative-web:$NARRATIVE_TAG`, creates a throwaway
+   container and copies `/srv/web` into the `narrative_web_static` Docker
+   volume that Caddy serves. The prod `VITE_*` values (API URL, WS URL,
+   imgproxy URL, `VITE_BUILD_VERSION`) were baked in **at build time** by
+   `build-push.sh` from `infra/.env.prod`
 5. Runs Drizzle DB migrations
 6. `docker compose up -d --remove-orphans`
 7. Waits 15s, then runs healthchecks (API, Caddy, optionally cloudflared)
@@ -128,15 +150,50 @@ Deploy dokončen.
 curl -sI https://narrative.example.com | head -5
 # HTTP/2 200
 
+# WHICH VERSION is actually live (the single most useful check)
+curl -s https://narrative.example.com/version.json
+# {"version":"v0.9.3+00454ec"}
+
+# The document must not be cacheable, or deploys look like no-ops
+curl -sI https://narrative.example.com | grep -i cache-control
+# cache-control: no-cache
+
+# The live CSP — the file on disk is NOT evidence, see "Config-only changes"
+curl -sI https://narrative.example.com | grep -i content-security-policy
+
 # API health
 curl https://narrative.example.com/api/health
 # {"status":"ok"}
 
-# On the VM — container status
+# On the VM — container status and the image tags actually running
 ssh petr@192.0.2.147 'docker ps --format "table {{.Names}}\t{{.Status}}"'
+ssh petr@192.0.2.147 'docker ps --format "{{.Names}}|{{.Image}}"'
 ```
 
-All containers should show `Up` + `(healthy)`.
+All containers should show `Up` + `(healthy)`, and the image tags should match
+the tag you deployed.
+
+## Config-only changes (Caddyfile, compose)
+
+These ship by rsync + redeploy **without** a version bump, so they do not move
+`/version.json` — verify them against the served artifact instead.
+
+🚨 **The file on the host is not proof the container sees it.** Compose used to
+mount `./caddy/Caddyfile` as a single file; a single-file bind mount is pinned
+to the file's **inode**, and rsync _replaces_ files rather than rewriting them
+in place, so the container went on reading the old, unlinked inode while the
+host file, `caddy validate` and `caddy reload` all reported success. That is
+how the CSP fix of 2026-09-09 appeared not to land. The **directory** is
+mounted now (`./caddy:/etc/caddy:ro`, commit `e6b4042`) — do not "simplify" it
+back to a file mount.
+
+After a Caddy config change:
+
+```bash
+ssh petr@192.0.2.147 'docker exec narrative-caddy caddy validate --config /etc/caddy/Caddyfile'
+ssh petr@192.0.2.147 'docker exec narrative-caddy caddy reload --config /etc/caddy/Caddyfile'
+curl -sI https://narrative.example.com | grep -i content-security-policy   # the real check
+```
 
 ## Checking logs
 
@@ -155,29 +212,30 @@ ssh petr@192.0.2.147 'docker logs narrative-caddy --tail=100 -f'
 
 ## Rollback
 
-The server is stateless (code + Docker images). To rollback:
+The server is stateless (code + Docker images), and since 2026-09-07 every
+release is a tagged image in GHCR — so a rollback is **re-deploying an older
+tag**, not checking out an older commit and rebuilding:
 
 ```bash
-# On your workstation — check out the previous commit
-git checkout HEAD~1
-
-# Re-deploy
-rsync -avz --delete \
-  --exclude .git --exclude node_modules --exclude dist \
-  --exclude .env --exclude infra/.env.prod \
-  --exclude .claude --exclude test-results --exclude playwright-report \
-  --exclude '*.tsbuildinfo' --exclude 'proxmox_mcp.log' \
-  ./ petr@192.0.2.147:/opt/narrative/
-
 ssh petr@192.0.2.147 'cd /opt/narrative && \
-  USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
+  NARRATIVE_TAG=v0.9.2 USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
 
-# Return to the branch you were on
-git checkout -
+# Confirm
+curl -s https://narrative.example.com/version.json
 ```
 
-DB migrations are forward-only (Drizzle). If a migration broke something,
-write a new migration to undo it — don't manually drop tables.
+Two caveats:
+
+- **DB migrations are forward-only** (Drizzle). If the newer version migrated
+  the schema, rolling the image back may leave the old code facing a newer
+  schema. If a migration broke something, write a new migration to undo it —
+  don't manually drop tables.
+- **Config is not in the image.** If the bad deploy also changed the Caddyfile
+  or compose files, rsync the older config too, or the old image runs behind
+  the new proxy config.
+
+Available tags: `git tag` locally, or
+`docker image ls 'ghcr.io/petronijus/narrative-*'` on the VM.
 
 ## Environment secrets
 
@@ -236,13 +294,46 @@ ssh petr@192.0.2.147 '/opt/narrative/infra/scripts/backup.sh \
 
 ## Troubleshooting
 
-### Deploy fails at "Stavíme Docker images..."
+### Deploy fails at "Stahuji prebuilt images z GHCR…"
 
-Docker build ran out of disk space. Clean up:
+Either the host is not logged in to GHCR (the packages are private) or the tag
+does not exist because `build-push.sh` was never run for it:
+
+```bash
+ssh petr@192.0.2.147 'docker login ghcr.io -u petronijus'   # one-time, needs a PAT with read:packages
+NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh            # on the build machine
+```
+
+If the pull itself fails on space, clean up:
 
 ```bash
 ssh petr@192.0.2.147 'docker system prune -af --volumes'
 ```
+
+### The browser shows an old version after a deploy
+
+`index.html` is served `no-cache` and the client-side version guard reloads a
+tab whose bundle disagrees with `/version.json`. If a browser still shows old
+UI, check in this order:
+
+```bash
+curl -s https://narrative.example.com/version.json          # did the deploy land at all?
+curl -sI https://narrative.example.com | grep -i cache-control
+```
+
+A browser that cached `index.html` **before** the `no-cache` header existed
+(pre-0.9.0) can hold it for weeks under heuristic freshness — the version guard
+exists precisely to break that, and needs one load to fire.
+
+### 415 on uploads / logout, blank canvas, or images that never appear
+
+These are the production-only failure classes fixed in 0.9.x — the tunnel
+re-framing bodyless POSTs, and the CSP blocking Pixi's eval / worker / font /
+probe paths. Read the live CSP and
+[`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md)
+before re-diagnosing from scratch. A CSP denial is silent to the application:
+a blocked worker leaves a promise that never settles, a blocked font leaves a
+plausible wrong-looking result.
 
 ### API healthcheck fails
 

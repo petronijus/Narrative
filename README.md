@@ -5,7 +5,12 @@ real-time multi-user editing, native tables, PowerPoint round-trip, and
 AI-assisted slide generation. Built for small teams (up to 15 simultaneous
 editors) on your own infrastructure.
 
-Latest milestones:
+Current release: **0.9.3** (2026-09-09) — see [CHANGELOG.md](./CHANGELOG.md).
+Latest work:
+**[0.9.0 → 0.9.3 — production hardening](./docs/handoff/0.9.x-production-hardening.md)**
+(2026-09-07 → 2026-09-09), which fixed ten production defects that were
+invisible in `pnpm dev`, and is also the current next-steps list.
+Feature milestones before that:
 **[M28 — PowerPoint import & export](./docs/handoff/M28-pptx-import-export.md)** (2026-05-14) +
 **[M29 — first-class TableObject](./docs/handoff/0.8.0-table-object.md)** (2026-05-18).
 
@@ -85,8 +90,8 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit + integration (~1,219 tests)
-pnpm --filter web test:e2e                      # 31 Playwright specs
+pnpm test                                       # unit + integration (1,542 pass, 32 skipped, 2026-09-09)
+pnpm --filter web test:e2e                      # 40 Playwright specs (see caveat below)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -103,17 +108,33 @@ Coverage highlights:
 - Destructive-flow e2e (deck delete, share-link revoke + IDOR guard, folder cascade)
 - Bundle budgets via size-limit (main app chunk ≤ 210 KB gzipped)
 
-## CI
+> ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
+> (`ERROR: Playwright does not support chromium on ubuntu26.04-x64`, same for
+> its ffmpeg download), so a plain `pnpm --filter web test:e2e` fails there.
+> Use the escape hatch already built into `apps/web/playwright.config.ts`:
+>
+> ```bash
+> PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+> ```
+>
+> See [docs/testing-strategy.md](./docs/testing-strategy.md).
 
-GitHub Actions runs on every push and PR to `main`:
-lint → typecheck → build → test + Docker build validation.
+## Checks
 
-See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+There is **no CI**. GitHub Actions was removed on 2026-09-07 (commit
+`573ba64`) after both workflows had been red since 2026-06-17 on a pnpm
+version conflict; there is no `.github/` directory in the repo. Checks run
+locally, and [`CLAUDE.md`](./CLAUDE.md) maps "files you touched" → "tests to
+run before declaring work done":
+
+```bash
+pnpm typecheck && pnpm lint && pnpm -r test     # the baseline, always
+```
 
 `pnpm size`, `pnpm load:all`, `pnpm lighthouse`, and `pnpm --filter
-@narrative/slide-model mutate` are intentionally NOT on every PR — they
-either need a representative machine (load, lighthouse) or take long
-enough that they're better as nightly / pre-release gates.
+@narrative/slide-model mutate` are deliberately not part of that baseline —
+they either need a representative machine (load, lighthouse) or take long
+enough that they belong before a release rather than on every save.
 
 ## Authentication
 
@@ -427,6 +448,32 @@ by Caddy). They are built on a dev machine via `infra/scripts/build-push.sh` and
 pushed to **private GHCR packages**; the VM only pulls. This keeps build load off
 the production host and removes the need for a source checkout / `git pull` there.
 The images are private (the source is published under a noncommercial license).
+
+#### Release & version discipline
+
+Since 0.9.0 one identifier flows through the whole pipeline unchanged:
+
+```
+package.json version  ==  git tag (vX.Y.Z)  ==  GHCR image tag  ==  /version.json
+```
+
+- Check what is deployed: `curl -s https://YOUR_DOMAIN/version.json`
+  → e.g. `{"version":"v0.9.3+00454ec"}`.
+- Roll back by tag: `NARRATIVE_TAG=v0.9.2 ./infra/scripts/deploy.sh prod`
+  (DB migrations are forward-only — that is the limit on how far back is safe).
+- `index.html` is served `no-cache`, and the client-side version guard
+  (`apps/web/src/state/versionGuard.ts`) reloads a browser stuck on a stale
+  document.
+- **Config-only changes** (Caddyfile, compose) ship by rsync + redeploy without
+  a version bump, so they do **not** move `/version.json`. Verify those against
+  the served artifact — `curl -sI` the public URL — never against the file on
+  disk: the Caddy container reads a bind-mounted **directory** precisely
+  because a single-file mount kept serving a stale inode after rsync
+  (see the `Unreleased` CHANGELOG section).
+
+Rationale: [ADR 0008](./docs/adr/0008-release-and-image-tag-discipline.md).
+The production CSP is a hard constraint on the renderer, not a tunable —
+[ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md).
 
 ### DB migrations
 

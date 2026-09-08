@@ -157,5 +157,3 @@ From the same sweep — ordered roughly by value. None touched in this branch.
   (`tl.play()` on a running timeline is a no-op).
 - Single-letter shortcuts fire while a `<select>` is focused —
   `useShortcuts.ts:229` (`isInputElement` doesn't cover `<select>`).
-  </content>
-  </invoke>

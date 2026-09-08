@@ -25,7 +25,8 @@ Self-hosted collaborative presentation tool with Keynote-level animations, heavy
 - **AI**: Anthropic API (Claude Sonnet for generation, tool use for structured output)
 - **Reverse proxy**: Caddy (automatic TLS)
 - **Deploy**: Docker Compose on Proxmox LXC/VM, ZFS for storage
-- **Observability**: Sentry + basic metrics from M6, full Prometheus in M29
+- **Observability**: Sentry + basic metrics from M6, full Prometheus in M30
+  (the milestone was renumbered when M29 was repurposed for the TableObject)
 
 ## Working principles
 
@@ -108,6 +109,32 @@ If any spike fails → change the stack **now**, not in M20.
 
 ---
 
+## Where the project stands (2026-09-09)
+
+M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap. The
+work since 2026-09-07 has been **not a milestone**: production hardening, cut
+as point releases rather than milestones.
+
+| Release      | Date       | Subject                                                                                                                 |
+| ------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 0.9.0        | 2026-09-07 | five production-only defects behind Cloudflare Tunnel + the production CSP; GHCR image pipeline; GitHub Actions removed |
+| 0.9.1        | 2026-09-08 | .pptx import: theme fonts + placeholder geometry inheritance                                                            |
+| 0.9.2        | 2026-09-09 | repaint the canvas when a hidden tab becomes visible                                                                    |
+| 0.9.3        | 2026-09-09 | version guard — a browser on a stale cached `index.html` reloads itself                                                 |
+| _unreleased_ | 2026-09-09 | CSP `data:` for Pixi fonts + ImageBitmap probe; Caddy config mounted as a directory (config-only, no tag)               |
+
+Since 0.9.0 the release invariant is **git tag = package version = deployed
+image tag** ([ADR 0008](./docs/adr/0008-release-and-image-tag-discipline.md)),
+and the production CSP is treated as a hard renderer constraint
+([ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md)).
+
+**Read next**:
+[`docs/handoff/0.9.x-production-hardening.md`](./docs/handoff/0.9.x-production-hardening.md)
+— it carries the current next-steps list (text jumps on zoom; the slides-panel
+scrollbar report; the Cloudflare beacon; Playwright on Ubuntu 26.04).
+
+---
+
 ## Milestones
 
 Each milestone is a shippable unit. Do not start the next one until the current one is committed, tested, has a CHANGELOG entry, and **a handoff document**.
@@ -117,6 +144,12 @@ Each milestone is a shippable unit. Do not start the next one until the current 
 Monorepo (pnpm workspaces). `apps/web` with Vite + React + TS strict + Tailwind. Empty `apps/server` skeleton. GitHub Actions: build + typecheck + test + lint on every push. Pre-commit hooks (husky + lint-staged). Local `docker-compose.yml` with Postgres for dev. README with setup instructions.
 
 **Deliverable**: `pnpm dev` starts; CI green on an empty repo.
+
+> **Superseded 2026-09-07**: GitHub Actions was removed entirely (commit
+> `573ba64`) after both workflows had been red since 2026-06-17 on a pnpm
+> version conflict. There is no `.github/` directory. The pre-commit hooks
+> remain; the check gate is now local (`pnpm typecheck && pnpm lint && pnpm -r
+test`) and codified in `CLAUDE.md`'s auto-run policy.
 
 ### M1 — Scene graph + resource manager
 
