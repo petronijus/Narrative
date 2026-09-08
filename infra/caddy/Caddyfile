@@ -115,7 +115,17 @@ http://{$DOMAIN:localhost} {
     #                            (nonces impractical for both).
     #   img-src    data: blob: — base64 slide thumbnails + CSS SVG data-URIs,
     #                            canvas snapshots; plus same-origin imgproxy/storage.
-    #   media/font 'self'      — same-origin /storage presigned + bundled /assets.
+    #   font-src   data:       — Pixi v8 rasterises HTMLText by building an SVG
+    #                            whose @font-face embeds the font as a data URL
+    #                            (see pixi.js loadFontCSS: `src: url('${dataSrc}')`).
+    #                            Without `data:` every canvas text falls back to
+    #                            a system face no matter what the deck asks for.
+    #                            Plus same-origin /storage presigned folder fonts.
+    #   media-src  'self'      — same-origin /storage presigned.
+    #   connect-src data:      — Pixi probes ImageBitmap support inside its
+    #                            texture worker by fetching a 1×1 data: PNG;
+    #                            blocking it makes the probe throw on every
+    #                            image load.
     #   connect-src 'self'     — /api, same-origin wss /ws, /storage, /imgproxy
     #                            ('self' covers same-origin wss). If
     #                            VITE_SENTRY_DSN is set in prod, append the DSN's
@@ -128,7 +138,7 @@ http://{$DOMAIN:localhost} {
     #                            canvas (slide thumbnails, which decode via
     #                            Image.decode(), kept working and masked it).
     #   no iframes or plugins; base-uri/frame-ancestors locked down.
-    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
+    header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src 'none'"
     root * /srv/web
     # SPA fallback — client-side routes return index.html
     try_files {path} /index.html
