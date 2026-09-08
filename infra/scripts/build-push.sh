@@ -38,6 +38,7 @@ $COMPOSE push server video-worker
 # 2) web — built with prod VITE_* baked in, pushed as narrative-web
 docker build \
   --target runtime \
+  --build-arg VITE_BUILD_VERSION="${NARRATIVE_TAG}+$(git -C "$REPO_DIR" rev-parse --short=7 HEAD)" \
   --build-arg VITE_API_URL="https://${DOMAIN}/api" \
   --build-arg VITE_HOCUSPOCUS_URL="wss://${DOMAIN}/ws" \
   --build-arg VITE_IMGPROXY_URL="${VITE_IMGPROXY_URL:-https://${DOMAIN}/imgproxy}" \
