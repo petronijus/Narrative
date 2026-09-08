@@ -4,6 +4,36 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.3 — A stale browser fixes itself (2026-09-09)
+
+### Added
+
+- **Version guard.** The build stamps its version into `/version.json` as well
+  as into the bundle; a mismatch means the running document came from an HTTP
+  cache while the server moved on, and the tab reloads — via
+  `fetch(location.href, { cache: 'reload' })` first, because a plain reload
+  would re-serve the stale entry. Checked at startup and on tab focus,
+  throttled to once a minute. It refuses to act on an unreadable version and
+  reloads at most once per served version, so an offline moment or a proxy
+  pinned to an old document can't cost anyone their unsaved work.
+
+  Background: `index.html` is served `no-cache`, but a browser that cached it
+  _before_ that header existed applies heuristic freshness from
+  `Last-Modified` — about 10 % of the document's age — and can keep serving a
+  months-old copy, with the old build's hashed assets, for weeks. Production
+  hit exactly that on 2026-09-09.
+
+### Fixed
+
+- `vite.config.ts` resolved the build version twice (once for the
+  `__BUILD_VERSION__` define, once for the new asset); two independent calls
+  can disagree, which would have reloaded every client once.
+- Docker builds have no `.git`, so the version resolver fell back to
+  `v<pkg>+build` — identical for every build of a version. `build-push.sh` now
+  passes the real tag + sha via `VITE_BUILD_VERSION`.
+
+---
+
 ## 0.9.2 — Canvas repaints when you come back to the tab (2026-09-09)
 
 ### Fixed
