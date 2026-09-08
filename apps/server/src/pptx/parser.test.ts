@@ -2334,6 +2334,163 @@ describe('parsePptx', () => {
 // realistic deck, so they're not exercised here (a 200k-entry fixture would be
 // impractically slow); the ratio guard is the meaningful, testable one.
 // ---------------------------------------------------------------------------
+describe('parsePptx — layout/master inheritance', () => {
+  // A theme whose font scheme names both faces, so `+mn-lt` / `+mj-lt`
+  // references have something real to resolve to.
+  const THEME_WITH_FONTS = OFFICE_THEME.replace(
+    '</a:clrScheme></a:themeElements>',
+    `</a:clrScheme>
+    <a:fontScheme name="Test">
+      <a:majorFont><a:latin typeface="Heading Face"/></a:majorFont>
+      <a:minorFont><a:latin typeface="Body Face"/></a:minorFont>
+    </a:fontScheme></a:themeElements>`,
+  )
+
+  /** Slide with a bare title placeholder: no geometry, no run properties —
+   *  everything has to come down the layout → master → theme chain. */
+  const BARE_TITLE_SLIDE = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="2" name="Title"/><p:cNvSpPr/>
+          <p:nvPr><p:ph type="title"/></p:nvPr>
+        </p:nvSpPr>
+        <p:spPr/>
+        <p:txBody>
+          <a:bodyPr/><a:lstStyle/>
+          <a:p><a:r><a:rPr lang="en-US"/><a:t>Hello</a:t></a:r></a:p>
+        </p:txBody>
+      </p:txBody-placeholder>
+    ${SLIDE_CLOSE}`.replace('</p:txBody-placeholder>', '</p:sp>')
+
+  /** Layout title placeholder that declares text defaults but NO `<a:xfrm>` —
+   *  the shape PowerPoint expects to inherit its box from the master. */
+  const LAYOUT_NO_GEOMETRY = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr>
+        <p:cNvPr id="2" name="Title"/><p:cNvSpPr/>
+        <p:nvPr><p:ph type="title"/></p:nvPr>
+      </p:nvSpPr>
+      <p:spPr/>
+      <p:txBody>
+        <a:bodyPr/>
+        <a:lstStyle><a:lvl1pPr algn="ctr"><a:defRPr sz="4000"/></a:lvl1pPr></a:lstStyle>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sldLayout>`
+
+  const MASTER_WITH_GEOMETRY = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr>
+        <p:cNvPr id="2" name="Title"/><p:cNvSpPr/>
+        <p:nvPr><p:ph type="title"/></p:nvPr>
+      </p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="952500" y="476250"/><a:ext cx="9525000" cy="1905000"/></a:xfrm>
+      </p:spPr>
+      <p:txBody>
+        <a:bodyPr/>
+        <a:lstStyle><a:lvl1pPr><a:defRPr sz="8800"><a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></a:lstStyle>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sldMaster>`
+
+  it('takes the master geometry when the layout placeholder declares none', async () => {
+    // Regression: the layout entry used to replace the master's wholesale, so
+    // a layout placeholder without <a:xfrm> collapsed the frame to 0×0. The
+    // renderer then word-wrapped at width 0 and clipped the text away — the
+    // text was simply invisible.
+    const buf = await makeFixture({
+      slideXml: BARE_TITLE_SLIDE,
+      layoutXml: LAYOUT_NO_GEOMETRY,
+      masterXml: MASTER_WITH_GEOMETRY,
+      themeXml: THEME_WITH_FONTS,
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('text')
+    expect(shape.x).toBeCloseTo(100, 0) // 952500 / 9525
+    expect(shape.y).toBeCloseTo(50, 0) // 476250 / 9525
+    expect(shape.width).toBeCloseTo(1000, 0) // 9525000 / 9525
+    expect(shape.height).toBeCloseTo(200, 0) // 1905000 / 9525
+  })
+
+  it('keeps layout text defaults while inheriting master geometry', async () => {
+    // The merge is per field: geometry from the master, alignment and size
+    // from the layout that actually declared them.
+    const buf = await makeFixture({
+      slideXml: BARE_TITLE_SLIDE,
+      layoutXml: LAYOUT_NO_GEOMETRY,
+      masterXml: MASTER_WITH_GEOMETRY,
+      themeXml: THEME_WITH_FONTS,
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.textAlign).toBe('center')
+    // sz="4000" is 40 pt; the parser reports px (pt × 96/72).
+    expect(shape.fontSize).toBeCloseTo((4000 / 100) * (96 / 72), 1)
+  })
+
+  it('resolves a +mn-lt theme font reference to the theme font', async () => {
+    const buf = await makeFixture({
+      slideXml: BARE_TITLE_SLIDE,
+      layoutXml: LAYOUT_NO_GEOMETRY,
+      masterXml: MASTER_WITH_GEOMETRY,
+      themeXml: THEME_WITH_FONTS,
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    // The master states `<a:latin typeface="+mn-lt"/>`; the theme's minor
+    // font is "Body Face". Before the resolver this surfaced as `undefined`
+    // (the raw `+mn-lt` was skipped), so the deck rendered in the browser's
+    // default font instead of the template's.
+    expect(shape.fontFamily).toBe('Body Face')
+  })
+
+  it('resolves a +mj-lt reference on a slide run to the major theme font', async () => {
+    const slideXml = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="2" name="Title"/><p:cNvSpPr/>
+          <p:nvPr><p:ph type="title"/></p:nvPr>
+        </p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9525000" cy="952500"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr/><a:lstStyle/>
+          <a:p><a:r><a:rPr lang="en-US"><a:latin typeface="+mj-lt"/></a:rPr><a:t>Hi</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: THEME_WITH_FONTS })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    const run = shape.textRuns?.[0]
+    expect(run?.fontFamily).toBe('Heading Face')
+  })
+
+  it('drops a theme reference the theme cannot resolve rather than leaking OOXML', async () => {
+    const slideXml = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="T"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9525000" cy="952500"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr/><a:lstStyle/>
+          <a:p><a:r><a:rPr lang="en-US"><a:latin typeface="+mn-lt"/></a:rPr><a:t>Hi</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+    // OFFICE_THEME has no <a:fontScheme> at all.
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.textRuns?.[0]?.fontFamily).toBeUndefined()
+  })
+})
+
 describe('parsePptx — zip-bomb guards', () => {
   it('rejects an entry with a bomb-like compression ratio', async () => {
     // A single ~4 MB run of one byte compresses to a few KB — ratio well past
