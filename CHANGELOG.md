@@ -4,6 +4,27 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.1 — .pptx import: fonts and invisible text (2026-09-08)
+
+### Fixed
+
+- **Imported decks lost their fonts** — 73 % of the text in a real deck (699
+  of 955 runs) arrived with no `fontFamily` and rendered in the browser's
+  default face. Two causes, both in the .pptx parser: placeholder inheritance
+  replaced the layout's entry over the master's _wholesale_ instead of merging
+  per property, and OOXML theme font references (`<a:latin typeface="+mn-lt"/>`,
+  how a template names its body font) were skipped outright. `theme1.xml`'s
+  `<a:fontScheme>` is now parsed and `+mj-*` / `+mn-*` resolved, and fonts
+  inherit the full chain: run → shape → placeholder → master `<p:txStyles>` →
+  theme.
+- **Text invisible on some imported slides** — same entry-level inheritance
+  bug seen from the other side: a layout placeholder without `<a:xfrm>`
+  shadowed the master's box, so the frame came out `0×0`. The renderer then
+  word-wrapped at width 0 (one glyph per line, 4704 px tall on a 720 px slide)
+  and its clip mask removed what was left.
+
+---
+
 ## 0.9.0 — Production hardening: it actually runs behind Cloudflare (2026-09-07)
 
 First tagged release since 0.8.1. It carries everything merged in between —
