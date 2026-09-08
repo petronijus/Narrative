@@ -4,6 +4,24 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.2 — Canvas repaints when you come back to the tab (2026-09-09)
+
+### Fixed
+
+- **A deck could open to a blank canvas until the page was reloaded.** Pixi
+  runs with `autoStart: false`, so the first paint is a synchronous
+  `renderNow()` and everything after it — the deck's own objects, which arrive
+  over the WebSocket after init — goes through `markDirty()` and a rAF. A page
+  that isn't visible gets no animation frames, leaving that frame pending
+  forever, and `markDirty()` early-returns while one is pending: the
+  visibility handler therefore did nothing at exactly the moment a repaint was
+  due. It now calls `renderNow()`, which cancels the stalled frame and paints
+  synchronously, and also repaints on a bfcache restore (`pageshow` with
+  `persisted`), where Pixi never re-initialises and so never gets a first
+  paint at all.
+
+---
+
 ## 0.9.1 — .pptx import: fonts and invisible text (2026-09-08)
 
 ### Fixed
