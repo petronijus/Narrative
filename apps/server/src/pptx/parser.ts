@@ -382,6 +382,50 @@ interface ThemeTxDef {
 }
 const themeTxDefStore = new WeakMap<ThemeColourMap, ThemeTxDef>()
 
+/**
+ * `<a:fontScheme>` from `theme1.xml` — the two typefaces every OOXML theme
+ * font reference points at. `+mj-*` (major) is the heading font, `+mn-*`
+ * (minor) the body font.
+ */
+interface ThemeFonts {
+  major?: string
+  minor?: string
+}
+
+/** Side-band store, same trick as `themeTxDefStore`: keyed by the theme map
+ *  so the dozen functions that already thread a `ThemeColourMap` don't need
+ *  a second parameter. */
+const themeFontStore = new WeakMap<ThemeColourMap, ThemeFonts>()
+
+/**
+ * Resolve an `<a:latin typeface="…">` value.
+ *
+ * A typeface is either a literal font name or a theme reference: `+mj-lt`
+ * (major/heading latin), `+mn-lt` (minor/body latin), plus the `-ea` / `-cs`
+ * east-asian and complex-script variants, which we map onto the same two
+ * latin faces — PowerPoint itself falls back to the latin face when the
+ * script-specific font isn't installed.
+ *
+ * Returns `undefined` for an empty value, and for a theme reference the
+ * loaded theme has no entry for — the caller then keeps looking up the
+ * inheritance chain instead of persisting raw OOXML markup like `+mn-lt`
+ * into the deck's `fontFamily`.
+ */
+function resolveTypeface(raw: unknown, theme: ThemeColourMap): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const tf = raw.trim()
+  if (tf.length === 0) return undefined
+  if (!tf.startsWith('+')) return tf
+  const fonts = themeFontStore.get(theme)
+  if (fonts === undefined) return undefined
+  const resolved = tf.startsWith('+mj')
+    ? fonts.major
+    : tf.startsWith('+mn')
+      ? fonts.minor
+      : undefined
+  return resolved !== undefined && resolved.length > 0 ? resolved : undefined
+}
+
 export interface ParsedSlide {
   /** File name like `slide1.xml` — useful for diagnostics. */
   source: string
@@ -1003,6 +1047,8 @@ interface TextStyleDefaults {
    *                 so a higher layer's bullet can be vetoed by a lower layer
    *                 setting buNone. */
   listStyle?: 'bullet' | 'numbered' | 'none'
+  /** Default typeface for this style layer, theme references resolved. */
+  fontFamily?: string
 }
 
 /**
@@ -1029,6 +1075,15 @@ interface PlaceholderEntry {
   y: number
   width: number
   height: number
+  /** True only when the source `<p:sp>` actually carried `<a:xfrm>` with both
+   *  `<a:off>` and `<a:ext>`. A layout placeholder routinely omits its
+   *  geometry and inherits the master's, so "absent" has to be told apart
+   *  from a legitimately declared 0 — otherwise the layout entry shadows the
+   *  master's real box and the frame collapses to 0×0. */
+  hasGeometry?: boolean
+  /** Default typeface from `<a:lstStyle>/<a:lvl1pPr>/<a:defRPr>/<a:latin>`,
+   *  with theme references (`+mn-lt`) already resolved. */
+  defaultFontFamily?: string
   /** Default paragraph alignment from `<a:lstStyle>/<a:lvl1pPr algn="…">`. */
   textAlign?: 'left' | 'center' | 'right' | 'justify'
   /** Default font size from `<a:lstStyle>/<a:lvl1pPr>/<a:defRPr sz="…">`,
@@ -1080,6 +1135,43 @@ interface SlideContext {
  * holds the first placeholder we see, as a last-ditch fallback.
  */
 type PlaceholderMap = Map<string, PlaceholderEntry>
+
+/**
+ * Layer a layout placeholder on top of the master's, field by field.
+ *
+ * Geometry moves as one unit (a box is only meaningful whole) and is taken
+ * from the layout only when it actually declared `<a:xfrm>` — see
+ * `PlaceholderEntry.hasGeometry`. Every text default falls back to the
+ * master's when the layout leaves it undefined.
+ */
+function mergePlaceholderEntries(
+  master: PlaceholderEntry,
+  layout: PlaceholderEntry,
+): PlaceholderEntry {
+  const geometry = layout.hasGeometry === true ? layout : master
+  const merged: PlaceholderEntry = {
+    x: geometry.x,
+    y: geometry.y,
+    width: geometry.width,
+    height: geometry.height,
+  }
+  if (geometry.hasGeometry === true) merged.hasGeometry = true
+  const pick = <K extends keyof PlaceholderEntry>(key: K): void => {
+    const value = layout[key] ?? master[key]
+    if (value !== undefined) merged[key] = value
+  }
+  pick('textAlign')
+  pick('defaultFontSize100')
+  pick('defaultFontFamily')
+  pick('bodyAnchor')
+  pick('defaultColor')
+  pick('defaultColorAlpha')
+  pick('defaultBold')
+  pick('defaultTextTransform')
+  pick('defaultListStyle')
+  pick('phType')
+  return merged
+}
 
 function placeholderKey(type: string | undefined, idx: string | undefined): string {
   if (type !== undefined && idx !== undefined) return `t:${type}+i:${idx}`
@@ -1443,6 +1535,7 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
           entry.y = Number(offAttrs['@y'] ?? 0)
           entry.width = Number(extAttrs['@cx'] ?? 0)
           entry.height = Number(extAttrs['@cy'] ?? 0)
+          entry.hasGeometry = true
         }
       }
     }
@@ -1485,6 +1578,14 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
             const dcap = defAttrs['@cap']
             if (dcap === 'all') entry.defaultTextTransform = 'uppercase'
             else if (dcap === 'small') entry.defaultTextTransform = 'lowercase'
+            // Default typeface for this placeholder. Templates overwhelmingly
+            // express it as a theme reference (`+mn-lt`), which resolveTypeface
+            // maps onto the theme's real font name.
+            const phLatin = findFirst(getChildren(defRPr, 'a:defRPr'), 'a:latin')
+            if (phLatin !== undefined) {
+              const tf = resolveTypeface(getAttrs(phLatin)['@typeface'], theme)
+              if (tf !== undefined) entry.defaultFontFamily = tf
+            }
             // Run colour is inside `<a:defRPr>`'s subtree as `<a:solidFill>`.
             const defRPrChildren = getChildren(defRPr, 'a:defRPr')
             const dfSolid = findFirst(defRPrChildren, 'a:solidFill')
@@ -1625,6 +1726,13 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         if (typeof sz === 'string') defaults.fontSize100 = Number(sz)
         if (defAttrs['@b'] === '1' || defAttrs['@b'] === 'true') defaults.bold = true
         const dfChildren = getChildren(defRPr, 'a:defRPr')
+        // Master txStyles is where a template usually states its typeface,
+        // as a `+mn-lt` / `+mj-lt` theme reference.
+        const dfLatin = findFirst(dfChildren, 'a:latin')
+        if (dfLatin !== undefined) {
+          const tf = resolveTypeface(getAttrs(dfLatin)['@typeface'], theme)
+          if (tf !== undefined) defaults.fontFamily = tf
+        }
         const dfSolid = findFirst(dfChildren, 'a:solidFill')
         if (dfSolid) {
           const c = parseColourAndAlphaFrom(dfSolid, theme)
@@ -1642,7 +1750,8 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         defaults.fontSize100 !== undefined ||
         defaults.color !== undefined ||
         defaults.bold === true ||
-        defaults.listStyle !== undefined
+        defaults.listStyle !== undefined ||
+        defaults.fontFamily !== undefined
       ) {
         out[bucket] = defaults
       }
@@ -1910,10 +2019,28 @@ async function buildSlideContexts(
     const layout = layoutPath !== undefined ? await loadLayoutOrMaster(layoutPath, 'layout') : null
     const master = masterPath !== undefined ? await loadLayoutOrMaster(masterPath, 'master') : null
 
-    // Merge placeholders: master first, layout on top so layout wins.
+    // Merge placeholders: layout over master, PER FIELD.
+    //
+    // OOXML inheritance is property-by-property: a layout placeholder that
+    // declares only text defaults still inherits the master's geometry, and
+    // vice versa. Replacing the whole entry (which is what this used to do)
+    // let a layout entry with no `<a:xfrm>` shadow the master's real box, so
+    // the frame came out 0×0 — a title placeholder then wrapped at width 0
+    // (one glyph per line) and its clip mask cut everything away, i.e. the
+    // text silently vanished. Same story for the default typeface.
     const placeholders: PlaceholderMap = new Map()
     if (master) for (const [k, v] of master.placeholders) placeholders.set(k, v)
-    if (layout) for (const [k, v] of layout.placeholders) placeholders.set(k, v)
+    if (layout) {
+      for (const [k, layoutEntry] of layout.placeholders) {
+        const masterEntry = placeholders.get(k)
+        placeholders.set(
+          k,
+          masterEntry === undefined
+            ? layoutEntry
+            : mergePlaceholderEntries(masterEntry, layoutEntry),
+        )
+      }
+    }
 
     // Background cascade: layout > master.
     const fallbackBackground: ParsedBackground =
@@ -2638,8 +2765,8 @@ function parseShape(
             }
             const paraLatin = findFirst(paraDefChildren, 'a:latin')
             if (paraLatin !== undefined) {
-              const tf = getAttrs(paraLatin)['@typeface']
-              if (typeof tf === 'string' && tf.length > 0) paraDefaults.fontFamily = tf
+              const tf = resolveTypeface(getAttrs(paraLatin)['@typeface'], theme)
+              if (tf !== undefined) paraDefaults.fontFamily = tf
             }
           }
         }
@@ -2708,8 +2835,8 @@ function parseShape(
           // east-asian font isn't installed anyway.
           const latin = findFirst(rPrChildren, 'a:latin')
           if (latin) {
-            const tf = getAttrs(latin)['@typeface']
-            if (typeof tf === 'string' && tf.length > 0) runAttrs.fontFamily = tf
+            const tf = resolveTypeface(getAttrs(latin)['@typeface'], theme)
+            if (tf !== undefined) runAttrs.fontFamily = tf
           }
           // Text stroke — `<a:rPr><a:ln w>` with a `<a:solidFill>` inside.
           // Captured as frame-level on the first run; per-run text stroke
@@ -2910,8 +3037,8 @@ function parseShape(
           if (frameFontFamily === undefined) {
             const latin = findFirst(defRPrChildren, 'a:latin')
             if (latin !== undefined) {
-              const tf = getAttrs(latin)['@typeface']
-              if (typeof tf === 'string' && tf.length > 0) frameFontFamily = tf
+              const tf = resolveTypeface(getAttrs(latin)['@typeface'], theme)
+              if (tf !== undefined) frameFontFamily = tf
             }
           }
         }
@@ -2932,6 +3059,9 @@ function parseShape(
       }
       if (fontSize === undefined && inheritedPh.defaultFontSize100 !== undefined) {
         fontSize = inheritedPh.defaultFontSize100 * PPTX_FONT_TO_PX
+      }
+      if (frameFontFamily === undefined && inheritedPh.defaultFontFamily !== undefined) {
+        frameFontFamily = inheritedPh.defaultFontFamily
       }
       if (textVerticalAlign === undefined && inheritedPh.bodyAnchor !== undefined) {
         textVerticalAlign = inheritedPh.bodyAnchor
@@ -2967,6 +3097,9 @@ function parseShape(
         }
         if (fontSize === undefined && bucket.fontSize100 !== undefined) {
           fontSize = bucket.fontSize100 * PPTX_FONT_TO_PX
+        }
+        if (frameFontFamily === undefined && bucket.fontFamily !== undefined) {
+          frameFontFamily = bucket.fontFamily
         }
         if (!bold && bucket.bold === true) bold = true
         if (listStyleResolved === undefined && bucket.listStyle !== undefined) {
@@ -4556,6 +4689,28 @@ async function parseThemeColours(zip: JSZip): Promise<ThemeColourMap> {
     }
     break // first clrScheme is the active one
   }
+
+  // Font scheme — the two typefaces `+mj-*` / `+mn-*` references resolve to.
+  // Recorded on the side-band store keyed by this map (see themeFontStore).
+  const fonts: ThemeFonts = {}
+  for (const node of walk(tree)) {
+    if (getTag(node) !== 'a:fontScheme') continue
+    for (const slot of getChildren(node, 'a:fontScheme')) {
+      const slotTag = getTag(slot)
+      if (slotTag !== 'a:majorFont' && slotTag !== 'a:minorFont') continue
+      const latin = findFirst(getChildren(slot, slotTag), 'a:latin')
+      if (latin === undefined) continue
+      const tf = getAttrs(latin)['@typeface']
+      if (typeof tf !== 'string' || tf.trim().length === 0) continue
+      if (slotTag === 'a:majorFont') fonts.major = tf.trim()
+      else fonts.minor = tf.trim()
+    }
+    break // first fontScheme is the active one
+  }
+  if (fonts.major !== undefined || fonts.minor !== undefined) {
+    themeFontStore.set(map, fonts)
+  }
+
   return map
 }
 
@@ -4617,11 +4772,11 @@ async function parseThemeTxDef(zip: JSZip, theme: ThemeColourMap): Promise<Theme
   }
   const latin = findFirst(defRPrChildren, 'a:latin')
   if (latin !== undefined) {
-    const tf = getAttrs(latin)['@typeface']
-    // OOXML uses `+mn-lt` / `+mj-lt` as theme-font placeholders. Skip those
-    // — we don't have a font-scheme resolver yet, and emitting the literal
-    // string would surface raw OOXML markup in Narrative's font field.
-    if (typeof tf === 'string' && tf.length > 0 && !tf.startsWith('+')) {
+    // `+mn-lt` / `+mj-lt` are theme-font references; `resolveTypeface` maps
+    // them onto the theme's minor/major faces so the deck gets a real font
+    // name instead of raw OOXML markup (or nothing at all).
+    const tf = resolveTypeface(getAttrs(latin)['@typeface'], theme)
+    if (tf !== undefined) {
       out.fontFamily = tf
     }
   }
