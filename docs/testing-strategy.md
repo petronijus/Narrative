@@ -1,12 +1,38 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-05-09 after Tier C roadmap completion. Current state:
-> 1,219 unit/integration tests pass across 5 packages, 31 e2e specs,
-> 23 web tests `it.skip` (all documented). Bundle budgets enforced via
-> `size-limit` (`pnpm size`). Property-based CRDT convergence,
+> Last updated 2026-09-09 (was 2026-05-09, after Tier C roadmap completion).
+> Current state, **measured** with `pnpm -r test` on 2026-09-09 — all green:
+>
+> | Package                | Files   | Passed    | Skipped |
+> | ---------------------- | ------- | --------- | ------- |
+> | `apps/web`             | 61      | 574       | 30      |
+> | `apps/server`          | 32      | 494       | 1       |
+> | `packages/slide-model` | 18      | 305       | 0       |
+> | `packages/animation`   | 13      | 144       | 0       |
+> | `packages/shared`      | 2       | 13        | 0       |
+> | `apps/video-worker`    | 1       | 12        | 1       |
+> | **Total**              | **127** | **1,542** | **32**  |
+>
+> (was 1,219 passing across 5 packages on 2026-05-09.) Plus **40 e2e spec
+> files** in `apps/web/e2e/`. Note the skip count: **32 total, 30 of them in
+> `apps/web`** — the long-standing "23 web skips" figure is stale, and 7 skips
+> have accumulated since without being triaged into the tables below.
+> Bundle budgets enforced via `size-limit` (`pnpm size`). Property-based CRDT convergence,
 > server lifecycle/leak coverage, multi-client e2e collab, destructive-
 > flow coverage, sampled-thumbnail visual regression all active.
-> Lighthouse CI + Stryker mutation testing wired in (opt-in).
+> Lighthouse + Stryker mutation testing wired in (opt-in).
+>
+> Added in the 0.9.x arc: **5 .pptx parser regression tests** (theme fonts +
+> placeholder geometry inheritance, 0.9.1) and the **first 3 tests for
+> `RenderScheduler`** (0.9.2). Nothing in this suite could have caught the
+> other eight defects of that arc — see _Environment traps_.
+>
+> ⚠️ **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
+> `573ba64`); nothing runs these suites but a human or an agent following
+> `CLAUDE.md`'s auto-run policy.
+>
+> ⚠️ **The e2e suite does not run on Ubuntu 26.04 as configured** — see
+> _Environment traps_ below.
 
 ## TL;DR
 
@@ -139,6 +165,62 @@ All six items landed:
 4. ✅ **Multi-client e2e harness** — `apps/web/e2e/multi-client-collab.spec.ts`. Two scenarios: three browser contexts each adding slides + objects in parallel converge through real Hocuspocus sync; one context goes offline via `setOffline(true)`, peer makes changes, reconnect triggers Hocuspocus initial-sync handshake. Asserts deep-equal `listSlides()` snapshots across all contexts. The e2e analog to the unit-level CRDT property test from Tier B.1.
 5. ✅ **Lighthouse CI** — `.lighthouserc.json` + `pnpm lighthouse` script. Audits the editor route on a built preview server. Budgets: performance ≥ 0.7, FCP < 2.5s, LCP < 4s, TBT < 600ms, CLS < 0.1, TTI < 5s. Currently `warn`-level (not `error`) so it's informational; promote after one or two PR cycles confirm CI stability.
 
+## Environment traps
+
+### Playwright has no browsers for Ubuntu 26.04
+
+```
+$ npx playwright install chromium
+Failed to install browsers
+Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64
+```
+
+The ffmpeg download (needed for video capture) fails the same way. Verified on
+`petronijus-PC` (Ubuntu 26.04.1 LTS) on 2026-09-09; `~/.cache/ms-playwright`
+does not exist there. **A plain `pnpm --filter web test:e2e` therefore fails on
+that machine.**
+
+`apps/web/playwright.config.ts` already carries the escape hatch — it is easy
+to miss, so it is written down here:
+
+```bash
+PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+# or pin the binary:
+PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
+```
+
+`PLAYWRIGHT_USE_SYSTEM_CHROME=1` → `channel: 'chrome'`;
+`PLAYWRIGHT_NO_VIDEO=1` → `video: 'off'`. The 0.9.x diagnostic probes pinned
+the same two settings per spec instead (`test.use({ channel: 'chrome', video:
+'off' })`).
+
+Whether the suite _passes_ with those vars set was not measured during the
+0.9.x arc — do not claim it either way without running it. The durable fixes:
+default to system Chrome when the bundled browser is absent, or run the suite
+in a container with a supported base image.
+
+### Diagnostic probes are not tests
+
+A spec written to _measure_ production behaviour — not to assert a contract —
+stays out of the committed suite until it becomes an assertion.
+`apps/web/e2e/zoom-text-probe.spec.ts` is the
+current example: it reads font faces, model-vs-measured text geometry and
+artboard screenshots across a renderer-resolution change, driven by
+`PROBE_DECK_ID` / `PROBE_SLIDE`. It is the starting point for the text-jump fix
+described in
+[`docs/handoff/0.9.x-production-hardening.md`](./handoff/0.9.x-production-hardening.md);
+when that lands, the measurement becomes a real assertion or the probe is
+deleted.
+
+### Some defects are only reachable in production
+
+Nine of the ten defects fixed in the 0.9.x arc were invisible to every local
+suite, because the tunnel, the reverse proxy, the CSP and the minified build
+exist only in production. No amount of unit or e2e coverage on `localhost`
+would have caught them; the checks that did are `curl -sI` against the public
+URL and a browser console on the deployed site. Both are listed under _How to
+verify the current state_ in the 0.9.x handoff note.
+
 ## Maintaining this strategy
 
 - New components SHOULD have a hook-level unit test if they have logic, an
@@ -167,5 +249,12 @@ target or retire an existing one. Examples of the policy:
   against `tests/load/baselines.json`).
 
 The slow gates (`pnpm lighthouse`, Stryker `mutate`) are NOT auto-run
-per change — they're nightly / pre-release. CI runs the unit + e2e +
-size budgets on every PR.
+per change — they belong before a release.
+
+Nothing runs any of this automatically: **there is no CI** (was GitHub Actions
+on every push and PR, removed 2026-09-07 — commit `573ba64` — after both
+workflows had been red since 2026-06-17 on a pnpm version conflict). The
+auto-run policy in `CLAUDE.md` is the only gate, and it is honoured by
+convention, not by a machine. If a command cannot run (port collision, missing
+service, the Playwright trap above), say so explicitly in the update — do not
+silently skip it.

@@ -139,6 +139,16 @@ frame-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`. Derived
   only external is optional Sentry ingest, off by default — noted inline).
   Verified with a real `caddy` run: SPA → full policy, `/storage` keeps
   `sandbox`, `/api` unaffected; repo Caddyfile passes `caddy validate`.
+  > **Amended 2026-09-07/09** — the policy above was derived from a source
+  > audit, not from a running renderer, and three directives turned out to be
+  > too tight for PixiJS in production: `worker-src` (was `'none'`, now
+  > `'self' blob:` — the texture-decode worker), `font-src` (was `'self'`, now
+  > `'self' data:` — HTMLText embeds fonts as data URLs) and `connect-src`
+  > (was `'self'`, now `'self' data:` — the ImageBitmap probe). `script-src`
+  > stayed `'self'`: Pixi's `new Function` shader compilation was solved with
+  > its eval-free build, not with `'unsafe-eval'`. Rationale and the current
+  > policy: [ADR 0007](../adr/0007-csp-as-a-renderer-constraint.md);
+  > symptoms: `../handoff/0.9.x-production-hardening.md`.
 - ☑ **CONN-1** Hocuspocus closes the revoked principal's live WS on share/
   permission/session revoke (`hocuspocus/connections.ts`, targeted — not
   the kick-everyone built-in) · ☑ **TUS-1** uploads bound to creator+deck,

@@ -38,6 +38,44 @@ If anything is missing, stop and escalate — do not run tests against a half-bo
 - **Waits**: `waitForTimeout` is only a fallback. Prefer `expect(...).toPass()` or explicit polling on the condition you care about (for example `countColouredPixels() > baseline + 500`).
 - **Trace on failure**: `trace: 'retain-on-failure'` in the config — open the resulting `trace.zip` with `npx playwright show-trace <path>`.
 
+### 🚨 Environment trap — Playwright browsers on Ubuntu 26.04
+
+```
+$ npx playwright install chromium
+Failed to install browsers
+Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64
+```
+
+The ffmpeg download (video capture) fails the same way. Verified on
+`petronijus-PC` (Ubuntu 26.04.1 LTS) on 2026-09-09 — `~/.cache/ms-playwright`
+does not exist, so a plain `pnpm --filter web test:e2e` fails there.
+
+**`apps/web/playwright.config.ts` already has the escape hatch. Use it before
+concluding anything is broken:**
+
+```bash
+PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+# or pin the binary:
+PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
+```
+
+`PLAYWRIGHT_USE_SYSTEM_CHROME=1` → `channel: 'chrome'`;
+`PLAYWRIGHT_NO_VIDEO=1` → `video: 'off'`. Per-spec equivalent, used by the
+0.9.x diagnostic probes: `test.use({ channel: 'chrome', video: 'off' })`.
+
+If it still will not run, say so explicitly in the update — never report the
+suite green when it did not execute, and never silently skip it.
+
+### Diagnostic probes vs. tests
+
+A spec written to _measure_ production behaviour rather than assert a contract
+stays out of the committed suite until it becomes an assertion. The current
+example is `apps/web/e2e/zoom-text-probe.spec.ts` (committed
+2026-09-09) — it reads font faces, model-vs-measured text geometry and
+artboard screenshots across a renderer-resolution change, driven by
+`PROBE_DECK_ID` / `PROBE_SLIDE`. Label such a spec `TEMPORARY diagnostic probe`
+with a date in the file header, as that one does.
+
 ### Iterative debugging
 
 When a test fails:

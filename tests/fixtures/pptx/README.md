@@ -32,6 +32,28 @@ on the M28 mapping table (MVP-covered / deferred / unknown), per-slide
 shape + fill + rotation breakdown. The output report lands at
 `<tmp>/narrative-pptx-spike/spike-findings.md`.
 
+## What a good fixture must exercise (added 2026-09-08, after 0.9.1)
+
+The 0.9.1 bugs were **inheritance** bugs, and a fixture that carries all its
+formatting inline will not reproduce them. When picking a deck, prefer one
+where:
+
+- **Runs name fonts indirectly** — `<a:latin typeface="+mn-lt"/>` rather than a
+  literal family. The parser had no font-scheme resolver until 0.9.1, and 699
+  of 955 runs in the reference deck (73 %) came through with no `fontFamily`
+  at all.
+- **A layout placeholder omits `<a:xfrm>`** and inherits its box from the
+  master. Entry-level replacement (instead of per-property merge) made the
+  frame come out `0×0`, which word-wrapped the text at width 0 — measured
+  4704 px tall on a 720 px slide — and the clip mask removed the rest, so the
+  slide-1 title was simply invisible.
+- **`theme1.xml` carries a real `<a:fontScheme>`**, with distinct major and
+  minor faces so `+mj-*` vs `+mn-*` resolution is observable.
+
+Template-derived exports (PowerPoint's own bundled templates, corporate
+templates) satisfy all three; hand-built one-slide decks usually satisfy none.
+Regression tests: `apps/server/src/pptx/parser.test.ts`.
+
 ## Beyond the spike
 
 Once Phase 2/3 land, this directory becomes the home of the

@@ -146,6 +146,29 @@ below if you're actively testing the real OIDC flow.
 - **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
+- **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. `apps/web/playwright.config.ts` already has the escape hatch — install Google Chrome and run:
+  ```bash
+  PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+  # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
+  ```
+  Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
+
+## Dev is not production
+
+Nine of the ten defects fixed between 2026-09-07 and 2026-09-09 were invisible
+in `pnpm dev`, because four things exist only in production:
+
+| Only in prod      | Consequence                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| Cloudflare Tunnel | re-frames bodyless POSTs as chunked; terminates TLS, so the origin sees plain HTTP                         |
+| Caddy             | rewrites `Host`, strips `/api` via `handle_path`, overwrites `X-Forwarded-Proto`                           |
+| The CSP           | Vite's dev server sends none at all — Pixi's eval, worker, font and probe paths are unexercised locally    |
+| The prod build    | Lightning CSS minification, and browser caching of a document the dev server never sends cache headers for |
+
+If a change touches uploads, the renderer's asset/font/worker paths, or
+anything served by Caddy, it is not verified until it has been checked on the
+deployed instance. Details and the four failure classes:
+[`docs/handoff/0.9.x-production-hardening.md`](./docs/handoff/0.9.x-production-hardening.md).
 
 ## Ports used in dev
 

@@ -50,12 +50,12 @@ Three questions to resolve:
 
 ## Decision 3 — Package split rationale
 
-| Package                  | Reason for separation                                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `@narrative/shared`      | Types used by both frontend and backend (e.g., API request/response shapes). Avoids duplication.                              |
-| `@narrative/slide-model` | Yjs bindings + object type registry. Will grow large (M2-M3). Kept separate so server can import it without pulling in React. |
-| `@narrative/animation`   | JSON DSL + GSAP compiler. Server will use it for AI-generated animation validation (M20 — renumbered from M16 on 2026-05-01). Must not depend on DOM APIs.        |
-| `@narrative/ui`          | Reusable React components. Separate so it can be documented/tested in isolation (Storybook, if added).                        |
+| Package                  | Reason for separation                                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@narrative/shared`      | Types used by both frontend and backend (e.g., API request/response shapes). Avoids duplication.                                                           |
+| `@narrative/slide-model` | Yjs bindings + object type registry. Will grow large (M2-M3). Kept separate so server can import it without pulling in React.                              |
+| `@narrative/animation`   | JSON DSL + GSAP compiler. Server will use it for AI-generated animation validation (M20 — renumbered from M16 on 2026-05-01). Must not depend on DOM APIs. |
+| `@narrative/ui`          | Reusable React components. Separate so it can be documented/tested in isolation (Storybook, if added).                                                     |
 
 All packages are empty shells at M0. Content arrives in milestones M2-M6.
 
@@ -65,4 +65,11 @@ All packages are empty shells at M0. Content arrives in milestones M2-M6.
 
 - Every workspace inherits `tsconfig.base.json` with `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`. No exceptions without explicit justification.
 - CI runs `pnpm -r typecheck`, `pnpm -r lint`, `pnpm -r build`, `pnpm -r test` across all workspaces.
+  > **Amended 2026-09-07**: there is no CI any more — GitHub Actions was removed
+  > (commit `573ba64`) after both workflows had been red since 2026-06-17 on a
+  > pnpm version conflict. The same four commands are now run **locally** before
+  > a release, per `CLAUDE.md`'s auto-run policy. The workspace-script
+  > convention this ADR establishes is unchanged and is what makes `pnpm -r`
+  > work at all. See
+  > [ADR 0008](./0008-release-and-image-tag-discipline.md).
 - When Turborepo is added, the `scripts` convention in each `package.json` (`build`, `typecheck`, `lint`, `test`) must be preserved — Turborepo will pick them up from `turbo.json` with no `package.json` changes.

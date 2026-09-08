@@ -4,6 +4,37 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+Config-only changes deployed to production on 2026-09-09 **after** the `v0.9.3`
+tag. They ship by rsync + redeploy and carry no version bump, so
+`/version.json` still reads `v0.9.3+00454ec` — check the served header / mount,
+not the version endpoint, to confirm they are live.
+
+### Fixed
+
+- **Canvas text ignored the deck's fonts, and every texture load threw** — the
+  SPA CSP was two directives too tight for PixiJS. `font-src 'self'` blocked
+  HTMLText's font embedding (Pixi builds an SVG whose `@font-face` embeds the
+  font as a **data URL** — `pixi.js/lib/scene/text-html/utils/loadFontCSS.mjs`,
+  `src: url('${dataSrc}')`), so **every** canvas text fell back to a system
+  face regardless of the deck — the render-side half of the 0.9.1 font problem,
+  and independent of it. `connect-src 'self'` blocked Pixi's ImageBitmap probe,
+  which fetches a 1×1 `data:` PNG inside the texture worker, so
+  `checkImageBitmap` threw on every texture load. Both now allow `data:`.
+  (PR #72, `931e648`.) Rationale:
+  [ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md).
+- **A config change could not reach the Caddy container.** Compose mounted
+  `./caddy/Caddyfile` as a single file, and a single-file bind mount is pinned
+  to the file's **inode**; the deploy syncs config in with rsync, which replaces
+  files rather than rewriting them in place. The container kept reading the old,
+  unlinked inode while the host file, `caddy validate` and `caddy reload` all
+  reported success — which is exactly how the CSP fix above appeared not to
+  land, and cost a debugging round the same day. The **directory** is mounted
+  now (`./caddy:/etc/caddy:ro`). (PR #73, `e6b4042`.)
+
+---
+
 ## 0.9.3 — A stale browser fixes itself (2026-09-09)
 
 ### Added
