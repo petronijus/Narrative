@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
@@ -38,6 +38,35 @@ function resolveBuildVersion(): string {
   }
 }
 
+/**
+ * Emit `/version.json` holding the same string that gets compiled into the
+ * bundle as `__BUILD_VERSION__`. The client-side version guard
+ * (`state/versionGuard.ts`) compares the two: a running bundle older than the
+ * served version means the document came from a stale HTTP cache, and the
+ * guard reloads to catch up. Written as an asset so it lands next to
+ * index.html and inherits its `no-cache` header from Caddy.
+ */
+function emitVersionJson(version: string): PluginOption {
+  return {
+    name: 'narrative-version-json',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ version }) + '\n',
+      })
+    },
+  }
+}
+
+/**
+ * Resolved once and shared by the `__BUILD_VERSION__` define and the
+ * `version.json` asset. They MUST agree: the version guard treats any
+ * difference as "this document is stale" and reloads.
+ */
+const BUILD_VERSION = process.env['VITE_BUILD_VERSION'] ?? resolveBuildVersion()
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   // Load .env from the monorepo root so one .env feeds both apps/server
@@ -48,10 +77,10 @@ export default defineConfig(({ mode }) => ({
     // Injektuje BUILD_VERSION do bundlu — used by the UI version chip and
     // Sentry release tracking. The resolver (above) pulls the commit count
     // + sha at Vite startup; every dev server restart refreshes the number.
-    __BUILD_VERSION__: JSON.stringify(process.env['VITE_BUILD_VERSION'] ?? resolveBuildVersion()),
+    __BUILD_VERSION__: JSON.stringify(BUILD_VERSION),
     __BUILD_MODE__: JSON.stringify(mode),
   },
-  plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), react(), emitVersionJson(BUILD_VERSION)],
   resolve: {
     alias: {
       '@narrative/animation': path.resolve(__dirname, '../../packages/animation/src/index.ts'),

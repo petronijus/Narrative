@@ -11,6 +11,7 @@
  */
 
 import { StrictMode } from 'react'
+import { installVersionGuard } from './state/versionGuard.js'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import { App } from './App'
@@ -125,6 +126,11 @@ createRoot(rootEl).render(
 // installs its global error/unhandledrejection handlers on init(), so any
 // error thrown in the narrow window before init resolves simply isn't
 // captured — an acceptable trade for not delaying first paint.
+// Stale-bundle guard — see state/versionGuard.ts. Installed before Sentry so
+// a browser stuck on an old document recovers even if everything else on the
+// page is broken by that mismatch.
+installVersionGuard()
+
 const sentryDsn = import.meta.env['VITE_SENTRY_DSN'] as string | undefined
 if (sentryDsn) {
   // Lazy import — Sentry se nenačte pokud DSN není set (tree-shakeable).

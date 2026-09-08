@@ -29,7 +29,13 @@ COPY tsconfig.base.json ./
 ARG VITE_API_URL=http://localhost:3001
 ARG VITE_HOCUSPOCUS_URL=ws://localhost:3002
 ARG VITE_IMGPROXY_URL=
+# No .git in the build context, so the version resolver in vite.config.ts would
+# fall back to `v<pkg>+build` — identical for every build of a given version,
+# which would make the client-side version guard blind. build-push.sh passes
+# the real tag + sha in here.
+ARG VITE_BUILD_VERSION=
 
+ENV VITE_BUILD_VERSION=$VITE_BUILD_VERSION
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_HOCUSPOCUS_URL=$VITE_HOCUSPOCUS_URL
 ENV VITE_IMGPROXY_URL=$VITE_IMGPROXY_URL
