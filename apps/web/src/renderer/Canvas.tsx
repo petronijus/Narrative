@@ -484,17 +484,34 @@ export function Canvas({ onReady, bleedPx = 0, artboardSize, zoom = 1 }: CanvasP
     return () => observer.disconnect()
   }, [])
 
-  // Re-render when the tab regains visibility. Browsers can discard the
-  // WebGL backbuffer while the tab is backgrounded to save memory. With
-  // autoStart:false the canvas never re-paints by itself, so the user
-  // comes back to a partially rendered or blank canvas.
+  // Re-paint whenever the page becomes user-visible again. Two ways to get
+  // here, both of which leave a blank or half-drawn canvas:
+  //
+  //   - the tab was backgrounded (browsers discard the WebGL backbuffer to
+  //     save memory, and with autoStart:false nothing re-paints on its own);
+  //   - the page came back from the bfcache, where Pixi never re-initialises
+  //     so there is no `renderNow()` first paint at all.
+  //
+  // `renderNow()` rather than `markDirty()` on purpose. A hidden tab gets no
+  // animation frames, so any `markDirty()` issued while it was hidden — the
+  // deck's own content arriving over the WebSocket, typically — leaves a
+  // handle pending; `markDirty()` early-returns while one is, and would
+  // therefore do nothing at exactly the moment a repaint is needed.
+  // `renderNow()` cancels that stalled frame and paints synchronously.
   useEffect(() => {
-    const onVisible = (): void => {
+    const repaint = (): void => {
       if (document.hidden) return
-      instanceRef.current?.scheduler.markDirty()
+      instanceRef.current?.scheduler.renderNow()
     }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
+    const onPageShow = (e: PageTransitionEvent): void => {
+      if (e.persisted) repaint()
+    }
+    document.addEventListener('visibilitychange', repaint)
+    window.addEventListener('pageshow', onPageShow)
+    return () => {
+      document.removeEventListener('visibilitychange', repaint)
+      window.removeEventListener('pageshow', onPageShow)
+    }
   }, [])
 
   return (
