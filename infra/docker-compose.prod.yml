@@ -101,7 +101,14 @@ services:
     expose:
       - '80'
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Mount the DIRECTORY, not the Caddyfile itself. A single-file bind mount
+      # is pinned to the file's inode, and the deploy syncs config in with rsync,
+      # which replaces files rather than rewriting them in place. The container
+      # then keeps reading the old, unlinked inode: `caddy reload` reports
+      # success, the file on the host shows the new config, and the served
+      # headers are still the previous ones — which is exactly what happened to
+      # the CSP change on 2026-09-09, and cost a confusing debugging round.
+      - ./caddy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
       # Static web files — build pipeline copies them here (see deploy.sh)
