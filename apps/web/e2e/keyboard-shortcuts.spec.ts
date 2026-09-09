@@ -43,17 +43,19 @@ async function openDeckReady(page: Page, deckId: string): Promise<void> {
  * The active tool surfaces in the DOM as `aria-pressed=true` on the
  * matching toolbar button. We don't need to peek into React state.
  */
+/**
+ * The armed tool, read off the toolbar root's `data-active-tool`.
+ *
+ * This used to scrape the first `button[aria-pressed="true"]` in the document
+ * and take the first word of its aria-label. Both halves rotted: the shape
+ * tools now live behind a dropdown (so no toolbar button is pressed for
+ * "rectangle"), and other pressed buttons — the rulers toggle, inspector
+ * segment controls — match the selector first.
+ */
 async function getActiveTool(page: Page): Promise<string | null> {
-  return page.evaluate(() => {
-    const pressed = document.querySelector(
-      'button[aria-pressed="true"][aria-label]',
-    ) as HTMLButtonElement | null
-    if (pressed === null) return null
-    const label = pressed.getAttribute('aria-label') ?? ''
-    // Toolbar labels are like "Select tool", "Rectangle tool", etc. —
-    // keep just the first word.
-    return label.split(' ')[0]?.toLowerCase() ?? null
-  })
+  return page.evaluate(
+    () => document.querySelector('[role="toolbar"]')?.getAttribute('data-active-tool') ?? null,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +104,10 @@ test.describe('Toolbar keyboard shortcuts', () => {
     const deckId = await createDeck(page)
     await openDeckReady(page, deckId)
 
-    // Add a rectangle so the inspector mounts.
+    // Add a rectangle so the inspector mounts, and let it reach the editor's
+    // object state before selecting it: EditorLayout sanitises selections
+    // against the objects it knows about, so selecting in the same tick as the
+    // insert is dropped again immediately.
     await page.evaluate(() => {
       window.__narrative_test_api!.addRect({
         id: 'rect-keyboard-spec',
@@ -112,11 +117,34 @@ test.describe('Toolbar keyboard shortcuts', () => {
         h: 100,
         fill: 0xff0000,
       })
-      window.__narrative_test_api!.setSelection(['rect-keyboard-spec'])
     })
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), {
+        timeout: 10_000,
+      })
+      .toContain('rect-keyboard-spec')
+    // Re-issue the selection until it sticks: it is dropped if the editor's
+    // object list has not caught up yet, and a single dispatch that loses that
+    // race is lost for good.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const api = window.__narrative_test_api!
+            if (!api.getSelection().includes('rect-keyboard-spec')) {
+              api.setSelection(['rect-keyboard-spec'])
+            }
+            return api.getSelection()
+          }),
+        { timeout: 10_000 },
+      )
+      .toEqual(['rect-keyboard-spec'])
 
-    // Focus the first numeric input in the inspector.
-    const input = page.locator('input[type="number"]').first()
+    // Focus the object's X field. Not "the first number input on the page" —
+    // that is the slide-transition duration, which is disabled until a
+    // transition is set, so `focus()` was a no-op and the keypress went to
+    // <body>, where the shortcut legitimately fires.
+    const input = page.getByLabel('X position')
     await input.waitFor({ state: 'visible', timeout: 5000 })
     await input.focus()
 
@@ -250,11 +278,22 @@ test.describe('Present mode keyboard shortcuts', () => {
     expect(slideIds.length).toBe(4)
 
     /** Read the active slide id via the same selector the slides panel uses. */
+    // Present mode renders no slides panel — the selected row in the editor's
+    // panel (`[role="option"][aria-selected="true"]`) does not exist here, so
+    // read the slide the presenter is actually showing.
     const getActiveId = async (): Promise<string | null> =>
-      page.evaluate(() => {
-        const el = document.querySelector('[role="option"][aria-selected="true"][data-slide-id]')
-        return el?.getAttribute('data-slide-id') ?? null
-      })
+      page.evaluate(
+        () =>
+          document
+            .querySelector('[data-testid="slide-container"]')
+            ?.getAttribute('data-active-slide-id') ?? null,
+      )
+
+    // The presenter opens on the first slide. Wait for that before pressing a
+    // key — the deck route mounts, syncs and paints asynchronously, and a key
+    // pressed into the gap is delivered to a view that has not decided which
+    // slide it is showing yet.
+    await expect.poll(getActiveId, { timeout: 10_000 }).toBe(slideIds[0]!)
 
     // ArrowRight → next.
     await page.keyboard.press('ArrowRight')

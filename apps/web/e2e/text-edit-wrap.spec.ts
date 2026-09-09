@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
 /**
  * Regression for "long unbroken string overflows the box in Pixi but
@@ -6,37 +7,23 @@ import { test, expect, type Page } from '@playwright/test'
  *
  * Pixi must use breakWords:true (matching DOM `word-break: break-word`)
  * so a string like "asdasdasdasd..." wraps at the box edge in both
- * the rendered text and the editing textarea, keeping the caret and
+ * the rendered text and the inline editor, keeping the caret and
  * the rendered glyphs in sync as the user types.
  */
 
-const DECK_URL = 'http://localhost:5173/deck/GoYLg0H4-wSp'
-
-async function setup(page: Page) {
+async function setup(page: Page): Promise<{ id: string; slideId: string }> {
   await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto(DECK_URL)
-  await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-    timeout: 15_000,
+  const { objectId, slideId } = await provisionDeckWithText(page, {
+    title: 'text-edit-wrap',
+    objectId: 'wrap-text',
   })
-  await page.waitForTimeout(1500)
-}
-
-async function findText(page: Page) {
-  return await page.evaluate(() => {
-    const api = window.__narrative_test_api!
-    for (const sid of api.listSlideIds()) {
-      const t = api.debugObjectTypes(sid).find((o) => o.type === 'text')
-      if (t !== undefined) return { id: t.id, slideId: sid }
-    }
-    return null
-  })
+  await page.waitForTimeout(500)
+  return { id: objectId, slideId }
 }
 
 test('long unbroken string wraps inside the box, no horizontal overflow', async ({ page }) => {
   test.setTimeout(45_000)
-  await setup(page)
-  const target = await findText(page)
-  if (target === null) throw new Error('no text obj')
+  const target = await setup(page)
 
   // Seed a long unbroken string + a known box width.
   const PAYLOAD = 'asdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasdasd'

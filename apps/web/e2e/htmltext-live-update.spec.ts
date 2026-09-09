@@ -22,17 +22,19 @@
  *    Y.Doc updates server-side).
  *
  * Invariants maintained by beforeEach:
- *   - Deck state starts fresh (all unknown objects removed).
- *   - Only TEXT_OBJ_ID exists on the slide with text='Hello'.
+ *   - Every test gets its own freshly created deck (it used to open a
+ *     hard-coded id that existed in one developer's database only).
+ *   - Only TEXT_OBJ_ID exists on the slide, with text='Hello'.
  *
  * testId: htmltext-live-update
  */
 
 import { test, expect, type Page } from '@playwright/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
-const DECK_ID = 'FsVfor6N8cI0'
-const DECK_URL = `http://localhost:5173/deck/${DECK_ID}`
 const TEXT_OBJ_ID = 'e2e-htmltext-probe'
+/** The inline editor is a contenteditable div, not a <textarea>. */
+const EDITOR = '[data-shortcut-scope="canvas"] [contenteditable="true"]'
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -43,6 +45,11 @@ async function waitForTestApi(page: Page): Promise<void> {
     timeout: 20_000,
   })
   await page.waitForTimeout(1500)
+}
+
+/** Read the visible string out of the inline editor. */
+async function editorText(page: Page): Promise<string> {
+  return (await page.locator(EDITOR).first().innerText()).replace(/\n$/, '')
 }
 
 async function waitForNodeMounted(page: Page, id: string): Promise<void> {
@@ -57,13 +64,29 @@ async function waitForNodeMounted(page: Page, id: string): Promise<void> {
   await page.waitForTimeout(800)
 }
 
-/** Read the Pixi HTMLText node's `.text` string for the given object id. */
+/**
+ * Read the Pixi HTMLText node's rendered copy for the given object id.
+ *
+ * The node's `.text` is markup, not a plain string — the renderer feeds
+ * HTMLText a paragraph-per-line document with a leading node-count comment
+ * (`<!--n:12--><div data-pb="1">Hello</div>`), so comparing it to 'Hello'
+ * asserts against the serialisation rather than against what the user sees.
+ * Strip it back to text, with one newline per paragraph.
+ */
 async function readPixiText(page: Page, id: string): Promise<string | null> {
   return page.evaluate((targetId: string) => {
     const sg = (window as any).__narrative_scene_graph
     const c = sg?.getContainer(targetId)
     const textNode = c?.children.find((ch: any) => ch.anchor !== undefined)
-    return textNode?.text ?? null
+    const markup: string | undefined = textNode?.text
+    if (typeof markup !== 'string') return null
+    const host = document.createElement('div')
+    host.innerHTML = markup
+    const blocks = host.querySelectorAll('div, p, br')
+    if (blocks.length === 0) return host.textContent ?? ''
+    return Array.from(host.children)
+      .map((el) => el.textContent ?? '')
+      .join('\n')
   }, id)
 }
 
@@ -124,6 +147,7 @@ async function countNonWhitePixels(page: Page, id: string): Promise<number> {
 test.describe('Pixi HTMLText live update during inline edit', () => {
   const consoleLogs: string[] = []
   const pageErrors: string[] = []
+  let deckUrl = ''
 
   test.beforeEach(async ({ page }) => {
     consoleLogs.length = 0
@@ -132,26 +156,24 @@ test.describe('Pixi HTMLText live update during inline edit', () => {
     page.on('pageerror', (err) => pageErrors.push(err.message))
 
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto(DECK_URL)
-    await waitForTestApi(page)
+    deckUrl = (
+      await provisionDeckWithText(page, {
+        title: 'htmltext-live-update',
+        objectId: TEXT_OBJ_ID,
+        x: 500,
+        y: 300,
+        width: 600,
+        height: 120,
+      })
+    ).deckUrl
 
+    // A brand-new deck ships with whatever the deck template seeds; drop it so
+    // nothing else can win the hit test at the probe's coordinates.
     await page.evaluate((id) => {
       const api = window.__narrative_test_api!
       const slideId = api.listSlideIds()[0]!
-      const allObjects = api.debugObjectTypes(slideId)
-      // Remove any stale objects that don't belong to this test suite
-      // to avoid click-target collisions from previous test runs.
-      for (const obj of allObjects) {
-        if (obj.id !== id) {
-          api.removeObject(obj.id, slideId)
-        }
-      }
-      const existing = allObjects.find((o) => o.id === id)
-      if (!existing) {
-        api.addText({ id, x: 500, y: 300, w: 600, h: 120, text: 'Hello' }, slideId)
-      } else {
-        // Reset text and ensure position is centred in slide for reliable hit-testing.
-        api.updateObject(id, { text: 'Hello', x: 500, y: 300, width: 600, height: 120 }, slideId)
+      for (const obj of api.debugObjectTypes(slideId)) {
+        if (obj.id !== id) api.removeObject(obj.id, slideId)
       }
     }, TEXT_OBJ_ID)
 
@@ -247,16 +269,14 @@ test.describe('Pixi HTMLText live update during inline edit', () => {
     await page.mouse.click(cx, cy)
     await page.waitForTimeout(200)
     await page.mouse.dblclick(cx, cy)
-    await expect(page.locator('textarea').first()).toBeVisible({ timeout: 8_000 })
+    await expect(page.locator(EDITOR).first()).toBeVisible({ timeout: 8_000 })
 
-    // The textarea defaultValue must match Y.Text — confirms no stale-object collision.
-    const taValueOnMount = await page.locator('textarea').first().inputValue()
-    expect(taValueOnMount, 'Textarea defaultValue must match the seeded Y.Text content').toBe(
-      'Hello',
-    )
+    // What the editor shows on mount must match Y.Text — confirms no
+    // stale-object collision put us in a different box than we think.
+    expect(await editorText(page), 'Editor content must match the seeded Y.Text').toBe('Hello')
 
-    // Select all (Meta+A on macOS), then type replacement text.
-    await page.keyboard.press('Meta+A')
+    // Select all, then type replacement text.
+    await page.keyboard.press('ControlOrMeta+A')
     await page.waitForTimeout(100)
 
     // Type 'live update test' character by character (above rAF period between each).
@@ -308,7 +328,8 @@ test.describe('Pixi HTMLText live update during inline edit', () => {
     console.log('[Pixi text before reload]:', beforeReload)
     expect(beforeReload, 'Pixi text must be updated before reload').toBe('persisted text')
 
-    // Hard reload
+    // Hard reload — same deck, fresh document.
+    expect(page.url()).toContain(deckUrl)
     await page.reload()
     await waitForTestApi(page)
     await waitForNodeMounted(page, TEXT_OBJ_ID)

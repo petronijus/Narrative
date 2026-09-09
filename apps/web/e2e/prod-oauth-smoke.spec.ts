@@ -1,13 +1,20 @@
 import { test, expect } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 
-const PROD = 'https://narrative.example.com'
+/**
+ * Points at a deployed environment, not the dev server, so it is opt-in:
+ * set PROD_SMOKE_URL (e.g. https://narrative.bastla.com). Without it the spec
+ * skips — the placeholder host it used to hard-code does not resolve, so the
+ * local suite reported a DNS error as a product failure.
+ */
+const PROD = process.env['PROD_SMOKE_URL'] ?? ''
 const ARTIFACT_DIR = '/tmp/narrative-prod-smoke'
 
 mkdirSync(ARTIFACT_DIR, { recursive: true })
 
-test.describe('Prod smoke: narrative.example.com', () => {
+test.describe('Prod smoke', () => {
   test('redirects to login and produces a valid Google OAuth URL', async ({ page }) => {
+    test.skip(PROD === '', 'deployment smoke — set PROD_SMOKE_URL to run it')
     const consoleErrors: string[] = []
     const pageErrors: string[] = []
     page.on('console', (msg) => {

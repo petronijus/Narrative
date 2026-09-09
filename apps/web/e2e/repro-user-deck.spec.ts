@@ -1,12 +1,22 @@
 import { test, type Page } from '@playwright/test'
 
 /**
- * Open the user's specific deck, switch to slide 2, drag an object,
- * capture all browser console output. The user reports thumbnails
- * stop generating after this — let's see what the browser says.
+ * Open one specific deck, switch to slide 2, drag an object, and capture all
+ * browser console output — the harness used to chase "thumbnails stop
+ * generating after a slide switch".
+ *
+ * It needs a deck with two populated slides that only exists in one
+ * developer's database, so it is opt-in: set REPRO_DECK_ID. The regression it
+ * was written for is covered without any opt-in by
+ * `thumbnails-after-slide-switch.spec.ts` and `thumbnail-drag-repro.spec.ts`,
+ * which provision their own decks; this one stays for console-level
+ * diagnosis of a deck a user reports.
  */
 
+const REPRO_DECK_ID = process.env['REPRO_DECK_ID'] ?? ''
+
 test('repro user deck slide 2 drag', async ({ page }) => {
+  test.skip(REPRO_DECK_ID === '', 'diagnostic harness — set REPRO_DECK_ID to run it')
   test.setTimeout(120_000)
 
   const lines: string[] = []
@@ -17,7 +27,7 @@ test('repro user deck slide 2 drag', async ({ page }) => {
     if (t.startsWith('[thumb-dbg]')) console.log(t)
   })
 
-  await page.goto('http://localhost:5173/deck/BX1r_CDVmc6d')
+  await page.goto(`http://localhost:5173/deck/${REPRO_DECK_ID}`)
   await page.waitForFunction(
     () =>
       (window as unknown as { __narrative_test_api?: unknown }).__narrative_test_api !== undefined,

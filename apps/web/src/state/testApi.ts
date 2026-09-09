@@ -25,7 +25,7 @@ import {
   updateSlideTransition,
   type SlideMutationContext,
 } from '@narrative/slide-model'
-import type { SlideObject, SlideObjectPatch } from '@narrative/shared'
+import type { Slide, SlideObject, SlideObjectPatch } from '@narrative/shared'
 
 /**
  * Snapshot of the Selection context written by SelectionContext in DEV
@@ -82,6 +82,13 @@ export interface TestApi {
   addSlide(): string
   /** Ordered list of slide ids in the deck. */
   listSlideIds(): string[]
+  /**
+   * Full slide snapshots — id, objects, transition — as the slide model sees
+   * them. Specs that compare two clients' state (multi-client-collab) need the
+   * objects per slide in one read, so a poll cannot observe a half-applied
+   * update the way `listSlideIds()` + a follow-up `objectIds()` can.
+   */
+  listSlides(): Slide[]
   /** Patch an object's geometry (used by tests to simulate drags). */
   updateObject(objectId: string, patch: Record<string, unknown>, slideId?: string): void
   /** Remove an object from the slide by id. */
@@ -149,8 +156,35 @@ declare global {
   }
 }
 
+/**
+ * The live deck context the installed API operates on.
+ *
+ * The API object on `window` is installed once and never removed; what changes
+ * underneath it is this context. React StrictMode mounts the deck provider
+ * twice — the first Y.Doc is destroyed by the effect cleanup, and its
+ * Hocuspocus `onSynced` can still land afterwards. Binding the API to the doc
+ * that happened to install it meant a spec could write into a doc that was
+ * already torn down: Y.Doc accepts the write silently, nothing renders and
+ * nothing syncs, so the spec sees "object never mounted in the SceneGraph"
+ * (observed intermittently in the e2e suite on 2026-09-09). Deleting the hook
+ * on teardown only moved the problem — specs that had already waited for
+ * `__narrative_test_api` then hit `undefined`. Retargeting keeps a single
+ * stable object that always writes to whichever doc is currently live.
+ */
+let activeCtx: SlideMutationContext | null = null
+
+function liveCtx(): SlideMutationContext {
+  if (activeCtx === null) {
+    throw new Error('test api: no live deck document (the provider is between mounts)')
+  }
+  return activeCtx
+}
+
+/** Point the API at this deck's live Y.Doc. A destroyed doc is ignored. */
 export function installTestApi(deckCtx: SlideMutationContext): void {
   if (!import.meta.env.DEV) return
+  if (deckCtx.doc.isDestroyed) return
+  activeCtx = deckCtx
 
   const api: TestApi = {
     seedMagicMoveFixture(opts = {}) {
@@ -172,24 +206,24 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         opacity: opts.to?.opacity ?? 1,
       }
 
-      deckCtx.doc.transact(() => {
-        for (const s of listSlides(deckCtx)) {
+      liveCtx().doc.transact(() => {
+        for (const s of listSlides(liveCtx())) {
           // removeSlide auto-replaces when emptying — ignore, we'll add ours
           // and end up with 2 seeded slides plus at most one stale empty.
-          removeSlide(deckCtx, s.id)
+          removeSlide(liveCtx(), s.id)
         }
       }, LOCAL_ORIGIN)
 
       // After the loop, deck has exactly one empty slide (removeSlide seeds
       // a fresh one when emptying). We replace both its content and add a
       // second slide.
-      const existing = listSlides(deckCtx)
-      const fromSlideId = existing[0]?.id ?? addSlide(deckCtx).id
-      const toSlide = addSlide(deckCtx)
+      const existing = listSlides(liveCtx())
+      const fromSlideId = existing[0]?.id ?? addSlide(liveCtx()).id
+      const toSlide = addSlide(liveCtx())
       const toSlideId = toSlide.id
 
-      const fromCtx = getSlideObjectsCtx(deckCtx, fromSlideId)
-      const toCtx = getSlideObjectsCtx(deckCtx, toSlideId)
+      const fromCtx = getSlideObjectsCtx(liveCtx(), fromSlideId)
+      const toCtx = getSlideObjectsCtx(liveCtx(), toSlideId)
       if (fromCtx === null || toCtx === null) {
         throw new Error('seedMagicMoveFixture: slide object context not found')
       }
@@ -217,20 +251,23 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         rotation: 0,
       })
 
-      updateSlideTransition(deckCtx, toSlideId, { kind: 'magic', durationMs })
+      updateSlideTransition(liveCtx(), toSlideId, { kind: 'magic', durationMs })
 
       return { fromSlideId, toSlideId }
     },
     addSlide() {
-      return addSlide(deckCtx).id
+      return addSlide(liveCtx()).id
     },
     listSlideIds() {
-      return listSlides(deckCtx).map((s) => s.id)
+      return listSlides(liveCtx()).map((s) => s.id)
+    },
+    listSlides() {
+      return listSlides(liveCtx())
     },
     debugObjectTypes(slideId) {
-      const sid = slideId ?? listSlides(deckCtx)[0]?.id
+      const sid = slideId ?? listSlides(liveCtx())[0]?.id
       if (sid === undefined) return []
-      const ctx = getSlideObjectsCtx(deckCtx, sid)
+      const ctx = getSlideObjectsCtx(liveCtx(), sid)
       if (ctx === null) return []
       const out: { id: string; type: string }[] = []
       for (let i = 0; i < ctx.objects.length; i++) {
@@ -243,9 +280,9 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       return out
     },
     updateObject(objectId, patch, slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) throw new Error('updateObject: no slide')
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) throw new Error('updateObject: slide ctx not found')
       // Use updateObject (not bulkUpdateObjects) so that Y.Text fields are
       // mutated in place rather than replaced with a plain string. A plain-
@@ -254,16 +291,16 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       updateObjectMutation(ctx, objectId, patch as SlideObjectPatch<SlideObject>)
     },
     removeObject(objectId, slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) throw new Error('removeObject: no slide')
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) throw new Error('removeObject: slide ctx not found')
       removeObjectMutation(ctx, objectId)
     },
     addRect(opts, slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) throw new Error('addRect: no slide')
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) throw new Error('addRect: slide ctx not found')
       addObject(ctx, {
         id: opts.id,
@@ -278,9 +315,9 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       })
     },
     addText(opts, slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) throw new Error('addText: no slide')
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) throw new Error('addText: slide ctx not found')
       addObject(ctx, {
         id: opts.id,
@@ -299,9 +336,9 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       })
     },
     objectIds(slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) return []
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) return []
       const out: string[] = []
       for (let i = 0; i < ctx.objects.length; i++) {
@@ -310,9 +347,9 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       return out
     },
     objectCount(slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) return 0
-      const ctx = getSlideObjectsCtx(deckCtx, targetSlideId)
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       return ctx === null ? 0 : ctx.objects.length
     },
     getSelection() {
@@ -378,8 +415,8 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       return out
     },
     getObjectPositionFromYDoc(objectId, slideId) {
-      for (let i = 0; i < deckCtx.slides.length; i++) {
-        const slideMap = deckCtx.slides.get(i)
+      for (let i = 0; i < liveCtx().slides.length; i++) {
+        const slideMap = liveCtx().slides.get(i)
         if ((slideMap.get('id') as string) !== slideId) continue
         // Found the slide — walk objects array
         const objectsArr = slideMap.get('objects') as {
@@ -403,10 +440,10 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       return null // slide not found
     },
     getObject(objectId, slideId) {
-      const targetSlideId = slideId ?? listSlides(deckCtx)[0]?.id
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
       if (targetSlideId === undefined) return null
-      for (let i = 0; i < deckCtx.slides.length; i++) {
-        const slideMap = deckCtx.slides.get(i)
+      for (let i = 0; i < liveCtx().slides.length; i++) {
+        const slideMap = liveCtx().slides.get(i)
         if ((slideMap.get('id') as string) !== targetSlideId) continue
         const objectsArr = slideMap.get('objects') as {
           length: number
@@ -428,4 +465,15 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
   }
 
   window.__narrative_test_api = api
+}
+
+/**
+ * Detach the API from a doc that is being destroyed. A no-op once a newer doc
+ * has taken the slot. The `window` hook stays in place — calls made in the gap
+ * throw a named error instead of silently writing into a dead document.
+ */
+export function uninstallTestApi(doc: SlideMutationContext['doc']): void {
+  if (!import.meta.env.DEV) return
+  if (activeCtx?.doc !== doc) return
+  activeCtx = null
 }

@@ -21,8 +21,18 @@
 import { test, type Page } from '@playwright/test'
 import * as path from 'path'
 
-const DECK_ID = 'catZVH3J4hkh'
-const DECK_URL = `http://localhost:5173/deck/${DECK_ID}`
+/**
+ * The flow needs nothing but an empty deck, so make one. It used to open a
+ * hard-coded id that existed in one developer's database; everywhere else the
+ * page 403s and the spec dies waiting for the test API.
+ */
+async function createDeck(page: Page): Promise<string> {
+  const res = await page.request.post('http://localhost:3001/decks', {
+    data: { title: 'text-reload-invisible' },
+  })
+  const { id } = (await res.json()) as { id: string }
+  return `/deck/${id}`
+}
 
 // ─── pixel sampler ──────────────────────────────────────────────────────────
 
@@ -210,7 +220,7 @@ test('p15 text-reload-invisible: diagnose invisible text after hard reload', asy
 
   // ── 1. Open the deck ───────────────────────────────────────────────────────
   console.log('=== Step 1: Open deck ===')
-  await page.goto(DECK_URL)
+  await page.goto(await createDeck(page))
   await waitForTestApi(page)
   // Extra wait for Pixi and Hocuspocus to settle
   await page.waitForTimeout(2000)

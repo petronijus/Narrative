@@ -230,10 +230,45 @@ export function subscribeToSlideObjectsWithFlush(
   let slideObjectsArr: Y.Array<Y.Map<unknown>> | null = resolveObjectsArr()
 
   if (slideObjectsArr === null) {
-    // Slide not found — no-op subscribe
+    // The slide isn't in the deck yet. That is a race, not an error: a
+    // consumer can subscribe while Hocuspocus is still syncing, or before the
+    // locally hydrated slide Y.Map has been swapped for the remote one.
+    //
+    // Returning a dead no-op here — which is what this used to do — is
+    // unrecoverable: the callback never fires, not even the initial emit, so
+    // every consumer that trusts the snapshot keeps an empty list forever.
+    // `useSlideObjects` is one, and from there it cascades: the React objects
+    // list stays empty, the stale-selection sanitiser in EditorLayout drops
+    // every selection the moment it is made, and the canvas hit test has
+    // nothing to hit, so clicking an object selects nothing and double-click
+    // never opens the text editor. The renderer escapes it only because
+    // `useSlideObjectChanges` re-subscribes on a slide-order fingerprint.
+    //
+    // Wait for the slide instead, then hand over to a real subscription whose
+    // initial synchronous emit delivers the snapshot.
+    let inner: { unsubscribe: () => void; flush: () => void } | null = null
+    let waiting = true
+    const stopWaiting = (): void => {
+      if (!waiting) return
+      waiting = false
+      ctx.slides.unobserve(waitForSlide)
+    }
+    function waitForSlide(): void {
+      if (!waiting) return
+      if (resolveObjectsArr() === null) return
+      stopWaiting()
+      inner = subscribeToSlideObjectsWithFlush(ctx, slideId, callback)
+    }
+    ctx.slides.observe(waitForSlide)
     return {
-      unsubscribe: () => {},
-      flush: () => {},
+      unsubscribe: () => {
+        stopWaiting()
+        inner?.unsubscribe()
+        inner = null
+      },
+      flush: () => {
+        inner?.flush()
+      },
     }
   }
 

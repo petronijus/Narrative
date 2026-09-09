@@ -418,6 +418,10 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
         className="panel flex items-center gap-1 border-b border-border px-3 py-1.5"
         role="toolbar"
         aria-label="Object tools"
+        /* Which tool is armed, in one place a test can read: the shape tools
+           moved behind a dropdown, so "the pressed toolbar button" no longer
+           identifies the active tool from the DOM. */
+        data-active-tool={activeTool}
       >
         {/* Home / back-to-presentation — when editing a master component, the
             home slot becomes a labelled blue pill that returns the user to the

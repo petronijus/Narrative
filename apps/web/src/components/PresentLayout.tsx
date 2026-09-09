@@ -621,6 +621,9 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
             transformOrigin: 'center center',
           }}
           data-testid="slide-container"
+          /* Which slide is on screen. Present mode renders no slides panel, so
+             this is the only place the current slide is legible from the DOM. */
+          data-active-slide-id={activeSlideId ?? undefined}
         >
           {/* Canvas itself is pointer-events:none */}
           <div className="pointer-events-none absolute inset-0">

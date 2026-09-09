@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
 /**
  * Verifies that the inline-text-edit DOM overlay sits exactly where
@@ -6,16 +7,17 @@ import { test, expect, type Page } from '@playwright/test'
  * vertical alignment, AND that vAlign survives align changes / reload.
  *
  * Spec strategy:
- *   - Open the user's reproduction deck.
+ *   - Provision a deck with one text object (the spec used to open a
+ *     hard-coded deck id that only existed on one machine).
  *   - For each (align × vAlign) combo:
  *       1. Patch the existing text obj via the dev test_api.
  *       2. Read the SceneGraph container's screen-space top-left and
  *          the Pixi text node's local x/y (which encodes Pixi's
  *          horizontal-anchor + vertical-align offset).
  *       3. Double-click to enter edit mode.
- *       4. Read the textarea's getBoundingClientRect.
+ *       4. Read the edit overlay's getBoundingClientRect.
  *       5. Compute the expected DOM glyph-block position and compare
- *          against the textarea's first-glyph position.
+ *          against the overlay's first-glyph position.
  *   - Plus: change align WITHOUT changing vAlign and assert vAlign is
  *     preserved (regression for the bug where align change reset it).
  *   - Plus: navigate away and reload to confirm vAlign survives a fresh
@@ -24,7 +26,6 @@ import { test, expect, type Page } from '@playwright/test'
  * Tolerance: 4 px (sub-pixel rounding + Pixi-vs-DOM font metrics).
  */
 
-const DECK_URL = 'http://localhost:5173/deck/GoYLg0H4-wSp'
 const TOL = 4
 
 interface TextNodeProbe {
@@ -85,9 +86,13 @@ async function probeTextNode(page: Page, id: string): Promise<TextNodeProbe | nu
   }, id)
 }
 
+/** The inline editor is a contenteditable div (it was a <textarea> when this
+ *  spec was first written — the locator is the only thing that changed). */
+const EDITOR = '[data-shortcut-scope="canvas"] [contenteditable="true"]'
+
 async function readTextareaRect(page: Page) {
   return await page
-    .locator('textarea')
+    .locator(EDITOR)
     .first()
     .evaluate((el) => {
       const r = el.getBoundingClientRect()
@@ -107,26 +112,24 @@ async function readTextareaRect(page: Page) {
 }
 
 async function openDeckAndFindText(page: Page): Promise<{ id: string; slideId: string }> {
-  await page.goto(DECK_URL)
-  await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-    timeout: 15_000,
+  const { objectId, slideId } = await provisionDeckWithText(page, {
+    title: 'text-edit-position',
+    objectId: 'tep-text',
+    text: 'Hamburgefonstiv',
+    x: 200,
+    y: 200,
+    width: 700,
+    height: 300,
   })
-  await page.waitForTimeout(1500)
-  const target = await page.evaluate(() => {
-    const api = window.__narrative_test_api!
-    for (const sid of api.listSlideIds()) {
-      const t = api.debugObjectTypes(sid).find((o) => o.type === 'text')
-      if (t !== undefined) return { id: t.id, slideId: sid }
-    }
-    return null
-  })
-  if (target === null) throw new Error('no text obj in deck')
-  return target
+  // The overlay measurements below compare against Pixi's rasterised glyphs,
+  // which land a frame or two after mount.
+  await page.waitForTimeout(1000)
+  return { id: objectId, slideId }
 }
 
 async function exitEdit(page: Page): Promise<void> {
   await page
-    .locator('textarea')
+    .locator(EDITOR)
     .first()
     .press('Escape')
     .catch(() => undefined)
@@ -161,7 +164,7 @@ test.describe('text edit overlay alignment', () => {
 
         // Enter edit mode by double-clicking inside the box.
         await page.mouse.dblclick(probe.pageX + 50, probe.pageY + 50)
-        await expect(page.locator('textarea').first()).toBeVisible({ timeout: 5_000 })
+        await expect(page.locator(EDITOR).first()).toBeVisible({ timeout: 5_000 })
         await page.waitForTimeout(300) // let autoSize settle
 
         const ta = await readTextareaRect(page)
@@ -171,7 +174,7 @@ test.describe('text edit overlay alignment', () => {
         console.log(
           `[align=${align} vAlign=${vAlign}] pixiTextTop=${pixiTextTop.toFixed(1)} ` +
             `taTop=${ta.top.toFixed(1)} dy=${dy.toFixed(1)}px ` +
-            `textareaH=${ta.height.toFixed(0)} textNodeY=${probe.textNodeY.toFixed(1)} ` +
+            `overlayH=${ta.height.toFixed(0)} textNodeY=${probe.textNodeY.toFixed(1)} ` +
             `textNodeH=${probe.textNodeHeight.toFixed(1)} text-align=${ta.textAlign}`,
         )
 

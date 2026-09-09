@@ -9,17 +9,22 @@ import { test, expect } from '@playwright/test'
  * filter chain), and reports back. We're hunting for whichever value
  * is multiplying the gradient into blue.
  *
- * Reusable: pass FIDELITY_DECK_ID=<id> to point at an already-imported
- * deck. Otherwise the spec uses the most-recent deck title that matches
- * the fixture name.
+ * Opt-in: pass FIDELITY_DECK_ID=<id> to point at an already-imported deck.
+ * Without one the spec skips — it used to throw, reporting a missing opt-in as
+ * a suite failure on every machine that had not run the import.
  */
 
+const FIDELITY_DECK_ID = process.env['FIDELITY_DECK_ID'] ?? ''
+
 test('dump slide 5 ellipse fill state', async ({ page }) => {
+  test.skip(
+    FIDELITY_DECK_ID === '',
+    'fidelity diagnostic — set FIDELITY_DECK_ID to an imported deck to run it',
+  )
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1920, height: 1080 })
 
-  const deckId = process.env['FIDELITY_DECK_ID']
-  if (!deckId) throw new Error('Set FIDELITY_DECK_ID to a deck id')
+  const deckId = FIDELITY_DECK_ID
 
   page.on('console', (msg) => {
     if (msg.type() === 'error') console.error(`[browser] ${msg.text()}`)

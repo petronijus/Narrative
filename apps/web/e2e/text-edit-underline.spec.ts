@@ -1,16 +1,22 @@
+/**
+ * Underline placement capture: writes one screenshot per (vAlign, fontSize)
+ * combination so the underline offset can be eyeballed against the glyph
+ * baseline. No assertions — this is a capture harness, kept because the
+ * underline offset has regressed twice and a pixel threshold here would be
+ * noise under a system Chrome.
+ */
+
 import { test, type Page } from '@playwright/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
-const DECK_URL = 'http://localhost:5173/deck/GoYLg0H4-wSp'
-
-async function findText(page: Page) {
-  return await page.evaluate(() => {
-    const api = window.__narrative_test_api!
-    for (const sid of api.listSlideIds()) {
-      const t = api.debugObjectTypes(sid).find((o) => o.type === 'text')
-      if (t !== undefined) return { id: t.id, slideId: sid }
-    }
-    return null
+async function setup(page: Page): Promise<{ id: string; slideId: string }> {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  const { objectId, slideId } = await provisionDeckWithText(page, {
+    title: 'text-edit-underline',
+    objectId: 'underline-text',
   })
+  await page.waitForTimeout(500)
+  return { id: objectId, slideId }
 }
 
 async function probe(page: Page, id: string) {
@@ -39,14 +45,7 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
       page,
     }) => {
       test.setTimeout(45_000)
-      await page.setViewportSize({ width: 1920, height: 1080 })
-      await page.goto(DECK_URL)
-      await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-        timeout: 15_000,
-      })
-      await page.waitForTimeout(1500)
-      const target = await findText(page)
-      if (target === null) throw new Error('no text obj')
+      const target = await setup(page)
 
       await page.evaluate(
         ({ id, slideId, fontSize, vAlign }) => {
@@ -87,14 +86,7 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
 for (const fontSize of [16, 24, 48, 96]) {
   test(`underline placement screenshot fontSize=${fontSize}`, async ({ page }) => {
     test.setTimeout(45_000)
-    await page.setViewportSize({ width: 1920, height: 1080 })
-    await page.goto(DECK_URL)
-    await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-      timeout: 15_000,
-    })
-    await page.waitForTimeout(1500)
-    const target = await findText(page)
-    if (target === null) throw new Error('no text obj')
+    const target = await setup(page)
 
     await page.evaluate(
       ({ id, slideId, fontSize }) => {

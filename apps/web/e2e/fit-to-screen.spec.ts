@@ -12,6 +12,9 @@ import { test, expect } from '@playwright/test'
 const API = 'http://localhost:3001'
 
 test('Fit to screen centers artboard in the visible channel', async ({ page }) => {
+  // Measure at a window the editor is actually laid out for.
+  await page.setViewportSize({ width: 1920, height: 1080 })
+
   // ── 1. Create a fresh deck via API ──────────────────────────────────────
   const res = await page.request.post(`${API}/decks`, {
     data: { title: 'fit-test' },
@@ -86,6 +89,11 @@ test('Fit to screen centers artboard in the visible channel', async ({ page }) =
   })
 
   // ── 5. Click Fit to screen ───────────────────────────────────────────────
+  // The zoom cluster keeps everything but the percentage collapsed
+  // (`max-h-0`) until it is hovered, and the collapsed strip sits under the
+  // "100%" button — so clicking straight at Fit is intercepted. Hover the
+  // cluster open first, the way a user does.
+  await page.getByRole('button', { name: 'Reset zoom to 100%' }).hover()
   const fitBtn = page.getByRole('button', { name: 'Fit to screen' })
   await expect(fitBtn).toBeVisible()
   await fitBtn.click()

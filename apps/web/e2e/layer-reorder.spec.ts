@@ -36,7 +36,9 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   page.on('console', (msg) => {
-    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()}`)
+    // Include the location: "Failed to load resource: … 404" on its own names
+    // nothing, and chasing it costs more than printing it does.
+    if (msg.type() === 'error') errors.push(`console.error: ${msg.text()} @ ${msg.location().url}`)
   })
 
   await createDeckAndOpen(page)
@@ -67,7 +69,12 @@ test('send backward keeps selection + no dropped ids + no render crash', async (
 
   // (a) No JS errors surfaced
   const realErrors = errors.filter(
-    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
+    (e) =>
+      !e.includes('No available adapters') &&
+      !e.includes('HocuspocusProvider') &&
+      // index.html declares no icon, so every page load 404s /favicon.ico.
+      // Unrelated to layer ordering; noise, not a render crash.
+      !e.includes('/favicon.ico'),
   )
   expect(realErrors, `unexpected errors: ${realErrors.join(' | ')}`).toEqual([])
 
@@ -141,7 +148,12 @@ test('layer-reorder stress: 10 consecutive backward/forward presses', async ({ p
   await page.waitForTimeout(500)
 
   const realErrors = errors.filter(
-    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
+    (e) =>
+      !e.includes('No available adapters') &&
+      !e.includes('HocuspocusProvider') &&
+      // index.html declares no icon, so every page load 404s /favicon.ico.
+      // Unrelated to layer ordering; noise, not a render crash.
+      !e.includes('/favicon.ico'),
   )
   expect(realErrors, realErrors.join(' | ')).toEqual([])
   expect(await page.evaluate(() => window.__narrative_test_api!.objectCount())).toBe(3)

@@ -70,9 +70,14 @@ async function sampleThumbnailPixel(
           c.height = tmp.naturalHeight
           const ctx = c.getContext('2d')!
           ctx.drawImage(tmp, 0, 0)
-          // Map slide-space coords (1280×720 default) to thumbnail px.
-          const px = Math.round((slideX / 1280) * tmp.naturalWidth)
-          const py = Math.round((slideY / 720) * tmp.naturalHeight)
+          // Map slide-space coords to thumbnail px. The artboard is
+          // SLIDE_WIDTH×SLIDE_HEIGHT (1920×1080); this used to divide by
+          // 1280×720, which sampled a point ~1.5× off in both axes — far
+          // enough that "is the top rect on top here?" read the background
+          // instead, and the suite reported layer-order and repaint failures
+          // that the renderer was not committing.
+          const px = Math.round((slideX / 1920) * tmp.naturalWidth)
+          const py = Math.round((slideY / 1080) * tmp.naturalHeight)
           const d = ctx.getImageData(px, py, 1, 1).data
           resolve({ r: d[0]!, g: d[1]!, b: d[2]! })
         }
@@ -82,6 +87,30 @@ async function sampleThumbnailPixel(
     },
     { slideX, slideY },
   )
+}
+
+/**
+ * Wait until a slide thumbnail exists and can be sampled, then return the
+ * pixel. Thumbnails are rendered on a debounce after the scene changes, so a
+ * fixed `waitForTimeout` either flakes or slows every test down; polling ends
+ * as soon as the PNG is there.
+ */
+async function sampleThumbnailPixelWhenReady(
+  page: Page,
+  slideX: number,
+  slideY: number,
+): Promise<{ r: number; g: number; b: number }> {
+  let sample: { r: number; g: number; b: number } | null = null
+  await expect
+    .poll(
+      async () => {
+        sample = await sampleThumbnailPixel(page, slideX, slideY)
+        return sample !== null
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true)
+  return sample!
 }
 
 // ---------------------------------------------------------------------------
@@ -181,10 +210,16 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
         fill: 0xff0000, // red first
       })
     })
-    await page.waitForTimeout(800)
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => window.__narrative_test_api!.sceneGraphHasMountedNode('rv-recolour')),
+        { timeout: 5000 },
+      )
+      .toBe(true)
 
-    const beforeRecolour = await sampleThumbnailPixel(page, 500, 350)
-    expect(beforeRecolour!.r).toBeGreaterThan(180)
+    const beforeRecolour = await sampleThumbnailPixelWhenReady(page, 500, 350)
+    expect(beforeRecolour.r).toBeGreaterThan(180)
 
     // Recolour to blue.
     await page.evaluate(() => {
@@ -192,9 +227,9 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
     })
     await page.waitForTimeout(900) // thumbnail debounce window
 
-    const afterRecolour = await sampleThumbnailPixel(page, 500, 350)
-    expect(afterRecolour!.b).toBeGreaterThan(180)
-    expect(afterRecolour!.r).toBeLessThan(120)
+    const afterRecolour = await sampleThumbnailPixelWhenReady(page, 500, 350)
+    expect(afterRecolour.b).toBeGreaterThan(180)
+    expect(afterRecolour.r).toBeLessThan(120)
   })
 })
 

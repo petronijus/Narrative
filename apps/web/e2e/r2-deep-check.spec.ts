@@ -1,3 +1,8 @@
+/**
+ * Diagnostic capture against an imported pptx deck — opt-in via
+ * FIDELITY_DECK_ID, since the deck only exists after a local import run.
+ */
+
 import { test } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -5,13 +10,17 @@ import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT = join(__dirname, '..', '..', '..', 'tests', 'pptx-import', 'r2-check')
+const FIDELITY_DECK_ID = process.env['FIDELITY_DECK_ID'] ?? ''
 
 test('deep R2 inspection slide 7 in present mode', async ({ page }) => {
+  test.skip(
+    FIDELITY_DECK_ID === '',
+    'fidelity capture — set FIDELITY_DECK_ID to an imported deck to run it',
+  )
   test.setTimeout(180_000)
   await page.setViewportSize({ width: 1920, height: 1080 })
   await mkdir(OUT, { recursive: true })
-  const deckId = process.env['FIDELITY_DECK_ID']
-  if (!deckId) throw new Error('Set FIDELITY_DECK_ID')
+  const deckId = FIDELITY_DECK_ID
 
   page.on('console', (msg) => {
     if (msg.text().includes('videoRenderer')) console.log(`[browser] ${msg.text()}`)

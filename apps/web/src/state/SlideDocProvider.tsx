@@ -108,6 +108,13 @@ export function SlideDocProvider({ deckId, doc: externalDoc, children }: SlideDo
   return <HocuspocusSlideProvider deckId={deckId}>{children}</HocuspocusSlideProvider>
 }
 
+/**
+ * How long a torn-down deck connection lingers before it is really destroyed.
+ * Long enough to survive StrictMode's synchronous remount and a fast-refresh
+ * cycle, short enough that leaving a deck frees the socket promptly.
+ */
+const TEARDOWN_DELAY_MS = 250
+
 interface HocuspocusSlideProviderProps {
   deckId: string
   children: React.ReactNode
@@ -119,12 +126,63 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
   const location = useLocation()
   const { user } = useAuth()
 
-  // Ref for StrictMode double-mount guard
-  const providerRef = useRef<HocuspocusProvider | null>(null)
+  // The live connection, kept across React StrictMode's mount → cleanup →
+  // mount cycle (see the deferred teardown in the cleanup below).
+  const providerRef = useRef<{
+    deckId: string
+    provider: HocuspocusProvider
+    doc: Y.Doc
+    awareness: Awareness
+  } | null>(null)
+  const teardownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    // StrictMode guard — don't remount if provider already exists for this deckId
-    if (providerRef.current !== null) return
+    const destroyNow = (held: NonNullable<typeof providerRef.current>): void => {
+      // M8: broadcast disappear to other peers.
+      held.awareness.setLocalState(null)
+      // E2E: detach the window hook from a doc that is going away, so a spec
+      // cannot seed objects into a document nothing renders from.
+      void import('./testApi.js').then(({ uninstallTestApi }) => {
+        uninstallTestApi(held.doc)
+      })
+      held.provider.destroy()
+      held.doc.destroy()
+    }
+
+    // A remount reclaims the connection its own cleanup scheduled for
+    // teardown. StrictMode runs mount → cleanup → mount on every deck open in
+    // dev; destroying eagerly meant a second Y.Doc and a second Hocuspocus
+    // socket per deck, with a window in which the two docs both existed and
+    // writes could land in the one that was about to be thrown away.
+    if (teardownRef.current !== null) {
+      clearTimeout(teardownRef.current)
+      teardownRef.current = null
+    }
+    /**
+     * Schedule the teardown of `target`, unless a remount reclaims it first.
+     * Returned from every path through this effect — including the reclaim
+     * path, which must still hand React a cleanup or the connection would
+     * outlive the last unmount.
+     */
+    const scheduleTeardown = (target: HocuspocusProvider) => (): void => {
+      teardownRef.current = setTimeout(() => {
+        teardownRef.current = null
+        const current = providerRef.current
+        if (current === null || current.provider !== target) return
+        destroyNow(current)
+        providerRef.current = null
+        setValue(null)
+      }, TEARDOWN_DELAY_MS)
+    }
+
+    const held = providerRef.current
+    if (held !== null) {
+      if (held.deckId === deckId) return scheduleTeardown(held.provider)
+      // Genuinely a different deck — let the old one go right away.
+      destroyNow(held)
+      providerRef.current = null
+      setValue(null)
+    }
 
     const doc = new Y.Doc()
 
@@ -194,8 +252,6 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       },
     })
 
-    providerRef.current = provider
-
     // P12d cold-start fix: don't gate `value` on `onSynced`. The
     // children (Canvas, Pixi init, reconciler) need to mount as early
     // as possible so the WS handshake, Postgres hydration, WebGL init
@@ -221,6 +277,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     if (awareness === null) {
       throw new Error('HocuspocusProvider.awareness is null — provider not initialized')
     }
+    providerRef.current = { deckId, provider, doc, awareness }
     awareness.setLocalState({
       user: localUser,
       selectedObjectIds: [],
@@ -234,14 +291,10 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     // server's real slides (Yjs CRDT merge), leaving an extra empty slide on
     // every reload. Wait for onSynced so we know Y.Doc state matches server.
 
-    return () => {
-      // M8: Cleanup — broadcast disappear to other peers
-      awareness.setLocalState(null)
-      provider.destroy()
-      doc.destroy()
-      providerRef.current = null
-      setValue(null)
-    }
+    // Defer the teardown by a tick so an immediate remount (StrictMode, or a
+    // fast-refresh re-render) reclaims this provider instead of trading it for
+    // a fresh doc and socket. A real unmount just runs it late.
+    return scheduleTeardown(provider)
   }, [deckId])
 
   // Memoize the merged context value — without this, every parent re-render

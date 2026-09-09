@@ -1,9 +1,10 @@
 import { test, type Page } from '@playwright/test'
+import { provisionDeckWithText } from './fixtures/provisionDeck.js'
 
 /**
- * Visual proof: open the user's deck in normal mode and edit mode and
- * save full-canvas screenshots so a human (or me) can eyeball whether
- * the edit overlay actually sits where the rendered Pixi text sits.
+ * Visual proof: open a freshly provisioned deck in normal mode and in edit
+ * mode and save screenshots so a human can eyeball whether the edit overlay
+ * actually sits where the rendered Pixi text sits.
  *
  * Screenshots:
  *   - test-results/deck-normal.png         (no edit, viewport)
@@ -12,18 +13,8 @@ import { test, type Page } from '@playwright/test'
  *   - test-results/deck-edit-clip.png      (clip around the text)
  */
 
-const DECK_URL = 'http://localhost:5173/deck/GoYLg0H4-wSp'
-
-async function findText(page: Page) {
-  return await page.evaluate(() => {
-    const api = window.__narrative_test_api!
-    for (const sid of api.listSlideIds()) {
-      const t = api.debugObjectTypes(sid).find((o) => o.type === 'text')
-      if (t !== undefined) return { id: t.id, slideId: sid }
-    }
-    return null
-  })
-}
+/** The inline editor is a contenteditable div, not a <textarea>. */
+const EDITOR = '[data-shortcut-scope="canvas"] [contenteditable="true"]'
 
 async function probe(page: Page, id: string) {
   return await page.evaluate((targetId: string) => {
@@ -48,22 +39,21 @@ async function probe(page: Page, id: string) {
   }, id)
 }
 
-async function setup(page: Page) {
+async function setup(page: Page): Promise<{ id: string; slideId: string }> {
   await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto(DECK_URL)
-  await page.waitForFunction(() => window.__narrative_test_api !== undefined, null, {
-    timeout: 15_000,
+  const { objectId, slideId } = await provisionDeckWithText(page, {
+    title: 'text-edit-screenshots',
+    objectId: 'shot-text',
   })
-  await page.waitForTimeout(2000)
+  await page.waitForTimeout(800)
+  return { id: objectId, slideId }
 }
 
 for (const vAlign of ['top', 'middle', 'bottom'] as const) {
   for (const align of ['left', 'center', 'right'] as const) {
     test(`screenshots align=${align} vAlign=${vAlign}`, async ({ page }) => {
       test.setTimeout(60_000)
-      await setup(page)
-      const target = await findText(page)
-      if (target === null) throw new Error('no text obj')
+      const target = await setup(page)
 
       // Apply combo + a longer multi-line payload so wrapping +
       // vertical-align effects are obvious in the screenshots. Also
@@ -72,10 +62,9 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
       // both Pixi and the editor to top-anchor and the screenshots
       // can't visually demonstrate vAlign=middle/bottom.
       const PAYLOAD = 'Lorem ipsum dolor.\nSecond line.\nThird line.'
-      // Reset every styling field that earlier specs may have left
-      // dirty on this deck — we want each combo screenshot to start
-      // from a known box-default state so visual comparisons are
-      // meaningful.
+      // Spell out every styling field so each combo screenshot starts
+      // from the same known box-default state and the images can be
+      // compared against each other.
       await page.evaluate(
         ({ id, slideId, align, vAlign, text }) => {
           window.__narrative_test_api!.updateObject(
@@ -118,12 +107,12 @@ for (const vAlign of ['top', 'middle', 'bottom'] as const) {
       await page.screenshot({ path: `test-results/normal-${tag}.png`, clip })
 
       await page.mouse.dblclick(p.pageX + 50, p.pageY + 50)
-      await page.locator('textarea').first().waitFor({ state: 'visible', timeout: 5_000 })
+      await page.locator(EDITOR).first().waitFor({ state: 'visible', timeout: 5_000 })
       await page.waitForTimeout(400)
 
       await page.screenshot({ path: `test-results/edit-${tag}.png`, clip })
 
-      await page.locator('textarea').first().press('Escape')
+      await page.locator(EDITOR).first().press('Escape')
       await page.waitForTimeout(200)
     })
   }

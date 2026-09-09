@@ -82,9 +82,16 @@ test.describe('M28 pptx round-trip', () => {
     await expect(dialog.getByText(/Imported 3 slides/i)).toBeVisible({ timeout: 15_000 })
     await expect(dialog.getByText(/objects created/i)).toBeVisible()
 
-    // After the 1.4 s dwell the success summary should auto-navigate to the
-    // deck. Wait for the URL transition + the editor's canvas mount.
-    await page.waitForURL(/\/deck\/[A-Za-z0-9_-]+/, { timeout: 8_000 })
+    // The summary auto-navigates after a short dwell only when the import
+    // raised no notices; a font advisory (which this fixture triggers — it
+    // embeds no fonts) leaves the deck behind an explicit "Open deck" /
+    // "Skip & open deck" button. Click it when it is there, then wait for the
+    // route change either way.
+    await dialog
+      .getByRole('button', { name: /open deck/i })
+      .click({ timeout: 3_000 })
+      .catch(() => undefined)
+    await page.waitForURL(/\/deck\/[A-Za-z0-9_-]+/, { timeout: 10_000 })
     await expect(page.locator('canvas').first()).toBeVisible({ timeout: 10_000 })
 
     expect(errors, `page errors: ${errors.join(' | ')}`).toEqual([])
@@ -117,11 +124,17 @@ test.describe('M28 pptx round-trip', () => {
     const exportButton = page.getByRole('button', { name: /Export to PowerPoint/i })
     await expect(exportButton).toBeVisible({ timeout: 5_000 })
 
+    // The toolbar button opens a compatibility-warning dialog first (D2); the
+    // fetch that produces the file happens when the user confirms inside it.
+    await exportButton.click()
+    const exportDialog = page.getByRole('dialog', { name: /Export to PowerPoint/i })
+    await expect(exportDialog).toBeVisible({ timeout: 5_000 })
+
     // Playwright captures the file the browser downloads via the
     // `page.on('download')` event. Trigger + await both happen here.
     const [download] = await Promise.all([
       page.waitForEvent('download', { timeout: 30_000 }) as Promise<Download>,
-      exportButton.click(),
+      exportDialog.getByRole('button', { name: /Export anyway/i }).click(),
     ])
 
     expect(download.suggestedFilename()).toMatch(/\.pptx$/i)

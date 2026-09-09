@@ -13,6 +13,10 @@ import { test, expect, type Page } from '@playwright/test'
  */
 
 async function createDeckAndOpen(page: Page): Promise<void> {
+  // A 1280×720 window puts the artboard's top-left corner behind the toolbar
+  // at 100% zoom, so a right-click aimed at an object near the slide origin
+  // lands on chrome instead of the canvas.
+  await page.setViewportSize({ width: 1920, height: 1080 })
   const res = await page.request.post('http://localhost:3001/decks', {
     data: { title: 'Object context menu test' },
   })
@@ -150,7 +154,11 @@ test('right-click on unselected object → menu opens, items fire', async ({ pag
 
   // No error spam.
   const realErrors = errors.filter(
-    (e) => !e.includes('No available adapters') && !e.includes('HocuspocusProvider'),
+    (e) =>
+      !e.includes('No available adapters') &&
+      !e.includes('HocuspocusProvider') &&
+      // index.html declares no icon, so every page load 404s /favicon.ico.
+      !e.includes('favicon'),
   )
   expect(realErrors, `unexpected errors: ${realErrors.join(' | ')}`).toEqual([])
 })

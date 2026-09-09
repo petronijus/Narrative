@@ -200,7 +200,16 @@ function modMatches(parsed: ParsedKey, e: KeyboardEvent): boolean {
   if (!parsed.mod && !parsed.ctrl && (IS_MAC ? e.metaKey : e.ctrlKey)) return false
 
   if (parsed.alt !== e.altKey) return false
-  if (parsed.shift !== e.shiftKey) return false
+  if (parsed.shift !== e.shiftKey) {
+    // A bare single-letter binding tolerates a held Shift: Shift+R is still
+    // "R", and no binding in the registry distinguishes the two (every Shift
+    // combo also carries Mod). Requiring an exact match meant tools could not
+    // be armed while Shift was down — including mid-gesture, where Shift is
+    // the constrain-proportions modifier.
+    const bareLetter =
+      parsed.key.length === 1 && !parsed.mod && !parsed.ctrl && !parsed.alt && !parsed.shift
+    if (!(bareLetter && e.shiftKey)) return false
+  }
   return true
 }
 

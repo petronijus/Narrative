@@ -176,10 +176,13 @@ test.describe('Slides panel', () => {
     const count = await page.evaluate(() => window.__narrative_test_api!.listSlides().length)
     expect(count).toBe(3)
 
-    // The slides panel exposes one [role="option"][data-slide-id] per
-    // slide; assert UI shape matches Y.Doc.
-    const renderedRows = await page.locator('[role="option"][data-slide-id]').count()
-    expect(renderedRows).toBe(3)
+    // The slides panel exposes one [role="option"][data-slide-id] per slide;
+    // assert UI shape matches Y.Doc. Counting once immediately after the
+    // mutation raced React's render — the Y.Doc had three slides while the
+    // panel still had none.
+    await expect(page.locator('[role="option"][data-slide-id]')).toHaveCount(3, {
+      timeout: 10_000,
+    })
   })
 })
 
