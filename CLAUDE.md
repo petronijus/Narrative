@@ -33,6 +33,21 @@ touched. Always run unit + typecheck + lint as the baseline.
 If a command doesn't exist or fails to start (port collision, missing
 service), say so explicitly in your update — don't silently skip it.
 
+**Playwright needs help on this machine.** Playwright refuses to install its
+own browsers on Ubuntu 26.04 (`Playwright does not support chromium on
+ubuntu26.04-x64`, and the same for its ffmpeg build), so a bare
+`pnpm --filter web test:e2e` fails before the first test. Drive the system
+Chrome instead — `apps/web/playwright.config.ts` already supports it:
+
+```bash
+PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
+# or point at a specific binary: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome
+```
+
+`PLAYWRIGHT_NO_VIDEO=1` is required, not optional — video capture needs the
+ffmpeg build that can't be installed either. Whether the suite _passes_ with
+those set is unmeasured as of 2026-09-09; only that it starts.
+
 ## What NOT to test
 
 These were deleted from the suite this audit; do not re-introduce them:
@@ -58,8 +73,8 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 1,219 unit/integration tests
-pnpm --filter web test:e2e                     # 31 Playwright specs
+pnpm -r test                                   # 1,542 tests / 127 files (32 skipped) — 2026-09-09
+pnpm --filter web test:e2e                     # 40 Playwright specs — needs the env vars above
 pnpm size                                      # bundle budgets
 pnpm load:all                                  # load tests + drift detection
 pnpm lighthouse                                # Core Web Vitals (built preview)
@@ -71,9 +86,13 @@ Filter by test name: `pnpm --filter web test:e2e -g "<grep-pattern>"`.
 
 ## Skipped tests
 
-23 web tests are `it.skip` with rationale comments in-file. Don't
-un-skip without reading the comment — most are deferred until a
-specific UI redesign lands or have an e2e replacement noted.
+30 web tests are `it.skip` with rationale comments in-file (plus one each in
+server and video-worker). Don't un-skip without reading the comment — most are
+deferred until a specific UI redesign lands or have an e2e replacement noted.
+
+The count was 23 for a long time and drifted to 30 unnoticed; ~7 skips have
+never been triaged. If you add a skip, say why in the file **and** move the
+number here, or the next person inherits the same blind spot.
 
 ## Git policy
 
@@ -111,9 +130,25 @@ ssh pve                # → root@100.64.0.100 (Proxmox host + jump host, Tailsc
 - Prod secrets: **`/opt/narrative/infra/.env.prod`** — never commit, never print.
 - Compose runs with three overlays (`docker-compose.yml` + `.prod.yml` +
   `.prod.shared-tunnel.yml`, i.e. `USE_SHARED_TUNNEL=1`).
-- Deploy command, run **on the VM**: `cd /opt/narrative && ./infra/scripts/deploy.sh prod`
-  (builds images → DB migrate → `compose up -d` → healthchecks). The script forbids
-  being run remotely from CI; pushing to `main` triggers CI but CI does NOT gate the deploy.
+- **Images are built locally and pulled by the VM** (since 2026-09-08 — the VM no
+  longer builds from source):
+  1. on your machine: `NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh` — builds
+     server / video-worker / web and pushes them to GHCR (needs `infra/.env.prod`
+     and a `docker login ghcr.io`);
+  2. rsync the tree to `/opt/narrative`;
+  3. on the VM: `cd /opt/narrative && NARRATIVE_TAG=v0.9.3 ./infra/scripts/deploy.sh prod`
+     — pulls the images, extracts the web bundle into the `web_static` volume,
+     runs migrations, `compose up -d`, healthchecks.
+
+  Full procedure, rollback and troubleshooting: **[`docs/deploy.md`](./docs/deploy.md)**.
+
+- **There is no CI.** Both GitHub Actions workflows were deleted in 0.9.0 (they had
+  been failing since 2026-06-17). Nothing gates a push — the auto-run policy above
+  is the only safety net, so actually run it.
+- **Version invariant** (since 0.9.0): git tag = package version = GHCR image tag =
+  what `/version.json` serves. Releasing means bump every workspace
+  `package.json`, write the CHANGELOG section, tag `vX.Y.Z`, then build-push with
+  that tag. Verify prod with `curl -s https://narrative.bastla.com/version.json`.
 
 **Connecting to these hosts needs Petr's explicit per-host consent** (the auto-mode
 classifier blocks agent-inferred prod SSH targets).
