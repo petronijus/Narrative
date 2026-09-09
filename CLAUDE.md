@@ -96,6 +96,10 @@ number here, or the next person inherits the same blind spot.
 
 ## Git policy
 
+- **No pull requests on this project — commit straight to `main`.** Petr is the
+  only reviewer and reads the diff in the terminal, so a PR adds a round trip and
+  a merge commit without adding a reader. Do not open one, do not branch first
+  "to be safe"; that overrides the usual branch-off-default habit.
 - Never commit without explicit user confirmation ("push", "commit", "ship", "merge", "hotovo").
 - Never `--no-verify` or force-push.
 - Always read before editing a file.
