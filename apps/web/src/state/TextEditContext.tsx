@@ -8,7 +8,7 @@
  * Not persisted to Y.Doc — purely ephemeral editor chrome state.
  */
 
-import { createContext, useCallback, useContext, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 export interface BeginEditOptions {
   /**
@@ -52,6 +52,27 @@ export function TextEditProvider({ children }: { children: React.ReactNode }) {
     pendingRef.current = null
     setEditingId(null)
   }, [])
+
+  // E2E: enter/leave text editing from a spec without hit-testing the canvas,
+  // mirroring `narrative:test-set-selection` in SelectionContext. Entering edit
+  // mode by synthesising a double-click is not reliable — the DOM overlay root
+  // sits above the canvas with `pointer-events: auto`, so the click never
+  // reaches Pixi's hit test.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const onBegin = (e: Event): void => {
+      const detail = (e as CustomEvent<{ id: string; selectAll?: boolean }>).detail
+      if (typeof detail?.id !== 'string') return
+      beginEdit(detail.id, { selectAllOnEnter: detail.selectAll === true })
+    }
+    const onEnd = (): void => endEdit()
+    window.addEventListener('narrative:test-begin-text-edit', onBegin)
+    window.addEventListener('narrative:test-end-text-edit', onEnd)
+    return () => {
+      window.removeEventListener('narrative:test-begin-text-edit', onBegin)
+      window.removeEventListener('narrative:test-end-text-edit', onEnd)
+    }
+  }, [beginEdit, endEdit])
   const consumeSelectAllOnEnter = useCallback((): boolean => {
     const p = pendingRef.current
     return p !== null && p.selectAll

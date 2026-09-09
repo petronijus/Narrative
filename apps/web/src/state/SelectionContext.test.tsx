@@ -156,3 +156,61 @@ describe('SelectionContext — backward compat', () => {
     expect(screen.getByTestId('selected').textContent).toBe('none')
   })
 })
+
+describe('E2E test hooks', () => {
+  // Specs cannot hit-test the canvas — the DOM overlay root sits above it — so
+  // they drive selection through a window event instead. That hook is only as
+  // good as the wiring; nothing covered it until 2026-09-09, when both it and
+  // the equivalent text-edit hook appeared not to work against a running app.
+  it('applies a selection dispatched as narrative:test-set-selection', () => {
+    render(
+      <SelectionProvider>
+        <SelectionReadout />
+      </SelectionProvider>,
+    )
+    expect(screen.getByTestId('count').textContent).toBe('0')
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('narrative:test-set-selection', { detail: { ids: ['obj-7', 'obj-8'] } }),
+      )
+    })
+
+    expect(screen.getByTestId('ids').textContent).toBe('obj-7,obj-8')
+  })
+
+  it('publishes the selection to the global snapshot specs read back', () => {
+    render(
+      <SelectionProvider>
+        <SelectionReadout />
+      </SelectionProvider>,
+    )
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('narrative:test-set-selection', { detail: { ids: ['obj-9'] } }),
+      )
+    })
+    const snapshot = (
+      window as unknown as { __narrative_selection_snapshot?: { selectedIds: string[] } }
+    ).__narrative_selection_snapshot
+    expect(snapshot?.selectedIds).toEqual(['obj-9'])
+  })
+
+  it('ignores a malformed event rather than clearing the selection', () => {
+    render(
+      <SelectionProvider>
+        <SelectionReadout />
+        <SelectionControls />
+      </SelectionProvider>,
+    )
+    act(() => {
+      screen.getByText('select obj-1').click()
+    })
+    expect(screen.getByTestId('selected').textContent).toBe('obj-1')
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('narrative:test-set-selection', { detail: {} }))
+    })
+    expect(screen.getByTestId('selected').textContent).toBe('obj-1')
+  })
+})

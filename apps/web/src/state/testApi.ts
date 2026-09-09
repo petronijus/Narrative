@@ -100,6 +100,13 @@ export interface TestApi {
    * expose its setter globally.
    */
   setSelection(ids: string[]): void
+  /** Enter the contenteditable text overlay for `objectId`, the way a
+   *  double-click does. Synthesising that click is unreliable: the DOM overlay
+   *  root sits above the canvas with `pointer-events: auto`, so the click never
+   *  reaches Pixi's hit test. */
+  beginTextEdit(objectId: string, opts?: { selectAll?: boolean }): void
+  /** Leave text editing (equivalent to Escape). */
+  endTextEdit(): void
   /**
    * Ids currently mounted in the Pixi SceneGraph. Must match the
    * Y.Array ids after the reconciler has caught up — a mismatch means
@@ -315,6 +322,16 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       window.dispatchEvent(
         new CustomEvent('narrative:test-set-selection', { detail: { ids: [...ids] } }),
       )
+    },
+    beginTextEdit(objectId, opts) {
+      window.dispatchEvent(
+        new CustomEvent('narrative:test-begin-text-edit', {
+          detail: { id: objectId, selectAll: opts?.selectAll === true },
+        }),
+      )
+    },
+    endTextEdit() {
+      window.dispatchEvent(new CustomEvent('narrative:test-end-text-edit'))
     },
     sceneGraphIds() {
       const sg = (

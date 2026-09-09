@@ -16,6 +16,7 @@
  */
 
 import type { Doc as YDoc } from 'yjs'
+import { LOCAL_ORIGIN } from '@narrative/slide-model'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 
 export interface YjsMetrics {
@@ -39,19 +40,25 @@ export function createYjsMetrics(doc: YDoc, provider: HocuspocusProvider): YjsMe
   let awarenessChanges = 0
 
   /**
-   * doc.on('update', handler) — volá se pro každý Yjs update.
-   * origin: null/undefined = lokální, non-null = remote (z provideru).
+   * doc.on('update', handler) — fires for every Yjs update.
    *
-   * HocuspocusProvider nastavuje origin na sebe samotného pro remote updates.
+   * Local vs remote is decided by the transaction origin. HocuspocusProvider
+   * stamps itself as the origin on updates it applies from the server, while
+   * local mutations either carry `LOCAL_ORIGIN` (everything in
+   * `slide-model/mutations.ts`, and the text-editing overlay since 2026-09-09)
+   * or no origin at all (a plain `doc.transact(fn)` somewhere).
+   *
+   * Treating "has an origin" as "remote" — which this did until 2026-09-09 —
+   * files every LOCAL_ORIGIN mutation under `updatesReceived`, i.e. most local
+   * editing, so both counters were wrong in opposite directions.
    */
   function onUpdate(update: Uint8Array, origin: unknown): void {
     const byteLength = update.byteLength
-    if (origin === null || origin === undefined) {
-      // Lokální update odeslán
+    const isLocal = origin === null || origin === undefined || origin === LOCAL_ORIGIN
+    if (isLocal) {
       updatesSent++
       bytesSent += byteLength
     } else {
-      // Remote update přijat
       updatesReceived++
       bytesReceived += byteLength
     }

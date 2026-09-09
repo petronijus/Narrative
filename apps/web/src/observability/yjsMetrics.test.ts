@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as Y from 'yjs'
 import { createYjsMetrics } from './yjsMetrics.js'
+import { LOCAL_ORIGIN } from '@narrative/slide-model'
 
 // Minimální mock pro HocuspocusProvider
 function createMockProvider() {
@@ -70,6 +71,26 @@ describe('createYjsMetrics', () => {
     doc.transact(() => {
       doc.getArray('objects').push([new Y.Map()])
     })
+
+    const stats = tracker.stats()
+    expect(stats.updatesSent).toBe(1)
+    expect(stats.bytesSent).toBeGreaterThan(0)
+    expect(stats.updatesReceived).toBe(0)
+
+    tracker.destroy()
+    doc.destroy()
+  })
+
+  it('counts a LOCAL_ORIGIN update as sent, not received', () => {
+    // Every mutation in slide-model carries LOCAL_ORIGIN, and so does the text
+    // editing overlay since 2026-09-09. Classifying "has an origin" as remote
+    // filed most local editing under updatesReceived, leaving both counters
+    // wrong in opposite directions.
+    const tracker = createYjsMetrics(doc, provider as never)
+
+    doc.transact(() => {
+      doc.getArray('objects').push([new Y.Map()])
+    }, LOCAL_ORIGIN)
 
     const stats = tracker.stats()
     expect(stats.updatesSent).toBe(1)

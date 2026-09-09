@@ -42,6 +42,7 @@ import {
   applyParagraphPatch,
   indentParagraphs,
   spliceRichText,
+  LOCAL_ORIGIN,
   PARAGRAPH_SEP,
   type ListedHtmlOptions,
 } from '@narrative/slide-model'
@@ -385,10 +386,17 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
 
     localEditRef.current = true
     try {
-      // Delegate the Y.Text splice to slide-model (mutations live there). We
-      // pass NO origin — the localEditRef flag above is what suppresses the
-      // observer echo for this in-place edit, matching the prior inline behavior.
-      spliceRichText(mutationCtxRef.current.doc, yText, pStart, removeLen, insertText)
+      // Delegate the Y.Text splice to slide-model (mutations live there).
+      //
+      // LOCAL_ORIGIN is what puts this edit on the undo stack: the UndoManager
+      // is built with `trackedOrigins: new Set([LOCAL_ORIGIN])`, so a
+      // transaction without it is invisible to undo. Typing used to pass no
+      // origin at all, which meant every keystroke was unundoable — you could
+      // undo moving a text box but not writing the sentence inside it.
+      //
+      // The observer echo is suppressed by the localEditRef flag above, not by
+      // the absence of an origin; the two are independent.
+      spliceRichText(mutationCtxRef.current.doc, yText, pStart, removeLen, insertText, LOCAL_ORIGIN)
     } finally {
       localEditRef.current = false
     }
@@ -437,9 +445,11 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     localEditRef.current = true
     let caret = { start: 0, end: 0 }
     try {
+      // LOCAL_ORIGIN so Enter / Tab / list restructuring lands on the undo
+      // stack alongside ordinary typing — see the splice above.
       mutationCtxRef.current.doc.transact(() => {
         caret = mutate(yText)
-      })
+      }, LOCAL_ORIGIN)
     } finally {
       localEditRef.current = false
     }
