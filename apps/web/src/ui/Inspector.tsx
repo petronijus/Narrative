@@ -2724,7 +2724,16 @@ export function FillBody({
   const currentTokenRef: TokenRef | null = isTokenRef(rawFill) ? rawFill : null
   const fillIsToken = currentTokenRef !== null
 
-  const mode = fillModeOf(obj.fillStyle, fillIsToken)
+  const committedMode = fillModeOf(obj.fillStyle, fillIsToken)
+  // What the user last asked for, which is ahead of `committedMode` until the
+  // patch has gone through Y.Doc and come back as new props. Two changes in
+  // quick succession (Linear, then Solid before the round-trip lands) would
+  // otherwise see the pre-Linear mode on the second one and discard it as a
+  // no-op — leaving the gradient in the document while the dropdown reads
+  // "Solid". Cleared as soon as the document agrees.
+  const requestedModeRef = useRef<FillMode | null>(null)
+  if (requestedModeRef.current === committedMode) requestedModeRef.current = null
+  const mode = requestedModeRef.current ?? committedMode
   // PathObject's `fill` is optional — fall back to white so the picker
   // and gradient seed always have a starting colour.
   // When fill is a token, resolve to the current literal for seed purposes.
@@ -2761,6 +2770,7 @@ export function FillBody({
 
   const setMode = (next: FillMode): void => {
     if (next === mode) return
+    requestedModeRef.current = next
     // If the current fill is a TokenRef and we're switching away from
     // solid, unlink (write resolved hex as a literal first).
     if (fillIsToken && next !== 'solid') {
@@ -2899,7 +2909,13 @@ export function FillBody({
           {gradientForRender !== null && gradientForRender.kind !== 'image' && (
             <GradientEditor
               fillStyle={gradientForRender}
-              onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+              onChange={(next) => {
+                // The editor stays mounted while the panel collapses so the
+                // close animation has something to slide. Anything it emits
+                // after the mode moved on would resurrect the gradient.
+                if (mode !== 'linearGradient' && mode !== 'radialGradient') return
+                patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
+              }}
             />
           )}
         </div>
@@ -2917,7 +2933,11 @@ export function FillBody({
           {imageForRender !== null && (
             <ImageFillEditor
               fillStyle={imageForRender}
-              onChange={(next) => patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)}
+              onChange={(next) => {
+                // Same collapse guard as the gradient editor above.
+                if (mode !== 'image') return
+                patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
+              }}
             />
           )}
         </div>
