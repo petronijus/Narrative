@@ -6,13 +6,49 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
-Config-only changes deployed to production on 2026-09-09 **after** the `v0.9.3`
-tag. They ship by rsync + redeploy and carry no version bump, so
-`/version.json` still reads `v0.9.3+00454ec` — check the served header / mount,
-not the version endpoint, to confirm they are live.
+Nothing yet.
+
+---
+
+## 0.9.4 — Four things that were quietly broken (2026-09-18)
+
+The CSP and Caddy-mount fixes below reached production by rsync on 2026-09-09
+without a version bump, so `/version.json` went on reading `v0.9.3+00454ec`
+while they were already live. They are folded into this release because the
+0.9.4 image is the first artifact that actually carries them. Everything else
+here has never been deployed.
 
 ### Fixed
 
+- **Opening a deck rebuilt the entire editor a fifth of a second in.**
+  `FolderDocGate` returned one element tree while the deck's `folderId` was
+  unknown and a different one once the deck-role fetch delivered it. The gate
+  sits above SlideDocProvider, the Pixi canvas and the slides panel, so that
+  swap is a full React unmount of everything below: the deck Y.Doc reconnects,
+  Pixi re-initialises, every thumbnail re-renders. Measured on one open of a
+  47-slide deck — editor mounted at 42 ms, `GET /api/decks` resolved at 129 ms,
+  subtree removed and re-added at 212 ms, four deck WebSockets and a duplicate
+  deck fetch for a single navigation. Reported as the slide sidebar jumping
+  during load. The three folder-scoped providers take a nullable `folderId` now
+  and the tree stays put.
+- **Typing was not undoable.** `Y.UndoManager` only tracks transactions
+  carrying `LOCAL_ORIGIN`, and the text-editing overlay passed no origin — so
+  moving a text box could be undone but writing the sentence inside it could
+  not, and neither could the Enter / Tab structural edits. Also corrects
+  `yjsMetrics.onUpdate`, which counted local edits as received-from-remote.
+  (`8169b9d`.)
+- **Clicking an object selected nothing when the click beat the sync.**
+  `subscribeToSlideObjectsWithFlush` returned a no-op subscription for a slide
+  that had not arrived yet, which never recovered: the object list stayed
+  empty, the stale-selection sanitiser dropped every selection, and the canvas
+  had nothing to hit-test. It waits for the slide now. Two more races went with
+  it — the deck provider tearing down its Y.Doc on a StrictMode remount, and
+  the dev test API binding itself to an already-destroyed doc. (`523c82c`.)
+- **A quick Linear → Solid switch left the gradient in the document** while the
+  dropdown read "Solid". The fill picker compared the requested mode against
+  the mode derived from `obj.fillStyle`, which comes back from Y.Doc a frame
+  later, so the second change decided nothing had changed. It compares against
+  the mode it last asked for instead. (`dd5f4d3`.)
 - **Canvas text ignored the deck's fonts, and every texture load threw** — the
   SPA CSP was two directives too tight for PixiJS. `font-src 'self'` blocked
   HTMLText's font embedding (Pixi builds an SVG whose `@font-face` embeds the
