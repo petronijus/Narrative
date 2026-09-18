@@ -1104,7 +1104,17 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
             role="listbox"
             aria-labelledby={headerId}
             aria-orientation="vertical"
-            className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2"
+            // `overflow-anchor: none` is load-bearing, not cosmetic. Every
+            // thumbnail that finishes rendering swaps this row's placeholder
+            // <div> for an <img>, and Chrome's scroll anchoring treats that
+            // as content moving underneath the user: it silently rewrites
+            // scrollTop to "compensate", with no scroll event and no code of
+            // ours touching the property. On a 47-slide deck whose thumbnails
+            // trickle in over several seconds that adds up to ~500px of the
+            // list sliding away while you are reading it. The rows are a
+            // fixed-size grid, so there is nothing anchoring can usefully
+            // correct here — it only ever moves the list against the user.
+            className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 [overflow-anchor:none]"
           >
             {slides.map((slide, idx) => {
               const isDragging = draggingSet !== null && draggingSet.has(slide.id)
