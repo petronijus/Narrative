@@ -85,8 +85,21 @@ fi
 # on this host (GHCR packages are private). Tag selected via NARRATIVE_TAG.
 NARRATIVE_TAG="${NARRATIVE_TAG:-latest}"
 export NARRATIVE_TAG
-log "Stahuji prebuilt images z GHCR (tag: ${NARRATIVE_TAG})..."
-${COMPOSE} pull
+log "Pulling prebuilt app images from GHCR (tag: ${NARRATIVE_TAG})..."
+for svc in server video-worker web; do
+  docker pull "ghcr.io/petronijus/narrative-${svc}:${NARRATIVE_TAG}"
+done
+
+# Everything else in the stack (postgres, minio, caddy, imgproxy, redis, nginx)
+# is pinned to an immutable third-party tag, so a refresh cannot change what
+# runs — it only makes the release depend on Docker Hub being reachable
+# anonymously. It stopped being: on 2026-09-18 `${COMPOSE} pull` died with
+# "pull access denied for minio/minio, repository does not exist or may require
+# 'docker login'" and took the whole deploy with it, although every one of those
+# images was already on the host. Refresh them best-effort instead; a genuinely
+# missing image still fails loudly at `compose up`, with a better message.
+log "Refreshing third-party images (best effort)..."
+${COMPOSE} pull --ignore-pull-failures || warn "Third-party image refresh incomplete — using the copies already on this host"
 
 # ── Web static build ───────────────────────────────────────────────────────────
 # Web se buildí jako Docker image, ale statické soubory potřebujeme v volume
