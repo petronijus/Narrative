@@ -10,6 +10,38 @@ Nothing yet.
 
 ---
 
+## 0.9.5 — The sidebar stops moving on its own (2026-09-18)
+
+### Fixed
+
+- **The slide panel scrolled itself while a deck loaded.** Reported as "when I
+  scroll down it throws me back up". Nothing in the app was moving it:
+  instrumenting `scrollIntoView` and the container's `scrollTop` setter across
+  a full load recorded one write, the test's own, while the panel drifted
+  535px; row heights and `scrollHeight` never changed. It is Chrome's scroll
+  anchoring — each finished thumbnail replaces that row's placeholder `<div>`
+  with an `<img>`, the browser reads the swap as content shifting under the
+  reader and rewrites `scrollTop` to compensate, with no scroll event. The rows
+  are a fixed-size grid, so anchoring has nothing it can usefully correct here.
+  The panel opts out with `overflow-anchor: none`: same deck, same load, 535px
+  of drift became 0.
+
+  This is **not** the same defect as the editor remount fixed in 0.9.4. That
+  one was real, but it was never the cause of the jumping, which is why the
+  sidebar still moved after 0.9.4 shipped.
+
+### Known, not fixed
+
+- **Imported text can be clipped where PowerPoint shows it whole.** A frame
+  with `spAutoFit` carries the height PowerPoint computed for its own line
+  spacing; we then lay the text out taller and mask the overflow. Three
+  independent causes, measured on one reported slide: the importer maps "100%
+  line spacing" to a fixed 1.2 rather than reading the font (Proseware Pro's own
+  metrics give 1.162), paragraph space-before is applied to the first
+  paragraph where PowerPoint omits it, and the renderer hard-clips the
+  overflow where PowerPoint never clips at all. 597.8 units of content in
+  PowerPoint against 636 in a 600-unit box here.
+
 ## 0.9.4 — Four things that were quietly broken (2026-09-18)
 
 The CSP and Caddy-mount fixes below reached production by rsync on 2026-09-09
