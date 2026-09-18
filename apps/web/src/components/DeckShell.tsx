@@ -29,7 +29,8 @@
  * M16 P2: FolderDocProvider wraps children inside DeckRoleProvider so the
  *   design-token Y.Doc for the deck's folder is available to all editor children.
  *   FolderDocGate reads folderId from DeckRoleContext (set after the deck list fetch)
- *   and opens the folder Hocuspocus doc once folderId is known.
+ *   and passes it down; the providers stay mounted from the first render and
+ *   open the folder Hocuspocus doc once folderId turns non-null.
  *   TokensProvider is mounted inside FolderDocGate to expose a synchronous
  *   colour resolver to the renderer tree.
  */
@@ -83,24 +84,24 @@ interface FolderDocGateProps {
 }
 
 /**
- * Renders children inside FolderDocProvider once folderId is known.
- * While folderId is null (loading), renders children without a folder doc.
- * This avoids a visual loading gate — the editor mounts immediately and
- * gains token resolution once the folder doc syncs.
+ * Renders children inside the folder-scoped providers.
+ *
+ * `folderId` is null for the first few hundred milliseconds of a deck
+ * open — it arrives with the deck-role fetch. The element tree here must
+ * NOT change shape when it flips: this gate sits directly above
+ * SlideDocProvider, the Pixi canvas and the slides panel, so swapping the
+ * wrapper components out makes React unmount and rebuild the whole
+ * editor. That was visible as the slide sidebar populating, blanking and
+ * re-populating mid-load (plus a second deck Y.Doc WebSocket and a
+ * duplicate deck fetch).
+ *
+ * So the providers are always mounted and take `folderId: string | null`
+ * themselves: with a null id they hold an empty font list and the
+ * empty-token placeholder snapshot, which resolves colours exactly like
+ * the old `tokens={null}` branch did.
  */
-function FolderDocGate({ children }: FolderDocGateProps) {
+export function FolderDocGate({ children }: FolderDocGateProps) {
   const { folderId } = useDeckRole()
-
-  if (!folderId) {
-    // No folderId yet — render with a null tokens snapshot (TokensProvider
-    // falls back to literal hex conversion).
-    return (
-      <TokensProvider tokens={null}>
-        <ColourResolverInstaller />
-        {children}
-      </TokensProvider>
-    )
-  }
 
   return (
     <FolderFontsProvider folderId={folderId}>

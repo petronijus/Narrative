@@ -36,7 +36,15 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>()
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 min
 
-function getCached(folderId: string): FolderFontSummary[] | null {
+/**
+ * Shared empty list for the no-folder state. A fresh `[]` on every call
+ * would be a new state value each time, so any caller whose `useApi()`
+ * identity is unstable would re-run the fetch effect forever.
+ */
+const NO_FONTS: FolderFontSummary[] = []
+
+function getCached(folderId: string | null): FolderFontSummary[] | null {
+  if (folderId === null) return null
   const entry = cache.get(folderId)
   if (!entry) return null
   if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) return null
@@ -69,7 +77,8 @@ export function invalidateFolderFontsCache(folderId: string): void {
 // ---------------------------------------------------------------------------
 
 export interface FolderFontsContextValue {
-  folderId: string
+  /** null while the deck's folder is still being resolved. */
+  folderId: string | null
   fonts: FolderFontSummary[]
   loading: boolean
   error: string | null
@@ -84,18 +93,34 @@ const FolderFontsContext = createContext<FolderFontsContextValue | null>(null)
 // ---------------------------------------------------------------------------
 
 interface FolderFontsProviderProps {
-  folderId: string
+  /**
+   * The folder whose fonts to load, or null while it is still unknown
+   * (the deck's folder arrives from the deck-role fetch a moment after
+   * the editor mounts). A null id keeps the provider mounted with an
+   * empty font list instead of forcing the caller to swap element types,
+   * which would remount the whole editor subtree mid-load.
+   */
+  folderId: string | null
   children: React.ReactNode
 }
 
 export function FolderFontsProvider({ folderId, children }: FolderFontsProviderProps) {
   const api = useApi()
-  const [fonts, setFonts] = useState<FolderFontSummary[]>(() => getCached(folderId) ?? [])
-  const [loading, setLoading] = useState<boolean>(() => getCached(folderId) === null)
+  const [fonts, setFonts] = useState<FolderFontSummary[]>(() => getCached(folderId) ?? NO_FONTS)
+  const [loading, setLoading] = useState<boolean>(
+    () => folderId !== null && getCached(folderId) === null,
+  )
   const [error, setError] = useState<string | null>(null)
 
   const doFetch = useCallback(
     async (invalidate: boolean) => {
+      if (folderId === null) {
+        setFonts(NO_FONTS)
+        setLoading(false)
+        setError(null)
+        return
+      }
+
       if (invalidate) invalidateCache(folderId)
 
       const cached = getCached(folderId)

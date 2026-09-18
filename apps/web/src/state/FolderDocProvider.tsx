@@ -320,7 +320,15 @@ const FolderMutationsContext = createContext<FolderMutationsContextValue | null>
 // ---------------------------------------------------------------------------
 
 interface FolderDocProviderProps {
-  folderId: string
+  /**
+   * The folder whose token doc to open, or null while it is still
+   * unknown. With a null id the provider stays mounted and serves the
+   * empty-token placeholder snapshot, so the caller never has to swap
+   * element types once the real id arrives — doing so would unmount and
+   * rebuild the entire editor subtree (deck Y.Doc, Pixi canvas, slide
+   * panel) in the middle of loading a deck.
+   */
+  folderId: string | null
   children: React.ReactNode
 }
 
@@ -330,6 +338,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   const docRef = useRef<Y.Doc | null>(null)
 
   useEffect(() => {
+    if (folderId === null) return
     if (providerRef.current !== null) return
 
     const doc = new Y.Doc()
