@@ -10,6 +10,24 @@ Nothing yet.
 
 ---
 
+## 0.9.10 — The font is measured properly now (2026-09-21)
+
+### Fixed
+
+- **Tall glyphs lost their tops.** Reported on an imported slide where the
+  word "Sell" is set at 79pt with 75% line spacing: the S was cut flat, and
+  entering the text editor showed it whole because the DOM overlay draws
+  without the clip mask. A line box is `lineHeight` tall while its ink is
+  `ascent + descent`; below that, CSS lets glyphs overhang their own line
+  boxes. The mask began at y=0 and shaved the overhang. It now starts above
+  it.
+- **Font metrics were measured on the wrong font, at every size.**
+  `CanvasTextMetrics.measureFont` takes a CSS font shorthand and was being
+  passed a `TextStyle` object, so the canvas measured its default ~10px face:
+  ascent 10 and descent 2 for a 158px heading instead of 147 and 31. Every
+  allowance derived from it — the descender room beneath the mask, and the new
+  overhang room above — was about a fifteenth of what it should have been.
+
 ## 0.9.9 — A probe for the sidebar jump (2026-09-21)
 
 ### Added
