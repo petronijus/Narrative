@@ -28,6 +28,8 @@ import { deckUpdates, mediaAssets } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { parsePptx, type ParsedPptx } from '../pptx/parser.js'
 import { buildDeckAppendUpdate } from '../pptx/writer.js'
+import type { WriteResult } from '../pptx/writer.js'
+import { getHocuspocusInstance } from '../hocuspocus/presence.js'
 import {
   importDeckFromPptxBytes,
   uploadEmbeddedImagesAndPatchAssetIds,
@@ -179,37 +181,71 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
       const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages } =
         await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, request.log)
 
-      // ─── Replay deck_updates → existing Y.Doc → append → diff ──────────
-      const updates = await db
-        .select({ update: deckUpdates.update })
-        .from(deckUpdates)
-        .where(eq(deckUpdates.deckId, deckId))
-        .orderBy(deckUpdates.id)
-      const doc = new Y.Doc()
-      for (const row of updates) {
+      // ─── Append into the LIVE document ─────────────────────────────────
+      // This used to replay deck_updates into a detached Y.Doc, append, and
+      // insert the diff as a new row. That silently threw the work away.
+      // Hocuspocus holds the deck in memory and its persistence writes a
+      // full snapshot and then deletes every older row for that doc, so our
+      // row was invisible to anyone connected and was deleted outright by
+      // the next store — the route answered 200 with a slide count while the
+      // slides ceased to exist. Reported as "I uploaded it as append and
+      // nothing happened", and reproduced: three appended decks each ended
+      // with a single row holding the pre-append state.
+      //
+      // Going through `openDirectConnection` makes the append an ordinary
+      // edit of the live document: connected editors receive it over the
+      // wire immediately, and it is persisted by the same path as every
+      // other change, so nothing can compact it away.
+      const hocuspocus = getHocuspocusInstance()
+      let written: WriteResult | null = null
+
+      if (hocuspocus !== null) {
+        const connection = await hocuspocus.openDirectConnection(deckId)
         try {
-          Y.applyUpdate(doc, row.update)
-        } catch (err) {
-          request.log.warn({ err, deckId }, 'pptx-append: skipping corrupt deck_updates row')
+          await connection.transact((doc) => {
+            written = buildDeckAppendUpdate(parsed, doc)
+          })
+        } finally {
+          await connection.disconnect()
         }
+        if (mediaAssetRows.length > 0) {
+          await db.insert(mediaAssets).values(mediaAssetRows)
+        }
+      } else {
+        // No sync server in this process (route-only unit tests). Fall back
+        // to the detached replay + insert; nothing is holding the document,
+        // so there is no snapshot to be compacted against.
+        const updates = await db
+          .select({ update: deckUpdates.update })
+          .from(deckUpdates)
+          .where(eq(deckUpdates.deckId, deckId))
+          .orderBy(deckUpdates.id)
+        const doc = new Y.Doc()
+        for (const row of updates) {
+          try {
+            Y.applyUpdate(doc, row.update)
+          } catch (err) {
+            request.log.warn({ err, deckId }, 'pptx-append: skipping corrupt deck_updates row')
+          }
+        }
+        written = buildDeckAppendUpdate(parsed, doc)
+        await db.transaction(async (tx) => {
+          if (mediaAssetRows.length > 0) {
+            await tx.insert(mediaAssets).values(mediaAssetRows)
+          }
+          await tx.insert(deckUpdates).values({
+            deckId,
+            update: written!.state,
+            createdAt: new Date(),
+          })
+        })
       }
 
-      const { state, slideCount, objectsCreated, skipped } = buildDeckAppendUpdate(parsed, doc)
-      const now = new Date()
-
-      // ─── Persist: deck_updates diff + new media_assets, one tx ─────────
-      // No new deck row — the deck already exists. We don't touch
-      // deckPermissions either (the appender already has editor+ access).
-      await db.transaction(async (tx) => {
-        if (mediaAssetRows.length > 0) {
-          await tx.insert(mediaAssets).values(mediaAssetRows)
-        }
-        await tx.insert(deckUpdates).values({
-          deckId,
-          update: state,
-          createdAt: now,
-        })
-      })
+      if (written === null) {
+        request.log.error({ deckId }, 'pptx-append: append produced no result')
+        return reply.status(500).send({ error: 'Append failed — no slides were written' })
+      }
+      const { slideCount, objectsCreated, skipped } = written as WriteResult
 
       request.log.info(
         {
