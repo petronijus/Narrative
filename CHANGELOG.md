@@ -10,6 +10,32 @@ Nothing yet.
 
 ---
 
+## 0.9.8 — Imported text stops being cut off (2026-09-21)
+
+### Fixed
+
+- **Text imported from PowerPoint was sliced off at the box edge.** A frame
+  with `<a:spAutoFit/>` carries the height PowerPoint computed for its own
+  line spacing; we laid the text out taller and masked away the remainder,
+  cutting the last line through the middle of its glyphs. The mask now
+  follows whichever is taller, the box or the text in it — PowerPoint never
+  clips an overflowing frame, it draws past the shape. Boxes whose text fits
+  are unaffected.
+- **Paragraph space-before was applied above the first paragraph.**
+  PowerPoint applies it only between paragraphs, so every imported frame sat
+  one gap too low and ran one gap too long. 20 of the 36 units of overflow on
+  the reported slide were this.
+
+### Known, not fixed
+
+- The default line height is a flat 1.2 where PowerPoint uses the font's own
+  metrics for "100% line spacing" — 1.162 for the face on the reported slide.
+  That is the last 16 units of difference. Changing it moves every text object
+  in every deck, so it needs its own change.
+- The slide sidebar movement, unchanged. The reproduction now known to matter
+  is: cold cache, scroll the previews to the **end**, and it clamps back up as
+  they load. Reproduced neither locally nor throttled so far.
+
 ## 0.9.7 — Append stops throwing your slides away (2026-09-21)
 
 ### Fixed
