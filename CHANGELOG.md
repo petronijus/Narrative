@@ -10,6 +10,22 @@ Nothing yet.
 
 ---
 
+## 0.9.12 — Clearing up after the hunt (2026-09-21)
+
+### Removed
+
+- **The `?debugSidebar=1` probe from 0.9.9.** It existed to catch the sidebar
+  jump on the reporter's machine; 0.9.11 found and fixed the cause, so it is
+  gone from the bundle.
+
+### Changed
+
+- The slide panel's `overflow-anchor: none` keeps its place but its note no
+  longer blames the thumbnail placeholder swap — the row-height transient
+  came from the Pixi style leak, and anchoring only amplified it. The
+  0.9.5 stability spec, whose drift check never reproduced anything on a
+  generated deck, is folded into the spec that does reproduce the bug.
+
 ## 0.9.11 — The sidebar stops jumping, for real this time (2026-09-21)
 
 ### Fixed
