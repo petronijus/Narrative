@@ -28,7 +28,8 @@
  * patches that only touch a sibling field.
  */
 
-import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle, TextStyle } from 'pixi.js'
+import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
+import type { TextStyle } from 'pixi.js'
 import * as Y from 'yjs'
 import {
   toDelta,
@@ -215,6 +216,14 @@ export function buildHtml(data: TextObject): string {
 
 /** Tag for the Pixi Text node stored on its parent Container. */
 const TEXT_TAG = Symbol('textNode')
+/**
+ * Line-height multiplier used when a text object does not set one. Pixi's
+ * own from-the-font fallback lands around 1.16 while the DOM edit overlay
+ * uses 1.2, and that 0.04 was visible as text drifting while editing, so
+ * both ends are pinned to the same number.
+ */
+const DEFAULT_LINE_HEIGHT = 1.2
+
 /** Tag for the clip-mask Graphics that crops glyphs to the box. */
 const MASK_TAG = Symbol('textMask')
 /** Last applied data snapshot — applyPatch merges against this so
@@ -360,7 +369,7 @@ export function buildStyleOpts(data: TextObject): any {
   opts.lineHeight =
     data.lineHeight !== undefined && data.lineHeight > 0
       ? data.lineHeight * data.fontSize
-      : data.fontSize * 1.2
+      : data.fontSize * DEFAULT_LINE_HEIGHT
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
       color: hexToColorString(resolveColour(data.stroke)),
@@ -387,11 +396,6 @@ export function buildStyleOpts(data: TextObject): any {
     `overflow-wrap: break-word`,
   ]
   return opts
-}
-
-/** Convenience wrapper used where a real TextStyle instance is needed. */
-function buildStyle(data: TextObject): TextStyle {
-  return new TextStyle(buildStyleOpts(data))
 }
 
 /**
@@ -499,30 +503,75 @@ function setStoredData(node: Container, data: TextObject): void {
  * `applyClipMask` call (which runs from `update()` / `applyPatch()` for
  * every reconciler tick, including transient transform-only patches).
  */
-const fontDescentCache = new Map<string, number>()
-function fontDescentFor(data: TextObject): number {
+const fontMetricsCache = new Map<string, { ascent: number; descent: number }>()
+function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
   const fontSize = data.fontSize ?? 0
-  if (fontSize <= 0) return 0
+  if (fontSize <= 0) return { ascent: 0, descent: 0 }
   const key = `${data.fontFamily ?? ''}|${fontSize}|${data.fontWeight}|${data.italic === true ? 1 : 0}`
-  const cached = fontDescentCache.get(key)
+  const cached = fontMetricsCache.get(key)
   if (cached !== undefined) return cached
+  // Pixi's `measureFont` takes a CSS font shorthand, not a TextStyle. Handing
+  // it the style object stringified to something the canvas could not parse,
+  // so it silently measured the default 10px face: ascent 10, descent 2, for
+  // a 158px heading. Every allowance computed from these — the descender room
+  // under the mask, and now the overhang above it — was therefore about a
+  // fifteenth of what it should be, which is why a tall glyph lost its top.
+  const family = (data.fontFamily ?? 'sans-serif').includes(' ')
+    ? `"${data.fontFamily ?? 'sans-serif'}"`
+    : (data.fontFamily ?? 'sans-serif')
+  const weight = data.fontWeight ?? 400
+  const shorthand = `${data.italic === true ? 'italic ' : ''}${weight} ${fontSize}px ${family}`
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const measure = (CanvasTextMetrics as any)?.measureFont as
-    | ((style: TextStyle) => { descent: number })
+    | ((font: string) => { ascent: number; descent: number })
     | undefined
-  let descent = Math.ceil(fontSize * 0.4)
+  const out = { ascent: Math.ceil(fontSize * 1.0), descent: Math.ceil(fontSize * 0.4) }
   if (typeof measure === 'function') {
     try {
-      const metrics = measure(buildStyle(data))
+      const metrics = measure(shorthand)
+      if (typeof metrics?.ascent === 'number' && metrics.ascent > 0) {
+        out.ascent = Math.ceil(metrics.ascent)
+      }
       if (typeof metrics?.descent === 'number' && metrics.descent > 0) {
-        descent = Math.ceil(metrics.descent)
+        out.descent = Math.ceil(metrics.descent)
       }
     } catch {
-      /* keep estimate */
+      /* keep estimates */
     }
   }
-  fontDescentCache.set(key, descent)
-  return descent
+  fontMetricsCache.set(key, out)
+  return out
+}
+
+function fontDescentFor(data: TextObject): number {
+  return fontMetricsFor(data).descent
+}
+
+/**
+ * How far the glyphs spill outside their own line boxes, per edge.
+ *
+ * A line box is `lineHeight` tall, but the ink in it is `ascent + descent`.
+ * When the line height is the smaller of the two — which a PowerPoint
+ * `<a:lnSpc><a:spcPct val="75000"/>` gives you, and which is exactly how the
+ * word "Sell" is set on the reported slide — CSS splits the shortfall evenly
+ * above and below as negative half-leading, and the glyphs simply stick out.
+ * The first line's ink then starts *above* the text node's own origin.
+ *
+ * The mask used to begin at y=0, so that overhang was shaved off: the top of
+ * a capital S, cut straight across. It showed correctly while editing
+ * because the DOM overlay draws without the mask, and reverted the moment
+ * you left the editor — which is what made it look like an editing bug
+ * rather than a clipping one.
+ */
+function lineOvershootFor(data: TextObject): number {
+  const fontSize = data.fontSize ?? 0
+  if (fontSize <= 0) return 0
+  const { ascent, descent } = fontMetricsFor(data)
+  const lineHeightPx =
+    data.lineHeight !== undefined && data.lineHeight > 0
+      ? data.lineHeight * fontSize
+      : fontSize * DEFAULT_LINE_HEIGHT
+  return Math.max(0, Math.ceil((ascent + descent - lineHeightPx) / 2))
 }
 
 /**
@@ -552,8 +601,9 @@ function applyClipMask(container: Container, data: TextObject): void {
   // the box so a not-yet-measured node is not masked away entirely.
   const measured = node !== undefined && node.height > 0 ? node.height : 0
   const contentHeight = Math.max(data.height, measured + (node?.y ?? 0))
+  const overshoot = lineOvershootFor(data)
   mask.clear()
-  mask.rect(0, 0, data.width, contentHeight + fontDescentFor(data))
+  mask.rect(0, -overshoot, data.width, overshoot + contentHeight + fontDescentFor(data) + overshoot)
   mask.fill({ color: 0xffffff })
 }
 
