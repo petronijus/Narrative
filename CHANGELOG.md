@@ -6,7 +6,16 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
-Nothing yet.
+### Infrastructure
+
+- **Every build and deploy cleans up after itself.** The prod VM reached 99%
+  disk on 2026-09-21 — sixteen releases of images plus 14 GB of build cache
+  from when it still built from source — and a deploy died mid-extract. New
+  `infra/scripts/prune-images.sh` keeps the current tag and two releases back
+  per image (a rollback window; GHCR holds the rest) and never touches what a
+  running container uses. `deploy.sh` runs it after a successful deploy, with
+  the build cache included; `build-push.sh` runs it after a successful push,
+  keeping the local build cache. Scripts ship by rsync, no version bump.
 
 ---
 

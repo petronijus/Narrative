@@ -55,5 +55,12 @@ for svc in server video-worker; do
   docker push "${REG}/narrative-${svc}:latest"
 done
 
+# 4) the images are in GHCR now; the local copies of older releases are just
+#    disk. Keep this tag and two back, drop the rest. The build cache stays —
+#    it is what makes the next build take minutes instead of tens of them.
+echo "→ Pruning local release images older than ${NARRATIVE_TAG} + 2 previous"
+"${SCRIPT_DIR}/prune-images.sh" --current "${NARRATIVE_TAG}" --keep 2 \
+  || echo "! Local image prune did not complete — 'docker system df' to see what is left" >&2
+
 echo "✓ Pushed ${REG}/narrative-{server,video-worker,web}:{${NARRATIVE_TAG},latest}"
 echo "  Deploy on the VM:  NARRATIVE_TAG=${NARRATIVE_TAG} ./infra/scripts/deploy.sh prod"

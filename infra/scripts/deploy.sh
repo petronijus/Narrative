@@ -189,6 +189,15 @@ else
   fi
 fi
 
+# ── Clean up ───────────────────────────────────────────────────────────────────
+# Every release adds ~2 GB of images that nothing removes; the disk filled up
+# on 2026-09-21 and a deploy died mid-extract. Keep the deployed tag and two
+# releases back for a rollback, drop the rest (GHCR has them all) and the
+# build cache — this host pulls, it never builds.
+log "Pruning old release images (keeping ${NARRATIVE_TAG} + 2 previous)..."
+"${SCRIPT_DIR}/prune-images.sh" --current "${NARRATIVE_TAG}" --keep 2 --builder-cache \
+  || warn "Image prune did not complete — check disk space with 'docker system df'"
+
 # ── Done ───────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}Deploy dokončen.${NC}"

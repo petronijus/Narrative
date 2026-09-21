@@ -142,6 +142,14 @@ Deploy dokončen.
 5. Runs Drizzle DB migrations
 6. `docker compose up -d --remove-orphans`
 7. Waits 15s, then runs healthchecks (API, Caddy, optionally cloudflared)
+8. **Prunes old release images** — `infra/scripts/prune-images.sh` keeps the
+   deployed tag plus two previous per image (server / video-worker / web),
+   never touches an image a running container uses, then drops dangling
+   layers and the build cache (this host pulls, it never builds). Added after
+   2026-09-21, when sixteen releases of images and 14 GB of stale build cache
+   filled the 38 GB disk to 99% and a deploy died mid-extract. Anything
+   pruned is still in GHCR. `build-push.sh` does the same on the build
+   machine, keeping its build cache.
 
 ## Verifying the deploy
 
@@ -235,7 +243,10 @@ Two caveats:
   the new proxy config.
 
 Available tags: `git tag` locally, or
-`docker image ls 'ghcr.io/petronijus/narrative-*'` on the VM.
+`docker image ls 'ghcr.io/petronijus/narrative-*'` on the VM — which only
+holds the current release and two before it (the deploy prunes the rest).
+Rolling further back just pulls the tag from GHCR again; `deploy.sh` does
+that on its own.
 
 ## Environment secrets
 
