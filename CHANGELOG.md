@@ -10,6 +10,28 @@ Nothing yet.
 
 ---
 
+## 0.9.7 — Append stops throwing your slides away (2026-09-21)
+
+### Fixed
+
+- **Appending a `.pptx` to a deck did nothing, and destroyed the appended
+  slides.** The route replayed `deck_updates` into a detached Y.Doc, appended,
+  and inserted the diff as a new row — then answered 200 with a slide count.
+  But Hocuspocus holds the deck in memory and never saw that row, and its
+  persistence writes a full snapshot and deletes every older row for the
+  document, so the next store deleted the append. Three decks appended to this
+  way each ended with one row holding the pre-append state; the deck still had
+  one slide before and after a reload. The append now goes through
+  `openDirectConnection`, so it is an ordinary edit of the live document:
+  connected editors see it immediately and it persists like any other change.
+  The detached path remains only for processes with no sync server, where
+  nothing can compact it away.
+
+### Known, not fixed
+
+- The slide sidebar movement and the imported-text clipping, both unchanged
+  from 0.9.6 — see that entry for what has and has not been established.
+
 ## 0.9.6 — Drop a deck where you are standing (2026-09-21)
 
 ### Added
