@@ -10,6 +10,35 @@ Nothing yet.
 
 ---
 
+## 0.9.6 — Drop a deck where you are standing (2026-09-21)
+
+### Added
+
+- **Drop a `.pptx` anywhere inside a folder to import it.** The folders home
+  already took a dropped file; the page you land on inside a folder had no
+  import at all, which is the page you are on when you go to put a deck
+  somewhere. The current folder is offered first, so it is drop then one
+  click, and the dialog still lets you send it elsewhere. Both pages now
+  share `usePptxImport` rather than keeping two copies of the drag
+  bookkeeping.
+
+### Known, not fixed
+
+- **The slide sidebar still moves on its own for at least one deck.** 0.9.4
+  and 0.9.5 each fixed a real defect behind this (an editor remount, then
+  browser scroll anchoring) and neither turned out to be the reported cause.
+  A reproduction attempt this release produced a repeatable 2,488px jump that
+  was then shown to be a harness artifact — no scroll event ever fired for
+  it — so it is not evidence of anything. What did measure: a deck load
+  blocks the main thread for 13.8s of 21.8s, 12.3s of it the panel rendering
+  all 47 thumbnails eagerly. Rendering only visible rows cuts that to 5.3s
+  but leaves off-screen rows blank when scrolled to, so it was not shipped.
+- **Imported text can be clipped where PowerPoint shows it whole**, unchanged
+  from 0.9.5. Three measured causes: a fixed 1.2 line height where the font's
+  own metrics give 1.162, space-before applied to the first paragraph where
+  PowerPoint omits it, and a renderer that masks the overflow PowerPoint
+  never clips.
+
 ## 0.9.5 — The sidebar stops moving on its own (2026-09-18)
 
 ### Fixed
