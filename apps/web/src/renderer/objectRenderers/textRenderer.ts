@@ -525,17 +525,7 @@ function setStoredData(node: Container, data: TextObject): void {
 }
 
 /**
- * Pixel allowance below the box for cursive descenders. Pixi's
- * TextStyle.padding (set in buildStyle) keeps descender pixels in the
- * rasterized texture, but the container mask still has to be a touch
- * taller than `data.height` for those pixels to show through.
- *
- * Uses Pixi's measured font descent when available, falling back to
- * 0.4 × fontSize for cursive fonts whose descent often exceeds the
- * usual 0.25 of the em.
- */
-/**
- * Memoise font descent measurement keyed on the visually-relevant style
+ * Memoise font ascent/descent measurement keyed on the visually-relevant style
  * fields. `CanvasTextMetrics.measureFont` rasterises a probe canvas and
  * is genuinely expensive — without a cache we paid for it on every
  * `applyClipMask` call (which runs from `update()` / `applyPatch()` for
@@ -599,10 +589,6 @@ function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
   return out
 }
 
-function fontDescentFor(data: TextObject): number {
-  return fontMetricsFor(data).descent
-}
-
 /**
  * How far the glyphs spill outside their own line boxes, per edge.
  *
@@ -628,9 +614,10 @@ export function lineOvershootFor(data: TextObject): number {
   const lineHeightPx = resolveLineHeightPx(data)
   // Canvas metrics report the font's nominal ascent; round glyphs and
   // accents overshoot it, and a face measured before its webfont arrived
-  // reports a fallback's numbers. A quarter em on top costs nothing — the
-  // mask exists to stop sideways bleed, not to police the vertical — and
-  // means a slightly-off metric cannot shave a glyph.
+  // reports a fallback's numbers. A quarter em on top is cheap — it is
+  // texture rows and mask rows, nothing the eye sees — and means a
+  // slightly-off metric cannot shave a glyph. This one number sizes both
+  // the texture's padding and the mask's reach, so they cannot disagree.
   const halfLeadingOverhang = Math.max(0, (ascent + descent - lineHeightPx) / 2)
   return Math.ceil(halfLeadingOverhang + fontSize * OVERHANG_MARGIN_EM)
 }
@@ -665,9 +652,12 @@ function applyClipMask(container: Container, data: TextObject): void {
   // the box so a not-yet-measured node is not masked away entirely.
   const measured = node !== undefined && node.height > 0 ? node.height : 0
   const contentHeight = Math.max(data.height, measured + (node?.y ?? 0))
+  // The same allowance above and below as the texture's own padding: the
+  // mask admits exactly what the texture can hold, no more (anything
+  // further out is not in the texture) and no less (that was the cut).
   const overshoot = lineOvershootFor(data)
   mask.clear()
-  mask.rect(0, -overshoot, data.width, overshoot + contentHeight + fontDescentFor(data) + overshoot)
+  mask.rect(0, -overshoot, data.width, contentHeight + overshoot * 2)
   mask.fill({ color: 0xffffff })
 }
 
@@ -1003,12 +993,7 @@ export const textRenderer = {
     // the box, or any typographic field — the room it opens above and
     // below the box follows the line height and the font's metrics, so a
     // line-height change alone used to leave a mask sized for the old one.
-    if (
-      patch.width !== undefined ||
-      patch.height !== undefined ||
-      needsStyleRebuild ||
-      layoutAffected
-    ) {
+    if (layoutAffected) {
       applyClipMask(node, merged)
     }
   },
