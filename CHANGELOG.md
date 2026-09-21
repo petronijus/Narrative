@@ -10,6 +10,32 @@ Nothing yet.
 
 ---
 
+## 0.9.11 — The sidebar stops jumping, for real this time (2026-09-21)
+
+### Fixed
+
+- **The slide panel threw the reader back up while previews loaded and when a
+  slide near the end was clicked.** Reported five times across three
+  releases; 0.9.4 and 0.9.5 fixed real defects nearby and neither was this.
+  The cause is PixiJS text measurement: every `HTMLText` render appends an
+  SVG with a `<style>` to `document.body` for one layout, and that CSS uses a
+  bare `div { font-size: 158px; line-height…; width… }` selector. A `<style>`
+  is document-global and an unlayered element rule beats every layered
+  utility class, so for the length of each measurement every `div` on the
+  page is a heading — the panel's rows change height, the list's scroll
+  height drops, and with the list at its end the browser clamps the scroll
+  position to the new maximum. The style goes away, the content returns, the
+  position does not. One clamp per text object, by the thumbnail renderer at
+  load and by the canvas on a slide click. Found by bisection: thumbnails of
+  empty slides held the position, of everything except text held it, of text
+  walked it back 3,216px. The generated selectors are now scoped to
+  `foreignObject div`, which matches only Pixi's own measurement markup.
+  Verified by a spec that holds the list at the end during load: 3,216px of
+  drift before, 0 after.
+- **The top of a tall glyph could still be shaved on the reported slide.**
+  The mask keeps a quarter-em of room beyond the computed overhang, and font
+  metrics measured before a webfont loaded are re-measured once it has.
+
 ## 0.9.10 — The font is measured properly now (2026-09-21)
 
 ### Fixed
