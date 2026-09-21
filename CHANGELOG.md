@@ -10,6 +10,35 @@ Nothing yet.
 
 ---
 
+## 0.9.13 — Text at the font's own line height (2026-09-21)
+
+### Fixed
+
+- **Imported text now lays out at the height PowerPoint sized it to.** The
+  importer folded percentage line spacing into a font-size multiple with a
+  flat ×1.2, right only for fonts whose normal line height is 1.2 em, and the
+  exporter sent that multiple back out as a normal-multiple (100% in, 120%
+  out). Percentage spacing is now its own field, `lineSpacing`, written by
+  the importer, read back by the exporter, and resolved against the font in
+  one place shared by the renderer, the edit overlay, the clip mask and the
+  Inspector.
+- **The font's normal line height comes from the font file.** For a font
+  that sets USE_TYPO_METRICS the browser's `line-height: normal` uses the
+  typo metrics (0.977 em for Proseware Pro) while PowerPoint uses hhea (1.162),
+  so the browser is the wrong source for exactly the fonts that need it. The
+  folder-font loader reads `hhea` from the bytes it installs and registers
+  it ahead of measurement; measurement remains for system fonts. On the
+  reported frame: 616 before, 598 now, PowerPoint 597.8.
+- Weights are matched on one numeric scale: a text object saying "normal"
+  now finds the folder font registered at 400.
+
+### Known
+
+- WOFF 2 folder fonts cannot be read in the browser (Brotli); they fall back
+  to the browser's measured normal. Uploading OTF/TTF/WOFF keeps fidelity.
+- Table cells keep the historical ×1.2 fold; the table pipeline has no
+  line-height resolver yet.
+
 ## 0.9.12 — Clearing up after the hunt (2026-09-21)
 
 ### Removed
