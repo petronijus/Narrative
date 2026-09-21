@@ -10,6 +10,51 @@ Nothing yet.
 
 ---
 
+## 0.9.14 — Line height no longer cuts the glyphs (2026-09-21)
+
+### Fixed
+
+- **A short line height cut the top off the text.** Pixi rasterises HTMLText
+  through an SVG exactly the line boxes tall; with a line height below the
+  font's own ascent + descent the glyphs overhang their box and the first
+  line's overhang was never in the texture — the top of a capital "S" cut
+  straight across, worse the lower the line height, and no mask could bring
+  it back. The style now carries a `padding` equal to the overhang allowance
+  the clip mask already opened, so the texture has the room and the text
+  stays where it was.
+- **The clip mask is rebuilt on every typographic change.** It used to be
+  rebuilt only when the box or the font size changed, so lowering the line
+  height in the Inspector left a mask sized for the old one.
+- **Font metrics measured against a fallback are forgotten when the real
+  face arrives.** `document.fonts` fires no `loadingdone` for a face added
+  already loaded, which is how folder fonts are installed; the loader's
+  refresh now drops the cached measurements of that family itself.
+- **A write to an object in the same tick as its insert reached nobody.**
+  The change batch kept the object as read when the insert fired and dropped
+  the later patch as redundant, so a font size set right after adding a text
+  (an import fix-up, two mutations between frames) stayed invisible until
+  the next unrelated write. The patch is now folded into the add.
+- **A style change during an in-flight rasterisation no longer gets lost.**
+  Pixi's HTMLText pipe clears the dirty flag and then returns early while a
+  texture is being generated, and never re-checks the style key once it
+  lands — the node kept the old texture under the new style's bounds. The
+  renderer now waits for that generation and re-flags the node if its key
+  moved on.
+- **Padding no longer reaches the paragraphs.** Pixi writes the container
+  rule as a bare `div` selector; our paragraphs are divs. The scoped rule is
+  now `foreignObject > div`, and the container is pinned to `content-box` so
+  the in-page measurement and the detached SVG render agree on the wrap
+  width.
+
+### Tests
+
+- `text-glyph-overhang.spec.ts` reads pixels instead of the mask's
+  geometry: the ink of "Sell" at line-height 0.5 must be as tall as at 1.5,
+  and must start above the box. The previous version passed with the "S"
+  still cut.
+
+---
+
 ## 0.9.13 — Text at the font's own line height (2026-09-21)
 
 ### Fixed
