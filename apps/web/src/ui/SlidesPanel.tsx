@@ -53,7 +53,6 @@ import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { Plus, EyeOff, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { attachSidebarScrollProbe } from '../state/sidebarScrollProbe.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -551,13 +550,6 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   // Keep selection in sync when the active slide changes externally
   // (e.g. keyboard nav, Enter, remote peer).
-  // Field diagnostic, off unless the URL carries ?debugSidebar=1.
-  useEffect(() => {
-    const root = listRef.current
-    if (root === null) return
-    return attachSidebarScrollProbe(root)
-  }, [])
-
   useEffect(() => {
     if (activeSlideId === null) return
     setSelectedIds((prev) => {
@@ -1112,16 +1104,16 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
             role="listbox"
             aria-labelledby={headerId}
             aria-orientation="vertical"
-            // `overflow-anchor: none` is load-bearing, not cosmetic. Every
-            // thumbnail that finishes rendering swaps this row's placeholder
-            // <div> for an <img>, and Chrome's scroll anchoring treats that
-            // as content moving underneath the user: it silently rewrites
-            // scrollTop to "compensate", with no scroll event and no code of
-            // ours touching the property. On a 47-slide deck whose thumbnails
-            // trickle in over several seconds that adds up to ~500px of the
-            // list sliding away while you are reading it. The rows are a
-            // fixed-size grid, so there is nothing anchoring can usefully
-            // correct here — it only ever moves the list against the user.
+            // `overflow-anchor: none`: the rows are a fixed-size grid, so
+            // there is nothing scroll anchoring could usefully correct here,
+            // and any transient change of a row's height above the viewport
+            // would only ever move the list against the user. That is not
+            // hypothetical — Pixi's text measurement used to restyle every
+            // div on the page for one layout per text render (see
+            // renderer/pixiHtmlTextStyleScope.ts), and with anchoring on that
+            // dragged the list ~500px mid-load. The leak is fixed at its
+            // source; this stays as the panel's own guarantee that it never
+            // re-anchors, whatever the next transient turns out to be.
             className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 [overflow-anchor:none]"
           >
             {slides.map((slide, idx) => {

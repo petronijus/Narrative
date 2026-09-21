@@ -4,20 +4,27 @@
  * The slide panel must stay where the user put it.
  *
  * Reported as "scroll the previews to the end while they load and it throws
- * me back up; click slide 45 and it scrolls me to slide 20". Confirmed by
- * A/B: with the thumbnail renderer disabled the list holds at the end on the
- * first try; with it enabled the list walks back 2,546px in three steps that
- * trace a smooth-scroll curve — 49%, 79%, 100% — sampled through a main
- * thread the thumbnail renders keep blocking for hundreds of milliseconds at
- * a time. No script scrolls it; every scroll API was patched and stayed
- * silent. The browser does it, and it only does it while the page is jammed.
+ * me back up; click slide 45 and it scrolls me to slide 20". The cause was
+ * PixiJS text measurement: every `HTMLText` render appends an SVG with a
+ * `<style>` to `document.body` for one layout, and that CSS used a bare
+ * `div { font-size: …; line-height: …; width: … }` selector — document-global,
+ * and stronger than any layered utility class. For that one layout every div
+ * on the page was a heading, the panel's rows changed height, the list's
+ * scrollHeight dropped, and with the list at its end the browser clamped the
+ * scroll position to the new maximum. The style went away, the content came
+ * back, the position did not. One clamp per text object rendered. Bisected:
+ * thumbnails of empty slides held the position, of everything except text
+ * held it, of text walked it back 3,216px. `renderer/pixiHtmlTextStyleScope`
+ * scopes those selectors to Pixi's own SVG.
  *
- * So the check is direct: put the list at the end while the deck is still
+ * Two guards. The panel opts out of scroll anchoring, so no transient row
+ * change can ever be "compensated" into a move — cheap and deterministic.
+ * And the real property: put the list at the end while the deck is still
  * rendering its thumbnails, and watch that it stays there.
  *
- * Needs a deck heavy enough to keep the renderer busy for several seconds.
- * The imported reference deck does; a generated one may not, so DECK_ID is
- * required rather than fabricated.
+ * Needs a deck heavy enough to keep the renderer busy for several seconds
+ * and with text on its slides. The imported reference deck does; a generated
+ * one may not, so DECK_ID is required rather than fabricated.
  */
 
 import { test, expect } from '@playwright/test'
@@ -34,6 +41,11 @@ test('the slide panel stays at the end while thumbnails are still rendering', as
 
   await page.goto(`/deck/${DECK_ID}`)
   await page.waitForSelector('ul.scrollbar-narrative [data-slide-id]', { timeout: 30_000 })
+
+  const anchor = await page.evaluate(
+    () => getComputedStyle(document.querySelector('ul.scrollbar-narrative')!).overflowAnchor,
+  )
+  expect(anchor, 'the slide panel must opt out of browser scroll anchoring').toBe('none')
 
   // While the renderer is still working through the deck.
   await page.waitForTimeout(2_000)
