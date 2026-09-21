@@ -28,6 +28,9 @@
  * patches that only touch a sibling field.
  */
 
+// Must run before any HTMLText is measured: scopes the CSS Pixi injects into
+// document.body during measurement so it cannot restyle the rest of the page.
+import '../pixiHtmlTextStyleScope.js'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
 import * as Y from 'yjs'
@@ -504,6 +507,12 @@ function setStoredData(node: Container, data: TextObject): void {
  * every reconciler tick, including transient transform-only patches).
  */
 const fontMetricsCache = new Map<string, { ascent: number; descent: number }>()
+// A measurement taken before a webfont has loaded describes the fallback
+// face. Forget everything once fonts finish loading so the next mask build
+// measures the real one.
+if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
+  document.fonts.addEventListener('loadingdone', () => fontMetricsCache.clear())
+}
 function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return { ascent: 0, descent: 0 }
@@ -571,8 +580,17 @@ function lineOvershootFor(data: TextObject): number {
     data.lineHeight !== undefined && data.lineHeight > 0
       ? data.lineHeight * fontSize
       : fontSize * DEFAULT_LINE_HEIGHT
-  return Math.max(0, Math.ceil((ascent + descent - lineHeightPx) / 2))
+  // Canvas metrics report the font's nominal ascent; round glyphs and
+  // accents overshoot it, and a face measured before its webfont arrived
+  // reports a fallback's numbers. A quarter em on top costs nothing — the
+  // mask exists to stop sideways bleed, not to police the vertical — and
+  // means a slightly-off metric cannot shave a glyph.
+  const halfLeadingOverhang = Math.max(0, (ascent + descent - lineHeightPx) / 2)
+  return Math.ceil(halfLeadingOverhang + fontSize * OVERHANG_MARGIN_EM)
 }
+
+/** Extra vertical room above and below the text, as a fraction of the em. */
+const OVERHANG_MARGIN_EM = 0.25
 
 /**
  * Rebuild the clip mask.
