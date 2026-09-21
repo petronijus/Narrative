@@ -10,6 +10,17 @@ Nothing yet.
 
 ---
 
+## 0.9.9 — A probe for the sidebar jump (2026-09-21)
+
+### Added
+
+- **`?debugSidebar=1` instruments the slide panel.** The jump has survived
+  three releases and has never reproduced off the reporter's machine, so the
+  panel can now record it in place: every scroll with its geometry and whether
+  a real gesture preceded it, a console warning the moment the list moves
+  backwards unprompted, and `window.__sidebarProbe()` to dump the buffer.
+  Inert without the flag.
+
 ## 0.9.8 — Imported text stops being cut off (2026-09-21)
 
 ### Fixed
