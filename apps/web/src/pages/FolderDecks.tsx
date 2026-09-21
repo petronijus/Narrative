@@ -27,6 +27,7 @@ import { FolderDocProvider, useFolderTokens } from '../state/FolderDocProvider.j
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
+import { usePptxImport } from '../ui/usePptxImport.js'
 
 // ---------------------------------------------------------------------------
 // FolderDecks
@@ -74,6 +75,19 @@ function FolderDecksInner() {
   const [thumbnails] = useState<Record<string, string>>(() => getAllDeckThumbnails())
   // id of deck for which the Move modal is open
   const [moveDeckId, setMoveDeckId] = useState<string | null>(null)
+
+  // Drop a .pptx anywhere on this page to import it as a new deck. This
+  // folder is offered first, since it is the one you are looking at, but the
+  // dialog still lets you send it elsewhere.
+  const pptxImport = usePptxImport({
+    folders:
+      folder === null ? allFolders : [folder, ...allFolders.filter((f) => f.id !== folder.id)],
+    onCreateFolder: (name) => api.createFolder(name),
+    onImported: (result) => {
+      void navigate(`/deck/${result.deckId}`)
+    },
+    onError: setError,
+  })
   // deckId → list of users currently editing it. Each entry includes the
   // user's email + name (server enriches via the `users` directory) so the
   // bubble can show real initials instead of the opaque Google sub. Polled
@@ -215,7 +229,11 @@ function FolderDecksInner() {
   )
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div
+      className="flex h-screen flex-col bg-background text-foreground"
+      {...pptxImport.dropHandlers}
+    >
+      {pptxImport.overlay}
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-between">
@@ -343,6 +361,9 @@ function FolderDecksInner() {
           </div>
         )}
       </main>
+
+      {/* PowerPoint import — folder picker + upload progress */}
+      {pptxImport.dialog}
 
       {/* Move deck modal */}
       {moveDeckId !== null && folderId !== undefined && (

@@ -28,8 +28,7 @@ import { useAuth } from '../state/AuthContext.js'
 import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
 import { NewDeckDialog } from '../ui/NewDeckDialog.js'
-import { ImportPptxDialog } from '../ui/ImportPptxDialog.js'
-import { importPptxViaTus } from '../state/importPptxViaTus.js'
+import { usePptxImport } from '../ui/usePptxImport.js'
 
 // ---------------------------------------------------------------------------
 // FoldersHome
@@ -49,14 +48,6 @@ export function FoldersHome() {
   const [deleteBlockedId, setDeleteBlockedId] = useState<string | null>(null)
   // New deck dialog (folder picker)
   const [newDeckOpen, setNewDeckOpen] = useState(false)
-  // Pending .pptx file waiting for folder selection.
-  // null when no import in flight; setting it opens ImportPptxDialog.
-  const [pendingPptx, setPendingPptx] = useState<File | null>(null)
-  // Page-level drag-drop visual hint. Counter ref keeps onDragLeave from
-  // flickering when entering a child element.
-  const [draggingPptx, setDraggingPptx] = useState(false)
-  const dragCounter = useRef(0)
-  const pptxFileInputRef = useRef<HTMLInputElement>(null)
 
   const fetchFolders = useCallback(async () => {
     try {
@@ -129,89 +120,33 @@ export function FoldersHome() {
   const blockedFolder = folders.find((f) => f.id === deleteBlockedId)
 
   // ---------------------------------------------------------------------------
-  // PPTX import — file picker + page-level drag-drop
+  // PPTX import — file picker + page-level drag-drop, shared with FolderDecks
   // ---------------------------------------------------------------------------
 
-  const isPptx = (file: File): boolean => {
-    // pptx mime is the canonical OOXML presentationml string, but some OSes
-    // (and Safari) send empty or `application/zip` here, so fall back to the
-    // file extension. Anything not ending `.pptx` is rejected.
-    if (file.name.toLowerCase().endsWith('.pptx')) return true
-    return file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-  }
-
-  const handleFileChosen = useCallback((file: File) => {
-    if (!isPptx(file)) {
-      setError('Only .pptx files can be imported.')
-      return
-    }
-    setError(null)
-    setPendingPptx(file)
-  }, [])
-
-  const handleImportClick = () => {
-    setError(null)
-    pptxFileInputRef.current?.click()
-  }
-
-  const handlePageDragEnter = (e: React.DragEvent) => {
-    if (!Array.from(e.dataTransfer.types).includes('Files')) return
-    dragCounter.current++
-    setDraggingPptx(true)
-  }
-  const handlePageDragLeave = () => {
-    dragCounter.current = Math.max(0, dragCounter.current - 1)
-    if (dragCounter.current === 0) setDraggingPptx(false)
-  }
-  const handlePageDragOver = (e: React.DragEvent) => {
-    if (Array.from(e.dataTransfer.types).includes('Files')) {
-      // Required so onDrop fires — browser default is to open the file.
-      e.preventDefault()
-      e.dataTransfer.dropEffect = 'copy'
-    }
-  }
-  const handlePageDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    dragCounter.current = 0
-    setDraggingPptx(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFileChosen(file)
-  }
+  const pptxImport = usePptxImport({
+    folders,
+    onCreateFolder: async (name) => {
+      const created = await api.createFolder(name)
+      setFolders((prev) => [...prev, created])
+      return created
+    },
+    onImported: (result) => {
+      // Navigate to the freshly created deck so the Hocuspocus seed plays
+      // back as the editor mounts.
+      void navigate(`/deck/${result.deckId}`)
+    },
+    onError: setError,
+    hint: "You'll pick a folder on the next step.",
+  })
 
   return (
     <div
       className="flex h-screen flex-col bg-background text-foreground"
-      onDragEnter={handlePageDragEnter}
-      onDragLeave={handlePageDragLeave}
-      onDragOver={handlePageDragOver}
-      onDrop={handlePageDrop}
+      {...pptxImport.dropHandlers}
     >
-      {/* Hidden file input for the Import button */}
-      <input
-        ref={pptxFileInputRef}
-        type="file"
-        accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) handleFileChosen(file)
-          // Clear so picking the same file twice still triggers onChange.
-          e.target.value = ''
-        }}
-      />
+      {pptxImport.fileInput}
+      {pptxImport.overlay}
 
-      {/* Drag overlay — shown while a file is being dragged anywhere on the page */}
-      {draggingPptx && (
-        <div className="pointer-events-none fixed inset-0 z-40 flex items-center justify-center bg-background/40 backdrop-blur-xs">
-          <div className="rounded-xl border-2 border-dashed border-foreground/40 bg-surface-1/80 px-10 py-8 text-center shadow-xl">
-            <FileUp className="mx-auto mb-3 h-8 w-8 text-foreground" aria-hidden="true" />
-            <p className="text-sm font-medium text-foreground">Drop a .pptx to import</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              You&apos;ll pick a folder on the next step.
-            </p>
-          </div>
-        </div>
-      )}
       {/* Header */}
       <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-end">
@@ -243,7 +178,7 @@ export function FoldersHome() {
               {creating ? 'Creating…' : 'New folder'}
             </Button>
             <Button
-              onClick={handleImportClick}
+              onClick={pptxImport.openFilePicker}
               size="sm"
               variant="ghost"
               className="gap-1.5"
@@ -327,37 +262,7 @@ export function FoldersHome() {
       )}
 
       {/* Import PowerPoint dialog */}
-      {pendingPptx !== null && (
-        <ImportPptxDialog
-          file={pendingPptx}
-          folders={folders}
-          onClose={() => setPendingPptx(null)}
-          onCreateFolder={async (name) => {
-            const folder = await api.createFolder(name)
-            setFolders((prev) => [...prev, folder])
-            return folder
-          }}
-          onImport={(folderId, file, opts) =>
-            // Resumable, chunked tus upload. The server-side onUploadFinish
-            // hook runs the full deck-import pipeline against the freshly
-            // uploaded blob and returns the standard ImportPptxResult.
-            importPptxViaTus({
-              file,
-              folderId,
-              ...(opts.onProgress !== undefined
-                ? { onProgress: (p) => opts.onProgress!(p.fraction) }
-                : {}),
-            })
-          }
-          onSuccess={(result) => {
-            // Dialog has already shown its "Imported …" summary for a beat;
-            // tear it down and navigate to the freshly created deck so the
-            // Hocuspocus seed plays back as the editor mounts.
-            setPendingPptx(null)
-            void navigate(`/deck/${result.deckId}`)
-          }}
-        />
-      )}
+      {pptxImport.dialog}
 
       {/* Non-empty folder delete blocker modal */}
       {deleteBlockedId !== null && (
