@@ -1219,7 +1219,7 @@ describe('parsePptx', () => {
     expect(shape.textTransform).toBe('uppercase')
   })
 
-  it('captures lineHeight (lnSpc spcPct) + paragraphSpace on the first <a:pPr>', async () => {
+  it('captures lineSpacing (lnSpc spcPct) + paragraphSpace on the first <a:pPr>', async () => {
     const buf = await makeFixture({
       themeXml: OFFICE_THEME,
       slideXml: `${SLIDE_OPEN}
@@ -1246,9 +1246,11 @@ describe('parsePptx', () => {
     })
     const out = await parsePptx(buf)
     const shape = out.slides[0]!.shapes[0]!
-    // 1.5 × PPTX_LINE_LEADING_FACTOR (1.2) = 1.8 — see parser
-    // PPTX_LINE_LEADING_FACTOR comment for the spcPct→CSS rationale.
-    expect(shape.lineHeight).toBeCloseTo(1.5 * 1.2, 3)
+    // spcPct is a multiple of the font's normal line height and is stored
+    // verbatim as lineSpacing; lineHeight (a font-size multiple) stays unset
+    // so the client resolves against the real font.
+    expect(shape.lineSpacing).toBeCloseTo(1.5, 6)
+    expect(shape.lineHeight).toBeUndefined()
     // 1200 PPTX units = 12pt = 16 px @ 96 DPI
     expect(shape.paragraphSpaceBefore).toBeCloseTo(16, 1)
     expect(shape.paragraphSpaceAfter).toBeCloseTo(8, 1)

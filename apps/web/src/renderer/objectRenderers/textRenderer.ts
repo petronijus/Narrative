@@ -33,6 +33,7 @@
 import '../pixiHtmlTextStyleScope.js'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
+import { resolveLineHeightPx } from '../../lib/fontLineMetrics.js'
 import * as Y from 'yjs'
 import {
   toDelta,
@@ -219,14 +220,6 @@ export function buildHtml(data: TextObject): string {
 
 /** Tag for the Pixi Text node stored on its parent Container. */
 const TEXT_TAG = Symbol('textNode')
-/**
- * Line-height multiplier used when a text object does not set one. Pixi's
- * own from-the-font fallback lands around 1.16 while the DOM edit overlay
- * uses 1.2, and that 0.04 was visible as text drifting while editing, so
- * both ends are pinned to the same number.
- */
-const DEFAULT_LINE_HEIGHT = 1.2
-
 /** Tag for the clip-mask Graphics that crops glyphs to the box. */
 const MASK_TAG = Symbol('textMask')
 /** Last applied data snapshot — applyPatch merges against this so
@@ -354,25 +347,12 @@ export function buildStyleOpts(data: TextObject): any {
     breakWords: true,
     letterSpacing: data.letterSpacing ?? 0,
   }
-  // P15: lock Pixi's line height to a fixed 1.2× multiplier when our
-  // schema doesn't set one. Pixi's auto-from-font-metrics fallback
-  // produced ~1.16×, while the DOM textarea overlay uses 1.2× during
-  // inline edit — that 0.04 mismatch was visible as text drifting
-  // slightly down + getting taller while editing. Pinning both ends
-  // to the same multiplier keeps live edit perfectly aligned with
-  // the rendered text.
-  // Default line-height multiplier. 1.4 (rather than the CSS spec's
-  // 1.0 or the previous 1.2) matches PowerPoint's effective rendering
-  // of <a:lnSpc spcPct="100000"/> - PowerPoint's 100% line spacing
-  // includes the font's ascent + descent + line gap on top of the
-  // em box, so a CSS pure multiplier of 1.0 renders noticeably
-  // tighter than the PPT source. 1.4 is the sweet spot for the
-  // audit deck's Northwind Sans / Druk faces and matches Tailwind's
-  // leading-snug - looser than the cramped 1.2, tighter than 1.5.
-  opts.lineHeight =
-    data.lineHeight !== undefined && data.lineHeight > 0
-      ? data.lineHeight * data.fontSize
-      : data.fontSize * DEFAULT_LINE_HEIGHT
+  // One resolver for the renderer, the edit overlay, the clip mask and the
+  // Inspector: `lineHeight` (× font size) wins, else `lineSpacing` (× the
+  // font's measured normal line height, PowerPoint's meaning), else the
+  // font's normal. Pinning a single px value here keeps the DOM overlay and
+  // Pixi's SVG rasterisation on the same line boxes while editing.
+  opts.lineHeight = resolveLineHeightPx(data)
   if (data.stroke !== undefined && (data.strokeWidth ?? 1) > 0) {
     opts.stroke = {
       color: hexToColorString(resolveColour(data.stroke)),
@@ -576,10 +556,7 @@ function lineOvershootFor(data: TextObject): number {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return 0
   const { ascent, descent } = fontMetricsFor(data)
-  const lineHeightPx =
-    data.lineHeight !== undefined && data.lineHeight > 0
-      ? data.lineHeight * fontSize
-      : fontSize * DEFAULT_LINE_HEIGHT
+  const lineHeightPx = resolveLineHeightPx(data)
   // Canvas metrics report the font's nominal ascent; round glyphs and
   // accents overshoot it, and a face measured before its webfont arrived
   // reports a fallback's numbers. A quarter em on top costs nothing — the
@@ -762,6 +739,7 @@ export const textRenderer = {
       prev.underline !== next.underline ||
       prev.letterSpacing !== next.letterSpacing ||
       prev.lineHeight !== next.lineHeight ||
+      prev.lineSpacing !== next.lineSpacing ||
       prev.stroke !== next.stroke ||
       prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth
@@ -843,6 +821,7 @@ export const textRenderer = {
       'underline' in patch ||
       'letterSpacing' in patch ||
       'lineHeight' in patch ||
+      'lineSpacing' in patch ||
       'stroke' in patch ||
       'strokeAlpha' in patch ||
       'strokeWidth' in patch ||

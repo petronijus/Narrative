@@ -65,6 +65,8 @@ export interface ParsedTableCell {
    *  per-cell otherwise. Values are in px / unitless (already scaled by
    *  parseShape's PPTX_FONT_TO_PX). */
   lineHeight?: number
+  /** Multiple of the font's normal line height (spcPct / 100000). */
+  lineSpacing?: number
   letterSpacing?: number
   paragraphSpaceBefore?: number
   paragraphSpaceAfter?: number
@@ -322,6 +324,8 @@ export interface ParsedShape {
   fontFamily?: string
   letterSpacing?: number
   lineHeight?: number
+  /** Multiple of the font's normal line height (spcPct / 100000). */
+  lineSpacing?: number
   paragraphSpaceBefore?: number
   paragraphSpaceAfter?: number
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
@@ -537,31 +541,17 @@ const PPTX_ROT_PER_DEG = 60000
 const PPTX_FONT_TO_PX = (1 / 100) * (96 / 72)
 
 /**
- * PPTX→CSS line-spacing leading factor.
+ * Percentage line spacing (`<a:lnSpc><a:spcPct val="N"/>`) is a multiple of
+ * the font's own normal line height — PowerPoint's meaning — and is stored
+ * verbatim as `lineSpacing` (N / 100000). The web client resolves it against
+ * the measured font. It used to be folded into `lineHeight` with a flat
+ * ×1.2, which was only right for fonts whose normal happens to be 1.2 em and
+ * left every imported frame a few percent off its PowerPoint height.
  *
- * `<a:lnSpc spcPct val="N"/>` declares line spacing as N/100000 of
- * PowerPoint's "single line spacing" — which is the font's `hhea`
- * ascent + descent + line gap (effectively the font's intrinsic em
- * box plus a small leading slack). For typical sans-serif faces
- * that's ~1.2× the font size.
- *
- * CSS `line-height: M * fontSize` is a PURE multiplier of font-size
- * — no extra leading from font metrics. So mapping spcPct → CSS
- * multiplier needs to *multiply* the parsed fraction by ~1.2 to
- * reproduce the visual spacing PowerPoint draws.
- *
- * Example: `spcPct val="70000"` (slide 2 "DAWN OF DESIGN") =>
- *   raw fraction = 0.7
- *   CSS lineHeight  = 0.7 × 1.2 = 0.84   (matches LibreOffice's render)
- *
- * Without this scaling, our 0.7× was rendering "DAWN OF" and "DESIGN"
- * cramped together while PowerPoint had visible breathing room.
- *
- * Only applied to the percentage form (`spcPct`). The absolute form
- * (`spcPts` — fixed point size for the line height) is already in
- * px and doesn't pass through this factor.
+ * Table cells are the exception: the table pipeline has no font-metric
+ * resolver yet, so cells keep the historical approximation.
  */
-const PPTX_LINE_LEADING_FACTOR = 1.2
+const TABLE_CELL_LEADING_APPROX = 1.2
 
 const HEX_RE = /^[0-9a-fA-F]{6}$/
 
@@ -2592,6 +2582,7 @@ function parseShape(
   let frameFontFamily: string | undefined
   let frameLetterSpacing: number | undefined
   let frameLineHeight: number | undefined
+  let frameLineSpacing: number | undefined
   let frameSpaceBefore: number | undefined
   let frameSpaceAfter: number | undefined
   let frameTextTransform: ParsedShape['textTransform']
@@ -2649,19 +2640,21 @@ function parseShape(
             if (bullet !== undefined) listStyleResolved = bullet
           }
           const pPrChildren = getChildren(pPr, 'a:pPr')
-          // <a:lnSpc>/<a:spcPct val=N> — N is 100000ths of a multiplier
-          //   (100000 = 1.0x). Narrative's lineHeight is the same multiplier.
+          // <a:lnSpc>/<a:spcPct val=N> — N is 100000ths of a multiple of the
+          //   font's normal line height → `lineSpacing` (see the constant
+          //   TABLE_CELL_LEADING_APPROX for why it is no longer folded into
+          //   lineHeight).
           // <a:lnSpc>/<a:spcPts val=N> — N is 100ths of a point (absolute).
           //   Convert to a multiplier against the resolved fontSize when
           //   possible, otherwise leave undefined and skip.
-          if (frameLineHeight === undefined) {
+          if (frameLineHeight === undefined && frameLineSpacing === undefined) {
             const lnSpc = findFirst(pPrChildren, 'a:lnSpc')
             if (lnSpc) {
               const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
               const pct = findFirst(lnSpcChildren, 'a:spcPct')
               if (pct) {
                 const v = Number(getAttrs(pct)['@val'])
-                if (Number.isFinite(v)) frameLineHeight = (v / 100000) * PPTX_LINE_LEADING_FACTOR
+                if (Number.isFinite(v) && v > 0) frameLineSpacing = v / 100000
               } else {
                 const pts = findFirst(lnSpcChildren, 'a:spcPts')
                 if (pts && fontSize !== undefined && fontSize > 0) {
@@ -2980,7 +2973,7 @@ function parseShape(
             if (mapped !== undefined) textAlign = mapped
           }
         }
-        if (frameLineHeight === undefined) {
+        if (frameLineHeight === undefined && frameLineSpacing === undefined) {
           const lvl1Children = getChildren(lvl1, 'a:lvl1pPr')
           const lnSpc = findFirst(lvl1Children, 'a:lnSpc')
           if (lnSpc !== undefined) {
@@ -2988,7 +2981,7 @@ function parseShape(
             const pct = findFirst(lnSpcChildren, 'a:spcPct')
             if (pct !== undefined) {
               const v = Number(getAttrs(pct)['@val'])
-              if (Number.isFinite(v)) frameLineHeight = (v / 100000) * PPTX_LINE_LEADING_FACTOR
+              if (Number.isFinite(v) && v > 0) frameLineSpacing = v / 100000
             } else {
               const pts = findFirst(lnSpcChildren, 'a:spcPts')
               if (pts !== undefined && fontSize !== undefined && fontSize > 0) {
@@ -3225,6 +3218,7 @@ function parseShape(
     if (frameFontFamily !== undefined) shape.fontFamily = frameFontFamily
     if (frameLetterSpacing !== undefined) shape.letterSpacing = frameLetterSpacing
     if (frameLineHeight !== undefined) shape.lineHeight = frameLineHeight
+    if (frameLineSpacing !== undefined) shape.lineSpacing = frameLineSpacing
     if (frameSpaceBefore !== undefined) shape.paragraphSpaceBefore = frameSpaceBefore
     if (frameSpaceAfter !== undefined) shape.paragraphSpaceAfter = frameSpaceAfter
     if (frameTextTransform !== undefined) shape.textTransform = frameTextTransform
@@ -3691,7 +3685,12 @@ function parseTable(
           // Advanced typography — same fields parseShape captures on text
           // frames. Writer aggregates uniform values into TableDefaults and
           // keeps the rest as per-cell overrides.
-          if (txt.lineHeight !== undefined) targetCell.lineHeight = txt.lineHeight
+          if (txt.lineHeight !== undefined) {
+            targetCell.lineHeight = txt.lineHeight
+          } else if (txt.lineSpacing !== undefined) {
+            // Cells have no metric resolver yet — the historical fold.
+            targetCell.lineHeight = txt.lineSpacing * TABLE_CELL_LEADING_APPROX
+          }
           if (txt.letterSpacing !== undefined) targetCell.letterSpacing = txt.letterSpacing
           if (txt.paragraphSpaceBefore !== undefined) {
             targetCell.paragraphSpaceBefore = txt.paragraphSpaceBefore

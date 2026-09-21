@@ -30,6 +30,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { resolveLineHeightPx } from '../lib/fontLineMetrics.js'
 import * as Y from 'yjs'
 import { isTokenRef } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
@@ -184,10 +185,9 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       // with otherwise small text balloons the line height — visible
       // as the line spacing growing while in edit mode and snapping
       // back smaller on exit.
-      // Default multiplier kept in lockstep with textRenderer.
-      // buildStyleOpts (1.4) so edit + render mode share a baseline.
-      // See the renderer's lineHeight default comment for rationale.
-      lineHeight: `${(obj.lineHeight !== undefined && obj.lineHeight > 0 ? obj.lineHeight : 1.2) * obj.fontSize}px`,
+      // Same resolver as the renderer, so edit and render mode share the
+      // exact same line boxes (lineHeight → lineSpacing → the font's normal).
+      lineHeight: `${resolveLineHeightPx(obj)}px`,
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),
@@ -204,6 +204,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       obj.italic,
       obj.underline,
       obj.lineHeight,
+      obj.lineSpacing,
       obj.letterSpacing,
       obj.align,
       obj.textTransform,

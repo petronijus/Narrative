@@ -20,6 +20,8 @@ import { useFolderFonts } from './useFolderFonts.js'
 import { useDeckFontsOptional } from './useDeckFonts.js'
 import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { FolderFontSummary } from '../api/client.js'
+import { readFontVerticalMetrics, powerpointLineHeightRatio } from '../lib/fontFileMetrics.js'
+import { registerDeclaredLineHeight } from '../lib/fontLineMetrics.js'
 
 /**
  * Pixi v8's HTMLText pipeline does NOT consult `document.fonts` when
@@ -141,12 +143,29 @@ export function FolderFontLoader(): null {
 
       void (async () => {
         try {
-          const face = new FontFace(font.family, `url(${font.url})`, {
+          // Fetch the bytes ourselves rather than handing the URL to
+          // FontFace: the same download then also yields the file's own
+          // vertical metrics, which the line-height resolver needs because
+          // no browser API exposes them for a font that sets
+          // USE_TYPO_METRICS (see lib/fontFileMetrics.ts).
+          const response = await fetch(font.url)
+          if (!response.ok) throw new Error(`font download failed: HTTP ${response.status}`)
+          const bytes = await response.arrayBuffer()
+          const face = new FontFace(font.family, bytes, {
             weight: String(font.weight),
             style: font.style,
             display: 'swap',
           })
           await face.load()
+          const metrics = await readFontVerticalMetrics(bytes)
+          if (metrics !== null) {
+            registerDeclaredLineHeight(
+              font.family,
+              font.weight,
+              font.style,
+              powerpointLineHeightRatio(metrics),
+            )
+          }
           // If cleanup ran while we were loading, bail without installing.
           // The cleanup will have already deleted the placeholder slot, so
           // the next effect invocation will retry.

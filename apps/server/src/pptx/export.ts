@@ -57,6 +57,25 @@ import type {
  * this to a MinIO GetObject + `streamToBuffer` pipeline; tests can stub it
  * to a static byte response.
  */
+/**
+ * pptxgenjs's `lineSpacingMultiple` is PowerPoint's `spcPct / 100000`: a
+ * multiple of the font's normal line height. `lineSpacing` already is that
+ * and passes through. `lineHeight` is a multiple of the font size, which the
+ * server cannot convert exactly without the font's metrics; 1.2 is the
+ * inverse of the fold the importer applied before `lineSpacing` existed, so
+ * a deck imported back then leaves at the spacing it arrived with.
+ */
+const LINE_HEIGHT_TO_NORMAL_APPROX = 1.2
+
+function toLineSpacingMultiple(
+  lineSpacing: number | undefined,
+  lineHeight: number | undefined,
+): number | undefined {
+  if (lineSpacing !== undefined && lineSpacing > 0) return lineSpacing
+  if (lineHeight !== undefined && lineHeight > 0) return lineHeight / LINE_HEIGHT_TO_NORMAL_APPROX
+  return undefined
+}
+
 export type AssetLoader = (assetId: string) => Promise<{ bytes: Buffer; mimeType: string } | null>
 
 // ---------------------------------------------------------------------------
@@ -380,9 +399,8 @@ function emitText(
     // pptxgenjs `charSpacing` is in points; Narrative letterSpacing is px.
     opts['charSpacing'] = (obj.letterSpacing * 72) / PX_PER_IN
   }
-  if (obj.lineHeight !== undefined && obj.lineHeight > 0) {
-    opts['lineSpacingMultiple'] = obj.lineHeight
-  }
+  const lineSpacingMultiple = toLineSpacingMultiple(obj.lineSpacing, obj.lineHeight)
+  if (lineSpacingMultiple !== undefined) opts['lineSpacingMultiple'] = lineSpacingMultiple
   if (obj.paragraphSpaceBefore !== undefined && obj.paragraphSpaceBefore > 0) {
     opts['paraSpaceBefore'] = (obj.paragraphSpaceBefore * 72) / PX_PER_IN
   }
@@ -1408,9 +1426,8 @@ function emitTable(
   if (d.fontFamily !== undefined) opts['fontFace'] = d.fontFamily
   if (d.italic === true) opts['italic'] = true
   if (d.underline === true) opts['underline'] = { style: 'sng' }
-  if (d.lineHeight !== undefined && d.lineHeight > 0) {
-    opts['lineSpacingMultiple'] = d.lineHeight
-  }
+  const lineSpacingMultiple = toLineSpacingMultiple(undefined, d.lineHeight)
+  if (lineSpacingMultiple !== undefined) opts['lineSpacingMultiple'] = lineSpacingMultiple
   if (d.letterSpacing !== undefined && d.letterSpacing !== 0) {
     opts['charSpacing'] = (d.letterSpacing * 72) / PX_PER_IN
   }

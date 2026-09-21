@@ -427,11 +427,19 @@ export interface TextObject extends BaseSlideObject {
   /** Vertical alignment inside the text box. Default 'top'. */
   vAlign?: TextVerticalAlign
   /**
-   * Line-height multiplier (1 = font size, 1.4 = typical body). Pixi's
-   * TextStyle expects absolute lineHeight in px — renderer multiplies
-   * by fontSize.
+   * Line height as a multiple of the **font size** (CSS semantics; 1.4 is
+   * a typical body). What the Inspector edits. Wins over `lineSpacing`.
    */
   lineHeight?: number
+  /**
+   * Line height as a multiple of the **font's own normal line height**
+   * (PowerPoint semantics: `<a:lnSpc><a:spcPct val="75000"/>` is 0.75, and
+   * 1 is "whatever this font says a line is"). Written by the PPTX importer
+   * and read back by the exporter, so a deck round-trips at the spacing it
+   * arrived with. Resolved against the measured font in
+   * `apps/web/src/lib/fontLineMetrics.ts`. Ignored when `lineHeight` is set.
+   */
+  lineSpacing?: number
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */

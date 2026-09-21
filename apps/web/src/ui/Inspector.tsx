@@ -17,6 +17,7 @@
  * - Shows slide-level inspector: transition kind / duration / direction.
  */
 
+import { effectiveLineHeightMultiple } from '../lib/fontLineMetrics.js'
 import {
   useCallback,
   useEffect,
@@ -4417,10 +4418,18 @@ export function TypographySection({
             id={`inspector-lineheight-${obj.id}`}
             glyph={<Rows3 className="h-3 w-3" aria-hidden />}
             ariaLabel="Line height"
-            value={obj.lineHeight ?? 1.2}
+            // Shows the effective multiple of the font size whichever field
+            // drives it; typing a value pins `lineHeight` and drops an
+            // imported `lineSpacing`, which is then no longer what applies.
+            value={Math.round(effectiveLineHeightMultiple(obj) * 100) / 100}
             step={0.1}
             onChange={(v) =>
-              patch({ lineHeight: Math.max(0.1, v) } as SlideObjectPatch<TextObject>)
+              // `undefined` deletes the key (mutations.ts, P5b); the patch
+              // type's exact optional props need the detour through unknown.
+              patch({
+                lineHeight: Math.max(0.1, v),
+                lineSpacing: undefined,
+              } as unknown as SlideObjectPatch<TextObject>)
             }
           />
           <CompactNumberField

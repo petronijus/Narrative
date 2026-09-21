@@ -410,6 +410,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.fontFamily !== undefined) obj.fontFamily = s.fontFamily
     if (s.letterSpacing !== undefined) obj.letterSpacing = round(s.letterSpacing * scale)
     if (s.lineHeight !== undefined && s.lineHeight > 0) obj.lineHeight = s.lineHeight
+    if (s.lineSpacing !== undefined && s.lineSpacing > 0) obj.lineSpacing = s.lineSpacing
     if (s.paragraphSpaceBefore !== undefined && s.paragraphSpaceBefore > 0) {
       obj.paragraphSpaceBefore = round(s.paragraphSpaceBefore * scale)
     }
