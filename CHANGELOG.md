@@ -10,6 +10,18 @@ Nothing yet.
 
 ---
 
+## 0.9.15 — Text clip cleanup (2026-09-21)
+
+### Changed
+
+- **One number sizes the text texture's padding and the clip mask.** The
+  mask's extra font-descent row below the box dated from when the mask was
+  the only thing sized for glyph overhang; the padded texture has no pixels
+  there. The mask is now content + 2 × overshoot, and it is rebuilt on the
+  one `layoutAffected` condition instead of a list that repeated it.
+
+---
+
 ## 0.9.14 — Line height no longer cuts the glyphs (2026-09-21)
 
 ### Fixed
