@@ -13,6 +13,7 @@ import {
   effectiveLineHeightMultiple,
   normalLineHeightRatio,
   registerDeclaredLineHeight,
+  forgetMeasuredLineHeight,
   numericWeight,
   FALLBACK_NORMAL_RATIO,
   __resetFontLineMetricsForTests,
@@ -102,5 +103,17 @@ describe('weight matching', () => {
     expect(normalLineHeightRatio('Face', 600, false)).toBeCloseTo(1.3, 6)
     // A different style is a different face; nothing declared → fallback.
     expect(normalLineHeightRatio('Face', 400, true)).toBe(FALLBACK_NORMAL_RATIO)
+  })
+})
+
+describe('forgetMeasuredLineHeight', () => {
+  it('drops measurements but keeps what the font file declared', () => {
+    registerDeclaredLineHeight('Proseware Pro Regular', 400, 'normal', 1.162)
+    // jsdom measures nothing, so the only thing there is to forget is the
+    // declared ratio — which must survive: it describes the file, not a probe.
+    forgetMeasuredLineHeight('Proseware Pro Regular')
+    expect(normalLineHeightRatio('Proseware Pro Regular', 400, false)).toBeCloseTo(1.162, 6)
+    // Unknown families are a no-op, not an error.
+    expect(() => forgetMeasuredLineHeight(undefined)).not.toThrow()
   })
 })

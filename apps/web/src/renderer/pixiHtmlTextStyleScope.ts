@@ -51,6 +51,18 @@ export const MEASUREMENT_SCOPE = 'foreignObject'
  * Pixi emits flat rules only — `sel { decls }` joined by spaces, no
  * nesting, no braces inside declarations — so a selector is whatever
  * precedes each `{` at the start of the string or after a `}`.
+ *
+ * Pixi's own `div { … }` rule describes the outer container — its
+ * `padding` is the room around the text, its `width` the wrap width — but
+ * as a bare element rule it also hits every div *inside* the text. Our
+ * paragraphs are divs (`<div data-pb>`, one per paragraph), so a padding
+ * of 15px meant 30px added to every paragraph and the first line pushed
+ * down instead of given room above. That one rule becomes `foreignObject
+ * > div`: the container only. Everything the paragraphs need from it
+ * (font, colour, line height, letter spacing, alignment, wrapping, stroke
+ * and shadow) is inherited CSS, and a block child fills the container's
+ * width without being told to. Tag rules (`b`, `i`, custom tags) stay
+ * descendant rules, which is what they are.
  */
 export function scopeHtmlTextCss(css: string): string {
   return css.replace(
@@ -58,7 +70,8 @@ export function scopeHtmlTextCss(css: string): string {
     (_m, before: string, ws: string, sel: string) => {
       const scoped = sel
         .split(',')
-        .map((s) => `${MEASUREMENT_SCOPE} ${s.trim()}`)
+        .map((s) => s.trim())
+        .map((s) => (s === 'div' ? `${MEASUREMENT_SCOPE} > div` : `${MEASUREMENT_SCOPE} ${s}`))
         .join(', ')
       return `${before}${ws}${scoped} {`
     },

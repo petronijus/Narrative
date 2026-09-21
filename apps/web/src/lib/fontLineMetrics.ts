@@ -196,6 +196,20 @@ export function normalLineHeightRatio(
 }
 
 /**
+ * Forget every measurement of one family. `check()` is also true when no
+ * face of the family exists at all, so a family measured before its folder
+ * font was installed was measured — and remembered — in a fallback. The
+ * loader's refresh calls this so the next question is put to the real face.
+ * Declared file metrics are untouched; they describe the file, not a probe.
+ */
+export function forgetMeasuredLineHeight(family: string | undefined): void {
+  const prefix = `${cssFamily(family)}|`
+  for (const key of ratioCache.keys()) {
+    if (key.startsWith(prefix)) ratioCache.delete(key)
+  }
+}
+
+/**
  * The line height in px this text should be laid out with:
  *
  *   lineHeight set   → lineHeight × fontSize

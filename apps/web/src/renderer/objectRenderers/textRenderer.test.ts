@@ -30,7 +30,7 @@ import { pixiMock } from '../../test/pixiMock'
 vi.mock('pixi.js', () => pixiMock())
 
 import { Container, HTMLText } from 'pixi.js'
-import { buildStyleOpts, textRenderer } from './textRenderer.js'
+import { buildStyleOpts, lineOvershootFor, textRenderer } from './textRenderer.js'
 import type { TextObject } from '@narrative/shared'
 
 function makeText(overrides: Partial<TextObject> = {}): TextObject {
@@ -176,5 +176,64 @@ describe('textRenderer.applyPatch — PERF-4 style-rebuild gating', () => {
     textRenderer.applyPatch(node, { fontSize: 36 })
 
     expect(textNode.style).not.toBe(styleBefore)
+  })
+})
+
+describe('textRenderer — room for ink outside the line boxes', () => {
+  function makeText(overrides: Partial<TextObject> = {}): TextObject {
+    return {
+      id: 't1',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 1200,
+      height: 400,
+      rotation: 0,
+      opacity: 1,
+      text: 'Sell',
+      fontSize: 160,
+      fontWeight: 'normal',
+      color: 0x111111,
+      align: 'left',
+      ...overrides,
+    } as TextObject
+  }
+
+  function getMask(node: Container): { rect: { mock: { calls: unknown[][] } } } {
+    // The mask is the Graphics child; the HTMLText child carries `anchor`.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const child = node.children.find((c) => (c as any).anchor === undefined && (c as any).rect)
+    return child as unknown as { rect: { mock: { calls: unknown[][] } } }
+  }
+
+  it('pads the HTMLText texture by the same allowance the mask opens', () => {
+    // HTMLText rasterises through an SVG exactly the line boxes tall; without
+    // padding the ink a short line box cannot hold is not in the texture at
+    // all, and no mask can bring it back.
+    const data = makeText({ lineHeight: 0.5 })
+    const opts = buildStyleOpts(data)
+    expect(opts.padding).toBe(lineOvershootFor(data))
+    // A quarter em of margin is the floor, whatever the metrics say.
+    expect(opts.padding).toBeGreaterThanOrEqual(160 * 0.25)
+  })
+
+  it('opens more room the shorter the line box', () => {
+    const tight = buildStyleOpts(makeText({ lineHeight: 0.5 })).padding as number
+    const roomy = buildStyleOpts(makeText({ lineHeight: 1.5 })).padding as number
+    expect(tight).toBeGreaterThan(roomy)
+  })
+
+  it('rebuilds the mask when only the line height changes', () => {
+    const node = textRenderer.mount(makeText({ lineHeight: 1.5 }))
+    const mask = getMask(node)
+    const before = mask.rect.mock.calls.length
+    const topBefore = mask.rect.mock.calls[before - 1]![1] as number
+
+    textRenderer.applyPatch(node, { lineHeight: 0.5 })
+
+    expect(mask.rect.mock.calls.length).toBeGreaterThan(before)
+    const topAfter = mask.rect.mock.calls[mask.rect.mock.calls.length - 1]![1] as number
+    // The mask starts higher above the box once the glyphs overhang more.
+    expect(topAfter).toBeLessThan(topBefore)
   })
 })

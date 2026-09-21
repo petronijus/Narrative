@@ -33,7 +33,7 @@
 import '../pixiHtmlTextStyleScope.js'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
-import { resolveLineHeightPx } from '../../lib/fontLineMetrics.js'
+import { resolveLineHeightPx, forgetMeasuredLineHeight } from '../../lib/fontLineMetrics.js'
 import * as Y from 'yjs'
 import {
   toDelta,
@@ -134,9 +134,49 @@ export function wireRedrawOnAsyncTextureUpdate(textNode: HTMLText): void {
       node.__narrativeLastKey = nextKey
       node.__narrativeLastText = nextText
       scheduleAsyncTextureCatchup(node)
+      reflagAfterInFlightRaster(node)
     }
   }
   node.__narrativeRedrawWired = true
+}
+
+/**
+ * Pixi's HTMLTextPipe loses a change that lands while it is still
+ * rasterising the previous one: `_updateGpuText` clears the node's dirty
+ * flag first and only then returns early because a texture is being
+ * generated, and once that texture arrives nothing compares `currentKey`
+ * with `styleKey` again. The node then draws the old texture under bounds
+ * computed for the new style — a 32px "Sell" floating above where the
+ * 160px one belongs — until some unrelated write to it. One text in five
+ * patched right after it was added ended up like this.
+ *
+ * So when a change arrives mid-generation, wait for that generation and,
+ * if the key has moved on in the meantime, flag the node again. Pixi's own
+ * continuation runs first (it registered on the promise before us) and
+ * has cleared `generatingTexture` by then, so the re-flag goes through.
+ */
+interface InFlightGpuText {
+  generatingTexture?: boolean
+  texturePromise?: Promise<unknown> | null
+  currentKey?: string
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function reflagAfterInFlightRaster(node: any): void {
+  const gpuData = node._gpuData as Record<string, InFlightGpuText> | undefined
+  if (gpuData === undefined) return
+  for (const gpu of Object.values(gpuData)) {
+    if (gpu.generatingTexture !== true || !gpu.texturePromise) continue
+    gpu.texturePromise.then(
+      () => {
+        if (node.destroyed === true || gpu.currentKey === node.styleKey) return
+        node._didTextUpdate = true
+        node.onViewUpdate()
+      },
+      () => {
+        /* the failed generation is Pixi's to report; nothing to follow up */
+      },
+    )
+  }
 }
 
 /**
@@ -330,12 +370,20 @@ export function buildStyleOpts(data: TextObject): any {
     fontStyle: data.italic === true ? 'italic' : 'normal',
     fill: colorWithAlpha(resolveColour(data.color), data.colorAlpha ?? 1),
     align: data.align,
-    // Pixi.HTMLText renders via an SVG foreignObject, so descenders
-    // are never clipped by a texture boundary — TextStyle.padding (used
-    // by canvas-rasterised Pixi.Text) is unnecessary here AND actively
-    // harmful: HTMLText shifts its render origin by `padding` on both
-    // axes, which would push the text outside the slide-coord box
-    // we draw at (0,0).
+    // Room in the rasterised texture for ink outside the line boxes.
+    //
+    // HTMLText draws through an SVG whose height is the sum of the line
+    // boxes, and the SVG viewport clips: with a line height below the
+    // font's own ascent + descent, the glyphs stick out of their line box
+    // and the first line's overhang is simply not in the texture — the top
+    // of a capital S cut straight across, worse the lower the line height.
+    // No mask could bring it back. `padding` is Pixi's answer: the outer
+    // div gets that much CSS padding, the texture grows by twice it, and
+    // the quad is drawn `padding` up and left so the content stays at the
+    // node's origin. Measurement subtracts it again, so `textNode.height`
+    // is still the content height everything below relies on. The same
+    // allowance is what the clip mask opens above and below the box.
+    padding: lineOvershootFor(data),
     wordWrap: true,
     wordWrapWidth: data.width,
     // Match the DOM textarea's `word-break: break-word`: also break
@@ -377,6 +425,13 @@ export function buildStyleOpts(data: TextObject): any {
     `font-family: ${cssStack}`,
     `width: ${data.width}px`,
     `overflow-wrap: break-word`,
+    // Pixi measures the text in a div appended to the page, where the
+    // app's preflight makes every element `border-box`, and rasterises it
+    // in a detached SVG document where the same div is `content-box`. With
+    // `padding` set the two disagree on the wrap width by twice the padding:
+    // the measurement wraps a line earlier than the render, and the node's
+    // height is one line box wrong. Say which model the rule means.
+    `box-sizing: content-box`,
   ]
   return opts
 }
@@ -493,6 +548,18 @@ const fontMetricsCache = new Map<string, { ascent: number; descent: number }>()
 if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
   document.fonts.addEventListener('loadingdone', () => fontMetricsCache.clear())
 }
+/**
+ * Drop the cached metrics of one family. The folder-font loader installs a
+ * face that is already loaded, and `document.fonts` fires no `loadingdone`
+ * for a face that never went through its loading state — so without this
+ * the fallback's numbers would outlive the fallback.
+ */
+export function forgetFontMetrics(family: string): void {
+  const prefix = `${family}|`
+  for (const key of fontMetricsCache.keys()) {
+    if (key.startsWith(prefix)) fontMetricsCache.delete(key)
+  }
+}
 function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return { ascent: 0, descent: 0 }
@@ -546,13 +613,15 @@ function fontDescentFor(data: TextObject): number {
  * above and below as negative half-leading, and the glyphs simply stick out.
  * The first line's ink then starts *above* the text node's own origin.
  *
- * The mask used to begin at y=0, so that overhang was shaved off: the top of
- * a capital S, cut straight across. It showed correctly while editing
- * because the DOM overlay draws without the mask, and reverted the moment
- * you left the editor — which is what made it look like an editing bug
- * rather than a clipping one.
+ * Two things used to shave that overhang, and both are sized by this number:
+ * the mask began at y=0, and — the one that survived the mask fix — the SVG
+ * Pixi rasterises the text through was exactly the line boxes tall, so the
+ * ink above the first one never made it into the texture (see `padding` in
+ * `buildStyleOpts`). It showed correctly while editing because the DOM
+ * overlay draws with neither, and reverted the moment you left the editor —
+ * which is what made it look like an editing bug rather than a clipping one.
  */
-function lineOvershootFor(data: TextObject): number {
+export function lineOvershootFor(data: TextObject): number {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return 0
   const { ascent, descent } = fontMetricsFor(data)
@@ -930,10 +999,16 @@ export const textRenderer = {
       applyFilterEffects(node, merged.shadow, merged.blur)
     }
 
-    // Rebuild the clip mask whenever the bounding box or fontSize
-    // changes — bottomPad tracks fontSize so a font-size patch must
-    // refresh the mask.
-    if (patch.width !== undefined || patch.height !== undefined || patch.fontSize !== undefined) {
+    // Rebuild the clip mask whenever anything it is computed from moved:
+    // the box, or any typographic field — the room it opens above and
+    // below the box follows the line height and the font's metrics, so a
+    // line-height change alone used to leave a mask sized for the old one.
+    if (
+      patch.width !== undefined ||
+      patch.height !== undefined ||
+      needsStyleRebuild ||
+      layoutAffected
+    ) {
       applyClipMask(node, merged)
     }
   },
@@ -961,6 +1036,17 @@ export const textRenderer = {
     textNode.text = buildHtmlForNode(textNode, stored)
     applyVerticalAlign(textNode, stored)
     return true
+  },
+
+  /**
+   * A face of `family` was installed or removed: metrics measured against
+   * whatever stood in for it are void. SceneGraph calls this before it
+   * re-applies the family to every node, so the rebuilt styles and masks
+   * measure the face that is now there.
+   */
+  forgetFontMetrics(family: string): void {
+    forgetFontMetrics(family)
+    forgetMeasuredLineHeight(family)
   },
 
   destroy(node: Container): void {

@@ -547,6 +547,14 @@ export class SceneGraph {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rendererUid = (this.app.renderer as any).uid as number | undefined
 
+    // Whatever was measured for this family so far was measured against a
+    // stand-in. Every style and mask rebuilt below must start from the face
+    // that is installed now.
+    const textRendererForMetrics = getRenderer('text') as
+      | { forgetFontMetrics?: (f: string) => void }
+      | undefined
+    textRendererForMetrics?.forgetFontMetrics?.(family)
+
     let touched = 0
     for (const [, node] of this.nodes) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

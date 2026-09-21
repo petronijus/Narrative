@@ -334,7 +334,17 @@ export function subscribeToSlideObjectsWithFlush(
       netRemoved.push(id)
     }
 
-    for (const [id, obj] of batchToProcess.addedObjects) {
+    for (const [id, added] of batchToProcess.addedObjects) {
+      // The added object was read from its Y.Map when the insert event
+      // fired; a write to the same object later in the tick arrived as a
+      // patch. The patch used to be dropped here on the assumption that
+      // the add carried everything, so a font size set right after the
+      // insert never reached the renderer — until the next unrelated
+      // write to that object. Fold it in: the add is the object as it is
+      // at flush time.
+      const late = batchToProcess.updatedPatches.get(id)
+      const obj = late !== undefined ? ({ ...added, ...late } as SlideObject) : added
+      batchToProcess.updatedPatches.delete(id)
       if (netZeroIds.has(id)) {
         // Pure reorder via applyReorderMinimal expresses itself as
         // delete + insert of the same id within one tick. The remove
@@ -349,7 +359,6 @@ export function subscribeToSlideObjectsWithFlush(
       }
       currentSnapshot.set(id, obj)
       netAdded.push(obj)
-      batchToProcess.updatedPatches.delete(id)
     }
 
     for (const [id, patch] of batchToProcess.updatedPatches) {

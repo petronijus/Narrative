@@ -20,12 +20,23 @@ describe('scopeHtmlTextCss', () => {
     const scoped = scopeHtmlTextCss(
       'div { font-size: 158px; width: 986px } b { font-weight: bold }',
     )
-    expect(selectorsOf(scoped)).toEqual([`${MEASUREMENT_SCOPE} div`, `${MEASUREMENT_SCOPE} b`])
+    expect(selectorsOf(scoped)).toEqual([`${MEASUREMENT_SCOPE} > div`, `${MEASUREMENT_SCOPE} b`])
   })
 
   it('scopes each member of a selector list', () => {
     const scoped = scopeHtmlTextCss('i, em { font-style: italic }')
     expect(selectorsOf(scoped)).toEqual([`${MEASUREMENT_SCOPE} i, ${MEASUREMENT_SCOPE} em`])
+  })
+
+  it('keeps the container rule off the paragraph divs inside the text', () => {
+    // Pixi's `div` rule carries the padding that makes room for glyph
+    // overhang. Paragraphs are divs too; a descendant rule would pad each
+    // of them and push the first line down instead of giving it room.
+    const scoped = scopeHtmlTextCss('div { padding: 15px } marker { color: red }')
+    expect(selectorsOf(scoped)).toEqual([
+      `${MEASUREMENT_SCOPE} > div`,
+      `${MEASUREMENT_SCOPE} marker`,
+    ])
   })
 
   it('leaves declarations untouched', () => {
@@ -51,8 +62,8 @@ describe('HTMLTextStyle.cssStyle once the scope is installed', () => {
     for (const sel of selectors) {
       expect(sel, `unscoped rule: ${sel}`).toMatch(new RegExp(`^${MEASUREMENT_SCOPE} `))
     }
-    // The one that matters most: the main rule still targets Pixi's own div.
-    expect(selectors[0]).toBe(`${MEASUREMENT_SCOPE} div`)
+    // The one that matters most: the main rule targets Pixi's container div and nothing inside it.
+    expect(selectors[0]).toBe(`${MEASUREMENT_SCOPE} > div`)
   })
 
   it('still carries the geometry Pixi needs for measurement', () => {
