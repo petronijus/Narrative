@@ -53,6 +53,7 @@ import { SlideItemMenu } from './SlideItemMenu.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { Plus, EyeOff, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { attachSidebarScrollProbe } from '../state/sidebarScrollProbe.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -550,6 +551,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   // Keep selection in sync when the active slide changes externally
   // (e.g. keyboard nav, Enter, remote peer).
+  // Field diagnostic, off unless the URL carries ?debugSidebar=1.
+  useEffect(() => {
+    const root = listRef.current
+    if (root === null) return
+    return attachSidebarScrollProbe(root)
+  }, [])
+
   useEffect(() => {
     if (activeSlideId === null) return
     setSelectedIds((prev) => {
