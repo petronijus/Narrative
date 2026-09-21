@@ -526,9 +526,18 @@ function fontDescentFor(data: TextObject): number {
 }
 
 /**
- * Rebuild the clip mask to cover the bounding box plus descender
- * room. Glyphs that wrap below the box still get clipped by the mask;
- * only the last line's descender survives.
+ * Rebuild the clip mask.
+ *
+ * The mask covers the box's width — text must not bleed sideways — but its
+ * height follows whichever is taller, the box or the text actually in it.
+ *
+ * It used to be the box height flat, which silently truncated any text that
+ * did not fit: an imported slide whose frame PowerPoint had auto-sized to its
+ * own line spacing lost its last line mid-glyph here. PowerPoint never clips
+ * an overflowing text frame — it draws the text past the shape — so clipping
+ * it is a fidelity bug and, worse, one that hides content rather than
+ * showing it wrong. A box whose text fits is unaffected: the two heights are
+ * the same and the mask is exactly where it always was.
  */
 function applyClipMask(container: Container, data: TextObject): void {
   let mask = getMask(container)
@@ -538,8 +547,13 @@ function applyClipMask(container: Container, data: TextObject): void {
     container.addChild(mask)
     container.mask = mask
   }
+  const node = getTextNode(container)
+  // `textNode.height` is 0 until the first rasterisation lands; fall back to
+  // the box so a not-yet-measured node is not masked away entirely.
+  const measured = node !== undefined && node.height > 0 ? node.height : 0
+  const contentHeight = Math.max(data.height, measured + (node?.y ?? 0))
   mask.clear()
-  mask.rect(0, 0, data.width, data.height + fontDescentFor(data))
+  mask.rect(0, 0, data.width, contentHeight + fontDescentFor(data))
   mask.fill({ color: 0xffffff })
 }
 

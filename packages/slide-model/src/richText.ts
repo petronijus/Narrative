@@ -728,7 +728,11 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     const marker = markers[i] ?? null
     const level = Math.max(0, Math.min(MAX_LIST_LEVEL, p.attrs.level ?? 0))
     const styleBits: string[] = []
-    if (psB > 0) styleBits.push(`margin-top:${psB}px`)
+    // Space-before is the gap *between* paragraphs. PowerPoint does not apply
+    // it above the first paragraph in a text frame, and neither do we — the
+    // extra leading pushed imported text down by one gap and was part of why
+    // a frame PowerPoint had auto-sized to its text overflowed here.
+    if (psB > 0 && i > 0) styleBits.push(`margin-top:${psB}px`)
     if (psA > 0) styleBits.push(`margin-bottom:${psA}px`)
     if (marker !== null) {
       styleBits.push(`padding-left:${(level * indentEm + hangEm).toFixed(3)}em`)
