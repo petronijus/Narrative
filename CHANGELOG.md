@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.9.18 — Imported slides the way PowerPoint drew them (2026-09-22)
+
 ### Fixed
 
 - **Imported rotation is right.** The model stores `rotation` in radians — the
