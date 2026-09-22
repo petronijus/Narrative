@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.9.16 — Import where you dropped it (2026-09-22)
+
 ### Added
 
 - **Drop a `.pptx` onto the slides panel and it imports where you pointed.**
