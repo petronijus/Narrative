@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.9.17 — Select a run of slides (2026-09-22)
+
 ### Fixed
 
 - **Shift-click selects a run of slides again.** Click the first, shift-click
