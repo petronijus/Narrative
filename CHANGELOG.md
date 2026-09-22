@@ -6,6 +6,43 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Fixed
+
+- **Imported rotation is right.** The model stores `rotation` in radians — the
+  renderer hands it straight to Pixi and the Inspector converts for display —
+  but the importer wrote PPTX degrees into it, so a label tilted 7°
+  counter-clockwise (`rot` 352.97°) rendered at 352.97 rad ≡ +64° clockwise.
+  The exporter made the mirror-image mistake, sending radians out as
+  pptxgenjs degrees, which is why an import → export round trip looked
+  consistent and hid both. Both boundaries now convert through
+  `rotationFromDegrees` / `rotationToDegrees` in `@narrative/shared`, imported
+  angles land normalised to (−180°, 180°], and the unit is documented on
+  `BaseSlideObject.rotation`. Decks imported earlier keep their stored
+  degrees; re-import them to correct rotated objects.
+- **Placeholder text keeps its template line spacing.** A slide that restyled
+  a title's size in its own `lstStyle` stopped the search there, so the
+  layout's `lnSpc` (68% on the Proseware deck's title layout) was never read and
+  the text laid out at the font's full normal line height — 47% taller than
+  PowerPoint and off the bottom of the slide. Line spacing is now inherited
+  down the whole chain — paragraph, the shape's `lstStyle`, the layout and
+  master placeholder, the master `txStyles` — and resolved once the frame's
+  final font size is known, so an absolute `spcPts` is divided by the size
+  the text actually renders at.
+- **Picture placeholders take their frame from the layout.** Inheritance
+  looked for `<p:ph>` only under `<p:nvSpPr>`; a `<p:pic>` keeps it under
+  `<p:nvPicPr>`, so a placeholder picture without its own `<a:xfrm>` came in
+  as a 1×1 px image at the slide origin. A layout's own `<p:pic>`
+  placeholders are also no longer baked onto every slide, which PowerPoint
+  never does.
+- **Very large images render.** imgproxy refuses a source over 50 MP (422,
+  "Source image resolution is too big"), so a 147 MP background photo never
+  loaded and the editor showed its broken-image placeholder. The PowerPoint
+  importer and the upload finaliser now downscale any raster over 40 MP or
+  16 384 px per side before storing it, in its own format, with EXIF
+  orientation applied and the ICC profile kept
+  (`apps/server/src/media/storedImageLimits.ts`, using `sharp`). Nothing
+  visible is lost — the largest display variant is 2560 px.
+
 ---
 
 ## 0.9.17 — Select a run of slides (2026-09-22)

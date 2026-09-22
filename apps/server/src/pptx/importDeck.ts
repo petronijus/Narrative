@@ -33,6 +33,7 @@ import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
+import { downscaleForStorage } from '../media/storedImageLimits.js'
 import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
 import { sanitizeFontFamily } from '@narrative/slide-model'
@@ -377,12 +378,38 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
     }
     const assetId = nanoid(12)
     const storageKey = `decks/${deckId}/uploads/${assetId}/original.${media.ext}`
+    // A raster above imgproxy's source limit would never render (422), so
+    // it is brought under the limit here, in its own format — see
+    // media/storedImageLimits.ts. A failed downscale stores the original.
+    let body = media.bytes
+    let dims: { width: number; height: number } | null = null
+    if (isImage) {
+      try {
+        const downscaled = await downscaleForStorage(media.bytes, media.mimeType)
+        if (downscaled !== null) {
+          log.info(
+            {
+              zipPath,
+              fromBytes: media.bytes.byteLength,
+              toBytes: downscaled.bytes.byteLength,
+              width: downscaled.width,
+              height: downscaled.height,
+            },
+            'pptx: downscaled oversize image to the stored-image limits',
+          )
+          body = downscaled.bytes
+          dims = { width: downscaled.width, height: downscaled.height }
+        }
+      } catch (err) {
+        log.warn({ err, zipPath }, 'pptx: downscaling an oversize image failed, storing original')
+      }
+    }
     try {
       await s3.send(
         new PutObjectCommand({
           Bucket: MEDIA_BUCKET,
           Key: storageKey,
-          Body: media.bytes,
+          Body: body,
           ContentType: media.mimeType,
           CacheControl: 'public, max-age=31536000, immutable',
         }),
@@ -391,14 +418,14 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
       log.warn({ err, zipPath }, 'pptx: MinIO upload failed, skipping asset')
       continue
     }
-    const dims = isImage ? await probeImageDims(media) : null
+    if (isImage && dims === null) dims = await probeImageDims(media)
     mediaPathToAssetId.set(zipPath, assetId)
     mediaAssetRows.push({
       id: assetId,
       deckId,
       uploaderUserId: ownerUserId,
       mimeType: media.mimeType,
-      sizeBytes: media.bytes.byteLength,
+      sizeBytes: body.byteLength,
       storageKey,
       originalFilename: zipPath.split('/').pop() ?? null,
       width: dims?.width ?? null,

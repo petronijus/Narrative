@@ -70,7 +70,7 @@ import type {
   RadialGradientFill,
   FillStyle,
 } from '@narrative/shared'
-import { SLIDE_WIDTH, SLIDE_HEIGHT, sanitizeHref } from '@narrative/shared'
+import { SLIDE_WIDTH, SLIDE_HEIGHT, rotationFromDegrees, sanitizeHref } from '@narrative/shared'
 import type {
   ParsedPptx,
   ParsedShape,
@@ -346,7 +346,9 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     y: round(s.y * scale),
     width: round(Math.max(1, s.width * scale)),
     height: round(Math.max(1, s.height * scale)),
-    rotation: round(s.rotation),
+    // ParsedShape carries PPTX degrees; the model stores radians. Not
+    // rounded: two decimals of a radian is 0.6°, visible on a long line.
+    rotation: rotationFromDegrees(s.rotation),
     opacity: 1,
   }
   if (s.groupId !== undefined) base.groupId = s.groupId

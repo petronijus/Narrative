@@ -21,7 +21,13 @@ import PptxGenJSImport from 'pptxgenjs'
 import JSZip from 'jszip'
 import { XMLParser, XMLBuilder } from 'fast-xml-parser'
 import * as Y from 'yjs'
-import { SLIDE_WIDTH, getEffectiveBorderSegment, hSegKey, vSegKey } from '@narrative/shared'
+import {
+  SLIDE_WIDTH,
+  getEffectiveBorderSegment,
+  hSegKey,
+  rotationToDegrees,
+  vSegKey,
+} from '@narrative/shared'
 import { toDelta, getParagraphDeltas } from '@narrative/slide-model'
 import type { RichDeltaOp } from '@narrative/slide-model'
 import type { ParagraphAttrs, ListNumberFormat } from '@narrative/shared'
@@ -386,7 +392,7 @@ function emitText(
     italic: defaultItalic,
     underline: defaultUnderline ? { style: 'sng' } : undefined,
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.fontFamily !== undefined) opts['fontFace'] = obj.fontFamily
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
@@ -759,7 +765,7 @@ function emitRectOrEllipse(
     if (obj.strokeDash === true) ln['dashType'] = 'dash'
     opts['line'] = ln
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.opacity < 1) {
     ;(opts['fill'] as Record<string, unknown>)['transparency'] = Math.round((1 - obj.opacity) * 100)
   }
@@ -905,7 +911,7 @@ function emitArrow(
   }
   if (flipH) opts['flipH'] = true
   if (flipV) opts['flipV'] = true
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (hyperlink !== undefined) opts['hyperlink'] = hyperlink
   slide.addShape('line', opts)
 }
@@ -1002,7 +1008,7 @@ function emitPath(
     lineOpts['transparency'] = Math.round((1 - obj.strokeAlpha) * 100)
   }
   opts['line'] = lineOpts
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.opacity < 1) {
     if (opts['fill'] !== undefined) {
       ;(opts['fill'] as Record<string, unknown>)['transparency'] = Math.round(
@@ -1038,7 +1044,7 @@ function emitLine(
       (1 - obj.strokeAlpha) * 100,
     )
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.flipH === true) opts['flipH'] = true
   if (obj.flipV === true) opts['flipV'] = true
   if (hyperlink !== undefined) opts['hyperlink'] = hyperlink
@@ -1097,7 +1103,7 @@ async function emitVideo(
       opts['cover'] = `data:${posterAsset.mimeType};base64,${posterAsset.bytes.toString('base64')}`
     }
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
   if (obj.flipV === true) opts['flipV'] = true
@@ -1133,7 +1139,7 @@ async function emitImage(
     h: px(obj.height),
     data: dataUrl,
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
   if (obj.flipV === true) opts['flipV'] = true
@@ -1437,7 +1443,7 @@ function emitTable(
   if (d.paragraphSpaceAfter !== undefined && d.paragraphSpaceAfter > 0) {
     opts['paraSpaceAfter'] = (d.paragraphSpaceAfter * 72) / PX_PER_IN
   }
-  if (obj.rotation !== 0) opts['rotate'] = obj.rotation
+  if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
   if (obj.flipV === true) opts['flipV'] = true

@@ -2491,6 +2491,132 @@ describe('parsePptx — layout/master inheritance', () => {
     const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
     expect(shape.textRuns?.[0]?.fontFamily).toBeUndefined()
   })
+
+  /** Title placeholder whose own lstStyle restyles size + tracking but says
+   *  nothing about line spacing — the Proseware deck's "Now we need to make the
+   *  experience even more awesome!" slide. */
+  const TITLE_RESIZED_ON_SLIDE = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr>
+          <p:cNvPr id="2" name="Title"/><p:cNvSpPr txBox="1"/>
+          <p:nvPr><p:ph type="title"/></p:nvPr>
+        </p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4762500" cy="6286500"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr/>
+          <a:lstStyle><a:lvl1pPr><a:defRPr spc="-418" sz="8835"/></a:lvl1pPr></a:lstStyle>
+          <a:p><a:pPr/><a:r><a:t>Now we need to make the experience even more awesome!</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+
+  const layoutWithTitleLstStyle = (lvl1Inner: string): string =>
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr>
+        <p:cNvPr id="2" name="Title"/><p:cNvSpPr/>
+        <p:nvPr><p:ph type="title"/></p:nvPr>
+      </p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4762500" cy="6286500"/></a:xfrm></p:spPr>
+      <p:txBody>
+        <a:bodyPr/>
+        <a:lstStyle><a:lvl1pPr>${lvl1Inner}</a:lvl1pPr></a:lstStyle>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sldLayout>`
+
+  it("keeps the layout placeholder's line spacing when the slide only restyles the size", async () => {
+    // Regression: the slide's own <a:lvl1pPr> (sz + spc only) ended the
+    // search, the layout's 68% was never consulted, and the title laid out
+    // at the font's full normal line height — 47% taller than PowerPoint.
+    const buf = await makeFixture({
+      slideXml: TITLE_RESIZED_ON_SLIDE,
+      layoutXml: layoutWithTitleLstStyle(
+        '<a:lnSpc><a:spcPct val="68000"/></a:lnSpc><a:defRPr spc="-450" sz="9500"/>',
+      ),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.lineSpacing).toBeCloseTo(0.68, 6)
+    // The slide's own size still wins over the layout's.
+    expect(shape.fontSize).toBeCloseTo((8835 / 100) * (96 / 72), 3)
+  })
+
+  it("falls back to the master's <p:titleStyle> line spacing", async () => {
+    const master = MASTER_WITH_GEOMETRY.replace(
+      '</p:spTree></p:cSld>',
+      `</p:spTree></p:cSld>
+  <p:txStyles>
+    <p:titleStyle><a:lvl1pPr><a:lnSpc><a:spcPct val="75000"/></a:lnSpc><a:defRPr sz="9500"/></a:lvl1pPr></p:titleStyle>
+  </p:txStyles>`,
+    )
+    const buf = await makeFixture({
+      slideXml: TITLE_RESIZED_ON_SLIDE,
+      layoutXml: layoutWithTitleLstStyle('<a:defRPr sz="9500"/>'),
+      masterXml: master,
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.lineSpacing).toBeCloseTo(0.75, 6)
+  })
+
+  it('resolves inherited absolute line spacing against the final font size', async () => {
+    // spcPts is absolute; as a lineHeight ratio it has to be divided by the
+    // size the frame actually renders at — here the slide's 88.35 pt, not
+    // the layout's 95 pt it was declared next to.
+    const buf = await makeFixture({
+      slideXml: TITLE_RESIZED_ON_SLIDE,
+      layoutXml: layoutWithTitleLstStyle(
+        '<a:lnSpc><a:spcPts val="6000"/></a:lnSpc><a:defRPr sz="9500"/>',
+      ),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.lineSpacing).toBeUndefined()
+    expect(shape.lineHeight).toBeCloseTo(6000 / 8835, 6)
+  })
+
+  it('inherits a <p:pic> placeholder frame from the layout', async () => {
+    // Regression: inheritance only looked under <p:nvSpPr>; a picture
+    // placeholder's <p:ph> lives under <p:nvPicPr>, so it came through as a
+    // 0×0 image at the slide origin.
+    const slideXml = `${SLIDE_OPEN}
+      <p:pic>
+        <p:nvPicPr>
+          <p:cNvPr id="3" name="Image"/><p:cNvPicPr/>
+          <p:nvPr><p:ph type="pic" idx="24"/></p:nvPr>
+        </p:nvPicPr>
+        <p:blipFill><a:blip r:embed="rIdMissing"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+        <p:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      </p:pic>
+    ${SLIDE_CLOSE}`
+    const layoutXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr>
+        <p:cNvPr id="4275" name="Image"/><p:cNvSpPr/>
+        <p:nvPr><p:ph type="pic" sz="quarter" idx="24"/></p:nvPr>
+      </p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="11430000" y="285750"/><a:ext cx="190500" cy="171450"/></a:xfrm></p:spPr>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sldLayout>`
+    const buf = await makeFixture({ slideXml, layoutXml })
+    const shapes = (await parsePptx(buf)).slides[0]!.shapes
+    // The empty layout placeholder itself must not be baked onto the slide.
+    expect(shapes).toHaveLength(1)
+    const pic = shapes[0]!
+    expect(pic.kind).toBe('image')
+    expect(pic.x).toBeCloseTo(1200, 3)
+    expect(pic.y).toBeCloseTo(30, 3)
+    expect(pic.width).toBeCloseTo(20, 3)
+    expect(pic.height).toBeCloseTo(18, 3)
+  })
 })
 
 describe('parsePptx — zip-bomb guards', () => {

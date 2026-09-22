@@ -105,6 +105,16 @@ describe('exportDeckToPptx', () => {
     expect(Math.abs(y - 914400)).toBeLessThanOrEqual(2000)
   })
 
+  it("writes the model's radians as PPTX degrees", async () => {
+    // Regression: radians went out as pptxgenjs `rotate` degrees unconverted,
+    // so a 45° shape exported at 0.785° — and an imported degree value
+    // round-tripped unchanged, hiding the import-side bug.
+    const buf = await exportDeckToPptx(singleSlide([makeRect({ rotation: -Math.PI / 4 })]))
+    const xml = await getSlide1Xml(buf)
+    // PPTX `rot` is 60 000ths of a degree in [0, 360°): −45° → 315°.
+    expect(xml).toMatch(/<a:xfrm rot="18900000"/)
+  })
+
   it('emits a solid-fill <a:srgbClr> for a rectangle with `fill`', async () => {
     const buf = await exportDeckToPptx(singleSlide([makeRect({ fill: 0xff5733 })]))
     const xml = await getSlide1Xml(buf)

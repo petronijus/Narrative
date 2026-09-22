@@ -1039,6 +1039,43 @@ interface TextStyleDefaults {
   listStyle?: 'bullet' | 'numbered' | 'none'
   /** Default typeface for this style layer, theme references resolved. */
   fontFamily?: string
+  /** Line spacing declared by `<a:lvl1pPr>/<a:lnSpc>` at this style layer. */
+  lineSpacing?: LineSpacingDecl
+}
+
+/**
+ * `<a:lnSpc>` as declared, before it is resolved against a font size.
+ *
+ * `spcPct` is a multiple of the font's normal line height and maps straight
+ * onto `lineSpacing`. `spcPts` is absolute (100ths of a point) and can only
+ * become the per-font-size `lineHeight` ratio once the frame's final font
+ * size is known — which, for placeholder text, is often inherited from the
+ * same layout/master layer or from one below it. Carrying the raw declaration
+ * down the inheritance chain and resolving it once at the end keeps the two
+ * questions — *which layer wins* and *what the number means* — apart.
+ */
+type LineSpacingDecl = { kind: 'pct'; value: number } | { kind: 'pts'; value100: number }
+
+/**
+ * Read `<a:lnSpc>` from the children of a paragraph-properties node
+ * (`<a:pPr>`, `<a:lvl1pPr>`, …). Returns undefined when absent or malformed,
+ * so the caller falls through to the next layer.
+ */
+function readLineSpacingDecl(pPrChildren: XmlNode[]): LineSpacingDecl | undefined {
+  const lnSpc = findFirst(pPrChildren, 'a:lnSpc')
+  if (lnSpc === undefined) return undefined
+  const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
+  const pct = findFirst(lnSpcChildren, 'a:spcPct')
+  if (pct !== undefined) {
+    const v = Number(getAttrs(pct)['@val'])
+    return Number.isFinite(v) && v > 0 ? { kind: 'pct', value: v / 100000 } : undefined
+  }
+  const pts = findFirst(lnSpcChildren, 'a:spcPts')
+  if (pts !== undefined) {
+    const v = Number(getAttrs(pts)['@val'])
+    return Number.isFinite(v) && v > 0 ? { kind: 'pts', value100: v } : undefined
+  }
+  return undefined
 }
 
 /**
@@ -1093,6 +1130,10 @@ interface PlaceholderEntry {
   /** Bullet marker from `<a:lvl1pPr>` (`<a:buChar>` / `<a:buAutoNum>` /
    *  `<a:buNone>`). 'none' = explicitly suppressed; missing = not declared. */
   defaultListStyle?: 'bullet' | 'numbered' | 'none'
+  /** Line spacing from `<a:lstStyle>/<a:lvl1pPr>/<a:lnSpc>`. A slide that
+   *  restyles the placeholder's size in its own `lvl1pPr` still inherits
+   *  this unless it declares an `lnSpc` of its own. */
+  defaultLineSpacing?: LineSpacingDecl
   /** Placeholder type declared on the source `<p:ph type="…">`. Used by the
    *  txStyles bucket lookup so a slide-side title placeholder that ends up
    *  matching an `idx`-only master entry still routes to `titleStyle`. */
@@ -1159,6 +1200,7 @@ function mergePlaceholderEntries(
   pick('defaultBold')
   pick('defaultTextTransform')
   pick('defaultListStyle')
+  pick('defaultLineSpacing')
   pick('phType')
   return merged
 }
@@ -1463,8 +1505,33 @@ function mapBodyAnchor(raw: string): 'top' | 'middle' | 'bottom' | undefined {
   }
 }
 
-/** Walk a slide/layout/master XML and extract every `<p:sp>` that has a
- *  `<p:ph>` non-visual node. Returns a map keyed by (type, idx). */
+/** Non-visual wrapper element for each shape tag that can carry `<p:ph>`. */
+const NV_WRAPPER_BY_SHAPE_TAG: Record<string, string> = {
+  'p:sp': 'p:nvSpPr',
+  'p:pic': 'p:nvPicPr',
+  'p:cxnSp': 'p:nvCxnSpPr',
+  'p:graphicFrame': 'p:nvGraphicFramePr',
+}
+
+/**
+ * The shape's `<p:ph>` node (`<nvXxxPr>/<p:nvPr>/<p:ph>`), or undefined when
+ * it is not a placeholder. Every shape type has its own non-visual wrapper —
+ * `<p:pic>` uses `<p:nvPicPr>`, not `<p:nvSpPr>` — so reading only the
+ * `<p:sp>` spelling silently treats a picture placeholder as a free shape
+ * and drops the geometry it should inherit from its layout.
+ */
+function findPlaceholderNode(shape: XmlNode, shapeTag: string): XmlNode | undefined {
+  const nvTag = NV_WRAPPER_BY_SHAPE_TAG[shapeTag]
+  if (nvTag === undefined) return undefined
+  const nv = findFirst(getChildren(shape, shapeTag), nvTag)
+  if (nv === undefined) return undefined
+  const nvPr = findFirst(getChildren(nv, nvTag), 'p:nvPr')
+  if (nvPr === undefined) return undefined
+  return findFirst(getChildren(nvPr, 'p:nvPr'), 'p:ph')
+}
+
+/** Walk a slide/layout/master XML and extract every `<p:sp>` / `<p:pic>`
+ *  that has a `<p:ph>` non-visual node. Returns a map keyed by (type, idx). */
 function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap {
   const xmlParser = new XMLParser({
     ignoreAttributes: false,
@@ -1487,17 +1554,15 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
   if (spTreeChildren === null) return map
 
   for (const sp of spTreeChildren) {
-    if (getTag(sp) !== 'p:sp') continue
-    const spChildren = getChildren(sp, 'p:sp')
+    // A picture placeholder may be declared as a `<p:sp>` (what PowerPoint
+    // writes into layouts) or as a `<p:pic>` (what Keynote and some
+    // generators write); both carry the same `<p:ph>` under their own
+    // non-visual wrapper.
+    const spTag = getTag(sp)
+    if (spTag !== 'p:sp' && spTag !== 'p:pic') continue
+    const spChildren = getChildren(sp, spTag)
 
-    // Look for nvSpPr → nvPr → ph
-    const nvSpPr = findFirst(spChildren, 'p:nvSpPr')
-    if (!nvSpPr) continue
-    const nvSpPrChildren = getChildren(nvSpPr, 'p:nvSpPr')
-    const nvPr = findFirst(nvSpPrChildren, 'p:nvPr')
-    if (!nvPr) continue
-    const nvPrChildren = getChildren(nvPr, 'p:nvPr')
-    const ph = findFirst(nvPrChildren, 'p:ph')
+    const ph = findPlaceholderNode(sp, spTag)
     if (!ph) continue
 
     const phAttrs = getAttrs(ph)
@@ -1556,6 +1621,8 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
           }
           const bullet = detectBulletDecl(lvl1, 'a:lvl1pPr')
           if (bullet !== undefined) entry.defaultListStyle = bullet
+          const lineSpacing = readLineSpacingDecl(getChildren(lvl1, 'a:lvl1pPr'))
+          if (lineSpacing !== undefined) entry.defaultLineSpacing = lineSpacing
           const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
           if (defRPr) {
             const defAttrs = getAttrs(defRPr)
@@ -1648,20 +1715,13 @@ function parseNonPlaceholderShapes(
     const tag = getTag(node)
     if (tag !== 'p:sp' && tag !== 'p:pic' && tag !== 'p:cxnSp') continue
 
-    // Skip `<p:sp>` with a `<p:ph>` child — that's a placeholder definition,
-    // not a paintable shape. Slides override placeholders by carrying their
-    // own `<p:sp>` with matching `<p:ph>`, and that's handled by the existing
-    // placeholder-inheritance path. We only bake non-placeholder shapes.
-    if (tag === 'p:sp') {
-      const spChildren = getChildren(node, 'p:sp')
-      const nvSpPr = findFirst(spChildren, 'p:nvSpPr')
-      if (nvSpPr) {
-        const nvPr = findFirst(getChildren(nvSpPr, 'p:nvSpPr'), 'p:nvPr')
-        if (nvPr && findFirst(getChildren(nvPr, 'p:nvPr'), 'p:ph') !== undefined) {
-          continue
-        }
-      }
-    }
+    // Skip a shape with a `<p:ph>` child — that's a placeholder definition,
+    // not a paintable shape (PowerPoint shows an empty layout placeholder
+    // only as an editing prompt, never on the slide). Slides override
+    // placeholders by carrying their own shape with a matching `<p:ph>`,
+    // handled by the placeholder-inheritance path. A picture placeholder
+    // can be a `<p:pic>`, so this applies to every shape tag.
+    if (findPlaceholderNode(node, tag) !== undefined) continue
 
     // Baked shapes don't participate in placeholder inheritance — they have
     // their own concrete spPr/xfrm. Pass an empty placeholder map.
@@ -1708,6 +1768,8 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
       const defaults: TextStyleDefaults = {}
       const bullet = detectBulletDecl(lvl1, 'a:lvl1pPr')
       if (bullet !== undefined) defaults.listStyle = bullet
+      const lineSpacing = readLineSpacingDecl(getChildren(lvl1, 'a:lvl1pPr'))
+      if (lineSpacing !== undefined) defaults.lineSpacing = lineSpacing
 
       const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
       if (defRPr) {
@@ -1741,7 +1803,8 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         defaults.color !== undefined ||
         defaults.bold === true ||
         defaults.listStyle !== undefined ||
-        defaults.fontFamily !== undefined
+        defaults.fontFamily !== undefined ||
+        defaults.lineSpacing !== undefined
       ) {
         out[bucket] = defaults
       }
@@ -2182,44 +2245,37 @@ function parseShape(
    *  `<p:txStyles>` bucket lookup (title vs body vs other) below. */
   let slideShapePhType: string | undefined
   {
-    const nvSpPr = findFirst(children, 'p:nvSpPr')
-    if (nvSpPr) {
-      const nvPr = findFirst(getChildren(nvSpPr, 'p:nvSpPr'), 'p:nvPr')
-      if (nvPr) {
-        const ph = findFirst(getChildren(nvPr, 'p:nvPr'), 'p:ph')
-        if (ph) {
-          const phAttrs = getAttrs(ph)
-          const type =
-            typeof phAttrs['@type'] === 'string' ? (phAttrs['@type'] as string) : undefined
-          const idx = typeof phAttrs['@idx'] === 'string' ? (phAttrs['@idx'] as string) : undefined
-          slideShapePhType = type
-          // Try most-specific key first, then less-specific, then __any__.
-          const candidates = [
-            placeholderKey(type, idx),
-            type !== undefined ? `t:${type}` : null,
-            idx !== undefined ? `i:${idx}` : null,
-            '__any__',
-          ].filter((k): k is string => k !== null)
-          for (const k of candidates) {
-            const got = placeholders.get(k)
-            if (got !== undefined) {
-              inheritedPh = got
-              break
-            }
-          }
-          if (inheritedPh !== undefined && (width === 0 || height === 0)) {
-            x = emuToPx(inheritedPh.x)
-            y = emuToPx(inheritedPh.y)
-            width = emuToPx(inheritedPh.width)
-            height = emuToPx(inheritedPh.height)
-          }
-          // If the slide shape didn't carry its own `type` attr, fall back to
-          // the placeholder entry's recorded type so the txStyles bucket
-          // lookup still routes correctly (a slide may ref by `idx` only).
-          if (slideShapePhType === undefined && inheritedPh?.phType !== undefined) {
-            slideShapePhType = inheritedPh.phType
-          }
+    const ph = findPlaceholderNode(sp, sourceTag)
+    if (ph) {
+      const phAttrs = getAttrs(ph)
+      const type = typeof phAttrs['@type'] === 'string' ? (phAttrs['@type'] as string) : undefined
+      const idx = typeof phAttrs['@idx'] === 'string' ? (phAttrs['@idx'] as string) : undefined
+      slideShapePhType = type
+      // Try most-specific key first, then less-specific, then __any__.
+      const candidates = [
+        placeholderKey(type, idx),
+        type !== undefined ? `t:${type}` : null,
+        idx !== undefined ? `i:${idx}` : null,
+        '__any__',
+      ].filter((k): k is string => k !== null)
+      for (const k of candidates) {
+        const got = placeholders.get(k)
+        if (got !== undefined) {
+          inheritedPh = got
+          break
         }
+      }
+      if (inheritedPh !== undefined && (width === 0 || height === 0)) {
+        x = emuToPx(inheritedPh.x)
+        y = emuToPx(inheritedPh.y)
+        width = emuToPx(inheritedPh.width)
+        height = emuToPx(inheritedPh.height)
+      }
+      // If the slide shape didn't carry its own `type` attr, fall back to
+      // the placeholder entry's recorded type so the txStyles bucket
+      // lookup still routes correctly (a slide may ref by `idx` only).
+      if (slideShapePhType === undefined && inheritedPh?.phType !== undefined) {
+        slideShapePhType = inheritedPh.phType
       }
     }
   }
@@ -2583,6 +2639,10 @@ function parseShape(
   let frameLetterSpacing: number | undefined
   let frameLineHeight: number | undefined
   let frameLineSpacing: number | undefined
+  /** First `<a:lnSpc>` found down the chain paragraph → shape lstStyle →
+   *  layout/master placeholder → master txStyles; resolved into
+   *  frameLineSpacing / frameLineHeight once the font size is final. */
+  let lineSpacingDecl: LineSpacingDecl | undefined
   let frameSpaceBefore: number | undefined
   let frameSpaceAfter: number | undefined
   let frameTextTransform: ParsedShape['textTransform']
@@ -2625,7 +2685,7 @@ function parseShape(
       if (
         textAlign === undefined ||
         listStyleResolved === undefined ||
-        frameLineHeight === undefined ||
+        lineSpacingDecl === undefined ||
         frameSpaceBefore === undefined ||
         frameSpaceAfter === undefined
       ) {
@@ -2640,34 +2700,9 @@ function parseShape(
             if (bullet !== undefined) listStyleResolved = bullet
           }
           const pPrChildren = getChildren(pPr, 'a:pPr')
-          // <a:lnSpc>/<a:spcPct val=N> — N is 100000ths of a multiple of the
-          //   font's normal line height → `lineSpacing` (see the constant
-          //   TABLE_CELL_LEADING_APPROX for why it is no longer folded into
-          //   lineHeight).
-          // <a:lnSpc>/<a:spcPts val=N> — N is 100ths of a point (absolute).
-          //   Convert to a multiplier against the resolved fontSize when
-          //   possible, otherwise leave undefined and skip.
-          if (frameLineHeight === undefined && frameLineSpacing === undefined) {
-            const lnSpc = findFirst(pPrChildren, 'a:lnSpc')
-            if (lnSpc) {
-              const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
-              const pct = findFirst(lnSpcChildren, 'a:spcPct')
-              if (pct) {
-                const v = Number(getAttrs(pct)['@val'])
-                if (Number.isFinite(v) && v > 0) frameLineSpacing = v / 100000
-              } else {
-                const pts = findFirst(lnSpcChildren, 'a:spcPts')
-                if (pts && fontSize !== undefined && fontSize > 0) {
-                  const v = Number(getAttrs(pts)['@val'])
-                  if (Number.isFinite(v)) {
-                    // PPTX value is 100ths of a point → px @ 96 DPI.
-                    const lineHeightPx = v * PPTX_FONT_TO_PX
-                    frameLineHeight = lineHeightPx / fontSize
-                  }
-                }
-              }
-            }
-          }
+          // <a:lnSpc> — spcPct (× the font's normal line height) or spcPts
+          //   (absolute). Kept as a declaration; see LineSpacingDecl.
+          if (lineSpacingDecl === undefined) lineSpacingDecl = readLineSpacingDecl(pPrChildren)
           // <a:spcBef>/<a:spcAft> use the same <a:spcPts val="100ths of pt">
           //  format. Narrative paragraphSpaceBefore/After is in px.
           if (frameSpaceBefore === undefined) {
@@ -2973,25 +3008,8 @@ function parseShape(
             if (mapped !== undefined) textAlign = mapped
           }
         }
-        if (frameLineHeight === undefined && frameLineSpacing === undefined) {
-          const lvl1Children = getChildren(lvl1, 'a:lvl1pPr')
-          const lnSpc = findFirst(lvl1Children, 'a:lnSpc')
-          if (lnSpc !== undefined) {
-            const lnSpcChildren = getChildren(lnSpc, 'a:lnSpc')
-            const pct = findFirst(lnSpcChildren, 'a:spcPct')
-            if (pct !== undefined) {
-              const v = Number(getAttrs(pct)['@val'])
-              if (Number.isFinite(v) && v > 0) frameLineSpacing = v / 100000
-            } else {
-              const pts = findFirst(lnSpcChildren, 'a:spcPts')
-              if (pts !== undefined && fontSize !== undefined && fontSize > 0) {
-                const v = Number(getAttrs(pts)['@val'])
-                if (Number.isFinite(v)) {
-                  frameLineHeight = (v * PPTX_FONT_TO_PX) / fontSize
-                }
-              }
-            }
-          }
+        if (lineSpacingDecl === undefined) {
+          lineSpacingDecl = readLineSpacingDecl(getChildren(lvl1, 'a:lvl1pPr'))
         }
         const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
         if (defRPr !== undefined) {
@@ -3050,6 +3068,9 @@ function parseShape(
       if (textAlign === undefined && inheritedPh.textAlign !== undefined) {
         textAlign = inheritedPh.textAlign
       }
+      if (lineSpacingDecl === undefined && inheritedPh.defaultLineSpacing !== undefined) {
+        lineSpacingDecl = inheritedPh.defaultLineSpacing
+      }
       if (fontSize === undefined && inheritedPh.defaultFontSize100 !== undefined) {
         fontSize = inheritedPh.defaultFontSize100 * PPTX_FONT_TO_PX
       }
@@ -3095,6 +3116,9 @@ function parseShape(
           frameFontFamily = bucket.fontFamily
         }
         if (!bold && bucket.bold === true) bold = true
+        if (lineSpacingDecl === undefined && bucket.lineSpacing !== undefined) {
+          lineSpacingDecl = bucket.lineSpacing
+        }
         if (listStyleResolved === undefined && bucket.listStyle !== undefined) {
           listStyleResolved = bucket.listStyle
         }
@@ -3121,6 +3145,16 @@ function parseShape(
       if (frameFontFamily === undefined && themeDef.fontFamily !== undefined) {
         frameFontFamily = themeDef.fontFamily
       }
+    }
+  }
+
+  // Resolve the winning `<a:lnSpc>` now that the frame's font size is final:
+  // a percentage is already in `lineSpacing` units; points become the
+  // per-font-size `lineHeight` ratio, which needs the size it applies to.
+  if (lineSpacingDecl !== undefined) {
+    if (lineSpacingDecl.kind === 'pct') frameLineSpacing = lineSpacingDecl.value
+    else if (fontSize !== undefined && fontSize > 0) {
+      frameLineHeight = (lineSpacingDecl.value100 * PPTX_FONT_TO_PX) / fontSize
     }
   }
 

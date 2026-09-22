@@ -78,6 +78,11 @@ export interface BaseSlideObject {
   y: number
   width: number
   height: number
+  /**
+   * Radians, clockwise, about the object's centre. File formats speak
+   * degrees — convert at the boundary with `rotationFromDegrees` /
+   * `rotationToDegrees` (./rotation.ts), never pass the number through.
+   */
   rotation: number
   opacity: number
   /**

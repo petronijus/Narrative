@@ -82,6 +82,8 @@ export { peerColorFromId } from './awareness.js'
 
 export { sanitizeHref } from './sanitize.js'
 
+export { rotationFromDegrees, rotationToDegrees } from './rotation.js'
+
 export {
   VIDEO_TRANSCODE_QUEUE,
   type VideoTranscodeJobData,

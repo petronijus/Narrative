@@ -46,6 +46,11 @@ import { createMediaAsset } from './assets.js'
 import { sanitizeSvg, sniffIsSvg, magicBytesMatch, MAGIC_CHECKED_MIMES } from './svgSanitize.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { parseFontMetadata } from './fontMetadata.js'
+import {
+  canDownscaleStoredImage,
+  downscaleForStorage,
+  exceedsStoredImageLimits,
+} from './storedImageLimits.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { eq } from 'drizzle-orm'
 import { folders, decks } from '../db/schema.js'
@@ -1164,6 +1169,48 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       if (!dims) {
         log.warn({ storageKey }, 'probe-image-size returned no result')
         // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
+      }
+
+      // A raster above imgproxy's source limit would never render (imgproxy
+      // answers 422), so it is brought under the limit now, in its own
+      // format, under the same key — see storedImageLimits.ts. The head probe
+      // above decides; only an oversize image pays for the full read. A
+      // failed downscale keeps the original rather than losing the upload.
+      if (
+        dims !== undefined &&
+        exceedsStoredImageLimits(dims.width, dims.height) &&
+        canDownscaleStoredImage(mimeRaw)
+      ) {
+        try {
+          const downscaled = await downscaleForStorage(
+            await getObjectBytes(s3, storageKey),
+            mimeRaw,
+          )
+          if (downscaled !== null) {
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: BUCKET,
+                Key: storageKey,
+                Body: downscaled.bytes,
+                ContentType: mimeRaw,
+              }),
+            )
+            log.info(
+              {
+                storageKey,
+                fromBytes: sizeBytes,
+                toBytes: downscaled.bytes.byteLength,
+                from: dims,
+                to: { width: downscaled.width, height: downscaled.height },
+              },
+              'downscaled oversize image to the stored-image limits',
+            )
+            sizeBytes = downscaled.bytes.byteLength
+            dims = { width: downscaled.width, height: downscaled.height }
+          }
+        } catch (err) {
+          log.error({ err, storageKey }, 'downscaling an oversize image failed, keeping original')
+        }
       }
 
       // Insert media_assets row
