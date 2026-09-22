@@ -12,13 +12,15 @@
  * - Defaults to first slide when Y.Doc is ready.
  * - Auto-corrects: if activeSlideId points to a deleted slide (remote edit),
  *   resets to the first available slide.
+ * - Accepts a slide the document has but this provider's (rAF-coalesced)
+ *   snapshot has not caught up with yet — see `setActiveSlideId`.
  *
  * Place: wraps content inside SlideDocProvider (i.e. inside DeckShell).
  */
 
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
-import { subscribeToSlides } from '@narrative/slide-model'
+import { listSlides, subscribeToSlides } from '@narrative/slide-model'
 import type { SlideSummary } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
 
@@ -109,11 +111,25 @@ export function ActiveSlideProvider({ children }: ActiveSlideProviderProps) {
 
   const setActiveSlideId = useCallback(
     (id: string) => {
-      if (slides.some((s) => s.id === id)) {
+      // The guard exists to ignore an id that no longer exists — a stale
+      // click on a slide a peer has just deleted. But `slides` is this
+      // provider's own state, fed by an rAF-coalesced subscription, so it
+      // lags the document by up to a frame and is simply empty for the first
+      // moments after a deck opens.
+      //
+      // Checking only that snapshot meant a click arriving in that window was
+      // dropped in silence, leaving activeSlideId null — whereupon the next
+      // subscription callback took the `prev === null` first-resolution
+      // branch and selected the FIRST slide. Clicking a thumbnail right after
+      // opening a deck would snap back to slide 1, and the slides panel would
+      // collapse its selection to match.
+      //
+      // So fall back to the live document, which is never stale.
+      if (slides.some((s) => s.id === id) || listSlides(deckCtx).some((s) => s.id === id)) {
         setActiveSlideIdState(id)
       }
     },
-    [slides],
+    [slides, deckCtx],
   )
 
   return (

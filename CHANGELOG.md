@@ -6,6 +6,28 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Fixed
+
+- **Shift-click selects a run of slides again.** Click the first, shift-click
+  the last, and everything between is selected — the gesture the panel's own
+  documentation described but never implemented: shift toggled the single
+  slide it was clicking, so "first, then last" selected exactly those two.
+  Cmd/Ctrl-click now does the toggling, as it does in Finder, Explorer,
+  Keynote and PowerPoint, and the range measures from an anchor that a
+  shift-click deliberately leaves in place, so dragging the far end resizes
+  one range instead of ratcheting new ones onto it.
+- **Delete removes every slide in the selection.** It took only the slide
+  under the cursor, which made a multi-selection look broken the moment you
+  tried to use it. Delete and Duplicate now follow the rule Copy already
+  used: act on the whole selection when the target is part of it, otherwise
+  on the target alone. The deck still never reaches zero slides.
+- **A click on a thumbnail is no longer dropped while the panel's snapshot is
+  behind the document.** `setActiveSlideId` validated the id against the
+  provider's own rAF-coalesced slide list, which lags the document by up to a
+  frame and is empty for the first moments after a deck opens; a click
+  arriving in that window was discarded in silence. It now falls back to the
+  live document.
+
 ### Infrastructure
 
 - **`build-push.sh` pins `linux/amd64`.** Docker builds for the host

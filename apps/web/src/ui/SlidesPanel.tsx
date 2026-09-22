@@ -112,6 +112,17 @@ function subtreeIds(slides: Slide[], fromIndex: number): string[] {
   return out
 }
 
+/**
+ * Which selection gesture a click carries. Plain click replaces the
+ * selection, shift extends it to a contiguous range from the anchor, and
+ * cmd/ctrl toggles the one slide — the convention every file manager and
+ * both presentation apps share, so it is what the hand already expects.
+ */
+interface ActivateModifiers {
+  shift?: boolean
+  toggle?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Drag state
 // ---------------------------------------------------------------------------
@@ -151,7 +162,7 @@ interface SlideItemProps {
   dropIndicatorBelow: boolean
   thumbnailUrl: string | undefined
   readOnly?: boolean
-  onActivate: (id: string, shift: boolean) => void
+  onActivate: (id: string, mods?: ActivateModifiers) => void
   onToggleCollapsed: (id: string) => void
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>, id: string, index: number) => void
   onDuplicate: (id: string) => void
@@ -313,7 +324,14 @@ function SlideItemImpl({
               ].join(' ')}
               style={{ aspectRatio: '16/9', width: '100%' }}
               onPointerDown={(e) => onPointerDown(e, slide.id, index)}
-              onClick={(e) => onActivate(slide.id, e.shiftKey)}
+              onClick={(e) =>
+                onActivate(slide.id, {
+                  shift: e.shiftKey,
+                  // Cmd on macOS, Ctrl elsewhere — the same key that toggles
+                  // one item in Finder, Explorer, Keynote and PowerPoint.
+                  toggle: e.metaKey || e.ctrlKey,
+                })
+              }
               aria-hidden="true"
             >
               {thumbnailUrl !== undefined ? (
@@ -555,6 +573,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
     activeSlideId !== null ? new Set([activeSlideId]) : new Set(),
   )
+  /**
+   * The slide a shift-click measures its range from: wherever the current
+   * selection gesture started. A plain or cmd click moves it; a shift-click
+   * deliberately does not, so dragging the far end of a range up and down
+   * resizes that one range rather than ratcheting a new one each time.
+   */
+  const anchorIdRef = useRef<string | null>(activeSlideId)
 
   // Keep selection in sync when the active slide changes externally
   // (e.g. keyboard nav, Enter, remote peer).
@@ -564,6 +589,9 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       if (prev.has(activeSlideId) && prev.size === 1) return prev
       return new Set([activeSlideId])
     })
+    // The active slide moved, so the next shift-click measures from here —
+    // otherwise it would span back to wherever the last gesture started.
+    anchorIdRef.current = activeSlideId
   }, [activeSlideId])
 
   // Prune stale ids when the slide list shrinks.
@@ -585,7 +613,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   // ---------------------------------------------------------------------------
 
   const handleActivate = useCallback(
-    (id: string, shift: boolean) => {
+    (id: string, mods: ActivateModifiers = {}) => {
       // Suppress the click that trails a drag gesture — without this, a
       // reorder drag of a multi-selection ends with a plain click that
       // collapses the selection to the single dragged slide.
@@ -593,24 +621,53 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
         didDragRef.current = false
         return
       }
-      if (shift) {
+
+      // Shift extends to a contiguous range from the anchor — the first
+      // slide of the current selection gesture. Shift used to toggle the one
+      // clicked slide, which meant "click the first, shift-click the last"
+      // selected exactly those two and nothing between them.
+      if (mods.shift === true) {
+        const anchor = anchorIdRef.current ?? activeSlideId ?? id
+        const from = slides.findIndex((s) => s.id === anchor)
+        const to = slides.findIndex((s) => s.id === id)
+        if (from === -1 || to === -1) {
+          setSelectedIds(new Set([id]))
+          anchorIdRef.current = id
+          return
+        }
+        const lo = Math.min(from, to)
+        const hi = Math.max(from, to)
+        // Everything in the index range, including rows hidden under a
+        // collapsed parent: they are part of the run being selected, and
+        // leaving them out would delete a parent and orphan its children.
+        setSelectedIds(new Set(slides.slice(lo, hi + 1).map((s) => s.id)))
+        // The anchor stays put, so dragging the shift-click up and down
+        // grows and shrinks one range instead of ratcheting.
+        return
+      }
+
+      // Cmd/Ctrl toggles the one slide, and moves the anchor to it. Removing
+      // the last selected slide is not allowed to empty the panel selection.
+      if (mods.toggle === true) {
         setSelectedIds((prev) => {
           const next = new Set(prev)
-          if (next.has(id) && next.size > 1) {
-            next.delete(id)
+          if (next.has(id)) {
+            if (next.size > 1) next.delete(id)
           } else {
             next.add(id)
           }
           return next
         })
-        // Don't change active slide on shift-click.
+        anchorIdRef.current = id
         return
       }
+
       setSelectedIds(new Set([id]))
+      anchorIdRef.current = id
       setActiveSlideId(id)
       clearSelection()
     },
-    [setActiveSlideId, clearSelection],
+    [slides, activeSlideId, setActiveSlideId, clearSelection],
   )
 
   const handleAdd = useCallback(() => {
@@ -620,33 +677,85 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
     clearSelection()
   }, [deckCtx, setActiveSlideId, clearSelection])
 
+  /**
+   * The slides an action aimed at `slideId` should apply to: the whole
+   * panel selection when the target is part of it, otherwise just the
+   * target — the rule `handleCopy` already used, now shared, because a
+   * Delete that took only the right-clicked slide made a multi-selection
+   * look broken the moment you tried to use one.
+   *
+   * Returned in slide-list order, which is what every caller wants.
+   */
+  const actionTargets = useCallback(
+    (slideId: string): string[] => {
+      if (!selectedIds.has(slideId) || selectedIds.size <= 1) return [slideId]
+      return slides.filter((s) => selectedIds.has(s.id)).map((s) => s.id)
+    },
+    [slides, selectedIds],
+  )
+
   const handleDuplicate = useCallback(
     (slideId: string) => {
-      const idx = slides.findIndex((s) => s.id === slideId)
-      if (idx === -1) return
-      const newSlide = duplicateSlide(deckCtx, slideId, idx + 1)
-      if (newSlide !== null) {
-        setActiveSlideId(newSlide.id)
+      const targets = actionTargets(slideId)
+      // Right to left: each insert shifts everything after it, so going the
+      // other way would interleave the copies with the originals.
+      let lastNewId: string | null = null
+      for (const id of [...targets].reverse()) {
+        const idx = slides.findIndex((s) => s.id === id)
+        if (idx === -1) continue
+        const newSlide = duplicateSlide(deckCtx, id, idx + 1)
+        if (newSlide !== null) lastNewId = newSlide.id
+      }
+      if (lastNewId !== null) {
+        setActiveSlideId(lastNewId)
         clearSelection()
       }
     },
-    [deckCtx, slides, setActiveSlideId, clearSelection],
+    [deckCtx, slides, actionTargets, setActiveSlideId, clearSelection],
   )
 
   const handleDelete = useCallback(
     (slideId: string) => {
-      const idx = slides.findIndex((s) => s.id === slideId)
-      if (idx !== -1 && slides.length > 1) {
-        const nextIdx = idx > 0 ? idx - 1 : 1
-        const nextSlide = slides[nextIdx]
-        if (nextSlide !== undefined && activeSlideId === slideId) {
-          setActiveSlideId(nextSlide.id)
+      const targets = actionTargets(slideId)
+      const doomed = new Set(targets)
+
+      // Land on the nearest survivor above the block, or the first one below
+      // it when the block starts at the top. `removeSlide` keeps the deck
+      // from ever reaching zero slides, so deleting every slide leaves one
+      // fresh empty one behind rather than nothing.
+      let nextActiveId: string | null = activeSlideId
+      if (activeSlideId === null || doomed.has(activeSlideId)) {
+        const firstIdx = slides.findIndex((s) => doomed.has(s.id))
+        let survivor: Slide | undefined
+        for (let i = firstIdx - 1; i >= 0; i--) {
+          const s = slides[i]
+          if (s !== undefined && !doomed.has(s.id)) {
+            survivor = s
+            break
+          }
         }
+        survivor ??= slides.find((s) => !doomed.has(s.id))
+        nextActiveId = survivor?.id ?? null
       }
-      removeSlide(deckCtx, slideId)
+
+      for (const id of targets) {
+        removeSlide(deckCtx, id)
+      }
+
+      // Keep the panel's invariant: when the selection is not empty it holds
+      // the active slide. Leaving the deleted ids in it would ring rows that
+      // no longer exist until the prune effect caught up.
+      if (nextActiveId !== null) {
+        setActiveSlideId(nextActiveId)
+        setSelectedIds(new Set([nextActiveId]))
+        anchorIdRef.current = nextActiveId
+      } else {
+        setSelectedIds(new Set())
+        anchorIdRef.current = null
+      }
       clearSelection()
     },
-    [deckCtx, slides, activeSlideId, setActiveSlideId, clearSelection],
+    [deckCtx, slides, activeSlideId, actionTargets, setActiveSlideId, clearSelection],
   )
 
   /** Panel-level rename request — set by the context menu's Rename
@@ -664,15 +773,13 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const handleCopy = useCallback(
     (slideId: string) => {
-      // If the right-clicked slide is part of the multi-selection, copy the
-      // whole selection (in slide-list order). Otherwise copy just that one.
-      const ids = selectedIds.has(slideId) ? new Set(selectedIds) : new Set([slideId])
+      const ids = new Set(actionTargets(slideId))
       const ordered = slides.filter((s) => ids.has(s.id))
       if (ordered.length === 0) return
       setSlideClipboard(ordered)
       setClipboardTick((t) => t + 1)
     },
-    [slides, selectedIds],
+    [slides, actionTargets],
   )
 
   const handlePaste = useCallback(
@@ -700,7 +807,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const handleTransition = useCallback(
     (slideId: string) => {
-      handleActivate(slideId, false)
+      handleActivate(slideId)
     },
     [handleActivate],
   )
@@ -959,7 +1066,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       handler: () => {
         const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
         const next = slides[Math.min(slides.length - 1, currentIdx + 1)]
-        if (next !== undefined) handleActivate(next.id, false)
+        if (next !== undefined) handleActivate(next.id)
       },
     },
     {
@@ -970,7 +1077,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       handler: () => {
         const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
         const prev = slides[Math.max(0, currentIdx - 1)]
-        if (prev !== undefined) handleActivate(prev.id, false)
+        if (prev !== undefined) handleActivate(prev.id)
       },
     },
     {
@@ -979,7 +1086,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       preventDefault: true,
       description: 'Open active slide',
       handler: () => {
-        if (activeSlideId !== null) handleActivate(activeSlideId, false)
+        if (activeSlideId !== null) handleActivate(activeSlideId)
       },
     },
     {
