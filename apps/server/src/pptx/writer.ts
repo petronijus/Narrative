@@ -1203,20 +1203,32 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
 }
 
 /**
- * Append parsed slides at the end of an existing deck's Y.Doc and return
- * the differential update — the caller stores this as a new `deck_updates`
+ * Insert parsed slides into an existing deck's Y.Doc and return the
+ * differential update — the caller stores this as a new `deck_updates`
  * row, so Hocuspocus's next replay produces the existing deck PLUS the
- * appended slides.
+ * inserted slides.
  *
  * The `existingDoc` MUST already be hydrated from prior `deck_updates`
  * rows; this function does not re-fetch anything from storage. The
  * caller (route handler) replays the deck history and hands the resulting
  * Y.Doc here.
  *
- * Returned `slideCount` is the number of slides APPENDED, not the deck's
+ * `insertAt` is the index the first imported slide takes in the deck, in
+ * the PRE-insert array — the same convention the slides panel's drop
+ * indicator uses, so "the indicator sits above slide 3" means
+ * `insertAt === 3`. The rest follow it in file order, which is why the
+ * index is stepped per slide instead of passing the same one each time:
+ * `addSlide(ctx, 3)` three times over would reverse the deck. Omitted (or
+ * past the end) appends, which is what the toolbar's Append button wants.
+ *
+ * Returned `slideCount` is the number of slides INSERTED, not the deck's
  * new total — matches the import route's response shape for symmetry.
  */
-export function buildDeckAppendUpdate(parsed: ParsedPptx, existingDoc: Y.Doc): WriteResult {
+export function buildDeckAppendUpdate(
+  parsed: ParsedPptx,
+  existingDoc: Y.Doc,
+  insertAt?: number,
+): WriteResult {
   const ctx = hydrateSlideDoc(existingDoc)
   // Snapshot of the doc's state BEFORE we append. `encodeStateAsUpdate(doc,
   // sv)` returns only the operations missing from `sv` — exactly the diff
@@ -1231,10 +1243,17 @@ export function buildDeckAppendUpdate(parsed: ParsedPptx, existingDoc: Y.Doc): W
   const scaleY = SLIDE_HEIGHT / Math.max(1, parsed.slideHeight)
   const scale = Math.min(scaleX, scaleY)
 
-  for (const slide of parsed.slides) {
+  // Clamp once, up front: a caller that asks for index 99 of a 4-slide deck
+  // means "at the end", and a negative index means "at the top".
+  const existingCount = listSlides(ctx).length
+  const base =
+    insertAt === undefined ? undefined : Math.max(0, Math.min(Math.trunc(insertAt), existingCount))
+
+  for (const [offset, slide] of parsed.slides.entries()) {
     // addSlide() with no index argument appends at the end of the slides
-    // array — exactly what we want for "import → append".
-    const created = addSlide(ctx)
+    // array — what "import → append" wants. With one, each slide goes one
+    // place further along so the imported run keeps its file order.
+    const created = base === undefined ? addSlide(ctx) : addSlide(ctx, base + offset)
     const stats = writeSlideShapes(ctx, created.id, slide, scale)
     objectsCreated += stats.objectsCreated
     skippedImages += stats.skippedImages

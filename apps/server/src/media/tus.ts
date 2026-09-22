@@ -51,6 +51,7 @@ import { eq } from 'drizzle-orm'
 import { folders, decks } from '../db/schema.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
+import { appendPptxToDeck } from '../pptx/appendDeck.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { subsystemLogger } from '../observability/logger.js'
 
@@ -395,9 +396,22 @@ async function requireUploadCreatorAndAccess(
   const folderId = upload.metadata?.['folderId'] ?? null
 
   if (mime === PPTX_MIME) {
-    // pptx imports are folder-scoped: re-assert folder ownership.
+    // A pptx upload is bound to EITHER a deck (insert into it — the slides
+    // panel's drop) or a folder (create a new deck in it). The binding
+    // decides which access is re-asserted: inserting slides into a deck is
+    // an ordinary edit of that deck and must not require owning the folder
+    // it sits in, or a shared editor could not drop a .pptx onto a deck
+    // they are otherwise free to rewrite.
+    if (deckId) {
+      const deckAccess = await resolveDeckAccess(db, { deckId, userId, shareToken: null })
+      if (!deckAccess || !roleAtLeast(deckAccess.role, 'editor')) {
+        throw { status_code: 403, body: 'Forbidden: editor access to the deck revoked' }
+      }
+      return
+    }
+    // Folder-scoped import: re-assert folder ownership.
     if (!folderId) {
-      throw { status_code: 403, body: 'Forbidden: pptx upload missing folder binding' }
+      throw { status_code: 403, body: 'Forbidden: pptx upload missing deck or folder binding' }
     }
     const [folder] = await db
       .select({ id: folders.id, ownerUserId: folders.ownerUserId })
@@ -541,7 +555,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // tell them apart at a glance.
       let storageKey: string
       if (mime === PPTX_MIME) {
-        storageKey = `imports/pptx-temp/${folderId ?? 'unknown'}/${assetId}/source.${ext}`
+        // Deck-scoped (insert into an open deck) vs folder-scoped (create a
+        // new deck): namespace the transient blob by whichever binding it
+        // has, so an orphan sweep can tell what it was for.
+        const scope = deckId !== 'unknown' ? `deck/${deckId}` : (folderId ?? 'unknown')
+        storageKey = `imports/pptx-temp/${scope}/${assetId}/source.${ext}`
       } else {
         const folder = isFontUpload(mime, filename) ? 'fonts' : 'uploads'
         storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
@@ -569,6 +587,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       const meta = parseMetadata(req.headers['upload-metadata'])
       const deckId = meta['deckId'] ?? upload.metadata?.['deckId'] ?? null
       const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
+      const insertAtRaw = meta['insertAt'] ?? upload.metadata?.['insertAt'] ?? null
 
       // 3. MIME resolution (used by both the pptx branch and the media branch).
       const mime =
@@ -604,6 +623,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         [CREATOR_META_KEY]: userId,
         ...(deckId ? { deckId } : {}),
         ...(folderId ? { folderId } : {}),
+        ...(insertAtRaw !== null ? { insertAt: insertAtRaw } : {}),
         ...(mime ? { 'content-type': mime } : {}),
       }
 
@@ -613,10 +633,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // folder ownership instead of deck role. The MinIO blob is transient
       // — the onUploadFinish hook parses it and deletes it.
       if (mime === PPTX_MIME) {
-        if (!folderId) {
+        if (!deckId && !folderId) {
           throw {
             status_code: 400,
-            body: 'Missing folderId in Upload-Metadata for pptx import',
+            body: 'Missing deckId or folderId in Upload-Metadata for pptx import',
           }
         }
         const uploadSize = upload.size ?? 0
@@ -626,11 +646,33 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
             body: `PPTX import exceeds maximum size of ${MAX_PPTX_UPLOAD_SIZE} bytes.`,
           }
         }
+
+        // ─── Deck-scoped: insert the slides into an existing deck ────────
+        // What the slides panel's drop does. `insertAt` is optional — no
+        // value means append, which is the toolbar's Append button.
+        if (deckId) {
+          if (insertAtRaw !== null && !/^\d+$/.test(insertAtRaw)) {
+            throw {
+              status_code: 400,
+              body: 'insertAt must be a non-negative integer',
+            }
+          }
+          const access = await resolveDeckAccess(db, { deckId, userId, shareToken: null })
+          if (!access || !roleAtLeast(access.role, 'editor')) {
+            throw {
+              status_code: 403,
+              body: 'Forbidden: editor or owner role required to import into this deck',
+            }
+          }
+          return { res, metadata: persistedMetadata }
+        }
+
+        // ─── Folder-scoped: create a new deck ────────────────────────────
         // Folder ownership — same check the synchronous pptxImport route does.
         const [folder] = await db
           .select({ id: folders.id, ownerUserId: folders.ownerUserId })
           .from(folders)
-          .where(eq(folders.id, folderId))
+          .where(eq(folders.id, folderId!))
           .limit(1)
         if (!folder) {
           throw { status_code: 404, body: 'Folder not found' }
@@ -765,6 +807,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         upload.metadata?.['content-type'] ??
         'application/octet-stream'
       const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
+      // A pptx bound to a deck carries its target index; the compound upload
+      // id stores 'unknown' for the folder-scoped case, so the metadata is
+      // what distinguishes them.
+      const pptxDeckId = upload.metadata?.['deckId'] ?? meta['deckId'] ?? null
+      const insertAtRaw = meta['insertAt'] ?? upload.metadata?.['insertAt'] ?? null
 
       // Get authoritative size from S3 head
       let sizeBytes = upload.size ?? 0
@@ -780,10 +827,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // delete the MinIO object whether import succeeded or not. Failed
       // imports leave nothing behind to clean up.
       if (mimeRaw === PPTX_MIME) {
-        if (!folderId) {
+        if (!folderId && !pptxDeckId) {
           // Should have been caught in onUploadCreate; defensive guard.
           await deleteMinIOObject(s3, storageKey)
-          throw { status_code: 400, body: 'Missing folderId in pptx import metadata' }
+          throw { status_code: 400, body: 'Missing deckId or folderId in pptx import metadata' }
         }
         let pptxBytes: Buffer
         try {
@@ -800,9 +847,59 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           throw { status_code: 500, body: 'Failed to read uploaded pptx from storage' }
         }
 
+        // ─── Deck-scoped: insert into an existing deck ──────────────────
+        if (pptxDeckId) {
+          const insertAt =
+            insertAtRaw !== null && /^\d+$/.test(insertAtRaw) ? Number(insertAtRaw) : undefined
+          const appendResult = await appendPptxToDeck({
+            bytes: pptxBytes,
+            deckId: pptxDeckId,
+            ownerUserId: userId,
+            ...(insertAt !== undefined ? { insertAt } : {}),
+            db,
+            log: {
+              info: (o, m) => log.info(o, m ?? 'pptx append'),
+              warn: (o, m) => log.warn(o, m ?? 'pptx append'),
+            },
+          })
+
+          // ALWAYS clean up the temp blob — a successful insert doesn't need
+          // the bytes (image extraction already ran from the in-memory
+          // Buffer); a failed one has nothing worth keeping.
+          await deleteMinIOObject(s3, storageKey)
+
+          if (!appendResult.ok) {
+            const { error } = appendResult
+            const status =
+              error.kind === 'parseFailed' ||
+              error.kind === 'noSlides' ||
+              error.kind === 'emptyBody'
+                ? 400
+                : 500
+            const message =
+              error.kind === 'parseFailed'
+                ? `Could not parse .pptx — ${error.message}`
+                : error.kind === 'noSlides'
+                  ? '.pptx contains no slides'
+                  : error.kind
+            throw { status_code: status, body: message }
+          }
+
+          return {
+            res,
+            status_code: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Narrative-Deck-Id': appendResult.result.deckId,
+            },
+            body: JSON.stringify(appendResult.result),
+          }
+        }
+
+        // ─── Folder-scoped: create a new deck ───────────────────────────
         const importResult = await importDeckFromPptxBytes({
           bytes: pptxBytes,
-          folderId,
+          folderId: folderId!,
           ownerUserId: userId,
           ...(typeof filename === 'string' ? { filenameForTitle: filename } : {}),
           db,

@@ -97,15 +97,6 @@ export interface ApiClient {
    */
   importPptx(file: File, folderId: string): Promise<ImportPptxResult>
 
-  /**
-   * M28 — Append a .pptx into an existing deck. Server appends the parsed
-   * slides at the end of the current slide list via a differential Y.Doc
-   * update; the caller's open Hocuspocus connection picks up the new slides
-   * within seconds (no client-side refresh needed). Caller must already
-   * have editor+ role on the deck.
-   */
-  appendPptx(file: File, deckId: string): Promise<AppendPptxResult>
-
   // ---------------------------------------------------------------------------
   // M16 P5 — Component API
   // ---------------------------------------------------------------------------
@@ -233,12 +224,17 @@ export interface ImportPptxResult {
  *  fields. `appendedSlides` is the number of slides added, not the deck total. */
 export interface AppendPptxResult {
   deckId: string
+  /** Slides inserted, not the deck's new total. */
   appendedSlides: number
   objectsCreated: number
   skipped: { images: number; unknownShapes: number }
   ignoredElements: string[]
   slideWidth: number
   slideHeight: number
+  /** Index the first inserted slide actually landed at, after the server
+   *  clamped the requested one. The panel selects this slide when the
+   *  import finishes, which would be wrong if it assumed its own index. */
+  insertedAt: number
 }
 
 // ---------------------------------------------------------------------------
@@ -564,28 +560,6 @@ export function createApiClient(): ApiClient {
         throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
       }
       return (await res.json()) as ImportPptxResult
-    },
-
-    appendPptx: async (file, deckId) => {
-      const res = await request(`/decks/${deckId}/append-pptx`, {
-        method: 'POST',
-        headers: {
-          'Content-Type':
-            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-          'X-Narrative-Filename': file.name,
-        },
-        body: file,
-      })
-      if (!res.ok) {
-        let body: unknown
-        try {
-          body = await res.json()
-        } catch {
-          body = {}
-        }
-        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body })
-      }
-      return (await res.json()) as AppendPptxResult
     },
 
     // -------------------------------------------------------------------------

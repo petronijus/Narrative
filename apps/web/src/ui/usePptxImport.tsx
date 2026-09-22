@@ -31,19 +31,7 @@ import { FileUp } from 'lucide-react'
 import { ImportPptxDialog } from './ImportPptxDialog.js'
 import { importPptxViaTus } from '../state/importPptxViaTus.js'
 import type { FolderSummary, ImportPptxResult } from '../api/client.js'
-
-const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-
-/**
- * The OOXML presentation MIME is the canonical answer, but some systems —
- * Safari in particular — hand over an empty string or `application/zip` for
- * the same file, so the extension is the fallback rather than the other way
- * round.
- */
-export function isPptxFile(file: File): boolean {
-  if (file.name.toLowerCase().endsWith('.pptx')) return true
-  return file.type === PPTX_MIME
-}
+import { PPTX_MIME, pptxRejectionReason } from '../lib/pptxFiles.js'
 
 export interface UsePptxImportOptions {
   /** Folders the file may be imported into. The first is preselected. */
@@ -94,8 +82,11 @@ export function usePptxImport({
 
   const accept = useCallback(
     (file: File) => {
-      if (!isPptxFile(file)) {
-        onError?.('Only .pptx files can be imported.')
+      // Shared with the slides panel's drop so both refuse a legacy `.ppt`
+      // with the same sentence, which is the one that says what to do next.
+      const reason = pptxRejectionReason(file)
+      if (reason !== null) {
+        onError?.(reason)
         return
       }
       setPendingPptx(file)

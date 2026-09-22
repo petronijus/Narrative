@@ -11,9 +11,15 @@
  *   Dragging a parent drags all its descendants as one block.
  * - Shift-click extends selection; plain click replaces it. Dragging
  *   any selected slide drags the whole selection (with descendants).
+ * - Dropping a `.pptx` from the desktop imports it INTO this deck at the
+ *   gap the pointer is over (see `usePptxDropIntoDeck`). That is a
+ *   different gesture from the reorder drag above — files arrive as HTML5
+ *   drag events, slides move by pointer events — so the two share only the
+ *   drop indicator they draw.
  */
 
 import {
+  Fragment,
   memo,
   useRef,
   useState,
@@ -50,6 +56,8 @@ import {
 } from '../state/slideClipboard.js'
 import type { Slide } from '@narrative/shared'
 import { SlideItemMenu } from './SlideItemMenu.js'
+import { usePptxDropIntoDeck } from './usePptxDropIntoDeck.js'
+import { PptxImportRow } from './PptxImportRow.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { Plus, EyeOff, ChevronRight, PanelLeftClose } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -1020,10 +1028,48 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   }, [activeSlideId])
 
   // ---------------------------------------------------------------------------
+  // .pptx dropped from the desktop → import into THIS deck, at the drop gap
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The imported slides arrive over Yjs, so the panel learns about them the
+   * same way it learns about a peer's edit: the array grows. All the import
+   * itself can tell us is the index they landed at, which is what selects
+   * them — but only once the array has actually caught up, hence the ref and
+   * the effect rather than a `setActiveSlideId` in the completion callback.
+   */
+  const pendingImportFocusRef = useRef<number | null>(null)
+  const handleImported = useCallback((insertedAt: number) => {
+    pendingImportFocusRef.current = insertedAt
+  }, [])
+
+  const pptxDrop = usePptxDropIntoDeck({
+    deckId,
+    listRef,
+    slideCount: slides.length,
+    disabled: isViewer,
+    onImported: handleImported,
+  })
+
+  useEffect(() => {
+    const target = pendingImportFocusRef.current
+    if (target === null) return
+    const slide = slides[target]
+    if (slide === undefined) return
+    pendingImportFocusRef.current = null
+    setActiveSlideId(slide.id)
+    setSelectedIds(new Set([slide.id]))
+  }, [slides, setActiveSlideId])
+
+  // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
   const draggingSet = dragState !== null ? new Set(dragState.slideIds) : null
+  /** Jobs waiting to render in the gap above slide `idx`. */
+  const importsAt = (idx: number) => pptxDrop.jobs.filter((j) => j.insertAt === idx)
+  /** …and everything aimed at or past the end of the list. */
+  const importsAtEnd = pptxDrop.jobs.filter((j) => j.insertAt >= slides.length)
 
   return (
     <div
@@ -1095,8 +1141,19 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
         canPaste={canPaste}
       >
         {slides.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="text-xs text-gray-600">No slides</p>
+          // Still a drop target with nothing in it — a deck whose slides were
+          // all deleted is exactly when someone reaches for a .pptx.
+          <div className="flex flex-1 flex-col" {...pptxDrop.dropHandlers}>
+            {pptxDrop.jobs.map((job) => (
+              <div key={job.id} className="pt-2">
+                <PptxImportRow job={job} onDismiss={pptxDrop.dismiss} />
+              </div>
+            ))}
+            <div className="flex flex-1 items-center justify-center">
+              <p className="text-xs text-gray-600">
+                {pptxDrop.indicatorAt !== null ? 'Drop to import' : 'No slides'}
+              </p>
+            </div>
           </div>
         ) : (
           <ul
@@ -1115,6 +1172,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
             // source; this stays as the panel's own guarantee that it never
             // re-anchors, whatever the next transient turns out to be.
             className="scrollbar-narrative flex flex-1 flex-col gap-2 overflow-y-auto py-2 [overflow-anchor:none]"
+            {...pptxDrop.dropHandlers}
           >
             {slides.map((slide, idx) => {
               const isDragging = draggingSet !== null && draggingSet.has(slide.id)
@@ -1127,46 +1185,70 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
                 dragState !== null &&
                 !draggingSet!.has(slide.id) &&
                 dragState.insertAt !== dragState.fromIndex
-              const dropIndicatorAbove = showIndicator && dragState!.insertAt === idx
+              // A file being dragged over the panel draws the same line, at
+              // the gap it would drop into. The two can never be live at
+              // once: one is a pointer gesture, the other an HTML5 drag.
+              const fileDropAt = pptxDrop.indicatorAt
+              const dropIndicatorAbove =
+                (showIndicator && dragState!.insertAt === idx) || fileDropAt === idx
               const dropIndicatorBelow =
-                showIndicator && dragState!.insertAt >= slides.length && idx === slides.length - 1
+                (showIndicator &&
+                  dragState!.insertAt >= slides.length &&
+                  idx === slides.length - 1) ||
+                (fileDropAt !== null && fileDropAt >= slides.length && idx === slides.length - 1)
 
               // Live-preview indent only for the dragged *root* slide.
               const isDragRoot = dragState !== null && dragState.slideIds[0] === slide.id
               const indent =
                 isDragRoot && dragState !== null ? dragState.indent : slideIndent(slide)
 
+              const rowImports = importsAt(idx)
+
               return (
-                <li key={slide.id}>
-                  <SlideItem
-                    slide={slide}
-                    index={idx}
-                    indent={indent}
-                    hasChildren={outline.hasChildrenMap.get(slide.id) ?? false}
-                    collapsed={slide.collapsed === true}
-                    hidden={outline.hiddenIds.has(slide.id)}
-                    isActive={slide.id === activeSlideId}
-                    isActiveDescendant={activeDescendants.has(slide.id)}
-                    isSelected={selectedIds.has(slide.id)}
-                    isDragging={isDragging}
-                    dropIndicatorAbove={dropIndicatorAbove}
-                    dropIndicatorBelow={dropIndicatorBelow}
-                    thumbnailUrl={thumbnailMap.get(slide.id)}
-                    readOnly={isViewer}
-                    onActivate={handleActivate}
-                    onToggleCollapsed={handleToggleCollapsed}
-                    onPointerDown={isViewer ? NOOP_POINTER_DOWN : handlePointerDown}
-                    onDuplicate={handleDuplicate}
-                    onDelete={handleDelete}
-                    onTransition={handleTransition}
-                    onRename={handleRename}
-                    onToggleSkip={handleToggleSkip}
-                    editRequestId={editRequestId}
-                    onConsumeEditRequest={consumeEditRequest}
-                  />
-                </li>
+                <Fragment key={slide.id}>
+                  {rowImports.map((job) => (
+                    <li key={job.id}>
+                      <PptxImportRow job={job} onDismiss={pptxDrop.dismiss} />
+                    </li>
+                  ))}
+                  <li>
+                    <SlideItem
+                      slide={slide}
+                      index={idx}
+                      indent={indent}
+                      hasChildren={outline.hasChildrenMap.get(slide.id) ?? false}
+                      collapsed={slide.collapsed === true}
+                      hidden={outline.hiddenIds.has(slide.id)}
+                      isActive={slide.id === activeSlideId}
+                      isActiveDescendant={activeDescendants.has(slide.id)}
+                      isSelected={selectedIds.has(slide.id)}
+                      isDragging={isDragging}
+                      dropIndicatorAbove={dropIndicatorAbove}
+                      dropIndicatorBelow={dropIndicatorBelow}
+                      thumbnailUrl={thumbnailMap.get(slide.id)}
+                      readOnly={isViewer}
+                      onActivate={handleActivate}
+                      onToggleCollapsed={handleToggleCollapsed}
+                      onPointerDown={isViewer ? NOOP_POINTER_DOWN : handlePointerDown}
+                      onDuplicate={handleDuplicate}
+                      onDelete={handleDelete}
+                      onTransition={handleTransition}
+                      onRename={handleRename}
+                      onToggleSkip={handleToggleSkip}
+                      editRequestId={editRequestId}
+                      onConsumeEditRequest={consumeEditRequest}
+                    />
+                  </li>
+                </Fragment>
               )
             })}
+            {/* Anything dropped below the last slide, or aimed past the end
+                of a list that has since shrunk. */}
+            {importsAtEnd.map((job) => (
+              <li key={job.id}>
+                <PptxImportRow job={job} onDismiss={pptxDrop.dismiss} />
+              </li>
+            ))}
           </ul>
         )}
       </SlidesPanelContextMenu>

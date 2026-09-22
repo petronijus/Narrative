@@ -69,6 +69,7 @@ import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { listSlides } from '@narrative/slide-model'
 import { ExportPptxDialog } from './ExportPptxDialog.js'
+import { importPptxViaTus } from '../state/importPptxViaTus.js'
 import type { Slide } from '@narrative/shared'
 import { useSelection } from '../state/SelectionContext.js'
 import { createObjectOfType } from '@narrative/slide-model'
@@ -785,17 +786,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   setAppending(true)
                   setExportError(null)
                   try {
-                    await api.appendPptx(file, id)
-                    // Hocuspocus picks up the new slides via the deck_updates
-                    // delta within a few hundred ms — no client-side reload.
+                    // Same tus path the slides panel's drop uses — one
+                    // transport for "pptx into this deck", just without an
+                    // index, which the server reads as "at the end".
+                    await importPptxViaTus({ file, deckId: id })
+                    // The slides arrive over Hocuspocus as an ordinary edit
+                    // of the live document — no client-side reload.
                   } catch (err) {
-                    const status = (err as { status?: number }).status
-                    const body = (err as { body?: { error?: string } }).body
-                    const msg =
-                      typeof body?.error === 'string'
-                        ? body.error
-                        : `Append failed${status !== undefined ? ` (HTTP ${status})` : ''}`
-                    setExportError(msg)
+                    setExportError(err instanceof Error ? err.message : 'Append failed')
                   } finally {
                     setAppending(false)
                   }

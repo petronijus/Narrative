@@ -14,12 +14,24 @@
  * The server-side `onUploadFinish` (in `apps/server/src/media/tus.ts`)
  * branches on the pptx MIME, reads the freshly-uploaded blob back from
  * MinIO, runs the deck-import pipeline, deletes the temp blob, and
- * returns the standard `ImportPptxResult` JSON in the final PATCH's
- * response body — same shape the synchronous POST returned.
+ * returns the standard result JSON in the final PATCH's response body —
+ * the same shape the synchronous POST returned.
+ *
+ * Two targets, one transport:
+ *   - `{ folderId }` creates a NEW deck in that folder (FoldersHome /
+ *     FolderDecks drop, and the Import button).
+ *   - `{ deckId, insertAt? }` inserts the slides into an OPEN deck at that
+ *     index (the slides panel's drop), or appends when the index is
+ *     omitted (the toolbar's Append button).
+ *
+ * Both go through tus rather than a plain POST because only tus reports
+ * upload progress and survives a dropped connection — a 200 MB deck over
+ * hotel wifi has to be resumable, and the panel wants a percentage to put
+ * in its placeholder row.
  */
 
 import * as tus from 'tus-js-client'
-import type { ImportPptxResult } from '../api/client.js'
+import type { AppendPptxResult, ImportPptxResult } from '../api/client.js'
 
 const API_URL = (import.meta.env['VITE_API_URL'] as string | undefined) ?? ''
 const UPLOAD_ENDPOINT = `${API_URL}/api/uploads`
@@ -34,9 +46,21 @@ export interface ImportPptxProgress {
   bytesTotal: number
 }
 
+/** Where the slides are to land. Exactly one of the two shapes. */
+export type PptxTarget =
+  | { folderId: string; deckId?: never; insertAt?: never }
+  | {
+      deckId: string
+      folderId?: never
+      /** Index the first imported slide takes, in the deck's pre-insert
+       *  array. Omitted → append at the end. The server clamps: by the time
+       *  a chunked upload finishes, the deck may have fewer slides than when
+       *  the drop happened. */
+      insertAt?: number
+    }
+
 export interface ImportPptxOptions {
   file: File
-  folderId: string
   /** Called repeatedly during upload — UI uses it to render a % bar. */
   onProgress?: (p: ImportPptxProgress) => void
   /** Signal returned by an outer AbortController. Aborting cancels the
@@ -51,10 +75,18 @@ export interface ImportPptxOptions {
  * the tus error body for HTTP-level failures (415, 413, 403, etc.) or
  * from the final response JSON for parse failures (400).
  */
-export function importPptxViaTus(opts: ImportPptxOptions): Promise<ImportPptxResult> {
-  const { file, folderId, onProgress, signal } = opts
-  return new Promise<ImportPptxResult>((resolve, reject) => {
-    let resultFromBody: ImportPptxResult | null = null
+export function importPptxViaTus(
+  opts: ImportPptxOptions & { folderId: string },
+): Promise<ImportPptxResult>
+export function importPptxViaTus(
+  opts: ImportPptxOptions & { deckId: string; insertAt?: number },
+): Promise<AppendPptxResult>
+export function importPptxViaTus(
+  opts: ImportPptxOptions & PptxTarget,
+): Promise<ImportPptxResult | AppendPptxResult> {
+  const { file, folderId, deckId, insertAt, onProgress, signal } = opts
+  return new Promise<ImportPptxResult | AppendPptxResult>((resolve, reject) => {
+    let resultFromBody: ImportPptxResult | AppendPptxResult | null = null
 
     const upload = new tus.Upload(file, {
       endpoint: UPLOAD_ENDPOINT,
@@ -68,7 +100,12 @@ export function importPptxViaTus(opts: ImportPptxOptions): Promise<ImportPptxRes
         filetype: file.type || PPTX_MIME,
         mimeType: file.type || PPTX_MIME,
         'content-type': file.type || PPTX_MIME,
-        folderId,
+        // The binding the server authorises against and dispatches on:
+        // folderId → create a deck, deckId → insert into one. Metadata, not
+        // a custom header — browser CORS strips `X-Narrative-*`.
+        ...(folderId !== undefined ? { folderId } : {}),
+        ...(deckId !== undefined ? { deckId } : {}),
+        ...(insertAt !== undefined ? { insertAt: String(insertAt) } : {}),
       },
       onProgress(bytesSent: number, bytesTotal: number) {
         if (!onProgress) return
@@ -82,9 +119,9 @@ export function importPptxViaTus(opts: ImportPptxOptions): Promise<ImportPptxRes
         const bodyText = (res as unknown as { getBody?: () => string }).getBody?.()
         if (!bodyText) return
         try {
-          const parsed = JSON.parse(bodyText) as Partial<ImportPptxResult>
+          const parsed = JSON.parse(bodyText) as Partial<ImportPptxResult | AppendPptxResult>
           if (typeof parsed.deckId === 'string' && parsed.deckId.length > 0) {
-            resultFromBody = parsed as ImportPptxResult
+            resultFromBody = parsed as ImportPptxResult | AppendPptxResult
           }
         } catch {
           // Non-JSON body → ignore; onError will fire if the upload itself failed.

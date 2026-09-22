@@ -6,6 +6,36 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Added
+
+- **Drop a `.pptx` onto the slides panel and it imports where you pointed.**
+  Dragging a presentation from the desktop over the thumbnails draws the same
+  insertion line a slide reorder does, and the imported slides land in that
+  gap rather than at the end of the deck. Several files dropped at once are
+  imported in the order they were dropped, each one after the last, and a
+  placeholder row holds the gap with the upload percentage while it runs.
+  Nothing is imported for a viewer, and a dropped image or video is still the
+  canvas's business, not the panel's.
+- **A legacy `.ppt` is refused in words that help.** It is the pre-2007
+  binary format and the parser reads OOXML out of a ZIP, so it could only ever
+  fail — previously with `End of central directory record not found`. Both
+  drop targets now recognise it before uploading a byte and say to re-save it
+  as `.pptx`. The refusal appears in the gap it was dropped into and stays
+  until dismissed.
+
+### Changed
+
+- **One transport for "a .pptx into this deck".** The toolbar's Append button
+  POSTed the whole file in one request, which reports no progress and cannot
+  resume; it now uses the same chunked tus upload as every other import. The
+  upload carries its target as metadata — `folderId` creates a deck,
+  `deckId` (+ optional `insertAt`) inserts into one — and the server
+  authorises each against the right thing: folder ownership for the first,
+  editor role on the deck for the second, so a shared editor can import into
+  a deck without owning the folder it sits in. `POST /decks/:id/append-pptx`
+  stays for API callers and gained `?at=N`; the pipeline behind both paths
+  moved into `apps/server/src/pptx/appendDeck.ts`.
+
 ### Infrastructure
 
 - **Every build and deploy cleans up after itself.** The prod VM reached 99%

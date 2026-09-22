@@ -21,19 +21,10 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import * as Y from 'yjs'
-import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckUpdates, mediaAssets } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
-import { parsePptx, type ParsedPptx } from '../pptx/parser.js'
-import { buildDeckAppendUpdate } from '../pptx/writer.js'
-import type { WriteResult } from '../pptx/writer.js'
-import { getHocuspocusInstance } from '../hocuspocus/presence.js'
-import {
-  importDeckFromPptxBytes,
-  uploadEmbeddedImagesAndPatchAssetIds,
-} from '../pptx/importDeck.js'
+import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
+import { appendPptxToDeck } from '../pptx/appendDeck.js'
 
 export const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
@@ -133,12 +124,14 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
 
   // ─── Append-pptx route ───────────────────────────────────────────────────
   // Mirrors /folders/:folderId/import-pptx but takes a deck id instead and
-  // appends the parsed slides at the end of the existing deck via a
-  // differential Y.Doc update. Uses the same MinIO upload pass + asset
-  // id wiring as the import route — the only thing that changes is the
-  // writer (buildDeckAppendUpdate vs buildDeckUpdate) and the persistence
-  // step (no new deck / permission rows, just a new deck_updates row).
-  app.post<{ Params: { id: string } }>(
+  // inserts the parsed slides into the existing deck. `?at=N` puts the first
+  // imported slide at index N (the slides panel's drop position); without it
+  // they land at the end, which is what the toolbar's Append button wants.
+  //
+  // The pipeline itself lives in pptx/appendDeck.ts because the tus upload
+  // path — what the editor actually uses, since only tus reports progress —
+  // has to run exactly the same steps.
+  app.post<{ Params: { id: string }; Querystring: { at?: string } }>(
     '/decks/:id/append-pptx',
     { preHandler: [authPreHandler, requireDeckRole('editor')] },
     async (request, reply) => {
@@ -160,118 +153,50 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
         })
       }
 
-      // ─── Parse ─────────────────────────────────────────────────────────
-      let parsed: ParsedPptx
-      try {
-        parsed = await parsePptx(body)
-      } catch (err) {
-        request.log.warn({ err }, 'pptx-append: parse failed')
-        return reply.status(400).send({
-          error: `Could not parse .pptx — ${err instanceof Error ? err.message : 'unknown error'}`,
-        })
-      }
-      if (parsed.slides.length === 0) {
-        return reply.status(400).send({ error: '.pptx contains no slides' })
+      const insertAt = parseInsertAt(request.query.at)
+      if (insertAt === 'invalid') {
+        return reply.status(400).send({ error: '`at` must be a non-negative integer' })
       }
 
-      // ─── Upload images + patch assetIds ────────────────────────────────
-      // Images for appended slides land under the SAME deckId namespace as
-      // the existing deck's media — that's important because the deck's
-      // permission grants on `mediaAssets.deckId` apply uniformly.
-      const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages } =
-        await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, request.log)
+      const appendResult = await appendPptxToDeck({
+        bytes: body,
+        deckId,
+        ownerUserId,
+        ...(insertAt !== undefined ? { insertAt } : {}),
+        db,
+        log: request.log,
+      })
 
-      // ─── Append into the LIVE document ─────────────────────────────────
-      // This used to replay deck_updates into a detached Y.Doc, append, and
-      // insert the diff as a new row. That silently threw the work away.
-      // Hocuspocus holds the deck in memory and its persistence writes a
-      // full snapshot and then deletes every older row for that doc, so our
-      // row was invisible to anyone connected and was deleted outright by
-      // the next store — the route answered 200 with a slide count while the
-      // slides ceased to exist. Reported as "I uploaded it as append and
-      // nothing happened", and reproduced: three appended decks each ended
-      // with a single row holding the pre-append state.
-      //
-      // Going through `openDirectConnection` makes the append an ordinary
-      // edit of the live document: connected editors receive it over the
-      // wire immediately, and it is persisted by the same path as every
-      // other change, so nothing can compact it away.
-      const hocuspocus = getHocuspocusInstance()
-      let written: WriteResult | null = null
-
-      if (hocuspocus !== null) {
-        const connection = await hocuspocus.openDirectConnection(deckId)
-        try {
-          await connection.transact((doc) => {
-            written = buildDeckAppendUpdate(parsed, doc)
-          })
-        } finally {
-          await connection.disconnect()
+      if (!appendResult.ok) {
+        const { error } = appendResult
+        if (error.kind === 'parseFailed') {
+          return reply.status(400).send({ error: `Could not parse .pptx — ${error.message}` })
         }
-        if (mediaAssetRows.length > 0) {
-          await db.insert(mediaAssets).values(mediaAssetRows)
+        if (error.kind === 'noSlides') {
+          return reply.status(400).send({ error: '.pptx contains no slides' })
         }
-      } else {
-        // No sync server in this process (route-only unit tests). Fall back
-        // to the detached replay + insert; nothing is holding the document,
-        // so there is no snapshot to be compacted against.
-        const updates = await db
-          .select({ update: deckUpdates.update })
-          .from(deckUpdates)
-          .where(eq(deckUpdates.deckId, deckId))
-          .orderBy(deckUpdates.id)
-        const doc = new Y.Doc()
-        for (const row of updates) {
-          try {
-            Y.applyUpdate(doc, row.update)
-          } catch (err) {
-            request.log.warn({ err, deckId }, 'pptx-append: skipping corrupt deck_updates row')
-          }
+        if (error.kind === 'emptyBody') {
+          return reply.status(400).send({ error: 'Empty body' })
         }
-        written = buildDeckAppendUpdate(parsed, doc)
-        await db.transaction(async (tx) => {
-          if (mediaAssetRows.length > 0) {
-            await tx.insert(mediaAssets).values(mediaAssetRows)
-          }
-          await tx.insert(deckUpdates).values({
-            deckId,
-            update: written!.state,
-            createdAt: new Date(),
-          })
-        })
-      }
-
-      if (written === null) {
-        request.log.error({ deckId }, 'pptx-append: append produced no result')
         return reply.status(500).send({ error: 'Append failed — no slides were written' })
       }
-      const { slideCount, objectsCreated, skipped } = written as WriteResult
 
-      request.log.info(
-        {
-          deckId,
-          appendedSlides: slideCount,
-          objectsCreated,
-          skippedImages: skipped.images + skippedUnsupportedImages,
-          skippedUnknown: skipped.unknownShapes,
-          uploadedImages: uploadedImageCount,
-          ignored: parsed.ignoredElements,
-        },
-        'pptx-append: slides appended',
-      )
-
-      return reply.status(200).send({
-        deckId,
-        appendedSlides: slideCount,
-        objectsCreated,
-        skipped: {
-          images: skipped.images + skippedUnsupportedImages,
-          unknownShapes: skipped.unknownShapes,
-        },
-        ignoredElements: parsed.ignoredElements,
-        slideWidth: parsed.slideWidth,
-        slideHeight: parsed.slideHeight,
-      })
+      return reply.status(200).send(appendResult.result)
     },
   )
+}
+
+/**
+ * Read the `at` query parameter. Absent → undefined (append at the end);
+ * a non-negative integer → that index; anything else → 'invalid', which the
+ * route turns into a 400 rather than silently appending, because a caller
+ * that sent `at=abc` has a bug it deserves to hear about. An index PAST the
+ * end is not invalid: the deck can legitimately shrink between the drop and
+ * the upload finishing, and the writer clamps.
+ */
+function parseInsertAt(raw: string | undefined): number | undefined | 'invalid' {
+  if (raw === undefined || raw === '') return undefined
+  if (!/^\d+$/.test(raw)) return 'invalid'
+  const n = Number(raw)
+  return Number.isSafeInteger(n) ? n : 'invalid'
 }

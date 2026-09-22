@@ -47,6 +47,38 @@ function textShape(overrides: Partial<ParsedShape>): ParsedShape {
   }
 }
 
+/** A parsed deck of one text shape per slide — enough to tell slides apart. */
+function deckOf(texts: string[]): ParsedPptx {
+  return {
+    ...BASE,
+    slides: texts.map((text, i) =>
+      emptySlide({
+        source: `slide${i + 1}.xml`,
+        shapes: [
+          {
+            kind: 'text',
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 50,
+            rotation: 0,
+            text,
+            sourceTag: 'p:sp',
+          },
+        ],
+      }),
+    ),
+  }
+}
+
+/** The first text object of every slide, in deck order. */
+function slideTexts(slides: Y.Array<Y.Map<unknown>>): string[] {
+  return slides.toArray().map((slide) => {
+    const objects = slide.get('objects') as Y.Array<Y.Map<unknown>>
+    return objects.get(0).get('text')?.toString() ?? ''
+  })
+}
+
 function emptySlide(overrides: Partial<ParsedSlide> = {}): ParsedSlide {
   return {
     source: 'slide1.xml',
@@ -620,6 +652,53 @@ describe('buildDeckUpdate', () => {
     expect(slideAObjects.get(0).get('text')?.toString()).toBe('Appended A')
     const slideBObjects = slides.get(2).get('objects') as Y.Array<Y.Map<unknown>>
     expect(slideBObjects.get(0).get('text')?.toString()).toBe('Appended B')
+  })
+
+  it('buildDeckAppendUpdate inserts at `insertAt`, keeping the imported file order', () => {
+    // A three-slide deck, so there is a real middle to drop into.
+    const doc = new Y.Doc()
+    Y.applyUpdate(
+      doc,
+      new Uint8Array(buildDeckUpdate(deckOf(['Original A', 'Original B', 'Original C'])).state),
+    )
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+
+    const result = buildDeckAppendUpdate(deckOf(['Imported 1', 'Imported 2']), doc, 1)
+    expect(result.slideCount).toBe(2)
+    Y.applyUpdate(doc, new Uint8Array(result.state))
+
+    // Imported slides land at 1 and 2 IN FILE ORDER — the bug worth a test
+    // is inserting each of them at the same index, which reverses them.
+    expect(slideTexts(slides)).toEqual([
+      'Original A',
+      'Imported 1',
+      'Imported 2',
+      'Original B',
+      'Original C',
+    ])
+  })
+
+  it('buildDeckAppendUpdate puts index 0 above everything', () => {
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, new Uint8Array(buildDeckUpdate(deckOf(['Original'])).state))
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+
+    Y.applyUpdate(doc, new Uint8Array(buildDeckAppendUpdate(deckOf(['Imported']), doc, 0).state))
+
+    expect(slideTexts(slides)).toEqual(['Imported', 'Original'])
+  })
+
+  it('buildDeckAppendUpdate clamps an index past the end instead of failing', () => {
+    // The deck can shrink between the drop and the upload finishing, so a
+    // stale index has to land the slides somewhere sensible rather than
+    // throwing away a parsed deck.
+    const doc = new Y.Doc()
+    Y.applyUpdate(doc, new Uint8Array(buildDeckUpdate(deckOf(['Original'])).state))
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+
+    Y.applyUpdate(doc, new Uint8Array(buildDeckAppendUpdate(deckOf(['Imported']), doc, 99).state))
+
+    expect(slideTexts(slides)).toEqual(['Original', 'Imported'])
   })
 
   it('skips image-kind shapes in v1 and counts them in `skipped.images`', async () => {
