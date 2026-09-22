@@ -6,6 +6,20 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Infrastructure
+
+- **`build-push.sh` pins `linux/amd64`.** Docker builds for the host
+  architecture, so the first release built on the Apple Silicon Mac pushed
+  arm64 images and the VM refused them at the pull — `no matching manifest
+for linux/amd64` — having already overwritten `:latest` with them. The
+  target is now pinned rather than inherited from wherever the build ran
+  (`TARGET_PLATFORM=` overrides); on arm64 it builds under emulation.
+- **`prune-images.sh` runs on macOS again.** It read the in-use image list
+  with `mapfile`, which is bash 4+; macOS ships bash 3.2, so the prune died
+  with `mapfile: command not found` on every build there — silently, because
+  a failed prune is tolerated by design. The Mac had never pruned a single
+  image. Replaced with a `while read` loop.
+
 ---
 
 ## 0.9.16 — Import where you dropped it (2026-09-22)

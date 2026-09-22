@@ -12,6 +12,7 @@
 # Usage:
 #   infra/scripts/build-push.sh            # tag = git short sha + :latest
 #   NARRATIVE_TAG=v0.8.1 infra/scripts/build-push.sh
+#   TARGET_PLATFORM=linux/arm64 infra/scripts/build-push.sh   # only if the VM ever moves
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +20,23 @@ INFRA_DIR="${SCRIPT_DIR}/.."
 REPO_DIR="${INFRA_DIR}/.."
 REG="ghcr.io/petronijus"
 cd "${INFRA_DIR}"
+
+# The prod VM is x86_64. Docker builds for the host's architecture unless told
+# otherwise, so building on an Apple Silicon Mac produced arm64 images that the
+# VM refused to run — `no matching manifest for linux/amd64 in the manifest
+# list entries`, after the tag had already been pushed and `:latest` clobbered
+# with it. Pin the target instead of relying on where the build happens to run.
+#
+# On an arm64 machine this goes through QEMU emulation, which is slower but
+# correct; Docker Desktop ships the binfmt handlers for it.
+TARGET_PLATFORM="${TARGET_PLATFORM:-linux/amd64}"
+export DOCKER_DEFAULT_PLATFORM="${TARGET_PLATFORM}"
+HOST_ARCH="$(uname -m)"
+case "${HOST_ARCH}:${TARGET_PLATFORM}" in
+  arm64:linux/amd64 | aarch64:linux/amd64)
+    echo "→ Host is ${HOST_ARCH}, target is ${TARGET_PLATFORM} — building under emulation (slow)"
+    ;;
+esac
 
 [[ -f .env.prod ]] || { echo "✗ Missing infra/.env.prod — run ../scripts/secrets-decrypt.sh prod" >&2; exit 1; }
 set -a; # shellcheck disable=SC1091

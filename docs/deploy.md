@@ -81,6 +81,20 @@ ssh -J root@192.0.2.100 petr@192.0.2.147  # via jump host (outside LAN)
 Both platforms need the ed25519 SSH key that VM 103 trusts. The key is
 already set up on both machines.
 
+🚨 **The images must be linux/amd64, whatever you build on.** The VM is
+x86_64; Docker builds for the host architecture unless told otherwise, so an
+Apple Silicon Mac produces arm64 images and the deploy dies at the pull with
+`no matching manifest for linux/amd64 in the manifest list entries` — after
+the tag has been pushed and `:latest` overwritten with it, so the next
+tagless deploy would break too. Since 0.9.16 `build-push.sh` pins
+`DOCKER_DEFAULT_PLATFORM=linux/amd64` itself (override with
+`TARGET_PLATFORM=` if the VM ever moves), so nothing is needed from you — but
+on an arm64 Mac the build runs under QEMU emulation and takes longer.
+
+If it did happen, the fix is just to rebuild and push the same tag: GHCR keeps
+whatever was pushed last, and the previous release's tag is untouched, so
+production and rollback are never at risk from a wrong-arch push.
+
 ## Quick deploy (copy-paste)
 
 From the project root (`~/Documents/Dev/Narrative`):

@@ -38,7 +38,14 @@ done
 [[ -n "$CURRENT" ]] || { echo "prune-images.sh: --current <tag> is required" >&2; exit 2; }
 
 # Images a running container is built from must never go, whatever their tag.
-mapfile -t IN_USE < <(docker ps --format '{{.Image}}' | sort -u)
+# Read with a while-loop rather than `mapfile`: that is bash 4+, and macOS
+# still ships bash 3.2, where the whole prune died with `mapfile: command not
+# found` — silently, because the caller tolerates a failed prune. The VM runs
+# bash 5 and was fine; the Mac build machine had never been pruning at all.
+IN_USE=()
+while IFS= read -r line; do
+  [[ -n "$line" ]] && IN_USE+=("$line")
+done < <(docker ps --format '{{.Image}}' | sort -u)
 in_use() {
   local ref="$1"
   local used
