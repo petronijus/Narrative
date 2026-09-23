@@ -76,10 +76,13 @@ test('dropping a .pptx inside a folder imports it as a new deck', async ({ page 
   // Now the real thing.
   await dropFileOnBody(page, bytes, 'import-test.pptx')
 
-  // The dialog opens with this folder already chosen, so Import is one click.
-  const importButton = page.getByRole('button', { name: /^Import$/ })
-  await expect(importButton).toBeVisible({ timeout: 15_000 })
-  await importButton.click()
+  // Inside a folder the page is the choice: the dialog opens already
+  // importing into it — no folder list, no "create folder", no confirm click.
+  const dialog = page.getByRole('dialog', { name: /Import PowerPoint deck/i })
+  await expect(dialog).toBeVisible({ timeout: 15_000 })
+  await expect(dialog.getByText(/Importing into/)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: /Create new folder/ })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: /^Import$/ })).toHaveCount(0)
 
   // A deck whose content did not survive the import cleanly pauses on a
   // warnings summary and waits to be acknowledged, so dismiss it if it shows.

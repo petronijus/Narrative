@@ -43,6 +43,12 @@ export interface UsePptxImportOptions {
   onError?: (message: string) => void
   /** Second line of the drop overlay. */
   hint?: string
+  /**
+   * The folder the page is showing. When set, a dropped or picked file goes
+   * straight into it — the dialog opens already uploading, with no folder
+   * choice and no confirm click; the page itself was the choice.
+   */
+  targetFolder?: FolderSummary
 }
 
 export interface UsePptxImport {
@@ -69,6 +75,7 @@ export function usePptxImport({
   onImported,
   onError,
   hint = 'It lands in this folder.',
+  targetFolder,
 }: UsePptxImportOptions): UsePptxImport {
   const [pendingPptx, setPendingPptx] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -152,6 +159,7 @@ export function usePptxImport({
         folders={folders}
         onClose={() => setPendingPptx(null)}
         onCreateFolder={onCreateFolder}
+        {...(targetFolder !== undefined ? { targetFolder } : {})}
         onImport={(folderId, file, opts) =>
           // Resumable chunked tus upload; the server's onUploadFinish hook
           // runs the deck-import pipeline against the uploaded blob.

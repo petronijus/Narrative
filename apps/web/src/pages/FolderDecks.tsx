@@ -76,12 +76,15 @@ function FolderDecksInner() {
   // id of deck for which the Move modal is open
   const [moveDeckId, setMoveDeckId] = useState<string | null>(null)
 
-  // Drop a .pptx anywhere on this page to import it as a new deck. This
-  // folder is offered first, since it is the one you are looking at, but the
-  // dialog still lets you send it elsewhere.
+  // Drop a .pptx anywhere on this page (or pick one with Import) to import it
+  // as a new deck in THIS folder — the page is the choice, so there is no
+  // folder picker and no confirm click; the dialog opens already uploading.
+  // Until the folder has loaded there is no target yet, and the picker (with
+  // this folder first) covers that brief window.
   const pptxImport = usePptxImport({
     folders:
       folder === null ? allFolders : [folder, ...allFolders.filter((f) => f.id !== folder.id)],
+    ...(folder !== null ? { targetFolder: folder } : {}),
     onCreateFolder: (name) => api.createFolder(name),
     onImported: (result) => {
       void navigate(`/deck/${result.deckId}`)
