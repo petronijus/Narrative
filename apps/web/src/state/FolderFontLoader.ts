@@ -20,8 +20,12 @@ import { useFolderFonts } from './useFolderFonts.js'
 import { useDeckFontsOptional } from './useDeckFonts.js'
 import { useCanvasInstance, type CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { FolderFontSummary } from '../api/client.js'
-import { readFontVerticalMetrics, powerpointLineHeightRatio } from '../lib/fontFileMetrics.js'
-import { registerDeclaredLineHeight } from '../lib/fontLineMetrics.js'
+import {
+  readFontVerticalMetrics,
+  powerpointDescentRatio,
+  powerpointLineHeightRatio,
+} from '../lib/fontFileMetrics.js'
+import { registerDeclaredLineMetrics } from '../lib/fontLineMetrics.js'
 
 /**
  * Pixi v8's HTMLText pipeline does NOT consult `document.fonts` when
@@ -159,12 +163,10 @@ export function FolderFontLoader(): null {
           await face.load()
           const metrics = await readFontVerticalMetrics(bytes)
           if (metrics !== null) {
-            registerDeclaredLineHeight(
-              font.family,
-              font.weight,
-              font.style,
-              powerpointLineHeightRatio(metrics),
-            )
+            registerDeclaredLineMetrics(font.family, font.weight, font.style, {
+              lineHeight: powerpointLineHeightRatio(metrics),
+              descent: powerpointDescentRatio(metrics),
+            })
           }
           // If cleanup ran while we were loading, bail without installing.
           // The cleanup will have already deleted the placeholder slot, so

@@ -41,6 +41,12 @@ export function powerpointLineHeightRatio(m: FontVerticalMetrics): number {
   return (m.hheaAscender - m.hheaDescender + m.hheaLineGap) / m.unitsPerEm
 }
 
+/** `−hhea.descender`, in ems — how far below the baseline PowerPoint's line
+ *  box ends, which fixes where the baseline sits inside it. */
+export function powerpointDescentRatio(m: FontVerticalMetrics): number {
+  return -m.hheaDescender / m.unitsPerEm
+}
+
 const TAG_SFNT_TT = 0x00010000
 const TAG_OTTO = 0x4f54544f // 'OTTO'
 const TAG_TRUE = 0x74727565 // 'true'

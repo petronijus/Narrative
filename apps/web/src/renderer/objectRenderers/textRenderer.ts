@@ -33,7 +33,11 @@
 import '../pixiHtmlTextStyleScope.js'
 import { CanvasTextMetrics, Container, Graphics, HTMLText, HTMLTextStyle } from 'pixi.js'
 import type { TextStyle } from 'pixi.js'
-import { resolveLineHeightPx, forgetMeasuredLineHeight } from '../../lib/fontLineMetrics.js'
+import {
+  resolveLineHeightPx,
+  forgetMeasuredLineHeight,
+  powerpointLineOffsetPx,
+} from '../../lib/fontLineMetrics.js'
 import * as Y from 'yjs'
 import {
   toDelta,
@@ -451,16 +455,17 @@ export function buildStyleOpts(data: TextObject): any {
  */
 export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   const vAlign = data.vAlign ?? 'top'
-  if (vAlign === 'top') {
-    textNode.y = 0
-    return
-  }
   const measured = textNode.height
-  if (vAlign === 'middle') {
-    textNode.y = Math.max(0, (data.height - measured) / 2)
-  } else {
-    textNode.y = Math.max(0, data.height - measured)
-  }
+  const block =
+    vAlign === 'top'
+      ? 0
+      : vAlign === 'middle'
+        ? Math.max(0, (data.height - measured) / 2)
+        : Math.max(0, data.height - measured)
+  // Then place the lines inside their boxes the way PowerPoint does — spare
+  // line height above the glyphs, not split around them. The block's height
+  // is unchanged, so this is a translation after alignment, not part of it.
+  textNode.y = block + powerpointLineOffsetPx(data)
 }
 
 /**
@@ -656,8 +661,12 @@ function applyClipMask(container: Container, data: TextObject): void {
   // mask admits exactly what the texture can hold, no more (anything
   // further out is not in the texture) and no less (that was the cut).
   const overshoot = lineOvershootFor(data)
+  // Line spacing below 100% moves the text up (negative PowerPoint offset),
+  // so its first line can start above the box; open the mask that far too.
+  const top = Math.min(0, node?.y ?? 0) - overshoot
+  const bottom = contentHeight + overshoot
   mask.clear()
-  mask.rect(0, -overshoot, data.width, contentHeight + overshoot * 2)
+  mask.rect(0, top, data.width, bottom - top)
   mask.fill({ color: 0xffffff })
 }
 

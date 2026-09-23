@@ -6,6 +6,40 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Changed
+
+- **Text sits in its lines the way PowerPoint puts it, everywhere.** A line
+  box is usually taller than the glyphs it holds. PowerPoint puts all of the
+  spare height above the glyphs — the baseline sits the font's descent above
+  the bottom of the line box — while CSS splits it half above and half below.
+  With generous spacing the difference is large: the Proseware deck's
+  "We made it to our first Camp!" (72 px on exactly 65 pt lines) sat 32 px
+  higher here than in PowerPoint. Because the difference is the same for
+  every line of a frame, it is one translation of the laid-out text,
+  computed once in `lib/fontLineMetrics.ts` (`powerpointLineOffsetPx`) from
+  the browser's own ascent/descent and the font file's hhea descent, and
+  applied by the renderer (text frames and table cells) and the edit overlay
+  alike. Frame heights, wrapping and auto-fit are unchanged; below 100%
+  spacing the text moves up and the clip mask opens to follow it. This
+  applies to text created in Narrative too, so a deck exported to PowerPoint
+  now lays out the same on both sides.
+
+### Fixed
+
+- **A plain paragraph at a deeper outline level is no longer indented.** In
+  PowerPoint `lvl` only selects the level whose `marL` applies; on the
+  Proseware headline (`lvl="1"`, level-2 `marL` 0, `indent` 0) that is no
+  indent at all, but the importer kept the level and the renderer drew it as
+  a 1.5 em indent — 108 px to the right. The level's margin is now resolved
+  down PowerPoint's chain (paragraph, shape, layout/master placeholder,
+  master `txStyles`, `presentation.xml` `defaultTextStyle`) and a paragraph
+  without a bullet keeps its level only when that margin is non-zero. List
+  paragraphs keep their nesting as before.
+- **The table cell editor lays text out like the cell it edits.** It pinned
+  line height to 1.2 and ignored the cell's italic, letter spacing, text
+  transform and the table's default face, so on any table not at 1.2 — every
+  imported one — the caret ran on different lines from the glyphs.
+
 ---
 
 ## 0.9.20 — Export fits its label (2026-09-23)

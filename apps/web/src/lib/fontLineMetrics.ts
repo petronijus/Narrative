@@ -33,6 +33,10 @@
  *    not read (WOFF2). Measurements taken while a webfont is still loading
  *    describe the fallback face, so they are only cached once
  *    `document.fonts.check()` says the font is there.
+ *
+ * Where the text sits inside its line boxes is the second half of the
+ * answer, see {@link powerpointLineOffsetPx}: PowerPoint puts all of a
+ * line's spare height above the glyphs, CSS splits it above and below.
  */
 
 export interface LineMetricsSource {
@@ -64,8 +68,19 @@ export const FALLBACK_NORMAL_RATIO = 1.2
 const PROBE_PX = 1000
 
 const ratioCache = new Map<string, number>()
-/** Ratios read from font files, keyed like the cache. Never invalidated: a file's metrics do not change. */
-const declared = new Map<string, number>()
+/** Browser layout ascent/descent per face, in ems — see {@link browserFontBox}. */
+const fontBoxCache = new Map<string, { ascent: number; descent: number }>()
+let boxContext: CanvasRenderingContext2D | null | undefined
+
+/** What a font file declares, in ems of the font size. */
+export interface DeclaredLineMetrics {
+  /** PowerPoint's single line height: hhea ascender − descender + gap. */
+  lineHeight: number
+  /** PowerPoint's descent below the baseline: −hhea descender. */
+  descent: number
+}
+/** Metrics read from font files, keyed like the cache. Never invalidated: a file's metrics do not change. */
+const declared = new Map<string, DeclaredLineMetrics>()
 let probe: HTMLSpanElement | null = null
 
 /**
@@ -98,41 +113,44 @@ function declaredFor(
   family: string | undefined,
   weight: number | string | undefined,
   italic: boolean | undefined,
-): number | undefined {
+): DeclaredLineMetrics | undefined {
   const exact = declared.get(metricKey(family, weight, italic))
   if (exact !== undefined) return exact
   const fam = cssFamily(family)
   const style = italic === true ? 'italic' : 'normal'
   const want = numericWeight(weight)
-  let best: { dist: number; ratio: number } | undefined
-  for (const [key, ratio] of declared) {
+  let best: { dist: number; metrics: DeclaredLineMetrics } | undefined
+  for (const [key, metrics] of declared) {
     const [kFam, kWeight, kStyle] = key.split('|')
     if (kFam !== fam || kStyle !== style) continue
     const dist = Math.abs(Number(kWeight) - want)
-    if (best === undefined || dist < best.dist) best = { dist, ratio }
+    if (best === undefined || dist < best.dist) best = { dist, metrics }
   }
-  return best?.ratio
+  return best?.metrics
 }
 /**
- * Record a font's declared line height (PowerPoint's 100%) so it is used
- * ahead of any measurement. Called by the folder-font loader with the ratio
- * read from the installed file.
+ * Record a font's declared metrics (PowerPoint's 100% line height and its
+ * descent) so they are used ahead of any measurement. Called by the
+ * folder-font loader with the values read from the installed file.
  */
-export function registerDeclaredLineHeight(
+export function registerDeclaredLineMetrics(
   family: string,
   weight: number | string,
   style: 'normal' | 'italic',
-  ratio: number,
+  metrics: DeclaredLineMetrics,
 ): void {
-  if (!(ratio > 0)) return
-  declared.set(metricKey(family, weight, style === 'italic'), ratio)
+  if (!(metrics.lineHeight > 0) || !(metrics.descent >= 0)) return
+  declared.set(metricKey(family, weight, style === 'italic'), metrics)
 }
 
 if (typeof document !== 'undefined' && typeof document.fonts?.addEventListener === 'function') {
   // A face finishing its load can change the answer for any family measured
   // against a fallback in the meantime; those were not cached, but a cached
   // system-font answer can also be superseded by a same-named webfont.
-  document.fonts.addEventListener('loadingdone', () => ratioCache.clear())
+  document.fonts.addEventListener('loadingdone', () => {
+    ratioCache.clear()
+    fontBoxCache.clear()
+  })
 }
 
 function cssFamily(family: string | undefined): string {
@@ -157,7 +175,7 @@ export function normalLineHeightRatio(
 ): number {
   const key = metricKey(family, weight, italic)
   const known = declaredFor(family, weight, italic)
-  if (known !== undefined) return known
+  if (known !== undefined) return known.lineHeight
   if (typeof document === 'undefined' || document.body === null) return FALLBACK_NORMAL_RATIO
   const w = String(weight ?? 400)
   const style = italic === true ? 'italic' : 'normal'
@@ -207,6 +225,9 @@ export function forgetMeasuredLineHeight(family: string | undefined): void {
   for (const key of ratioCache.keys()) {
     if (key.startsWith(prefix)) ratioCache.delete(key)
   }
+  for (const key of fontBoxCache.keys()) {
+    if (key.startsWith(prefix)) fontBoxCache.delete(key)
+  }
 }
 
 /**
@@ -236,9 +257,90 @@ export function effectiveLineHeightMultiple(src: LineMetricsSource): number {
   return resolveLineHeightPx(src) / src.fontSize
 }
 
+/**
+ * The font's ascent and descent as the browser lays text out with them, in
+ * ems — the "content area" CSS centres in each line box. Read from canvas
+ * `fontBoundingBox*`, which reports exactly the metrics layout uses (typo for
+ * a USE_TYPO_METRICS face such as Proseware Pro: 0.704 + 0.198, hhea otherwise).
+ * Undefined where there is no canvas (jsdom), so callers can fall back.
+ */
+function browserFontBox(
+  family: string | undefined,
+  weight: number | string | undefined,
+  italic: boolean | undefined,
+): { ascent: number; descent: number } | undefined {
+  const key = metricKey(family, weight, italic)
+  const cached = fontBoxCache.get(key)
+  if (cached !== undefined) return cached
+  if (typeof document === 'undefined') return undefined
+  if (boxContext === undefined) {
+    try {
+      boxContext = document.createElement('canvas').getContext('2d')
+    } catch {
+      boxContext = null
+    }
+  }
+  if (boxContext === null) return undefined
+  const style = italic === true ? 'italic' : 'normal'
+  const font = `${style} ${String(weight ?? 400)} ${PROBE_PX}px ${cssFamily(family)}`
+  boxContext.font = font
+  const m = boxContext.measureText('Hg')
+  const ascent = m.fontBoundingBoxAscent
+  const descent = m.fontBoundingBoxDescent
+  if (!(ascent > 0) || !(descent >= 0)) return undefined
+  const box = { ascent: ascent / PROBE_PX, descent: descent / PROBE_PX }
+  let settled = true
+  try {
+    settled = document.fonts.check(font)
+  } catch {
+    /* unparsable descriptor: nothing to wait for */
+  }
+  if (settled) fontBoxCache.set(key, box)
+  return box
+}
+
+/**
+ * How far to move laid-out text down so its lines sit where PowerPoint puts
+ * them, in px (negative moves it up).
+ *
+ * A line box is `L` tall and the glyphs need less (or, below 100%, more).
+ * PowerPoint puts the whole difference ABOVE the glyphs — the baseline sits
+ * the font's descent above the bottom of the line box. CSS splits it into
+ * equal half-leading above and below. Because the difference is the same for
+ * every line of the frame, the two layouts differ by one constant: the whole
+ * block moves, its height does not, so auto-fitted frame heights and wrapping
+ * are untouched and a single translation of the laid-out text reconciles
+ * them:
+ *
+ *   PowerPoint baseline = L − descent_ppt
+ *   CSS baseline        = (L − (ascent_css + descent_css)) / 2 + ascent_css
+ *   offset              = L/2 − descent_ppt − (ascent_css − descent_css)/2
+ *
+ * `descent_ppt` is the file's hhea descent when the loader read the file,
+ * else the browser's own (the two agree for fonts without USE_TYPO_METRICS),
+ * which reduces the offset to plain half-leading. On the Proseware deck's
+ * "We made it to our first Camp!" (72 px, exactly 65 pt) this is 32.5 px —
+ * the gap between our render and PowerPoint's.
+ *
+ * Applied by the renderer and the edit overlay alike, so both keep drawing
+ * the same line boxes; zero where the browser's metrics cannot be read.
+ */
+export function powerpointLineOffsetPx(src: LineMetricsSource): number {
+  const fontSize = src.fontSize
+  if (!(fontSize > 0)) return 0
+  const box = browserFontBox(src.fontFamily, src.fontWeight, src.italic)
+  if (box === undefined) return 0
+  const lineHeight = resolveLineHeightPx(src)
+  const declaredDescent = declaredFor(src.fontFamily, src.fontWeight, src.italic)?.descent
+  const pptDescent = (declaredDescent ?? box.descent) * fontSize
+  return lineHeight / 2 - pptDescent - ((box.ascent - box.descent) * fontSize) / 2
+}
+
 /** Test hook: forget every measurement. */
 export function __resetFontLineMetricsForTests(): void {
   ratioCache.clear()
+  fontBoxCache.clear()
+  boxContext = undefined
   declared.clear()
   if (probe !== null) {
     probe.remove()

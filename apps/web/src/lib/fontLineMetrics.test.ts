@@ -7,12 +7,13 @@
  * contract: environments without layout render exactly as before (1.2).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   resolveLineHeightPx,
   effectiveLineHeightMultiple,
   normalLineHeightRatio,
-  registerDeclaredLineHeight,
+  registerDeclaredLineMetrics,
+  powerpointLineOffsetPx,
   forgetMeasuredLineHeight,
   numericWeight,
   FALLBACK_NORMAL_RATIO,
@@ -64,9 +65,12 @@ describe('effectiveLineHeightMultiple', () => {
   })
 })
 
-describe('registerDeclaredLineHeight', () => {
+describe('registerDeclaredLineMetrics', () => {
   it('declared file metrics win over measurement and the fallback', () => {
-    registerDeclaredLineHeight('Proseware Pro Regular', 400, 'normal', 1.162)
+    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+      lineHeight: 1.162,
+      descent: 0.2,
+    })
     expect(normalLineHeightRatio('Proseware Pro Regular', 400, false)).toBeCloseTo(1.162, 6)
     // Keyed by weight and style: the italic face is still unknown here.
     expect(normalLineHeightRatio('Proseware Pro Regular', 400, true)).toBe(FALLBACK_NORMAL_RATIO)
@@ -76,8 +80,8 @@ describe('registerDeclaredLineHeight', () => {
     ).toBeCloseTo(0.75 * 1.162 * 158, 4)
   })
 
-  it('ignores a non-positive ratio', () => {
-    registerDeclaredLineHeight('Broken', 400, 'normal', 0)
+  it('ignores a non-positive line height', () => {
+    registerDeclaredLineMetrics('Broken', 400, 'normal', { lineHeight: 0, descent: 0.2 })
     expect(normalLineHeightRatio('Broken', 400, false)).toBe(FALLBACK_NORMAL_RATIO)
   })
 })
@@ -91,13 +95,16 @@ describe('weight matching', () => {
     expect(numericWeight(300)).toBe(300)
     expect(numericWeight(undefined)).toBe(400)
     // The reported case: object says "normal", the installed face says 400.
-    registerDeclaredLineHeight('Proseware Pro Regular', 400, 'normal', 1.162)
+    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+      lineHeight: 1.162,
+      descent: 0.2,
+    })
     expect(normalLineHeightRatio('Proseware Pro Regular', 'normal', false)).toBeCloseTo(1.162, 6)
   })
 
   it('falls back to the nearest declared weight of the same family and style', () => {
-    registerDeclaredLineHeight('Face', 300, 'normal', 1.1)
-    registerDeclaredLineHeight('Face', 700, 'normal', 1.3)
+    registerDeclaredLineMetrics('Face', 300, 'normal', { lineHeight: 1.1, descent: 0.2 })
+    registerDeclaredLineMetrics('Face', 700, 'normal', { lineHeight: 1.3, descent: 0.2 })
     expect(normalLineHeightRatio('Face', 400, false)).toBeCloseTo(1.1, 6)
     expect(normalLineHeightRatio('Face', 'bold', false)).toBeCloseTo(1.3, 6)
     expect(normalLineHeightRatio('Face', 600, false)).toBeCloseTo(1.3, 6)
@@ -108,12 +115,69 @@ describe('weight matching', () => {
 
 describe('forgetMeasuredLineHeight', () => {
   it('drops measurements but keeps what the font file declared', () => {
-    registerDeclaredLineHeight('Proseware Pro Regular', 400, 'normal', 1.162)
+    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+      lineHeight: 1.162,
+      descent: 0.2,
+    })
     // jsdom measures nothing, so the only thing there is to forget is the
     // declared ratio — which must survive: it describes the file, not a probe.
     forgetMeasuredLineHeight('Proseware Pro Regular')
     expect(normalLineHeightRatio('Proseware Pro Regular', 400, false)).toBeCloseTo(1.162, 6)
     // Unknown families are a no-op, not an error.
     expect(() => forgetMeasuredLineHeight(undefined)).not.toThrow()
+  })
+})
+
+describe('powerpointLineOffsetPx', () => {
+  // The jsdom canvas stub is one shared object; a spy left on it would leak.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** Make the canvas report a face's layout ascent/descent, in ems. */
+  function browserReports(ascentEm: number, descentEm: number): void {
+    const ctx = document.createElement('canvas').getContext('2d')!
+    vi.spyOn(ctx, 'measureText').mockImplementation(
+      () =>
+        ({
+          width: 0,
+          fontBoundingBoxAscent: ascentEm * 1000,
+          fontBoundingBoxDescent: descentEm * 1000,
+        }) as TextMetrics,
+    )
+  }
+
+  it('puts the Proseware deck headline where PowerPoint does', () => {
+    // Proseware Pro: the browser lays it out with typo 0.704 / 0.198 (the font
+    // sets USE_TYPO_METRICS); PowerPoint uses hhea, descent 0.198. The
+    // headline is 72 px with exactly 65 pt lines = 130 px at 1920.
+    browserReports(0.704, 0.198)
+    registerDeclaredLineMetrics('Proseware Pro Regular', 400, 'normal', {
+      lineHeight: 1.162,
+      descent: 0.198,
+    })
+    const offset = powerpointLineOffsetPx({
+      fontSize: 72,
+      fontFamily: 'Proseware Pro Regular',
+      lineHeight: 130 / 72,
+    })
+    // PowerPoint baseline 130 − 14.256; CSS baseline (130 − 64.944)/2 + 50.688.
+    expect(offset).toBeCloseTo(130 - 14.256 - ((130 - 64.944) / 2 + 50.688), 3)
+  })
+
+  it('is plain half-leading when the file was not read', () => {
+    browserReports(0.8, 0.2)
+    // 150 px lines, 100 px of glyph box: CSS leaves 25 above, PowerPoint 50.
+    expect(powerpointLineOffsetPx({ fontSize: 100, lineHeight: 1.5 })).toBeCloseTo(25, 6)
+  })
+
+  it('moves text up when the line height is below the glyph box', () => {
+    browserReports(0.8, 0.2)
+    expect(powerpointLineOffsetPx({ fontSize: 100, lineHeight: 0.8 })).toBeCloseTo(-10, 6)
+  })
+
+  it('is zero where the browser cannot report font metrics', () => {
+    // The jsdom canvas stub reports none.
+    expect(powerpointLineOffsetPx({ fontSize: 72, lineHeight: 1.8 })).toBe(0)
   })
 })

@@ -30,7 +30,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { resolveLineHeightPx } from '../lib/fontLineMetrics.js'
+import { powerpointLineOffsetPx, resolveLineHeightPx } from '../lib/fontLineMetrics.js'
 import * as Y from 'yjs'
 import { isTokenRef } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
@@ -188,6 +188,13 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       // Same resolver as the renderer, so edit and render mode share the
       // exact same line boxes (lineHeight → lineSpacing → the font's normal).
       lineHeight: `${resolveLineHeightPx(obj)}px`,
+      // The renderer moves laid-out text by the same amount to put spare
+      // line height above the glyphs, as PowerPoint does (see
+      // powerpointLineOffsetPx). Relative positioning shifts what is drawn
+      // and where the caret goes without changing the flex layout, so
+      // vertical alignment is computed on the same block in both.
+      position: 'relative',
+      top: powerpointLineOffsetPx(obj),
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),
