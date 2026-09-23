@@ -8,6 +8,18 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.20 — Export fits its label (2026-09-23)
+
+### Fixed
+
+- **The toolbar's Export button is as wide as its label.** It reserved the
+  width of "Exporting…" at all times so the toolbar would not shift during
+  the second or two an export takes, which left the idle button ~30 px wider
+  than "Export". The label now stays "Export"; the spinner, the disabled
+  state and `aria-busy` show that it is working.
+
+---
+
 ## 0.9.19 — One way into a deck (2026-09-23)
 
 ### Removed
