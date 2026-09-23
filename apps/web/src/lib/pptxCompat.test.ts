@@ -132,10 +132,10 @@ describe('scanDeckForExportCompat', () => {
     const w = findById(out, 'imageRotation')
     expect(w).toBeDefined()
     expect(w!.count).toBe(2)
-    expect(w!.severity).toBe('lossy')
+    expect(w!.severity).toBe('simplified')
   })
 
-  it('flags image-filled shapes (rectangle + ellipse)', () => {
+  it('does not warn about image-filled shapes (PowerPoint draws them natively)', () => {
     const slide = wrap([
       { ...baseRect, fillStyle: { kind: 'image', assetId: 'a' } },
       {
@@ -145,11 +145,7 @@ describe('scanDeckForExportCompat', () => {
         fillStyle: { kind: 'image', assetId: 'a' },
       } as unknown as SlideObject,
     ])
-    const out = scanDeckForExportCompat([slide])
-    const w = findById(out, 'shapeImageFill')
-    expect(w).toBeDefined()
-    expect(w!.count).toBe(2)
-    expect(w!.severity).toBe('simplified')
+    expect(scanDeckForExportCompat([slide])).toEqual([])
   })
 
   it('flags video playback options when any non-default field is set', () => {
@@ -163,7 +159,7 @@ describe('scanDeckForExportCompat', () => {
     const w = findById(out, 'videoPlayback')
     expect(w).toBeDefined()
     expect(w!.count).toBe(2)
-    expect(w!.severity).toBe('lossy')
+    expect(w!.severity).toBe('simplified')
   })
 
   it('flags custom fonts on text and table defaults', () => {
@@ -182,10 +178,7 @@ describe('scanDeckForExportCompat', () => {
     expect(w!.severity).toBe('simplified')
   })
 
-  it('does not warn about multi-level lists (they now round-trip fully)', () => {
-    // Per-paragraph list attrs live inside the Y.Text body, which the scanner
-    // doesn't even inspect — but assert explicitly that no list-flattening
-    // warning is surfaced for a text frame that uses lists.
+  it('does not warn about multi-level lists (they round-trip fully)', () => {
     const out = scanDeckForExportCompat([
       wrap([{ ...baseText, listStyle: 'numbered' } as unknown as SlideObject]),
     ])
@@ -196,34 +189,54 @@ describe('scanDeckForExportCompat', () => {
     const out = scanDeckForExportCompat([wrap([{ ...baseText, textTransform: 'capitalize' }])])
     const w = findById(out, 'textTransformCapitalize')
     expect(w).toBeDefined()
-    expect(w!.severity).toBe('lossy')
+    expect(w!.severity).toBe('simplified')
   })
 
-  it('flags free-form group when 2+ non-table objects share a groupId', () => {
+  it('flags weights between regular and bold, but not regular or bold themselves', () => {
+    const out = scanDeckForExportCompat([
+      wrap([
+        { ...baseText, fontWeight: 300 },
+        { ...baseText, id: 't2', fontWeight: 700 },
+        { ...baseText, id: 't3', fontWeight: 'bold' },
+      ]),
+    ])
+    expect(findById(out, 'fontWeight')?.count).toBe(1)
+  })
+
+  it('flags mirrored text', () => {
+    const out = scanDeckForExportCompat([wrap([{ ...baseText, flipH: true }])])
+    expect(findById(out, 'mirroredText')?.count).toBe(1)
+  })
+
+  it('flags a different radius per corner on rectangles and rectangle masks', () => {
+    const out = scanDeckForExportCompat([
+      wrap([
+        { ...baseRect, cornerRadius: { tl: 1, tr: 2, br: 3, bl: 4 } },
+        { ...baseRect, id: 'r2', cornerRadius: 8 },
+        { ...baseImage, mask: { kind: 'rectangle', cornerRadius: { tl: 0, tr: 4, br: 0, bl: 4 } } },
+      ]),
+    ])
+    expect(findById(out, 'cornerRadiusPerCorner')?.count).toBe(2)
+  })
+
+  it('does not warn about grouped shapes (they export as PowerPoint groups)', () => {
     const out = scanDeckForExportCompat([
       wrap([
         { ...baseRect, id: 'a', groupId: 'g1' },
         { ...baseRect, id: 'b', groupId: 'g1' },
-        // Single-member group — does NOT trigger the warning.
-        { ...baseRect, id: 'c', groupId: 'g2' },
       ]),
     ])
-    const w = findById(out, 'freeFormGroup')
-    expect(w).toBeDefined()
-    // One warning per slide carrying a group ≥ 2; we don't double-count
-    // even when multiple groups in the same slide qualify.
-    expect(w!.count).toBe(1)
+    expect(out).toEqual([])
   })
 
-  it('sorts lossy warnings before simplified', () => {
+  it('sorts warnings by title', () => {
     const out = scanDeckForExportCompat([
       wrap([
-        { ...baseImage, imageRotation: 0.5 }, // lossy
-        { ...baseRect, fillStyle: { kind: 'image', assetId: 'a' } }, // simplified
+        { ...baseImage, imageRotation: 0.5 },
+        { ...baseText, fontFamily: 'Inter' },
       ]),
     ])
-    expect(out[0]!.severity).toBe('lossy')
-    expect(out[out.length - 1]!.severity).toBe('simplified')
+    expect(out.map((w) => w.title)).toEqual(['Custom fonts', 'Image rotated inside frame'])
   })
 })
 

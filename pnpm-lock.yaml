@@ -79,6 +79,9 @@ importers:
       '@narrative/slide-model':
         specifier: workspace:*
         version: link:../../packages/slide-model
+      '@nodable/entities':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@sentry/node':
         specifier: ^8.51.0
         version: 8.55.1
@@ -127,9 +130,6 @@ importers:
       pino:
         specifier: ^10.3.1
         version: 10.3.1
-      pptxgenjs:
-        specifier: ^4.0.1
-        version: 4.0.1
       probe-image-size:
         specifier: ^7.3.0
         version: 7.3.0
@@ -6458,12 +6458,6 @@ packages:
       }
     engines: { node: '>= 14' }
 
-  https@1.0.0:
-    resolution:
-      {
-        integrity: sha512-4EC57ddXrkaF0x83Oj8sM6SLQHAWXw90Skqu2M4AEWENZ3F02dFJE/GARA8igO79tcgYqGrD7ae4f5L3um2lgg==,
-      }
-
   human-signals@5.0.0:
     resolution:
       {
@@ -6525,14 +6519,6 @@ packages:
         integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==,
       }
     engines: { node: '>= 4' }
-
-  image-size@1.2.1:
-    resolution:
-      {
-        integrity: sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==,
-      }
-    engines: { node: '>=16.x' }
-    hasBin: true
 
   image-ssim@0.2.0:
     resolution:
@@ -8069,12 +8055,6 @@ packages:
       }
     engines: { node: '>=0.10.0' }
 
-  pptxgenjs@4.0.1:
-    resolution:
-      {
-        integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==,
-      }
-
   prelude-ls@1.2.1:
     resolution:
       {
@@ -8277,12 +8257,6 @@ packages:
     resolution:
       {
         integrity: sha512-FIqgj2EUvTa7R50u0rGsyTftzjYmv/a3hO345bZNrqabNqjtgiDMgmo4mkUjd+nzU5oF3dClKqFIPUKybUyqoQ==,
-      }
-
-  queue@6.0.2:
-    resolution:
-      {
-        integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==,
       }
 
   quick-format-unescaped@4.0.4:
@@ -14073,8 +14047,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  https@1.0.0: {}
-
   human-signals@5.0.0: {}
 
   human-signals@8.0.1: {}
@@ -14096,10 +14068,6 @@ snapshots:
   ignore@5.3.2: {}
 
   ignore@7.0.5: {}
-
-  image-size@1.2.1:
-    dependencies:
-      queue: 6.0.2
 
   image-ssim@0.2.0: {}
 
@@ -14944,13 +14912,6 @@ snapshots:
     dependencies:
       xtend: 4.0.2
 
-  pptxgenjs@4.0.1:
-    dependencies:
-      '@types/node': 22.19.17
-      https: 1.0.0
-      image-size: 1.2.1
-      jszip: 3.10.1
-
   prelude-ls@1.2.1: {}
 
   prettier@3.8.3: {}
@@ -15109,10 +15070,6 @@ snapshots:
       side-channel: 1.1.0
 
   querystringify@2.2.0: {}
-
-  queue@6.0.2:
-    dependencies:
-      inherits: 2.0.4
 
   quick-format-unescaped@4.0.4: {}
 

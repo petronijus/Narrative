@@ -12,14 +12,15 @@
  * Implementation:
  *   1. Replay every `deck_updates` row into a fresh Y.Doc (same code path
  *      Hocuspocus uses on connect, just inline here).
- *   2. Hydrate the slide-model handles, list slides as plain snapshots.
- *   3. Hand the slide list to `exportDeckToPptx` (pure / no I/O).
+ *   2. Hydrate the slide-model handles, list slides as plain snapshots,
+ *      resolve folder colour tokens to concrete colours.
+ *   3. Hand the slides to `writeDeck` (pptx/ooxml/) — the OOXML writer that
+ *      shares its units, vocabulary and element readers with the importer,
+ *      so an exported deck imports back as the same model
+ *      (pptx/roundtrip.test.ts) and every part is schema-valid
+ *      (pptx/ooxml/validate.test.ts).
  *   4. Stream the resulting Buffer back with a Content-Disposition that
  *      uses the deck title for the filename.
- *
- * Latency-wise the bottleneck is pptxgenjs's `.write()` which is ~1-2 s for
- * a 30-slide deck. Acceptable for an interactive download; will need a
- * worker if we ever batch-export entire folders.
  */
 
 import type { FastifyInstance } from 'fastify'
@@ -40,7 +41,8 @@ import type { Database } from '../db/client.js'
 import { decks, deckUpdates, mediaAssets, folderUpdates } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
-import { exportDeckToPptx, type AssetLoader } from '../pptx/export.js'
+import { writeDeck, type AssetLoader } from '../pptx/ooxml/writeDeck.js'
+import { notesFromFragment, type NotesDoc } from '../pptx/ooxml/notes.js'
 
 export async function registerPptxExportRoutes(app: FastifyInstance, db: Database): Promise<void> {
   app.get<{ Params: { id: string } }>(
@@ -87,15 +89,24 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
       // folder Y.Doc tokens so the .pptx carries final colour numbers instead
       // of falling back to the exporter's grey default.
       const folderTokens = await loadFolderTokens(deck.folderId, db, request)
-      const slides =
+      const resolved =
         folderTokens === null
           ? rawSlides
           : rawSlides.map((s) => resolveSlideTokens(s, folderTokens))
+      // A reference to a token the folder no longer has cannot be resolved;
+      // it is written as a neutral grey, and counted.
+      const unresolved = { count: 0 }
+      const slides = resolved.map((s) => replaceUnresolvedTokens(s, unresolved))
+      if (unresolved.count > 0) {
+        request.log.warn(
+          { deckId: id, count: unresolved.count },
+          'pptx-export: unresolved colour tokens written as grey',
+        )
+      }
 
       // ─── Asset loader for image objects + image backgrounds ──────────────
       // Memoised so repeated references (e.g. the same logo on every slide)
-      // hit MinIO once. The pptxgenjs API is sync from our side, so we have
-      // to read every byte into memory anyway.
+      // hit MinIO once; the package is assembled in memory.
       const assetCache = new Map<string, { bytes: Buffer; mimeType: string } | null>()
       const s3 = buildS3Client()
       const assetLoader: AssetLoader = async (assetId) => {
@@ -129,27 +140,26 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
       }
 
       // ─── Speaker notes per slide ─────────────────────────────────────────
-      // Walk each slide's ProseMirror-shaped notes Y.XmlFragment and flatten
-      // to a plain string (one line per `<paragraph>` block). Empty notes
-      // surface as an absent map entry so the exporter skips `addNotes`
-      // entirely on slides without content.
-      const notesBySlideId = new Map<string, string>()
+      // The notes editor's document, as it is (pptx/ooxml/notes.ts writes it
+      // formatted and exact). A slide without notes has no entry, and no
+      // notes page is written for it.
+      const notesBySlideId = new Map<string, NotesDoc>()
       for (const slide of slides) {
         const fragment = getSlideNotes(handles, slide.id)
         if (fragment === null) continue
-        const text = flattenNotesFragment(fragment)
-        if (text.length > 0) notesBySlideId.set(slide.id, text)
+        const notes = notesFromFragment(fragment)
+        if (notes.length > 0) notesBySlideId.set(slide.id, notes)
       }
 
       let buffer: Buffer
       try {
-        buffer = await exportDeckToPptx(slides, {
+        buffer = await writeDeck(slides, {
           title: deck.title,
           assetLoader,
           notesBySlideId,
         })
       } catch (err) {
-        request.log.error({ err, deckId: id }, 'pptx-export: pptxgenjs write failed')
+        request.log.error({ err, deckId: id }, 'pptx-export: writing the package failed')
         return reply.status(500).send({ error: 'Failed to build .pptx' })
       }
 
@@ -166,29 +176,6 @@ export async function registerPptxExportRoutes(app: FastifyInstance, db: Databas
         .send(buffer)
     },
   )
-}
-
-/**
- * Walk a ProseMirror-shaped Y.XmlFragment and emit a plain-text string.
- * One `\n` between block children (paragraphs etc.), and consecutive
- * blank paragraphs collapse to a single blank line — same behaviour as
- * the editor's preview pane (`useSlideNotes.serialiseFragment`).
- */
-function flattenNotesFragment(frag: Y.XmlFragment): string {
-  const lines: string[] = []
-  for (const child of frag.toArray() as Array<
-    Y.XmlElement | Y.XmlText | Y.XmlHook | Y.XmlFragment
-  >) {
-    if (child instanceof Y.XmlElement) {
-      lines.push(child.toString().replace(/<[^>]+>/g, ''))
-    } else if (child instanceof Y.XmlText) {
-      lines.push(child.toString())
-    }
-  }
-  return lines
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
 }
 
 /**
@@ -247,8 +234,7 @@ async function loadFolderTokens(
  * Walk every object on a slide and replace TokenRef references with their
  * concrete colour values. Idempotent — concrete numbers pass through
  * unchanged. Resolution failure (unknown token id) leaves the ref in
- * place; the export's `resolveColor` fallback then drops it to grey,
- * matching the pre-token-resolution behaviour.
+ * place; `replaceUnresolvedTokens` then writes it as grey.
  *
  * Token refs can sit at arbitrary depth: top-level (`obj.color`,
  * `obj.fill`, `obj.stroke`), nested (`obj.shadow.color`,
@@ -263,6 +249,41 @@ async function loadFolderTokens(
 export function resolveSlideTokens(slide: Slide, tokens: FolderTokensSnapshot): Slide {
   const objects = slide.objects.map((obj) => resolveTokensDeep(obj, tokens) as SlideObject)
   return { ...slide, objects }
+}
+
+/** Colour for a token reference that does not resolve: the writer takes concrete colours only. */
+export const UNRESOLVED_TOKEN_COLOUR = 0x808080
+
+/**
+ * Replace every token reference still left after resolution (a token the
+ * folder no longer has) with `UNRESOLVED_TOKEN_COLOUR`, counting them.
+ */
+export function replaceUnresolvedTokens(slide: Slide, counter: { count: number }): Slide {
+  const walk = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      let touched = false
+      const next = value.map((v) => {
+        const r = walk(v)
+        if (r !== v) touched = true
+        return r
+      })
+      return touched ? next : value
+    }
+    if (!isPlainObject(value)) return value
+    if (isTokenRef(value)) {
+      counter.count++
+      return UNRESOLVED_TOKEN_COLOUR
+    }
+    let touched = false
+    const next: Record<string, unknown> = {}
+    for (const key of Object.keys(value)) {
+      const r = walk(value[key])
+      next[key] = r
+      if (r !== value[key]) touched = true
+    }
+    return touched ? next : value
+  }
+  return { ...slide, objects: slide.objects.map((o) => walk(o) as SlideObject) }
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -284,8 +305,7 @@ function resolveTokensDeep(value: unknown, tokens: FolderTokensSnapshot): unknow
   }
   if (!isPlainObject(value)) return value
   // TokenRef itself — resolve to a hex number when possible. Leave the ref
-  // in place when the token id is unknown so the exporter's grey fallback
-  // matches pre-token-resolution behaviour.
+  // in place when the token id is unknown (see replaceUnresolvedTokens).
   if (isTokenRef(value)) {
     const resolved = resolveTokenValue(value, tokens)
     if (resolved !== null) {

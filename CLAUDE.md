@@ -14,21 +14,22 @@ Run the tests below **automatically before declaring work complete** —
 do not wait for the user to ask. Pick the rows that match what you
 touched. Always run unit + typecheck + lint as the baseline.
 
-| Files you touched                                             | Run automatically                                                                                          |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Anything                                                      | `pnpm typecheck` + `pnpm lint` + `pnpm -r test`                                                            |
-| `packages/slide-model/src/**`                                 | `pnpm --filter @narrative/slide-model test` (incl. property-based CRDT)                                    |
-| `packages/animation/src/**`                                   | `pnpm --filter @narrative/animation test`                                                                  |
-| `apps/server/src/**` (routes, auth, hocuspocus, media)        | `pnpm --filter server test` — covers lifecycle + leak guards                                               |
-| `apps/web/src/renderer/**` or any Pixi-touching code          | unit tests + the sampled-thumbnail e2e: `pnpm --filter web test:e2e -g "renderer-visual\|inspector-flows"` |
-| `apps/web/src/ui/**` or `apps/web/src/components/**`          | unit + relevant e2e: `pnpm --filter web test:e2e -g "<feature>"`                                           |
-| Keyboard shortcuts, focus scope, drag/drop                    | `pnpm --filter web test:e2e -g "keyboard-shortcuts"`                                                       |
-| Auth, sharing, folders, cascade-delete                        | `pnpm --filter web test:e2e -g "destructive-flows"` + `pnpm --filter server test`                          |
-| Yjs mutations, Hocuspocus, sync                               | `pnpm --filter @narrative/slide-model test` + `pnpm --filter web test:e2e -g "multi-client-collab"`        |
-| Bundle entry points, dynamic imports, vendor chunks           | `pnpm size` (size-limit budgets must stay green)                                                           |
-| Hot edit / awareness / doc-growth perf-sensitive paths        | `pnpm load:all` (compares against `tests/load/baselines.json`, warns on > 20% drift)                       |
-| Editor render path (FCP / LCP / TTI suspects)                 | `pnpm lighthouse` (warn-level Core Web Vitals)                                                             |
-| `packages/slide-model/src/{mutations,slides}.ts` deep changes | `pnpm --filter @narrative/slide-model mutate` (Stryker — slow, ~5min, run before PR not on every save)     |
+| Files you touched                                             | Run automatically                                                                                                                                                                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anything                                                      | `pnpm typecheck` + `pnpm lint` + `pnpm -r test`                                                                                                                                                                                  |
+| `packages/slide-model/src/**`                                 | `pnpm --filter @narrative/slide-model test` (incl. property-based CRDT)                                                                                                                                                          |
+| `packages/animation/src/**`                                   | `pnpm --filter @narrative/animation test`                                                                                                                                                                                        |
+| `apps/server/src/**` (routes, auth, hocuspocus, media)        | `pnpm --filter server test` — covers lifecycle + leak guards                                                                                                                                                                     |
+| `apps/web/src/renderer/**` or any Pixi-touching code          | unit tests + the sampled-thumbnail e2e: `pnpm --filter web test:e2e -g "renderer-visual\|inspector-flows"`                                                                                                                       |
+| `apps/web/src/ui/**` or `apps/web/src/components/**`          | unit + relevant e2e: `pnpm --filter web test:e2e -g "<feature>"`                                                                                                                                                                 |
+| Keyboard shortcuts, focus scope, drag/drop                    | `pnpm --filter web test:e2e -g "keyboard-shortcuts"`                                                                                                                                                                             |
+| `apps/server/src/pptx/**` (PowerPoint import / export)        | `pnpm --filter server test` (round-trip matrix + ECMA-376 schema check, needs `xmllint`) + `npx tsx src/scripts/pptxRoundtrip.ts <real deck>` in `apps/server` — must report 0 differences; see `apps/server/src/pptx/README.md` |
+| Auth, sharing, folders, cascade-delete                        | `pnpm --filter web test:e2e -g "destructive-flows"` + `pnpm --filter server test`                                                                                                                                                |
+| Yjs mutations, Hocuspocus, sync                               | `pnpm --filter @narrative/slide-model test` + `pnpm --filter web test:e2e -g "multi-client-collab"`                                                                                                                              |
+| Bundle entry points, dynamic imports, vendor chunks           | `pnpm size` (size-limit budgets must stay green)                                                                                                                                                                                 |
+| Hot edit / awareness / doc-growth perf-sensitive paths        | `pnpm load:all` (compares against `tests/load/baselines.json`, warns on > 20% drift)                                                                                                                                             |
+| Editor render path (FCP / LCP / TTI suspects)                 | `pnpm lighthouse` (warn-level Core Web Vitals)                                                                                                                                                                                   |
+| `packages/slide-model/src/{mutations,slides}.ts` deep changes | `pnpm --filter @narrative/slide-model mutate` (Stryker — slow, ~5min, run before PR not on every save)                                                                                                                           |
 
 If a command doesn't exist or fails to start (port collision, missing
 service), say so explicitly in your update — don't silently skip it.
@@ -73,7 +74,7 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 1,542 tests / 127 files (32 skipped) — 2026-09-09
+pnpm -r test                                   # 1,619 tests / 138 files (32 skipped) — 2026-09-23
 pnpm --filter web test:e2e                     # 40 Playwright specs — needs the env vars above
 pnpm size                                      # bundle budgets
 pnpm load:all                                  # load tests + drift detection

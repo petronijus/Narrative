@@ -8,6 +8,69 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.25 — PowerPoint, both ways (2026-09-23)
+
+### Changed
+
+- **The PowerPoint exporter is rewritten, and import and export are now one
+  translation.** Export no longer goes through pptxgenjs: `pptx/ooxml/`
+  writes the package itself, with every element's reader next to its writer
+  — the same units, the same vocabulary, the same geometry, text, table,
+  transition, animation and notes code in both directions (ADR 0009). What
+  OOXML can express is written natively, so PowerPoint shows it; what it
+  cannot (a radius per corner, numeric font weights, video playback
+  settings, …) is written as close as PowerPoint can draw it and kept
+  exactly in Narrative's own extension inside the file, which applies only
+  while the shape is unedited in PowerPoint. On the Proseware deck,
+  import → export → import changed 6 173 values before and changes none now;
+  LibreOffice renders the export about five times closer to the original.
+- **Exported pictures are cropped as Narrative shows them.** A picture was
+  stretched to its frame; it is now fitted (cover / contain) and cropped the
+  way the canvas draws it, for pictures, video posters, picture-filled shapes
+  and table cells. Picture masks are the picture's own geometry (ellipse,
+  rounded rectangle, polygon, path), so PowerPoint clips them too.
+- **Speaker notes keep their formatting.** Bold, italic, underline, strike,
+  code, links, headings, bullet and numbered lists and quotes are written as
+  PowerPoint formatting, and come back exactly. Notes in PowerPoint decks
+  import with their formatting and lists instead of as plain lines.
+- **The export dialog lists what PowerPoint shows differently** — nothing is
+  lost any more; everything comes back when the file is opened in Narrative
+  again.
+
+### Fixed
+
+- **Imported text keeps each run's own formatting.** A run with no size or
+  weight of its own took the one of the run before it (Yjs inherits
+  formatting on insert): "**Colors:** Primary, secondary…" came in bold to
+  the end of the line.
+- **Text sits where PowerPoint puts it.** Text-box insets (0.1 in / 0.05 in
+  by default, or the layout's) were ignored, so imported text sat at the very
+  edge of its box. The frame is now the area the text is laid out in.
+- **Ellipses, triangles, polygons and paths with text keep their shape.**
+  Only rectangles kept their geometry under their text; the Proseware deck's red
+  "Wireframe" circle came in as white text on nothing.
+- **Character references in the XML are decoded.** `&#233;`, `&#x2014;` and
+  line breaks written as references came in as literal `&#…;` text.
+- **Table cells after a horizontal merge land in their own column** instead
+  of one further right (the last one fell off the table). Cell borders keep
+  their dash and transparency; picture fills in cells are imported.
+- **Letter spacing and caps from the slide master apply.** The Proseware title
+  style's −8 pt tracking was ignored, so titles ran wider than in
+  PowerPoint.
+- **Slides without a transition have none.** `<p:transition>` carrying only
+  advance settings imported as a half-second fade; speeds are PowerPoint's
+  (0.5 / 0.75 / 1 s); Morph, Cube and exact durations inside
+  `mc:AlternateContent` are read.
+- **Straight lines are straight.** A horizontal or vertical line imported
+  1 px tall or wide, slightly slanted.
+- **More of each shape is read:** rounded corners from the preset's own
+  radius (not always half the short side), dashed outlines, flips, alt text,
+  aspect locks, picture fills, links on whole shapes and links that jump to
+  another slide, bullets declared in a shape's own list style, paragraph
+  spacing from it, an explicit "not bold / not italic" on a run, a
+  gradient's radial centre, a solid background's transparency, a background
+  picture's dimming, Keynote's gradient direction, animation delays.
+
 ## 0.9.24 — Bullets you can see (2026-09-23)
 
 ### Fixed

@@ -14,7 +14,6 @@
     "db:migrate-demo": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/migrateDemoUserDecks.ts",
     "db:backfill-video": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/backfillVideoPlayback.ts",
     "db:purge-components": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/purgeComponentInstances.ts",
-    "pptx:spike": "node --expose-gc ../../node_modules/tsx/dist/cli.mjs src/scripts/pptxSpike.ts",
     "start": "node --max-old-space-size=8192 dist/index.js"
   },
   "dependencies": {
@@ -27,6 +26,7 @@
     "@hocuspocus/server": "^2.15.0",
     "@narrative/shared": "workspace:*",
     "@narrative/slide-model": "workspace:*",
+    "@nodable/entities": "^2.1.0",
     "@sentry/node": "^8.51.0",
     "@tus/s3-store": "^1.5.0",
     "@tus/server": "^1.8.0",
@@ -43,7 +43,6 @@
     "opentype.js": "^1.3.4",
     "pg": "^8.21.0",
     "pino": "^10.3.1",
-    "pptxgenjs": "^4.0.1",
     "probe-image-size": "^7.3.0",
     "resend": "^6.12.3",
     "sharp": "^0.35.4",

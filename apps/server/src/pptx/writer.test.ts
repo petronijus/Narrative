@@ -13,6 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
 import { getParagraphs, PARAGRAPH_SEP } from '@narrative/slide-model'
+import { notesFromFragment } from './ooxml/notes.js'
 import { buildDeckUpdate, buildDeckAppendUpdate } from './writer.js'
 import type { ParsedPptx, ParsedSlide, ParsedShape } from './parser.js'
 
@@ -520,7 +521,7 @@ describe('buildDeckUpdate', () => {
               height: 50,
               rotation: 0,
               text: 'Click',
-              hyperlink: { href: 'https://example.com/' },
+              hyperlink: { kind: 'url', href: 'https://example.com/' },
               sourceTag: 'p:sp',
             },
           ],
@@ -580,12 +581,49 @@ describe('buildDeckUpdate', () => {
     expect(delta[1]!.attributes?.['color']).toBe(0x00ff00)
   })
 
+  it("maps a text frame shrunk by its body insets, along the frame's own axes", async () => {
+    const text = (extra: Partial<ParsedShape>): ParsedShape => ({
+      kind: 'text',
+      x: 100,
+      y: 100,
+      width: 200,
+      height: 100,
+      rotation: 0,
+      text: 'Inset',
+      sourceTag: 'p:sp',
+      textInsets: { l: 10, t: 4, r: 30, b: 16 },
+      ...extra,
+    })
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [emptySlide({ shapes: [text({}), text({ rotation: 90 })] })],
+    }
+    const { slides } = applyToFreshDoc(buildDeckUpdate(parsed).state)
+    // 1280-px source deck on the 1920 canvas: × 1.5.
+    const [upright, turned] = slides[0]!.objects
+    expect(upright).toMatchObject({ x: 165, y: 156, width: 240, height: 120 })
+    // Turned a quarter: the frame's left inset is on top, its top inset on the right.
+    // Centre (200, 150) moves by (−10, −6) in frame axes → (+6, −10) on the slide.
+    expect(turned).toMatchObject({
+      x: (206 - 80) * 1.5,
+      y: (140 - 40) * 1.5,
+      width: 240,
+      height: 120,
+    })
+  })
+
   it('seeds slide notes Y.XmlFragment when ParsedSlide.notes is set', async () => {
     const parsed: ParsedPptx = {
       ...BASE,
       slides: [
         emptySlide({
-          notes: ['First paragraph', 'Second paragraph'],
+          notes: [
+            { type: 'paragraph', content: [{ text: 'First paragraph' }] },
+            {
+              type: 'paragraph',
+              content: [{ text: 'Second ', marks: { bold: {} } }, { text: 'paragraph' }],
+            },
+          ],
         }),
       ],
     }
@@ -598,8 +636,13 @@ describe('buildDeckUpdate', () => {
     expect(notes.length).toBe(2)
     const paragraphs = notes.toArray() as Y.XmlElement[]
     expect(paragraphs[0]!.nodeName).toBe('paragraph')
-    expect(paragraphs[0]!.toString()).toContain('First paragraph')
-    expect(paragraphs[1]!.toString()).toContain('Second paragraph')
+    expect(notesFromFragment(notes)).toEqual([
+      { type: 'paragraph', content: [{ text: 'First paragraph' }] },
+      {
+        type: 'paragraph',
+        content: [{ text: 'Second ', marks: { bold: {} } }, { text: 'paragraph' }],
+      },
+    ])
   })
 
   it('buildDeckAppendUpdate appends parsed slides at the end of an existing Y.Doc', async () => {

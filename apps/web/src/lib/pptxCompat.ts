@@ -1,35 +1,26 @@
 /**
  * lib/pptxCompat.ts
  *
- * Pure compatibility scanner for the PPTX export pipeline. Walks every
- * slide + object in the deck and returns a list of human-readable
- * warnings about features that won't survive a `.pptx` round-trip. The
- * categories track the deferred items in `apps/server/src/pptx/export.ts`
- * (F7/F8/F12/F13/F14 + the F9 partial-fidelity case).
+ * Pure compatibility scanner for the PPTX export. Walks every slide and
+ * object in the deck and lists what PowerPoint will show differently from
+ * Narrative.
  *
- * Multi-level lists are NOT a loss category: the per-paragraph list model
- * (kind / level / custom glyph / autonum format / startAt) round-trips
- * fully through both the exporter (pptxgenjs paragraph-level `bullet` +
- * `indentLevel`, see `emitText`) and the importer (`paragraphs[]` block
- * attrs). The exporter no longer flattens lists to a frame-wide bullet, so
- * there is deliberately no list-flattening warning here.
+ * The exporter (apps/server/src/pptx/ooxml/) writes every model value: what
+ * OOXML can express natively, the rest in Narrative's own extension inside
+ * the file, so a deck exported and imported again is the same deck
+ * (apps/server/src/pptx/roundtrip.test.ts). Nothing listed here is lost —
+ * each entry is something PowerPoint itself cannot draw the way Narrative
+ * does, and which comes back when the .pptx is opened in Narrative again.
  *
- * Used by `ExportPptxDialog` to surface a pre-export "you'll lose…"
- * checklist; the user can decide to proceed anyway.
+ * Used by `ExportPptxDialog` to surface a pre-export checklist; the user can
+ * decide to proceed anyway.
  *
  * Static `IMPORT_KNOWN_LOSSES` is the same kind of list but for the
  * import direction — referenced by `ImportPptxDialog` after a
  * successful import to explain what may not have come through.
  */
 
-import type {
-  Slide,
-  SlideObject,
-  TextObject,
-  ImageObject,
-  VideoObject,
-  TableObject,
-} from '@narrative/shared'
+import type { Slide, SlideObject, TextObject, VideoObject } from '@narrative/shared'
 
 /**
  * One compatibility issue surfaced to the user. `count` aggregates across
@@ -67,47 +58,19 @@ function bump(acc: Accumulator, entry: Omit<CompatWarning, 'count'>): void {
   }
 }
 
+const RESTORED =
+  'Narrative keeps it in the file and restores it when the .pptx is opened in Narrative again.'
+
 function walkObject(obj: SlideObject, acc: Accumulator): void {
-  // F8 — image rotated inside its frame independent of frame rotation.
-  // The image will render upright on PPTX side; frame rotation still
-  // works but the inner-rotation is lost.
-  if (
-    obj.type === 'image' &&
-    typeof (obj as ImageObject).imageRotation === 'number' &&
-    (obj as ImageObject).imageRotation !== 0
-  ) {
+  if (obj.type === 'image' && typeof obj.imageRotation === 'number' && obj.imageRotation !== 0) {
     bump(acc, {
       id: 'imageRotation',
       title: 'Image rotated inside frame',
-      detail:
-        'PowerPoint has no way to rotate an image independently of its frame. The image will display upright; the frame’s own rotation still applies.',
-      severity: 'lossy',
-    })
-  }
-
-  // F9 — non-rect shape with image fill. The export routes it through
-  // addImage so the picture renders correctly, but the shape's stroke,
-  // corner radius, and shadow are dropped.
-  if (
-    (obj.type === 'rectangle' ||
-      obj.type === 'ellipse' ||
-      obj.type === 'triangle' ||
-      obj.type === 'polygon') &&
-    obj.fillStyle !== undefined &&
-    obj.fillStyle.kind === 'image'
-  ) {
-    bump(acc, {
-      id: 'shapeImageFill',
-      title: 'Image-filled shape',
-      detail:
-        'PowerPoint draws the image inside a plain rectangle. The shape’s stroke, corner radius, and shadow are not preserved.',
+      detail: `PowerPoint cannot rotate a picture inside its frame; it shows the picture upright. ${RESTORED}`,
       severity: 'simplified',
     })
   }
 
-  // F7 — video playback flags. Any VideoObject with non-default trigger /
-  // autoplay / loop / muted / volume / poster / trim values lands in
-  // PPTX with default click-to-play behaviour.
   if (obj.type === 'video') {
     const v = obj as VideoObject
     const hasPlaybackTweaks =
@@ -123,81 +86,70 @@ function walkObject(obj: SlideObject, acc: Accumulator): void {
       bump(acc, {
         id: 'videoPlayback',
         title: 'Video playback options',
-        detail:
-          'Autoplay, loop, mute, volume, poster, trim, and trigger settings are not exported. Videos will play with PowerPoint’s default click-to-play behaviour.',
-        severity: 'lossy',
+        detail: `PowerPoint plays the video on click with its own defaults, not with its autoplay, loop, mute, volume, poster, trim and trigger settings. ${RESTORED}`,
+        severity: 'simplified',
       })
     }
   }
 
-  // F12 — custom fontFamily. Folder-uploaded fonts aren't embedded; the
-  // recipient sees PowerPoint's substitution if they don't have the font
-  // installed. We can't tell "system font" vs "user-uploaded" from the
-  // client without scanning the folder's font assets — surface a single
-  // umbrella warning whenever any text or table sets `fontFamily`.
+  // One radius per corner: PowerPoint's rounded rectangle has one.
+  const perCorner = (r: unknown): boolean => typeof r === 'object' && r !== null
+  if (
+    (obj.type === 'rectangle' && perCorner(obj.cornerRadius)) ||
+    (obj.type === 'image' && obj.mask?.kind === 'rectangle' && perCorner(obj.mask.cornerRadius))
+  ) {
+    bump(acc, {
+      id: 'cornerRadiusPerCorner',
+      title: 'Different radius per corner',
+      detail: `PowerPoint rounds all four corners alike; it shows the average of the four radii. ${RESTORED}`,
+      severity: 'simplified',
+    })
+  }
+
+  // Folder-uploaded fonts aren't embedded; the recipient sees PowerPoint's
+  // substitution if the font isn't installed. The client can't tell a system
+  // font from an uploaded one, so any explicit family raises it.
+  const fontFamily =
+    obj.type === 'text'
+      ? obj.fontFamily
+      : obj.type === 'table'
+        ? obj.defaults.fontFamily
+        : undefined
+  if (typeof fontFamily === 'string' && fontFamily.length > 0) {
+    bump(acc, {
+      id: 'fontEmbed',
+      title: 'Custom fonts',
+      detail:
+        'Folder-uploaded fonts are not embedded in the .pptx. Recipients who don’t have the font installed will see PowerPoint’s substitute (usually Calibri).',
+      severity: 'simplified',
+    })
+  }
+
   if (obj.type === 'text') {
     const t = obj as TextObject
-    if (typeof t.fontFamily === 'string' && t.fontFamily.length > 0) {
-      bump(acc, {
-        id: 'fontEmbed',
-        title: 'Custom fonts',
-        detail:
-          'Folder-uploaded fonts are not embedded in the .pptx. Recipients who don’t have the font installed will see PowerPoint’s substitute (usually Calibri).',
-        severity: 'simplified',
-      })
-    }
     if (t.textTransform === 'capitalize') {
       bump(acc, {
         id: 'textTransformCapitalize',
         title: '“Capitalize” text transform',
-        detail:
-          'PowerPoint has no equivalent of CSS `text-transform: capitalize`. The text will render as-stored (no automatic capitalization).',
-        severity: 'lossy',
-      })
-    }
-  }
-  if (obj.type === 'table') {
-    const t = obj as TableObject
-    if (typeof t.defaults.fontFamily === 'string' && t.defaults.fontFamily.length > 0) {
-      bump(acc, {
-        id: 'fontEmbed',
-        title: 'Custom fonts',
-        detail:
-          'Folder-uploaded fonts are not embedded in the .pptx. Recipients who don’t have the font installed will see PowerPoint’s substitute (usually Calibri).',
+        detail: `PowerPoint has no automatic capitalisation of each word; it shows the text as typed. ${RESTORED}`,
         severity: 'simplified',
       })
     }
-  }
-}
-
-/**
- * Group every object by `groupId` and surface a warning when free-form
- * groups (non-table) exist. Called separately from `walkObject` because
- * the detection is cross-object.
- */
-function detectGroups(slides: Slide[], acc: Accumulator): void {
-  for (const slide of slides) {
-    const byGroup = new Map<string, SlideObject[]>()
-    for (const obj of slide.objects ?? []) {
-      if (typeof obj.groupId !== 'string' || obj.groupId.length === 0) continue
-      // Tables are handled via emitGroupedTables, ignore them.
-      if (obj.type === 'table') continue
-      const list = byGroup.get(obj.groupId) ?? []
-      list.push(obj)
-      byGroup.set(obj.groupId, list)
+    if (typeof t.fontWeight === 'number' && t.fontWeight !== 400 && t.fontWeight !== 700) {
+      bump(acc, {
+        id: 'fontWeight',
+        title: 'Font weights between regular and bold',
+        detail: `PowerPoint knows regular and bold only; light, medium and similar weights show as the nearer of the two. ${RESTORED}`,
+        severity: 'simplified',
+      })
     }
-    // A "group" only matters if it has at least 2 members.
-    for (const [, members] of byGroup) {
-      if (members.length >= 2) {
-        bump(acc, {
-          id: 'freeFormGroup',
-          title: 'Grouped shapes',
-          detail:
-            'Shapes that share a Narrative group will render at the right positions in PowerPoint, but they won’t be a selectable group on re-import.',
-          severity: 'simplified',
-        })
-        break // one warning per slide is enough — count tracks distinct groups
-      }
+    if (t.flipH === true || t.flipV === true) {
+      bump(acc, {
+        id: 'mirroredText',
+        title: 'Mirrored text',
+        detail: `PowerPoint does not mirror text; a flipped text box shows its text readable. ${RESTORED}`,
+        severity: 'simplified',
+      })
     }
   }
 }
@@ -213,7 +165,6 @@ export function scanDeckForExportCompat(slides: Slide[]): CompatWarning[] {
   for (const slide of slides) {
     for (const obj of slide.objects ?? []) walkObject(obj, acc)
   }
-  detectGroups(slides, acc)
   return Object.values(acc)
     .map((e) => ({ ...e.warning, count: e.count }))
     .sort((a, b) => {

@@ -1,10 +1,11 @@
 /**
  * ui/ExportPptxDialog.tsx
  *
- * Pre-export compatibility checklist. Scans the deck for features that
- * won't survive a `.pptx` round-trip (font embedding, video playback
- * options, etc.) and gives the user a chance to decide whether to
- * proceed. Sibling of `ImportPptxDialog`: same styling chrome, same
+ * Pre-export compatibility checklist. Scans the deck for what PowerPoint
+ * will show differently from Narrative (fonts that are not embedded, video
+ * playback options, …) and gives the user a chance to decide whether to
+ * proceed. The .pptx itself keeps everything: opened in Narrative again it
+ * is the same deck. Sibling of `ImportPptxDialog`: same styling chrome, same
  * busy-spinner UX, just different content.
  */
 
@@ -73,8 +74,8 @@ export function ExportPptxDialog({ slides, onExport, onClose }: ExportPptxDialog
       <div className="panel w-[520px] max-h-[80vh] overflow-y-auto rounded-xl border border-border p-5 shadow-xl">
         <h2 className="mb-1 text-sm font-semibold text-foreground">Export to PowerPoint</h2>
         <p className="mb-4 text-xs text-muted-foreground">
-          Most of your deck will round-trip cleanly. Below is what won’t survive the conversion to
-          `.pptx` — review and decide whether to proceed.
+          The .pptx keeps your whole deck — open it in Narrative again and it is the same deck.
+          Below is what PowerPoint itself will show differently.
         </p>
 
         {warnings.length === 0 ? (
@@ -98,7 +99,7 @@ export function ExportPptxDialog({ slides, onExport, onClose }: ExportPptxDialog
             )}
             {simplified.length > 0 && (
               <WarningGroup
-                heading="Will be simplified"
+                heading="Shown differently in PowerPoint"
                 icon={<Info className="h-3.5 w-3.5 text-sky-400" aria-hidden="true" />}
                 warnings={simplified}
               />

@@ -448,10 +448,12 @@ describe('parsePptx', () => {
     expect(g!.stops).toHaveLength(2)
     expect(g!.stops[0]!.color).toBe(0xff0000)
     expect(g!.stops[1]!.color).toBe(0x0000ff)
-    // PPTX 5400000 = 90° (clockwise from "right"); we add 90 to convert to
-    // CSS "top→bottom = 0" → result 180 (i.e. bottom→top).
+    // PPTX 5400000 = 90° clockwise from "right", i.e. top→bottom, which is
+    // Narrative's 0°. This test used to expect 180 (bottom→top): the old
+    // conversion added 90° instead of reflecting, and turned every vertical
+    // gradient upside down. See ooxml/fill.ts.
     if (g!.kind === 'linearGradient') {
-      expect(g!.angleDeg).toBe(180)
+      expect(g!.angleDeg).toBe(0)
     }
   })
 
@@ -546,8 +548,8 @@ describe('parsePptx', () => {
     })
     const out = await parsePptx(buf)
     const shape = out.slides[0]!.shapes[0]!
-    expect(shape.hyperlink).toEqual({ href: 'https://example.com/' })
-    expect(shape.textRuns![0]!.hyperlinkHref).toBe('https://example.com/')
+    expect(shape.hyperlink).toEqual({ kind: 'url', href: 'https://example.com/' })
+    expect(shape.textRuns![0]!.hyperlink).toEqual({ kind: 'url', href: 'https://example.com/' })
   })
 
   it('imports speaker notes paragraphs from the linked notesSlide', async () => {
@@ -577,7 +579,108 @@ describe('parsePptx', () => {
       notesXml,
     })
     const out = await parsePptx(buf)
-    expect(out.slides[0]!.notes).toEqual(['Talk about X.', 'Then Y.'])
+    expect(out.slides[0]!.notes).toEqual([
+      { type: 'paragraph', content: [{ text: 'Talk about X.' }] },
+      { type: 'paragraph', content: [{ text: 'Then Y.' }] },
+    ])
+  })
+
+  it('reads formatted PowerPoint notes as the notes editor document: marks and nested lists', async () => {
+    const notesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="2" name="Notes"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+      <p:spPr/>
+      <p:txBody>
+        <a:bodyPr/><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US" b="1"/><a:t>Key</a:t></a:r><a:r><a:rPr lang="en-US" i="1" strike="sngStrike"/><a:t> point</a:t></a:r><a:br/><a:r><a:rPr lang="en-US" u="sng"/><a:t>next line</a:t></a:r></a:p>
+        <a:p><a:pPr><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>one</a:t></a:r></a:p>
+        <a:p><a:pPr lvl="1"><a:buAutoNum type="arabicPeriod" startAt="2"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>one.two</a:t></a:r></a:p>
+        <a:p><a:pPr><a:buChar char="•"/></a:pPr><a:r><a:rPr lang="en-US"/><a:t>two</a:t></a:r></a:p>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>after</a:t></a:r></a:p>
+      </p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:notes>`
+    const buf = await makeFixture({
+      themeXml: OFFICE_THEME,
+      slideXml: `${SLIDE_OPEN}${SLIDE_CLOSE}`,
+      notesXml,
+    })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.notes).toEqual([
+      {
+        type: 'paragraph',
+        content: [
+          { text: 'Key', marks: { bold: {} } },
+          { text: ' point', marks: { italic: {}, strike: {} } },
+          { type: 'hardBreak' },
+          { text: 'next line', marks: { underline: {} } },
+        ],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              { type: 'paragraph', content: [{ text: 'one' }] },
+              {
+                type: 'orderedList',
+                attrs: { start: 2 },
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [{ type: 'paragraph', content: [{ text: 'one.two' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+          { type: 'listItem', content: [{ type: 'paragraph', content: [{ text: 'two' }] }] },
+        ],
+      },
+      { type: 'paragraph', content: [{ text: 'after' }] },
+    ])
+  })
+
+  it('keeps the geometry of a text-bearing ellipse as an ellipse under the text frame', async () => {
+    const slideXml = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Badge"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm><a:off x="914400" y="914400"/><a:ext cx="914400" cy="914400"/></a:xfrm>
+          <a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>
+          <a:solidFill><a:srgbClr val="E4002B"/></a:solidFill>
+        </p:spPr>
+        <p:txBody><a:bodyPr lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Wireframe</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const shapes = (await parsePptx(buf)).slides[0]!.shapes
+    expect(shapes.map((s) => s.kind)).toEqual(['ellipse', 'text'])
+    expect(shapes[0]!.fillColor).toBe(0xe4002b)
+    expect(shapes[1]!.text).toBe('Wireframe')
+    expect(shapes[1]!.fillColor).toBeUndefined()
+  })
+
+  it('decodes XML character references in text and attributes', async () => {
+    const slideXml = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Caf&#233;&#x2019;s &amp;#65;"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>Caf&#233; &#x2014; &amp;#65;</a:t></a:r></a:p></p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const out = await parsePptx(buf)
+    const shape = out.slides[0]!.shapes[0]!
+    // A reference is its character; an escaped ampersand stays literal text.
+    expect(shape.text).toBe('Café — &#65;')
+    expect(shape.cnvName).toBe('Café’s &#65;')
   })
 
   // ─── Tables ───────────────────────────────────────────────────────────────
@@ -1491,7 +1594,24 @@ describe('parsePptx', () => {
 </p:sld>`
     const buf = await makeFixture({ slideXml })
     const out = await parsePptx(buf)
-    expect(out.slides[0]!.transition).toEqual({ kind: 'push', durationMs: 500, direction: 'r' })
+    // `spd="med"` is PowerPoint's 0.75 s; the direction arrives in the model's form.
+    expect(out.slides[0]!.transition).toEqual({ kind: 'push', durationMs: 750, direction: 'right' })
+  })
+
+  it('reads a `<p:transition>` with no effect element as no transition', async () => {
+    // PowerPoint writes `spd` / `advClick` on slides that have no transition;
+    // it shows none, and so must the import.
+    const slideXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+  </p:spTree></p:cSld>
+  <p:transition spd="med" advClick="1"/>
+</p:sld>`
+    const buf = await makeFixture({ slideXml })
+    const out = await parsePptx(buf)
+    expect(out.slides[0]!.transition).toBeUndefined()
   })
 
   it('extracts an entrance animation step from `<p:timing>` and maps presetID 10 → fadeIn', async () => {
@@ -1527,8 +1647,8 @@ describe('parsePptx', () => {
       spId: 5,
       preset: 'fadeIn',
       trigger: 'onClick',
-      durationMs: 500,
-      delayMs: 0,
+      duration: 0.5,
+      delay: 0,
     })
   })
 

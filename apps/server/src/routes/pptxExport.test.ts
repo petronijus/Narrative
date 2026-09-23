@@ -2,16 +2,20 @@
  * routes/pptxExport.test.ts
  *
  * Unit tests for the token-resolution step that the PPTX export route runs
- * before handing slides to `exportDeckToPptx`. Token refs in Narrative live
- * at arbitrary depth (top-level on shapes/text, nested under
- * `shadow`/`defaults`/`border`, deeply under `rows[r][c]` for tables,
- * and inside the `borderSegments` record-map). Each layer must resolve
- * so the exported `.pptx` carries concrete hex numbers instead of the
- * exporter's grey fallback.
+ * before handing slides to `writeDeck`. Token refs in Narrative live at
+ * arbitrary depth (top-level on shapes/text, nested under
+ * `shadow`/`defaults`/`border`, deeply under `rows[r][c]` for tables, and
+ * inside the `borderSegments` record-map). Each layer must resolve so the
+ * exported `.pptx` carries concrete colours; a reference that cannot be
+ * resolved is written as a neutral grey (`replaceUnresolvedTokens`).
  */
 
 import { describe, it, expect } from 'vitest'
-import { resolveSlideTokens } from './pptxExport.js'
+import {
+  replaceUnresolvedTokens,
+  resolveSlideTokens,
+  UNRESOLVED_TOKEN_COLOUR,
+} from './pptxExport.js'
 import { DEFAULT_TRANSITION } from '@narrative/shared'
 import type {
   Slide,
@@ -150,7 +154,7 @@ describe('resolveSlideTokens', () => {
       align: 'left',
     }
     const out = resolveSlideTokens(wrap([t]), TOKENS)
-    // Ref stays as-is — exporter's `resolveColor` fallback will drop it to grey.
+    // Ref stays as-is — `replaceUnresolvedTokens` then writes it as grey.
     expect((out.objects[0] as TextObject).color).toEqual({
       $token: 'colors.does-not-exist',
     })
@@ -172,5 +176,57 @@ describe('resolveSlideTokens', () => {
     const out = resolveSlideTokens(slide, TOKENS)
     // Object reference is preserved when nothing changed — cheap fast path.
     expect(out.objects[0]).toBe(r)
+  })
+})
+
+describe('replaceUnresolvedTokens', () => {
+  it('writes every remaining token reference as the grey fallback, at any depth, and counts them', () => {
+    const slide = wrap([
+      {
+        id: 'r',
+        type: 'rectangle',
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 10,
+        rotation: 0,
+        opacity: 1,
+        fill: { $token: 'colors.gone' },
+        stroke: 0x123456,
+        shadow: {
+          color: { $token: 'colors.gone' },
+          blur: 1,
+          offsetX: 0,
+          offsetY: 0,
+          opacity: 1,
+        } as ShadowStyle,
+      } as RectangleObject,
+    ])
+    const counter = { count: 0 }
+    const out = replaceUnresolvedTokens(slide, counter)
+    const r = out.objects[0] as RectangleObject
+    expect(r.fill).toBe(UNRESOLVED_TOKEN_COLOUR)
+    expect(r.shadow?.color).toBe(UNRESOLVED_TOKEN_COLOUR)
+    expect(r.stroke).toBe(0x123456)
+    expect(counter.count).toBe(2)
+  })
+
+  it('returns the same objects when nothing needs replacing', () => {
+    const slide = wrap([
+      {
+        id: 't',
+        type: 'rectangle',
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        rotation: 0,
+        opacity: 1,
+        fill: 0xffffff,
+      } as RectangleObject,
+    ])
+    const counter = { count: 0 }
+    expect(replaceUnresolvedTokens(slide, counter).objects[0]).toBe(slide.objects[0])
+    expect(counter.count).toBe(0)
   })
 })

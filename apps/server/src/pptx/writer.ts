@@ -41,6 +41,8 @@ import {
   setSlideSkipped,
   updateSlideBackground,
   updateSlideTransition,
+  setSlideIndent,
+  setSlideCollapsed,
   listSlides,
   PARAGRAPH_SEP,
   blockAttrsToInsertAttrs,
@@ -69,6 +71,8 @@ import type {
   LinearGradientFill,
   RadialGradientFill,
   FillStyle,
+  SlideTransition,
+  ObjectHyperlink,
 } from '@narrative/shared'
 import { SLIDE_WIDTH, SLIDE_HEIGHT, rotationFromDegrees, sanitizeHref } from '@narrative/shared'
 import type {
@@ -78,8 +82,13 @@ import type {
   ParsedGradient,
   ParsedBackground,
   ParsedTableCell,
+  ParsedTextRun,
+  ParsedHyperlink,
 } from './parser.js'
 import { subsystemLogger } from '../observability/logger.js'
+import type { LineBoxExt, TableExt } from './ooxml/extSchema.js'
+import { objectExtFields } from './ooxml/objectExt.js'
+import { writeNotesIntoFragment, type NotesDoc } from './ooxml/notes.js'
 
 const log = subsystemLogger('pptx-import')
 
@@ -165,13 +174,11 @@ function gradientToFillStyle(g: ParsedGradient): FillStyle {
     }
     return fill
   }
-  // Radial — Narrative requires centerX/Y on the fill style.
-  const fill: RadialGradientFill = {
-    kind: 'radialGradient',
-    stops: gradientStops(g),
-    centerX: 0.5,
-    centerY: 0.5,
-  }
+  // Radial: the centre the file names; none is the shape's centre, which
+  // is also what the renderer draws for an unset one.
+  const fill: RadialGradientFill = { kind: 'radialGradient', stops: gradientStops(g) }
+  if (g.centerX !== undefined) fill.centerX = g.centerX
+  if (g.centerY !== undefined) fill.centerY = g.centerY
   return fill
 }
 
@@ -199,6 +206,32 @@ function gradientToFillStyle(g: ParsedGradient): FillStyle {
  * The first-run hyperlink is captured upstream and lands on the shape's
  * `hyperlink` field, which `mapShape` copies onto the TextObject.
  */
+/** Every inline key a Y.Text run can carry (slide-model `RichAttrs`). */
+const INLINE_KEYS = [
+  'fontWeight',
+  'italic',
+  'underline',
+  'color',
+  'fontSize',
+  'fontFamily',
+] as const
+
+/** A parsed run's inline attributes, with null for each key it leaves unset. */
+function runAttrs(r: ParsedTextRun, scale: number): Record<string, unknown> {
+  const attrs: Record<string, unknown> = {}
+  for (const k of INLINE_KEYS) attrs[k] = null
+  // A run's weight: the exact number a Narrative export carried, else
+  // OOXML's bold / not bold.
+  if (r.fontWeight !== undefined) attrs['fontWeight'] = r.fontWeight
+  else if (r.bold !== undefined) attrs['fontWeight'] = r.bold ? 700 : 400
+  if (r.italic !== undefined) attrs['italic'] = r.italic
+  if (r.underline !== undefined) attrs['underline'] = r.underline
+  if (r.color !== undefined) attrs['color'] = r.color
+  if (r.fontSize !== undefined) attrs['fontSize'] = round(r.fontSize * scale)
+  if (r.fontFamily !== undefined) attrs['fontFamily'] = r.fontFamily
+  return attrs
+}
+
 function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
   const runs = s.textRuns
   if (runs === undefined || runs.length === 0) return null
@@ -219,9 +252,10 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
   const hasRichRun = runs.some(
     (r) =>
       !isStructuralBreak(r.text) &&
-      (r.bold === true ||
-        r.italic === true ||
-        r.underline === true ||
+      (r.bold !== undefined ||
+        r.fontWeight !== undefined ||
+        r.italic !== undefined ||
+        r.underline !== undefined ||
         r.color !== undefined ||
         r.fontSize !== undefined ||
         r.fontFamily !== undefined),
@@ -264,26 +298,11 @@ function buildRichTextBody(s: ParsedShape, scale: number): Y.Text | null {
       paraIndex += 1
       continue
     }
-    // Insert the run/soft-break with block keys explicitly cleared so it does
-    // NOT inherit a preceding formatted separator's list attrs (those belong
-    // on separators only). Inline formatting is applied via `format` below.
-    yt.insert(cursor, r.text, hasBlockAttrs ? clearBlockKeys() : undefined)
-    // Soft-break ('\n') synthetic runs carry no inline formatting \u2014 skip the
-    // format pass but DON'T advance the paragraph index (still same <a:p>).
-    if (r.text === '\n') {
-      cursor += 1
-      continue
-    }
-    const attrs: Record<string, unknown> = {}
-    if (r.bold === true) attrs['fontWeight'] = 700
-    if (r.italic === true) attrs['italic'] = true
-    if (r.underline === true) attrs['underline'] = true
-    if (r.color !== undefined) attrs['color'] = r.color
-    if (r.fontSize !== undefined) attrs['fontSize'] = round(r.fontSize * scale)
-    if (r.fontFamily !== undefined) attrs['fontFamily'] = r.fontFamily
-    if (Object.keys(attrs).length > 0) {
-      yt.format(cursor, r.text.length, attrs)
-    }
+    // Insert the run (or soft break) with its COMPLETE record: every inline
+    // key it does not set is null, so it does not inherit the formatting of
+    // the run to its left (Yjs' default for an insert), and block keys are
+    // cleared too — those belong on separators only.
+    yt.insert(cursor, r.text, { ...runAttrs(r, scale), ...(hasBlockAttrs ? clearBlockKeys() : {}) })
     cursor += r.text.length
   }
   // Trailing separator for the FINAL paragraph. The run stream only carries
@@ -322,7 +341,192 @@ function endpointsFromBbox(
   return { p1: { x: left, y: top }, p2: { x: right, y: bottom } }
 }
 
+/**
+ * Lay a Narrative export's extension (`ooxml/narrativeExt.ts`) over the
+ * object mapped from the native XML: the model values PowerPoint had no
+ * native form for. The parser only hands the extension on while the
+ * shape's frame is the one it was written for, and `objectExtFields`
+ * admits only the fields valid for this object type, each in its model
+ * shape — the extension is untrusted file content.
+ */
+function applyNarrativeExt(obj: SlideObject, s: ParsedShape): void {
+  if (s.narrative === undefined) return
+  const { implicit, box, anchors, table, hyperlinkTarget, fillFit, fillPicturePending, ...plain } =
+    objectExtFields(obj.type, s.narrative)
+  Object.assign(obj, plain)
+  const record = obj as unknown as Record<string, unknown>
+  // Fields the object never had, which the import produced anyway — unless
+  // they were changed in PowerPoint since (then they are the user's).
+  if (implicit !== undefined) {
+    for (const [k, v] of Object.entries(implicit as Record<string, unknown>)) {
+      if (JSON.stringify(record[k]) === JSON.stringify(v)) delete record[k]
+    }
+  }
+  // A picture fill still waiting for its upload: no picture was written.
+  if (fillPicturePending === true && isFilledType(obj) && obj.fillStyle === undefined) {
+    obj.fillStyle = { kind: 'image', assetId: '' }
+  }
+  if (obj.hyperlink?.kind === 'url' && typeof hyperlinkTarget === 'string') {
+    if (hyperlinkTarget === 'none') delete obj.hyperlink.target
+    else obj.hyperlink.target = hyperlinkTarget as '_self' | '_blank'
+  }
+  if (fillFit !== undefined && isFilledType(obj) && obj.fillStyle?.kind === 'image') {
+    obj.fillStyle.fit = fillFit as 'cover' | 'contain'
+  }
+  if (box !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
+    const b = box as LineBoxExt
+    obj.x = b.x
+    obj.y = b.y
+    obj.width = b.width
+    obj.height = b.height
+    obj.p1 = b.p1
+    obj.p2 = b.p2
+  }
+  if (anchors !== undefined && obj.type === 'path') obj.anchors = anchors as PathAnchor[]
+  if (table !== undefined && obj.type === 'table') applyTableExt(obj, table as TableExt)
+}
+
+function isFilledType(
+  o: SlideObject,
+): o is RectangleObject | EllipseObject | TriangleObject | PolygonObject | PathObject {
+  return (
+    o.type === 'rectangle' ||
+    o.type === 'ellipse' ||
+    o.type === 'triangle' ||
+    o.type === 'polygon' ||
+    o.type === 'path'
+  )
+}
+
+/**
+ * A table's model structure from the extension: the split between
+ * `defaults`, per-cell overrides and border segments, which the native
+ * grid (every cell fully resolved) cannot recover. Applied only when the
+ * grid dimensions still agree; cell text stays the native text.
+ */
+function applyTableExt(t: TableObject, ext: TableExt): void {
+  const rows = t.rows.length
+  const cols = t.colWidths.length
+  if (ext.colWidths.length !== cols || ext.rowHeights.length !== rows || ext.cells.length !== rows)
+    return
+  if (ext.cells.some((row) => row.length !== cols)) return
+  t.colWidths = ext.colWidths
+  t.rowHeights = ext.rowHeights
+  if (ext.borderSegments !== undefined) {
+    t.borderSegments = ext.borderSegments as NonNullable<TableObject['borderSegments']>
+  } else {
+    delete t.borderSegments
+  }
+  // Pictures: the extension says only how a fill is fitted; the asset is
+  // the one the native cell's picture was imported as.
+  const nativeRows = t.rows
+  const nativePicture = (r: number, c: number): string | undefined => {
+    const fs = nativeRows[r]?.[c]?.fillStyle
+    return fs?.kind === 'image' ? fs.assetId : undefined
+  }
+  const withAsset = (
+    fs: FillStyle | undefined,
+    assetId: string | undefined,
+  ): FillStyle | undefined => {
+    if (fs === undefined || fs.kind !== 'image') return fs
+    return assetId === undefined ? undefined : { ...fs, assetId }
+  }
+  const defaults = ext.defaults as unknown as TableDefaults
+  if (defaults.fillStyle?.kind === 'image') {
+    // Written on every cell that uses the default: take it from one.
+    let assetId: string | undefined
+    ext.cells.forEach((row, r) =>
+      row.forEach((style, c) => {
+        if (assetId === undefined && style['fillStyle'] === undefined) assetId = nativePicture(r, c)
+      }),
+    )
+    const fs = withAsset(defaults.fillStyle, assetId)
+    if (fs === undefined) delete defaults.fillStyle
+    else defaults.fillStyle = fs
+  }
+  t.defaults = defaults
+  t.rows = nativeRows.map((row, r) =>
+    row.map((cell, c) => {
+      const style = { ...(ext.cells[r]![c] as Omit<TableCell, 'text'>) }
+      if (style.fillStyle?.kind === 'image') {
+        const fs = withAsset(style.fillStyle, nativePicture(r, c))
+        if (fs === undefined) delete style.fillStyle
+        else style.fillStyle = fs
+      }
+      return { ...style, text: cell.text }
+    }),
+  )
+}
+
+/**
+ * Fill and outline of the parametric shapes (rectangle, ellipse, triangle,
+ * polygon) — one mapping for all four.
+ */
+function applyFilledStyle(
+  obj: RectangleObject | EllipseObject | TriangleObject | PolygonObject,
+  s: ParsedShape,
+  scale: number,
+): void {
+  if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+  else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
+  if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+  // A picture fill (`<a:blipFill>` in the shape's own properties).
+  if (s.assetId !== undefined && s.assetId !== '')
+    obj.fillStyle = { kind: 'image', assetId: s.assetId }
+  if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
+  if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+  if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
+    obj.strokeWidth = round(s.strokeWidth * scale)
+  }
+  if (s.strokeDash === true) obj.strokeDash = true
+}
+
+function isConnectorKind(kind: ParsedShape['kind']): boolean {
+  return kind === 'line' || kind === 'arrow'
+}
+
+/** Slide part path (`ppt/slides/slide3.xml`) → the id its imported slide got. */
+type SlideIdsByPath = ReadonlyMap<string, string>
+
+/**
+ * A parsed link as the model's `ObjectHyperlink`. Sanitised at the import
+ * boundary: a crafted .pptx can carry a `javascript:` / `data:` target, and
+ * nothing but an allowed scheme is persisted. A jump to a slide that was
+ * not imported (outside the deck, or not part of an append) is dropped.
+ */
+function resolveHyperlink(
+  h: ParsedHyperlink,
+  slideIds: SlideIdsByPath,
+): ObjectHyperlink | undefined {
+  if (h.kind === 'slide') {
+    const slideId = slideIds.get(h.slidePath)
+    return slideId === undefined ? undefined : { kind: 'slide', slideId }
+  }
+  const href = sanitizeHref(h.href)
+  return href === null ? undefined : { kind: 'url', href, target: '_blank' }
+}
+
+/**
+ * A text frame shrunk by its body insets: the model's frame is where the
+ * text is laid out, PowerPoint's is the box around it. The centre moves by
+ * half the difference of opposite insets, along the frame's own axes (a
+ * flipped-vertical text box is turned a half turn, see mapShape).
+ */
+function insetTextFrame(s: ParsedShape): { x: number; y: number; width: number; height: number } {
+  const ins = s.textInsets
+  if (s.kind !== 'text' || ins === undefined) return s
+  const width = Math.max(1, s.width - ins.l - ins.r)
+  const height = Math.max(1, s.height - ins.t - ins.b)
+  const turn = ((s.rotation + (s.flipV === true ? 180 : 0)) * Math.PI) / 180
+  const dx = (ins.l - ins.r) / 2
+  const dy = (ins.t - ins.b) / 2
+  const cx = s.x + s.width / 2 + dx * Math.cos(turn) - dy * Math.sin(turn)
+  const cy = s.y + s.height / 2 + dx * Math.sin(turn) + dy * Math.cos(turn)
+  return { x: cx - width / 2, y: cy - height / 2, width, height }
+}
+
 function mapShape(s: ParsedShape, scale: number): SlideObject | null {
+  const frame = insetTextFrame(s)
   const base: {
     id: string
     x: number
@@ -340,18 +544,26 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       opacity: number
     }
     blur?: number
+    flipH?: boolean
+    flipV?: boolean
+    aspectLocked?: boolean
   } = {
     id: nanoid(),
-    x: round(s.x * scale),
-    y: round(s.y * scale),
-    width: round(Math.max(1, s.width * scale)),
-    height: round(Math.max(1, s.height * scale)),
+    x: round(frame.x * scale),
+    y: round(frame.y * scale),
+    // A connector's box is its endpoints' span, and a straight line has no
+    // height (or width); every other object is at least a pixel.
+    width: round(isConnectorKind(s.kind) ? frame.width * scale : Math.max(1, frame.width * scale)),
+    height: round(
+      isConnectorKind(s.kind) ? frame.height * scale : Math.max(1, frame.height * scale),
+    ),
     // ParsedShape carries PPTX degrees; the model stores radians. Not
     // rounded: two decimals of a radian is 0.6°, visible on a long line.
     rotation: rotationFromDegrees(s.rotation),
     opacity: 1,
   }
   if (s.groupId !== undefined) base.groupId = s.groupId
+  if (s.aspectLocked === true) base.aspectLocked = true
   if (s.shadow !== undefined) {
     base.shadow = {
       color: s.shadow.color,
@@ -362,6 +574,16 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     }
   }
   if (s.blur !== undefined && s.blur > 0) base.blur = round(s.blur * scale)
+  // Mirroring. A connector's flips name its endpoints instead (below), and
+  // PowerPoint does not mirror text: it ignores `flipH` on a text box and
+  // turns it upside down for `flipV`, which is a half turn.
+  const isConnector = isConnectorKind(s.kind)
+  if (s.kind === 'text') {
+    if (s.flipV === true) base.rotation = rotationFromDegrees(s.rotation + 180)
+  } else if (!isConnector) {
+    if (s.flipH === true) base.flipH = true
+    if (s.flipV === true) base.flipV = true
+  }
 
   // Text takes precedence — a `p:sp` with a `<p:txBody>` that has runs is
   // imported as a text frame regardless of its preset geometry.
@@ -378,7 +600,10 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     const obj: TextObject = {
       ...base,
       type: 'text',
-      text: richBody ?? s.text,
+      // Without formatting to keep, the plain text — paragraphs still
+      // separated as paragraphs (U+2029), line breaks as '\n'.
+      text:
+        richBody ?? (s.textRuns !== undefined ? s.textRuns.map((r) => r.text).join('') : s.text),
       fontSize: round((s.fontSize ?? DEFAULT_TEXT_SIZE) * scale),
       fontWeight: s.bold === true ? 'bold' : 'normal',
       color: s.textColor ?? DEFAULT_TEXT_COLOR,
@@ -399,15 +624,6 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     // unset on import. (The legacy field stays defined on the schema for
     // backward-compat with pre-multi-level decks; the slide-model migrates
     // it to per-paragraph attrs on first edit.)
-    if (s.hyperlink !== undefined) {
-      // Sanitise at the import boundary: a crafted .pptx can carry a
-      // `javascript:`/`data:` hlinkClick target. Drop anything that isn't
-      // an allowed scheme so we never persist a dangerous href into the doc.
-      const href = sanitizeHref(s.hyperlink.href)
-      if (href !== null) {
-        obj.hyperlink = { kind: 'url', href, target: '_blank' }
-      }
-    }
     // Frame-level text fine attrs.
     if (s.fontFamily !== undefined) obj.fontFamily = s.fontFamily
     if (s.letterSpacing !== undefined) obj.letterSpacing = round(s.letterSpacing * scale)
@@ -421,7 +637,9 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     }
     if (s.isSlideNumber === true) obj.isSlideNumber = true
     if (s.wrap === 'none') obj.wrap = 'none'
-    if (s.textTransform !== undefined && s.textTransform !== 'none') {
+    if (s.italic !== undefined) obj.italic = s.italic
+    if (s.underline !== undefined) obj.underline = s.underline
+    if (s.textTransform !== undefined) {
       obj.textTransform = s.textTransform
     }
     if (s.textStrokeColor !== undefined) obj.stroke = s.textStrokeColor
@@ -435,59 +653,24 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
   }
 
   if (s.kind === 'rectangle') {
-    const obj: RectangleObject = {
-      ...base,
-      type: 'rectangle',
-      fill: pickFillForShape(s),
-    }
-    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
-    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
-    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
-    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
-    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
-    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
-      obj.strokeWidth = round(s.strokeWidth * scale)
-    }
+    const obj: RectangleObject = { ...base, type: 'rectangle', fill: pickFillForShape(s) }
+    applyFilledStyle(obj, s, scale)
     if (s.cornerRadius !== undefined && s.cornerRadius > 0) {
-      // ParsedShape.cornerRadius is in slide-local px; Narrative's
-      // RectangleObject.cornerRadius accepts a number applied to all
-      // four corners. Scale to deck-canvas px in lockstep with x/y/w/h.
+      // Slide-local px from the roundRect's `adj`; scaled with x/y/w/h.
       obj.cornerRadius = round(s.cornerRadius * scale)
     }
     return obj
   }
 
   if (s.kind === 'ellipse') {
-    const obj: EllipseObject = {
-      ...base,
-      type: 'ellipse',
-      fill: pickFillForShape(s),
-    }
-    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
-    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
-    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
-    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
-    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
-    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
-      obj.strokeWidth = round(s.strokeWidth * scale)
-    }
+    const obj: EllipseObject = { ...base, type: 'ellipse', fill: pickFillForShape(s) }
+    applyFilledStyle(obj, s, scale)
     return obj
   }
 
   if (s.kind === 'triangle') {
-    const obj: TriangleObject = {
-      ...base,
-      type: 'triangle',
-      fill: pickFillForShape(s),
-    }
-    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
-    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
-    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
-    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
-    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
-    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
-      obj.strokeWidth = round(s.strokeWidth * scale)
-    }
+    const obj: TriangleObject = { ...base, type: 'triangle', fill: pickFillForShape(s) }
+    applyFilledStyle(obj, s, scale)
     return obj
   }
 
@@ -498,14 +681,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       fill: pickFillForShape(s),
       sides: s.sides ?? 6, // hexagon fallback — polygon detection always sets sides
     }
-    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
-    else if (sourceDeclaredNoFill(s)) obj.fillAlpha = 0
-    if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
-    if (s.strokeColor !== undefined) obj.stroke = s.strokeColor
-    if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
-    if (s.strokeWidth !== undefined && s.strokeWidth > 0) {
-      obj.strokeWidth = round(s.strokeWidth * scale)
-    }
+    applyFilledStyle(obj, s, scale)
     return obj
   }
 
@@ -554,10 +730,17 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
           : 2
         : 0,
     }
-    if (s.fillColor !== undefined) obj.fill = s.fillColor
-    if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    // A path without a fill colour is unfilled already; `<a:noFill/>`'s
+    // alpha 0 only means something next to a colour.
+    if (s.fillColor !== undefined) {
+      obj.fill = s.fillColor
+      if (s.fillAlpha !== undefined && s.fillAlpha < 1) obj.fillAlpha = s.fillAlpha
+    }
     if (s.fillGradient !== undefined) obj.fillStyle = gradientToFillStyle(s.fillGradient)
+    if (s.assetId !== undefined && s.assetId !== '')
+      obj.fillStyle = { kind: 'image', assetId: s.assetId }
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeDash === true) obj.dash = true
     if (s.pathClosed === true) obj.closed = true
     return obj
   }
@@ -579,6 +762,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       endCap: s.endCap ?? 'arrow',
     }
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeDash === true) obj.dash = true
     return obj
   }
 
@@ -593,6 +777,14 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       assetId: s.assetId,
       variant: 'display',
       fit: 'cover',
+    }
+    if (s.alt !== undefined) obj.alt = s.alt
+    if (s.mask !== undefined) {
+      // A rounded rectangle's radius is a length; the rest is unitless.
+      obj.mask =
+        s.mask.kind === 'rectangle' && typeof s.mask.cornerRadius === 'number'
+          ? { kind: 'rectangle', cornerRadius: round(s.mask.cornerRadius * scale) }
+          : s.mask
     }
     // PPTX `<a:alphaModFix>` on the blip maps to the image object's opacity.
     if (s.imageAlpha !== undefined && s.imageAlpha < 1) obj.opacity = s.imageAlpha
@@ -643,6 +835,7 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
       endCap: s.endCap ?? 'none',
     }
     if (s.strokeAlpha !== undefined && s.strokeAlpha < 1) obj.strokeAlpha = s.strokeAlpha
+    if (s.strokeDash === true) obj.dash = true
     return obj
   }
 
@@ -809,31 +1002,18 @@ function mapTableShape(
       // every other shape's stroke.
       if (rawCell.border !== undefined) {
         const b: NonNullable<TableCell['border']> = {}
-        if (rawCell.border.top !== undefined) {
-          b.top = {
-            color: rawCell.border.top.color,
-            width: round(rawCell.border.top.width * scale),
-          }
-        }
-        if (rawCell.border.right !== undefined) {
-          b.right = {
-            color: rawCell.border.right.color,
-            width: round(rawCell.border.right.width * scale),
-          }
-        }
-        if (rawCell.border.bottom !== undefined) {
-          b.bottom = {
-            color: rawCell.border.bottom.color,
-            width: round(rawCell.border.bottom.width * scale),
-          }
-        }
-        if (rawCell.border.left !== undefined) {
-          b.left = {
-            color: rawCell.border.left.color,
-            width: round(rawCell.border.left.width * scale),
-          }
+        for (const edge of ['top', 'right', 'bottom', 'left'] as const) {
+          const e = rawCell.border[edge]
+          if (e === undefined) continue
+          b[edge] = { color: e.color, width: round(e.width * scale) }
+          if (e.dash !== undefined) b[edge]!.dash = e.dash
+          if (e.alpha !== undefined) b[edge]!.alpha = e.alpha
         }
         cell.border = b
+      }
+      // A picture fill (`<a:tcPr>/<a:blipFill>`).
+      if (rawCell.assetId !== undefined && rawCell.assetId !== '') {
+        cell.fillStyle = { kind: 'image', assetId: rawCell.assetId }
       }
       // Merge stamping — same shape as Narrative's TableCell schema.
       if (rawCell.gridSpan !== undefined && rawCell.gridSpan > 1) {
@@ -969,9 +1149,14 @@ function aggregateTableTypography(
 
 function backgroundForSlide(
   parsedBg: ParsedBackground,
+  narrative: Record<string, unknown> | undefined,
 ): ColorBackground | LinearGradientBackground | RadialGradientBackground | ImageBackground | null {
+  // Background details OOXML cannot hold, for the kind they were written for.
+  const ext = narrative?.['background'] as
+    | { kind: string; radius?: number; fit?: 'cover' | 'contain' }
+    | undefined
   if (parsedBg.kind === 'solid' && parsedBg.color !== undefined) {
-    return { kind: 'color', color: parsedBg.color, alpha: 1 }
+    return { kind: 'color', color: parsedBg.color, alpha: parsedBg.alpha ?? 1 }
   }
   if (parsedBg.kind === 'gradient' && parsedBg.gradient !== undefined) {
     const g = parsedBg.gradient
@@ -980,14 +1165,20 @@ function backgroundForSlide(
     }
     return {
       kind: 'radialGradient',
-      centerX: 0.5,
-      centerY: 0.5,
-      radius: 0.5,
+      centerX: g.centerX ?? 0.5,
+      centerY: g.centerY ?? 0.5,
+      radius: ext?.kind === 'radialGradient' && ext.radius !== undefined ? ext.radius : 0.5,
       stops: gradientStops(g),
     }
   }
   if (parsedBg.kind === 'image' && parsedBg.assetId !== undefined) {
-    return { kind: 'image', assetId: parsedBg.assetId, fit: 'cover' }
+    const out: ImageBackground = {
+      kind: 'image',
+      assetId: parsedBg.assetId,
+      fit: ext?.kind === 'image' && ext.fit !== undefined ? ext.fit : 'cover',
+    }
+    if (parsedBg.dim !== undefined && parsedBg.dim > 0) out.dim = parsedBg.dim
+    return out
   }
   return null
 }
@@ -1001,6 +1192,7 @@ function writeSlideShapes(
   slideId: string,
   parsedSlide: ParsedSlide,
   scale: number,
+  slideIds: SlideIdsByPath,
 ): { objectsCreated: number; skippedImages: number; skippedUnknown: number } {
   const objCtx = getSlideObjectsCtx(ctx, slideId)
   let objectsCreated = 0
@@ -1031,6 +1223,11 @@ function writeSlideShapes(
     // same `<p:pic>` that carries `<a:videoFile>`, matching how
     // PowerPoint authors it.
     const obj = mapShape(shape, scale)
+    if (obj !== null && shape.hyperlink !== undefined) {
+      const link = resolveHyperlink(shape.hyperlink, slideIds)
+      if (link !== undefined) obj.hyperlink = link
+    }
+    if (obj !== null) applyNarrativeExt(obj, shape)
     if (obj === null) {
       if (shape.kind === 'image') skippedImages++
       else skippedUnknown++
@@ -1054,13 +1251,11 @@ function writeSlideShapes(
   }
 
   // Solid / gradient backgrounds — image bgs skipped in v1.
-  const bg = backgroundForSlide(parsedSlide.background)
+  const bg = backgroundForSlide(parsedSlide.background, parsedSlide.narrative)
   if (bg !== null) updateSlideBackground(ctx, slideId, bg)
 
-  // Speaker notes — seed the slide's Y.XmlFragment with ProseMirror
-  // `<paragraph>` elements containing each parsed paragraph as plain text.
-  // Tiptap/y-prosemirror binds to this same fragment in the editor so the
-  // user sees the imported notes immediately on first open.
+  // Speaker notes — the notes editor's document into the slide's
+  // Y.XmlFragment, which Tiptap / y-prosemirror binds to in the editor.
   if (parsedSlide.notes !== undefined && parsedSlide.notes.length > 0) {
     seedSlideNotes(ctx, slideId, parsedSlide.notes)
   }
@@ -1073,49 +1268,36 @@ function writeSlideShapes(
     setSlideSkipped(ctx, slideId, true)
   }
 
-  // Slide transition. Parser uses short PPTX direction codes ('l' / 'r'
-  // / 'u' / 'd'); Narrative's SlidePushDirection uses the long form.
-  if (parsedSlide.transition !== undefined) {
-    const longDirection: 'left' | 'right' | 'up' | 'down' | undefined =
-      parsedSlide.transition.direction === 'l'
-        ? 'left'
-        : parsedSlide.transition.direction === 'r'
-          ? 'right'
-          : parsedSlide.transition.direction === 'u'
-            ? 'up'
-            : parsedSlide.transition.direction === 'd'
-              ? 'down'
-              : undefined
-    const patch: {
-      kind: NonNullable<ParsedSlide['transition']>['kind']
-      durationMs: number
-      direction?: 'left' | 'right' | 'up' | 'down'
-    } = {
-      kind: parsedSlide.transition.kind,
-      durationMs: parsedSlide.transition.durationMs,
-    }
-    if (longDirection !== undefined) patch.direction = longDirection
-    updateSlideTransition(ctx, slideId, patch)
-  }
+  // Slide transition: already in the model's form (`ooxml/transition.ts`).
+  // A Narrative export's explicit "none" with a duration comes back
+  // through the slide extension.
+  const noneTransition = parsedSlide.narrative?.['transition'] as SlideTransition | undefined
+  const transition = parsedSlide.transition ?? noneTransition
+  if (transition !== undefined) updateSlideTransition(ctx, slideId, transition)
+
+  const indent = parsedSlide.narrative?.['indent']
+  if (typeof indent === 'number' && indent > 0) setSlideIndent(ctx, slideId, indent)
+  if (parsedSlide.narrative?.['collapsed'] === true) setSlideCollapsed(ctx, slideId, true)
 
   // Animations — resolve each step's target spId against the map we just
-  // built, then add to the slide's animations Y.Array via the
-  // animationMutations API. Steps that target an unknown spId (e.g. the
-  // shape was dropped during the shapes pass) are skipped silently.
+  // built. Steps that target an unknown spId (the shape was dropped during
+  // the shapes pass) are skipped.
   if (parsedSlide.animations !== undefined && parsedSlide.animations.length > 0) {
     const animCtx = getSlideAnimationsCtx(ctx, slideId)
     if (animCtx !== null) {
       for (const step of parsedSlide.animations) {
         const targetObjId = spIdToObjectId.get(step.spId)
         if (targetObjId === undefined) continue
-        addAnimation(animCtx, {
+        const input: Parameters<typeof addAnimation>[1] = {
           objectId: targetObjId,
-          preset: step.preset as never,
+          preset: step.preset,
           trigger: step.trigger,
-          duration: Math.max(0.05, step.durationMs / 1000),
-          delay: Math.max(0, step.delayMs / 1000),
-          easing: 'power2.out',
-        })
+          duration: Math.max(0.05, step.duration),
+          delay: Math.max(0, step.delay),
+          easing: step.easing ?? 'power2.out',
+        }
+        if (step.params !== undefined) input.params = step.params
+        addAnimation(animCtx, input)
       }
     }
   }
@@ -1124,33 +1306,17 @@ function writeSlideShapes(
 }
 
 /**
- * Lazily populate a slide's notes Y.XmlFragment from parsed plain-text
- * paragraphs. ProseMirror's default schema treats each block as a
- * `paragraph` node containing zero or more text children, so we mirror
- * that shape: one Y.XmlElement('paragraph') per source paragraph, each
- * holding a Y.XmlText with the line's plain content.
- *
- * Empty paragraphs come through as empty `<paragraph/>` so the editor
- * preserves blank-line spacing from the source.
+ * Populate a slide's notes fragment — the one the notes editor binds to
+ * through y-prosemirror — with the imported notes document.
  */
 function seedSlideNotes(
   ctx: ReturnType<typeof createSlideDoc>,
   slideId: string,
-  paragraphs: string[],
+  notes: NotesDoc,
 ): void {
   const fragment = getSlideNotes(ctx, slideId)
   if (fragment === null) return
-  ctx.doc.transact(() => {
-    for (const para of paragraphs) {
-      const block = new Y.XmlElement('paragraph')
-      if (para.length > 0) {
-        const text = new Y.XmlText()
-        text.insert(0, para)
-        block.insert(0, [text])
-      }
-      fragment.insert(fragment.length, [block])
-    }
-  })
+  ctx.doc.transact(() => writeNotesIntoFragment(fragment, notes))
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,6 +1328,14 @@ function seedSlideNotes(
  * no DB or filesystem side-effects. Caller is responsible for inserting
  * the resulting `state` into `deck_updates`.
  */
+function slideIdsByPath(parsed: ParsedPptx, ids: readonly string[]): SlideIdsByPath {
+  const out = new Map<string, string>()
+  parsed.slides.forEach((slide, i) => {
+    if (slide.path !== undefined && ids[i] !== undefined) out.set(slide.path, ids[i]!)
+  })
+  return out
+}
+
 export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
   const ctx = createSlideDoc()
 
@@ -1182,9 +1356,12 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
   const scaleY = SLIDE_HEIGHT / Math.max(1, parsed.slideHeight)
   const scale = Math.min(scaleX, scaleY)
 
-  for (const slide of parsed.slides) {
-    const created = addSlide(ctx)
-    const stats = writeSlideShapes(ctx, created.id, slide, scale)
+  // Every slide exists before any shape is mapped, so a link to a later
+  // slide resolves to its id.
+  const created = parsed.slides.map(() => addSlide(ctx).id)
+  const slideIds = slideIdsByPath(parsed, created)
+  for (const [i, slide] of parsed.slides.entries()) {
+    const stats = writeSlideShapes(ctx, created[i]!, slide, scale, slideIds)
     objectsCreated += stats.objectsCreated
     skippedImages += stats.skippedImages
     skippedUnknown += stats.skippedUnknown
@@ -1253,12 +1430,16 @@ export function buildDeckAppendUpdate(
   const base =
     insertAt === undefined ? undefined : Math.max(0, Math.min(Math.trunc(insertAt), existingCount))
 
-  for (const [offset, slide] of parsed.slides.entries()) {
-    // addSlide() with no index argument appends at the end of the slides
-    // array — what "import → append" wants. With one, each slide goes one
-    // place further along so the imported run keeps its file order.
-    const created = base === undefined ? addSlide(ctx) : addSlide(ctx, base + offset)
-    const stats = writeSlideShapes(ctx, created.id, slide, scale)
+  // addSlide() with no index argument appends at the end of the slides
+  // array — what "import → append" wants. With one, each slide goes one
+  // place further along so the imported run keeps its file order. All of
+  // them exist before shapes are mapped, so links between them resolve.
+  const created = parsed.slides.map(
+    (_, offset) => (base === undefined ? addSlide(ctx) : addSlide(ctx, base + offset)).id,
+  )
+  const slideIds = slideIdsByPath(parsed, created)
+  for (const [i, slide] of parsed.slides.entries()) {
+    const stats = writeSlideShapes(ctx, created[i]!, slide, scale, slideIds)
     objectsCreated += stats.objectsCreated
     skippedImages += stats.skippedImages
     skippedUnknown += stats.skippedUnknown

@@ -15,9 +15,69 @@
  */
 
 import JSZip from 'jszip'
-import { XMLParser } from 'fast-xml-parser'
-import type { ParagraphAttrs, ListNumberFormat } from '@narrative/shared'
+import type {
+  AnimationPreset,
+  AnimationTrigger,
+  ImageMask,
+  ListNumberFormat,
+  ParagraphAttrs,
+  SlideTransition,
+} from '@narrative/shared'
 import { MAX_LIST_LEVEL } from '@narrative/shared'
+import {
+  type XmlNode,
+  ooxmlParser,
+  getAttrs,
+  getTag,
+  getChildren,
+  findFirst,
+  findAll,
+  walk,
+} from './ooxml/read.js'
+import {
+  type ThemeColourMap,
+  parseHexColour,
+  resolveSchemeColour,
+  parseColourAndAlphaFrom,
+  parseColourFrom,
+  unpackRgb,
+  packRgb,
+  clamp01,
+} from './ooxml/color.js'
+import { type ParsedGradient, parseGradient } from './ooxml/fill.js'
+import { EMU_PER_SOURCE_PX, emuToSourcePx } from './ooxml/units.js'
+import { readLine } from './ooxml/line.js'
+import { readEffects } from './ooxml/effects.js'
+import {
+  readAspectLocked,
+  readCustGeom,
+  readImageRect,
+  readPictureMask,
+  readRoundRectRadius,
+  srcRectSignature,
+  type GeomAnchor as ParsedPathAnchor,
+} from './ooxml/shapes.js'
+import {
+  readNarrativeExt,
+  readSlideExt,
+  type FrameFingerprint,
+  type NarrativeObjectExt,
+} from './ooxml/narrativeExt.js'
+import { imageCrop, slideExtFields } from './ooxml/extSchema.js'
+import { readTransition } from './ooxml/transition.js'
+import { readTiming } from './ooxml/timing.js'
+import { readNotes, type NotesDoc } from './ooxml/notes.js'
+import { ALIGN, ANCHOR, AUTONUM, BORDER_DASH } from './ooxml/vocabulary.js'
+import { defaultBulletGlyph } from '@narrative/slide-model'
+import {
+  DEFAULT_BODY_INSETS,
+  paragraphAttrsKey,
+  readBodyInsets,
+  readParagraphExt,
+  readRunExt,
+  type BodyInsets,
+} from './ooxml/text.js'
+import { paragraphAttrs as paragraphAttrsSchema } from './ooxml/extSchema.js'
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -44,6 +104,14 @@ export type ParsedShapeKind =
  * mirror Narrative's TableCell schema (origin carries gridSpan/rowSpan,
  * continuation cells carry mergeOriginR/C pointers).
  */
+/** One edge of a table cell, in source px. */
+export interface ParsedCellBorder {
+  color: number
+  width: number
+  dash?: 'solid' | 'dash' | 'dot'
+  alpha?: number
+}
+
 export interface ParsedTableCell {
   /** Concatenated plain text of every run in the cell — same shape as
    *  ParsedShape.text for ordinary text frames. The writer turns this
@@ -87,11 +155,15 @@ export interface ParsedTableCell {
    *  TableCellEdgeBorders shape. An undefined edge means "inherit
    *  from the table default" (renderer-side fallback). */
   border?: {
-    top?: { color: number; width: number }
-    right?: { color: number; width: number }
-    bottom?: { color: number; width: number }
-    left?: { color: number; width: number }
+    top?: ParsedCellBorder
+    right?: ParsedCellBorder
+    bottom?: ParsedCellBorder
+    left?: ParsedCellBorder
   }
+  /** Zip path of a picture fill (`<a:tcPr>/<a:blipFill>`); the importer
+   *  sets `assetId` once the bytes are stored. */
+  imagePath?: string
+  assetId?: string
   /** Cell content padding (PPTX `<a:tcPr marL/marR/marT/marB>`). */
   padding?: { top: number; right: number; bottom: number; left: number }
   /** Merge extent — set on the origin only. `gridSpan` = column count
@@ -105,43 +177,12 @@ export interface ParsedTableCell {
 }
 
 /**
- * Stop on a parsed gradient. `offset` is normalised 0..1 (PPTX uses 0..100000
- * `<a:gs pos="..">` so the parser does the divide). `color` is 0xRRGGBB.
- */
-export interface ParsedGradientStop {
-  offset: number
-  color: number
-  alpha?: number
-}
-
-export interface ParsedLinearGradient {
-  kind: 'linearGradient'
-  /** Degrees, clockwise. 0 = top→bottom (matches Narrative's convention). */
-  angleDeg: number
-  stops: ParsedGradientStop[]
-}
-
-export interface ParsedRadialGradient {
-  kind: 'radialGradient'
-  stops: ParsedGradientStop[]
-}
-
-export type ParsedGradient = ParsedLinearGradient | ParsedRadialGradient
-
-/**
  * Path-object anchor — same schema as Narrative's PathAnchor, but in
  * PPTX EMU before the writer scales to canvas pixels. cpIn / cpOut are
  * the cubic-bezier control handles relative to the anchor; missing on
  * both sides of a segment means the segment is a straight line.
  */
-export interface ParsedPathAnchor {
-  x: number
-  y: number
-  cpIn?: { x: number; y: number }
-  cpOut?: { x: number; y: number }
-  /** Subpath start marker — see `PathAnchor.moveTo` in slide-model. */
-  moveTo?: boolean
-}
+export type { GeomAnchor as ParsedPathAnchor } from './ooxml/shapes.js'
 
 /**
  * A single styled run inside a text frame. Mirrors PPTX's `<a:r>` shape
@@ -163,13 +204,14 @@ export interface ParsedTextRun {
   underline?: boolean
   /** Run font size in px (post `PPTX_FONT_TO_PX` conversion). */
   fontSize?: number
-  /** Resolved URL when the run carried `<a:rPr>/<a:hlinkClick r:id>` and
-   *  that rel id mapped to a hyperlink Target. */
-  hyperlinkHref?: string
+  /** The run's `<a:rPr>/<a:hlinkClick>`, resolved through the slide's rels. */
+  hyperlink?: ParsedHyperlink
   /** Font family from `<a:rPr>/<a:latin typeface="…">`. */
   fontFamily?: string
   /** Letter spacing in px (PPTX `<a:rPr spc>` is 100ths of a point). */
   letterSpacing?: number
+  /** Exact numeric weight from a Narrative export's run extension. */
+  fontWeight?: number
 }
 
 export interface ParsedShape {
@@ -193,9 +235,17 @@ export interface ParsedShape {
   strokeAlpha?: number
   /** Outline width in px. */
   strokeWidth?: number
-  /** Corner radius in px. Set by `extractGeometryUnderText` for
-   *  roundRect outlines split off a text frame. */
+  /** Dashed outline (`<a:prstDash>` other than solid). */
+  strokeDash?: boolean
+  /** For a shape its text made a text frame: the geometry it draws under
+   *  the text (rectangle, ellipse, …), see `extractGeometryUnderText`. */
+  geometryKind?: ParsedShapeKind
+  /** Corner radius in px, from a `roundRect`'s `adj`. */
   cornerRadius?: number
+  /** Model values from a Narrative export's extension (`ooxml/narrativeExt.ts`),
+   *  present only while the shape's frame is the one they were written for.
+   *  The writer lays them over the object it maps. */
+  narrative?: NarrativeObjectExt
   /** Concatenated text content (one style per frame; per-run formatting deferred). */
   text?: string
   /** First-run text colour (0xRRGGBB) if set. */
@@ -253,9 +303,17 @@ export interface ParsedShape {
    *  when this is absent. Present even for single-run text frames so
    *  callers don't have to special-case formatting consistency checks. */
   textRuns?: ParsedTextRun[]
-  /** First-run hyperlink (collapsed onto the TextObject — Narrative's
-   *  hyperlink lives on `BaseSlideObject`, one per object). */
-  hyperlink?: { href: string }
+  /** The shape's click action (`<p:cNvPr>/<a:hlinkClick>`), or for a text
+   *  frame without one its first run's link — Narrative models one link
+   *  per object. */
+  hyperlink?: ParsedHyperlink
+  /** Alt text, `<p:cNvPr descr>`. */
+  alt?: string
+  /** A picture's own geometry as the model's image mask (`ooxml/shapes.ts`);
+   *  a rectangle's corner radius is in source px. */
+  mask?: ImageMask
+  /** `noChangeAspect` on the shape's locks. */
+  aspectLocked?: boolean
   /** P6 group membership — table cells share a single nanoid groupId so
    *  the user can move/duplicate/delete the table as a unit. Other shape
    *  kinds leave this undefined. */
@@ -329,6 +387,13 @@ export interface ParsedShape {
   paragraphSpaceBefore?: number
   paragraphSpaceAfter?: number
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** Frame italic / underline from the shape's lstStyle (the frame tier). */
+  italic?: boolean
+  underline?: boolean
+  /** The text body's insets in source px (`<a:bodyPr lIns/tIns/rIns/bIns>`,
+   *  inherited and defaulted as PowerPoint does). The model's text frame is
+   *  where its text is, so the writer maps the frame shrunk by them. */
+  textInsets?: { l: number; t: number; r: number; b: number }
   /** `<a:bodyPr wrap="none">` — see TextObject.wrap. */
   wrap?: 'none'
   /** The frame is a PowerPoint slide-number field (`<a:fld type="slidenum">`)
@@ -353,6 +418,10 @@ export interface ParsedBackground {
   kind: 'solid' | 'gradient' | 'image' | 'none'
   /** 0xRRGGBB when kind === 'solid'. */
   color?: number
+  /** Solid colour alpha 0..1, when `<a:alpha>` was set. */
+  alpha?: number
+  /** Image darkening 0..1, from `<a:lum bright>` below zero. */
+  dim?: number
   /** Present when kind === 'gradient'. */
   gradient?: ParsedGradient
   /** Relationship id for an `<a:blipFill>` background. */
@@ -369,7 +438,13 @@ export interface ParsedBackground {
  * Used to resolve `<a:schemeClr val="…"/>` references against the deck's
  * actual theme rather than guessing a default palette.
  */
-export type ThemeColourMap = Record<string, number>
+export type { ThemeColourMap } from './ooxml/color.js'
+export type {
+  ParsedGradientStop,
+  ParsedLinearGradient,
+  ParsedRadialGradient,
+  ParsedGradient,
+} from './ooxml/fill.js'
 
 /**
  * `<a:theme>/<a:objectDefaults>/<a:txDef>/<a:lstStyle>/<a:defPPr>/<a:defRPr>`
@@ -440,27 +515,30 @@ function resolveTypeface(raw: unknown, theme: ThemeColourMap): string | undefine
   return resolved !== undefined && resolved.length > 0 ? resolved : undefined
 }
 
+/** Where a hyperlink leads, before slide paths are mapped to slide ids. */
+export type ParsedHyperlink = { kind: 'url'; href: string } | { kind: 'slide'; slidePath: string }
+
 export interface ParsedSlide {
   /** File name like `slide1.xml` — useful for diagnostics. */
   source: string
+  /** Zip path of the slide part (`ppt/slides/slide1.xml`): the target of
+   *  slide-jump hyperlinks. Set by `parsePptx`. */
+  path?: string
   background: ParsedBackground
   shapes: ParsedShape[]
-  /** Speaker notes — paragraphs of plain text pulled from the linked
-   *  `ppt/notesSlides/notesSlideN.xml`. Missing or empty array ⇒ slide
-   *  has no notes. v1 is plain-text only (no formatting). */
-  notes?: string[]
+  /** Speaker notes from the linked `ppt/notesSlides/notesSlideN.xml`: the
+   *  notes editor's document (`ooxml/notes.ts`). Missing ⇒ no notes. */
+  notes?: NotesDoc
   /** Slide title from `<p:cSld name="…">`. Optional. */
   name?: string
   /** True when the source `<p:sld show="0">` — slide hidden in presenter. */
   skipped?: boolean
-  /** Parsed transition kind + duration from `<p:transition>`. */
-  transition?: {
-    kind: 'none' | 'fade' | 'push' | 'cube' | 'magic'
-    durationMs: number
-    direction?: 'l' | 'r' | 'u' | 'd'
-  }
-  /** Imported animation steps (lossy mapping from PPTX `<p:timing>`). */
+  /** The slide's transition (`ooxml/transition.ts`). */
+  transition?: SlideTransition
+  /** Imported animation steps (`ooxml/timing.ts`). */
   animations?: ParsedAnimationStep[]
+  /** Validated fields of a Narrative export's slide extension (`extSchema.ts`). */
+  narrative?: Record<string, unknown>
 }
 
 /**
@@ -475,10 +553,14 @@ export interface ParsedSlide {
 export interface ParsedAnimationStep {
   /** PPTX `spid` reference — the integer `<p:cNvPr id>` of the target. */
   spId: number
-  preset: string
-  trigger: 'onEnter' | 'onClick' | 'withPrevious' | 'afterPrevious'
-  durationMs: number
-  delayMs: number
+  preset: AnimationPreset
+  trigger: AnimationTrigger
+  /** Seconds, as the model stores them. */
+  duration: number
+  /** Seconds. */
+  delay: number
+  easing?: string
+  params?: Record<string, unknown>
 }
 
 export interface ParsedEmbeddedImage {
@@ -541,8 +623,27 @@ export interface ParsedPptx {
 // ---------------------------------------------------------------------------
 
 /** PPTX uses 914 400 EMU per inch; web is 96 px per inch. */
-export const EMU_PER_PX = 9525
-export const emuToPx = (emu: number): number => emu / EMU_PER_PX
+export const EMU_PER_PX = EMU_PER_SOURCE_PX
+export const emuToPx = emuToSourcePx
+
+/** An `<a:xfrm>` / `<p:xfrm>` as the raw integers the extension fingerprints. */
+function frameFingerprintOf(xfrm: XmlNode): FrameFingerprint {
+  const tagName = getTag(xfrm) ?? 'a:xfrm'
+  const kids = getChildren(xfrm, tagName)
+  const off = getAttrs(findFirst(kids, 'a:off') ?? {})
+  const ext = getAttrs(findFirst(kids, 'a:ext') ?? {})
+  const n = (v: unknown): number => {
+    const x = Number(v)
+    return Number.isFinite(x) ? x : 0
+  }
+  return {
+    x: n(off['@x']),
+    y: n(off['@y']),
+    cx: n(ext['@cx']),
+    cy: n(ext['@cy']),
+    rot: n(getAttrs(xfrm)['@rot']),
+  }
+}
 
 /** PPTX rotations are stored as 60 000ths-of-a-degree integers. */
 const PPTX_ROT_PER_DEG = 60000
@@ -562,61 +663,6 @@ const PPTX_FONT_TO_PX = (1 / 100) * (96 / 72)
  * resolver yet, so cells keep the historical approximation.
  */
 const TABLE_CELL_LEADING_APPROX = 1.2
-
-const HEX_RE = /^[0-9a-fA-F]{6}$/
-
-/** "0F172A" → 0x0F172A. Returns undefined on malformed input. */
-function parseHexColour(s: string | undefined): number | undefined {
-  if (s === undefined) return undefined
-  const clean = s.replace(/^#/, '').toUpperCase()
-  if (!HEX_RE.test(clean)) return undefined
-  return parseInt(clean, 16)
-}
-
-/**
- * Office default scheme palette — fallback when theme1.xml is absent or a
- * scheme reference doesn't match any entry. Matches PowerPoint's Office
- * theme so unmapped accent colours stay visually plausible.
- */
-const DEFAULT_THEME: ThemeColourMap = {
-  dk1: 0x000000,
-  lt1: 0xffffff,
-  dk2: 0x44546a,
-  lt2: 0xe7e6e6,
-  tx1: 0x000000, // text/background fall-throughs to dk1/lt1 — see resolveSchemeColour
-  bg1: 0xffffff,
-  tx2: 0x44546a,
-  bg2: 0xe7e6e6,
-  accent1: 0x4472c4,
-  accent2: 0xed7d31,
-  accent3: 0xa5a5a5,
-  accent4: 0xffc000,
-  accent5: 0x5b9bd5,
-  accent6: 0x70ad47,
-  hlink: 0x0563c1,
-  folHlink: 0x954f72,
-}
-
-function resolveSchemeColour(name: string, theme: ThemeColourMap): number | undefined {
-  // OOXML themes physically store `dk1/lt1/dk2/lt2`; `tx1/bg1/tx2/bg2` are
-  // *slot aliases* the slide-master `<p:clrMap>` (default mapping) points at.
-  // Resolve direct + aliased against the *loaded* theme first — only then
-  // fall through to DEFAULT_THEME — otherwise a deck whose `lt1` is non-white
-  // (legal!) reads as white because DEFAULT_THEME.bg1 short-circuits the
-  // alias lookup.
-  const aliases: Record<string, string> = {
-    tx1: 'dk1',
-    bg1: 'lt1',
-    tx2: 'dk2',
-    bg2: 'lt2',
-  }
-  const aliased = aliases[name]
-  if (theme[name] !== undefined) return theme[name]
-  if (aliased !== undefined && theme[aliased] !== undefined) return theme[aliased]
-  if (DEFAULT_THEME[name] !== undefined) return DEFAULT_THEME[name]
-  if (aliased !== undefined && DEFAULT_THEME[aliased] !== undefined) return DEFAULT_THEME[aliased]
-  return undefined
-}
 
 // ---------------------------------------------------------------------------
 // Mapping tables (kept in sync with docs/plans/m28-pptx-import-export.md)
@@ -764,279 +810,9 @@ const MVP_ELEMENTS = new Set<string>([
 // Internal: walk preserveOrder XML trees
 // ---------------------------------------------------------------------------
 
-/**
- * fast-xml-parser preserveOrder layout:
- *   - Each element is an object with exactly one tag key (besides ':@' for
- *     attrs), and the value is an array of child elements.
- *   - Text content lives in `{ '#text': '...' }` entries.
- *   - Attributes live in `{ ':@': { '@attr': value, ... } }`.
- */
-type XmlNode = Record<string, unknown>
-
-/**
- * The one XMLParser configuration every OOXML part is read with.
- *
- * `parseTagValue: false` is the point: fast-xml-parser otherwise turns text
- * that looks numeric into a number, and every reader here only takes
- * `#text` when it is a string — so a run whose whole text was "2", "2026" or
- * "10" silently vanished from the import (and "007" would have become 7).
- * PowerPoint splits runs at every formatting change, so a bold year inside a
- * sentence is exactly such a run. Text is text; attributes are converted
- * explicitly where they are read.
- */
-function ooxmlParser(opts: { trimValues?: boolean } = {}): XMLParser {
-  return new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-    parseTagValue: false,
-    trimValues: opts.trimValues ?? true,
-  })
-}
-
-function getAttrs(node: XmlNode): Record<string, unknown> {
-  const a = node[':@']
-  return a !== null && typeof a === 'object' ? (a as Record<string, unknown>) : {}
-}
-
-function getTag(node: XmlNode): string | null {
-  for (const key of Object.keys(node)) {
-    if (key !== ':@' && key !== '#text') return key
-  }
-  return null
-}
-
-function getChildren(node: XmlNode, tag: string): XmlNode[] {
-  const v = node[tag]
-  return Array.isArray(v) ? (v as XmlNode[]) : []
-}
-
-function findFirst(nodes: XmlNode[], tag: string): XmlNode | undefined {
-  for (const n of nodes) {
-    if (getTag(n) === tag) return n
-  }
-  return undefined
-}
-
-function findAll(nodes: XmlNode[], tag: string): XmlNode[] {
-  return nodes.filter((n) => getTag(n) === tag)
-}
-
-/** Recursive: yields every node in the subtree (depth-first). */
-function* walk(nodes: XmlNode[]): IterableIterator<XmlNode> {
-  for (const n of nodes) {
-    yield n
-    const tag = getTag(n)
-    if (tag !== null) {
-      yield* walk(getChildren(n, tag))
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Parse one shape (p:sp, p:pic, p:cxnSp)
 // ---------------------------------------------------------------------------
-
-/**
- * Resolve the first colour descriptor found in the subtree, applying any
- * inline modifiers (lumMod / lumOff / shade / tint) and capturing alpha.
- * Handles:
- *   - `<a:srgbClr val="RRGGBB">[...mods...]</a:srgbClr>`
- *   - `<a:sysClr val="..." lastClr="RRGGBB">[...mods...]</a:sysClr>`
- *   - `<a:schemeClr val="accent1">[...mods...]</a:schemeClr>` — looked up in
- *     the deck's theme palette, fall-through to PowerPoint's Office defaults
- *
- * Modifiers (each value is `n / 100000`, so 50000 = 0.5):
- *   - `<a:lumMod val="N"/>` — multiplies luminance (HSL L) by N
- *   - `<a:lumOff val="N"/>` — adds N to luminance
- *   - `<a:shade   val="N"/>` — darken (mix toward black)
- *   - `<a:tint    val="N"/>` — lighten (mix toward white)
- *   - `<a:alpha   val="N"/>` — sets the result's alpha to N/100000 (0..1)
- *
- * Returns undefined if no colour descriptor is found anywhere in the subtree.
- */
-function parseColourAndAlphaFrom(
-  node: XmlNode,
-  theme: ThemeColourMap,
-): { color: number; alpha?: number } | undefined {
-  const colourNode = findFirstColourDescriptor(node)
-  if (colourNode === null) return undefined
-  const { tag, attrs, descriptor } = colourNode
-
-  let base: number | undefined
-  if (tag === 'a:srgbClr') {
-    base = parseHexColour(typeof attrs['@val'] === 'string' ? (attrs['@val'] as string) : '')
-  } else if (tag === 'a:sysClr') {
-    base = parseHexColour(
-      typeof attrs['@lastClr'] === 'string' ? (attrs['@lastClr'] as string) : '',
-    )
-  } else if (tag === 'a:schemeClr') {
-    base =
-      typeof attrs['@val'] === 'string'
-        ? resolveSchemeColour(attrs['@val'] as string, theme)
-        : undefined
-  }
-  if (base === undefined) return undefined
-
-  // Apply modifiers in document order (PowerPoint's renderer does the same).
-  let { r, g, b } = unpackRgb(base)
-  let alpha: number | undefined
-  for (const mod of getChildren(descriptor, tag)) {
-    const mTag = getTag(mod)
-    if (mTag === null) continue
-    const v = Number(getAttrs(mod)['@val'])
-    if (!Number.isFinite(v)) continue
-    const frac = v / 100000 // PPTX uses parts-per-100000 for these
-    if (mTag === 'a:lumMod') {
-      const hsl = rgbToHsl(r, g, b)
-      hsl.l *= frac
-      ;({ r, g, b } = hslToRgb(hsl.h, hsl.s, hsl.l))
-    } else if (mTag === 'a:lumOff') {
-      const hsl = rgbToHsl(r, g, b)
-      hsl.l = clamp01(hsl.l + frac)
-      ;({ r, g, b } = hslToRgb(hsl.h, hsl.s, hsl.l))
-    } else if (mTag === 'a:shade') {
-      r = Math.round(r * frac)
-      g = Math.round(g * frac)
-      b = Math.round(b * frac)
-    } else if (mTag === 'a:tint') {
-      r = Math.round(r + (255 - r) * (1 - frac))
-      g = Math.round(g + (255 - g) * (1 - frac))
-      b = Math.round(b + (255 - b) * (1 - frac))
-    } else if (mTag === 'a:alpha') {
-      alpha = clamp01(frac)
-    }
-  }
-  const out: { color: number; alpha?: number } = { color: packRgb(r, g, b) }
-  if (alpha !== undefined) out.alpha = alpha
-  return out
-}
-
-/** Backwards-compatible thin wrapper for call sites that don't need alpha. */
-function parseColourFrom(node: XmlNode, theme: ThemeColourMap): number | undefined {
-  return parseColourAndAlphaFrom(node, theme)?.color
-}
-
-interface ColourDescriptor {
-  tag: string
-  attrs: Record<string, unknown>
-  descriptor: XmlNode
-}
-
-function findFirstColourDescriptor(node: XmlNode): ColourDescriptor | null {
-  for (const desc of walk([node])) {
-    const tag = getTag(desc)
-    if (tag === 'a:srgbClr' || tag === 'a:sysClr' || tag === 'a:schemeClr') {
-      return { tag, attrs: getAttrs(desc), descriptor: desc }
-    }
-  }
-  return null
-}
-
-// ─── Tiny colour-space helpers (no external deps) ───────────────────────────
-
-function unpackRgb(v: number): { r: number; g: number; b: number } {
-  return { r: (v >> 16) & 0xff, g: (v >> 8) & 0xff, b: v & 0xff }
-}
-function packRgb(r: number, g: number, b: number): number {
-  const c = (n: number): number => Math.max(0, Math.min(255, Math.round(n)))
-  return (c(r) << 16) | (c(g) << 8) | c(b)
-}
-function clamp01(n: number): number {
-  return Math.max(0, Math.min(1, n))
-}
-function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
-  r /= 255
-  g /= 255
-  b /= 255
-  const max = Math.max(r, g, b),
-    min = Math.min(r, g, b)
-  let h = 0,
-    s = 0
-  const l = (max + min) / 2
-  if (max !== min) {
-    const d = max - min
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
-    switch (max) {
-      case r:
-        h = (g - b) / d + (g < b ? 6 : 0)
-        break
-      case g:
-        h = (b - r) / d + 2
-        break
-      case b:
-        h = (r - g) / d + 4
-        break
-    }
-    h /= 6
-  }
-  return { h, s, l }
-}
-function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
-  let r: number, g: number, b: number
-  if (s === 0) {
-    r = g = b = l
-  } else {
-    const hue2rgb = (p: number, q: number, t: number): number => {
-      if (t < 0) t += 1
-      if (t > 1) t -= 1
-      if (t < 1 / 6) return p + (q - p) * 6 * t
-      if (t < 1 / 2) return q
-      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
-      return p
-    }
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-    const p = 2 * l - q
-    r = hue2rgb(p, q, h + 1 / 3)
-    g = hue2rgb(p, q, h)
-    b = hue2rgb(p, q, h - 1 / 3)
-  }
-  return { r: r * 255, g: g * 255, b: b * 255 }
-}
-
-/** PPTX rotation/angle attribute resolution: 60 000 units per degree. */
-function pptxAngleToDeg(raw: string | undefined): number {
-  if (typeof raw !== 'string') return 0
-  const n = Number(raw)
-  if (!Number.isFinite(n)) return 0
-  // PPTX 0° = "to the right". CSS / Narrative gradient: 0° = "to bottom".
-  // Match the CSS-style "0 = top→bottom" convention by adding 90° here so the
-  // resulting gradient orientation matches what the source rendered.
-  return (((n / 60000) % 360) + 90) % 360
-}
-
-function parseGradient(gradFill: XmlNode, theme: ThemeColourMap): ParsedGradient | undefined {
-  const children = getChildren(gradFill, 'a:gradFill')
-  const gsLst = findFirst(children, 'a:gsLst')
-  if (!gsLst) return undefined
-  const gsNodes = findAll(getChildren(gsLst, 'a:gsLst'), 'a:gs')
-  const stops: ParsedGradientStop[] = []
-  for (const gs of gsNodes) {
-    const a = getAttrs(gs)
-    const pos = Number(a['@pos'] ?? 0) / 100000
-    const c = parseColourAndAlphaFrom(gs, theme)
-    if (c !== undefined) {
-      const stop: ParsedGradientStop = { offset: pos, color: c.color }
-      if (c.alpha !== undefined) stop.alpha = c.alpha
-      stops.push(stop)
-    }
-  }
-  // Sort by offset — PPTX guarantees order but defensive.
-  stops.sort((a, b) => a.offset - b.offset)
-  if (stops.length === 0) return undefined
-
-  // Radial?
-  const path = findFirst(children, 'a:path')
-  if (path !== undefined) {
-    return { kind: 'radialGradient', stops }
-  }
-
-  // Linear (default).
-  const lin = findFirst(children, 'a:lin')
-  const angleDeg = lin ? pptxAngleToDeg(String(getAttrs(lin)['@ang'] ?? '0')) : 0
-  return { kind: 'linearGradient', angleDeg, stops }
-}
 
 // ---------------------------------------------------------------------------
 // Master + layout flattening — see `SlideContext` for the full set of artefacts
@@ -1075,6 +851,10 @@ interface TextStyleDefaults {
   lineSpacing?: LineSpacingDecl
   /** Per-level `marL` (EMU), see {@link readLevelMargins}. */
   levelMargins?: Array<number | undefined>
+  /** `<a:defRPr spc>`: letter spacing in 100ths of a point. */
+  letterSpacing100?: number
+  /** `<a:defRPr cap>`. */
+  textTransform?: 'none' | 'uppercase' | 'lowercase'
 }
 
 /**
@@ -1089,6 +869,136 @@ interface TextStyleDefaults {
  * questions — *which layer wins* and *what the number means* — apart.
  */
 type LineSpacingDecl = { kind: 'pct'; value: number } | { kind: 'pts'; value100: number }
+
+/** `<a:spcBef>` / `<a:spcAft>` as px, when given in points (`<a:spcPts>`). */
+function readSpacingPts(pPrChildren: XmlNode[], name: 'a:spcBef' | 'a:spcAft'): number | undefined {
+  const node = findFirst(pPrChildren, name)
+  if (node === undefined) return undefined
+  const pts = findFirst(getChildren(node, name), 'a:spcPts')
+  if (pts === undefined) return undefined
+  const v = Number(getAttrs(pts)['@val'])
+  return Number.isFinite(v) ? v * PPTX_FONT_TO_PX : undefined
+}
+
+/** `<a:pPr>/<a:defRPr>`: run properties for the runs of one paragraph. */
+interface ParagraphRunDefaults {
+  color?: number
+  colorAlpha?: number
+  fontSize?: number
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  letterSpacing?: number
+  textTransform?: ParsedShape['textTransform']
+  fontFamily?: string
+}
+
+/**
+ * What one `<a:rPr>` says about its run (or line break), explicit "off"
+ * values included: `b="0"` in a bold frame is a non-bold run.
+ */
+function readRunProperties(
+  rPr: XmlNode,
+  theme: ThemeColourMap,
+  hyperlinkRels: HyperlinkRelMap,
+): {
+  attrs: Omit<ParsedTextRun, 'text'>
+  textTransform: ParsedShape['textTransform']
+  ln: XmlNode | undefined
+} {
+  const attrs: Omit<ParsedTextRun, 'text'> = {}
+  const a = getAttrs(rPr)
+  const b = readOnOff(a['@b'])
+  if (b !== undefined) attrs.bold = b
+  const i = readOnOff(a['@i'])
+  if (i !== undefined) attrs.italic = i
+  if (typeof a['@u'] === 'string') attrs.underline = a['@u'] !== 'none'
+  const exact = readRunExt(rPr)
+  if (exact.fontWeight !== undefined) attrs.fontWeight = exact.fontWeight
+  const sz = Number(a['@sz'])
+  if (typeof a['@sz'] === 'string' && Number.isFinite(sz)) attrs.fontSize = sz * PPTX_FONT_TO_PX
+  // Letter spacing — `spc` is 100ths of a point (signed).
+  const spc = Number(a['@spc'])
+  if (typeof a['@spc'] === 'string' && Number.isFinite(spc))
+    attrs.letterSpacing = spc * PPTX_FONT_TO_PX
+  const cap = a['@cap']
+  const textTransform: ParsedShape['textTransform'] =
+    cap === 'all' ? 'uppercase' : cap === 'small' ? 'lowercase' : undefined
+  const kids = getChildren(rPr, 'a:rPr')
+  const solid = findFirst(kids, 'a:solidFill')
+  if (solid !== undefined) {
+    const c = parseColourAndAlphaFrom(solid, theme)
+    if (c !== undefined) {
+      attrs.color = c.color
+      if (c.alpha !== undefined) attrs.colorAlpha = c.alpha
+    }
+  }
+  // `<a:latin>` names the face; PowerPoint falls back to it when an
+  // east-asian / complex-script face (`<a:ea>` / `<a:cs>`) is missing.
+  const latinNode = findFirst(kids, 'a:latin')
+  if (latinNode !== undefined) {
+    const tf = resolveTypeface(getAttrs(latinNode)['@typeface'], theme)
+    if (tf !== undefined) attrs.fontFamily = tf
+  }
+  // A family stack a Narrative export wrote as its first face.
+  if (exact.fontFamily !== undefined) attrs.fontFamily = exact.fontFamily
+  // `<a:hlinkClick r:id>` → the slide relationship's target URL.
+  const hlink = findFirst(kids, 'a:hlinkClick')
+  if (hlink !== undefined) {
+    const rId = getAttrs(hlink)['@r:id']
+    if (typeof rId === 'string') {
+      const link = hyperlinkRels.get(rId)
+      if (link !== undefined) attrs.hyperlink = link
+    }
+  }
+  return { attrs, textTransform, ln: findFirst(kids, 'a:ln') }
+}
+
+/** Fill what a run left unsaid from its paragraph's `<a:defRPr>`. */
+function applyParagraphRunDefaults(run: ParsedTextRun, d: ParagraphRunDefaults): void {
+  if (run.color === undefined && d.color !== undefined) {
+    run.color = d.color
+    if (d.colorAlpha !== undefined) run.colorAlpha = d.colorAlpha
+  }
+  if (run.fontSize === undefined && d.fontSize !== undefined) run.fontSize = d.fontSize
+  if (run.bold === undefined && d.bold === true) run.bold = true
+  if (run.italic === undefined && d.italic === true) run.italic = true
+  if (run.underline === undefined && d.underline === true) run.underline = true
+  if (run.letterSpacing === undefined && d.letterSpacing !== undefined)
+    run.letterSpacing = d.letterSpacing
+  if (run.fontFamily === undefined && d.fontFamily !== undefined) run.fontFamily = d.fontFamily
+}
+
+/** Whether a text body's only visible content is a slide-number field. */
+function isSlideNumberOnly(paragraphs: XmlNode[]): boolean {
+  let field = false
+  for (const p of paragraphs) {
+    for (const child of getChildren(p, 'a:p')) {
+      const t = getTag(child)
+      if (t !== 'a:r' && t !== 'a:fld') continue
+      if (t === 'a:fld' && getAttrs(child)['@type'] === 'slidenum') {
+        field = true
+        continue
+      }
+      const tNode = findFirst(getChildren(child, t), 'a:t')
+      const text =
+        tNode !== undefined
+          ? getChildren(tNode, 'a:t')
+              .map((c) => (c as { '#text'?: unknown })['#text'] ?? '')
+              .join('')
+          : ''
+      if (String(text).trim() !== '') return false
+    }
+  }
+  return field
+}
+
+/** An OOXML boolean attribute (`1` / `0` / `true` / `false`), undefined when absent. */
+function readOnOff(v: unknown): boolean | undefined {
+  if (v === '1' || v === 'true') return true
+  if (v === '0' || v === 'false') return false
+  return undefined
+}
 
 /**
  * Read `<a:lnSpc>` from the children of a paragraph-properties node
@@ -1189,6 +1099,8 @@ interface PlaceholderEntry {
   /** `<a:bodyPr wrap="…">` on the placeholder — a master's slide-number box
    *  declares `none` there and every slide's copy inherits it. */
   bodyWrap?: 'none' | 'square'
+  /** `<a:bodyPr lIns/tIns/rIns/bIns>` on the placeholder (EMU), per side. */
+  bodyInsets?: Partial<BodyInsets>
   /** Default run colour from `<a:lvl1pPr>/<a:defRPr>/<a:solidFill>`. */
   defaultColor?: number
   defaultColorAlpha?: number
@@ -1198,6 +1110,8 @@ interface PlaceholderEntry {
    *  Inherited by slide shapes whose own runs don't specify cap. Drives
    *  the "title is always uppercase" pattern PowerPoint templates use. */
   defaultTextTransform?: 'uppercase' | 'lowercase'
+  /** Default letter spacing from `<a:lvl1pPr>/<a:defRPr spc>`, 100ths of a point. */
+  defaultLetterSpacing100?: number
   /** Bullet marker from `<a:lvl1pPr>` (`<a:buChar>` / `<a:buAutoNum>` /
    *  `<a:buNone>`). 'none' = explicitly suppressed; missing = not declared. */
   defaultListStyle?: 'bullet' | 'numbered' | 'none'
@@ -1282,10 +1196,15 @@ function mergePlaceholderEntries(
   pick('defaultFontFamily')
   pick('bodyAnchor')
   pick('bodyWrap')
+  // Per side: a layout that sets one inset still inherits the master's others.
+  if (layout.bodyInsets !== undefined || master.bodyInsets !== undefined) {
+    merged.bodyInsets = { ...master.bodyInsets, ...layout.bodyInsets }
+  }
   pick('defaultColor')
   pick('defaultColorAlpha')
   pick('defaultBold')
   pick('defaultTextTransform')
+  pick('defaultLetterSpacing100')
   pick('defaultListStyle')
   pick('defaultLineSpacing')
   pick('fill')
@@ -1307,46 +1226,12 @@ function placeholderKey(type: string | undefined, idx: string | undefined): stri
   return '__any__'
 }
 
-/** Map PPTX `<a:pPr algn>` enum to Narrative's TextObject.align. */
-function mapAlgn(raw: string): 'left' | 'center' | 'right' | 'justify' {
-  switch (raw) {
-    case 'ctr':
-      return 'center'
-    case 'r':
-      return 'right'
-    case 'just':
-    case 'justLow':
-      return 'justify'
-    case 'l':
-    default:
-      return 'left'
-  }
+/** `<a:pPr algn>` through the shared vocabulary (justified text renders left-aligned). */
+function mapAlgn(raw: string): 'left' | 'center' | 'right' {
+  return ALIGN.fromXml(raw) ?? 'left'
 }
 
-/**
- * Parse a `<a:custGeom>/<a:pathLst>/<a:path>` into an array of anchors
- * matching Narrative's PathAnchor schema (with cubic-bezier handles when
- * the source used `<a:cubicBezTo>` segments).
- *
- * PPTX path coordinate model: `<a:path w="EMU" h="EMU">` declares a path
- * coordinate space that maps onto the shape's `<a:xfrm>/<a:ext>` bbox.
- * Children are `<a:moveTo>`, `<a:lnTo>`, `<a:cubicBezTo>`, `<a:quadBezTo>`,
- * `<a:arcTo>`, and `<a:close>`. Each `<a:pt x="..." y="..."/>` is a
- * coordinate in that EMU space. We:
- *   1. Convert each PPTX point from path-space EMU → slide-local px
- *      using `(emuToPx(coord) * shapeExtPx / emuToPx(pathW))` so the
- *      anchors map directly into the shape's bbox.
- *   2. For cubicBezTo: PPTX gives three points (cp1, cp2, end). cp1
- *      becomes the previous anchor's cpOut, cp2 becomes the new
- *      anchor's cpIn.
- *   3. quadBezTo gets converted to a cubic by the standard
- *      `1/3, 2/3` interpolation between the start, control, and end
- *      points. arcTo is not currently supported (drops the segment).
- *
- * Returns `{ anchors, closed }`. Anchor coordinates are slide-local px,
- * NOT yet relative to the shape's `(x, y)` — that conversion happens in
- * the writer's mapShape so the parser stays coordinate-system-agnostic.
- */
+/** `<a:custGeom>` anchors in slide-local source px (`ooxml/shapes.ts` reads it). */
 function parseCustGeomAnchors(
   custGeom: XmlNode,
   shapeWidthPx: number,
@@ -1354,125 +1239,12 @@ function parseCustGeomAnchors(
   shapeXPx: number,
   shapeYPx: number,
 ): { anchors: ParsedPathAnchor[]; closed: boolean } {
-  const cgChildren = getChildren(custGeom, 'a:custGeom')
-  const pathLst = findFirst(cgChildren, 'a:pathLst')
-  if (!pathLst) return { anchors: [], closed: false }
-  const path = findFirst(getChildren(pathLst, 'a:pathLst'), 'a:path')
-  if (!path) return { anchors: [], closed: false }
-
-  const pathAttrs = getAttrs(path)
-  const pathW = Number(pathAttrs['@w'] ?? 0) || 1
-  const pathH = Number(pathAttrs['@h'] ?? 0) || 1
-  const scaleX = shapeWidthPx / pathW
-  const scaleY = shapeHeightPx / pathH
-  // Convert a `<a:pt>` (EMU in path-space) to slide-local px.
-  const toPx = (ptNode: XmlNode | undefined): { x: number; y: number } | undefined => {
-    if (!ptNode) return undefined
-    const a = getAttrs(ptNode)
-    const px = Number(a['@x'] ?? 0)
-    const py = Number(a['@y'] ?? 0)
-    return { x: shapeXPx + px * scaleX, y: shapeYPx + py * scaleY }
-  }
-
-  const anchors: ParsedPathAnchor[] = []
-  let closed = false
-  const pathChildren = getChildren(path, 'a:path')
-  let cursor: { x: number; y: number } | undefined
-  // `<a:custGeom>` can pack many disconnected subpaths into a single
-  // `<a:path>` — each subpath is delimited by `<a:moveTo>` (start) and
-  // `<a:close/>` (end). Slide 8's dot-grid icons take this shape:
-  // ~1300 closed quads, one per dot, all in one <a:path>. Without
-  // subpath tracking the renderer would draw straight lines between
-  // each dot's closing corner and the next dot's start, producing the
-  // diagonal-shear artefact the user saw. The first anchor of a
-  // subpath gets a `moveTo: true` flag; the renderer's `tracePath`
-  // emits a Graphics.moveTo for those instead of a lineTo.
-
-  for (const cmd of pathChildren) {
-    const tag = getTag(cmd)
-    if (tag === null) continue
-    const ptNodes = getChildren(cmd, tag).filter((n) => getTag(n) === 'a:pt')
-    if (tag === 'a:moveTo') {
-      const p = toPx(ptNodes[0])
-      if (p !== undefined) {
-        // First anchor of the whole path is implicitly a subpath start,
-        // so no flag needed (tracePath always emits moveTo for index 0).
-        // Subsequent moveTo's (post-close) DO need the flag.
-        const a: ParsedPathAnchor = { x: p.x, y: p.y }
-        if (anchors.length > 0) a.moveTo = true
-        anchors.push(a)
-        cursor = p
-      }
-    } else if (tag === 'a:lnTo') {
-      const p = toPx(ptNodes[0])
-      if (p !== undefined) {
-        anchors.push({ x: p.x, y: p.y })
-        cursor = p
-      }
-    } else if (tag === 'a:cubicBezTo') {
-      // cubicBezTo carries three `<a:pt>` children: cp1, cp2, end.
-      const cp1 = toPx(ptNodes[0])
-      const cp2 = toPx(ptNodes[1])
-      const end = toPx(ptNodes[2])
-      if (cp1 !== undefined && anchors.length > 0 && cursor !== undefined) {
-        const prev = anchors[anchors.length - 1]!
-        prev.cpOut = { x: cp1.x - prev.x, y: cp1.y - prev.y }
-      }
-      if (end !== undefined) {
-        const next: ParsedPathAnchor = { x: end.x, y: end.y }
-        if (cp2 !== undefined) {
-          next.cpIn = { x: cp2.x - end.x, y: cp2.y - end.y }
-        }
-        anchors.push(next)
-        cursor = end
-      }
-    } else if (tag === 'a:quadBezTo') {
-      // Quad → cubic conversion. Quad has cp + end; cubic equivalent:
-      // cp1 = start + 2/3 (cp - start), cp2 = end + 2/3 (cp - end).
-      const cp = toPx(ptNodes[0])
-      const end = toPx(ptNodes[1])
-      if (cp !== undefined && end !== undefined && cursor !== undefined) {
-        const start = cursor
-        const cp1 = {
-          x: start.x + (2 / 3) * (cp.x - start.x),
-          y: start.y + (2 / 3) * (cp.y - start.y),
-        }
-        const cp2 = {
-          x: end.x + (2 / 3) * (cp.x - end.x),
-          y: end.y + (2 / 3) * (cp.y - end.y),
-        }
-        if (anchors.length > 0) {
-          const prev = anchors[anchors.length - 1]!
-          prev.cpOut = { x: cp1.x - prev.x, y: cp1.y - prev.y }
-        }
-        anchors.push({
-          x: end.x,
-          y: end.y,
-          cpIn: { x: cp2.x - end.x, y: cp2.y - end.y },
-        })
-        cursor = end
-      }
-    } else if (tag === 'a:close') {
-      closed = true
-    }
-    // arcTo intentionally not handled — out of v1 scope; PowerPoint's
-    // arcTo is rare on user-drawn paths (pen tool uses cubic).
-  }
-
-  return { anchors, closed }
-}
-
-/**
- * Map PPTX line-end type to Narrative's LineCap. PPTX values include
- * 'none' / 'triangle' / 'stealth' / 'arrow' / 'diamond' / 'oval'. We
- * collapse pointy variants to `'arrow'` (Narrative has just one arrow
- * cap kind) and treat decorative round/diamond/oval as `'round'` so the
- * stroke endpoint stays visibly capped on round-trip.
- */
-function mapLineEndCap(raw: string): ParsedShape['startCap'] {
-  if (raw === 'triangle' || raw === 'stealth' || raw === 'arrow') return 'arrow'
-  if (raw === 'oval' || raw === 'diamond') return 'round'
-  return 'none'
+  return readCustGeom(custGeom, {
+    x: shapeXPx,
+    y: shapeYPx,
+    width: shapeWidthPx,
+    height: shapeHeightPx,
+  })
 }
 
 /**
@@ -1503,23 +1275,9 @@ function detectBulletDecl(
  * models only a trailing delimiter. Unknown / unmapped tokens fall back to
  * `decimal` so an exotic numbering scheme still imports as an ordered list.
  */
-const BU_AUTONUM_TYPE_MAP: Record<string, ListNumberFormat> = {
-  arabicPeriod: 'decimal',
-  arabicParenR: 'decimalParen',
-  arabicParenBoth: 'decimalParen',
-  alphaLcPeriod: 'lowerAlpha',
-  alphaLcParenR: 'lowerAlphaParen',
-  alphaUcPeriod: 'upperAlpha',
-  alphaUcParenR: 'upperAlphaParen',
-  romanLcPeriod: 'lowerRoman',
-  romanUcPeriod: 'upperRoman',
-}
-
+/** `<a:buAutoNum type>` through the shared vocabulary; an unknown type numbers 1. 2. 3. */
 function mapBuAutoNumType(raw: string | undefined): ListNumberFormat {
-  if (typeof raw === 'string' && BU_AUTONUM_TYPE_MAP[raw] !== undefined) {
-    return BU_AUTONUM_TYPE_MAP[raw]!
-  }
-  return 'decimal'
+  return (raw !== undefined ? AUTONUM.fromXml(raw) : undefined) ?? 'decimal'
 }
 
 /**
@@ -1585,19 +1343,9 @@ function readParagraphLevel(pPr: XmlNode | undefined): number {
   return Math.min(MAX_LIST_LEVEL, Math.floor(n))
 }
 
-/** Map PPTX `<a:bodyPr anchor>` enum to TextObject.vAlign. PPTX values:
- *  `t` (top), `ctr` (middle), `b` (bottom). Anything else → undefined. */
+/** `<a:bodyPr anchor>` through the shared vocabulary. */
 function mapBodyAnchor(raw: string): 'top' | 'middle' | 'bottom' | undefined {
-  switch (raw) {
-    case 't':
-      return 'top'
-    case 'ctr':
-      return 'middle'
-    case 'b':
-      return 'bottom'
-    default:
-      return undefined
-  }
+  return ANCHOR.fromXml(raw)
 }
 
 /** Non-visual wrapper element for each shape tag that can carry `<p:ph>`. */
@@ -1718,6 +1466,8 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
         }
         const wrap = getAttrs(bodyPr)['@wrap']
         if (wrap === 'none' || wrap === 'square') entry.bodyWrap = wrap
+        const insets = readBodyInsets(bodyPr)
+        if (Object.keys(insets).length > 0) entry.bodyInsets = insets
       }
       const lstStyle = findFirst(txBodyChildren, 'a:lstStyle')
       if (lstStyle) {
@@ -1745,6 +1495,9 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
             const dcap = defAttrs['@cap']
             if (dcap === 'all') entry.defaultTextTransform = 'uppercase'
             else if (dcap === 'small') entry.defaultTextTransform = 'lowercase'
+            const dspc = Number(defAttrs['@spc'])
+            if (typeof defAttrs['@spc'] === 'string' && Number.isFinite(dspc))
+              entry.defaultLetterSpacing100 = dspc
             // Default typeface for this placeholder. Templates overwhelmingly
             // express it as a theme reference (`+mn-lt`), which resolveTypeface
             // maps onto the theme's real font name.
@@ -1830,7 +1583,7 @@ function parseNonPlaceholderShapes(
     // Baked shapes don't participate in placeholder inheritance — they have
     // their own concrete spPr/xfrm. Pass an empty placeholder map.
     const shape = parseShape(node, tag, theme, new Map(), imageRels)
-    if (shape !== null) shapes.push(shape)
+    if (shape !== null) pushWithGeometry(shapes, shape)
   }
   return shapes
 }
@@ -1878,6 +1631,13 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         const sz = defAttrs['@sz']
         if (typeof sz === 'string') defaults.fontSize100 = Number(sz)
         if (defAttrs['@b'] === '1' || defAttrs['@b'] === 'true') defaults.bold = true
+        const spc = Number(defAttrs['@spc'])
+        if (typeof defAttrs['@spc'] === 'string' && Number.isFinite(spc))
+          defaults.letterSpacing100 = spc
+        const cap = defAttrs['@cap']
+        if (typeof cap === 'string')
+          defaults.textTransform =
+            cap === 'all' ? 'uppercase' : cap === 'small' ? 'lowercase' : 'none'
         const dfChildren = getChildren(defRPr, 'a:defRPr')
         // Master txStyles is where a template usually states its typeface,
         // as a `+mn-lt` / `+mj-lt` theme reference.
@@ -1906,7 +1666,9 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         defaults.listStyle !== undefined ||
         defaults.fontFamily !== undefined ||
         defaults.lineSpacing !== undefined ||
-        defaults.levelMargins !== undefined
+        defaults.levelMargins !== undefined ||
+        defaults.letterSpacing100 !== undefined ||
+        defaults.textTransform !== undefined
       ) {
         out[bucket] = defaults
       }
@@ -1942,18 +1704,14 @@ async function loadHyperlinkRels(zip: JSZip, xmlPath: string): Promise<Hyperlink
     const id = a['@Id']
     const target = a['@Target']
     const type = a['@Type']
-    if (
-      typeof id === 'string' &&
-      typeof target === 'string' &&
-      typeof type === 'string' &&
-      type.endsWith('/hyperlink')
-    ) {
-      // External hyperlinks have TargetMode="External"; the Target is the
-      // literal URL. We don't currently resolve internal "slide jump"
-      // hyperlinks (ppaction://hlinksldjump) — they'd require knowing the
-      // target slide's id post-import, which is out of v1 scope.
-      rels.set(id, target)
-    }
+    if (typeof id !== 'string' || typeof target !== 'string' || typeof type !== 'string') continue
+    // External hyperlinks have TargetMode="External"; the Target is the
+    // literal URL.
+    if (type.endsWith('/hyperlink')) rels.set(id, { kind: 'url', href: target })
+    // A jump to another slide (`action="ppaction://hlinksldjump"`) points
+    // at that slide's part; the writer maps it to the imported slide's id.
+    else if (type.endsWith('/slide'))
+      rels.set(id, { kind: 'slide', slidePath: resolveRelPath(dir, target) })
   }
   return rels
 }
@@ -2216,10 +1974,9 @@ function resolveRelPath(sourceDir: string, target: string): string {
 /** rel-id → zip path for image relationships in a single slide's rels file. */
 type ImageRelMap = Map<string, string>
 
-/** rel-id → resolved URL for `…/hyperlink` relationships. Targets are
- *  literal URLs (e.g. `https://example.com`) rather than zip paths, so
- *  this map is independent of `ImageRelMap` despite the similar shape. */
-type HyperlinkRelMap = Map<string, string>
+/** rel-id → where an `<a:hlinkClick r:id>` leads: a URL (`…/hyperlink`,
+ *  external target) or another slide of the deck (`…/slide`, a zip path). */
+type HyperlinkRelMap = Map<string, ParsedHyperlink>
 
 /**
  * Pick the master `<p:txStyles>` bucket for a placeholder type. PowerPoint:
@@ -2268,6 +2025,10 @@ function parseShape(
   // the name (e.g. "Title 1") surfaces in PowerPoint's selection pane.
   let parsedSpId: number | undefined
   let parsedCnvName: string | undefined
+  let cNvPrNode: XmlNode | undefined
+  let parsedDescr: string | undefined
+  let aspectLocked = false
+  let shapeHyperlink: ParsedHyperlink | undefined
   {
     // `<p:cNvPr>` lives inside `<p:nvSpPr>` / `<p:nvPicPr>` / `<p:nvCxnSpPr>`
     // depending on shape source tag. Walk all candidates.
@@ -2275,9 +2036,11 @@ function parseShape(
     const nvPicPr = findFirst(children, 'p:nvPicPr')
     const nvCxnSpPr = findFirst(children, 'p:nvCxnSpPr')
     const nvHolder = nvSpPr ?? nvPicPr ?? nvCxnSpPr
+    aspectLocked = readAspectLocked(nvHolder)
     if (nvHolder) {
       const nvTag = getTag(nvHolder) ?? 'p:nvSpPr'
       const cNvPr = findFirst(getChildren(nvHolder, nvTag), 'p:cNvPr')
+      cNvPrNode = cNvPr
       if (cNvPr) {
         const a = getAttrs(cNvPr)
         const idStr = a['@id']
@@ -2287,6 +2050,12 @@ function parseShape(
         }
         const nm = a['@name']
         if (typeof nm === 'string' && nm.length > 0) parsedCnvName = nm
+        const descr = a['@descr']
+        if (typeof descr === 'string' && descr.length > 0) parsedDescr = descr
+        // A click action on the whole shape (as opposed to a text run).
+        const hlink = findFirst(getChildren(cNvPr, 'p:cNvPr'), 'a:hlinkClick')
+        const rId = hlink !== undefined ? getAttrs(hlink)['@r:id'] : undefined
+        if (typeof rId === 'string' && rId !== '') shapeHyperlink = hyperlinkRels.get(rId)
       }
     }
   }
@@ -2315,6 +2084,12 @@ function parseShape(
       height = emuToPx(Number(a['@cy'] ?? 0))
     }
   }
+
+  // ─── Narrative extension ───────────────────────────────────────────────
+  // Model values a Narrative export could not say natively, kept only while
+  // the frame they were written for is still the shape's own.
+  const narrative =
+    xfrm !== undefined ? readNarrativeExt(cNvPrNode, frameFingerprintOf(xfrm)) : undefined
 
   // ─── Placeholder inheritance ───────────────────────────────────────────
   // When this shape has a <p:ph> AND no inline <a:xfrm> (the common case for
@@ -2392,6 +2167,11 @@ function parseShape(
     sides = POLYGON_SIDES[prst]
   } else if (prst === 'line' || prst === 'straightConnector1') kind = 'line'
   else if (custGeom !== undefined) kind = 'path'
+  // A polygon with no preset was drawn as a path; the extension names it.
+  if (kind === 'path' && typeof narrative?.['polygonSides'] === 'number') {
+    kind = 'polygon'
+    sides = narrative['polygonSides']
+  }
 
   // ─── Fill ──────────────────────────────────────────────────────────────
   let fillColor: number | undefined
@@ -2537,36 +2317,33 @@ function parseShape(
   }
 
   // ─── Stroke ────────────────────────────────────────────────────────────
+  // `ooxml/line.ts` reads `<a:ln>` with the vocabulary the exporter writes.
   let strokeColor: number | undefined
   let strokeAlpha: number | undefined
   let strokeWidth: number | undefined
-  // Endpoint caps for lines/arrows — read from `<a:ln>/<a:headEnd>` and
-  // `<a:tailEnd>`. PPTX cap types: 'none' / 'triangle' / 'stealth' /
-  // 'diamond' / 'oval' / 'arrow'. We collapse all "non-none, pointy"
-  // variants to Narrative's `'arrow'` cap; the rest map to `'none'`.
+  let strokeDash: boolean | undefined
   let startCap: ParsedShape['startCap']
   let endCap: ParsedShape['endCap']
   const ln = findFirst(spPrChildren, 'a:ln')
   if (ln) {
-    const wAttr = getAttrs(ln)['@w']
-    if (typeof wAttr === 'string') strokeWidth = emuToPx(Number(wAttr))
-    const lnChildren = getChildren(ln, 'a:ln')
-    const lnSolid = findFirst(lnChildren, 'a:solidFill')
-    if (lnSolid) {
-      const c = parseColourAndAlphaFrom(lnSolid, theme)
-      if (c !== undefined) {
-        strokeColor = c.color
-        if (c.alpha !== undefined) strokeAlpha = c.alpha
-      }
-    }
-    const head = findFirst(lnChildren, 'a:headEnd')
-    const tail = findFirst(lnChildren, 'a:tailEnd')
-    if (head) startCap = mapLineEndCap(String(getAttrs(head)['@type'] ?? 'none'))
-    if (tail) endCap = mapLineEndCap(String(getAttrs(tail)['@type'] ?? 'none'))
+    const line = readLine(ln, theme)
+    strokeWidth = line.width
+    strokeColor = line.color
+    strokeAlpha = line.alpha
+    if (line.dash === true) strokeDash = true
+    startCap = line.head
+    endCap = line.tail
   }
   // A line with any arrow cap is logically an ArrowObject, not a LineObject.
   if (kind === 'line' && (startCap === 'arrow' || endCap === 'arrow')) {
     kind = 'arrow'
+  }
+  // Which of the two the object was, when its ends alone do not say.
+  if (
+    (kind === 'line' || kind === 'arrow') &&
+    (narrative?.['type'] === 'line' || narrative?.['type'] === 'arrow')
+  ) {
+    kind = narrative['type']
   }
 
   // Connector flips from `<a:xfrm flipH="1" flipV="1">` — the writer needs
@@ -2585,37 +2362,9 @@ function parseShape(
   let blurRadius: number | undefined
   const effectLst = findFirst(spPrChildren, 'a:effectLst')
   if (effectLst) {
-    const effects = getChildren(effectLst, 'a:effectLst')
-    const outerShdw = findFirst(effects, 'a:outerShdw')
-    if (outerShdw) {
-      // PPTX shadow attrs:
-      //   blurRad   — EMU; convert to px @ 96 DPI.
-      //   dist      — EMU offset distance.
-      //   dir       — 60000ths of a degree (PPTX angle convention, 0 = right,
-      //               clockwise). Combined with `dist` to derive offsetX/Y.
-      //   <a:srgbClr val="…"><a:alpha val="N"/></a:srgbClr> — colour + opacity
-      //   (alpha is 1/100000ths so 50000 = 0.5).
-      const a = getAttrs(outerShdw)
-      const blurRad = Number(a['@blurRad'] ?? 0)
-      const dist = Number(a['@dist'] ?? 0)
-      const dirRaw = Number(a['@dir'] ?? 0)
-      const dirRad = (dirRaw / 60000) * (Math.PI / 180)
-      const offX = emuToPx(dist) * Math.cos(dirRad)
-      const offY = emuToPx(dist) * Math.sin(dirRad)
-      const c = parseColourAndAlphaFrom(outerShdw, theme)
-      shadow = {
-        color: c?.color ?? 0x000000,
-        blur: emuToPx(blurRad),
-        offsetX: offX,
-        offsetY: offY,
-        opacity: c?.alpha ?? 1,
-      }
-    }
-    const blurEffect = findFirst(effects, 'a:blur')
-    if (blurEffect) {
-      const rad = Number(getAttrs(blurEffect)['@rad'] ?? 0)
-      blurRadius = emuToPx(rad)
-    }
+    const fx = readEffects(effectLst, theme)
+    shadow = fx.shadow
+    blurRadius = fx.blur
   }
 
   // ─── Image crop: <a:blipFill>/<a:srcRect l t r b> → imageRect ──────────
@@ -2625,31 +2374,24 @@ function parseShape(
   // on the slide; the frame's bounding box clips visible pixels. We solve
   // for that imageRect from `frame + srcRect` here.
   let imageRect: ParsedShape['imageRect']
+  let pictureMask: ImageMask | undefined
   if (sourceTag === 'p:pic') {
     const picBlipFill = findFirst(children, 'p:blipFill')
-    if (picBlipFill) {
-      const bfChildren = getChildren(picBlipFill, 'p:blipFill')
-      const srcRect = findFirst(bfChildren, 'a:srcRect')
-      if (srcRect) {
-        const sa = getAttrs(srcRect)
-        const l = Number(sa['@l'] ?? 0) / 100000
-        const t = Number(sa['@t'] ?? 0) / 100000
-        const r = Number(sa['@r'] ?? 0) / 100000
-        const b = Number(sa['@b'] ?? 0) / 100000
-        // Skip the no-op case (all sides zero) so we don't emit a
-        // redundant imageRect that just equals the frame.
-        if (l !== 0 || t !== 0 || r !== 0 || b !== 0) {
-          const visibleFracW = Math.max(0.001, 1 - l - r)
-          const visibleFracH = Math.max(0.001, 1 - t - b)
-          const imgW = width / visibleFracW
-          const imgH = height / visibleFracH
-          imageRect = {
-            x: x - l * imgW,
-            y: y - t * imgH,
-            width: imgW,
-            height: imgH,
-          }
-        }
+    const srcRect =
+      picBlipFill !== undefined
+        ? findFirst(getChildren(picBlipFill, 'p:blipFill'), 'a:srcRect')
+        : undefined
+    imageRect = readImageRect(srcRect, { x, y, width, height })
+    pictureMask = readPictureMask(spPrChildren, { x, y, width, height })
+    // A Narrative export's exact crop, while the picture is still cropped
+    // exactly as written (`srcRect`'s percentages round).
+    if (narrative !== undefined) {
+      const crop = imageCrop(narrative['crop'])
+      delete narrative['crop']
+      delete narrative['imageRect']
+      if (crop !== undefined && crop.src === srcRectSignature(srcRect)) {
+        if (crop.rect === null) imageRect = undefined
+        else narrative['imageRect'] = crop.rect
       }
     }
   }
@@ -2718,6 +2460,8 @@ function parseShape(
    *  paragraph carried no own buChar/buAutoNum/buNone, so it falls back to
    *  the inherited (placeholder/master/txStyles) declaration. */
   const paraBulletDecls: (BulletDecl | undefined)[] = []
+  /** A Narrative export's exact attributes per paragraph (`ooxml/text.ts`). */
+  const paraExts: Array<ReturnType<typeof readParagraphExt>> = []
   /** Per-paragraph nesting level from each `<a:p>/<a:pPr lvl="N">`. 0 = no
    *  indent. Index-aligned with `paraBulletDecls`. */
   const paraLevels: number[] = []
@@ -2735,7 +2479,7 @@ function parseShape(
   let allRuns: ParsedTextRun[] = []
   /** First hyperlink seen during run walk — surfaces as the TextObject's
    *  collapsed `hyperlink` (Narrative models one hyperlink per object). */
-  let firstHyperlinkHref: string | undefined
+  let firstHyperlink: ParsedHyperlink | undefined
   /** Frame-level text properties captured during the run / paragraph walk.
    *  These collapse from PPTX's per-run / per-paragraph schema onto
    *  TextObject's single-value root fields — the FIRST run / paragraph
@@ -2751,6 +2495,9 @@ function parseShape(
   let slideNumberFieldSeen = false
   let otherTextSeen = false
   let frameWrap: 'none' | 'square' | undefined
+  /** The shape's own geometry kind, when its text makes it a text frame. */
+  let geometryKind: ParsedShapeKind | undefined
+  let textInsets: BodyInsets | undefined
   /** First `<a:lnSpc>` found down the chain paragraph → shape lstStyle →
    *  layout/master placeholder → master txStyles; resolved into
    *  frameLineSpacing / frameLineHeight once the font size is final. */
@@ -2758,6 +2505,8 @@ function parseShape(
   let frameSpaceBefore: number | undefined
   let frameSpaceAfter: number | undefined
   let frameTextTransform: ParsedShape['textTransform']
+  let frameItalic: boolean | undefined
+  let frameUnderline: boolean | undefined
   let frameTextStrokeColor: number | undefined
   let frameTextStrokeAlpha: number | undefined
   let frameTextStrokeWidth: number | undefined
@@ -2775,11 +2524,15 @@ function parseShape(
       const ownWrap = getAttrs(bodyPr)['@wrap']
       if (ownWrap === 'none' || ownWrap === 'square') frameWrap = ownWrap
     }
+    // Where the text sits inside the frame: the body's own insets, else its
+    // placeholder's, else PowerPoint's default, side by side.
+    textInsets = { ...DEFAULT_BODY_INSETS, ...inheritedPh?.bodyInsets, ...readBodyInsets(bodyPr) }
     // A placeholder's copy usually leaves wrap to its layout/master.
     if (frameWrap === undefined && inheritedPh?.bodyWrap !== undefined) {
       frameWrap = inheritedPh.bodyWrap
     }
     const paragraphs = findAll(txBodyChildren, 'a:p')
+    const slideNumberOnly = isSlideNumberOnly(paragraphs)
     const paraStrings: string[] = []
     let firstRunStyled = false
     for (let pi = 0; pi < paragraphs.length; pi++) {
@@ -2793,6 +2546,7 @@ function parseShape(
       // for any paragraph that didn't declare its own bullet here.
       {
         const ownPPr = findFirst(pChildren, 'a:pPr')
+        paraExts.push(readParagraphExt(ownPPr))
         paraBulletDecls.push(ownPPr ? extractBulletDecl(ownPPr, 'a:pPr') : undefined)
         paraLevels.push(readParagraphLevel(ownPPr))
         const ownMarL = ownPPr !== undefined ? getAttrs(ownPPr)['@marL'] : undefined
@@ -2826,26 +2580,10 @@ function parseShape(
           if (lineSpacingDecl === undefined) lineSpacingDecl = readLineSpacingDecl(pPrChildren)
           // <a:spcBef>/<a:spcAft> use the same <a:spcPts val="100ths of pt">
           //  format. Narrative paragraphSpaceBefore/After is in px.
-          if (frameSpaceBefore === undefined) {
-            const spcBef = findFirst(pPrChildren, 'a:spcBef')
-            if (spcBef) {
-              const pts = findFirst(getChildren(spcBef, 'a:spcBef'), 'a:spcPts')
-              if (pts) {
-                const v = Number(getAttrs(pts)['@val'])
-                if (Number.isFinite(v)) frameSpaceBefore = v * PPTX_FONT_TO_PX
-              }
-            }
-          }
-          if (frameSpaceAfter === undefined) {
-            const spcAft = findFirst(pPrChildren, 'a:spcAft')
-            if (spcAft) {
-              const pts = findFirst(getChildren(spcAft, 'a:spcAft'), 'a:spcPts')
-              if (pts) {
-                const v = Number(getAttrs(pts)['@val'])
-                if (Number.isFinite(v)) frameSpaceAfter = v * PPTX_FONT_TO_PX
-              }
-            }
-          }
+          if (frameSpaceBefore === undefined)
+            frameSpaceBefore = readSpacingPts(pPrChildren, 'a:spcBef')
+          if (frameSpaceAfter === undefined)
+            frameSpaceAfter = readSpacingPts(pPrChildren, 'a:spcAft')
         }
       }
       // Paragraph-break separator uses Unicode U+2029 (PARAGRAPH
@@ -2869,17 +2607,7 @@ function parseShape(
       // `<a:rPr>` doesn't override them. Distinct level in the inheritance
       // chain from the shape's `<a:lstStyle>` lvl1 defaults (handled
       // post-loop) and from the run-level rPr (highest, handled below).
-      const paraDefaults: {
-        color?: number
-        colorAlpha?: number
-        fontSize?: number
-        bold?: boolean
-        italic?: boolean
-        underline?: boolean
-        letterSpacing?: number
-        textTransform?: ParsedShape['textTransform']
-        fontFamily?: string
-      } = {}
+      const paraDefaults: ParagraphRunDefaults = {}
       {
         const paraPPr = findFirst(pChildren, 'a:pPr')
         if (paraPPr !== undefined) {
@@ -2938,7 +2666,15 @@ function parseShape(
           // it as a `\n` in both the run array (so the rich-text body
           // breaks at the same point) and the plain-string accumulator
           // (so the fallback `text` field stays consistent).
-          allRuns.push({ text: '\n' })
+          // The break has formatting of its own (`<a:br><a:rPr>`): the
+          // model's '\n' character is part of a run like any other.
+          const brPr = findFirst(getChildren(child, 'a:br'), 'a:rPr')
+          const brAttrs: ParsedTextRun = {
+            ...(brPr !== undefined ? readRunProperties(brPr, theme, hyperlinkRels).attrs : {}),
+            text: '\n',
+          }
+          applyParagraphRunDefaults(brAttrs, paraDefaults)
+          allRuns.push(brAttrs)
           runStrings.push('\n')
           continue
         }
@@ -2949,85 +2685,13 @@ function parseShape(
         // "default" for the TextObject (top-level color / fontSize / bold)
         // AND captured per-run into `allRuns` for the Y.Text format pass.
         const rPr = findFirst(rChildren, 'a:rPr')
-        const runAttrs: ParsedTextRun = { text: '' }
-        let runTextTransform: ParsedShape['textTransform']
-        let rPrLn: XmlNode | undefined
-        if (rPr) {
-          const a = getAttrs(rPr)
-          if (a['@b'] === '1' || a['@b'] === 'true') runAttrs.bold = true
-          if (a['@i'] === '1' || a['@i'] === 'true') runAttrs.italic = true
-          if (typeof a['@u'] === 'string' && a['@u'] !== 'none') runAttrs.underline = true
-          const sz = a['@sz']
-          if (typeof sz === 'string') runAttrs.fontSize = Number(sz) * PPTX_FONT_TO_PX
-          // Letter spacing — PPTX `spc` is 100ths of a point (signed).
-          const spc = a['@spc']
-          if (typeof spc === 'string') {
-            const v = Number(spc)
-            if (Number.isFinite(v)) runAttrs.letterSpacing = v * PPTX_FONT_TO_PX
-          }
-          // Text case — `cap="all"|"small"|"none"` maps to textTransform.
-          const cap = a['@cap']
-          if (cap === 'all') runTextTransform = 'uppercase'
-          else if (cap === 'small') runTextTransform = 'lowercase'
-          const rPrChildren = getChildren(rPr, 'a:rPr')
-          const rSolid = findFirst(rPrChildren, 'a:solidFill')
-          if (rSolid) {
-            const c = parseColourAndAlphaFrom(rSolid, theme)
-            if (c !== undefined) {
-              runAttrs.color = c.color
-              if (c.alpha !== undefined) runAttrs.colorAlpha = c.alpha
-            }
-          }
-          // Font family — `<a:latin typeface="…">` carries the run's
-          // typeface. Eastern/Asian variants (`<a:ea>` / `<a:cs>`) are
-          // ignored for v1; PowerPoint falls back to `a:latin` when an
-          // east-asian font isn't installed anyway.
-          const latin = findFirst(rPrChildren, 'a:latin')
-          if (latin) {
-            const tf = resolveTypeface(getAttrs(latin)['@typeface'], theme)
-            if (tf !== undefined) runAttrs.fontFamily = tf
-          }
-          // Text stroke — `<a:rPr><a:ln w>` with a `<a:solidFill>` inside.
-          // Captured as frame-level on the first run; per-run text stroke
-          // doesn't survive into Narrative's TextObject model.
-          rPrLn = findFirst(rPrChildren, 'a:ln')
-          // Hyperlink rel id → resolved URL via slide rels. PPTX stamps
-          // `<a:hlinkClick r:id="rIdN"/>` on the run; the rId maps to a
-          // `…/hyperlink` Relationship with the actual URL as Target.
-          const hlink = findFirst(rPrChildren, 'a:hlinkClick')
-          if (hlink) {
-            const hAttrs = getAttrs(hlink)
-            const rId = hAttrs['@r:id']
-            if (typeof rId === 'string') {
-              const href = hyperlinkRels.get(rId)
-              if (href !== undefined) runAttrs.hyperlinkHref = href
-            }
-          }
-        }
-        // Per-paragraph defRPr fallback — fill in anything the run's own
-        // rPr didn't supply (or for runs that have no rPr at all).
-        if (runAttrs.color === undefined && paraDefaults.color !== undefined) {
-          runAttrs.color = paraDefaults.color
-          if (paraDefaults.colorAlpha !== undefined) {
-            runAttrs.colorAlpha = paraDefaults.colorAlpha
-          }
-        }
-        if (runAttrs.fontSize === undefined && paraDefaults.fontSize !== undefined) {
-          runAttrs.fontSize = paraDefaults.fontSize
-        }
-        if (runAttrs.bold !== true && paraDefaults.bold === true) runAttrs.bold = true
-        if (runAttrs.italic !== true && paraDefaults.italic === true) runAttrs.italic = true
-        if (runAttrs.underline !== true && paraDefaults.underline === true) {
-          runAttrs.underline = true
-        }
-        if (runAttrs.letterSpacing === undefined && paraDefaults.letterSpacing !== undefined) {
-          runAttrs.letterSpacing = paraDefaults.letterSpacing
-        }
+        const own = rPr !== undefined ? readRunProperties(rPr, theme, hyperlinkRels) : undefined
+        const runAttrs: ParsedTextRun = { ...(own?.attrs ?? {}), text: '' }
+        let runTextTransform = own?.textTransform
+        const rPrLn = own?.ln
+        applyParagraphRunDefaults(runAttrs, paraDefaults)
         if (runTextTransform === undefined && paraDefaults.textTransform !== undefined) {
           runTextTransform = paraDefaults.textTransform
-        }
-        if (runAttrs.fontFamily === undefined && paraDefaults.fontFamily !== undefined) {
-          runAttrs.fontFamily = paraDefaults.fontFamily
         }
         // First-run promotion to frame-level. Runs out at this point, so
         // the run inherits whatever rPr / pPr-defRPr together produced —
@@ -3060,8 +2724,8 @@ function parseShape(
           }
           firstRunStyled = true
         }
-        if (firstHyperlinkHref === undefined && runAttrs.hyperlinkHref !== undefined) {
-          firstHyperlinkHref = runAttrs.hyperlinkHref
+        if (firstHyperlink === undefined && runAttrs.hyperlink !== undefined) {
+          firstHyperlink = runAttrs.hyperlink
         }
         const tNode = findFirst(rChildren, 'a:t')
         const runTextParts: string[] = []
@@ -3075,10 +2739,12 @@ function parseShape(
         let runText = runTextParts.join('')
         if (childTag === 'a:fld' && getAttrs(r)['@type'] === 'slidenum') {
           slideNumberFieldSeen = true
-          // Keynote writes the field with no cached text; PowerPoint's own
-          // stand-in for "the number goes here" keeps the frame a text frame
-          // with this run's formatting. The renderer shows the live number.
-          if (runText.trim() === '') runText = '‹#›'
+          // A frame that is only the number holds PowerPoint's own stand-in,
+          // `‹#›`, whatever digits the file cached (Keynote caches none, a
+          // Narrative export caches the slide's number): the renderer shows
+          // the live number, the text is only the field's marker. A number
+          // inside other text keeps its cached digits.
+          if (slideNumberOnly || runText.trim() === '') runText = '‹#›'
         } else if (runText.trim() !== '') {
           otherTextSeen = true
         }
@@ -3101,6 +2767,7 @@ function parseShape(
       // beneath the text frame. Narrative's TextObject schema only
       // models stroke around glyph fills (textStroke), not around
       // the bounding box.
+      geometryKind = kind
       kind = 'text'
     }
     // Shape-inline lstStyle fallback: the text body's own `<a:lstStyle>/
@@ -3110,78 +2777,71 @@ function parseShape(
     // author their own text style. Higher priority than `<p:style>/
     // <a:fontRef>`, inherited placeholder defaults, and `<p:txStyles>`;
     // run-level `<a:rPr>` (already processed above) still wins.
+    // ─── The frame tier: the shape's own `<a:lstStyle>/<a:lvl1pPr>` ───────
+    // What applies to a run that says nothing about itself. PowerPoint's
+    // inheritance puts it under the runs' own `<a:rPr>` (captured per run
+    // above) and over the placeholder / master / theme layers below. The
+    // model's frame fields ARE this tier, so where the shape declares a
+    // value here it is the frame's value — the first run's own formatting
+    // (promoted above as a stand-in for decks that declare no frame tier)
+    // only belongs to that run. A Narrative export always writes this tier,
+    // so an export whose first run differs from its frame reads back
+    // exactly; a deck without one keeps the first-run promotion.
     const lstStyleNode = findFirst(txBodyChildren, 'a:lstStyle')
-    if (lstStyleNode !== undefined) {
-      const lvl1 = findFirst(getChildren(lstStyleNode, 'a:lstStyle'), 'a:lvl1pPr')
-      if (lvl1 !== undefined) {
-        // Frame-level `<a:lnSpc>` lives as a child of `<a:lvl1pPr>`
-        // (sibling of `<a:defRPr>`) — NOT inside defRPr. Slide 1's
-        // author block ships its line spacing this way (`<a:spcPct
-        // val="90000"/>` at the lstStyle level) and without picking
-        // it up here the rendered text falls back to the default
-        // ~1.2 multiplier, overflows the autoFit-sized text box, and
-        // the trailing line (`Jordan Example …`) gets clipped at the
-        // frame bottom in vAlign='top' frames.
-        // Frame-level `algn` attribute on `<a:lvl1pPr>` carries the
-        // default text alignment for the whole frame when no
-        // paragraph-level `<a:pPr algn="…">` overrides it. Slide 4's
-        // ACME text and slide 5's "Native" badge both use this
-        // shape: the text is centered by the lstStyle, never by a
-        // per-paragraph pPr — so without picking it up here the
-        // text renders left-aligned and the first character of the
-        // ACME frame ends up off-slide (frame x is negative because
-        // the centered text overflows the slide width).
-        if (textAlign === undefined) {
-          const algn = getAttrs(lvl1)['@algn']
-          if (typeof algn === 'string') {
-            const mapped = mapAlgn(algn)
-            if (mapped !== undefined) textAlign = mapped
+    const lvl1 =
+      lstStyleNode !== undefined
+        ? findFirst(getChildren(lstStyleNode, 'a:lstStyle'), 'a:lvl1pPr')
+        : undefined
+    if (lvl1 !== undefined) {
+      const lvl1Children = getChildren(lvl1, 'a:lvl1pPr')
+      // Paragraph-level frame values: a first paragraph's own `<a:pPr>`
+      // still wins (it was read above), the lstStyle fills what it left.
+      if (textAlign === undefined) {
+        const algn = getAttrs(lvl1)['@algn']
+        if (typeof algn === 'string') textAlign = mapAlgn(algn)
+      }
+      if (lineSpacingDecl === undefined) lineSpacingDecl = readLineSpacingDecl(lvl1Children)
+      if (frameSpaceBefore === undefined)
+        frameSpaceBefore = readSpacingPts(lvl1Children, 'a:spcBef')
+      if (frameSpaceAfter === undefined) frameSpaceAfter = readSpacingPts(lvl1Children, 'a:spcAft')
+
+      const defRPr = findFirst(lvl1Children, 'a:defRPr')
+      if (defRPr !== undefined) {
+        const a = getAttrs(defRPr)
+        const sz = Number(a['@sz'])
+        if (typeof a['@sz'] === 'string' && Number.isFinite(sz)) fontSize = sz * PPTX_FONT_TO_PX
+        const b = readOnOff(a['@b'])
+        if (b !== undefined) bold = b
+        const i = readOnOff(a['@i'])
+        if (i !== undefined) frameItalic = i
+        if (typeof a['@u'] === 'string') frameUnderline = a['@u'] !== 'none'
+        const spc = Number(a['@spc'])
+        if (typeof a['@spc'] === 'string' && Number.isFinite(spc))
+          frameLetterSpacing = spc * PPTX_FONT_TO_PX
+        const cap = a['@cap']
+        if (typeof cap === 'string') {
+          frameTextTransform = cap === 'all' ? 'uppercase' : cap === 'small' ? 'lowercase' : 'none'
+        }
+        const defRPrChildren = getChildren(defRPr, 'a:defRPr')
+        const solid = findFirst(defRPrChildren, 'a:solidFill')
+        if (solid !== undefined) {
+          const c = parseColourAndAlphaFrom(solid, theme)
+          if (c !== undefined) {
+            textColor = c.color
+            textColorAlpha = c.alpha
           }
         }
-        if (lineSpacingDecl === undefined) {
-          lineSpacingDecl = readLineSpacingDecl(getChildren(lvl1, 'a:lvl1pPr'))
+        const latinNode = findFirst(defRPrChildren, 'a:latin')
+        if (latinNode !== undefined) {
+          const tf = resolveTypeface(getAttrs(latinNode)['@typeface'], theme)
+          if (tf !== undefined) frameFontFamily = tf
         }
-        const defRPr = findFirst(getChildren(lvl1, 'a:lvl1pPr'), 'a:defRPr')
-        if (defRPr !== undefined) {
-          const a = getAttrs(defRPr)
-          if (fontSize === undefined) {
-            const sz = a['@sz']
-            if (typeof sz === 'string') {
-              const v = Number(sz)
-              if (Number.isFinite(v)) fontSize = v * PPTX_FONT_TO_PX
-            }
-          }
-          if (!bold && (a['@b'] === '1' || a['@b'] === 'true')) bold = true
-          if (frameLetterSpacing === undefined) {
-            const spc = a['@spc']
-            if (typeof spc === 'string') {
-              const v = Number(spc)
-              if (Number.isFinite(v)) frameLetterSpacing = v * PPTX_FONT_TO_PX
-            }
-          }
-          if (frameTextTransform === undefined) {
-            const cap = a['@cap']
-            if (cap === 'all') frameTextTransform = 'uppercase'
-            else if (cap === 'small') frameTextTransform = 'lowercase'
-          }
-          const defRPrChildren = getChildren(defRPr, 'a:defRPr')
-          if (textColor === undefined) {
-            const solid = findFirst(defRPrChildren, 'a:solidFill')
-            if (solid !== undefined) {
-              const c = parseColourAndAlphaFrom(solid, theme)
-              if (c !== undefined) {
-                textColor = c.color
-                if (c.alpha !== undefined) textColorAlpha = c.alpha
-              }
-            }
-          }
-          if (frameFontFamily === undefined) {
-            const latin = findFirst(defRPrChildren, 'a:latin')
-            if (latin !== undefined) {
-              const tf = resolveTypeface(getAttrs(latin)['@typeface'], theme)
-              if (tf !== undefined) frameFontFamily = tf
-            }
-          }
+        const glyphLn = findFirst(defRPrChildren, 'a:ln')
+        if (glyphLn !== undefined) {
+          const line = readLine(glyphLn, theme)
+          frameTextStrokeColor = line.color
+          frameTextStrokeAlpha = line.alpha
+          frameTextStrokeWidth = line.width
         }
       }
     }
@@ -3220,6 +2880,9 @@ function parseShape(
       if (frameTextTransform === undefined && inheritedPh.defaultTextTransform !== undefined) {
         frameTextTransform = inheritedPh.defaultTextTransform
       }
+      if (frameLetterSpacing === undefined && inheritedPh.defaultLetterSpacing100 !== undefined) {
+        frameLetterSpacing = inheritedPh.defaultLetterSpacing100 * PPTX_FONT_TO_PX
+      }
       if (listStyleResolved === undefined && inheritedPh.defaultListStyle !== undefined) {
         listStyleResolved = inheritedPh.defaultListStyle
       }
@@ -3248,6 +2911,12 @@ function parseShape(
         if (!bold && bucket.bold === true) bold = true
         if (lineSpacingDecl === undefined && bucket.lineSpacing !== undefined) {
           lineSpacingDecl = bucket.lineSpacing
+        }
+        if (frameLetterSpacing === undefined && bucket.letterSpacing100 !== undefined) {
+          frameLetterSpacing = bucket.letterSpacing100 * PPTX_FONT_TO_PX
+        }
+        if (frameTextTransform === undefined && bucket.textTransform !== undefined) {
+          frameTextTransform = bucket.textTransform
         }
         if (listStyleResolved === undefined && bucket.listStyle !== undefined) {
           listStyleResolved = bucket.listStyle
@@ -3303,6 +2972,15 @@ function parseShape(
   if (strokeColor !== undefined) shape.strokeColor = strokeColor
   if (strokeAlpha !== undefined) shape.strokeAlpha = strokeAlpha
   if (strokeWidth !== undefined) shape.strokeWidth = strokeWidth
+  if (strokeDash === true) shape.strokeDash = true
+  if (prst === 'roundRect' && prstGeom !== undefined) {
+    shape.cornerRadius = readRoundRectRadius(prstGeom, width, height)
+  }
+  if (narrative !== undefined) shape.narrative = narrative
+  if (geometryKind !== undefined) shape.geometryKind = geometryKind
+  if (shapeHyperlink !== undefined) shape.hyperlink = shapeHyperlink
+  if (parsedDescr !== undefined) shape.alt = parsedDescr
+  if (aspectLocked) shape.aspectLocked = true
   if (text !== undefined) shape.text = text
   if (textColor !== undefined) shape.textColor = textColor
   if (textColorAlpha !== undefined) shape.textColorAlpha = textColorAlpha
@@ -3321,12 +2999,18 @@ function parseShape(
   if (shadow !== undefined) shape.shadow = shadow
   if (blurRadius !== undefined && blurRadius > 0) shape.blur = blurRadius
   if (imageRect !== undefined) shape.imageRect = imageRect
+  if (pictureMask !== undefined) shape.mask = pictureMask
   if (parsedSpId !== undefined) shape.spId = parsedSpId
   if (parsedCnvName !== undefined) shape.cnvName = parsedCnvName
   if (sides !== undefined) shape.sides = sides
   // Custom path geometry — only emitted when the shape is a path; we
   // parse anchors lazily here so non-path shapes don't pay the cost.
-  if (kind === 'path' && custGeom !== undefined && width > 0 && height > 0) {
+  if (
+    (kind === 'path' || geometryKind === 'path') &&
+    custGeom !== undefined &&
+    width > 0 &&
+    height > 0
+  ) {
     const { anchors, closed } = parseCustGeomAnchors(custGeom, width, height, x, y)
     if (anchors.length > 0) {
       shape.pathAnchors = anchors
@@ -3338,9 +3022,9 @@ function parseShape(
   if (kind === 'line' || kind === 'arrow') {
     if (startCap !== undefined) shape.startCap = startCap
     if (endCap !== undefined) shape.endCap = endCap
-    if (flipH !== undefined) shape.flipH = flipH
-    if (flipV !== undefined) shape.flipV = flipV
   }
+  if (flipH !== undefined) shape.flipH = flipH
+  if (flipV !== undefined) shape.flipV = flipV
   // Rich runs + collapsed hyperlink — only attached for text-kind shapes
   // since they're meaningless on rect/ellipse/image/line outputs and would
   // just bloat the parser JSON in debug dumps.
@@ -3372,13 +3056,33 @@ function parseShape(
             txStyles[txStylesBucketFor(slideShapePhType)]?.levelMargins,
           ]
         : [shapeMargins, presentationLevelMarginsStore.get(theme)]
+    // The shape's own list style, per outline level: the layer between a
+    // paragraph's own `<a:pPr>` and the placeholder / master chain.
+    const lstLevelDecls: Array<BulletDecl | undefined> = []
+    if (shapeLstStyle !== undefined) {
+      const lvls = getChildren(shapeLstStyle, 'a:lstStyle')
+      for (let n = 1; n <= 9; n++) {
+        const node = findFirst(lvls, `a:lvl${n}pPr`)
+        lstLevelDecls.push(node !== undefined ? extractBulletDecl(node, `a:lvl${n}pPr`) : undefined)
+      }
+    }
     const paraAttrs: ParagraphAttrs[] = paraBulletDecls.map((own, i) => {
       const attrs: ParagraphAttrs = {}
       const level = paraLevels[i] ?? 0
-      // Effective declaration: own veto/decl beats inherited; absent own decl
-      // inherits the coarse kind. An own 'none' suppresses inheritance.
+      // Effective declaration: the paragraph's own, else its level in the
+      // shape's list style, else the inherited coarse kind. An own 'none'
+      // suppresses inheritance. A glyph that comes from the list style and
+      // is the renderer's default for the level is "whatever the level
+      // uses" (how a Narrative export writes a list item without a glyph of
+      // its own), not a glyph the paragraph chose.
+      let fromLevel = lstLevelDecls[level]
+      if (fromLevel?.kind === 'bullet' && fromLevel.bulletChar === defaultBulletGlyph(level)) {
+        fromLevel = { kind: 'bullet' }
+      }
       const decl =
-        own ?? (inheritedBulletKind !== undefined ? { kind: inheritedBulletKind } : undefined)
+        own ??
+        fromLevel ??
+        (inheritedBulletKind !== undefined ? { kind: inheritedBulletKind } : undefined)
       const isList = decl !== undefined && decl.kind !== 'none'
       if (level > 0) {
         // A list keeps its nesting. A plain paragraph keeps the level only
@@ -3397,6 +3101,13 @@ function parseShape(
           if (decl.startAt !== undefined) attrs.startAt = decl.startAt
         }
       }
+      // A Narrative export's exact attributes, while the native ones still
+      // read as what was written next to them.
+      const exact = paraExts[i]
+      if (exact !== undefined && exact.native === paragraphAttrsKey(attrs)) {
+        const model = paragraphAttrsSchema(exact.model)
+        if (model !== undefined) return model
+      }
       return attrs
     })
     // Only attach when at least one paragraph carries list / level data —
@@ -3405,9 +3116,18 @@ function parseShape(
     if (paraAttrs.some((a) => a.list !== undefined || a.level !== undefined)) {
       shape.paragraphs = paraAttrs
     }
-    if (firstHyperlinkHref !== undefined) shape.hyperlink = { href: firstHyperlinkHref }
+    if (firstHyperlink !== undefined && shape.hyperlink === undefined)
+      shape.hyperlink = firstHyperlink
     if (slideNumberFieldSeen && !otherTextSeen) shape.isSlideNumber = true
     if (frameWrap === 'none') shape.wrap = 'none'
+    if (textInsets !== undefined) {
+      shape.textInsets = {
+        l: emuToPx(textInsets.l),
+        t: emuToPx(textInsets.t),
+        r: emuToPx(textInsets.r),
+        b: emuToPx(textInsets.b),
+      }
+    }
     if (frameFontFamily !== undefined) shape.fontFamily = frameFontFamily
     if (frameLetterSpacing !== undefined) shape.letterSpacing = frameLetterSpacing
     if (frameLineHeight !== undefined) shape.lineHeight = frameLineHeight
@@ -3415,6 +3135,8 @@ function parseShape(
     if (frameSpaceBefore !== undefined) shape.paragraphSpaceBefore = frameSpaceBefore
     if (frameSpaceAfter !== undefined) shape.paragraphSpaceAfter = frameSpaceAfter
     if (frameTextTransform !== undefined) shape.textTransform = frameTextTransform
+    if (frameItalic !== undefined) shape.italic = frameItalic
+    if (frameUnderline !== undefined) shape.underline = frameUnderline
     if (frameTextStrokeColor !== undefined) shape.textStrokeColor = frameTextStrokeColor
     if (frameTextStrokeAlpha !== undefined) shape.textStrokeAlpha = frameTextStrokeAlpha
     if (frameTextStrokeWidth !== undefined) shape.textStrokeWidth = frameTextStrokeWidth
@@ -3446,8 +3168,10 @@ function parseBackground(
     const solid = findFirst(bgPrChildren, 'a:solidFill')
     if (solid) {
       const c = parseColourAndAlphaFrom(solid, theme)
-      if (c !== undefined) return { kind: 'solid', color: c.color }
-      return { kind: 'none' }
+      if (c === undefined) return { kind: 'none' }
+      const out: ParsedBackground = { kind: 'solid', color: c.color }
+      if (c.alpha !== undefined) out.alpha = c.alpha
+      return out
     }
     const gradFill = findFirst(bgPrChildren, 'a:gradFill')
     if (gradFill) {
@@ -3457,13 +3181,19 @@ function parseBackground(
     const blip = findFirst(bgPrChildren, 'a:blipFill')
     if (blip) {
       let relId: string | undefined
+      let dim: number | undefined
       for (const desc of walk([blip])) {
         if (getTag(desc) === 'a:blip') {
           const embed = getAttrs(desc)['@r:embed']
           if (typeof embed === 'string') relId = embed
+        } else if (getTag(desc) === 'a:lum') {
+          // Narrative's dim is written as negative brightness.
+          const bright = Number(getAttrs(desc)['@bright'])
+          if (Number.isFinite(bright) && bright < 0) dim = Math.min(1, -bright / 100_000)
         }
       }
       const out: ParsedBackground = { kind: 'image' }
+      if (dim !== undefined) out.dim = dim
       if (relId !== undefined) {
         out.blipRelId = relId
         const path = imageRels.get(relId)
@@ -3492,26 +3222,18 @@ function parseBackground(
 }
 
 /**
- * Walk a slide's rels for a `…/notesSlide` link and pull plain-text
- * paragraphs out of the linked notesSlideN.xml. Notes structure mirrors a
- * slide: `<p:notes>/<p:cSld>/<p:spTree>` with a body placeholder shape
- * containing the user's typed notes. We concatenate paragraphs into a
- * string[] — one entry per `<a:p>` — leaving rich formatting on the floor
- * (v1 plain-text only; notes Y.XmlFragment can be enriched later).
- *
- * Returns undefined when the slide has no notes link or the linked file is
- * absent — caller skips seeding the slide's notes fragment in that case.
+ * The speaker notes linked from a slide's rels (`…/notesSlide`), read by
+ * `ooxml/notes.ts` — the notes editor's document, exact for a Narrative
+ * export, formatted paragraphs and lists for any other deck. Undefined when
+ * the slide has no notes page or the page has no body text.
  */
-async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<string[] | undefined> {
+async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<NotesDoc | undefined> {
   const dir = slidePath.substring(0, slidePath.lastIndexOf('/'))
   const file = slidePath.substring(slidePath.lastIndexOf('/') + 1)
-  const relsPath = `${dir}/_rels/${file}.rels`
-  const relsEntry = zip.file(relsPath)
+  const relsEntry = zip.file(`${dir}/_rels/${file}.rels`)
   if (relsEntry === null) return undefined
 
   const xmlParser = ooxmlParser({ trimValues: false })
-
-  // Find the notesSlide target.
   let notesPath: string | undefined
   const relsTree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
   for (const node of walk(relsTree)) {
@@ -3525,50 +3247,16 @@ async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<string[] 
     }
   }
   if (notesPath === undefined) return undefined
-
   const notesEntry = zip.file(notesPath)
   if (notesEntry === null) return undefined
   const notesTree = xmlParser.parse(await notesEntry.async('string')) as XmlNode[]
-
-  // Find the spTree under `<p:notes>/<p:cSld>` (PowerPoint also nests a
-  // slide-image placeholder in here we want to skip — it's a `<p:pic>`).
-  let spTreeChildren: XmlNode[] | null = null
-  for (const node of walk(notesTree)) {
-    if (getTag(node) === 'p:spTree') {
-      spTreeChildren = getChildren(node, 'p:spTree')
-      break
-    }
-  }
-  if (spTreeChildren === null) return undefined
-
-  // The body of speaker notes lives on the `<p:sp>` with `<p:ph type="body">`.
-  // Iterate every sp (defensive — older exporters use idx instead of type)
-  // and concatenate text from each paragraph.
-  const paragraphs: string[] = []
-  for (const sp of spTreeChildren) {
-    if (getTag(sp) !== 'p:sp') continue
-    const spChildren = getChildren(sp, 'p:sp')
-    const txBody = findFirst(spChildren, 'p:txBody')
-    if (!txBody) continue
-    const txBodyChildren = getChildren(txBody, 'p:txBody')
-    for (const para of findAll(txBodyChildren, 'a:p')) {
-      const paraChildren = getChildren(para, 'a:p')
-      const parts: string[] = []
-      for (const run of findAll(paraChildren, 'a:r')) {
-        const runChildren = getChildren(run, 'a:r')
-        const tNode = findFirst(runChildren, 'a:t')
-        if (!tNode) continue
-        for (const tc of getChildren(tNode, 'a:t')) {
-          const tx = (tc as { '#text'?: unknown })['#text']
-          if (typeof tx === 'string') parts.push(tx)
-        }
-      }
-      if (parts.length > 0) paragraphs.push(parts.join(''))
-    }
-  }
-
-  if (paragraphs.length === 0) return undefined
-  return paragraphs
+  const notes = findFirst(notesTree, 'p:notes')
+  if (notes === undefined) return undefined
+  const links = await loadHyperlinkRels(zip, notesPath)
+  return readNotes(getChildren(notes, 'p:notes'), (rId) => {
+    const link = links.get(rId)
+    return link?.kind === 'url' ? link.href : undefined
+  })
 }
 
 /**
@@ -3706,6 +3394,7 @@ function parseTable(
   graphicFrame: XmlNode,
   theme: ThemeColourMap,
   hyperlinkRels: HyperlinkRelMap,
+  imageRels: ImageRelMap,
 ): ParsedShape | null {
   const gfChildren = getChildren(graphicFrame, 'p:graphicFrame')
 
@@ -3761,10 +3450,11 @@ function parseTable(
   for (const row of allRows) rowHeightsEmu.push(Number(getAttrs(row)['@h'] ?? 0))
 
   // Pre-build a fully-populated cell matrix and walk the PPTX `<a:tc>`
-  // sequence, stamping merge pointers as we go. PPTX's per-row `<a:tc>`
-  // sequence is column-indexed (after any prior gridSpan); a vMerge="1"
-  // cell still occupies one column slot. We use `ci` to track the
-  // current column position in the row.
+  // sequence, stamping merge pointers as we go. A row has one `<a:tc>` per
+  // grid column: the columns a `gridSpan` origin covers follow it as
+  // `hMerge="1"` cells, and a `vMerge="1"` cell holds its column too. `ci`
+  // is the column of the current `<a:tc>`. Some generators leave the
+  // `hMerge` cells out; `spanEnd` then moves the next cell past the span.
   const tableCells: ParsedTableCell[][] = []
   for (let r = 0; r < totalRows; r++) {
     const row: ParsedTableCell[] = []
@@ -3776,10 +3466,12 @@ function parseTable(
     const rowNode = allRows[r]!
     const tcs = findAll(getChildren(rowNode, 'a:tr'), 'a:tc')
     let ci = 0
+    let spanEnd = 0
     for (const tc of tcs) {
       const tcAttrs = getAttrs(tc)
-      const isHMergeCont = tcAttrs['@hMerge'] === '1'
-      const isVMergeCont = tcAttrs['@vMerge'] === '1'
+      const isHMergeCont = tcAttrs['@hMerge'] === '1' || tcAttrs['@hMerge'] === 'true'
+      const isVMergeCont = tcAttrs['@vMerge'] === '1' || tcAttrs['@vMerge'] === 'true'
+      if (!isHMergeCont && ci < spanEnd) ci = spanEnd
       if (isHMergeCont || isVMergeCont) {
         // Continuation cell — origin must already be present (above or to
         // the left, depending on direction). Stamp pointer; the writer
@@ -3790,14 +3482,16 @@ function parseTable(
       const gridSpan = Math.max(1, Number(tcAttrs['@gridSpan'] ?? 1))
       const rowSpan = Math.max(1, Number(tcAttrs['@rowSpan'] ?? 1))
 
-      const cellStyle = parseCellStyle(tc, theme)
+      const cellStyle = parseCellStyle(tc, theme, imageRels)
       const targetCell = tableCells[r]?.[ci]
+      spanEnd = ci + gridSpan
       if (targetCell === undefined) {
-        ci += gridSpan
+        ci++
         continue
       }
       // Fill + border.
       if (cellStyle.fillColor !== undefined) targetCell.fill = cellStyle.fillColor
+      if (cellStyle.imagePath !== undefined) targetCell.imagePath = cellStyle.imagePath
       if (cellStyle.fillAlpha !== undefined) targetCell.fillAlpha = cellStyle.fillAlpha
       if (cellStyle.fillGradient !== undefined) targetCell.fillGradient = cellStyle.fillGradient
       if (
@@ -3910,7 +3604,7 @@ function parseTable(
         }
       }
 
-      ci += gridSpan
+      ci++
     }
   }
 
@@ -3918,18 +3612,39 @@ function parseTable(
   // non-zero bbox. Otherwise treat as garbage and drop.
   if (tableW <= 0 || tableH <= 0) return null
 
-  return {
+  const shape: ParsedShape = {
     kind: 'table',
     x: emuToPx(tableX),
     y: emuToPx(tableY),
     width: emuToPx(tableW),
     height: emuToPx(tableH),
-    rotation: 0,
+    rotation: xfrm !== undefined ? Number(getAttrs(xfrm)['@rot'] ?? 0) / PPTX_ROT_PER_DEG || 0 : 0,
     sourceTag: 'a:tbl',
     tableColWidths: colWidthsEmu.map(emuToPx),
     tableRowHeights: rowHeightsEmu.map(emuToPx),
     tableCells,
   }
+  // The frame's non-visual properties: the id animations target, name, alt
+  // text, click action, aspect lock and a Narrative export's extension.
+  const nv = findFirst(gfChildren, 'p:nvGraphicFramePr')
+  const cNvPr =
+    nv !== undefined ? findFirst(getChildren(nv, 'p:nvGraphicFramePr'), 'p:cNvPr') : undefined
+  if (cNvPr !== undefined) {
+    const a = getAttrs(cNvPr)
+    const id = Number(a['@id'])
+    if (Number.isFinite(id)) shape.spId = id
+    if (typeof a['@name'] === 'string' && a['@name'] !== '') shape.cnvName = a['@name']
+    if (typeof a['@descr'] === 'string' && a['@descr'] !== '') shape.alt = a['@descr']
+    const hlink = findFirst(getChildren(cNvPr, 'p:cNvPr'), 'a:hlinkClick')
+    const rId = hlink !== undefined ? getAttrs(hlink)['@r:id'] : undefined
+    const link = typeof rId === 'string' && rId !== '' ? hyperlinkRels.get(rId) : undefined
+    if (link !== undefined) shape.hyperlink = link
+  }
+  if (readAspectLocked(nv)) shape.aspectLocked = true
+  const narrative =
+    xfrm !== undefined ? readNarrativeExt(cNvPr, frameFingerprintOf(xfrm)) : undefined
+  if (narrative !== undefined) shape.narrative = narrative
+  return shape
 }
 
 /**
@@ -4108,13 +3823,15 @@ interface CellStyle {
    *  case still surfaces as fully absent — Narrative's renderer treats
    *  an undefined cell.border as "inherit", so explicit suppression on
    *  every edge collapses into the same behaviour. */
-  borderTop?: { color: number; width: number }
-  borderRight?: { color: number; width: number }
-  borderBottom?: { color: number; width: number }
-  borderLeft?: { color: number; width: number }
+  borderTop?: ParsedCellBorder
+  borderRight?: ParsedCellBorder
+  borderBottom?: ParsedCellBorder
+  borderLeft?: ParsedCellBorder
+  /** Zip path of a `<a:blipFill>` picture. */
+  imagePath?: string
 }
 
-function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
+function parseCellStyle(tc: XmlNode, theme: ThemeColourMap, imageRels: ImageRelMap): CellStyle {
   const tcChildren = getChildren(tc, 'a:tc')
   const tcPr = findFirst(tcChildren, 'a:tcPr')
   if (!tcPr) return {}
@@ -4135,6 +3852,17 @@ function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
     if (grad) {
       const g = parseGradient(grad, theme)
       if (g !== undefined) out.fillGradient = g
+    }
+    // A picture fill: its bytes are imported like any picture's.
+    const pictureFill = findFirst(tcPrChildren, 'a:blipFill')
+    const blipNode =
+      pictureFill !== undefined
+        ? findFirst(getChildren(pictureFill, 'a:blipFill'), 'a:blip')
+        : undefined
+    const embed = blipNode !== undefined ? getAttrs(blipNode)['@r:embed'] : undefined
+    if (typeof embed === 'string') {
+      const path = imageRels.get(embed)
+      if (path !== undefined) out.imagePath = path
     }
   }
   // `<a:noFill/>` is explicit "no background" — same as not setting fill,
@@ -4157,18 +3885,20 @@ function parseCellStyle(tc: XmlNode, theme: ThemeColourMap): CellStyle {
   for (const { tag, key } of edges) {
     const ln = findFirst(tcPrChildren, tag)
     if (!ln) continue
-    const lnChildren = getChildren(ln, tag)
-    if (findFirst(lnChildren, 'a:noFill') !== undefined) continue
-    const lnSolid = findFirst(lnChildren, 'a:solidFill')
-    if (!lnSolid) continue
-    const c = parseColourAndAlphaFrom(lnSolid, theme)
-    if (c === undefined) continue
-    const wAttr = getAttrs(ln)['@w']
-    const w = typeof wAttr === 'string' ? emuToPx(Number(wAttr)) : 1
-    ;(out as Record<string, unknown>)[key] = {
-      color: c.color,
-      width: w > 0 ? w : 1,
+    const line = readLine(ln, theme)
+    if (line.noFill === true || line.color === undefined) continue
+    const border: ParsedCellBorder = {
+      color: line.color,
+      width: line.width !== undefined && line.width > 0 ? line.width : 1,
     }
+    const prstDash = findFirst(getChildren(ln, tag), 'a:prstDash')
+    const dash =
+      prstDash !== undefined
+        ? BORDER_DASH.fromXml(String(getAttrs(prstDash)['@val'] ?? ''))
+        : undefined
+    if (dash !== undefined && dash !== 'solid') border.dash = dash
+    if (line.alpha !== undefined && line.alpha < 1) border.alpha = line.alpha
+    ;(out as Record<string, unknown>)[key] = border
   }
 
   return out
@@ -4212,20 +3942,35 @@ const IDENTITY_GROUP_TRANSFORM: GroupTransform = { x: 0, y: 0, scaleX: 1, scaleY
  * stroke + the label text inside. Without the split the lime borders
  * disappear and only the text remains.
  */
+/**
+ * Add a parsed shape to a slide's list. A text-bearing shape with geometry
+ * of its own goes in as two: the geometry first (`extractGeometryUnderText`),
+ * the text frame on top — children render in array order.
+ */
+function pushWithGeometry(shapes: ParsedShape[], shape: ParsedShape): void {
+  const underlay = extractGeometryUnderText(shape)
+  if (underlay !== null) shapes.push(underlay)
+  shapes.push(shape)
+}
+
 function extractGeometryUnderText(shape: ParsedShape): ParsedShape | null {
   if (shape.kind !== 'text') return null
-  const prst = shape.prstGeom
-  const isRectLike = prst === 'rect' || prst === 'roundRect'
-  if (!isRectLike) return null
+  const g = shape.geometryKind
+  // Geometry the model can draw: a rectangle (rounded or not), ellipse,
+  // triangle, regular polygon, or a custom path.
+  if (g !== 'rectangle' && g !== 'ellipse' && g !== 'triangle' && g !== 'polygon' && g !== 'path')
+    return null
+  if (g === 'path' && (shape.pathAnchors === undefined || shape.pathAnchors.length === 0))
+    return null
   const hasStroke = shape.strokeColor !== undefined && (shape.strokeWidth ?? 0) > 0
   const hasFill =
     shape.fillColor !== undefined ||
     shape.fillGradient !== undefined ||
     shape.imagePath !== undefined
-  const wantsRoundedCorners = prst === 'roundRect'
+  const wantsRoundedCorners = shape.prstGeom === 'roundRect'
   if (!hasStroke && !hasFill && !wantsRoundedCorners) return null
   const underlay: ParsedShape = {
-    kind: 'rectangle',
+    kind: g,
     x: shape.x,
     y: shape.y,
     width: shape.width,
@@ -4236,31 +3981,33 @@ function extractGeometryUnderText(shape: ParsedShape): ParsedShape | null {
   if (shape.fillColor !== undefined) underlay.fillColor = shape.fillColor
   if (shape.fillAlpha !== undefined) underlay.fillAlpha = shape.fillAlpha
   if (shape.fillGradient !== undefined) underlay.fillGradient = shape.fillGradient
+  if (shape.imagePath !== undefined) underlay.imagePath = shape.imagePath
   if (shape.strokeColor !== undefined) underlay.strokeColor = shape.strokeColor
   if (shape.strokeAlpha !== undefined) underlay.strokeAlpha = shape.strokeAlpha
   if (shape.strokeWidth !== undefined) underlay.strokeWidth = shape.strokeWidth
+  if (shape.strokeDash === true) underlay.strokeDash = true
+  if (shape.flipH === true) underlay.flipH = true
+  if (shape.flipV === true) underlay.flipV = true
   if (shape.groupId !== undefined) underlay.groupId = shape.groupId
   if (shape.shadow !== undefined) underlay.shadow = shape.shadow
   if (shape.blur !== undefined) underlay.blur = shape.blur
-  if (wantsRoundedCorners) {
-    // PPTX roundRect carries the corner radius in
-    // `<a:avLst>/<a:gd name="adj" fmla="val N"/>` where N is 1/1000ths
-    // of the smaller dimension. Default 50000 (50%). We don't have
-    // the adj parsed at this point — use the PPTX default, which
-    // matches the vast majority of authored roundRects.
-    const halfMin = Math.min(shape.width, shape.height) / 2
-    underlay.cornerRadius = halfMin
-  }
-  // Strip the geometry properties from the text shape so the writer
-  // doesn't accidentally try to apply them to a TextObject (Narrative's
-  // TextObject schema doesn't model them and would emit them as no-ops,
-  // but the cleaner data shape avoids surprises downstream).
+  if (shape.cornerRadius !== undefined) underlay.cornerRadius = shape.cornerRadius
+  if (shape.sides !== undefined) underlay.sides = shape.sides
+  if (shape.pathAnchors !== undefined) underlay.pathAnchors = shape.pathAnchors
+  if (shape.pathClosed === true) underlay.pathClosed = true
+  // The geometry belongs to the underlay now; the text frame keeps its text.
   delete shape.fillColor
   delete shape.fillAlpha
   delete shape.fillGradient
+  delete shape.imagePath
   delete shape.strokeColor
   delete shape.strokeAlpha
   delete shape.strokeWidth
+  delete shape.strokeDash
+  delete shape.cornerRadius
+  delete shape.sides
+  delete shape.pathAnchors
+  delete shape.pathClosed
   delete shape.prstGeom
   return underlay
 }
@@ -4418,7 +4165,7 @@ function flattenGroupShape(
       const gd = graphic ? findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData') : undefined
       const uri = gd !== undefined ? String(getAttrs(gd)['@uri'] ?? '') : ''
       if (uri.endsWith('/table')) {
-        const tableShape = parseTable(node, theme, hyperlinkRels)
+        const tableShape = parseTable(node, theme, hyperlinkRels, imageRels)
         if (tableShape !== null) {
           applyGroupTransform(tableShape, newTransform)
           if (tableShape.groupId === undefined) tableShape.groupId = groupId
@@ -4515,15 +4262,7 @@ function parseSlide(
         context.txStyles,
         hyperlinkRels,
       )
-      if (shape !== null) {
-        // Split text-with-geometry shapes: a `<p:sp>` whose prstGeom
-        // is rect / roundRect with a real stroke/fill AND text body
-        // becomes a rect underlay + text frame. Push the rect FIRST
-        // so the text renders ON TOP (children render in array order).
-        const underlay = extractGeometryUnderText(shape)
-        if (underlay !== null) shapes.push(underlay)
-        shapes.push(shape)
-      }
+      if (shape !== null) pushWithGeometry(shapes, shape)
     } else if (tag === 'p:graphicFrame') {
       // Tables nest inside graphicFrame → graphicData → tbl. Charts use
       // the same graphicFrame envelope but with a `/chart` URI; we route
@@ -4535,7 +4274,7 @@ function parseSlide(
       const gd = graphic ? findFirst(getChildren(graphic, 'a:graphic'), 'a:graphicData') : undefined
       const uri = gd !== undefined ? String(getAttrs(gd)['@uri'] ?? '') : ''
       if (uri.endsWith('/table')) {
-        const tableShape = parseTable(node, theme, hyperlinkRels)
+        const tableShape = parseTable(node, theme, hyperlinkRels, imageRels)
         if (tableShape !== null) shapes.push(tableShape)
       } else if (uri.endsWith('/chart')) {
         const chartShape = parseChartFallback(node, imageRels)
@@ -4562,7 +4301,7 @@ function parseSlide(
               context.txStyles,
               hyperlinkRels,
             )
-            if (shape !== null) shapes.push(shape)
+            if (shape !== null) pushWithGeometry(shapes, shape)
           } else if (fbTag === 'p:sp') {
             const shape = parseShape(
               fbChild,
@@ -4573,7 +4312,7 @@ function parseSlide(
               context.txStyles,
               hyperlinkRels,
             )
-            if (shape !== null) shapes.push(shape)
+            if (shape !== null) pushWithGeometry(shapes, shape)
           }
         }
       }
@@ -4618,7 +4357,7 @@ function parseSlide(
   const skipped = showAttr === '0' || showAttr === 'false'
 
   // ─── Slide transition ──────────────────────────────────────────────────
-  const transition = parseSlideTransition(sldChildren)
+  const transition = readTransition(sldChildren)
 
   // ─── Animations (from `<p:timing>`) ────────────────────────────────────
   // We extract entrance / exit / emphasis presets keyed by their PPTX
@@ -4627,198 +4366,28 @@ function parseSlide(
   // then resolves to the SlideObject.id assigned when shapes were
   // mapped. Lossy: the PPTX timing tree's nested click/withEffect
   // semantics collapse to Narrative's flat {trigger, delay} fields.
-  const animations = parseSlideAnimations(sldChildren)
+  const animations: ParsedAnimationStep[] = readTiming(sldChildren).map((step) => {
+    const out: ParsedAnimationStep = {
+      spId: step.spid,
+      preset: step.preset,
+      trigger: step.trigger,
+      duration: step.duration,
+      delay: step.delay,
+    }
+    if (step.easing !== undefined) out.easing = step.easing
+    if (step.params !== undefined) out.params = step.params
+    return out
+  })
+  const slideExt = readSlideExt(sldChildren)
+  const narrative = slideExt !== undefined ? slideExtFields(slideExt) : undefined
 
   const out: ParsedSlide = { source: sourceName, background, shapes }
+  if (narrative !== undefined && Object.keys(narrative).length > 0) out.narrative = narrative
   if (slideName !== undefined) out.name = slideName
   if (skipped) out.skipped = true
   if (transition !== undefined) out.transition = transition
   if (animations.length > 0) out.animations = animations
   return out
-}
-
-/**
- * Parse `<p:transition>` into Narrative's SlideTransition shape. PPTX
- * transition children correspond to kinds:
- *   <p:fade/>       → 'fade'
- *   <p:push dir>   → 'push' with direction
- *   <p:cube dir>   → 'cube'
- *   <p:morph/>     → 'magic' (PPT 2019+ "morph" — Narrative's Magic Move)
- *   <p:none/>      → 'none' (default; we omit the field if encountered)
- *   anything else  → 'fade' (best-effort default)
- *
- * Duration: `<p:transition spd="med">` is the legacy speed enum; newer
- * decks use the milliseconds attribute on individual transition kinds.
- * We honor both and default to 500 ms.
- */
-function parseSlideTransition(sldChildren: XmlNode[]): ParsedSlide['transition'] | undefined {
-  const trans = findFirst(sldChildren, 'p:transition')
-  if (!trans) return undefined
-  const transAttrs = getAttrs(trans)
-  const spd = String(transAttrs['@spd'] ?? '')
-  const dur = Number(transAttrs['@p14:dur'] ?? transAttrs['@dur'] ?? 0)
-  let durationMs = 500
-  if (Number.isFinite(dur) && dur > 0) durationMs = dur
-  else if (spd === 'fast') durationMs = 250
-  else if (spd === 'slow') durationMs = 1000
-
-  const transChildren = getChildren(trans, 'p:transition')
-  for (const ch of transChildren) {
-    const tag = getTag(ch)
-    if (tag === 'p:fade') return { kind: 'fade', durationMs }
-    if (tag === 'p:morph') return { kind: 'magic', durationMs }
-    if (tag === 'p:push' || tag === 'p:cover' || tag === 'p:wipe') {
-      const dir = String(getAttrs(ch)['@dir'] ?? 'l')
-      const direction: 'l' | 'r' | 'u' | 'd' =
-        dir === 'r' || dir === 'd' || dir === 'u' || dir === 'l' ? (dir as 'l') : 'l'
-      return { kind: 'push', durationMs, direction }
-    }
-    if (tag === 'p:cube' || tag === 'p:flythrough' || tag === 'p:doors') {
-      const dir = String(getAttrs(ch)['@dir'] ?? 'l')
-      const direction: 'l' | 'r' | 'u' | 'd' =
-        dir === 'r' || dir === 'd' || dir === 'u' || dir === 'l' ? (dir as 'l') : 'l'
-      return { kind: 'cube', durationMs, direction }
-    }
-    if (tag === 'p:none') return undefined
-  }
-  // Unknown transition kind → fall back to fade.
-  return { kind: 'fade', durationMs }
-}
-
-/**
- * Walk `<p:timing>` looking for entrance/exit/emphasis effects. PPTX's
- * timing schema is a nested click/withEffect/afterEffect tree; we
- * flatten it by walking depth-first and recording each `<p:cTn
- * presetClass="entr|exit|emph" presetID="N">` encountered, paired with
- * the shape it targets via `<p:spTgt spid="N">`.
- *
- * Lossy by design — PPTX's nested timing tree is far richer than
- * Narrative's flat AnimationStep list. Per the M28 plan we document
- * this limitation: a deck with complex sequencing will re-import with
- * the right effects but a simplified timing.
- */
-function parseSlideAnimations(sldChildren: XmlNode[]): ParsedAnimationStep[] {
-  const timing = findFirst(sldChildren, 'p:timing')
-  if (!timing) return []
-  const out: ParsedAnimationStep[] = []
-
-  // PPTX timing nodes we care about:
-  //   <p:par>            paragraph (sequential or click container)
-  //   <p:cTn>            common-timing-node — carries `presetClass`,
-  //                      `presetID`, `dur` (milliseconds OR 'indefinite'),
-  //                      `nodeType` ('clickEffect' | 'withEffect' | 'afterEffect')
-  //   <p:tgtEl>/<p:spTgt> target shape, attr `spid`
-  //
-  // Walk depth-first collecting any cTn with a usable presetClass.
-  for (const node of walk([timing])) {
-    if (getTag(node) !== 'p:cTn') continue
-    const a = getAttrs(node)
-    const presetClass = String(a['@presetClass'] ?? '')
-    if (presetClass !== 'entr' && presetClass !== 'exit' && presetClass !== 'emph') continue
-    const presetID = Number(a['@presetID'] ?? 0)
-    const durRaw = a['@dur']
-    let durationMs = 500
-    if (typeof durRaw === 'string') {
-      const n = Number(durRaw)
-      if (Number.isFinite(n) && n > 0) durationMs = n
-    }
-    const nodeType = String(a['@nodeType'] ?? '')
-    let trigger: ParsedAnimationStep['trigger'] = 'onEnter'
-    if (nodeType === 'clickEffect') trigger = 'onClick'
-    else if (nodeType === 'withEffect') trigger = 'withPrevious'
-    else if (nodeType === 'afterEffect') trigger = 'afterPrevious'
-
-    // Find target spid by walking this cTn's subtree for <p:spTgt spid>.
-    let spId = -1
-    for (const desc of walk([node])) {
-      if (getTag(desc) !== 'p:spTgt') continue
-      const sid = getAttrs(desc)['@spid']
-      if (typeof sid === 'string') {
-        const n = Number(sid)
-        if (Number.isFinite(n)) {
-          spId = n
-          break
-        }
-      }
-    }
-    if (spId < 0) continue
-
-    out.push({
-      spId,
-      preset:
-        presetClass === 'entr'
-          ? pptxEntrancePresetIdToNarrative(presetID)
-          : presetClass === 'exit'
-            ? pptxExitPresetIdToNarrative(presetID)
-            : pptxEmphasisPresetIdToNarrative(presetID),
-      trigger,
-      durationMs,
-      delayMs: 0,
-    })
-  }
-  return out
-}
-
-/**
- * Map common PPTX entrance preset IDs to Narrative's AnimationPreset
- * names. The table covers the user-visible "Basic" + "Subtle" categories
- * — uncommon presets fall through to 'fadeIn' as the safe visual default.
- */
-function pptxEntrancePresetIdToNarrative(presetID: number): string {
-  // Sourced from `presetID` enumerations in PPTX schema docs:
-  //   1=Appear, 2=Fly In, 3=Blinds, 4=Box, 5=Checkerboard, 6=Circle,
-  //   10=Fade, 11=Dissolve, 21=Spinner, 22=Wipe, 23=Zoom, 39=Bounce,
-  //   42=Float, 50=Float, 53=Compress, 54=Rise Up, 55=Sink Down
-  switch (presetID) {
-    case 1:
-    case 10:
-      return 'fadeIn'
-    case 2:
-      return 'slideIn'
-    case 6:
-    case 23:
-    case 42:
-    case 50:
-      return 'zoomIn'
-    case 11:
-      return 'dissolveIn'
-    case 21:
-      return 'rotateIn'
-    case 22:
-      return 'wipeIn'
-    case 39:
-      return 'bounceIn'
-    default:
-      return 'fadeIn'
-  }
-}
-
-function pptxExitPresetIdToNarrative(presetID: number): string {
-  // Exit-class presets — Narrative's exit-side coverage is smaller.
-  switch (presetID) {
-    case 10:
-      return 'fadeOut'
-    case 2:
-      return 'slideOut'
-    case 6:
-    case 23:
-      return 'scaleOut'
-    default:
-      return 'fadeOut'
-  }
-}
-
-function pptxEmphasisPresetIdToNarrative(presetID: number): string {
-  // Emphasis effects don't have many direct Narrative analogues — most
-  // collapse to scaleIn (a soft "pop"). presetID=5 spin maps to rotateIn.
-  switch (presetID) {
-    case 5:
-      return 'rotateIn'
-    case 1:
-      return 'popIn'
-    default:
-      return 'popIn'
-  }
 }
 
 /**
@@ -5344,6 +4913,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     // Speaker notes — independent rels path; loaded per-slide so a deck
     // with notes on only some slides doesn't pay the parse cost on every
     // slide.
+    slide.path = path
     const notes = await parseSlideNotes(zip, path)
     if (notes !== undefined) slide.notes = notes
     slides.push(slide)
@@ -5355,6 +4925,10 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
     for (const sh of slide.shapes) {
       if (sh.imagePath !== undefined) referencedImagePaths.add(sh.imagePath)
       if (sh.videoPath !== undefined) referencedImagePaths.add(sh.videoPath)
+      for (const row of sh.tableCells ?? []) {
+        for (const cell of row)
+          if (cell.imagePath !== undefined) referencedImagePaths.add(cell.imagePath)
+      }
     }
     // Track distinct tags across the whole deck for the report metric.
     const xmlParser = ooxmlParser()

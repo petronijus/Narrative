@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Maps the remote schema locations the OPC core-properties and Dublin Core
+  schemas import to the copies in this directory, so validation never
+  touches the network (xmllint runs with no network access in the tests).
+-->
+<catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd" uri="dublin-core/dc.xsd"/>
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd" uri="dublin-core/dcterms.xsd"/>
+  <system systemId="http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcmitype.xsd" uri="dublin-core/dcmitype.xsd"/>
+  <system systemId="http://www.w3.org/2001/03/xml.xsd" uri="w3c/xml.xsd"/>
+  <system systemId="http://www.w3.org/2001/xml.xsd" uri="w3c/xml.xsd"/>
+  <uri name="http://www.w3.org/XML/1998/namespace" uri="w3c/xml.xsd"/>
+</catalog>

@@ -236,7 +236,7 @@ await registerSharingRoutes(app, db)
 // PowerPoint import — synchronous parse + Y.Doc write (M28 phase 3 MVP)
 await registerPptxImportRoutes(app, db)
 
-// PowerPoint export — synchronous Y.Doc → pptxgenjs Buffer (M28 phase 2 MVP)
+// PowerPoint export — synchronous Y.Doc → .pptx (pptx/ooxml/writeDeck)
 await registerPptxExportRoutes(app, db)
 
 // Server-driven OAuth flow + session cookie minting (replaces the old

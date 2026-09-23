@@ -439,11 +439,32 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
     uploadedImageCount++
   }
 
-  // Patch parsed shapes + backgrounds with their resolved assetIds.
-  // Video shapes get TWO ids: the video file lands on `assetId`, and the
-  // blipFill poster (when present) lands on `posterAssetId` so the writer
-  // can emit a sibling ImageObject — slides stay visible while the HLS
-  // transcode is still pending.
+  patchParsedAssetIds(parsed, mediaPathToAssetId)
+
+  return {
+    mediaAssetRows,
+    uploadedImageCount,
+    skippedUnsupportedImages,
+    uploadedFontCount,
+    skippedFontCount,
+    videoTranscodeJobs,
+  }
+}
+
+/**
+ * Point every parsed shape and background at the asset its embedded media
+ * was stored as. Pure — the round-trip harness (pptx/roundtrip.ts) runs the
+ * same step in memory, so what it tests is what the importer does.
+ *
+ * Video shapes get TWO ids: the video file lands on `assetId`, and the
+ * blipFill poster (when present) lands on `posterAssetId` so the writer can
+ * emit a sibling ImageObject — slides stay visible while the HLS transcode
+ * is still pending.
+ */
+export function patchParsedAssetIds(
+  parsed: ParsedPptx,
+  mediaPathToAssetId: ReadonlyMap<string, string>,
+): void {
   for (const slide of parsed.slides) {
     if (slide.background.imagePath !== undefined) {
       const aid = mediaPathToAssetId.get(slide.background.imagePath)
@@ -459,16 +480,15 @@ export async function uploadEmbeddedImagesAndPatchAssetIds(
         if (imageAid !== undefined) sh.assetId = imageAid
         if (videoAid !== undefined) sh.assetId = videoAid
       }
+      // Table cells with picture fills.
+      for (const row of sh.tableCells ?? []) {
+        for (const cell of row) {
+          const aid =
+            cell.imagePath !== undefined ? mediaPathToAssetId.get(cell.imagePath) : undefined
+          if (aid !== undefined) cell.assetId = aid
+        }
+      }
     }
-  }
-
-  return {
-    mediaAssetRows,
-    uploadedImageCount,
-    skippedUnsupportedImages,
-    uploadedFontCount,
-    skippedFontCount,
-    videoTranscodeJobs,
   }
 }
 
