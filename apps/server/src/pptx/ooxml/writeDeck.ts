@@ -58,10 +58,13 @@ export interface WriteDeckOptions {
   title?: string
   author?: string
   assetLoader?: AssetLoader
-  /** Speaker notes as plain text per slide id. */
   /** Speaker notes per slide id: the notes editor's document (ooxml/notes.ts). */
   notesBySlideId?: ReadonlyMap<string, NotesDoc>
-  /** Fixed timestamp for reproducible output (tests). */
+  /**
+   * When the deck was written: the package's modified date and the
+   * timestamp of every zip entry. Fixed, it makes the output reproducible
+   * byte for byte (tests).
+   */
   now?: Date
 }
 
@@ -363,9 +366,17 @@ export async function writeDeck(
 ): Promise<Buffer> {
   const zip = new JSZip()
   const media = new MediaStore(options.assetLoader)
+  const now = options.now ?? new Date()
   const overrides: Array<{ partName: string; contentType: string }> = []
+  /**
+   * Every entry is a part, stamped `now`. Left to itself JSZip stamps each
+   * with the moment it was added and adds an entry for every folder on the
+   * way; folders are not parts of a package (PowerPoint writes none), and
+   * the clock made two exports of one deck differ whenever they straddled
+   * a tick of the zip's two-second time.
+   */
   const put = (path: string, content: string | Buffer, contentType?: string): void => {
-    zip.file(path, content)
+    zip.file(path, content, { date: now, createFolders: false })
     if (contentType !== undefined) overrides.push({ partName: `/${path}`, contentType })
   }
 
@@ -488,10 +499,7 @@ export async function writeDeck(
       notesRels.add(REL.notesMaster, '../notesMasters/notesMaster1.xml')
       notesRels.add(REL.slide, `../slides/slide${i + 1}.xml`)
       put(notesPath, notesSlidePart(notes, notesRels), CT.notesSlide)
-      zip.file(
-        `ppt/notesSlides/_rels/notesSlide${i + 1}.xml.rels`,
-        relationshipsPart(notesRels.all),
-      )
+      put(`ppt/notesSlides/_rels/notesSlide${i + 1}.xml.rels`, relationshipsPart(notesRels.all))
     }
 
     const sld = el(
@@ -509,7 +517,7 @@ export async function writeDeck(
       writeSlideExt(extValues),
     )
     put(`ppt/slides/slide${i + 1}.xml`, xmlDocument(sld), CT.slide)
-    zip.file(`ppt/slides/_rels/slide${i + 1}.xml.rels`, relationshipsPart(rels.all))
+    put(`ppt/slides/_rels/slide${i + 1}.xml.rels`, relationshipsPart(rels.all))
   }
 
   // Package parts.
@@ -522,9 +530,9 @@ export async function writeDeck(
     }),
     CT.presentation,
   )
-  zip.file('ppt/_rels/presentation.xml.rels', relationshipsPart(presRels.all))
+  put('ppt/_rels/presentation.xml.rels', relationshipsPart(presRels.all))
   put('ppt/slideMasters/slideMaster1.xml', slideMasterPart('rId1'), CT.slideMaster)
-  zip.file(
+  put(
     'ppt/slideMasters/_rels/slideMaster1.xml.rels',
     relationshipsPart([
       { id: 'rId1', type: REL.slideLayout, target: '../slideLayouts/slideLayout1.xml' },
@@ -532,7 +540,7 @@ export async function writeDeck(
     ]),
   )
   put('ppt/slideLayouts/slideLayout1.xml', slideLayoutPart(), CT.slideLayout)
-  zip.file(
+  put(
     'ppt/slideLayouts/_rels/slideLayout1.xml.rels',
     relationshipsPart([
       { id: 'rId1', type: REL.slideMaster, target: '../slideMasters/slideMaster1.xml' },
@@ -541,7 +549,7 @@ export async function writeDeck(
   put('ppt/theme/theme1.xml', themePart(), CT.theme)
   if (hasNotes) {
     put('ppt/notesMasters/notesMaster1.xml', notesMasterPart(), CT.notesMaster)
-    zip.file(
+    put(
       'ppt/notesMasters/_rels/notesMaster1.xml.rels',
       relationshipsPart([{ id: 'rId1', type: REL.theme, target: '../theme/theme2.xml' }]),
     )
@@ -550,14 +558,13 @@ export async function writeDeck(
   put('ppt/presProps.xml', presPropsPart(), CT.presProps)
   put('ppt/viewProps.xml', viewPropsPart(), CT.viewProps)
   put('ppt/tableStyles.xml', tableStylesPart(), CT.tableStyles)
-  for (const [path, bytes] of media.parts) zip.file(path, bytes)
+  for (const [path, bytes] of media.parts) put(path, bytes)
 
-  const now = options.now ?? new Date()
   const title = options.title ?? 'Narrative deck'
   const author = options.author ?? 'Narrative'
   put('docProps/core.xml', corePropsPart(title, author, now), CT.coreProps)
   put('docProps/app.xml', extendedPropsPart(slides.length), CT.extendedProps)
-  zip.file(
+  put(
     '_rels/.rels',
     relationshipsPart([
       { id: 'rId1', type: REL.officeDocument, target: 'ppt/presentation.xml' },
@@ -565,7 +572,7 @@ export async function writeDeck(
       { id: 'rId3', type: REL.extendedProps, target: 'docProps/app.xml' },
     ]),
   )
-  zip.file(
+  put(
     '[Content_Types].xml',
     contentTypesPart(
       [...media.defaults].map(([extension, contentType]) => ({ extension, contentType })),

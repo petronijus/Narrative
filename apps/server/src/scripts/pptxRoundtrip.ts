@@ -31,7 +31,7 @@ import { matrixDeck } from '../pptx/roundtripMatrix.js'
 const args = process.argv.slice(2)
 const outIdx = args.indexOf('--out')
 const out = outIdx >= 0 ? args[outIdx + 1] : undefined
-const file = args.find((a, i) => !a.startsWith('--') && i !== outIdx + 1)
+const file = args.find((a, i) => !a.startsWith('--') && (outIdx < 0 || i !== outIdx + 1))
 const matrix = args.includes('--matrix')
 if (file === undefined && !matrix) {
   console.error('usage: pptxRoundtrip.ts <deck.pptx> | --matrix [--out exported.pptx] [--detail]')

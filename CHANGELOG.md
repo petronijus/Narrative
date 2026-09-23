@@ -8,6 +8,26 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.27 — No outline where PowerPoint draws none (2026-09-24)
+
+### Fixed
+
+- **Imported shapes keep "no outline".** A shape's `<p:style>` names a line
+  and a fill from the theme, which PowerPoint uses only where the shape does
+  not set its own. The importer took the style's line whenever the shape had
+  no colour for it — including when the shape said explicitly that it has no
+  line (`<a:ln><a:noFill/>`), and it took an `idx="0"` reference ("none") as
+  the theme's first line. The Proseware deck's slide 7 wireframe drew 33 grey
+  boxes with a 1 px red accent outline PowerPoint never shows. A declared
+  fill of either kind now wins over the style, and index 0 means none. The
+  deck has to be imported again to pick it up.
+- **Two exports of one deck are identical byte for byte.** Every zip entry
+  was stamped with the moment it was written, and JSZip added an entry for
+  each folder; exports that straddled a tick of the zip's two-second clock
+  differed, which made the round-trip stability test fail now and then under
+  load. Entries now carry the export's own date, and the package holds parts
+  only, as PowerPoint writes it.
+
 ## 0.9.26 — Lines as tall as their text (2026-09-24)
 
 ### Fixed
