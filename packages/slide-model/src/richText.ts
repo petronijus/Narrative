@@ -740,9 +740,15 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     } else if (level > 0) {
       styleBits.push(`padding-left:${(level * indentEm).toFixed(3)}em`)
     }
+    // `text-indent` is inherited, and an inline-block is a block container
+    // with a first line of its own: without resetting it, the paragraph's
+    // hanging −hangEm outdent moved the glyph a second time, out of its
+    // gutter and off the left edge of the rendered text. Every bullet and
+    // number since multi-level lists landed was drawn outside the picture —
+    // the gutter was there, the marker was not.
     const markerHtml =
       marker !== null
-        ? `<span data-marker="1" contenteditable="false" style="display:inline-block;width:${hangEm}em">${escapeHtml(marker)}</span>`
+        ? `<span data-marker="1" contenteditable="false" style="display:inline-block;width:${hangEm}em;text-indent:0">${escapeHtml(marker)}</span>`
         : ''
     const inner = toHtml(p.ops, defaults)
     const body = inner.length > 0 ? inner : '<br data-empty="1">'

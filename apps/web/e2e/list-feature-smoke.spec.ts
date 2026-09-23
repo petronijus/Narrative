@@ -200,6 +200,40 @@ async function colouredPixels(
   return n
 }
 
+/**
+ * Screen rectangle of the marker gutter — the first em of the object. A
+ * list paragraph's text starts 1.6 em in, after its marker, and the marker
+ * glyph sits at the start of that hang, so this strip holds the marker and
+ * nothing else (the full 1.6 em would catch the anti-aliased left edge of
+ * the text's first letter). Ink in here is a marker; none means the marker
+ * was not drawn, which the whole-box pixel count above cannot tell apart
+ * from the text merely shifting right by the indent.
+ */
+async function markerGutter(
+  page: Page,
+  id: string,
+): Promise<{ x: number; y: number; w: number; h: number }> {
+  return page.evaluate((targetId) => {
+    const sg = window.__narrative_scene_graph
+    const c = sg?.getContainer(targetId)
+    const o = window.__narrative_test_api?.getObject(targetId) as {
+      fontSize?: number
+      height?: number
+    } | null
+    const canvasEl = document.querySelector('canvas')
+    const r = canvasEl?.getBoundingClientRect() ?? { left: 0, top: 0 }
+    const fontSize = o?.fontSize ?? 24
+    const a = c?.toGlobal({ x: 0, y: 0 }) ?? { x: 0, y: 0 }
+    // Only as tall as the three lines: the box runs on below the visible
+    // canvas at this zoom, into the panels under it, whose ink is not ours.
+    const b = c?.toGlobal({ x: fontSize, y: Math.min(o?.height ?? 300, 4 * fontSize) }) ?? {
+      x: 0,
+      y: 0,
+    }
+    return { x: a.x + r.left, y: a.y + r.top, w: b.x - a.x, h: b.y - a.y }
+  }, id)
+}
+
 test.describe('Multi-level lists — feature smoke', () => {
   test('type 3 lines, bullet, indent, numbered, caret + backspace, WYSIWYG', async ({ page }) => {
     test.setTimeout(60_000)
@@ -288,6 +322,15 @@ test.describe('Multi-level lists — feature smoke', () => {
     // measured +12 px on system Chrome at this font size. Keep the invariant
     // (bullets add ink), drop the number that was never measured.
     expect(bulletPixels).toBeGreaterThan(plainPixels)
+    // And the ink has to be the markers, in their gutter. That total rose by
+    // a dozen pixels while no marker was drawn at all — the text moving right
+    // by the indent was enough — so it never noticed they were missing.
+    // Deselect first: the selection frame runs down the gutter's left edge
+    // and would pass for ink.
+    await page.evaluate(() => window.__narrative_test_api!.setSelection([]))
+    await page.waitForTimeout(300)
+    const gutterInk = await colouredPixels(page, await markerGutter(page, ID))
+    expect(gutterInk, 'no bullet glyphs drawn in the marker gutter').toBeGreaterThan(20)
 
     // ---- (f-pre) WYSIWYG check on bullets: re-enter, read markers --------
     await enterEdit(page, ID)

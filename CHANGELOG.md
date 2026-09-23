@@ -8,6 +8,23 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.24 — Bullets you can see (2026-09-23)
+
+### Fixed
+
+- **List markers are drawn.** Every bullet and number since multi-level
+  lists (June) was rendered outside the picture: `text-indent` is inherited,
+  the marker is an inline-block with a first line of its own, so the
+  paragraph's hanging −1.6 em outdent moved the glyph a second time — out of
+  its gutter and off the left edge. The gutter was there, the marker was
+  not; imported PowerPoint lists (the Proseware deck's slide 8) and lists made
+  in the editor alike. The marker now resets `text-indent`. The list smoke
+  test used to pass on "the frame has more ink than before", which the
+  indent alone satisfied; it now counts ink in the marker gutter itself and
+  fails without the fix.
+
+---
+
 ## 0.9.23 — The Proseware header, complete (2026-09-23)
 
 ### Fixed
