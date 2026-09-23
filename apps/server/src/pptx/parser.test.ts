@@ -34,6 +34,8 @@ async function makeFixture(opts: {
   masterXml?: string
   notesXml?: string
   hyperlinks?: Array<{ id: string; url: string }>
+  /** Inner XML of `<p:defaultTextStyle>` in presentation.xml. */
+  defaultTextStyleXml?: string
 }): Promise<Buffer> {
   const zip = new JSZip()
   zip.file(
@@ -41,7 +43,11 @@ async function makeFixture(opts: {
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <p:presentation xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
   <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
-  <p:sldSz cx="12192000" cy="6858000"/>
+  <p:sldSz cx="12192000" cy="6858000"/>${
+    opts.defaultTextStyleXml !== undefined
+      ? `\n  <p:defaultTextStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">${opts.defaultTextStyleXml}</p:defaultTextStyle>`
+      : ''
+  }
 </p:presentation>`,
   )
   zip.file(
@@ -2616,6 +2622,64 @@ describe('parsePptx — layout/master inheritance', () => {
     expect(pic.y).toBeCloseTo(30, 3)
     expect(pic.width).toBeCloseTo(20, 3)
     expect(pic.height).toBeCloseTo(18, 3)
+  })
+})
+
+describe('parsePptx — paragraph outline level', () => {
+  /** A text box (not a placeholder) with one paragraph at `lvl="1"`. */
+  const textBoxAtLevel2 = (pPrExtra: string, bullet = '', lstStyle = '<a:lstStyle/>'): string =>
+    `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="2" name="Headline"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="460964" y="622101"/><a:ext cx="10713058" cy="960121"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr lIns="0" tIns="0" rIns="0" bIns="0"/>${lstStyle}
+          <a:p><a:pPr lvl="1" ${pPrExtra}>${bullet}</a:pPr><a:r><a:t>We made it to our first Camp!</a:t></a:r></a:p>
+        </p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+
+  it('drops the level of a plain paragraph whose level has no margin', async () => {
+    // The Proseware deck's headline: lvl 1 selects defaultTextStyle's level 2,
+    // whose marL is 0, so PowerPoint draws it flush at the frame edge. The
+    // level used to be kept and rendered as a 1.5 em indent — 108 px off.
+    const buf = await makeFixture({
+      slideXml: textBoxAtLevel2('indent="0"'),
+      defaultTextStyleXml: '<a:lvl2pPr marL="0" indent="457200"/>',
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.paragraphs?.[0]?.level).toBeUndefined()
+  })
+
+  it('keeps the level of a plain paragraph whose shape gives that level a margin', async () => {
+    const buf = await makeFixture({
+      slideXml: textBoxAtLevel2('', '', '<a:lstStyle><a:lvl2pPr marL="457200"/></a:lstStyle>'),
+      defaultTextStyleXml: '<a:lvl2pPr marL="0"/>',
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.paragraphs?.[0]?.level).toBe(1)
+  })
+
+  it("lets the paragraph's own marL decide over inherited margins", async () => {
+    const buf = await makeFixture({
+      slideXml: textBoxAtLevel2(
+        'marL="0"',
+        '',
+        '<a:lstStyle><a:lvl2pPr marL="457200"/></a:lstStyle>',
+      ),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.paragraphs?.[0]?.level).toBeUndefined()
+  })
+
+  it('always keeps the nesting level of a list paragraph', async () => {
+    const buf = await makeFixture({
+      slideXml: textBoxAtLevel2('marL="0"', '<a:buChar char="•"/>'),
+      defaultTextStyleXml: '<a:lvl2pPr marL="0"/>',
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.paragraphs?.[0]?.level).toBe(1)
+    expect(shape.paragraphs?.[0]?.list).toBe('bullet')
   })
 })
 

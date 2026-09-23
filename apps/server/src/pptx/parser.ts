@@ -401,6 +401,11 @@ interface ThemeFonts {
  *  a second parameter. */
 const themeFontStore = new WeakMap<ThemeColourMap, ThemeFonts>()
 
+/** Side-band store, same trick again: per-level `marL` from
+ *  `ppt/presentation.xml` `<p:defaultTextStyle>` — the bottom layer for text
+ *  that is not a placeholder (text boxes, shapes with text). */
+const presentationLevelMarginsStore = new WeakMap<ThemeColourMap, Array<number | undefined>>()
+
 /**
  * Resolve an `<a:latin typeface="…">` value.
  *
@@ -1041,6 +1046,8 @@ interface TextStyleDefaults {
   fontFamily?: string
   /** Line spacing declared by `<a:lvl1pPr>/<a:lnSpc>` at this style layer. */
   lineSpacing?: LineSpacingDecl
+  /** Per-level `marL` (EMU), see {@link readLevelMargins}. */
+  levelMargins?: Array<number | undefined>
 }
 
 /**
@@ -1074,6 +1081,40 @@ function readLineSpacingDecl(pPrChildren: XmlNode[]): LineSpacingDecl | undefine
   if (pts !== undefined) {
     const v = Number(getAttrs(pts)['@val'])
     return Number.isFinite(v) && v > 0 ? { kind: 'pts', value100: v } : undefined
+  }
+  return undefined
+}
+
+/**
+ * Left margin (`marL`, EMU) declared for each outline level — index 0 is
+ * `<a:lvl1pPr>`, 8 is `<a:lvl9pPr>` — by a list-style container
+ * (`<a:lstStyle>`, `<p:titleStyle>`, `<a:defaultTextStyle>`, …). A level the
+ * container does not mention, or mentions without `marL`, is undefined so the
+ * next layer down can answer it.
+ *
+ * This is what a paragraph's `lvl` actually does in PowerPoint: it selects
+ * the level whose margin (and bullet, size, …) applies. On a paragraph with
+ * no bullet the margin is the level's only visible effect.
+ */
+function readLevelMargins(containerChildren: XmlNode[]): Array<number | undefined> {
+  const out: Array<number | undefined> = []
+  for (let n = 1; n <= 9; n++) {
+    const lvl = findFirst(containerChildren, `a:lvl${n}pPr`)
+    const raw = lvl !== undefined ? getAttrs(lvl)['@marL'] : undefined
+    const v = typeof raw === 'string' ? Number(raw) : Number.NaN
+    out.push(Number.isFinite(v) ? v : undefined)
+  }
+  return out
+}
+
+/** First defined margin for `levelIndex` across layers, most specific first. */
+function firstLevelMargin(
+  levelIndex: number,
+  layers: Array<Array<number | undefined> | undefined>,
+): number | undefined {
+  for (const layer of layers) {
+    const v = layer?.[levelIndex]
+    if (v !== undefined) return v
   }
   return undefined
 }
@@ -1134,6 +1175,8 @@ interface PlaceholderEntry {
    *  restyles the placeholder's size in its own `lvl1pPr` still inherits
    *  this unless it declares an `lnSpc` of its own. */
   defaultLineSpacing?: LineSpacingDecl
+  /** Per-level `marL` (EMU) from the placeholder's `<a:lstStyle>`. */
+  levelMargins?: Array<number | undefined>
   /** Placeholder type declared on the source `<p:ph type="…">`. Used by the
    *  txStyles bucket lookup so a slide-side title placeholder that ends up
    *  matching an `idx`-only master entry still routes to `titleStyle`. */
@@ -1202,6 +1245,13 @@ function mergePlaceholderEntries(
   pick('defaultListStyle')
   pick('defaultLineSpacing')
   pick('phType')
+  // Per level, not per list: a layout that restyles level 1 still inherits
+  // the master's level-2 margin.
+  if (layout.levelMargins !== undefined || master.levelMargins !== undefined) {
+    merged.levelMargins = Array.from({ length: 9 }, (_, i) =>
+      firstLevelMargin(i, [layout.levelMargins, master.levelMargins]),
+    )
+  }
   return merged
 }
 
@@ -1613,6 +1663,8 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
       }
       const lstStyle = findFirst(txBodyChildren, 'a:lstStyle')
       if (lstStyle) {
+        const margins = readLevelMargins(getChildren(lstStyle, 'a:lstStyle'))
+        if (margins.some((m) => m !== undefined)) entry.levelMargins = margins
         const lvl1 = findFirst(getChildren(lstStyle, 'a:lstStyle'), 'a:lvl1pPr')
         if (lvl1) {
           const algn = getAttrs(lvl1)['@algn']
@@ -1766,6 +1818,8 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
       if (!lvl1) continue
 
       const defaults: TextStyleDefaults = {}
+      const margins = readLevelMargins(styleChildren)
+      if (margins.some((m) => m !== undefined)) defaults.levelMargins = margins
       const bullet = detectBulletDecl(lvl1, 'a:lvl1pPr')
       if (bullet !== undefined) defaults.listStyle = bullet
       const lineSpacing = readLineSpacingDecl(getChildren(lvl1, 'a:lvl1pPr'))
@@ -1804,7 +1858,8 @@ function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
         defaults.bold === true ||
         defaults.listStyle !== undefined ||
         defaults.fontFamily !== undefined ||
-        defaults.lineSpacing !== undefined
+        defaults.lineSpacing !== undefined ||
+        defaults.levelMargins !== undefined
       ) {
         out[bucket] = defaults
       }
@@ -2617,6 +2672,8 @@ function parseShape(
   /** Per-paragraph nesting level from each `<a:p>/<a:pPr lvl="N">`. 0 = no
    *  indent. Index-aligned with `paraBulletDecls`. */
   const paraLevels: number[] = []
+  /** Each paragraph's own `<a:pPr marL>` (EMU), undefined when not declared. */
+  const paraOwnMargins: Array<number | undefined> = []
   /** Bullet kind inherited from the placeholder / master-txStyles chain.
    *  Only a coarse kind ('bullet' | 'numbered' | 'none') is recoverable from
    *  those layers (they store no glyph / autonum detail). Applied per
@@ -2677,6 +2734,9 @@ function parseShape(
         const ownPPr = findFirst(pChildren, 'a:pPr')
         paraBulletDecls.push(ownPPr ? extractBulletDecl(ownPPr, 'a:pPr') : undefined)
         paraLevels.push(readParagraphLevel(ownPPr))
+        const ownMarL = ownPPr !== undefined ? getAttrs(ownPPr)['@marL'] : undefined
+        const ownMarLNum = typeof ownMarL === 'string' ? Number(ownMarL) : Number.NaN
+        paraOwnMargins.push(Number.isFinite(ownMarLNum) ? ownMarLNum : undefined)
       }
       // First-paragraph explicit `<a:pPr algn="..">` wins over layout defaults.
       // Bullet decl on first paragraph likewise wins over any inherited default.
@@ -3220,16 +3280,43 @@ function parseShape(
     // Resolve each source paragraph's effective list kind/level/glyph/format.
     // Own `<a:pPr>` declaration wins; absent ⇒ fall back to the inherited
     // (placeholder/master/txStyles) coarse kind. An explicit `<a:buNone/>`
-    // (own or inherited-vetoed) yields a plain paragraph. `level` is carried
-    // even on plain paragraphs (PPTX `lvl` is an indent, not list-only).
+    // (own or inherited-vetoed) yields a plain paragraph.
+    //
+    // `lvl` does not indent anything by itself in PowerPoint: it selects the
+    // outline level whose `marL` applies. Narrative renders `level` as a fixed
+    // per-level indent, so on a plain paragraph the level is kept only when
+    // that level's margin, resolved down the same chain PowerPoint uses, is
+    // actually non-zero. Keeping it unconditionally pushed the Proseware deck's
+    // "We made it to our first Camp!" (lvl 1, marL 0, indent 0) 108 px right.
+    const shapeLstStyle =
+      txBody !== undefined ? findFirst(getChildren(txBody, 'p:txBody'), 'a:lstStyle') : undefined
+    const shapeMargins =
+      shapeLstStyle !== undefined
+        ? readLevelMargins(getChildren(shapeLstStyle, 'a:lstStyle'))
+        : undefined
+    const marginLayers: Array<Array<number | undefined> | undefined> =
+      slideShapePhType !== undefined
+        ? [
+            shapeMargins,
+            inheritedPh?.levelMargins,
+            txStyles[txStylesBucketFor(slideShapePhType)]?.levelMargins,
+          ]
+        : [shapeMargins, presentationLevelMarginsStore.get(theme)]
     const paraAttrs: ParagraphAttrs[] = paraBulletDecls.map((own, i) => {
       const attrs: ParagraphAttrs = {}
       const level = paraLevels[i] ?? 0
-      if (level > 0) attrs.level = level
       // Effective declaration: own veto/decl beats inherited; absent own decl
       // inherits the coarse kind. An own 'none' suppresses inheritance.
       const decl =
         own ?? (inheritedBulletKind !== undefined ? { kind: inheritedBulletKind } : undefined)
+      const isList = decl !== undefined && decl.kind !== 'none'
+      if (level > 0) {
+        // A list keeps its nesting. A plain paragraph keeps the level only
+        // when its margin is non-zero — or unknown, where no layer declared
+        // one and the historical indent is the safer guess.
+        const margin = paraOwnMargins[i] ?? firstLevelMargin(level, marginLayers)
+        if (isList || margin === undefined || margin > 0) attrs.level = level
+      }
       if (decl !== undefined && decl.kind !== 'none') {
         if (decl.kind === 'bullet') {
           attrs.list = 'bullet'
@@ -4820,6 +4907,30 @@ async function parseThemeTxDef(zip: JSZip, theme: ThemeColourMap): Promise<Theme
 // Presentation-level (slide order + dimensions)
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-level `marL` from `ppt/presentation.xml` `<p:defaultTextStyle>`, or
+ * undefined when the file has none.
+ */
+async function parseDefaultTextStyleMargins(
+  zip: JSZip,
+): Promise<Array<number | undefined> | undefined> {
+  const entry = zip.file('ppt/presentation.xml')
+  if (entry === null) return undefined
+  const xmlParser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@',
+    preserveOrder: true,
+    ignoreDeclaration: true,
+  })
+  const tree = xmlParser.parse(await entry.async('string')) as XmlNode[]
+  for (const node of walk(tree)) {
+    if (getTag(node) !== 'p:defaultTextStyle') continue
+    const margins = readLevelMargins(getChildren(node, 'p:defaultTextStyle'))
+    return margins.some((m) => m !== undefined) ? margins : undefined
+  }
+  return undefined
+}
+
 async function parsePresentationXml(zip: JSZip): Promise<{
   slidePaths: string[]
   slideWidth: number
@@ -5161,6 +5272,8 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
   // new parameter through the dozen functions that take a ThemeColourMap.
   const themeTxDef = await parseThemeTxDef(zip, theme)
   if (themeTxDef !== undefined) themeTxDefStore.set(theme, themeTxDef)
+  const defaultMargins = await parseDefaultTextStyleMargins(zip)
+  if (defaultMargins !== undefined) presentationLevelMarginsStore.set(theme, defaultMargins)
   // `referencedImagePaths` collects every image referenced anywhere in the
   // deck — slide bodies AND baked master/layout shapes — so the next pass
   // can pull the matching bytes out of the zip and the route handler can
