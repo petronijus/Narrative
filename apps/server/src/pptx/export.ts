@@ -393,6 +393,8 @@ function emitText(
     underline: defaultUnderline ? { style: 'sng' } : undefined,
   }
   if (obj.rotation !== 0) opts['rotate'] = rotationToDegrees(obj.rotation)
+  // pptxgenjs `wrap: false` writes `<a:bodyPr wrap="none">`.
+  if (obj.wrap === 'none') opts['wrap'] = false
   if (obj.fontFamily !== undefined) opts['fontFace'] = obj.fontFamily
   if (obj.opacity < 1) opts['transparency'] = Math.round((1 - obj.opacity) * 100)
   if (obj.flipH === true) opts['flipH'] = true
@@ -2189,6 +2191,9 @@ async function applyGradientFixups(buf: Buffer, fixups: GradientFixup[]): Promis
     attributeNamePrefix: '@',
     preserveOrder: true,
     ignoreDeclaration: false,
+    // Text stays text: numeric-looking run text ("2.50", "007") must be
+    // written back byte for byte, not as a re-serialised number.
+    parseTagValue: false,
     trimValues: false,
   })
   const builder = new XMLBuilder({

@@ -388,7 +388,9 @@ export function buildStyleOpts(data: TextObject): any {
     // is still the content height everything below relies on. The same
     // allowance is what the clip mask opens above and below the box.
     padding: lineOvershootFor(data),
-    wordWrap: true,
+    // `wrap: 'none'` lays each line out at its natural width; the box then
+    // only anchors it (see applyHorizontalAlign) and the mask follows it.
+    wordWrap: data.wrap !== 'none',
     wordWrapWidth: data.width,
     // Match the DOM textarea's `word-break: break-word`: also break
     // inside long unbroken runs (e.g. "asdasdasdasd…") at the box edge
@@ -427,8 +429,11 @@ export function buildStyleOpts(data: TextObject): any {
   // renderers use the same text layout algorithm.
   opts.cssOverrides = [
     `font-family: ${cssStack}`,
-    `width: ${data.width}px`,
-    `overflow-wrap: break-word`,
+    // Wrapping text is laid out at exactly the box width; unwrapped text at
+    // its own width, with no break opportunity but explicit line breaks.
+    ...(data.wrap === 'none'
+      ? [`white-space: pre`]
+      : [`width: ${data.width}px`, `overflow-wrap: break-word`]),
     // Pixi measures the text in a div appended to the page, where the
     // app's preflight makes every element `border-box`, and rasterises it
     // in a detached SVG document where the same div is `content-box`. With
@@ -665,8 +670,18 @@ function applyClipMask(container: Container, data: TextObject): void {
   // so its first line can start above the box; open the mask that far too.
   const top = Math.min(0, node?.y ?? 0) - overshoot
   const bottom = contentHeight + overshoot
+  // Text must not bleed sideways out of a wrapping box. Unwrapped text is
+  // meant to: PowerPoint draws a `wrap="none"` line past the box on the side
+  // its alignment grows towards, so the mask spans the line where it is.
+  let left = 0
+  let right = data.width
+  if (data.wrap === 'none' && node !== undefined && node.width > 0) {
+    const nodeLeft = node.x - node.anchor.x * node.width
+    left = Math.min(0, nodeLeft) - overshoot
+    right = Math.max(data.width, nodeLeft + node.width) + overshoot
+  }
   mask.clear()
-  mask.rect(0, top, data.width, bottom - top)
+  mask.rect(left, top, right - left, bottom - top)
   mask.fill({ color: 0xffffff })
 }
 
@@ -808,6 +823,7 @@ export const textRenderer = {
       prev.letterSpacing !== next.letterSpacing ||
       prev.lineHeight !== next.lineHeight ||
       prev.lineSpacing !== next.lineSpacing ||
+      prev.wrap !== next.wrap ||
       prev.stroke !== next.stroke ||
       prev.strokeAlpha !== next.strokeAlpha ||
       prev.strokeWidth !== next.strokeWidth
@@ -890,6 +906,7 @@ export const textRenderer = {
       'letterSpacing' in patch ||
       'lineHeight' in patch ||
       'lineSpacing' in patch ||
+      'wrap' in patch ||
       'stroke' in patch ||
       'strokeAlpha' in patch ||
       'strokeWidth' in patch ||

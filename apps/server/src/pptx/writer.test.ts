@@ -165,6 +165,20 @@ describe('buildDeckUpdate', () => {
     expect(rect['fill']).toBe(0xff0000)
   })
 
+  it('carries a slide-number field and no-wrap onto the text object', async () => {
+    const parsed: ParsedPptx = {
+      ...BASE,
+      slides: [
+        emptySlide({
+          shapes: [textShape({ text: '‹#›', isSlideNumber: true, wrap: 'none' })],
+        }),
+      ],
+    }
+    const obj = applyToFreshDoc(buildDeckUpdate(parsed).state).slides[0]!.objects[0]!
+    expect(obj['isSlideNumber']).toBe(true)
+    expect(obj['wrap']).toBe('none')
+  })
+
   it("stores PPTX degrees as the model's radians, normalised to (−π, π]", async () => {
     // Regression: `rotation` went into the doc in degrees. The renderer reads
     // radians, so the Proseware deck's "(barely)" (rot 352.97°, a 7° counter-

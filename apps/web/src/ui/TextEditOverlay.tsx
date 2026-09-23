@@ -592,9 +592,11 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       flexDirection: 'column',
       justifyContent:
         obj.vAlign === 'middle' ? 'center' : obj.vAlign === 'bottom' ? 'flex-end' : 'flex-start',
-      overflow: 'hidden',
+      // An unwrapped line may extend past the box, as it renders; clipping
+      // it here would hide the caret at the end of it.
+      overflow: obj.wrap === 'none' ? 'visible' : 'hidden',
     }),
-    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign],
+    [obj.x, obj.y, obj.width, obj.height, obj.rotation, obj.vAlign, obj.wrap],
   )
 
   const editorStyle = useMemo<React.CSSProperties>(
@@ -610,11 +612,22 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       outline: 'none',
       padding: 0,
       margin: 0,
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
+      whiteSpace: obj.wrap === 'none' ? 'pre' : 'pre-wrap',
+      wordBreak: obj.wrap === 'none' ? 'normal' : 'break-word',
+      // Unwrapped text is as wide as its longest line and may be wider than
+      // the box; it grows the way the renderer anchors it (align-self below
+      // mirrors applyHorizontalAlign), so caret and glyphs stay together.
+      ...(obj.wrap === 'none'
+        ? {
+            width: 'max-content',
+            minWidth: '100%',
+            alignSelf:
+              obj.align === 'right' ? 'flex-end' : obj.align === 'center' ? 'center' : 'flex-start',
+          }
+        : {}),
       ...baseStyle,
     }),
-    [baseStyle],
+    [baseStyle, obj.wrap, obj.align],
   )
 
   return (

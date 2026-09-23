@@ -105,6 +105,18 @@ describe('exportDeckToPptx', () => {
     expect(Math.abs(y - 914400)).toBeLessThanOrEqual(2000)
   })
 
+  it('writes wrap="none" for a text object that does not wrap', async () => {
+    const buf = await exportDeckToPptx(singleSlide([makeText({ text: '10', wrap: 'none' })]))
+    expect(await getSlide1Xml(buf)).toMatch(/<a:bodyPr[^>]*wrap="none"/)
+  })
+
+  it('writes numeric-looking text back unchanged', async () => {
+    // The post-processing pass re-parses pptxgenjs's XML; with numeric tag
+    // parsing on, "2.50" came back out as 2.5 and "007" as 7.
+    const buf = await exportDeckToPptx(singleSlide([makeText({ text: '007' })]))
+    expect(await getSlide1Xml(buf)).toContain('<a:t>007</a:t>')
+  })
+
   it("writes the model's radians as PPTX degrees", async () => {
     // Regression: radians went out as pptxgenjs `rotate` degrees unconverted,
     // so a 45° shape exported at 0.785° — and an imported degree value

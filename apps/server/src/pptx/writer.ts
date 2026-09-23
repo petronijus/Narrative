@@ -419,6 +419,8 @@ function mapShape(s: ParsedShape, scale: number): SlideObject | null {
     if (s.paragraphSpaceAfter !== undefined && s.paragraphSpaceAfter > 0) {
       obj.paragraphSpaceAfter = round(s.paragraphSpaceAfter * scale)
     }
+    if (s.isSlideNumber === true) obj.isSlideNumber = true
+    if (s.wrap === 'none') obj.wrap = 'none'
     if (s.textTransform !== undefined && s.textTransform !== 'none') {
       obj.textTransform = s.textTransform
     }

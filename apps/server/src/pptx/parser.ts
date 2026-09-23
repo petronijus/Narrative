@@ -329,6 +329,11 @@ export interface ParsedShape {
   paragraphSpaceBefore?: number
   paragraphSpaceAfter?: number
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
+  /** `<a:bodyPr wrap="none">` — see TextObject.wrap. */
+  wrap?: 'none'
+  /** The frame is a PowerPoint slide-number field (`<a:fld type="slidenum">`)
+   *  and nothing else; becomes `TextObject.isSlideNumber`. */
+  isSlideNumber?: boolean
   /** Text-shape stroke ("text outline") — `<a:rPr><a:ln>` solidFill +
    *  width. Captured from the first run; collapsed onto TextObject root. */
   textStrokeColor?: number
@@ -768,6 +773,28 @@ const MVP_ELEMENTS = new Set<string>([
  */
 type XmlNode = Record<string, unknown>
 
+/**
+ * The one XMLParser configuration every OOXML part is read with.
+ *
+ * `parseTagValue: false` is the point: fast-xml-parser otherwise turns text
+ * that looks numeric into a number, and every reader here only takes
+ * `#text` when it is a string — so a run whose whole text was "2", "2026" or
+ * "10" silently vanished from the import (and "007" would have become 7).
+ * PowerPoint splits runs at every formatting change, so a bold year inside a
+ * sentence is exactly such a run. Text is text; attributes are converted
+ * explicitly where they are read.
+ */
+function ooxmlParser(opts: { trimValues?: boolean } = {}): XMLParser {
+  return new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: '@',
+    preserveOrder: true,
+    ignoreDeclaration: true,
+    parseTagValue: false,
+    trimValues: opts.trimValues ?? true,
+  })
+}
+
 function getAttrs(node: XmlNode): Record<string, unknown> {
   const a = node[':@']
   return a !== null && typeof a === 'object' ? (a as Record<string, unknown>) : {}
@@ -1159,6 +1186,9 @@ interface PlaceholderEntry {
   defaultFontSize100?: number
   /** Default vertical anchor from `<a:bodyPr anchor="…">` on the placeholder. */
   bodyAnchor?: 'top' | 'middle' | 'bottom'
+  /** `<a:bodyPr wrap="…">` on the placeholder — a master's slide-number box
+   *  declares `none` there and every slide's copy inherits it. */
+  bodyWrap?: 'none' | 'square'
   /** Default run colour from `<a:lvl1pPr>/<a:defRPr>/<a:solidFill>`. */
   defaultColor?: number
   defaultColorAlpha?: number
@@ -1177,11 +1207,24 @@ interface PlaceholderEntry {
   defaultLineSpacing?: LineSpacingDecl
   /** Per-level `marL` (EMU) from the placeholder's `<a:lstStyle>`. */
   levelMargins?: Array<number | undefined>
+  /**
+   * The placeholder's own `<p:spPr>` fill. A slide shape bound to this
+   * placeholder that declares no fill of its own inherits it, as PowerPoint
+   * does — the Proseware deck's black corner mark is a body placeholder whose
+   * slide copy carries only the path, the black living on the layout.
+   */
+  fill?: PlaceholderFill
   /** Placeholder type declared on the source `<p:ph type="…">`. Used by the
    *  txStyles bucket lookup so a slide-side title placeholder that ends up
    *  matching an `idx`-only master entry still routes to `titleStyle`. */
   phType?: string
 }
+
+/** A placeholder's declared fill: a colour, a gradient, or explicitly none. */
+type PlaceholderFill =
+  | { kind: 'solid'; color: number; alpha?: number }
+  | { kind: 'gradient'; gradient: ParsedGradient }
+  | { kind: 'none' }
 
 /**
  * Per-slide bundle of everything inherited from the layout/master chain.
@@ -1238,12 +1281,14 @@ function mergePlaceholderEntries(
   pick('defaultFontSize100')
   pick('defaultFontFamily')
   pick('bodyAnchor')
+  pick('bodyWrap')
   pick('defaultColor')
   pick('defaultColorAlpha')
   pick('defaultBold')
   pick('defaultTextTransform')
   pick('defaultListStyle')
   pick('defaultLineSpacing')
+  pick('fill')
   pick('phType')
   // Per level, not per list: a layout that restyles level 1 still inherits
   // the master's level-2 margin.
@@ -1583,13 +1628,7 @@ function findPlaceholderNode(shape: XmlNode, shapeTag: string): XmlNode | undefi
 /** Walk a slide/layout/master XML and extract every `<p:sp>` / `<p:pic>`
  *  that has a `<p:ph>` non-visual node. Returns a map keyed by (type, idx). */
 function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-    trimValues: false,
-  })
+  const xmlParser = ooxmlParser({ trimValues: false })
   const tree = xmlParser.parse(xml) as XmlNode[]
   const map: PlaceholderMap = new Map()
 
@@ -1628,6 +1667,23 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
 
     const spPr = findFirst(spChildren, 'p:spPr')
     if (spPr) {
+      const spPrKids = getChildren(spPr, 'p:spPr')
+      const solid = findFirst(spPrKids, 'a:solidFill')
+      const grad = findFirst(spPrKids, 'a:gradFill')
+      if (solid !== undefined) {
+        const c = parseColourAndAlphaFrom(solid, theme)
+        if (c !== undefined) {
+          entry.fill =
+            c.alpha !== undefined
+              ? { kind: 'solid', color: c.color, alpha: c.alpha }
+              : { kind: 'solid', color: c.color }
+        }
+      } else if (grad !== undefined) {
+        const g = parseGradient(grad, theme)
+        if (g !== undefined) entry.fill = { kind: 'gradient', gradient: g }
+      } else if (findFirst(spPrKids, 'a:noFill') !== undefined) {
+        entry.fill = { kind: 'none' }
+      }
       const xfrm = findFirst(getChildren(spPr, 'p:spPr'), 'a:xfrm')
       if (xfrm) {
         const xfrmChildren = getChildren(xfrm, 'a:xfrm')
@@ -1660,6 +1716,8 @@ function collectPlaceholders(xml: string, theme: ThemeColourMap): PlaceholderMap
           const va = mapBodyAnchor(anchor)
           if (va !== undefined) entry.bodyAnchor = va
         }
+        const wrap = getAttrs(bodyPr)['@wrap']
+        if (wrap === 'none' || wrap === 'square') entry.bodyWrap = wrap
       }
       const lstStyle = findFirst(txBodyChildren, 'a:lstStyle')
       if (lstStyle) {
@@ -1743,13 +1801,7 @@ function parseNonPlaceholderShapes(
   theme: ThemeColourMap,
   imageRels: ImageRelMap,
 ): ParsedShape[] {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-    trimValues: false,
-  })
+  const xmlParser = ooxmlParser({ trimValues: false })
   const tree = xmlParser.parse(xml) as XmlNode[]
 
   // Find spTree (under p:sld / p:sldLayout / p:sldMaster).
@@ -1793,12 +1845,7 @@ function parseNonPlaceholderShapes(
  * case for layouts — only the master defines it).
  */
 function parseTxStyles(xml: string, theme: ThemeColourMap): TxStylesByBucket {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   const out: TxStylesByBucket = {}
 
@@ -1887,12 +1934,7 @@ async function loadHyperlinkRels(zip: JSZip, xmlPath: string): Promise<Hyperlink
   const rels: HyperlinkRelMap = new Map()
   if (relsEntry === null) return rels
 
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'Relationship') continue
@@ -1929,12 +1971,7 @@ async function loadImageRels(zip: JSZip, xmlPath: string): Promise<ImageRelMap> 
   const rels: ImageRelMap = new Map()
   if (relsEntry === null) return rels
 
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(await relsEntry.async('string')) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'Relationship') continue
@@ -1966,12 +2003,7 @@ async function loadImageRels(zip: JSZip, xmlPath: string): Promise<ImageRelMap> 
  * gate whether master shapes get baked onto a slide.
  */
 function readShowMasterSp(xml: string, rootTag: 'p:sld' | 'p:sldLayout'): boolean {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   const root = findFirst(tree, rootTag)
   if (!root) return true
@@ -2006,12 +2038,7 @@ async function buildSlideContexts(
   theme: ThemeColourMap,
   imagePathSink: Set<string>,
 ): Promise<Map<string, SlideContext>> {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
 
   const layoutCache = new Map<string, LayoutMasterCacheEntry>()
   const masterCache = new Map<string, LayoutMasterCacheEntry>()
@@ -2410,6 +2437,28 @@ function parseShape(
       fillGradient = inheritedGroupFill.gradient
     }
   }
+  // A placeholder that declares no fill of its own takes its layout/master
+  // placeholder's — the same inheritance its geometry and text defaults get.
+  // Only when the slide says nothing: any own fill element (even noFill, or
+  // grpFill, or a picture/pattern fill) is the shape's own decision.
+  const ownFillDeclared =
+    noFillExplicit ||
+    solidFill !== undefined ||
+    gradFill !== undefined ||
+    findFirst(spPrChildren, 'a:grpFill') !== undefined ||
+    findFirst(spPrChildren, 'a:blipFill') !== undefined ||
+    findFirst(spPrChildren, 'a:pattFill') !== undefined
+  if (!ownFillDeclared && inheritedPh?.fill !== undefined) {
+    const f = inheritedPh.fill
+    if (f.kind === 'solid') {
+      fillColor = f.color
+      if (f.alpha !== undefined) fillAlpha = f.alpha
+    } else if (f.kind === 'gradient') {
+      fillGradient = f.gradient
+    } else {
+      fillAlpha = 0
+    }
+  }
   let imagePath: string | undefined
   let imageAlpha: number | undefined
   // PPTX expresses image opacity as `<a:blip>/<a:alphaModFix amt="N">`
@@ -2696,6 +2745,12 @@ function parseShape(
   let frameLetterSpacing: number | undefined
   let frameLineHeight: number | undefined
   let frameLineSpacing: number | undefined
+  /** Whether the frame's text is a `<a:fld type="slidenum">` and nothing
+   *  else (whitespace aside) — the one case the model can show live, as
+   *  `isSlideNumber`. A number inside other text keeps its cached digits. */
+  let slideNumberFieldSeen = false
+  let otherTextSeen = false
+  let frameWrap: 'none' | 'square' | undefined
   /** First `<a:lnSpc>` found down the chain paragraph → shape lstStyle →
    *  layout/master placeholder → master txStyles; resolved into
    *  frameLineSpacing / frameLineHeight once the font size is final. */
@@ -2717,6 +2772,12 @@ function parseShape(
         const va = mapBodyAnchor(anchorRaw)
         if (va !== undefined) textVerticalAlign = va
       }
+      const ownWrap = getAttrs(bodyPr)['@wrap']
+      if (ownWrap === 'none' || ownWrap === 'square') frameWrap = ownWrap
+    }
+    // A placeholder's copy usually leaves wrap to its layout/master.
+    if (frameWrap === undefined && inheritedPh?.bodyWrap !== undefined) {
+      frameWrap = inheritedPh.bodyWrap
     }
     const paragraphs = findAll(txBodyChildren, 'a:p')
     const paraStrings: string[] = []
@@ -3011,7 +3072,16 @@ function parseShape(
             if (typeof tx === 'string') runTextParts.push(tx)
           }
         }
-        const runText = runTextParts.join('')
+        let runText = runTextParts.join('')
+        if (childTag === 'a:fld' && getAttrs(r)['@type'] === 'slidenum') {
+          slideNumberFieldSeen = true
+          // Keynote writes the field with no cached text; PowerPoint's own
+          // stand-in for "the number goes here" keeps the frame a text frame
+          // with this run's formatting. The renderer shows the live number.
+          if (runText.trim() === '') runText = '‹#›'
+        } else if (runText.trim() !== '') {
+          otherTextSeen = true
+        }
         if (runText.length > 0) {
           runStrings.push(runText)
           runAttrs.text = runText
@@ -3336,6 +3406,8 @@ function parseShape(
       shape.paragraphs = paraAttrs
     }
     if (firstHyperlinkHref !== undefined) shape.hyperlink = { href: firstHyperlinkHref }
+    if (slideNumberFieldSeen && !otherTextSeen) shape.isSlideNumber = true
+    if (frameWrap === 'none') shape.wrap = 'none'
     if (frameFontFamily !== undefined) shape.fontFamily = frameFontFamily
     if (frameLetterSpacing !== undefined) shape.letterSpacing = frameLetterSpacing
     if (frameLineHeight !== undefined) shape.lineHeight = frameLineHeight
@@ -3437,13 +3509,7 @@ async function parseSlideNotes(zip: JSZip, slidePath: string): Promise<string[] 
   const relsEntry = zip.file(relsPath)
   if (relsEntry === null) return undefined
 
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-    trimValues: false,
-  })
+  const xmlParser = ooxmlParser({ trimValues: false })
 
   // Find the notesSlide target.
   let notesPath: string | undefined
@@ -4394,13 +4460,7 @@ function parseSlide(
   imageRels: ImageRelMap,
   hyperlinkRels: HyperlinkRelMap = new Map(),
 ): ParsedSlide {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-    trimValues: false,
-  })
+  const xmlParser = ooxmlParser({ trimValues: false })
   const tree = xmlParser.parse(xml) as XmlNode[]
 
   // Track every tag for diagnostics.
@@ -4770,12 +4830,7 @@ async function parseThemeColours(zip: JSZip): Promise<ThemeColourMap> {
   const themeEntry = zip.file('ppt/theme/theme1.xml')
   if (themeEntry === null) return {}
   const xml = await themeEntry.async('string')
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   const map: ThemeColourMap = {}
   // Walk to the clrScheme node; its direct children are named slots whose
@@ -4845,12 +4900,7 @@ async function parseThemeTxDef(zip: JSZip, theme: ThemeColourMap): Promise<Theme
   const themeEntry = zip.file('ppt/theme/theme1.xml')
   if (themeEntry === null) return undefined
   const xml = await themeEntry.async('string')
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(xml) as XmlNode[]
   let txDef: XmlNode | undefined
   for (const node of walk(tree)) {
@@ -4916,12 +4966,7 @@ async function parseDefaultTextStyleMargins(
 ): Promise<Array<number | undefined> | undefined> {
   const entry = zip.file('ppt/presentation.xml')
   if (entry === null) return undefined
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const tree = xmlParser.parse(await entry.async('string')) as XmlNode[]
   for (const node of walk(tree)) {
     if (getTag(node) !== 'p:defaultTextStyle') continue
@@ -4950,12 +4995,7 @@ async function parsePresentationXml(zip: JSZip): Promise<{
     return { slidePaths, slideWidth: 1280, slideHeight: 720 }
   }
 
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
 
   // ─── Dimensions ─────────────────────────────────────────────────────────
   const presXml = await presEntry.async('string')
@@ -5053,12 +5093,7 @@ async function parseEmbeddedFonts(zip: JSZip, ignored: Set<string>): Promise<Par
   const presXml = await presEntry.async('string')
   if (!presXml.includes('<p:embeddedFontLst')) return []
 
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const presTree = xmlParser.parse(presXml) as XmlNode[]
   const relsXml = await relsEntry.async('string')
   const relsTree = xmlParser.parse(relsXml) as XmlNode[]
@@ -5322,12 +5357,7 @@ export async function parsePptx(buffer: Buffer): Promise<ParsedPptx> {
       if (sh.videoPath !== undefined) referencedImagePaths.add(sh.videoPath)
     }
     // Track distinct tags across the whole deck for the report metric.
-    const xmlParser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: '@',
-      preserveOrder: true,
-      ignoreDeclaration: true,
-    })
+    const xmlParser = ooxmlParser()
     const tree = xmlParser.parse(xml) as XmlNode[]
     for (const node of walk(tree)) {
       const tag = getTag(node)
@@ -5378,12 +5408,7 @@ async function buildSlideImageRels(
   zip: JSZip,
   slidePaths: string[],
 ): Promise<Map<string, ImageRelMap>> {
-  const xmlParser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@',
-    preserveOrder: true,
-    ignoreDeclaration: true,
-  })
+  const xmlParser = ooxmlParser()
   const out = new Map<string, ImageRelMap>()
   for (const slidePath of slidePaths) {
     const dir = slidePath.substring(0, slidePath.lastIndexOf('/'))

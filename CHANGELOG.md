@@ -8,6 +8,41 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.23 — The Proseware header, complete (2026-09-23)
+
+### Fixed
+
+- **Numbers in text no longer vanish on import.** fast-xml-parser turns text
+  that looks numeric into a number, and every reader only took string text,
+  so a run whose whole text was "2", "2026" or "10" disappeared — and
+  PowerPoint splits runs at every formatting change, so a bold year inside a
+  sentence is exactly such a run. All OOXML parts are now read through one
+  parser configuration with `parseTagValue: false`, and the exporter's
+  post-processing pass keeps "2.50" and "007" byte for byte instead of
+  writing them back as 2.5 and 7.
+- **Slide numbers import as live slide numbers.** A frame holding only
+  `<a:fld type="slidenum">` becomes a text object with `isSlideNumber`, which
+  the renderer fills with the slide's number and the exporter writes back as
+  a field. Keynote writes the field with no cached text, so the Proseware
+  header's "2" used to come in as an empty rectangle. A number inside other
+  text keeps its cached digits.
+- **Placeholders inherit their layout's fill.** A slide shape bound to a
+  placeholder that declares no fill of its own now takes the layout/master
+  placeholder's fill, as PowerPoint does; the Proseware deck's black corner mark
+  carries only its path on the slide and came in invisible.
+
+### Added
+
+- **Text that does not wrap.** `TextObject.wrap: 'none'` (PowerPoint
+  `<a:bodyPr wrap="none">`, also inherited from a layout/master placeholder):
+  lines break only at explicit breaks and extend past the box on the side
+  their alignment grows towards; the clip mask follows the line and the edit
+  overlay lays it out the same way. Slide numbers sit in boxes sized for one
+  digit, so without it "10" broke into "1" / "0". Exported back as
+  `wrap="none"`.
+
+---
+
 ## 0.9.22 — Drop straight into the folder (2026-09-23)
 
 ### Changed

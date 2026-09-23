@@ -445,6 +445,14 @@ export interface TextObject extends BaseSlideObject {
    * `apps/web/src/lib/fontLineMetrics.ts`. Ignored when `lineHeight` is set.
    */
   lineSpacing?: number
+  /**
+   * `'none'`: lines break only at paragraph and line breaks, never at the
+   * box edge, and a line longer than the box extends past it — rightwards,
+   * both ways or leftwards per `align`. PowerPoint `<a:bodyPr wrap="none">`,
+   * which slide numbers and short labels use so "10" does not become "1/0"
+   * in a box sized for one digit. Absent: wrap at the box width.
+   */
+  wrap?: 'none'
   /** Letter spacing in px. Default 0. */
   letterSpacing?: number
   /** Vertical space inserted ABOVE each paragraph, in px. Default 0. */

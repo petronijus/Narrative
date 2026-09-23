@@ -2683,6 +2683,141 @@ describe('parsePptx — paragraph outline level', () => {
   })
 })
 
+describe('parsePptx — slide-number fields, no-wrap and inherited placeholder fill', () => {
+  const numberBox = (paraInner: string): string => `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="4303" name="Text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="2652445" y="338899"/><a:ext cx="127001" cy="165101"/></a:xfrm></p:spPr>
+        <p:txBody>
+          <a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="b"><a:spAutoFit/></a:bodyPr>
+          <a:lstStyle><a:lvl1pPr><a:defRPr sz="1100"/></a:lvl1pPr></a:lstStyle>
+          <a:p><a:pPr/>${paraInner}</a:p>
+        </p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+
+  it('turns a frame holding only a slide-number field into a live slide number', async () => {
+    // Keynote writes the field with no cached text; it used to come out as
+    // an empty rectangle and the header's "2" was simply missing.
+    const buf = await makeFixture({
+      slideXml: numberBox('<a:fld id="{86CB4B4D-7CA3-9044-876B-883B54F8677D}" type="slidenum"/>'),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('text')
+    expect(shape.isSlideNumber).toBe(true)
+    expect(shape.wrap).toBe('none')
+  })
+
+  it('keeps a run whose whole text is a number', async () => {
+    // fast-xml-parser turned "2026" into the number 2026 and the reader only
+    // takes string text, so the run vanished: "Revenue " was all that came in.
+    const buf = await makeFixture({
+      slideXml: numberBox(
+        '<a:r><a:t>Revenue </a:t></a:r><a:r><a:rPr b="1"/><a:t>2026</a:t></a:r><a:r><a:t> 007</a:t></a:r>',
+      ),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.text).toBe('Revenue 2026 007')
+  })
+
+  it('keeps cached digits when the number sits inside other text', async () => {
+    const buf = await makeFixture({
+      slideXml: numberBox(
+        '<a:r><a:t>Slide </a:t></a:r><a:fld id="{1}" type="slidenum"><a:t>2</a:t></a:fld>',
+      ),
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.isSlideNumber).toBeUndefined()
+    expect(shape.text).toBe('Slide 2')
+  })
+
+  it("inherits wrap=none from the master's slide-number placeholder", async () => {
+    // Most of the deck's slide numbers are sldNum placeholders with an empty
+    // bodyPr; the "don't wrap" lives on the master. Without it "10" broke
+    // into two lines in a box sized for one digit.
+    const master = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="9" name="Slide Number"/><p:cNvSpPr/><p:nvPr><p:ph type="sldNum" sz="quarter" idx="2"/></p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="2635511" y="464899"/><a:ext cx="142102" cy="165101"/></a:xfrm></p:spPr>
+        <p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="b"/><a:lstStyle/></p:txBody>
+      </p:sp>
+  </p:spTree></p:cSld>
+</p:sldMaster>`
+    const layout = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld>
+</p:sldLayout>`
+    const slideXml = `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="4484" name="Slide Number"/><p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="sldNum" sz="quarter" idx="4294967295"/></p:nvPr></p:nvSpPr>
+        <p:spPr><a:xfrm><a:off x="2652445" y="338899"/><a:ext cx="131065" cy="165101"/></a:xfrm></p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr/><a:fld id="{86CB4B4D-7CA3-9044-876B-883B54F8677D}" type="slidenum"/></a:p></p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, layoutXml: layout, masterXml: master })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.isSlideNumber).toBe(true)
+    expect(shape.wrap).toBe('none')
+  })
+
+  /** Layout body placeholder idx 21: a black custom-geometry mark. */
+  const LAYOUT_BLACK_MARK = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree>
+    <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>
+    <p:grpSpPr/>
+    <p:sp>
+      <p:nvSpPr><p:cNvPr id="4272" name="Graphic 9"/><p:cNvSpPr/><p:nvPr><p:ph type="body" sz="quarter" idx="21"/></p:nvPr></p:nvSpPr>
+      <p:spPr>
+        <a:xfrm><a:off x="11233611" y="239300"/><a:ext cx="187934" cy="252001"/></a:xfrm>
+        <a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/>
+          <a:pathLst><a:path w="21600" h="21600"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="21600" y="0"/></a:lnTo><a:lnTo><a:pt x="21600" y="21600"/></a:lnTo><a:close/></a:path></a:pathLst>
+        </a:custGeom>
+        <a:solidFill><a:srgbClr val="000000"/></a:solidFill>
+      </p:spPr>
+      <p:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/></p:txBody>
+    </p:sp>
+  </p:spTree></p:cSld>
+</p:sldLayout>`
+
+  const markOnSlide = (ownFill: string): string => `${SLIDE_OPEN}
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="4297" name="Graphic 9"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="21"/></p:nvPr></p:nvSpPr>
+        <p:spPr>
+          <a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l="0" t="0" r="r" b="b"/>
+            <a:pathLst><a:path w="21600" h="21600"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="21600" y="0"/></a:lnTo><a:lnTo><a:pt x="21600" y="21600"/></a:lnTo><a:close/></a:path></a:pathLst>
+          </a:custGeom>${ownFill}
+        </p:spPr>
+        <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:pPr/></a:p></p:txBody>
+      </p:sp>
+    ${SLIDE_CLOSE}`
+
+  it("fills a placeholder that declares no fill with its layout placeholder's", async () => {
+    // The Proseware deck's black corner mark: the slide copy carries only the
+    // path, the black is on the layout. It came in fill-less — an invisible
+    // shape you could only find by clicking it.
+    const buf = await makeFixture({ slideXml: markOnSlide(''), layoutXml: LAYOUT_BLACK_MARK })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.kind).toBe('path')
+    expect(shape.fillColor).toBe(0x000000)
+    expect(shape.fillAlpha).toBeUndefined()
+  })
+
+  it("lets the slide's own fill decision stand, including noFill", async () => {
+    const buf = await makeFixture({
+      slideXml: markOnSlide('<a:noFill/>'),
+      layoutXml: LAYOUT_BLACK_MARK,
+    })
+    const shape = (await parsePptx(buf)).slides[0]!.shapes[0]!
+    expect(shape.fillColor).toBeUndefined()
+    expect(shape.fillAlpha).toBe(0)
+  })
+})
+
 describe('parsePptx — zip-bomb guards', () => {
   it('rejects an entry with a bomb-like compression ratio', async () => {
     // A single ~4 MB run of one byte compresses to a few KB — ratio well past
