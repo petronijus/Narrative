@@ -8,6 +8,21 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.22 — Drop straight into the folder (2026-09-23)
+
+### Changed
+
+- **A .pptx dropped inside a folder goes straight into that folder.** The
+  import dialog used to open on a folder picker with the current folder
+  preselected and wait for Import — a question the page had already
+  answered. Inside a folder it now opens already uploading into it
+  ("Importing into Proseware"), with no folder list and no confirm click; it
+  still shows the upload progress, the result and the missing-font uploads,
+  and offers Retry if the import fails. A drop on the folders home keeps
+  the picker, since there it is a real choice.
+
+---
+
 ## 0.9.21 — Lines where PowerPoint puts them (2026-09-23)
 
 ### Changed
