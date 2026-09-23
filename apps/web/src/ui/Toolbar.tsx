@@ -786,6 +786,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   setExportDialogSlides(slides)
                 }}
                 aria-label="Export to PowerPoint"
+                aria-busy={exporting}
                 className="gap-1.5"
               >
                 {exporting ? (
@@ -793,11 +794,11 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 ) : (
                   <FileDown className="h-4 w-4" aria-hidden="true" />
                 )}
-                {/* Reserve the wider "Exporting…" width so the toolbar
-                    doesn't jiggle when the label swaps. */}
-                <span className="hidden sm:inline-block min-w-[4.75rem] text-left">
-                  {exporting ? 'Exporting…' : 'Export'}
-                </span>
+                {/* The label stays "Export" while the file builds — the
+                    spinner and the disabled state say it is busy. Swapping
+                    in "Exporting…" meant reserving its width permanently,
+                    which left the idle button ~30 px wider than its text. */}
+                <span className="hidden sm:inline">Export</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">Review compatibility & download .pptx</TooltipContent>
