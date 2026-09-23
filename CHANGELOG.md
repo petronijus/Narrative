@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.9.21 — Lines where PowerPoint puts them (2026-09-23)
+
 ### Changed
 
 - **Text sits in its lines the way PowerPoint puts it, everywhere.** A line
