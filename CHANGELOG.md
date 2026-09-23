@@ -6,6 +6,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+---
+
+## 0.9.19 — One way into a deck (2026-09-23)
+
 ### Removed
 
 - **The editor toolbar's Append button.** Dropping a `.pptx` onto the slides
