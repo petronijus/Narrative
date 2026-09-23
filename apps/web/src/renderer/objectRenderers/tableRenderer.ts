@@ -69,7 +69,9 @@ import {
 
 /** Default font stack — kept in lockstep with TextEditOverlay so cell
  *  text glyphs sit on the same baselines between edit and render. */
-const DEFAULT_FONT_STACK = 'system-ui, -apple-system, sans-serif'
+/** Face a cell renders in when the table names none. Exported so the cell
+ *  editor lays its text out in the same face. */
+export const DEFAULT_FONT_STACK = 'system-ui, -apple-system, sans-serif'
 
 const GRID_TAG = Symbol('tableGrid')
 const CELLS_TAG = Symbol('tableCellNodes')

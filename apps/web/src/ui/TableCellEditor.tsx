@@ -31,6 +31,7 @@ import { isTokenRef, type TableObject, type TextObject } from '@narrative/shared
 import type { TokenRef } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { TextEditOverlay } from './TextEditOverlay.js'
+import { DEFAULT_FONT_STACK } from '../renderer/objectRenderers/tableRenderer.js'
 
 export interface TableCellEditorProps {
   table: TableObject
@@ -160,9 +161,17 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
       color: hexResolve(cell.color ?? d.color, 0x111111),
       align: cell.align ?? d.align,
       vAlign: cell.vAlign ?? d.vAlign,
-      lineHeight: 1.2,
+      // Every value below that shapes the line boxes is resolved exactly as
+      // the table renderer's cell style resolves it (tableRenderer.ts,
+      // resolveCellStyle). The editor used to pin 1.2 and drop the rest, so
+      // on any table whose cells were not 1.2 — every imported one — the
+      // caret ran on different lines from the glyphs under it.
+      lineHeight: cell.lineHeight ?? d.lineHeight ?? 1.2,
+      italic: cell.italic ?? d.italic ?? false,
+      letterSpacing: cell.letterSpacing ?? d.letterSpacing ?? 0,
+      textTransform: cell.textTransform ?? d.textTransform ?? 'none',
+      fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
     }
-    if (d.fontFamily !== undefined) obj.fontFamily = d.fontFamily
     return obj
   }, [binding, table])
 
