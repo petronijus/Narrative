@@ -647,6 +647,45 @@ describe('parsePptx', () => {
     ])
   })
 
+  it('takes no outline or fill from the shape style where the shape declares its own', async () => {
+    const rect = (id: number, spPrTail: string, lnRef = 1, fillRef = 3): string => `
+      <p:sp>
+        <p:nvSpPr><p:cNvPr id="${id}" name="r${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+        <p:spPr>
+          <a:xfrm><a:off x="${id * 1000000}" y="0"/><a:ext cx="914400" cy="457200"/></a:xfrm>
+          <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+          ${spPrTail}
+        </p:spPr>
+        <p:style>
+          <a:lnRef idx="${lnRef}"><a:srgbClr val="FF0000"/></a:lnRef>
+          <a:fillRef idx="${fillRef}"><a:srgbClr val="00FF00"/></a:fillRef>
+          <a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>
+          <a:fontRef idx="minor"><a:srgbClr val="FFFFFF"/></a:fontRef>
+        </p:style>
+      </p:sp>`
+    const slideXml = `${SLIDE_OPEN}
+      ${rect(2, '<a:solidFill><a:srgbClr val="E6E6E6"/></a:solidFill><a:ln><a:noFill/></a:ln>')}
+      ${rect(3, '<a:noFill/><a:ln w="12700"/>')}
+      ${rect(4, '')}
+      ${rect(5, '', 0, 0)}
+    ${SLIDE_CLOSE}`
+    const buf = await makeFixture({ slideXml, themeXml: OFFICE_THEME })
+    const [ownNone, ownFillOnly, styled, idxZero] = (await parsePptx(buf)).slides[0]!.shapes
+    // `<a:ln><a:noFill/>` is "no outline", whatever the style's colour.
+    expect(ownNone!.fillColor).toBe(0xe6e6e6)
+    expect(ownNone!.strokeColor).toBeUndefined()
+    // An own `<a:noFill/>` fill keeps the style's fill out; an `<a:ln>` with a
+    // width but no fill of its own still takes the style's colour.
+    expect(ownFillOnly!.fillColor).toBeUndefined()
+    expect(ownFillOnly!.strokeColor).toBe(0xff0000)
+    // A shape that says nothing takes both from its style.
+    expect(styled!.fillColor).toBe(0x00ff00)
+    expect(styled!.strokeColor).toBe(0xff0000)
+    // idx 0 is the style's "none".
+    expect(idxZero!.fillColor).toBeUndefined()
+    expect(idxZero!.strokeColor).toBeUndefined()
+  })
+
   it('keeps the geometry of a text-bearing ellipse as an ellipse under the text frame', async () => {
     const slideXml = `${SLIDE_OPEN}
       <p:sp>

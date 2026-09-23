@@ -2407,22 +2407,38 @@ function parseShape(
   //     <a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef>
   //   </p:style>
   // The `idx` selects a fill/line/effect TEMPLATE in `theme1.xml`'s
-  // <a:fmtScheme> (1=subtle, 2=moderate, 3=intense). For v1 we ignore the
-  // template variations and just pick the embedded scheme colour — which is
-  // already a faithful "what should this shape look like" approximation.
+  // <a:fmtScheme> (1=subtle, 2=moderate, 3=intense; 0 = none). For v1 we
+  // ignore the template variations and just pick the embedded scheme colour
+  // — which is already a faithful "what should this shape look like"
+  // approximation.
+  //
+  // A style is only the default: whatever the shape says for itself wins.
+  // A shape that declares its own fill (any kind, `<a:noFill/>` included)
+  // takes nothing from `fillRef`; one whose `<a:ln>` declares a fill takes
+  // no outline colour from `lnRef` — `<a:ln><a:noFill/></a:ln>` with an
+  // accent `lnRef` is "no outline", and drawing the accent colour put a red
+  // frame round every grey box of the Proseware deck's wireframes.
   // `styleFontColor` is captured here and consumed in the text-parsing block
   // below as the fall-back run colour when `<a:rPr><a:solidFill>` is absent.
   let styleFontColor: number | undefined
   const style = findFirst(children, 'p:style')
   if (style) {
     const styleChildren = getChildren(style, 'p:style')
-    if (fillColor === undefined && fillGradient === undefined) {
-      const fillRef = findFirst(styleChildren, 'a:fillRef')
-      if (fillRef) fillColor = parseColourFrom(fillRef, theme)
+    const styleIdx = (ref: XmlNode): number => {
+      const v = Number(getAttrs(ref)['@idx'])
+      return Number.isFinite(v) ? v : 1
     }
-    if (strokeColor === undefined) {
+    if (!ownFillDeclared && fillColor === undefined && fillGradient === undefined) {
+      const fillRef = findFirst(styleChildren, 'a:fillRef')
+      if (fillRef && styleIdx(fillRef) !== 0) fillColor = parseColourFrom(fillRef, theme)
+    }
+    const lnChildren = ln !== undefined ? getChildren(ln, 'a:ln') : []
+    const lnFillDeclared = ['a:noFill', 'a:solidFill', 'a:gradFill', 'a:pattFill'].some(
+      (t) => findFirst(lnChildren, t) !== undefined,
+    )
+    if (strokeColor === undefined && !lnFillDeclared) {
       const lnRef = findFirst(styleChildren, 'a:lnRef')
-      if (lnRef) {
+      if (lnRef && styleIdx(lnRef) !== 0) {
         strokeColor = parseColourFrom(lnRef, theme)
         // Stroke width was never declared in spPr/ln either → use the
         // idx-mapped default. PowerPoint subtle line = ~9525 EMU = 1px.
