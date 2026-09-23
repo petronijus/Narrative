@@ -231,21 +231,31 @@ export function forgetMeasuredLineHeight(family: string | undefined): void {
 }
 
 /**
- * The line height in px this text should be laid out with:
+ * The line height in px this text should be laid out with, for a line whose
+ * largest font is `lineFontSize` (the frame's size when omitted):
  *
- *   lineHeight set   → lineHeight × fontSize
- *   lineSpacing set  → lineSpacing × normal(font) × fontSize
- *   neither          → normal(font) × fontSize
+ *   lineHeight set   → lineHeight × the frame's fontSize — an absolute
+ *                      height (PowerPoint `spcPts`), whatever the line holds
+ *   lineSpacing set  → lineSpacing × normal(font) × lineFontSize
+ *   neither          → normal(font) × lineFontSize
+ *
+ * The last two follow the line's own font: PowerPoint's "single" and
+ * "× 0.68" are multiples of the text on the line, so a frame whose runs are
+ * 60 pt while its default is 88 pt is spaced for 60 pt.
  */
-export function resolveLineHeightPx(src: LineMetricsSource): number {
+export function resolveLineHeightPx(
+  src: LineMetricsSource,
+  lineFontSize: number = src.fontSize,
+): number {
   const fontSize = src.fontSize
   if (!(fontSize > 0)) return 0
   if (src.lineHeight !== undefined && src.lineHeight > 0) return src.lineHeight * fontSize
+  const size = lineFontSize > 0 ? lineFontSize : fontSize
   const normal = normalLineHeightRatio(src.fontFamily, src.fontWeight, src.italic)
   if (src.lineSpacing !== undefined && src.lineSpacing > 0) {
-    return src.lineSpacing * normal * fontSize
+    return src.lineSpacing * normal * size
   }
-  return normal * fontSize
+  return normal * size
 }
 
 /**
@@ -322,15 +332,23 @@ function browserFontBox(
  * "We made it to our first Camp!" (72 px, exactly 65 pt) this is 32.5 px —
  * the gap between our render and PowerPoint's.
  *
+ * `lineFontSize` is the font the lines are set in — the first line's
+ * largest (lib/textLayout.ts), which is every line's for text of one size;
+ * where paragraphs differ in size the first line's placement is exact and
+ * the rest are within the difference of their descents.
+ *
  * Applied by the renderer and the edit overlay alike, so both keep drawing
  * the same line boxes; zero where the browser's metrics cannot be read.
  */
-export function powerpointLineOffsetPx(src: LineMetricsSource): number {
-  const fontSize = src.fontSize
-  if (!(fontSize > 0)) return 0
+export function powerpointLineOffsetPx(
+  src: LineMetricsSource,
+  lineFontSize: number = src.fontSize,
+): number {
+  if (!(src.fontSize > 0)) return 0
+  const fontSize = lineFontSize > 0 ? lineFontSize : src.fontSize
   const box = browserFontBox(src.fontFamily, src.fontWeight, src.italic)
   if (box === undefined) return 0
-  const lineHeight = resolveLineHeightPx(src)
+  const lineHeight = resolveLineHeightPx(src, fontSize)
   const declaredDescent = declaredFor(src.fontFamily, src.fontWeight, src.italic)?.descent
   const pptDescent = (declaredDescent ?? box.descent) * fontSize
   return lineHeight / 2 - pptDescent - ((box.ascent - box.descent) * fontSize) / 2

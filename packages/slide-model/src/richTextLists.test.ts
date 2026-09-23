@@ -244,6 +244,38 @@ describe('buildListedHtml', () => {
     expect(html).toMatch(/padding-left:[\d.]+em/)
   })
 
+  it('spaces each paragraph for its own largest font, keeping frame-em lengths put', () => {
+    // A frame whose default is 150 px, holding one paragraph set at 60 px
+    // (a bulleted list item) and one in the frame's own size.
+    const paras = [
+      {
+        ops: [{ insert: 'small', attributes: { fontSize: 60 } }],
+        attrs: { list: 'bullet' as const },
+      },
+      { ops: [{ insert: 'default' }], attrs: {} },
+    ]
+    const html = buildListedHtml(paras, { fontSize: 150, lineHeightForFontSize: (s) => s * 0.8 })
+    const [small, plain] = html.split('</div>')
+    // Its own size and a line height for it — the block's strut matches its text.
+    expect(small).toContain('font-size:60px')
+    expect(small).toContain('line-height:48px')
+    // Indent and marker gutter stay in the frame's em (1.6 × 150), in px.
+    expect(small).toContain('padding-left:240px')
+    expect(small).toContain('width:240px')
+    // The paragraph in the frame's size is left to inherit it.
+    expect(plain).not.toMatch(/<div[^>]*font-size/)
+    expect(plain).toContain('line-height:120px')
+  })
+
+  it('gives runs without a size the frame size inside a paragraph set in another', () => {
+    const paras = [
+      { ops: [{ insert: 'big', attributes: { fontSize: 200 } }, { insert: ' rest' }], attrs: {} },
+    ]
+    const html = buildListedHtml(paras, { fontSize: 100, lineHeightForFontSize: (s) => s })
+    expect(html).toContain('font-size:200px;line-height:200px')
+    expect(html).toContain('<span style="font-size:100px"> rest</span>')
+  })
+
   it('renders an empty paragraph with a placeholder break', () => {
     const { yt } = attach('')
     const html = buildListedHtml(getParagraphDeltas(yt), {})

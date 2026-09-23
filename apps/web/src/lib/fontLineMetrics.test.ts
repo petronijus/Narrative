@@ -32,6 +32,20 @@ describe('normalLineHeightRatio', () => {
 })
 
 describe('resolveLineHeightPx', () => {
+  it('follows the line font for a multiple of the normal height', () => {
+    // A 150 px frame default holding 60 px text is spaced for 60 px.
+    expect(resolveLineHeightPx({ fontSize: 150, lineSpacing: 0.68 }, 60)).toBeCloseTo(
+      0.68 * FALLBACK_NORMAL_RATIO * 60,
+      6,
+    )
+    expect(resolveLineHeightPx({ fontSize: 150 }, 60)).toBeCloseTo(FALLBACK_NORMAL_RATIO * 60, 6)
+  })
+
+  it('keeps an absolute line height whatever the line holds', () => {
+    // `lineHeight` is PowerPoint's spcPts: a height, not a multiple of the line's font.
+    expect(resolveLineHeightPx({ fontSize: 150, lineHeight: 1.2 }, 60)).toBe(180)
+  })
+
   it('lineHeight is a multiple of the font size and wins over lineSpacing', () => {
     expect(resolveLineHeightPx({ fontSize: 60, lineHeight: 1.5, lineSpacing: 0.75 })).toBe(90)
   })

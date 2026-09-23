@@ -8,6 +8,23 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.26 — Lines as tall as their text (2026-09-24)
+
+### Fixed
+
+- **Text is spaced for the size it is set in.** A line's height — single
+  spacing, or a multiple such as the Proseware titles' 68 % — was always
+  computed from the frame's default size. Text set smaller than that default
+  came out with its lines far apart: slide 3's title (60 pt text in a frame
+  whose default is 88 pt) ran ~45 % too loose against PowerPoint. Each
+  paragraph is now laid out for its own largest font, as PowerPoint spaces
+  each line for the text on it; the paragraph also takes that size itself so
+  the browser does not add the gap between the two fonts' baseline positions
+  to every line. Indents and list gutters stay where they were (they are
+  measured in the frame's size). Rendering and text editing share the same
+  layout. Exposed by 0.9.25, which imports a frame's default size from its
+  list style as PowerPoint does instead of from its first run.
+
 ## 0.9.25 — PowerPoint, both ways (2026-09-23)
 
 ### Changed

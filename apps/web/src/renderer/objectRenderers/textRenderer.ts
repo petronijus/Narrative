@@ -38,17 +38,14 @@ import {
   forgetMeasuredLineHeight,
   powerpointLineOffsetPx,
 } from '../../lib/fontLineMetrics.js'
-import * as Y from 'yjs'
 import {
-  toDelta,
-  toHtml,
-  buildListedHtml,
-  getParagraphDeltas,
-  PARAGRAPH_SEP,
-  type HtmlDefaults,
-  type ParagraphDelta,
-  type ListedHtmlOptions,
-} from '@narrative/slide-model'
+  firstLineFontSizePx,
+  largestFontSizePx,
+  listedHtmlOptionsFor,
+  paragraphsOf,
+} from '../../lib/textLayout.js'
+import * as Y from 'yjs'
+import { toDelta, toHtml, buildListedHtml, type HtmlDefaults } from '@narrative/slide-model'
 import type { TextObject } from '../types'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
 import { markRenderDirty } from '../RenderScheduler.js'
@@ -197,35 +194,8 @@ function reflagAfterInFlightRaster(node: any): void {
  * Legacy plain-string text (decks predating Phase A) is HTML-escaped
  * and rendered as a single run.
  */
-/**
- * Build the shared `ListedHtmlOptions` for a TextObject — used by this
- * renderer and (mirrored) by the edit overlay so the two never drift.
- */
-export function listedHtmlOptionsFor(data: TextObject): ListedHtmlOptions {
-  const o: ListedHtmlOptions = {}
-  if (data.italic === true) o.italic = true
-  if (data.underline === true) o.underline = true
-  if (typeof data.paragraphSpaceBefore === 'number' && data.paragraphSpaceBefore > 0) {
-    o.paragraphSpaceBefore = data.paragraphSpaceBefore
-  }
-  if (typeof data.paragraphSpaceAfter === 'number' && data.paragraphSpaceAfter > 0) {
-    o.paragraphSpaceAfter = data.paragraphSpaceAfter
-  }
-  if (data.listStyle !== undefined) o.legacyListStyle = data.listStyle
-  return o
-}
-
-/** Turn a legacy plain `string` body into paragraph deltas (split on U+2029). */
-function stringToParagraphDeltas(s: string): ParagraphDelta[] {
-  return s.split(PARAGRAPH_SEP).map((seg) => ({
-    ops: seg.length > 0 ? [{ insert: seg }] : [],
-    attrs: {},
-  }))
-}
-
 /** Exported for the table renderer — same HTML build pipeline for cells. */
 export function buildHtml(data: TextObject): string {
-  const t = data.text
   let inner: string
   if (data.isSlideNumber === true) {
     // Page-number field — render the live deck index for the slide
@@ -245,11 +215,7 @@ export function buildHtml(data: TextObject): string {
     // paragraph/list builder so per-paragraph bullets, numbering, nesting
     // indent, and paragraph spacing are produced identically here and in
     // the edit overlay.
-    const paras =
-      t instanceof Y.Text
-        ? getParagraphDeltas(t)
-        : stringToParagraphDeltas(typeof t === 'string' ? t : '')
-    inner = buildListedHtml(paras, listedHtmlOptionsFor(data))
+    inner = buildListedHtml(paragraphsOf(data), listedHtmlOptionsFor(data))
   }
   // Visual case transform — wrap in a span with the corresponding CSS
   // so the underlying text stays editable in its original casing while
@@ -470,7 +436,7 @@ export function applyVerticalAlign(textNode: HTMLText, data: TextObject): void {
   // Then place the lines inside their boxes the way PowerPoint does — spare
   // line height above the glyphs, not split around them. The block's height
   // is unchanged, so this is a translation after alignment, not part of it.
-  textNode.y = block + powerpointLineOffsetPx(data)
+  textNode.y = block + powerpointLineOffsetPx(data, firstLineFontSizePx(data))
 }
 
 /**
@@ -620,8 +586,13 @@ function fontMetricsFor(data: TextObject): { ascent: number; descent: number } {
 export function lineOvershootFor(data: TextObject): number {
   const fontSize = data.fontSize ?? 0
   if (fontSize <= 0) return 0
-  const { ascent, descent } = fontMetricsFor(data)
-  const lineHeightPx = resolveLineHeightPx(data)
+  // The overhang grows with the font; the largest one on any line is the
+  // one that reaches furthest (a line is spaced for its own fonts).
+  const largest = largestFontSizePx(data)
+  const frame = fontMetricsFor(data)
+  const ascent = (frame.ascent * largest) / fontSize
+  const descent = (frame.descent * largest) / fontSize
+  const lineHeightPx = resolveLineHeightPx(data, largest)
   // Canvas metrics report the font's nominal ascent; round glyphs and
   // accents overshoot it, and a face measured before its webfont arrived
   // reports a fallback's numbers. A quarter em on top is cheap — it is
@@ -629,7 +600,7 @@ export function lineOvershootFor(data: TextObject): number {
   // slightly-off metric cannot shave a glyph. This one number sizes both
   // the texture's padding and the mask's reach, so they cannot disagree.
   const halfLeadingOverhang = Math.max(0, (ascent + descent - lineHeightPx) / 2)
-  return Math.ceil(halfLeadingOverhang + fontSize * OVERHANG_MARGIN_EM)
+  return Math.ceil(halfLeadingOverhang + largest * OVERHANG_MARGIN_EM)
 }
 
 /** Extra vertical room above and below the text, as a fraction of the em. */

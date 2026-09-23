@@ -47,6 +47,8 @@ export interface HtmlDefaults {
   underline?: boolean
   fontWeight?: number
   color?: number
+  /** Font size in px for runs with none of their own. Unset: they inherit. */
+  fontSize?: number
 }
 
 /** Allocate a fresh Y.Text containing `initial`. */
@@ -655,8 +657,9 @@ export function toHtml(delta: RichDeltaOp[], defaults: HtmlDefaults): string {
       const family = sanitizeFontFamily(a.fontFamily)
       if (family !== undefined) styleBits.push(`font-family:${family}`)
     }
-    if (typeof a.fontSize === 'number' && a.fontSize > 0) {
-      styleBits.push(`font-size:${a.fontSize}px`)
+    const size = typeof a.fontSize === 'number' && a.fontSize > 0 ? a.fontSize : defaults.fontSize
+    if (typeof size === 'number' && size > 0) {
+      styleBits.push(`font-size:${size}px`)
     }
     // Two break flavors land here:
     //   '\n'      soft line break (PPTX <a:br>, Shift-Enter in the
@@ -688,6 +691,29 @@ export interface ListedHtmlOptions extends HtmlDefaults {
   indentPerLevelEm?: number
   /** Width of the marker gutter (hanging indent), in em. Default 1.6. */
   markerHangEm?: number
+  /** The frame's font size in px — the size of text with no size of its own. */
+  fontSize?: number
+  /**
+   * The line height in px for a paragraph whose largest font is `fontSizePx`.
+   * A line is as tall as the fonts on it (PowerPoint's "single" and "× 0.8"
+   * are multiples of the line's own font, not of the frame's default size),
+   * so each paragraph gets its own. Needs `fontSize`.
+   */
+  lineHeightForFontSize?: (fontSizePx: number) => number
+}
+
+/**
+ * The largest font size in a paragraph, px: each run's own size, else the
+ * frame's. An empty paragraph is the frame's size.
+ */
+export function paragraphFontSizePx(p: ParagraphDelta, frameFontSize: number): number {
+  let size = 0
+  for (const op of p.ops) {
+    if (typeof op.insert !== 'string' || op.insert.length === 0) continue
+    const own = op.attributes?.fontSize
+    size = Math.max(size, typeof own === 'number' && own > 0 ? own : frameFontSize)
+  }
+  return size > 0 ? size : frameFontSize
 }
 
 /**
@@ -723,22 +749,41 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
       ? o.paragraphSpaceAfter
       : 0
   const out: string[] = []
+  const frameSize = typeof o.fontSize === 'number' && o.fontSize > 0 ? o.fontSize : undefined
   for (let i = 0; i < paras.length; i++) {
     const p = paras[i]!
     const marker = markers[i] ?? null
     const level = Math.max(0, Math.min(MAX_LIST_LEVEL, p.attrs.level ?? 0))
     const styleBits: string[] = []
+    // A line is as tall as the fonts on it. CSS also sizes every line by the
+    // block's own font (its "strut"), centred on its own metrics — with the
+    // frame's larger default size that adds the gap between the two fonts'
+    // baseline positions to each line. So a paragraph set in another size
+    // than the frame takes that size itself; runs with no size of their own
+    // keep the frame's, and lengths the model measures in the frame's em
+    // (indent, marker gutter) are given in px so they do not move with it.
+    const paraSize = frameSize !== undefined ? paragraphFontSizePx(p, frameSize) : undefined
+    const ownSize = paraSize !== undefined && paraSize !== frameSize ? paraSize : undefined
+    const len = (em: number): string =>
+      ownSize !== undefined && frameSize !== undefined
+        ? `${Math.round(em * frameSize * 1000) / 1000}px`
+        : `${em.toFixed(3)}em`
+    if (ownSize !== undefined) styleBits.push(`font-size:${ownSize}px`)
     // Space-before is the gap *between* paragraphs. PowerPoint does not apply
     // it above the first paragraph in a text frame, and neither do we — the
     // extra leading pushed imported text down by one gap and was part of why
     // a frame PowerPoint had auto-sized to its text overflowed here.
     if (psB > 0 && i > 0) styleBits.push(`margin-top:${psB}px`)
     if (psA > 0) styleBits.push(`margin-bottom:${psA}px`)
+    if (o.lineHeightForFontSize !== undefined && paraSize !== undefined) {
+      const lh = o.lineHeightForFontSize(paraSize)
+      if (lh > 0) styleBits.push(`line-height:${Math.round(lh * 1000) / 1000}px`)
+    }
     if (marker !== null) {
-      styleBits.push(`padding-left:${(level * indentEm + hangEm).toFixed(3)}em`)
-      styleBits.push(`text-indent:-${hangEm}em`)
+      styleBits.push(`padding-left:${len(level * indentEm + hangEm)}`)
+      styleBits.push(`text-indent:-${ownSize !== undefined ? len(hangEm) : `${hangEm}em`}`)
     } else if (level > 0) {
-      styleBits.push(`padding-left:${(level * indentEm).toFixed(3)}em`)
+      styleBits.push(`padding-left:${len(level * indentEm)}`)
     }
     // `text-indent` is inherited, and an inline-block is a block container
     // with a first line of its own: without resetting it, the paragraph's
@@ -748,9 +793,14 @@ export function buildListedHtml(paras: ParagraphDelta[], o: ListedHtmlOptions): 
     // the gutter was there, the marker was not.
     const markerHtml =
       marker !== null
-        ? `<span data-marker="1" contenteditable="false" style="display:inline-block;width:${hangEm}em;text-indent:0">${escapeHtml(marker)}</span>`
+        ? `<span data-marker="1" contenteditable="false" style="display:inline-block;width:${ownSize !== undefined ? len(hangEm) : `${hangEm}em`};text-indent:0">${escapeHtml(marker)}</span>`
         : ''
-    const inner = toHtml(p.ops, defaults)
+    const inner = toHtml(
+      p.ops,
+      ownSize !== undefined && frameSize !== undefined
+        ? { ...defaults, fontSize: frameSize }
+        : defaults,
+    )
     const body = inner.length > 0 ? inner : '<br data-empty="1">'
     const style = styleBits.length > 0 ? ` style="${styleBits.join(';')}"` : ''
     out.push(`<div data-pb="1"${style}>${markerHtml}${body}</div>`)

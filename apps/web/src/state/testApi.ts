@@ -13,6 +13,7 @@
  * never reach a production bundle.
  */
 
+import * as Y from 'yjs'
 import {
   LOCAL_ORIGIN,
   addObject,
@@ -75,7 +76,20 @@ export interface TestApi {
    * color so the test only has to specify position + content.
    */
   addText(
-    opts: { id: string; x: number; y: number; w: number; h: number; text: string },
+    opts: {
+      id: string
+      x: number
+      y: number
+      w: number
+      h: number
+      text: string
+      /** Frame default size; 32 when omitted. */
+      fontSize?: number
+      lineSpacing?: number
+      wrap?: 'none'
+      /** Size of the text's own run — makes the body a Y.Text run at that size. */
+      runFontSize?: number
+    },
     slideId?: string,
   ): void
   /** Append a new slide to the deck. Returns its id. */
@@ -319,6 +333,12 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       if (targetSlideId === undefined) throw new Error('addText: no slide')
       const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
       if (ctx === null) throw new Error('addText: slide ctx not found')
+      let text: string | Y.Text = opts.text
+      if (opts.runFontSize !== undefined) {
+        const yt = new Y.Text()
+        yt.insert(0, opts.text, { fontSize: opts.runFontSize })
+        text = yt
+      }
       addObject(ctx, {
         id: opts.id,
         type: 'text',
@@ -326,8 +346,10 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         y: opts.y,
         width: opts.w,
         height: opts.h,
-        text: opts.text,
-        fontSize: 32,
+        text,
+        ...(opts.lineSpacing !== undefined ? { lineSpacing: opts.lineSpacing } : {}),
+        ...(opts.wrap !== undefined ? { wrap: opts.wrap } : {}),
+        fontSize: opts.fontSize ?? 32,
         fontWeight: 400,
         color: 0x000000,
         align: 'left',

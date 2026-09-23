@@ -31,13 +31,13 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { powerpointLineOffsetPx, resolveLineHeightPx } from '../lib/fontLineMetrics.js'
+import { firstLineFontSizePx, listedHtmlOptionsFor, paragraphsOf } from '../lib/textLayout.js'
 import * as Y from 'yjs'
 import { isTokenRef } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
 import {
   type ObjectsMutationContext,
   buildListedHtml,
-  getParagraphDeltas,
   getParagraphs,
   blockAttrsToInsertAttrs,
   applyParagraphPatch,
@@ -45,7 +45,6 @@ import {
   spliceRichText,
   LOCAL_ORIGIN,
   PARAGRAPH_SEP,
-  type ListedHtmlOptions,
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
 import { setActiveTextSelection } from './textEditSelection.js'
@@ -75,26 +74,6 @@ function hexToCss(n: number | TokenRef): string {
 }
 
 /**
- * Shared list/paragraph HTML options for a TextObject. Mirrors the Pixi
- * renderer's `listedHtmlOptionsFor` (kept local so the overlay never
- * imports Pixi-side state) so edit mode and render mode draw identical
- * markers, indents, and paragraph spacing.
- */
-function listedOptionsFor(obj: TextObject): ListedHtmlOptions {
-  const o: ListedHtmlOptions = {}
-  if (obj.italic === true) o.italic = true
-  if (obj.underline === true) o.underline = true
-  if (typeof obj.paragraphSpaceBefore === 'number' && obj.paragraphSpaceBefore > 0) {
-    o.paragraphSpaceBefore = obj.paragraphSpaceBefore
-  }
-  if (typeof obj.paragraphSpaceAfter === 'number' && obj.paragraphSpaceAfter > 0) {
-    o.paragraphSpaceAfter = obj.paragraphSpaceAfter
-  }
-  if (obj.listStyle !== undefined) o.legacyListStyle = obj.listStyle
-  return o
-}
-
-/**
  * Build the contenteditable HTML — the SAME `buildListedHtml` output the
  * Pixi renderer uses, so markers, numbering, nesting indent, and paragraph
  * blocks are WYSIWYG while editing. Each paragraph is a `<div data-pb>`;
@@ -103,14 +82,7 @@ function listedOptionsFor(obj: TextObject): ListedHtmlOptions {
  * treat those structurally.
  */
 function buildOverlayHtml(obj: TextObject): string {
-  const t = obj.text
-  const paras =
-    t instanceof Y.Text
-      ? getParagraphDeltas(t)
-      : (typeof t === 'string' ? t : '')
-          .split(PARAGRAPH_SEP)
-          .map((seg) => ({ ops: seg.length > 0 ? [{ insert: seg }] : [], attrs: {} }))
-  return buildListedHtml(paras, listedOptionsFor(obj))
+  return buildListedHtml(paragraphsOf(obj), listedHtmlOptionsFor(obj))
 }
 
 /**
@@ -179,14 +151,11 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       fontWeight: weightToCss(obj.fontWeight),
       fontStyle: obj.italic === true ? 'italic' : 'normal',
       textDecoration: obj.underline === true ? 'underline' : 'none',
-      // Match Pixi: fixed pixel line height = multiplier × box fontSize.
-      // A unitless multiplier would let each child element compute its
-      // own line box from its own font-size, so a 100px run on a line
-      // with otherwise small text balloons the line height — visible
-      // as the line spacing growing while in edit mode and snapping
-      // back smaller on exit.
-      // Same resolver as the renderer, so edit and render mode share the
-      // exact same line boxes (lineHeight → lineSpacing → the font's normal).
+      // Match Pixi: fixed pixel line heights. Each paragraph carries its own
+      // (buildListedHtml, from the fonts in it); this is the frame's, for
+      // anything outside a paragraph. A unitless multiplier would let each
+      // run compute its own line box, so edit and render mode would draw
+      // different lines — same resolver, same boxes.
       lineHeight: `${resolveLineHeightPx(obj)}px`,
       // The renderer moves laid-out text by the same amount to put spare
       // line height above the glyphs, as PowerPoint does (see
@@ -194,7 +163,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       // and where the caret goes without changing the flex layout, so
       // vertical alignment is computed on the same block in both.
       position: 'relative',
-      top: powerpointLineOffsetPx(obj),
+      top: powerpointLineOffsetPx(obj, firstLineFontSizePx(obj)),
       letterSpacing: `${obj.letterSpacing ?? 0}px`,
       textAlign: obj.align,
       color: hexToCss(obj.color),

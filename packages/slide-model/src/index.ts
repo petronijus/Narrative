@@ -146,6 +146,7 @@ export {
   formatListNumber,
   defaultBulletGlyph,
   buildListedHtml,
+  paragraphFontSizePx,
   blockAttrsToInsertAttrs,
 } from './richText.js'
 export type {
