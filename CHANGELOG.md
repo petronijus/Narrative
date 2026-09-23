@@ -6,6 +6,15 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Removed
+
+- **The editor toolbar's Append button.** Dropping a `.pptx` onto the slides
+  panel (0.9.16) imports it at the drop position over the same upload route,
+  with a progress row in the panel, which made the button redundant. Drop
+  below the last thumbnail to append. The server still appends when no
+  position is given; `e2e/pptx-append.spec.ts` went with the button, and
+  `pptx-drop-into-panel.spec.ts` covers the live-arrival check it made.
+
 ---
 
 ## 0.9.18 — Imported slides the way PowerPoint drew them (2026-09-22)

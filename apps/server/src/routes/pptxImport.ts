@@ -126,7 +126,8 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
   // Mirrors /folders/:folderId/import-pptx but takes a deck id instead and
   // inserts the parsed slides into the existing deck. `?at=N` puts the first
   // imported slide at index N (the slides panel's drop position); without it
-  // they land at the end, which is what the toolbar's Append button wants.
+  // they land at the end (an API caller's default; the editor itself always
+  // sends the drop index since the toolbar's Append button went in 0.9.19).
   //
   // The pipeline itself lives in pptx/appendDeck.ts because the tus upload
   // path — what the editor actually uses, since only tus reports progress —

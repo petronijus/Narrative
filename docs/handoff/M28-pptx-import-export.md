@@ -21,6 +21,9 @@ number sliding — see plan doc for the rationale).
   state-vector-based diff against the pre-append state, and inserts the
   diff as a new `deck_updates` row. Open Hocuspocus connections pick up
   the new slides within ~200 ms without a client reload.
+  _Removed in 0.9.19: dropping a `.pptx` onto the slides panel (0.9.16)
+  imports it at the drop position over the same route, and made the button
+  redundant. The server still appends when no position is given._
 - **Round-trip stability**: importing then exporting the same file
   preserves positions to ±2 EMU, colours exact, alpha + alignment +
   rotation + stroke + images + **multi-stop gradients** intact. Gradient

@@ -25,7 +25,6 @@ import {
   ImagePlus,
   Share2,
   FileDown,
-  FilePlus,
   Loader2,
   Play,
   Eye,
@@ -69,7 +68,6 @@ import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { listSlides } from '@narrative/slide-model'
 import { ExportPptxDialog } from './ExportPptxDialog.js'
-import { importPptxViaTus } from '../state/importPptxViaTus.js'
 import type { Slide } from '@narrative/shared'
 import { useSelection } from '../state/SelectionContext.js'
 import { createObjectOfType } from '@narrative/slide-model'
@@ -152,8 +150,6 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   // contains a `Slide[]` snapshot the scanner walks for known losses.
   const [exportDialogSlides, setExportDialogSlides] = useState<Slide[] | null>(null)
   const slideDoc = useSlideDoc()
-  const [appending, setAppending] = useState(false)
-  const appendInputRef = useRef<HTMLInputElement | null>(null)
   // Auto-dismiss the export-error banner after a few seconds — feels nicer
   // than leaving a stale message lying around.
   useEffect(() => {
@@ -765,63 +761,6 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               <TooltipContent side="bottom">Share deck</TooltipContent>
             </Tooltip>
             {shareOpen && <ShareDialog deckId={id} onClose={() => setShareOpen(false)} />}
-          </>
-        )}
-
-        {/* M28: Append .pptx to current deck — hidden file input + button.
-            Owner-gated (same auth as Export). Server route requires editor+
-            so this matches when the role hierarchy widens. */}
-        {isOwner && id !== undefined && (
-          <>
-            <input
-              ref={appendInputRef}
-              type="file"
-              accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                e.target.value = '' // reset so re-picking the same file fires onChange
-                if (file === undefined) return
-                void (async () => {
-                  setAppending(true)
-                  setExportError(null)
-                  try {
-                    // Same tus path the slides panel's drop uses — one
-                    // transport for "pptx into this deck", just without an
-                    // index, which the server reads as "at the end".
-                    await importPptxViaTus({ file, deckId: id })
-                    // The slides arrive over Hocuspocus as an ordinary edit
-                    // of the live document — no client-side reload.
-                  } catch (err) {
-                    setExportError(err instanceof Error ? err.message : 'Append failed')
-                  } finally {
-                    setAppending(false)
-                  }
-                })()
-              }}
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={appending}
-                  onClick={() => appendInputRef.current?.click()}
-                  aria-label="Append .pptx slides to this deck"
-                  className="gap-1.5"
-                >
-                  {appending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <FilePlus className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  <span className="hidden sm:inline-block min-w-[4.75rem] text-left">
-                    {appending ? 'Appending…' : 'Append'}
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Append slides from a .pptx</TooltipContent>
-            </Tooltip>
           </>
         )}
 

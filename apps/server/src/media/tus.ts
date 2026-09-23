@@ -654,7 +654,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
 
         // ─── Deck-scoped: insert the slides into an existing deck ────────
         // What the slides panel's drop does. `insertAt` is optional — no
-        // value means append, which is the toolbar's Append button.
+        // value means append at the end.
         if (deckId) {
           if (insertAtRaw !== null && !/^\d+$/.test(insertAtRaw)) {
             throw {

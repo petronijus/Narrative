@@ -1221,7 +1221,7 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
  * `insertAt === 3`. The rest follow it in file order, which is why the
  * index is stepped per slide instead of passing the same one each time:
  * `addSlide(ctx, 3)` three times over would reverse the deck. Omitted (or
- * past the end) appends, which is what the toolbar's Append button wants.
+ * past the end) appends at the end of the deck.
  *
  * Returned `slideCount` is the number of slides INSERTED, not the deck's
  * new total — matches the import route's response shape for symmetry.

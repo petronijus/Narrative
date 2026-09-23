@@ -22,7 +22,7 @@
  *     FolderDecks drop, and the Import button).
  *   - `{ deckId, insertAt? }` inserts the slides into an OPEN deck at that
  *     index (the slides panel's drop), or appends when the index is
- *     omitted (the toolbar's Append button).
+ *     omitted.
  *
  * Both go through tus rather than a plain POST because only tus reports
  * upload progress and survives a dropped connection — a 200 MB deck over
