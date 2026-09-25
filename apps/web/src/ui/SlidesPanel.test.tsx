@@ -24,7 +24,6 @@ import type { Slide } from '@narrative/shared'
 import * as Y from 'yjs'
 import type { SlideMutationContext } from '@narrative/slide-model'
 import type * as SlideModel from '@narrative/slide-model'
-import type * as SlideHelpers from './slideHelpers'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -48,6 +47,7 @@ vi.mock('../state/DeckRoleContext', () => ({
 
 // Mock slide mutations
 const mockAddSlide = vi.fn()
+const mockDuplicateSlide = vi.fn()
 const mockRemoveSlide = vi.fn()
 const mockMoveSlide = vi.fn()
 vi.mock('@narrative/slide-model', async (importOriginal) => {
@@ -70,22 +70,17 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
     moveSlide: (...args: Parameters<typeof actual.moveSlide>) => {
       mockMoveSlide(...args)
     },
+    duplicateSlide: (...args: Parameters<typeof actual.duplicateSlide>) => {
+      mockDuplicateSlide(...args)
+      return {
+        id: 'dup-slide',
+        objects: [],
+        animations: [],
+        transition: { kind: 'none', durationMs: 0 },
+      }
+    },
   }
 })
-
-// Mock duplicateSlide helper
-const mockDuplicateSlide = vi.fn()
-vi.mock('./slideHelpers', () => ({
-  duplicateSlide: (...args: Parameters<typeof SlideHelpers.duplicateSlide>) => {
-    mockDuplicateSlide(...args)
-    return {
-      id: 'dup-slide',
-      objects: [],
-      animations: [],
-      transition: { kind: 'none', durationMs: 0 },
-    }
-  },
-}))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -262,7 +257,7 @@ describe('SlidesPanel — duplicate slide', () => {
     fireEvent.click(dupBtn)
 
     expect(mockDuplicateSlide).toHaveBeenCalledOnce()
-    expect(mockDuplicateSlide).toHaveBeenCalledWith(expect.anything(), 's1', 1)
+    expect(mockDuplicateSlide).toHaveBeenCalledWith(expect.anything(), 's1')
   })
 })
 

@@ -6,6 +6,26 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Fixed
+
+- **A duplicated slide draws, keeps its text, and gets its thumbnail.**
+  Duplicating a slide (Ctrl/⌘+D or the thumbnail menu) left the copy's
+  canvas blank — objects could be selected but nothing drew — and after a
+  reload its text boxes were empty. The copy re-used the original's live
+  text objects, which the collaboration layer cannot share between two
+  slides; it is now cloned whole — text with its formatting, tables,
+  speaker notes, transition, background — in one step, which is also one
+  undo step. The blank canvas itself came from images: the copy picked up
+  a texture the editor was just unloading, and every frame after that
+  failed. Textures are now kept briefly after their last use and never
+  handed out while unloading, and a render failure is reported instead of
+  silently freezing the canvas. Slides duplicated before this release lost
+  their texts on the server; duplicate them again.
+- **Thumbnails of new slides no longer wait for the whole deck.** Right
+  after a deck opens, every thumbnail renders in turn; a slide added or
+  duplicated meanwhile waited for all of them (~12 s on a 56-slide deck).
+  What you do now renders first.
+
 ---
 
 ## 0.9.28 — Duplicate a slide from the keyboard (2026-09-25)

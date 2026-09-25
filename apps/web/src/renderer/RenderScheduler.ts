@@ -37,6 +37,8 @@ export class RenderScheduler {
   private rafHandle: number | null = null
   private destroyed = false
   private postRender: Array<() => void> = []
+  /** Set while renders keep failing, so a failure is reported once, not every frame. */
+  private failing = false
 
   constructor(app: Application) {
     this.app = app
@@ -97,12 +99,24 @@ export class RenderScheduler {
   private runRender(): void {
     const app = this.app
     if (this.destroyed || app === null) return
+    // Torn down between schedule and fire: Application.destroy() nulls both.
+    // Nothing to draw, nothing wrong.
+    if ((app.renderer as unknown) == null || (app.stage as unknown) == null) return
     try {
       app.renderer.render(app.stage)
-    } catch {
-      // Renderer was torn down between schedule and fire. Safe to drop.
+    } catch (err) {
+      // A live renderer that throws is a bug, and it rarely throws once:
+      // Pixi leaves the render group half-updated, so every later frame
+      // fails too and the canvas stops drawing. This used to be swallowed
+      // as if it were teardown — which hid a canvas that went blank after
+      // a slide was duplicated. Report the first failure of each run.
+      if (!this.failing) {
+        this.failing = true
+        console.error('[RenderScheduler] render failed; the canvas stops updating', err)
+      }
       return
     }
+    this.failing = false
     // Snapshot subscribers so an unsubscribe inside a callback can't
     // skip the next entry in the same render pass.
     const subs = this.postRender.slice()

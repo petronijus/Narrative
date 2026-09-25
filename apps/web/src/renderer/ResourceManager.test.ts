@@ -7,13 +7,13 @@
  * a nepotřebují GPU. Mock vrací minimal Texture-like objekt s destroy() spy.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { pixiMock } from '../test/pixiMock'
 
 // Mock pixi.js Assets před importem ResourceManager
 vi.mock('pixi.js', () => pixiMock())
 
-import { ResourceManager } from './ResourceManager'
+import { ResourceManager, UNLOAD_GRACE_MS } from './ResourceManager'
 import { Assets } from 'pixi.js'
 
 describe('ResourceManager', () => {
@@ -23,6 +23,15 @@ describe('ResourceManager', () => {
     rm = new ResourceManager()
     vi.clearAllMocks()
   })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** Let the grace run out and the unload it starts settle. */
+  async function afterGrace(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(UNLOAD_GRACE_MS)
+  }
 
   it('acquireTexture načte texturu a vrátí ji', async () => {
     const texture = await rm.acquireTexture('https://example.com/img.png')
@@ -58,11 +67,15 @@ describe('ResourceManager', () => {
     expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
   })
 
-  it('releaseTexture při refCount=0 unloadne texturu z Assets cache', async () => {
+  it('releaseTexture při refCount=0 unloadne texturu z Assets cache — after the grace', async () => {
+    vi.useFakeTimers()
     await rm.acquireTexture('https://example.com/img.png')
 
     rm.releaseTexture('https://example.com/img.png')
+    expect(Assets.unload).not.toHaveBeenCalled()
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(0)
 
+    await afterGrace()
     // Source delegates teardown to Assets.unload() — that's the leak
     // guard. The fallback texture.destroy(true) only fires if Assets
     // rejects (texture wasn't tracked by Assets — img-decoded path).
@@ -70,12 +83,75 @@ describe('ResourceManager', () => {
     expect(rm.textureCount).toBe(0)
   })
 
-  it('releaseTexture při refCount=0 odstraní texturu z interní mapy', async () => {
-    await rm.acquireTexture('https://example.com/img.png')
+  it('takes a released texture back within the grace, without loading or unloading it', async () => {
+    vi.useFakeTimers()
+    const t1 = await rm.acquireTexture('https://example.com/img.png')
     rm.releaseTexture('https://example.com/img.png')
+    await vi.advanceTimersByTimeAsync(UNLOAD_GRACE_MS - 1)
 
-    expect(rm.getRefCount('https://example.com/img.png')).toBe(0)
+    const t2 = await rm.acquireTexture('https://example.com/img.png')
+    await afterGrace()
+
+    expect(t2).toBe(t1)
+    expect(Assets.load).toHaveBeenCalledTimes(1)
+    expect(Assets.unload).not.toHaveBeenCalled()
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
+  })
+
+  it('shares one load between acquires that arrive while it runs', async () => {
+    let resolve!: (t: unknown) => void
+    const loading = new Promise<unknown>((r) => (resolve = r))
+    vi.mocked(Assets.load).mockImplementationOnce(() => loading as ReturnType<typeof Assets.load>)
+    const a = rm.acquireTexture('https://example.com/img.png')
+    const b = rm.acquireTexture('https://example.com/img.png')
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(2)
+    await vi.waitFor(() => expect(Assets.load).toHaveBeenCalledTimes(1))
+    const texture = { source: {}, destroyed: false, destroy: vi.fn() }
+    resolve(texture)
+
+    expect(await a).toBe(texture)
+    expect(await b).toBe(texture)
+    expect(Assets.load).toHaveBeenCalledTimes(1)
+
+    // One of the two objects goes away: the other still draws with it.
+    vi.useFakeTimers()
+    rm.releaseTexture('https://example.com/img.png')
+    await afterGrace()
+    expect(Assets.unload).not.toHaveBeenCalled()
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
+  })
+
+  it('never hands out a texture that is being unloaded: a load waits for the unload', async () => {
+    vi.useFakeTimers()
+    await rm.acquireTexture('https://example.com/img.png')
+    let unloaded!: () => void
+    vi.mocked(Assets.unload).mockImplementationOnce(() => new Promise<void>((r) => (unloaded = r)))
+    rm.releaseTexture('https://example.com/img.png')
+    await afterGrace()
+    expect(Assets.unload).toHaveBeenCalledTimes(1)
+
+    const next = rm.acquireTexture('https://example.com/img.png')
+    await vi.advanceTimersByTimeAsync(0)
+    // Pixi still holds the dying texture in its cache: loading now would get it.
+    expect(Assets.load).toHaveBeenCalledTimes(1)
+
+    unloaded()
+    await next
+    expect(Assets.load).toHaveBeenCalledTimes(2)
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
+  })
+
+  it('leaves nothing behind when a load fails, so the next acquire tries again', async () => {
+    vi.mocked(Assets.load).mockRejectedValueOnce(new Error('offline'))
+    const decode = vi
+      .spyOn(globalThis.Image.prototype, 'decode')
+      .mockRejectedValueOnce(new Error('offline'))
+    await expect(rm.acquireTexture('https://example.com/img.png')).rejects.toThrow('offline')
     expect(rm.textureCount).toBe(0)
+
+    await rm.acquireTexture('https://example.com/img.png')
+    expect(rm.getRefCount('https://example.com/img.png')).toBe(1)
+    decode.mockRestore()
   })
 
   it('releaseTexture na neexistující URL je no-op', () => {
@@ -87,6 +163,7 @@ describe('ResourceManager', () => {
     await rm.acquireTexture('https://example.com/b.png')
 
     rm.destroyAll()
+    await Promise.resolve()
 
     expect(Assets.unload).toHaveBeenCalledWith('https://example.com/a.png')
     expect(Assets.unload).toHaveBeenCalledWith('https://example.com/b.png')
@@ -180,6 +257,7 @@ describe('ResourceManager', () => {
   })
 
   it('textureCount vrací správný počet spravovaných textur', async () => {
+    vi.useFakeTimers()
     expect(rm.textureCount).toBe(0)
 
     await rm.acquireTexture('https://example.com/a.png')
@@ -189,6 +267,9 @@ describe('ResourceManager', () => {
     expect(rm.textureCount).toBe(2)
 
     rm.releaseTexture('https://example.com/a.png')
+    // Still on the GPU until its grace is over.
+    expect(rm.textureCount).toBe(2)
+    await afterGrace()
     expect(rm.textureCount).toBe(1)
   })
 })

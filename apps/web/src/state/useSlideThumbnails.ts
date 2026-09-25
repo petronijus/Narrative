@@ -145,6 +145,9 @@ function readSlideObjects(ctx: SlideMutationContext, slideId: string): SlideObje
 /** Debounce interval in ms — applied per slide independently. */
 const DEBOUNCE_MS = 500
 
+/** See the render queue in useSlideThumbnails. */
+type RenderPriority = 'urgent' | 'background'
+
 /**
  * For a set of slide IDs, returns a Map<slideId, dataUrl> of current thumbnails.
  * Re-renders the thumbnail for a slide when that slide's objects change (debounced 500 ms).
@@ -199,37 +202,78 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
   // Render helper — schedules a thumbnail update for one slide
   // ---------------------------------------------------------------------------
 
-  /** Per-slide render-in-flight tracker. The renderer's internal queue
-   *  serialises ALL renders globally — without coalescing, rapid edits
-   *  on slide A queue several renders for A behind unrelated slide B
-   *  renders, so the latest A thumbnail can take seconds to appear. We
-   *  keep at most ONE in-flight render + ONE pending re-render per
-   *  slide. */
-  const inFlightRef = useRef<Set<string>>(new Set())
-  const pendingDirtyRef = useRef<Set<string>>(new Set())
+  // The slides this hook tracks, read by the deck callback (created once) and
+  // by the render queue, which skips a slide that has gone since it was queued.
+  const trackedSlideIdsRef = useRef<Set<string>>(new Set())
 
-  const scheduleRender = useCallback((slideId: string): void => {
+  /**
+   * The slides waiting for a render, in two tiers. The renderer serialises
+   * every render anyway (one offscreen canvas), so the hook hands it one
+   * slide at a time and picks the next itself:
+   *
+   * - `background` — the pass that fills every thumbnail when the deck
+   *   opens: on a 60-slide deck with images that is ~15 s of renders.
+   * - `urgent` — everything that follows from something the user did:
+   *   a slide added, duplicated or pasted, an edit, a reorder.
+   *
+   * Handing the renderer the whole deck at once instead (as this did) put a
+   * slide duplicated right after opening the deck at the end of the
+   * opening pass — its thumbnail stayed blank for as long as the pass ran.
+   *
+   * A slide is queued at most once (Sets keep insertion order), and a slide
+   * asked for again while its render runs is re-queued once when it ends,
+   * so a burst of edits costs one extra render, not one per edit.
+   */
+  const urgentRef = useRef<Set<string>>(new Set())
+  const backgroundRef = useRef<Set<string>>(new Set())
+  const inFlightRef = useRef<string | null>(null)
+  const pendingDirtyRef = useRef<Map<string, RenderPriority>>(new Map())
+
+  const enqueue = useCallback((slideId: string, priority: RenderPriority): void => {
+    if (inFlightRef.current === slideId) {
+      // Its render already read the old state: run it once more after.
+      const had = pendingDirtyRef.current.get(slideId)
+      pendingDirtyRef.current.set(slideId, had === 'urgent' ? 'urgent' : priority)
+      return
+    }
+    if (priority === 'urgent') {
+      backgroundRef.current.delete(slideId)
+      urgentRef.current.add(slideId)
+    } else if (!urgentRef.current.has(slideId)) {
+      backgroundRef.current.add(slideId)
+    }
+  }, [])
+
+  const pump = useCallback((): void => {
     const renderer = rendererRef.current
-    if (renderer === null) {
-      return
-    }
+    if (renderer === null || inFlightRef.current !== null) return
 
-    if (inFlightRef.current.has(slideId)) {
-      pendingDirtyRef.current.add(slideId)
-      return
+    let slideId: string | undefined
+    for (const tier of [urgentRef.current, backgroundRef.current]) {
+      for (const id of tier) {
+        tier.delete(id)
+        // Gone since it was queued (deleted, or the deck changed).
+        if (!trackedSlideIdsRef.current.has(id)) continue
+        slideId = id
+        break
+      }
+      if (slideId !== undefined) break
     }
+    if (slideId === undefined) return
 
     const objects = latestObjectsRef.current.get(slideId) ?? []
     const background = latestBackgroundRef.current.get(slideId)
     const slideNumber = computeSlideNumber(slidesRef.current, slideId)
-    inFlightRef.current.add(slideId)
+    const id = slideId
+    inFlightRef.current = id
 
     renderer
       .renderSlide(objects, background, slideNumber)
       .then((dataUrl) => {
+        if (!trackedSlideIdsRef.current.has(id)) return
         setThumbnails((prev) => {
           const next = new Map(prev)
-          next.set(slideId, dataUrl)
+          next.set(id, dataUrl)
           return next
         })
       })
@@ -240,13 +284,23 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
         console.error('[useSlideThumbnails] renderSlide failed:', err)
       })
       .finally(() => {
-        inFlightRef.current.delete(slideId)
-        const wasDirty = pendingDirtyRef.current.delete(slideId)
-        if (wasDirty) {
-          scheduleRender(slideId)
+        inFlightRef.current = null
+        const again = pendingDirtyRef.current.get(id)
+        if (again !== undefined) {
+          pendingDirtyRef.current.delete(id)
+          enqueue(id, again)
         }
+        pump()
       })
-  }, [])
+  }, [enqueue])
+
+  const scheduleRender = useCallback(
+    (slideId: string, priority: RenderPriority = 'urgent'): void => {
+      enqueue(slideId, priority)
+      pump()
+    },
+    [enqueue, pump],
+  )
 
   // ---------------------------------------------------------------------------
   // Ensure per-slide debouncer exists (idempotent)
@@ -275,10 +329,6 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
   // Deck-level subscription — mounted once, never torn down until unmount.
   // When a deck event fires, we fresh-traverse ctx.slides for each affected id.
   // ---------------------------------------------------------------------------
-
-  // Keep a stable ref to the current tracked slide ids so the deck callback
-  // (which is created once) can always read the latest set.
-  const trackedSlideIdsRef = useRef<Set<string>>(new Set())
 
   // Keep a stable ref to deckCtx (changes are rare but possible).
   const deckCtxRef = useRef<SlideMutationContext>(deckCtx)
@@ -350,11 +400,8 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
             return
           }
           rendererRef.current = renderer
-
-          // Trigger initial renders for all currently tracked slides.
-          for (const slideId of latestObjectsRef.current.keys()) {
-            scheduleRender(slideId)
-          }
+          // Everything asked for while the renderer was starting is queued.
+          pump()
         })
         .catch((err: unknown) => {
           console.error('[useSlideThumbnails] createThumbnailRenderer failed:', err)
@@ -390,6 +437,9 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     const sameOrder = prev.length === slideIds.length && prev.every((id, i) => id === slideIds[i])
 
     if (sameOrder) return
+    // The deck opening: every slide appears at once, and the pass that
+    // renders them all runs behind anything the user does meanwhile.
+    const opening = prev.length === 0
 
     const incomingSet = new Set(slideIds)
     const prevSet = new Set(prev)
@@ -430,7 +480,7 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
       }
       // Schedule initial render immediately (not debounced) so thumbnails
       // appear as soon as the renderer is ready.
-      scheduleRender(id)
+      scheduleRender(id, opening ? 'background' : 'urgent')
     }
 
     // Prune thumbnails of slides that no longer exist.
@@ -488,8 +538,14 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
     () => allSlides.map((s) => `${s.id}:${s.skipped === true ? 'x' : '_'}`).join('|'),
     [allSlides],
   )
+  // Its first run with slides is the deck opening, already queued by the
+  // seeding above. (Before the doc has synced the list is empty: that run
+  // does not count, or the opening pass would come through as urgent.)
+  const orderSeenRef = useRef(false)
   useEffect(() => {
-    for (const id of slideIds) scheduleRender(id)
+    const priority: RenderPriority = orderSeenRef.current ? 'urgent' : 'background'
+    if (slideIds.length > 0) orderSeenRef.current = true
+    for (const id of slideIds) scheduleRender(id, priority)
     // Depend on a stable fingerprint string so unrelated slide-prop
     // edits (background, name) don't double-trigger here — the
     // background-watch effect above already covers those.
@@ -505,9 +561,13 @@ export function useSlideThumbnails(slideIdsInput: string[]): Map<string, string>
         removeDebouncer(slideId)
       }
       trackedSlideIdsRef.current = new Set()
+      urgentRef.current.clear()
+      backgroundRef.current.clear()
+      pendingDirtyRef.current.clear()
       // React 18 StrictMode persists refs across the mount→unmount→remount cycle.
       // Reset lastSlideIdsRef so remount re-seeds all slides.
       lastSlideIdsRef.current = []
+      orderSeenRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cleanup only on unmount
   }, [])

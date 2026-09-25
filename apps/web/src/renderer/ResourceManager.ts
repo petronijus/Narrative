@@ -7,7 +7,10 @@
  * - Resource manager má poslední slovo nad alokací/dealokací GPU zdrojů.
  * - Object renderers neznají texture lifecycle — žádají resource manager.
  * - Ref counting: acquireTexture inkrementuje, releaseTexture dekrementuje.
- *   Při refCount=0 je textura zničena a GPU paměť uvolněna.
+ *   Při refCount=0 je textura po krátké lhůtě (UNLOAD_GRACE_MS) uvolněna;
+ *   acquire v té lhůtě ji převezme zpět bez nového načítání.
+ * - A texture is never handed out while it is being unloaded: a load of a
+ *   URL whose unload is still running waits for that unload to finish.
  *
  * M1: Malý scope — rectangle nepotřebuje textury. API existuje a je testované.
  * M11 (image uploads): ResourceManager bude zásadní — rozhraní musí být stabilní.
@@ -21,6 +24,35 @@ interface TextureEntry {
 }
 
 /**
+ * A texture loaded from a URL. The entry exists from the first acquire on,
+ * holding the load itself: every acquire that arrives while it runs shares
+ * it, so the ref count is right from the start. (Recording the entry only
+ * once the load had finished let two concurrent acquires each start a load
+ * and each write a ref count of 1 — the first release then unloaded the
+ * texture the other object was still drawing.)
+ */
+interface UrlTextureEntry {
+  load: Promise<Texture>
+  /** The loaded texture, once `load` has resolved. */
+  texture: Texture | null
+  refCount: number
+  /** The unload waiting out UNLOAD_GRACE_MS once nothing holds the texture. */
+  unloadTimer: ReturnType<typeof setTimeout> | null
+}
+
+/**
+ * How long a texture nothing holds any more stays loaded before it is
+ * unloaded. Switching slides, duplicating one, or undoing a delete removes
+ * objects and mounts them (or others showing the same image) again right
+ * away — but an image object only acquires its texture after resolving its
+ * URL, which can take a round trip. Within the grace the texture is simply
+ * taken back; after it, it is loaded again. Correctness does not depend on
+ * the length: a load never overlaps an unload of the same URL (see
+ * `unloading`), whatever the timing.
+ */
+export const UNLOAD_GRACE_MS = 5000
+
+/**
  * P12c: cap on the procedural texture cache. Even with correct
  * acquire/release ref-counting, the LRU is a backstop so a missed
  * release (or a runaway slider scrub building thousands of unique keys)
@@ -30,7 +62,17 @@ interface TextureEntry {
 const PROCEDURAL_LRU_CAP = 128
 
 export class ResourceManager {
-  private readonly textures = new Map<string, TextureEntry>()
+  private readonly textures = new Map<string, UrlTextureEntry>()
+
+  /**
+   * Unloads in progress, by URL. Pixi's `Assets.unload` is asynchronous and
+   * keeps the asset in its own cache until it has finished; an
+   * `Assets.load` of the same URL in that window returns the texture about
+   * to be destroyed. An object mounted with it made every later frame throw
+   * (Pixi's batcher reads the destroyed texture's source) — the canvas
+   * stopped drawing after a slide was duplicated. So a load waits for them.
+   */
+  private readonly unloading = new Map<string, Promise<void>>()
 
   /**
    * P12c: ref-counted cache for procedurally generated textures
@@ -48,13 +90,43 @@ export class ResourceManager {
   /**
    * Načte texturu z URL (nebo vrátí cachouvanou). Inkrementuje ref count.
    * Volající je zodpovědný za zavolání releaseTexture() po použití.
+   *
+   * A texture released to zero but still within its grace is taken back
+   * as it is. A failed load leaves no entry behind, so the next acquire
+   * tries again; the callers that shared it hold no reference to release.
    */
-  async acquireTexture(url: string): Promise<Texture> {
+  acquireTexture(url: string): Promise<Texture> {
     const existing = this.textures.get(url)
     if (existing !== undefined) {
       existing.refCount += 1
-      return existing.texture
+      if (existing.unloadTimer !== null) {
+        clearTimeout(existing.unloadTimer)
+        existing.unloadTimer = null
+      }
+      return existing.load
     }
+
+    const entry: UrlTextureEntry = {
+      load: this.loadTexture(url),
+      texture: null,
+      refCount: 1,
+      unloadTimer: null,
+    }
+    entry.load.then(
+      (texture) => {
+        entry.texture = texture
+      },
+      () => {
+        if (this.textures.get(url) === entry) this.textures.delete(url)
+      },
+    )
+    this.textures.set(url, entry)
+    return entry.load
+  }
+
+  private async loadTexture(url: string): Promise<Texture> {
+    const unloading = this.unloading.get(url)
+    if (unloading !== undefined) await unloading
 
     let texture: Texture | null = null
     try {
@@ -78,35 +150,50 @@ export class ResourceManager {
       await img.decode()
       texture = Texture.from(img as unknown as TextureSourceOptions)
     }
-
-    this.textures.set(url, { texture, refCount: 1 })
     return texture
   }
 
   /**
-   * Uvolní referenci na texturu. Při refCount=0 zničí texturu a uvolní GPU paměť.
+   * Uvolní referenci na texturu. Při refCount=0 texturu po UNLOAD_GRACE_MS
+   * uvolní z GPU, pokud si ji mezitím nikdo znovu nevyžádá.
    * Volání releaseTexture na neexistující URL je no-op (bezpečné).
-   *
-   * Uses Assets.unload(url) for textures that came through Assets.load
-   * (the happy path); falls back to texture.destroy(true) for the
-   * <img>-decoded fallback below where the texture isn't tracked by
-   * Assets. This avoids Pixi's "managed TextureSource was destroyed
-   * instead of unloaded" warning that fires on every poster swap.
    */
   releaseTexture(url: string): void {
     const entry = this.textures.get(url)
-    if (entry === undefined) return
+    if (entry === undefined || entry.refCount === 0) return
 
     entry.refCount -= 1
-    if (entry.refCount <= 0) {
-      void Assets.unload(url).catch(() => {
-        // Not in the Assets cache (came from the <img> fallback path) —
-        // destroy directly. Catch keeps the cleanup chain alive even if
-        // Assets has already unloaded the source from another release.
-        if (!entry.texture.destroyed) entry.texture.destroy(true)
-      })
+    if (entry.refCount > 0) return
+    entry.unloadTimer = setTimeout(() => {
+      entry.unloadTimer = null
+      if (this.textures.get(url) !== entry || entry.refCount > 0) return
       this.textures.delete(url)
-    }
+      this.unload(url, entry)
+    }, UNLOAD_GRACE_MS)
+  }
+
+  /**
+   * Uses Assets.unload(url) for textures that came through Assets.load
+   * (the happy path); falls back to texture.destroy(true) for the
+   * <img>-decoded fallback where the texture isn't tracked by Assets.
+   * This avoids Pixi's "managed TextureSource was destroyed instead of
+   * unloaded" warning that fires on every poster swap.
+   */
+  private unload(url: string, entry: UrlTextureEntry): void {
+    const done: Promise<void> = entry.load.then(
+      (texture) =>
+        Assets.unload(url).catch(() => {
+          // Not in the Assets cache (came from the <img> fallback path) —
+          // destroy directly.
+          if (!texture.destroyed) texture.destroy(true)
+        }),
+      // The load itself failed: nothing to unload.
+      () => undefined,
+    )
+    this.unloading.set(url, done)
+    void done.then(() => {
+      if (this.unloading.get(url) === done) this.unloading.delete(url)
+    })
   }
 
   /**
@@ -115,9 +202,8 @@ export class ResourceManager {
    */
   destroyAll(): void {
     for (const [url, entry] of this.textures) {
-      void Assets.unload(url).catch(() => {
-        if (!entry.texture.destroyed) entry.texture.destroy(true)
-      })
+      if (entry.unloadTimer !== null) clearTimeout(entry.unloadTimer)
+      this.unload(url, entry)
     }
     this.textures.clear()
     for (const [, entry] of this.procedural) {
@@ -126,7 +212,11 @@ export class ResourceManager {
     this.procedural.clear()
   }
 
-  /** Počet aktuálně spravovaných textur (pro debugging a testy). */
+  /**
+   * Počet aktuálně spravovaných textur (pro debugging a testy) — including
+   * those nothing holds that are still within their grace: they are still
+   * on the GPU.
+   */
   get textureCount(): number {
     return this.textures.size
   }

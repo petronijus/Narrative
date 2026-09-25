@@ -74,7 +74,7 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 1,625 tests / 138 files (32 skipped) — 2026-09-24
+pnpm -r test                                   # 1,632 tests / 138 files (32 skipped) — 2026-09-25
 pnpm --filter web test:e2e                     # 40 Playwright specs — needs the env vars above
 pnpm size                                      # bundle budgets
 pnpm load:all                                  # load tests + drift detection

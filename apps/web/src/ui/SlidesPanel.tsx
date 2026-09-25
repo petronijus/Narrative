@@ -40,6 +40,7 @@ import { useParams } from 'react-router-dom'
 import { useShortcuts } from '../state/useShortcuts.js'
 import {
   addSlide,
+  duplicateSlide,
   removeSlide,
   moveSlidesBlock,
   setSlideName,
@@ -47,7 +48,7 @@ import {
   setSlideIndent,
   setSlideCollapsed,
 } from '@narrative/slide-model'
-import { duplicateSlide, pasteSlides } from './slideHelpers.js'
+import { pasteSlides } from './slideHelpers.js'
 import { SlidesPanelContextMenu } from './SlidesPanelContextMenu.js'
 import {
   setSlideClipboard,
@@ -697,13 +698,11 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const handleDuplicate = useCallback(
     (slideId: string) => {
       const targets = actionTargets(slideId)
-      // Right to left: each insert shifts everything after it, so going the
-      // other way would interleave the copies with the originals.
+      // Each copy lands right after its original. Right to left, so a copy
+      // never pushes a later original out from under its own copy.
       let lastNewId: string | null = null
       for (const id of [...targets].reverse()) {
-        const idx = slides.findIndex((s) => s.id === id)
-        if (idx === -1) continue
-        const newSlide = duplicateSlide(deckCtx, id, idx + 1)
+        const newSlide = duplicateSlide(deckCtx, id)
         if (newSlide !== null) lastNewId = newSlide.id
       }
       if (lastNewId !== null) {
@@ -711,7 +710,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
         clearSelection()
       }
     },
-    [deckCtx, slides, actionTargets, setActiveSlideId, clearSelection],
+    [deckCtx, actionTargets, setActiveSlideId, clearSelection],
   )
 
   const handleDelete = useCallback(

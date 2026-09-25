@@ -62,6 +62,7 @@ export type { SlideMutationContext, DeckMutationContext } from './slideMutationC
 // Slide CRUD + scoped context accessors (M9)
 export {
   addSlide,
+  duplicateSlide,
   removeSlide,
   moveSlide,
   moveSlidesBlock,

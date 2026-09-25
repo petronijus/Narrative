@@ -74,4 +74,42 @@ describe('RenderScheduler', () => {
     frames.forEach((f) => f())
     expect(renders()).toBe(1)
   })
+
+  it('reports a render that throws — once per run of failures, not every frame', () => {
+    // A throwing render leaves Pixi's render group half-updated, so every
+    // later frame throws as well and the canvas stops drawing. It used to be
+    // swallowed as if the renderer had been torn down.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let fail = true
+    const app = {
+      renderer: {
+        render: () => {
+          if (fail) throw new TypeError("Cannot read properties of null (reading 'alphaMode')")
+        },
+      },
+      stage: {},
+    } as unknown as Application
+    const scheduler = new RenderScheduler(app)
+    scheduler.renderNow()
+    scheduler.renderNow()
+    scheduler.renderNow()
+    expect(error).toHaveBeenCalledTimes(1)
+
+    fail = false
+    scheduler.renderNow()
+    fail = true
+    scheduler.renderNow()
+    expect(error).toHaveBeenCalledTimes(2)
+    error.mockRestore()
+  })
+
+  it('stays quiet when the app was torn down between schedule and fire', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const app = { renderer: null, stage: null } as unknown as Application
+    const scheduler = new RenderScheduler(app)
+    scheduler.markDirty()
+    frames.forEach((f) => f())
+    expect(error).not.toHaveBeenCalled()
+    error.mockRestore()
+  })
 })

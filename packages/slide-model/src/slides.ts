@@ -220,6 +220,48 @@ export function addSlide(ctx: SlideMutationContext, index?: number): Slide {
 }
 
 /**
+ * Duplicates a slide, inserting the copy at `index` — right after the
+ * source when omitted.
+ *
+ * The copy is the source's own Yjs structure cloned whole: objects with
+ * their rich text (Y.Text, formatting runs included), tables with their
+ * cell texts, animations, transition, background, speaker notes, name and
+ * outline state. Yjs types cannot be re-parented — a Y.Text that already
+ * lives in the source slide cannot be inserted a second time, and trying
+ * throws in the middle of integration — so everything is cloned, never
+ * copied by reference. The copy is inserted in one transaction: collaborators
+ * and the undo stack see one change, not a slide filling up object by object.
+ *
+ * Object ids are kept, deliberately (ids are unique per slide, not per
+ * deck): "duplicate the slide and move things" is the natural Magic Move
+ * authoring flow, which pairs objects across slides by id, and the copied
+ * animations keep pointing at their objects.
+ *
+ * @returns Plain snapshot of the copy, or null (with a warning) when the
+ *   source slide does not exist.
+ */
+export function duplicateSlide(
+  ctx: SlideMutationContext,
+  slideId: string,
+  index?: number,
+): Slide | null {
+  const sourceIndex = findSlideIndex(ctx.slides, slideId)
+  if (sourceIndex === -1) {
+    console.warn(`duplicateSlide: slide '${slideId}' not found — no-op`)
+    return null
+  }
+  const copy = ctx.slides.get(sourceIndex).clone()
+  copy.set('id', nanoid())
+
+  const at = Math.max(0, Math.min(index ?? sourceIndex + 1, ctx.slides.length))
+  ctx.doc.transact(() => {
+    ctx.slides.insert(at, [copy])
+  }, LOCAL_ORIGIN)
+
+  return yMapToSlide(copy)
+}
+
+/**
  * Removes a slide by ID.
  *
  * - No-op + warn if slide not found.
