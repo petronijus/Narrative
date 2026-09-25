@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.9.29 — Duplicated slides that draw (2026-09-25)
 
 ### Fixed
 

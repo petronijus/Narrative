@@ -54,19 +54,25 @@ only after a very long time. The shortcut only exposed it: the thumbnail menu's
 - New e2e `apps/web/e2e/slide-duplicate.spec.ts` (image slide → Mod+D → the copy
   draws the image and an edit on it reaches the canvas) passes.
 
+## Verified on the MacBook (2026-09-25, evening)
+
+- **Negative control holds.** `slide-duplicate.spec.ts` against the v0.9.28
+  `ResourceManager.ts` (everything else at `1b1dab4`): 3/3 runs fail — the
+  copy's canvas stays blank (98 blue pixels where ~3,700 are expected). Back
+  on the fixed file: 3/3 pass. The single 64 px test image is enough to hit
+  the race; the spec needs no heavier slide.
+- **Auto-run policy e2e green:** `renderer-visual`, `inspector-flows`,
+  `keyboard-shortcuts`, `image-upload`, `multi-client-collab`,
+  `thumbnails-after-slide-switch` — 19 passed, 3 skipped (the opt-in
+  `RUN_VISUAL_BASELINES=1` pixel baselines). On the Mac no Playwright env
+  vars are needed.
+- Gotcha: after pulling this range, run `pnpm install` — the dev server dies
+  on the missing `sharp` package otherwise.
+
 ## Next steps
 
-1. Negative control for `slide-duplicate.spec.ts`: run it against the old
-   `ResourceManager.ts` (`git show v0.9.28:apps/web/src/renderer/ResourceManager.ts`)
-   and confirm it fails. If the tiny test image doesn't hit the race, make the
-   spec closer to the Proseware slide (several images, an image under a mask /
-   crop) until it does — the race needs the re-acquire to land while Pixi's
-   unload is in flight.
-2. Auto-run policy e2e (renderer + UI + Yjs touched):
-   `PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1` is only needed on the
-   Ubuntu desktop; on the Mac plain `pnpm --filter web test:e2e -g "…"` works.
-   Run `renderer-visual|inspector-flows`, `keyboard-shortcuts`, `image-upload`,
-   `slide-duplicate`, `multi-client-collab`, `thumbnails-after-slide-switch`.
+1. ~~Negative control for `slide-duplicate.spec.ts`~~ — done, see above.
+2. ~~Auto-run policy e2e~~ — done, see above.
 3. Release 0.9.29 (CHANGELOG section is already written under "Unreleased"):
    bump the 7 package.json files, tag, push, build-push, deploy, verify
    `/version.json`.
