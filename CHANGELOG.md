@@ -8,6 +8,23 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.9.28 — Duplicate a slide from the keyboard (2026-09-25)
+
+### Added
+
+- **Ctrl+D (⌘D on a Mac) duplicates the selected slide** in the slides
+  panel, the way the thumbnail menu's "Duplicate" does: every selected slide
+  when several are, each copy placed right after its original, and the
+  editor moves to the copy. While the slide list has the focus it takes the
+  key over from the canvas, where Ctrl+D still duplicates the selected
+  objects, and the browser's own Ctrl+D (bookmark) no longer fires there.
+
+### Fixed
+
+- **A viewer can no longer delete or paste slides from the keyboard.** The
+  slides panel hid those actions from its menus for viewers, but its Delete
+  and Ctrl+V shortcuts still acted on the deck.
+
 ## 0.9.27 — No outline where PowerPoint draws none (2026-09-24)
 
 ### Fixed

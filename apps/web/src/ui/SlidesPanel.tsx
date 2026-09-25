@@ -1095,7 +1095,22 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       preventDefault: true,
       description: 'Delete active slide',
       handler: () => {
+        if (isViewer) return
         if (activeSlideId !== null && slides.length > 1) handleDelete(activeSlideId)
+      },
+    },
+    {
+      // Wins over the canvas's Mod+D (duplicate objects) whenever the slide
+      // list has the focus: useShortcuts tries the panel's scope first and
+      // stops at the first scope that handles the key. preventDefault keeps
+      // the browser's own Ctrl+D (bookmark) out of it.
+      keys: 'Mod+d',
+      scope: 'slidePanel',
+      preventDefault: true,
+      description: 'Duplicate slide(s)',
+      handler: () => {
+        if (isViewer) return
+        if (activeSlideId !== null) handleDuplicate(activeSlideId)
       },
     },
     {
@@ -1118,6 +1133,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       // object on the new slide.
       canHandle: () => hasSlideClipboard(),
       handler: () => {
+        if (isViewer) return
         const target = activeSlideId ?? slides[slides.length - 1]?.id ?? null
         if (target !== null) handlePaste(target)
       },

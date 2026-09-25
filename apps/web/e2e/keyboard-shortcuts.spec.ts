@@ -242,6 +242,50 @@ test.describe('Slides panel keyboard navigation', () => {
       )
       .toBe(slides[1]!.id)
   })
+
+  test('Mod+D on a selected thumbnail duplicates the slide, not the canvas selection', async ({
+    page,
+  }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    const second = await page.evaluate(() => {
+      const api = window.__narrative_test_api!
+      api.addSlide()
+      const id = api.addSlide()
+      api.addRect({ id: 'dup-rect', x: 100, y: 100, w: 200, h: 120 }, id)
+      return id
+    })
+    const before = await page.evaluate(() => window.__narrative_test_api!.listSlideIds())
+    expect(before.length).toBe(3)
+
+    await page.locator(`[role="option"][data-slide-id="${second}"]`).click()
+    // An object selected on the canvas too: the canvas's own Mod+D would
+    // duplicate it. The slide list has the focus, so the slide is what's copied.
+    await page.evaluate(() => window.__narrative_test_api!.setSelection(['dup-rect']))
+    await page.keyboard.press('ControlOrMeta+d')
+
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.listSlideIds().length), {
+        timeout: 3000,
+      })
+      .toBe(4)
+    const after = await page.evaluate(() => window.__narrative_test_api!.listSlideIds())
+    const copy = after[3]!
+    expect(after.slice(0, 3)).toEqual(before.slice(0, 3))
+    expect(before).not.toContain(copy)
+    // Right after the original, holding its content; the original untouched.
+    expect(after.indexOf(copy)).toBe(after.indexOf(second) + 1)
+    expect(await page.evaluate((id) => window.__narrative_test_api!.objectCount(id), second)).toBe(
+      1,
+    )
+    expect(await page.evaluate((id) => window.__narrative_test_api!.objectCount(id), copy)).toBe(1)
+    // And the copy is where the editor now is.
+    await expect(
+      page.locator(`[role="option"][aria-selected="true"][data-slide-id="${copy}"]`),
+    ).toHaveCount(1)
+  })
 })
 
 // ---------------------------------------------------------------------------
