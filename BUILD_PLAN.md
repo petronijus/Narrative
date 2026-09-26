@@ -268,23 +268,32 @@ Timeline panel per slide. Drag-to-reorder. Visual delay/duration bars (drag to a
 
 **Deliverable**: rich preset library.
 
-### M16 — AI slide generation
+### M16–M18 — AI (replaced by the agentic plan, 2026-09-26)
 
-Anthropic SDK in the server. Structured output via tool use with a JSON schema matching the slide model. Server-side Yjs client (direct Y.Doc manipulation) applies the generated slides. Streaming: slide by slide as the model produces them. Prompt UI: modal with a textarea ("generate 10 slides about X"). `ANTHROPIC_API_KEY` env var.
+The three AI milestones that stood here (slide generation, per-slide
+assistance, layout suggestions; renumbered M20–M22 in
+`docs/handoff/polish-phase-plan.md`, while M16 was reused for folders,
+tokens and components) are replaced by
+**[`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)**.
+All three goals are now covered there, along with:
 
-**Deliverable**: slide generation from a prompt.
+- every capability callable by an agent through one command registry;
+- an MCP server, so Claude Code and claude.ai drive Narrative (an in-app
+  agent is deferred);
+- Woodgrove style packs;
+- a parity guard.
 
-### M17 — AI per-slide assistance
+The plan runs in phases A0–A5:
 
-Context menu on objects/slides: rewrite, translate, simplify, expand, shorten. The LLM receives the current object/slide + surrounding slides as context. Diff preview modal before applying. Apply = Yjs transaction.
+1. **A0:** foundations.
+2. **A1:** server host, identity and MCP.
+3. **A2:** extraction of web-only logic.
+4. **A3:** render worker (the agent can screenshot and see slides).
+5. **A4:** style packs.
+6. **A5:** deck builder and restyle.
 
-**Deliverable**: AI editing tools.
-
-### M18 — AI layout suggestions
-
-"Fix my slide" button. The LLM receives objects + positions, returns a new layout. Constrained to predefined layout templates (title+content, two-column, image+caption, quote, section divider) to avoid chaos.
-
-**Deliverable**: layout AI.
+**Deliverable**: an agent can do everything a user can, including
+building a whole deck in a brand style.
 
 ### M19 — Speaker notes
 
@@ -295,6 +304,10 @@ Per-slide notes as Y.Text in the slide Y.Map. Notes panel (collapsible) in the e
 ### M20 — Templates + themes
 
 Theme = `{ colors, fonts, spacing }` at the deck level. Slide templates predefined in code (title, content, two-column, image+text, quote, section-divider). Template picker on new slide. "Apply theme" restyles all objects.
+
+> Largely absorbed by the style packs of the agentic plan (phase A4:
+> layouts and slots, furniture, `style.deck.applyPack`). Re-scope this
+> milestone against it before starting.
 
 **Deliverable**: design consistency.
 

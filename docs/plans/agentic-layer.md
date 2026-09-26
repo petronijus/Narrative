@@ -1,0 +1,1093 @@
+# Agentic Narrative: every capability callable by an agent, plus Woodgrove style packs
+
+Status: **accepted**, 2026-09-26. Not started. The agent surface is
+**MCP only**; an in-app agent is deferred (§13). Replaces the AI milestones
+(M16–M18 in BUILD_PLAN, renumbered M20–M22 in
+`docs/handoff/polish-phase-plan.md`); BUILD_PLAN now points here. Petr's
+decisions are recorded in §12.
+
+This plan is based on two read-only surveys done on 2026-09-26:
+
+- a full capability inventory of this repo at `00890b0` (v0.9.29);
+- the presentation skills in the Woodgrove skill library
+  (`Woodgrove/internal/woodgrove-ai-brain`, commit `29f9367`): litware-fabrikam-pptx,
+  litware-fabrikam-html, litware-contoso-presentation, tailspinr-pptx, html-presentation-slides,
+  html-document, html-to-pptx, global-deck-editing-enable,
+  gamma-deck-builder, adatum-analysis / adatum-key-insights,
+  presentation-narrative-standard.
+
+## 1. Goals
+
+1. **Full parity.** An agent can do everything a user can do in Narrative:
+   build a whole deck, and also make small targeted edits, for example
+   "copy this", "move that", "change this text", "change the font",
+   "export", or "insert that other deck after slide 4 and restyle it to
+   match".
+2. **Brand styles as data, owned by Narrative.** Decks in Narrative must
+   be able to look the way Woodgrove's current decks look (Fabrikam, Contoso, Tailspin, the Woodgrove house style, Adatum). The skill library are the
+   **inspiration and the starting material**, not a source Narrative
+   stays in sync with. Narrative's own **style packs** and its own
+   mechanics (the playbooks the MCP server serves, the `narrative`
+   skill) become the
+   way Woodgrove builds decks. An agent uses a pack to build and restyle decks
+   and to check them against the brand.
+3. **Parity cannot silently rot.** When a feature is added, it has to
+   reach the agent surface too, or the build fails. A dedicated
+   `agent-parity` Claude agent (modelled on `narrative-docs`) reviews
+   every feature change for agentic coverage.
+4. **MCP is the agent surface.** Claude Code and claude.ai drive
+   Narrative through an MCP server. The model runs in the user's own
+   Claude client, so Narrative has no Anthropic dependency and no API
+   bill. The same registry also backs a batch HTTP API for scripts. An
+   in-app chat agent was considered and deferred (§13).
+
+## 2. Non-goals (for this plan)
+
+- Charts as an object type. The Contoso `graph` layout and Adatum decks need
+  them, but a chart object is a separate feature. Once it exists, it goes
+  through the parity machinery like any other feature.
+- Version history and comments. These are separate milestones. Section 6
+  covers what agent undo needs on its own, without depending on them.
+- Generating images. If image generation is added later, the Contoso
+  AI-labelling rule in §7.6 applies to it.
+
+## 3. What the surveys found (the facts this plan rests on)
+
+**What already helps:**
+
+- `packages/slide-model`, `packages/shared` and the animation compiler run
+  headless: all their tests run in Node.
+- The server already writes to live decks with slide-model mutations,
+  through `hocuspocus.openDirectConnection(deckId)` in
+  `apps/server/src/pptx/appendDeck.ts`.
+- There is a headless read path: `media/replayDoc.ts` plus the token
+  scanners.
+- The PPTX round-trip matrix is a strong oracle for checking what an agent
+  built.
+- `tests/load/yjsClient.ts` is a Node client for the sync server.
+- BullMQ and Redis are already deployed, so background jobs are available.
+
+**What blocks parity (the full list is in Appendix B):**
+
+- **There is no runtime schema.** No zod anywhere. `updateObject` writes
+  any keys it is given.
+- **A lot of behaviour exists only in React:**
+  - the clipboard, for objects and for slides;
+  - duplicate with group remapping;
+  - move and nudge, including the `imageRect` rule for cropped images;
+  - align to slide;
+  - flip;
+  - creation defaults;
+  - pen and path geometry;
+  - text-style apply, detach and reset;
+  - token CRUD and default seeding;
+  - the list rules;
+  - table routing between range, cell and table defaults;
+  - animation defaults;
+  - writing a component master;
+  - every thumbnail.
+- **Text-style token propagation is web-only.** It is
+  `DeckShell:TextStylePropagator`, so a deck only catches up with a changed
+  style when someone opens it in a browser.
+- **A folder created over the API has no tokens.** Default tokens are
+  seeded only when a browser opens the folder.
+- **There is no machine identity.** No API tokens, no service accounts, no
+  rate limit, no audit log.
+- **Undo does not fit agents:**
+  - Every writer uses the one `LOCAL_ORIGIN` symbol.
+  - Server writes reach clients as remote updates, so users cannot undo
+    them.
+  - Hocuspocus runs a direct-connection callback without wrapping it in a
+    single transaction, so one server write arrives as many small updates.
+  - In five places a nested `doc.transact` with no origin silently drops a
+    write from undo history.
+  - Two writes happen just because something is viewed: the font-weight
+    auto-adjust and the timeline's onEnter migration.
+- **Reordering deletes and re-inserts a clone.** This applies to layers,
+  slides and animations. A collaborator's concurrent edit to the moved item
+  is lost. An agent that reorders a lot makes this worse.
+- **There is no server-side renderer.** An agent-built deck has no
+  thumbnail, there is no PNG/PDF export, and the server cannot measure
+  whether text fits.
+- **There is no layout or slot concept.** A slide is a flat list of
+  objects, and PPTX masters and layouts are flattened on import. So the
+  server has nothing to go on when asked to restyle a slide or re-lay it
+  out.
+
+**What the skill library gives us:**
+
+- **Contoso has the model to copy.** `litware-contoso-presentation` ships:
+  - `references/layouts.json`: 58 layouts, each with slot geometry,
+    per-level text styles, anchors, autofit, insets, and background/text
+    per colour cut;
+  - one **deck spec** (`vw_deck.py: Deck.to_dict()`) that renders to both
+    PPTX and HTML;
+  - a measurement-based fit and collision checker.
+
+  This is the template for the Narrative style-pack format.
+
+- **Fabrikam (50 layouts × light/dark) and Tailspin (22 layouts)** can be read from
+  their `.pptx` masters. Their slot geometry is already extracted in the
+  survey's scratch output.
+- **The Woodgrove house style, Fabrikam HTML and Adatum** are CSS tokens plus
+  class recipes, sized with viewport units. They convert to fixed
+  1920×1080 regions: 1vw = 19.2 px, 1vh = 10.8 px.
+- **`presentation-narrative-standard` is the storyline stage upstream of
+  every builder.** It hands off a per-slide table with these columns:
+  title direction, body, sub-line, format archetype, claim type, move and
+  notes. That table maps directly onto the deck spec.
+- **The skills contradict each other in places.** Fabrikam HTML and Fabrikam PPTX
+  differ in title size, footer position, rings, margins and bullets. The
+  Woodgrove `template.html` contradicts its own SKILL.md. Each pack has to name
+  one source of truth (§7.4).
+
+## 4. Architecture
+
+```
+                    ┌────────────────────────────────────────────────┐
+  clients           │ Editor UI (humans)     MCP server     HTTP API  │
+                    └──────┬─────────────────────┬──────────────┬────┘
+                           │                     │              │
+                    ┌──────▼─────────────────────▼──────────────▼────┐
+  L2 hosts          │ BrowserHost (local Y.Doc)  │  ServerHost        │
+                    │  LOCAL_ORIGIN              │  agentOrigin(run)  │
+                    │                            │  + changesets      │
+                    └──────────────┬─────────────┴─────────┬──────────┘
+                                   │                       │
+                    ┌──────────────▼───────────────────────▼──────────┐
+  L1 commands       │ packages/commands — THE capability registry      │
+                    │ id · zod input · output · role · effects ·       │
+                    │ undo policy · description · examples · handler   │
+                    └──────────────┬───────────────────────┬──────────┘
+                                   │                       │
+                    ┌──────────────▼──────────┐ ┌──────────▼──────────┐
+  L0 model/services │ slide-model (Yjs)       │ │ server services      │
+                    │ shared (types + zod)    │ │ decks, pptx, media,  │
+                    │ animation compiler      │ │ share, render worker │
+                    └─────────────────────────┘ └─────────────────────┘
+```
+
+### 4.1 The rule that makes parity structural
+
+**Every user-visible mutation goes through a command.** The editor stops
+calling slide-model mutations and web-only helpers directly; it dispatches
+commands. An agent gets the same registry. When the UI and the agent can
+only change state through one door, "the agent can do what the user can"
+is true by construction. The remaining job is to make sure no second door
+appears, and §9 enforces that.
+
+This goes beyond the "state = Yjs only" invariant: the rule becomes
+"state = Yjs, **written only through commands**". Record it as an ADR
+(§11).
+
+### 4.2 `packages/commands`: the capability registry
+
+A new headless package. It depends on slide-model, shared, animation and
+zod, and **never** on React, Pixi or the DOM.
+
+```ts
+interface CommandDef<I, O> {
+  id: string // 'object.duplicate', 'text.setStyle', 'deck.exportPptx'
+  domain: Domain // deck | folder | slide | object | text | table | animation |
+  // guide | media | component | token | share | style | query | editor
+  title: string // human label (also the UI menu label source where it fits)
+  description: string // written for a model: when to use, what it does NOT do
+  input: z.ZodType<I> // validated at every host boundary
+  output: z.ZodType<O>
+  role: 'viewer' | 'editor' | 'owner'
+  effects: ('doc' | 'folderDoc' | 'componentDoc' | 'server' | 'render' | 'external')[]
+  undo: 'undoable' | 'irreversible' | 'n/a' // share/invite/delete-deck/export are irreversible
+  confirm?: 'always' | 'bulk' | 'never' // human-in-the-loop policy for agents
+  hosts: ('browser' | 'server')[] // where the handler can run
+  examples: { input: I; note: string }[] // few-shot for tool descriptions + contract tests
+  handler(ctx: CommandContext, input: I): Promise<O> | O
+}
+```
+
+- **Addressing is explicit.** Commands take ids or **selectors**, never
+  "the current selection":
+
+  ```ts
+  type SlideRef = { id } | { index } | { number } | 'current' | { name }
+  type ObjectSel =
+    | { ids }
+    | {
+        slide: SlideRef
+        where: {
+          type?
+          name?
+          textContains?
+          slot?
+          role?
+          textStyleId?
+          tokenRef?
+          groupId?
+        }
+      }
+  ```
+
+  The agent learns what "this" means from `editor.context`: the calling
+  user's open editor already publishes its selection in awareness, and
+  gains an `activeSlideId` field; the server reads the awareness states of
+  that user's connections (§4.5). So "this" resolves to real ids before
+  any command runs, never inside a handler.
+
+- **Batching.** `ops.apply({ ops: CommandInvocation[], atomic: true })`
+  runs many commands in one Yjs transaction and one undo step. This is the
+  main tool the agent calls, because it saves round trips and keeps an
+  agent action to one undo step.
+- **Queries are commands too:**
+  - `query.outline` (a compact deck digest built for LLM context);
+  - `query.find`, `query.object`, `query.slide`, `query.tokens`,
+    `query.fonts`;
+  - `query.render` (a PNG of a slide, for vision);
+  - `query.check` (brand/QA report, §7.5).
+
+### 4.3 Hosts
+
+**BrowserHost** runs commands against the editor's local Y.Doc. It serves
+the human UI only, with `LOCAL_ORIGIN`, so the editor's undo keeps working
+exactly as it does today.
+
+**ServerHost** runs every agent command: MCP, the HTTP API, and anything
+else that is not a person clicking.
+
+- It opens `openDirectConnection(deckId)`, checks access first (the
+  connection skips `onAuthenticate`), and wraps each invocation or batch in
+  **one** `doc.transact(fn, agentOrigin(runId))`, so clients receive one
+  update instead of many.
+- It records a **changeset** (§6).
+- Server-only commands call the existing services directly: import,
+  export, share, media, render.
+- **Undo consequence:** an agent write reaches open editors as a remote
+  update, so Mod+Z in the editor does not undo it. Agent changes are
+  undone per run instead (`agent.revert`, §6). Making agent edits
+  Mod+Z-undoable would need the agent to execute inside the browser,
+  which is exactly the deferred in-app agent (§13).
+
+### 4.4 Agent guidance: playbooks over MCP
+
+Narrative does not run a model. What it provides is **guidance**, so any
+Claude client driving it builds decks the Woodgrove way:
+
+- **Playbooks** live as markdown in `packages/commands/playbooks/`: build
+  deck, edit, restyle, insert-and-restyle, fix slide, translate, shorten.
+  They are Narrative's own, written using the skill library as
+  inspiration (§8).
+- The MCP server serves them as **MCP prompts**, so claude.ai users get
+  them without installing anything.
+- The **`narrative` Claude Code skill** (in woodgrove-plugins) is generated
+  from the same files, so the skill and the prompts never drift apart.
+- **Style packs** are served as **MCP resources**: tokens, layouts,
+  editorial rules. The agent reads the active pack before it builds.
+- **Tool descriptions** come from the registry and are written for a
+  model: when to use the command, what it does not do, and one example.
+
+### 4.5 MCP server
+
+- `apps/server/src/mcp/` exposes the registry as MCP tools over
+  streamable HTTP at `/api/mcp`, using the official MCP TypeScript SDK.
+- **Authentication:**
+  - Claude Code uses a **personal access token** sent as a header,
+    created in Narrative's account settings. This ships first.
+  - claude.ai custom connectors need the MCP OAuth flow (authorization
+    server metadata, dynamic client registration, PKCE). It comes second,
+    in the same phase. It reuses the existing Google sign-in as the login
+    step.
+- **Tools** are generated from the registry. Each tool carries its
+  command's zod schema as JSON Schema and **annotations** from its
+  metadata:
+  - `readOnlyHint` for queries;
+  - `destructiveHint` for irreversible commands;
+  - `idempotentHint` where it holds.
+- **Confirmation** for `confirm: 'always'` commands (share, invite,
+  delete deck or folder) uses **MCP elicitation**. Claude clients that
+  cannot elicit get an error asking the user to confirm in plain words and
+  retry with `confirmed: true`.
+- **Images:** `query.render` returns slide PNGs as MCP image content, so
+  the agent can look at its own work.
+- **Presence:**
+  - The agent joins the deck's awareness as a peer named "Claude (MCP)",
+    with its own colour and selection. You watch it work live on the
+    canvas, as you would a colleague.
+  - `editor.show` sends a Hocuspocus stateless message to the calling
+    user's open editors, to jump to a slide and highlight objects ("show
+    me what you changed").
+- **Session scope:** an MCP session is bound to one user. Every command
+  runs with that user's deck role, never more.
+
+### 4.6 Render worker (a prerequisite, and three user features)
+
+- A BullMQ worker running headless Chromium loads the real web bundle in a
+  **render mode** route (`/render/:deckId?slide=`) under the **production
+  CSP**. It returns a PNG per slide, plus a PDF.
+- **Why it has to be the real renderer:** text fidelity depends on the
+  browser's text shaping and on the folder fonts. And 9 of the 10 0.9.x
+  defects appeared only under production CSP.
+- **What it unlocks:**
+  1. thumbnails for decks nobody has opened;
+  2. **PNG/PDF export**, which does not exist today;
+  3. `query.render`, which gives the agent eyes (below);
+  4. **text-fit measurement.** The page reports each text box's laid-out
+     height, so the brand checker (§7.5) measures with the real fonts, as
+     the Contoso checker does with Pillow.
+- **The agent can screenshot and see.** `query.render` is the agent's
+  eyes, returned as MCP image content that Claude looks at directly:
+  - `{slide}`: one slide at full size (1920×1080, downscaled to what the
+    model can read, about 1568 px on the long edge);
+  - `{slides | 'all', sheet: true}`: a contact sheet of many slides in one
+    image, for pacing, repetition and consistency across the deck;
+  - `{slide, region}`: a crop at full resolution, to check small type, a
+    table or an alignment detail;
+  - `{slide, compare: 'before'}`: before and after side by side, the
+    "before" being the state at the start of the current run (§6).
+  - Renders are taken from the **live** document through the sync
+    server, not from the saved snapshot, so a screenshot right after a
+    command already shows that command's effect.
+  - The build, restyle and fix playbooks require a look after every
+    visible change (§8.2). Tool descriptions say so too.
+- Playwright cannot install browsers on Ubuntu 26.04 (see CLAUDE.md), but
+  the worker image uses the official Playwright Docker base, so this only
+  affects local runs.
+
+## 5. Command catalogue: full coverage
+
+Every row of the inventory maps to a command. The **complete** mapping,
+with source locations, is Appendix A. Here is the shape by domain:
+
+| Domain    | Commands (abridged; `*` marks new capabilities, not just extraction)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| deck      | `list`, `get`, `create`, `rename`, `delete`, `moveToFolder` (+ token rebinding\*), `duplicate`\*, `importPptx`, `insertFrom` (pptx **or** another Narrative deck, at N)\*, `exportPptx`, `exportPdf`\*, `exportPng`\*, `refreshThumbnail`\*, `activeEditors`                                                                                                                                                                                                                                                                                                                                    |
+| folder    | `list`, `create`, `rename`, `delete`, `moveDecks`; `fonts.list/upload/delete`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| token     | `color.list/add/update/delete`, `textStyle.list/add/update/delete`, `usages`, `seedDefaults`\*, `delete` with replace-or-detach\*                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| slide     | `add` (optionally from a layout\*), `duplicate`, `delete`, `move`, `moveBlock`, `indent`, `collapse`, `skip`, `rename`, `setTransition`, `setBackground`, `copyTo` (same or another deck, at N; replaces the clipboard and keeps name, notes, indent\*), `notes.get/set` (markdown)\*, `applyLayout`\*                                                                                                                                                                                                                                                                                          |
+| object    | `create` (per type, with defaults), `delete` (also deletes its animations\*), `update` (validated patch), `rename` (unique per slide), `lock`, `duplicate` (group remap\*), `copyTo`, `move`/`nudge` (with `imageRect`), `resize`, `rotate`, `flip`, `align`, `alignToSlide`, `distribute`, `layer` (front, back, forward, backward, toIndex), `group`, `ungroup`, `mask.apply/remove`, `crop.set/reset`, `path.create/fromShape/setAnchors`, `line.setEndpoints`, `fill.solid/token/unlinkToken/gradient/image`, `stroke.set`, `effects.shadow/blur`, `hyperlink.set/clear`, `slideNumber.set` |
+| text      | `set` (plain, markdown subset, or delta), `replace` (find/replace across slide or deck\*), `formatRange`, `clearFormat`, `setBoxTypography`, `list.toggle/indent/outdent/setGlyph/setFormat/setStart`, `style.apply/detach/reset`, `style.updateFromObject`, `style.createFromObject`                                                                                                                                                                                                                                                                                                           |
+| table     | `insert`, `row.insert/delete`, `col.insert/delete`, `setSize` (rows × cols), `resizeTrack`, `merge`, `split`, `cell.setText`\*, `style.cell/range/table`, `border.preset/segment`                                                                                                                                                                                                                                                                                                                                                                                                               |
+| animation | `add` (with defaults), `update`, `remove`, `reorder`, `retarget`\*, `setMoveTarget`, `videoTiming`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| guide     | `list`, `add`, `update`, `remove`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| media     | `upload` (bytes or URL, with SSRF guard), `status`, `url`, `delete`; `image.insert` (native size, fit into rect, or into a slot)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| component | `list`, `promote` (keeps rich text\*), `stamp` (keeps rich text and animations\*), `rename`, `delete`, `master.*` (the object/text commands pointed at a component doc)                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| share     | `permissions.list/invite/setRole/revoke`, `invites.list/cancel`, `links.list/create/revoke`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| style     | `pack.list/get/import/validate`, `deck.applyPack`, `slide.relayout`, `slides.restyle`, `check`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| query     | `outline`, `find`, `object`, `slide`, `tokens`, `fonts`, `render`, `check`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| editor    | `context` (the user's active slide and selection, from awareness)\*, `show` (point the user's open editor at slides/objects)\*, `present.link` (`?slide=N`\*)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+**Excluded from the agent surface, on purpose and in writing.** These live
+in `packages/commands/src/parity/allowlist.ts`, each with a reason:
+
+- zoom, pan, stage background, rulers toggle, active tool, group isolation;
+- cheatsheet, FPS overlay;
+- present-mode navigation, fullscreen, and the presenter window: human
+  runtime, not document state. The agent gets `present.link`.
+
+The allowlist is the only place a capability can be left out, and adding
+to it is a reviewed change (§9).
+
+## 6. Agent changes: preview, undo, audit
+
+**Decision (2026-09-26): the agent applies changes directly by default**,
+for every kind of run, and relies on per-run revert. Propose mode is an
+opt-in flag on `ops.apply` and the style commands, for anyone who wants
+to review first.
+
+A **run** is one MCP session's work on one deck, split into a new run when
+the agent calls `agent.startRun` (the playbooks do this per user request)
+or after 10 minutes of inactivity.
+
+- **Direct (default).** Commands apply live.
+  - Every change is recorded in the run's changeset. `agent.revert` undoes
+    a whole run or its last N ops, while the document is loaded
+    (`unloadImmediately: false` keeps it loaded while anyone is
+    connected). It uses a server-side `Y.UndoManager` scoped to
+    `agentOrigin(runId)`, so a revert removes only the agent's changes
+    and keeps edits people made in the meantime.
+  - The editor gets one small piece of UI: an **Agent activity** popover
+    listing recent runs on this deck (what, when, how many ops) with a
+    **Revert** button. So a human can undo an agent without going back to
+    Claude.
+- **Propose (opt-in).** Review before anything touches the live deck.
+  1. Fork the live document: a new Y.Doc seeded with
+     `encodeStateAsUpdate(live)`.
+  2. Run the commands on the fork and render before/after thumbnails.
+  3. Return the per-slide before/after renders to the agent, which shows
+     them to the user in the Claude conversation.
+  4. **Apply** sends
+     `encodeStateAsUpdate(fork, stateVectorAtFork)` to the live document
+     with the agent origin, via `agent.applyProposal`. Because it is a
+     CRDT delta, concurrent human edits made in the meantime survive.
+
+  `.claude/agents/ai-integration.md` still says "never mutate the Y.Doc
+  without user confirmation". That principle is superseded by the
+  direct-by-default decision; the brief is updated in A0 (along with its
+  `model: sonnet`, which contradicts CLAUDE.md).
+
+Irreversible commands (`share.*`, `deck.delete`, `folder.delete`,
+invite emails) are the exception to direct mode: they always ask for
+confirmation (`confirm: 'always'` in the registry), through MCP
+elicitation (§4.5).
+
+**Changesets and audit.** A new table `agent_runs` records the run id, the
+user, the surface (MCP or API), the client name the MCP session reported,
+the user's request as the agent stated it in `agent.startRun`, the status,
+and the style pack. A second table `agent_ops`
+records the run id, a sequence number, the command id, the input, the
+result or error, and the time.
+
+This gives:
+
+- revert while the doc is loaded;
+- replay: re-running the recorded ops on a fork is deterministic, because
+  commands take explicit ids;
+- an audit trail of what agents did to which deck.
+
+Durable revert after the doc unloads needs version history (M18). It is
+out of scope here and noted as a known limit.
+
+## 7. Style packs
+
+### 7.1 Format
+
+A style pack is JSON validated by zod, stored per folder. In Narrative a
+folder is the natural brand or client boundary: it already owns tokens,
+fonts and components. The schema is the one proposed by the survey,
+condensed here:
+
+- `tokens`:
+  - colours and colour roles (for example Contoso allows only
+    `{dark_blue, white}` as text colours);
+  - theme slots;
+  - **variants** (Fabrikam light/dark, Contoso white/nh/dc, Woodgrove dark/light × one
+    of 8 accents);
+  - chart palette.
+- `fonts`: the role (`head`, `text`, `text_bold`, `display`), weights,
+  axes (Fabrikam's single variable font has `wdth` 100/105/130), fallbacks,
+  `synthesizeBold: false`.
+- `textStyles`: map to folder text-style tokens, **plus per-level list
+  styles** (bullet glyph, bullet colour, bullet scale, indent, hanging
+  indent, space before).
+- `grid`: margins, content band, columns, halves, gutter, the tops of the
+  title / content / footer areas. These map to deck guides.
+- `furniture`: the slide chrome the pack draws, not the author: logo
+  placements per layout, a footer template with fields
+  (`Page {page} | Creation date: {created} | …`), page number,
+  classification marking, rules, and decoration (Adatum spheres and
+  rings).
+- `layouts[]`: `id`, `family`, `variant`, `tone`, `purpose`,
+  `needsPicture`, `background`, and `regions[]`. Each region has a `slot`,
+  a `role`, a `rect` as a fraction of the canvas, a `textStyle`, `align`,
+  `anchor`, `autofit` (`grow-down` / `fixed` / `shrink`), `insets`,
+  `aspect`, `maxLines`, `maxChars`, `required` and `fillOrder`.
+- `components[]`: recipes such as a table style, stat cards, a band, an
+  agenda row, cards, glass cards, the Tailspin flywheel. They compile to
+  ordinary objects.
+- `imagery`: a pool reference plus rights, slot aspect ratios, minimum
+  dpi, default focus, whether scrims are allowed, an AI-label rule, and
+  icon style.
+- `editorial`:
+  - title mode: `action-title` for Fabrikam, Contoso and Adatum; `label +
+message-subtitle` for Tailspin;
+  - title word limits and "no trailing period";
+  - no caps, no italics;
+  - bullet glyphs;
+  - an accent budget (Fabrikam red once per slide);
+  - eyebrow policy;
+  - minimum body size;
+  - typography: quote style, en dash, em dash, NBSP before units, no emoji;
+  - banned phrases, register (du/Sie), languages, the bilingual marker
+    (`{de|en}`).
+- `qa`: fit check with real fonts, partial-overlap errors, stay inside the
+  grid, text-colour whitelist, one variant per deck, required furniture,
+  and placeholder sentinels (`I/XX`, `xxxx-xx`, `Bitte Fußzeile
+einfügen`).
+- `archetypeMap`: maps a narrative archetype to layout ids in preference
+  order.
+
+### 7.2 Slide-model changes a pack needs
+
+These land before the importers, and every one of them goes through the
+command layer and the parity check.
+
+1. **Layouts and slots.**
+   - A slide gets `layout?: {packId, layoutId, variant}`.
+   - An object gets `slot?: string` and `role?: 'title' | 'subtitle' |
+'body' | … | 'furniture'`.
+   - This is the equivalent of Contoso's `data-contoso-slot`. It turns restyle and
+     re-layout into lookups instead of guesses, and PPTX export can then
+     fill a real master's placeholders when the pack has one.
+2. **Autofit semantics on text boxes:** `grow-down` / `fixed` / `shrink`,
+   matching `spAutoFit`.
+3. **Per-level list styles on text-style tokens.** Today list attributes
+   live only on paragraph runs.
+4. **Furniture objects:** locked, `role: 'furniture'`, regenerated by
+   `style.deck.applyPack` and never hand-edited. The page number reuses
+   `isSlideNumber`.
+5. **Font stretch** (a `wdth` axis) on text, for Fabrikam Type.
+6. **Deck-level variant** (Contoso's rule of one variant per deck), with
+   `style.deck.setVariant`.
+7. **Schema debt found by the survey:** add `textStyleId` to `TextObject`.
+   It is written today through a type cast.
+
+### 7.3 Where packs come from, and who owns them
+
+**Decision (2026-09-26): Narrative owns its packs.** The skill library
+are inspiration: the goal is that the same visual works in Narrative, not
+that Narrative mirrors the skills. So:
+
+- The importers below are **one-time bootstrap tools** that produce a
+  first version of each pack from the skill material. After that, the
+  pack is edited in Narrative and nowhere else. There is no sync back to
+  the brain and no "stale brain commit" check. The pack records where it
+  was bootstrapped from (brain commit `29f9367`, file paths) as
+  provenance only.
+- Packs are **editable in Narrative**: a "Style pack" tab in Folder
+  Settings, backed by `style.pack.*` CRUD commands. That means packs are
+  covered by the parity machinery like every other feature, so an agent
+  can edit a pack too ("make the Contoso accent a touch darker", "add a
+  three-column layout").
+- The long-term way Woodgrove builds decks is Narrative's own playbooks and
+  the `narrative` skill (§4.4, §4.5), not the per-client brain skills.
+
+| Pack          | Bootstrap from                                                                                                             | Visual reference to match                                                    |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Contoso 2026       | `layouts.json` → pack, almost field for field; the Contoso deck spec informs Narrative's own DeckSpec                           | `VW_Master_2026_{DE,EN}.pptx`                                                |
+| Fabrikam          | new PPTX master/layout reader (extends the M28 parser; ADR 0009 "one translation both directions")                         | `Audi_Template.pptx`, **not** the HTML skill (they disagree; see the survey) |
+| Tailspin | the same master reader, plus the diagram builders as components                                                            | `tailspinr-master.pptx`                                                          |
+| Woodgrove house   | hand-authored from `test-presentation.html`, **not** `references/template.html` (v1 contradicts SKILL.md v1.8); vw/vh → px | `test-presentation.html` / SKILL.md v1.8                                     |
+| Adatum        | extends Woodgrove: lime accent, decoration, chart palette                                                                      | `adatum-deck-design.md`                                                      |
+
+**The PPTX master reader is a real deliverable.** It also fixes "masters
+and layouts are flattened on import" for ordinary PPTX imports: slides
+imported from a branded deck keep `layout` and `slot`.
+
+### 7.4 Contradictions resolved at bootstrap
+
+The skill material contradicts itself in places. Each bootstrap makes one
+explicit call, recorded in the pack's provenance notes:
+
+- **Fabrikam:** the PPTX master wins. The HTML skill's values become a
+  separate `web` variant, if anyone wants it.
+- **Woodgrove:** SKILL.md v1.8 and `test-presentation.html` win.
+- **Contoso:** `layouts.json` wins over the off-by-one level comment in
+  `vw_deck.py`.
+- **Tailspin:** the master theme wins over the dashboard-builder ramp
+  (`#002B46`, not `#003D7A`).
+- **Title philosophy:** this is a per-pack setting (`editorial.titleMode`),
+  not a global one.
+
+### 7.5 Brand/QA checker (`query.check`)
+
+This ports `vw check_deck.py` into a pack-driven checker. It reports
+errors and warnings per slide and per object:
+
+- **Fit:** the rendered height from the render worker is compared with
+  the region. A `grow-down` box may grow until the next region or the
+  footer, with half a line of slack.
+- **Collisions:** partial overlap is an error; full containment is fine.
+- **Grid, variant and colours:**
+  - everything stays inside the grid;
+  - one variant per deck;
+  - text colours come from the whitelist.
+- **Content rules:**
+  - required furniture is present;
+  - placeholder sentinels are flagged;
+  - editorial rules are enforced (caps, italics, bullet glyphs, a title
+    ending in a period, the accent budget, typography);
+  - a missing picture on a picture layout is flagged;
+  - `[SOURCE NEEDED]` claims block the deck when the proof standard is
+    Rigorous.
+
+If a font cannot be loaded, the checker reports **"fit not verified"** and
+treats it as a failure, as the Contoso checker does.
+
+### 7.6 Fonts, masters and rights
+
+**Decision (2026-09-26): Narrative may host the brand fonts** (Contoso Head/Text
+Office, Fabrikam Type, Northwind Sans ST Pro) as folder fonts.
+
+- Brand fonts are uploaded as **folder fonts** of the client's folder.
+  They are scoped to the folder and are never served to anonymous
+  share-link viewers.
+- **Gap to fix in A4:** an editor on a shared deck cannot load the
+  folder's fonts today (folder routes are owner-only), so a collaborator
+  would see fallback faces. Deck-scoped font access fixes it.
+- **Contoso Head/Text Office** are not in the brain repo (the skill
+  deliberately links rather than ships them); they have to be uploaded
+  from Woodgrove's own font files.
+- **Fabrikam Type:** the variable font is uploaded whole, not the latin subset
+  the HTML skill embeds, so German and other diacritics outside the subset
+  render correctly.
+- The render worker loads folder fonts exactly as the editor does, so fit
+  checks measure with the real faces.
+- **Client masters** (`.pptx`) are client IP. The derived JSON (geometry,
+  tokens) lives in the pack. The binary master is stored as a private
+  folder asset, used only for "export via master".
+- **Image pools** (Fabrikam: 291 files; Contoso: 72 press images) stay on Drive. A
+  pack references them, and an ingestion step copies selected images into
+  media along with their rights metadata.
+- **Contoso AI labelling:** since 2026-08-02, AI-generated or AI-modified
+  imagery must be labelled. The Contoso pack carries the rule, and assets carry
+  an `aiGenerated` provenance flag.
+
+## 8. Building decks and restyling
+
+### 8.1 Deck spec (the agent's build format)
+
+This generalises the Contoso spec:
+
+```ts
+interface DeckSpec {
+  pack: { id: string; variant: string }
+  lang: string[] // bilingual via {de|en}
+  meta: { title: string; classification?: string; footer?: Record<string, string> }
+  slides: {
+    layout: string // pack layout id
+    archetype?: string // narrative archetype (provenance)
+    message?: string // the one-line job of the slide (QA + notes)
+    slots: Record<string, Paragraph[]> // {text, level, marks?}
+    pictures?: Record<string, { asset: AssetRef; focus?: Focus }>
+    drawn?: Primitive[] // box | text | rule | arrow | number, in pack grid units
+    notes?: string // markdown
+    provenance?: { claim: 'sourced' | 'source-needed' | 'illustrative'; source?: string }[]
+  }[]
+}
+```
+
+`style.buildFromSpec` turns a spec into objects in one transaction:
+
+- regions become rects;
+- text styles become token refs;
+- furniture becomes locked objects;
+- every object gets its `slot` and `layout`.
+
+Because a spec is data, the agent can revise it and rebuild. The spec is
+stored on the run, so a deck can be rebuilt with another pack.
+
+### 8.2 Build playbook (Narrative's own, inspired by the skill library)
+
+1. **Narrative.** Modelled on `presentation-narrative-standard`: scope (mode,
+   depth, ownership, tone, room, decision, slide count), then three story
+   directions, then a per-slide handoff table. For client decks the brain's
+   voice-unknown protocol applies: ask for samples, never invent a voice.
+2. **Map.** Each row becomes a DeckSpec slide: the archetype goes through
+   `archetypeMap` to a layout; title and body go into slots; claim type
+   goes into provenance.
+3. **Build:** `style.buildFromSpec`, applied directly (or into a fork
+   when the user switched propose mode on).
+4. **Check:** `query.check`. Fix the errors: edit, group or split before
+   shrinking type, as the Contoso and Woodgrove composition rules say.
+5. **Look:** `query.render` on each slide at full size, then a contact
+   sheet of the whole deck for pacing and repetition (Contoso's two-pass
+   review). Whatever looks wrong goes back to step 4, and the agent looks
+   again after fixing it. For small edits the playbooks require at least
+   one screenshot of the changed slide before the agent reports done.
+6. **Report.** Summarise what was built and what `query.check` still
+   flags. The whole build is one changeset, revertible in one step.
+
+### 8.3 Insert another deck after slide N and restyle it
+
+This is `deck.insertFrom({source: deckId | pptxUpload, range?, at})`
+followed by `style.slides.restyle({slides, pack, variant, mode})`:
+
+- **Deterministic part:**
+  - remap colours to token refs by role;
+  - map fonts to text styles;
+  - regenerate furniture;
+  - replace the variant.
+- **Judgment part**, for slides without `slot` metadata:
+  - the agent classifies objects into roles (title, body, picture, and so
+    on) and picks a layout through `archetypeMap`;
+  - `slide.applyLayout` moves the classified objects into regions;
+  - `query.check` verifies the result.
+- Slides that came in with slot metadata (built by a pack, or imported
+  through the master reader) skip the judgment part entirely.
+
+## 9. Keeping parity from drifting
+
+There are three layers. The mechanical ones fail the build; the agent
+catches what they cannot.
+
+### 9.1 Mechanical guards (run by `pnpm -r test` + `pnpm lint`)
+
+1. **One door, enforced by lint.**
+   - An ESLint `no-restricted-imports` rule forbids `apps/web/src/{ui,
+components,editor,pages}` from importing slide-model mutations,
+     `richText` writers, `tableMutations`, `animationMutations`,
+     `deckGuides` writers, or `Y.Doc.transact`.
+   - The UI must use `useCommand()`.
+   - Read-side imports stay allowed.
+2. **Parity test** (`packages/commands/src/parity/parity.test.ts`):
+   - every exported writer in slide-model is referenced by at least one
+     command handler, or appears in the allowlist with a reason;
+   - every Fastify route (enumerated from the server's route table) is
+     backed by a command or allowlisted;
+   - every shortcut in `useShortcuts.ts` and every context-menu or toolbar
+     action id dispatches a command id that exists;
+   - every command has a description of at least 40 characters, at least
+     one example, and a contract test.
+3. **Schema coverage test.** Every property of every object type in
+   `shared/slide.ts` exists in its zod schema (a compile-time exhaustive
+   check through `z.infer` equality), so a new property cannot be missing
+   from agent input.
+4. **Contract tests per command.** Each example runs against a fixture
+   doc, and the resulting `listSlides()` is compared **structurally** (no
+   CRDT byte equality, per CLAUDE.md). The property-based convergence
+   suite gains agent ops: batch apply, concurrent human and agent edits,
+   and propose-then-apply over concurrent edits.
+5. **Generated manifest.** `pnpm capabilities` writes
+   `docs/capabilities.md` and `packages/commands/capabilities.json` (ids,
+   roles, effects, descriptions). Both are committed, and a test fails if
+   the committed copy is stale. So every capability change shows up in the
+   diff that Petr reads.
+
+### 9.2 The `agent-parity` Claude agent
+
+A new file, `.claude/agents/agent-parity.md`, set to `model: opus`. It is
+built like `narrative-docs`: a sweep with a ledger at the end, and it never
+commits. It is invoked after any feature work, and in the same breath as
+the docs sweep.
+
+1. **Ground itself:** `git diff` / `git log`, and the files that changed.
+2. **Classify every change:**
+   - new or changed user capability;
+   - new object property;
+   - new route;
+   - new shortcut or menu action;
+   - a change to the style-pack schema or a pack.
+3. **For each change, check that it exists and is good:**
+   - the command, with a model-quality description;
+   - the zod schema;
+   - the examples;
+   - the contract test;
+   - an eval scenario (§9.3);
+   - the manifest regenerated;
+   - style-pack mapping if it affects appearance (for example a new text
+     property must be representable in `textStyles`);
+   - PPTX round-trip, if relevant.
+4. **Run the guards:** the parity test, the schema test, the command
+   contract tests, and `pnpm capabilities --check`.
+5. **Return a ledger:** covered, missing (with the exact file:line to add
+   it), and deliberately allowlisted (with the reason). It may **write**
+   missing commands, schemas and tests when asked. By default it only
+   reports.
+
+Two supporting edits:
+
+- **CLAUDE.md** gets a row in the auto-run table: any change under
+  `apps/web/src/{ui,components}`, `packages/slide-model/src`,
+  `apps/server/src/routes`, or `packages/commands` → run the parity guards
+  and invoke `agent-parity`. You edit CLAUDE.md yourself, or ask me to.
+  The docs agent must not.
+- **`narrative-docs`** gets one line: when a capability changed, check
+  that `docs/capabilities.md` was regenerated.
+
+### 9.3 Agent eval suite (`pnpm agent:eval`)
+
+Scenario prompts, each with a starting fixture and a **deterministic
+grader over the resulting document** (structural checks, not LLM
+judgment), for example:
+
+- "duplicate slide 3 and change its title to X";
+- "make every heading on this slide Inter Bold";
+- "export to PDF";
+- "insert deck B after slide 4 and restyle it to Contoso nh";
+- "build a 10-slide Fabrikam deck from this brief".
+
+For the last one the grader runs `query.check`: zero errors, all required
+slots filled.
+
+How they run: `pnpm agent:eval` starts the local stack, creates a test
+token, and drives each scenario through **headless Claude Code**
+(`claude -p` with the Narrative MCP server configured), then grades the
+resulting document. That exercises the real MCP surface and the real
+playbooks, on the developer's own Claude subscription; Narrative still
+needs no API key.
+
+- They run on demand: before a release, and after any change to
+  playbooks, prompts or tool descriptions.
+- A small smoke subset replays recorded MCP tool-call transcripts
+  against the commands in `pnpm -r test`, with no model involved.
+- Every new command adds at least one scenario. The parity agent checks
+  this.
+
+## 10. Phases
+
+Each phase ends green on the CLAUDE.md auto-run table and is a separately
+releasable version.
+
+| Phase                             | Deliverable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Notes                                                                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A0 Foundations**                | ADRs (§11). zod schemas for every type in `shared`. `packages/commands` skeleton with `ops.apply`, BrowserHost, `useCommand`. `agentOrigin(runId)`. Fix the 5 origin-dropping nested transactions and the 2 writes caused by viewing. Add `textStyleId` to the schema. Fix the bugs the survey found: `duplicateObject` keeps `groupId`; `imageRect` is not moved by nudge, Inspector X/Y, align or distribute; the "Send back"/"Send backward" labels are swapped; merged-cell pointers are not shifted on row/col insert or delete; `stamp`/`promote` flatten rich text; videos in an appended .pptx are never transcoded. Wrap every existing headless slide-model mutation as a command. Parity test, allowlist and manifest wired up from day one (with a known-missing list that shrinks). `agent-parity` agent brief; repurpose the `ai-integration` brief to own the MCP surface and playbooks (and set it to Opus). | No user-visible agent yet.                                                                                                                         |
+| **A1 Server host, identity, MCP** | Personal access tokens: hashed, scoped, with expiry, created in account settings, accepted in `authPreHandler`, `onAuthenticate` and the tus upload handler. ServerHost with single-transaction wrapping. Runs and changesets (`agent_runs` / `agent_ops`), `agent.revert`, the Agent activity popover. `activeSlideId` in awareness; `editor.context`, `editor.show`; the agent as an awareness peer. `POST /api/commands` (batch). Rate limit (`@fastify/rate-limit`). **`/api/mcp`**: tools from the registry with annotations, elicitation for confirmations, the first playbooks as MCP prompts, and the `narrative` Claude Code skill in woodgrove-plugins. Then MCP OAuth for claude.ai connectors.                                                                                                                                                                                                                        | MCP ships here, per the 2026-09-26 decision: Claude Code can drive Narrative with every command A0 wrapped. Security review (`security-reviewer`). |
+| **A2 Extraction**                 | Move every web-only item in Appendix B into commands and switch the UI over. Turn the lint rule on per directory as each is migrated. Move **token seeding and text-style propagation to the server**: a Hocuspocus extension, or a command run on token update, so propagation reaches decks nobody has open. Add the notes API, `deck.duplicate`, `slide.copyTo` / `object.copyTo` (the clipboard becomes a thin UI over them), `text.set` with formatting, and `table.cell.setText`.                                                                                                                                                                                                                                                                                                                                                                                                                                      | The biggest phase. Each extracted command appears in MCP automatically. Done when the known-missing list is empty.                                 |
+| **A3 Render worker**              | Headless Chromium worker; `/render` route under the production CSP, reading the live document. Thumbnails for unopened decks. `deck.exportPdf` and `deck.exportPng`. `query.render` with single slide, contact sheet, region crop and before/after. Text-fit measurement API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | The agent can see what it built. Also three user-facing features apart from agents.                                                                |
+| **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2. `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. PPTX master/layout reader (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Woodgrove and Adatum packs; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Visual target: the decks Woodgrove builds today.                                                                                                       |
+| **A5 Deck builder + restyle**     | Deck spec and `style.buildFromSpec`. The build playbook, modelled on `presentation-narrative-standard`, with the render-and-look loop. `deck.insertFrom` + `style.slides.restyle`. The full eval suite.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | The "whole deck from a brief" goal.                                                                                                                |
+
+## 11. ADRs to write
+
+- **0010:** the command layer is the only writer (state = Yjs, written
+  only through commands). The registry is the capability source of truth.
+- **0011:** agent execution over MCP: the server host, origins,
+  single-transaction server writes, runs and per-run revert,
+  direct-by-default with opt-in propose-mode fork-and-delta, awareness
+  presence and `editor.context`.
+- **0012:** style packs: format, Narrative-owned packs bootstrapped from
+  the skill library, slide layouts and slots, furniture.
+- **0013:** the render worker as the one server-side renderer
+  (thumbnails, PDF/PNG, fit measurement), running under the production CSP.
+- **Later, a known risk:** reorder by delete-plus-clone loses concurrent
+  edits. A fractional-index order field fixes it but changes the model. Not
+  a prerequisite; revisit if agent-heavy use shows lost edits.
+
+## 12. Decisions (Petr, 2026-09-26)
+
+1. **Fonts:** yes. Narrative may host Contoso Head/Text Office, Fabrikam Type and
+   Northwind Sans ST Pro as folder fonts (§7.6).
+2. **Autonomy:** the agent applies changes directly, for every kind of
+   run. Propose mode stays as an opt-in (§6). Irreversible commands still
+   ask.
+3. **MCP:** now, and it is the only agent surface. It ships in A1, right
+   after the foundations, and grows with every command A2 extracts (§10).
+4. **Style packs:** the skill library are inspiration only. The goal is
+   that the visual Woodgrove uses today works in Narrative too; after
+   bootstrap, packs are owned and edited in Narrative, and Narrative's own
+   playbooks and skill become how decks are built (§7.3).
+5. **Model cost:** none for Narrative. The model runs in the user's
+   Claude client (Claude Code or claude.ai), which the user already pays
+   for.
+6. **Numbering:** this plan replaces the AI milestones in BUILD_PLAN, with
+   phases A0–A5.
+7. **In-app agent:** not needed now; MCP is enough (§13).
+8. **Screenshots:** the agent screenshots slides and looks at them
+   (`query.render`, §4.6), and the playbooks make it look after every
+   visible change.
+
+## 13. Deferred: an in-app agent
+
+A chat panel inside the editor, running the model on Narrative's server,
+was considered and deferred on 2026-09-26. Recorded here so it is not
+re-derived from scratch.
+
+**What it would add over MCP:**
+
+- people without a Claude client could use an agent;
+- "select something and ask" without naming it;
+- agent steps undoable with Mod+Z, because the agent would execute in the
+  browser (BrowserHost with `agentOrigin`, tracked by the editor's
+  UndoManager with `stopCapturing()` between agent actions).
+
+**What it would cost:**
+
+- an Anthropic API key on the server, and a bill: roughly $0.02–0.10 per
+  small edit and $2–8 per whole deck on `claude-opus-5`, an unmeasured
+  estimate;
+- an agent runtime in `apps/server/src/agent/` on the TypeScript SDK Tool
+  Runner, with streaming over SSE, prompt caching, tool search over the
+  registry, BullMQ for long runs, cost logging and a daily cap;
+- the chat panel UI.
+
+**Why it is cheap to add later:** it would reuse the registry, the
+playbooks, the render worker and the style packs unchanged. Nothing in
+A0–A5 has to be built differently to keep the door open.
+
+---
+
+## Appendix A: inventory → command mapping
+
+Source: capability inventory, 2026-09-26, sections B1–B14. Layer codes
+say where the logic lives today:
+
+- **SM:** a slide-model mutation, already headless.
+- **SRV:** an HTTP route.
+- **WEB:** logic in React/web code; must be extracted.
+- **REND:** needs the renderer or a browser.
+
+**Slides (B1)**
+
+| Capability                     | Today                | Command                                              |
+| ------------------------------ | -------------------- | ---------------------------------------------------- |
+| add slide                      | SM `addSlide`        | `slide.add`                                          |
+| duplicate slide(s)             | SM + WEB ordering    | `slide.duplicate` (multi, ordered)                   |
+| delete slide(s)                | SM + WEB next-active | `slide.delete` (returns suggested next)              |
+| reorder / move block           | SM + WEB drag rules  | `slide.move`, `slide.moveBlock` (depth rules inside) |
+| indent / outdent               | SM + WEB depth cap   | `slide.indent` (cap inside)                          |
+| collapse                       | SM                   | `slide.collapse`                                     |
+| skip                           | SM                   | `slide.skip`                                         |
+| rename                         | SM                   | `slide.rename`                                       |
+| transition                     | SM                   | `slide.setTransition` (+ clearing `direction`)       |
+| background                     | SM + WEB defaults    | `slide.setBackground` (defaults inside)              |
+| copy/paste slides, cross-deck  | WEB clipboard        | `slide.copyTo` (keeps name, notes, indent, skip)     |
+| speaker notes                  | WEB Tiptap           | `slide.notes.get/set` (markdown)                     |
+| read slides / number / observe | SM                   | `query.slide`, `query.outline`                       |
+| insert .pptx at N              | SRV                  | `deck.insertFrom`                                    |
+
+**Objects (B2)**
+
+| Capability                    | Today                   | Command                                                      |
+| ----------------------------- | ----------------------- | ------------------------------------------------------------ |
+| create shape / text           | SM + WEB defaults       | `object.create` (per-type defaults, folder Primary colour)   |
+| pen path                      | WEB                     | `object.path.create` (anchors in, bbox normalised)           |
+| shape → path                  | WEB                     | `object.path.fromShape`                                      |
+| edit anchors / line endpoints | WEB                     | `object.path.setAnchors`, `object.line.setEndpoints`         |
+| insert table                  | SM + WEB sizing         | `table.insert`                                               |
+| insert image/video            | SRV + WEB placement     | `media.upload` + `image.insert` / `video.insert`             |
+| delete                        | SM (orphans animations) | `object.delete` (removes its animations)                     |
+| update property               | SM, unvalidated         | `object.update` (zod-validated)                              |
+| rename                        | SM + WEB uniqueness     | `object.rename`                                              |
+| lock                          | SM                      | `object.lock`                                                |
+| hide                          | not implemented         | — (becomes a command when the feature ships)                 |
+| page number                   | SM + WEB flow           | `object.slideNumber.set` (+ style/component choice as input) |
+
+**Geometry, arrangement, grouping (B3)**
+
+| Capability                    | Today            | Command                                                      |
+| ----------------------------- | ---------------- | ------------------------------------------------------------ |
+| move / nudge                  | WEB              | `object.move` (moves `imageRect` too)                        |
+| numeric X/Y/W/H, aspect       | SM + WEB ratio   | `object.resize` / `object.update`                            |
+| resize with handles           | WEB              | `object.resize` (anchor, aspect, group resize)               |
+| rotate                        | WEB + SM         | `object.rotate` (degrees in, radians stored)                 |
+| flip                          | WEB rule         | `object.flip`                                                |
+| align to each other           | SM               | `object.align`                                               |
+| align to slide                | WEB              | `object.alignToSlide`                                        |
+| distribute                    | SM               | `object.distribute`                                          |
+| layer order                   | SM               | `object.layer` (front, back, forward, backward, toIndex)     |
+| group / ungroup               | SM               | `object.group` / `object.ungroup`                            |
+| duplicate / Alt-drag          | SM (groupId bug) | `object.duplicate` (group remap, optional animations)        |
+| mask                          | SM               | `object.mask.apply` / `object.mask.remove`                   |
+| crop                          | WEB              | `object.crop.set` / `object.crop.reset`                      |
+| snapping                      | WEB (pure)       | used inside `object.move` and `object.resize` (`snap: true`) |
+| guides                        | SM               | `guide.*`                                                    |
+| zoom / pan / stage background | UI               | allowlisted (view state)                                     |
+
+**Fills, strokes, effects, links (B4)**
+
+| Capability             | Today             | Command                                                                |
+| ---------------------- | ----------------- | ---------------------------------------------------------------------- |
+| solid fill / no colour | SM + WEB rule     | `object.fill.solid` (`none` → alpha 0)                                 |
+| token link / unlink    | SM + WEB resolve  | `object.fill.token` / `object.fill.unlinkToken`                        |
+| gradients              | SM + WEB defaults | `object.fill.gradient` (+ radial centre and radius)                    |
+| image fill             | SRV + SM          | `object.fill.image`                                                    |
+| stroke                 | SM + WEB default  | `object.stroke.set`                                                    |
+| line caps              | SM                | `object.stroke.set` (`startCap` / `endCap`)                            |
+| corner radius          | SM + WEB clamp    | `object.update` (clamped in schema)                                    |
+| opacity                | SM                | `object.update`                                                        |
+| shadow / blur          | SM + WEB defaults | `object.effects.shadow` / `object.effects.blur`                        |
+| hyperlink              | SM                | `object.hyperlink.set` / `object.hyperlink.clear` (sanitised on write) |
+
+**Text (B5)**
+
+| Capability                         | Today              | Command                                                            |
+| ---------------------------------- | ------------------ | ------------------------------------------------------------------ |
+| type or replace text               | SM                 | `text.set`, `text.replace`                                         |
+| inline format on a range           | SM + WEB targeting | `text.formatRange`, `text.clearFormat` (ranges by offset or match) |
+| box typography                     | SM + WEB routing   | `text.setBoxTypography`                                            |
+| lists                              | SM + WEB rules     | `text.list.*`                                                      |
+| apply / detach / reset preset      | WEB                | `text.style.apply` / `detach` / `reset`                            |
+| update / create preset from object | WEB                | `text.style.updateFromObject` / `createFromObject`                 |
+| token propagation                  | WEB (critical)     | server-side propagation on `token.textStyle.update`                |
+| available fonts                    | WEB list           | `query.fonts`                                                      |
+
+**Tables (B6)**
+
+| Capability                 | Today            | Command                                        |
+| -------------------------- | ---------------- | ---------------------------------------------- |
+| rows / cols                | SM (merge bug)   | `table.row.*`, `table.col.*`, `table.setSize`  |
+| resize track               | SM + WEB         | `table.resizeTrack`                            |
+| merge / split              | SM               | `table.merge` / `table.split`                  |
+| cell text                  | SM low-level     | `table.cell.setText`                           |
+| cell / range / table style | SM + WEB routing | `table.style.cell` / `range` / `table`         |
+| borders                    | SM               | `table.border.preset` / `table.border.segment` |
+
+**Animations (B7)**
+
+| Capability    | Today             | Command                                   |
+| ------------- | ----------------- | ----------------------------------------- |
+| add step      | SM + WEB defaults | `animation.add` (defaults inside)         |
+| edit step     | SM                | `animation.update`                        |
+| reorder       | SM + WEB layout   | `animation.reorder` (+ timing from order) |
+| remove        | SM                | `animation.remove`                        |
+| retarget      | missing           | `animation.retarget`                      |
+| moveTo target | SM                | `animation.setMoveTarget`                 |
+| video timing  | SM                | `animation.videoTiming`                   |
+| preview       | REND              | `query.render` (frame sampling later)     |
+
+**Clipboard (B8):** objects → `object.copyTo`; slides → `slide.copyTo`.
+
+**Components (B9)**
+
+| Capability             | Today                      | Command                                |
+| ---------------------- | -------------------------- | -------------------------------------- |
+| promote                | SM plan + SRV + WEB + REND | `component.promote`                    |
+| stamp                  | SM                         | `component.stamp`                      |
+| edit master            | SM                         | `component.master.*`                   |
+| list / rename / delete | SRV                        | `component.list` / `rename` / `delete` |
+
+**Folder design system (B10)**
+
+| Capability    | Today                                       | Command                                             |
+| ------------- | ------------------------------------------- | --------------------------------------------------- |
+| seed defaults | WEB                                         | `token.seedDefaults` (server, on folder create)     |
+| colour tokens | WEB                                         | `token.color.*` (24 cap in schema)                  |
+| text styles   | WEB                                         | `token.textStyle.*` (+ replace-or-detach on delete) |
+| usages        | SRV (misses shadows, tables, `textStyleId`) | `token.usages` (scanner fixed)                      |
+| fonts         | SRV                                         | `folder.fonts.*`                                    |
+
+**Folders and decks (B11)**
+
+| Capability           | Today                    | Command                                                            |
+| -------------------- | ------------------------ | ------------------------------------------------------------------ |
+| folders CRUD         | SRV                      | `folder.*`                                                         |
+| decks CRUD           | SRV                      | `deck.*` (create also hydrates the document)                       |
+| move decks           | SRV (no token rebinding) | `deck.moveToFolder` (rebinds tokens)                               |
+| duplicate deck       | missing                  | `deck.duplicate`                                                   |
+| import / export pptx | SRV                      | `deck.importPptx` / `deck.exportPptx` (from live state, not saved) |
+| thumbnail            | REND                     | `deck.refreshThumbnail` (render worker)                            |
+| PDF / PNG            | missing                  | `deck.exportPdf` / `deck.exportPng`                                |
+| active editors       | SRV                      | `deck.activeEditors`                                               |
+
+**Sharing (B12):** `share.*`. Every command is marked irreversible and
+requires confirmation.
+
+**Present mode (B13):** `editor.present.link` (new `?slide=N`). Navigation,
+fullscreen and the presenter window are allowlisted as human runtime.
+
+**Media (B14):** `media.*` (`media.upload` accepts a URL, behind an SSRF
+guard).
+
+## Appendix B: web-only logic to extract (A2 checklist)
+
+1. Object creation defaults and placement: `EditorLayout`, `Toolbar`,
+   `EditorContextMenu`, `UploadDropZone`, `useDefaultObjectFill`.
+2. Path geometry: pen commit, shape → path, anchor editing, line
+   endpoints.
+3. Transforms: move and nudge with `imageRect`, resize, rotate, group
+   resize, aspect, flip, align to slide, Inspector ratio math, snapping
+   (`editor/snap.ts` is already pure).
+4. Clipboard for objects and slides: rich-text save, new ids, group remap,
+   offsets.
+5. Duplicate with group remap and optional animation copy.
+6. Text:
+   - range, box or clear routing;
+   - which paragraphs a list change hits;
+   - the Enter/Tab/Backspace list rules;
+   - apply/reset/update/create a preset;
+   - override tracking;
+   - the page-number flow;
+   - **token propagation**.
+7. Fill and background starting values: gradient stops, stop insertion,
+   token unlink, "no colour", stroke default, radius clamp, shadow and blur
+   defaults.
+8. Table logic: range/cell/defaults routing, table-wide fill, row and
+   column count loops, reading border presets, Tab adding a row, track
+   resize.
+9. Animation defaults, `layoutSteps`, turning a drag into trigger and delay
+   values, the onEnter migration (made explicit, never written on view).
+10. Slide rules: next active slide after delete, outline drag and indent
+    rules, duplicate ordering.
+11. Components: master write, thumbnail, stamp placement.
+12. Folder tokens: CRUD, seeding, migrations.
+13. Speaker notes as text or markdown.
+14. Validation: name uniqueness per slide, the 24-colour cap, the maximum
+    slide depth.
+15. Thumbnails, PNG and PDF: render worker (A3).
