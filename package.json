@@ -19,6 +19,7 @@
     "lighthouse": "pnpm --filter web build && lhci autorun --config=.lighthouserc.json",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
     "prepare": "husky",
+    "capabilities": "pnpm --filter @narrative/commands capabilities",
     "load:all": "node tests/load/runAll.mjs",
     "load:hotedit": "tsx tests/load/hotEdit.ts",
     "load:awareness": "tsx tests/load/awarenessFlood.ts",

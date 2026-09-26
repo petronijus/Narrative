@@ -466,6 +466,14 @@ export interface TextObject extends BaseSlideObject {
    */
   textTransform?: 'none' | 'uppercase' | 'lowercase' | 'capitalize'
   /**
+   * Folder text-style preset binding (M16): id of the folder text-style
+   * token this text box is linked to. When set, the inspector marks the box
+   * as "linked" to that preset and folder-token edits propagate to whichever
+   * fields aren't in `textStyleOverrides`. Paired with `textStyleOverrides`;
+   * mirrors `TableDefaults`' identical pair.
+   */
+  textStyleId?: string
+  /**
    * When this object is linked to a folder text style via `textStyleId`,
    * this list records every typography field the user has hand-tweaked
    * since applying the preset. Edits to the underlying token in folder

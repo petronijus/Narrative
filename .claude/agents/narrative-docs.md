@@ -68,6 +68,7 @@ Enumerate with `ls *.md docs/*.md docs/*/*.md` plus
 - **docs/testing-strategy.md** — what is tested and how; keep the suite counts
   and the command list honest.
 - **docs/agents.md** — architecture and agent ownership map.
+- **docs/capabilities.md** + `packages/commands/capabilities.json` — generated, never hand-edited: when a capability changed, check both were regenerated (`pnpm --filter @narrative/commands capabilities`) in the same change.
 - **docs/audits/\*.md**, **docs/plans/\*.md**, **docs/storage.md** — living topic
   docs; correct in place.
 - **Package READMEs** (`packages/animation`, `tests/load`, `tests/fixtures/pptx`,

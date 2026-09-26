@@ -1,0 +1,1334 @@
+{
+  "commands": [
+    {
+      "id": "animation.add",
+      "domain": "animation",
+      "title": "Add animation",
+      "description": "Append an animation step for an object to the end of its slide's timeline. Omitted fields take the editor defaults: trigger afterPrevious, duration 0.6 s, delay 0 s, easing \"power2.out\"; moveTo targets the slide centre (960, 540) and rotateTo turns to 180°. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle). Use animation.reorder to move the step, animation.update to change it.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "animation.remove",
+      "domain": "animation",
+      "title": "Remove animations",
+      "description": "Remove animation steps from a slide's timeline; the objects themselves stay. Deleting an object with object.delete already removes its steps.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "animation.reorder",
+      "domain": "animation",
+      "title": "Reorder animations",
+      "description": "Set the play order of a slide's animation steps. `order` must list every step id of the slide exactly once (query.slide lists them). Triggers are kept, so an afterPrevious step now follows its new predecessor.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "animation.update",
+      "domain": "animation",
+      "title": "Update animation",
+      "description": "Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into the current params (a key set to null is removed; params: null clears them all). Changing `preset` drops params the new preset does not use and fills its defaults (moveTo: slide centre, rotateTo: 180°). The animated object cannot be changed here. Presets: fadeIn, fadeOut, slideIn, slideOut, scaleIn, scaleOut, zoomIn, rotateIn, bounceIn, flipIn, popIn, dissolveIn, wipeIn, moveTo, rotateTo. Triggers: afterPrevious (starts when the previous step ends), withPrevious (starts together with the previous step), onClick (waits for a click or the next key). The first step (step 0) with afterPrevious or withPrevious starts as soon as the slide appears; an onClick step 0 waits for the first click. Steps of older decks may read back as trigger onEnter (legacy: starts with the slide wherever it sits); it cannot be chosen, and a step keeps it until its trigger is changed. Rotation units differ by preset, as the animation engine defines them: rotateIn `angle` is in RADIANS (the starting offset, default -1.5708 = a quarter turn), rotateTo `angleDeg` is in DEGREES (the absolute end angle).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "guide.add",
+      "domain": "guide",
+      "title": "Add guide",
+      "description": "Add an alignment guide to the deck. A vertical guide is an x position (0..1920 px), a horizontal guide a y position (0..1080 px). Guides are deck-wide and only help alignment in the editor; they never render in the presentation.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "guide.remove",
+      "domain": "guide",
+      "title": "Remove guides",
+      "description": "Remove alignment guides from the deck (every slide shares them). Objects do not move.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "guide.update",
+      "domain": "guide",
+      "title": "Move guide",
+      "description": "Move a guide to a new position. Its orientation cannot change (remove it and add a new one). A vertical guide is an x position (0..1920 px), a horizontal guide a y position (0..1080 px). Guides are deck-wide and only help alignment in the editor; they never render in the presentation.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.align",
+      "domain": "object",
+      "title": "Align objects to each other",
+      "description": "Align two or more objects to the edges or centre of their combined bounding box (e.g. 'left' moves every object's left edge to the leftmost edge). Rotation is ignored; cropped images keep their crop. Aligning one object to the slide itself is object.alignToSlide (planned, not available yet): today compute x/y from the 1920 x 1080 slide (e.g. centred x = (1920 - width) / 2) and set it with object.update.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.create",
+      "domain": "object",
+      "title": "Create object",
+      "description": "Create one object on a slide: rectangle, ellipse, triangle, polygon, line, arrow, path, text, image, video or table. Only `type` is required; every property you omit takes the editor default (e.g. a 200 x 150 blue rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or { paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of an asset already uploaded to the deck. A table takes rows/cols/defaults (same as table.insert) and is filled with text.set. New objects go on top of the stacking order; use object.layer to reorder. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.delete",
+      "domain": "object",
+      "title": "Delete objects",
+      "description": "Delete objects from a slide together with every animation step that targets them. Group members are deleted individually; pass every member to delete a whole group. To hide an object instead, use object.update with opacity 0. Locked objects are deleted like any other: `locked` is an editor-only flag that does not restrict commands.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.distribute",
+      "domain": "object",
+      "title": "Distribute objects evenly",
+      "description": "Space three or more objects so the gaps between neighbours are equal, horizontally or vertically. The two outermost objects stay where they are. Rotation is ignored; cropped images keep their crop.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.duplicate",
+      "domain": "object",
+      "title": "Duplicate objects",
+      "description": "Copy objects on the same slide, offset by `offset` slide pixels (default 20, 20), on top of the stacking order, in one undo step. Copies get new ids and keep every property, rich text included. A duplicated group becomes its own new group (the original group is untouched); copying a single member of a group gives an ungrouped copy. A cropped image's crop moves with its copy, so the copy shows the same part of the picture. A copy of a locked object is locked too. Animations are not copied (add them with animation.add). Copying to another slide or deck is object.copyTo (planned, not available yet): today, read the object with query.object and recreate it there with object.create.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.group",
+      "domain": "object",
+      "title": "Group objects",
+      "description": "Group two or more objects so they are selected, moved and duplicated together. Groups do not nest: every listed object leaves its current group for the new one, while members of that old group you did not list stay in it — to merge whole groups, list all their members (query.slide shows each object's groupId).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.layer",
+      "domain": "object",
+      "title": "Change stacking order",
+      "description": "Change where objects sit in the stacking (z) order of their slide: `front` / `back` move them to the very top / bottom, `forward` / `backward` move them past one neighbour. Several objects move as a block and keep their relative order. To put one object at an exact stacking position use `toIndex` (0 = backmost), which requires exactly one object. Other objects shift around the moved ones as needed.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.mask.apply",
+      "domain": "object",
+      "title": "Mask an image with a shape",
+      "description": "Clip an image to a shape's silhouette (rectangle, ellipse, triangle, polygon or path). The shape is consumed: it is deleted along with its animations, and the image's frame becomes the shape's bounding box while the picture stays exactly where it was on the slide. Shape rotation is ignored. Undo with object.mask.remove (which keeps the new frame).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.mask.remove",
+      "domain": "object",
+      "title": "Remove image mask",
+      "description": "Remove an image's shape mask so it shows as a rectangle again. The frame stays where the mask left it and the picture does not move. Returns removed: false when the image had no mask. To remove a crop instead use object.update with imageRect: null.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.move",
+      "domain": "object",
+      "title": "Move objects",
+      "description": "Move objects by a delta in slide pixels (the slide is 1920 x 1080, origin top-left, y down). This is the correct way to move anything: a cropped image keeps its crop. To place an object at absolute coordinates, set x/y with object.update (a crop follows there too) or compute the delta from its current x/y (query.object). To line objects up use object.align; aligning to the slide itself is object.alignToSlide (planned, not available yet) — today compute the target x/y from the 1920 x 1080 slide and the object size and set it with object.update.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.ungroup",
+      "domain": "object",
+      "title": "Ungroup objects",
+      "description": "Remove the given objects from their group. To dissolve a whole group, pass all its members (query.slide lists objects with their groupId).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.update",
+      "domain": "object",
+      "title": "Update object properties",
+      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate (planned, not available yet) will take degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`, absolute slide px) the way the editor's resize handles do — scale imageRect in the same patch to resize the picture with its frame; object.resize (planned, not available yet) will do both. (2) `flipH` / `flipV` only mirror the content; unlike the editor's Flip buttons they do NOT negate `rotation`, so a rotated object does not mirror in place — send { flipH: true, rotation: -currentRotation } in one patch to flip like the editor; object.flip (planned, not available yet) will do both. (3) Box-level typography (fontFamily, fontSize, fontWeight, color, …) is only the default: inline run formatting in the text overrides it, so a box-wide change on formatted text needs text.format with `clear` for those attributes first — put both in one ops.apply. (4) `fontFamily` does not snap `fontWeight` to a cut the new family has (the editor does); set a weight the family provides in the same patch. (5) `textStyleId` only links a folder text style, it does not apply it; set the style's font fields in the same patch; text.style.apply (planned, not available yet) will do both. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "ops.apply",
+      "domain": "ops",
+      "title": "Apply several edits at once",
+      "description": "Run a list of document commands on one deck as ONE change: collaborators receive one update and it is one step to revert. With `atomic: true` (default) either every op succeeds or nothing changes — all inputs are validated first, then the ops run in order, each seeing the result of the previous ones. With `atomic: false` failing ops are reported in `results` and skipped. Only commands that edit the deck document can be batched (not export, share, media upload or other server-side commands). Prefer this over many single calls whenever you make more than one edit.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "query.deck",
+      "domain": "query",
+      "title": "Deck outline",
+      "description": "A compact outline of the whole deck, built to fit a model's context: every slide with its id, 0-based index, name, a title guessed from its largest text, outline indent, skipped flag, transition kind and object / animation counts, plus the deck's alignment guides. Start here, then read one slide with query.slide. Slides are 1920 x 1080 px.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "query.object",
+      "domain": "query",
+      "title": "Read object",
+      "description": "One object with all its properties (same shape as in query.slide) plus the animation steps that target it and its stacking position (0 = backmost). Use it before text.format / text.list to see the exact text offsets, or before object.update to see current values.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "query.slide",
+      "domain": "query",
+      "title": "Read slide",
+      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.add",
+      "domain": "slide",
+      "title": "Add slide",
+      "description": "Insert a new empty slide (white background, no objects, no transition). Omit `index` to append at the end; `index` is the 0-based position the new slide will occupy. To copy an existing slide with its content use slide.duplicate instead.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.collapse",
+      "domain": "slide",
+      "title": "Collapse slide section",
+      "description": "Collapse or expand a slide's outline children in the slides panel. Purely a panel view setting shared with collaborators; it does not hide anything from present mode (use slide.skip for that).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.delete",
+      "domain": "slide",
+      "title": "Delete slides",
+      "description": "Delete one or more slides with everything on them. A deck always keeps at least one slide: deleting the last remaining slide replaces it with an empty one. To hide a slide from the presentation without deleting it use slide.skip.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.duplicate",
+      "domain": "slide",
+      "title": "Duplicate slide",
+      "description": "Copy a slide whole — objects with their rich text, tables, animations, transition, background, speaker notes, name and outline state — and insert the copy right after the source (or at `index`). Object ids are kept on purpose so Magic Move pairs objects across the two slides; use it before moving things on the copy to author a Magic Move.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.indent",
+      "domain": "slide",
+      "title": "Set slide outline level",
+      "description": "Set a slide's outline indent level (0 = top level, max 6). A slide can be at most one level deeper than the slide above it, and the first slide is always level 0 — the same rules as dragging in the slides panel. Indented slides become children of the nearest shallower slide above them (sections); the outline does not affect present mode.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.move",
+      "domain": "slide",
+      "title": "Move slides",
+      "description": "Move one or more slides, as a block keeping their current relative order, so the block starts at `toIndex` (0-based, counted in the deck BEFORE the move; clamped to the deck length). Outline children are NOT moved implicitly — list them too if they should follow their parent.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.rename",
+      "domain": "slide",
+      "title": "Rename slide",
+      "description": "Set the name shown for a slide in the slides panel and the presenter view. An empty (or whitespace-only) name clears it, so the slide falls back to \"Slide N\".",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.setBackground",
+      "domain": "slide",
+      "title": "Set slide background",
+      "description": "Set a slide's background: { kind: \"color\", color, alpha? }, { kind: \"linearGradient\", angleDeg, stops }, { kind: \"radialGradient\", centerX, centerY, radius, stops } (2..10 stops of { offset 0..1, color, alpha? }) or { kind: \"image\", assetId, fit: cover|contain, dim? } for an already uploaded asset. Colours \"#RRGGBB\" or 0xRRGGBB. `null` resets to the default white. The whole background is replaced.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.setTransition",
+      "domain": "slide",
+      "title": "Set slide transition",
+      "description": "Set how present mode moves INTO this slide: `kind` none | fade | push | cube | magic (Magic Move animates objects that share ids with the previous slide — see slide.duplicate), `durationMs` in milliseconds, `direction` left | right | up | down for push (null removes it). Fields you omit keep their value.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.skip",
+      "domain": "slide",
+      "title": "Skip slide in presentation",
+      "description": "Mark a slide as skipped (hidden from present mode, still visible and editable in the editor) or un-skip it. Skipped slides do not count towards page numbers.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.border.preset",
+      "domain": "table",
+      "title": "Apply a table border preset",
+      "description": "Draw grid lines on a range of cells (default: the whole table) with a preset: all, outer (perimeter), inside (inner lines), insideH / insideV, top / bottom / left / right (that edge of the range), or none (hide the lines, overriding the default grid). `color` and `width` (px) are required except for none. For one individual line use table.border.segment.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.border.segment",
+      "domain": "table",
+      "title": "Style one table grid line",
+      "description": "Set or clear the style of ONE grid-line segment. A horizontal segment {orientation: \"horizontal\", row, col} is the line above row `row` in column `col` (row = number of rows is the bottom edge); a vertical one is the line left of column `col` in row `row` (col = number of columns is the right edge). `style: null` removes the segment so it falls back to the table default. Width 0 hides the line. For ranges use table.border.preset.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.col.delete",
+      "domain": "table",
+      "title": "Delete table columns",
+      "description": "Delete `count` (default 1) columns starting at `index` (0-based). The table shrinks by their size. Merged cells crossing them shrink; a merge whose top-left cell is deleted hands its text and style to the next cell of the merge. A table keeps at least one column — to remove the whole table use object.delete.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.col.insert",
+      "domain": "table",
+      "title": "Insert table columns",
+      "description": "Insert `count` (default 1) blank columns so the first new one sits at `index` (0-based; omit to append at the right). The table grows by the new columns, each as wide as the current average. Inserting strictly inside a merged cell extends the merge, as in PowerPoint. To set an exact size use table.resizeColumn.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.insert",
+      "domain": "table",
+      "title": "Insert table",
+      "description": "Insert an empty table of `rows` x `cols` cells (default 3 x 3) on a slide. Position and size are slide px (slide 1920 x 1080); without a size each cell is 120 x 60 px, split evenly. `defaults` restyles every cell at once (font, colours, padding, grid line). Fill cells afterwards with text.set using target.cell, and style them with table.style.*; do not use object.update for table structure.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.merge",
+      "domain": "table",
+      "title": "Merge table cells",
+      "description": "Merge a rectangle of cells into one cell. The range grows until it contains every merged cell it touches (whole merges only, as in PowerPoint), so check the returned origin and spans. The top-left cell shows its text; the other cells keep theirs hidden, and it reappears after table.split.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.resizeColumn",
+      "domain": "table",
+      "title": "Resize table column",
+      "description": "Set one column's width in slide px as drawn. By default the other columns keep their size and the table widens or narrows by the difference. With `keepTableSize: true` the table keeps its width and the difference comes from the next column (the previous one for the last column) — what dragging a boundary in the editor does. No column may end up smaller than 4 px.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.resizeRow",
+      "domain": "table",
+      "title": "Resize table row",
+      "description": "Set one row's height in slide px as drawn. By default the other rows keep their size and the table grows or shrinks by the difference. With `keepTableSize: true` the table keeps its height and the difference comes from the next row (the previous one for the last row) — what dragging a boundary in the editor does. No row may end up smaller than 4 px.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.row.delete",
+      "domain": "table",
+      "title": "Delete table rows",
+      "description": "Delete `count` (default 1) rows starting at `index` (0-based). The table shrinks by their size. Merged cells crossing them shrink; a merge whose top-left cell is deleted hands its text and style to the next cell of the merge. A table keeps at least one row — to remove the whole table use object.delete.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.row.insert",
+      "domain": "table",
+      "title": "Insert table rows",
+      "description": "Insert `count` (default 1) blank rows so the first new one sits at `index` (0-based; omit to append at the bottom). The table grows by the new rows, each as tall as the current average. Inserting strictly inside a merged cell extends the merge, as in PowerPoint. To set an exact size use table.resizeRow.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.split",
+      "domain": "table",
+      "title": "Split merged cell",
+      "description": "Split a merged cell back into its individual cells. `cell` may be the merged cell itself or any cell it covers. Each cell shows again whatever text it kept while hidden. Fails with conflict when the cell is not merged.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.style.cell",
+      "domain": "table",
+      "title": "Style a table cell",
+      "description": "Set or clear style overrides on one cell (fill, text colour, font size/weight, alignment, padding, …). Colours: \"#RRGGBB\", 0xRRGGBB or a colour token ref. `null` removes an override. For many cells use table.style.range, for the whole table table.style.table, for borders table.border.*, for the text itself text.set.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.style.range",
+      "domain": "table",
+      "title": "Style a range of table cells",
+      "description": "Set or clear the same style overrides on every visible cell of a rectangle (e.g. colour a header row or a column). Cells hidden inside a merge are skipped; the merged cell itself is styled. Same fields as table.style.cell.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "table.style.table",
+      "domain": "table",
+      "title": "Style a whole table",
+      "description": "Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. Cell overrides set with table.style.cell/range still win.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "text.format",
+      "domain": "text",
+      "title": "Format text range",
+      "description": "Apply (`set`) and/or remove (`clear`) inline formatting — bold, fontWeight, italic, underline, color, fontFamily, fontSize — on part of a text box or table cell without changing the text. Choose the range by { match: \"exact text\", occurrence?: n | \"all\" } (safest) or { start, length } in characters of the text as query.object returns it; omit `range` for the whole body. `clear` runs first, so clear: \"all\" plus set restyles from scratch. Clearing makes the text fall back to the box defaults. For the box-wide font use object.update; inline formatting wins over the box defaults, so to restyle formatted text box-wide, clear those attributes here and set the box value with object.update in one ops.apply.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "text.list",
+      "domain": "text",
+      "title": "Set list formatting",
+      "description": "Turn paragraphs into a bullet or numbered list, change nesting, glyph or numbering, or remove the list — on the paragraphs a range touches (omit `range` for every paragraph; a range of length 0 targets the paragraph containing it), exactly like the Inspector list controls. `kind`: \"bullet\" | \"number\" | \"none\" (removes the list and its level/glyph/numbering); `toggle`: the editor toolbar button (removes the list if every targeted paragraph already has that kind, else applies it); `level` 0..8 sets nesting, `indent` +1/-1 shifts it; `bulletChar` (implies bullet; null = default glyph), `numberFormat` (implies number), `startAt` (restart numbering; null clears). To write new list text use text.set with list paragraphs.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "text.set",
+      "domain": "text",
+      "title": "Set text",
+      "description": "Replace the WHOLE body of a text box or of one table cell (`target.cell`). Pass a plain string — a blank line (\"\\n\\n\") starts a new paragraph, a single \"\\n\" is a line break inside the paragraph — or { paragraphs: [{ runs: [{ text, bold, italic, underline, color, fontFamily, fontSize }], list, level, bulletChar, numberFormat, startAt }] } for formatted runs and bullet / numbered lists (level 0..8). A plain string drops existing inline formatting and lists. Box-level typography (the box font, size, alignment) is unchanged — set it with object.update. To restyle part of the text without retyping it use text.format; for lists on existing text use text.list.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    }
+  ],
+  "knownMissing": [
+    {
+      "capability": "component.stamp",
+      "phase": "A1",
+      "source": "slide-model",
+      "where": "packages/slide-model/src/stampComponent.ts",
+      "writers": ["stampComponent"],
+      "note": "needs the component document loaded by a host; the server host provides it in A1"
+    },
+    {
+      "capability": "component.master.edit",
+      "phase": "A1",
+      "source": "web",
+      "where": "apps/web/src/pages/ComponentMasterEditor.tsx",
+      "note": "editing a component master = the object/text/table commands run against a component document instead of a deck; needs the server host to open `component:<id>`"
+    },
+    {
+      "capability": "component.get",
+      "phase": "A1",
+      "source": "new",
+      "note": "a master's objects with their slot map, so the agent can pick a component and fill it (plan §7.2 item 8)"
+    },
+    {
+      "capability": "deck.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks"
+        }
+      ]
+    },
+    {
+      "capability": "deck.get",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "capability": "deck.create",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks"
+        }
+      ]
+    },
+    {
+      "capability": "deck.rename",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "capability": "deck.delete",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "capability": "deck.moveToFolder",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:id/move-decks"
+        }
+      ]
+    },
+    {
+      "capability": "deck.importPptx",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/import-pptx"
+        }
+      ]
+    },
+    {
+      "capability": "deck.insertFrom",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/append-pptx"
+        }
+      ]
+    },
+    {
+      "capability": "deck.exportPptx",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.pptx"
+        }
+      ]
+    },
+    {
+      "capability": "deck.activeEditors",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:id/active-editors"
+        }
+      ]
+    },
+    {
+      "capability": "deck.fonts.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/decks/:deckId/fonts"
+        }
+      ],
+      "note": "the fonts a deck's editors may load (its folder's fonts), for any role on the deck"
+    },
+    {
+      "capability": "folder.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders"
+        }
+      ]
+    },
+    {
+      "capability": "folder.create",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders"
+        }
+      ]
+    },
+    {
+      "capability": "folder.rename",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/folders/:id"
+        }
+      ]
+    },
+    {
+      "capability": "folder.delete",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/folders/:id"
+        }
+      ]
+    },
+    {
+      "capability": "folder.fonts.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/folders/:folderId/fonts"
+        }
+      ]
+    },
+    {
+      "capability": "folder.fonts.upload",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/folders/:folderId/fonts"
+        }
+      ]
+    },
+    {
+      "capability": "folder.fonts.delete",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/api/folders/:folderId/fonts/:assetId"
+        }
+      ]
+    },
+    {
+      "capability": "component.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:folderId/components"
+        }
+      ]
+    },
+    {
+      "capability": "component.rename",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/components/:id"
+        }
+      ]
+    },
+    {
+      "capability": "component.delete",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/components/:id"
+        }
+      ]
+    },
+    {
+      "capability": "token.usages",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:folderId/tokens/:category/:tokenId/usages"
+        }
+      ]
+    },
+    {
+      "capability": "share.permissions.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/permissions"
+        }
+      ]
+    },
+    {
+      "capability": "share.permissions.invite",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/permissions"
+        }
+      ]
+    },
+    {
+      "capability": "share.permissions.revoke",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/permissions/:userId"
+        }
+      ]
+    },
+    {
+      "capability": "share.invites.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/invites"
+        }
+      ]
+    },
+    {
+      "capability": "share.invites.cancel",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/invites/:inviteId"
+        }
+      ]
+    },
+    {
+      "capability": "share.links.list",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/share-links"
+        }
+      ]
+    },
+    {
+      "capability": "share.links.create",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/share-links"
+        }
+      ]
+    },
+    {
+      "capability": "share.links.revoke",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/share-links/:linkId"
+        }
+      ]
+    },
+    {
+      "capability": "media.upload",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "ALL",
+          "path": "/api/uploads"
+        },
+        {
+          "method": "ALL",
+          "path": "/api/uploads/*"
+        }
+      ],
+      "note": "the tus endpoint; the command takes bytes or a URL (with an SSRF guard) instead of speaking tus"
+    },
+    {
+      "capability": "media.status",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/video-info"
+        }
+      ]
+    },
+    {
+      "capability": "media.url",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/url"
+        }
+      ]
+    },
+    {
+      "capability": "media.fontUrl",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/font-url"
+        }
+      ],
+      "note": "signed URL of an uploaded font file"
+    },
+    {
+      "capability": "media.delete",
+      "phase": "A1",
+      "source": "route",
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/api/media/:assetId"
+        }
+      ]
+    },
+    {
+      "capability": "editor.context",
+      "phase": "A1",
+      "source": "new"
+    },
+    {
+      "capability": "editor.show",
+      "phase": "A1",
+      "source": "new"
+    },
+    {
+      "capability": "editor.present.link",
+      "phase": "A1",
+      "source": "new"
+    },
+    {
+      "capability": "agent.revert",
+      "phase": "A1",
+      "source": "new"
+    },
+    {
+      "capability": "object.path.create",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/components/EditorLayout.tsx (PenSession)"
+    },
+    {
+      "capability": "object.path.fromShape",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/components/EditorLayout.tsx (convertToPathAndPlace)"
+    },
+    {
+      "capability": "object.path.setAnchors",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/PathPointsOverlay.tsx",
+      "note": "the raw path fields are settable with object.update today; the command adds the point editor's rule of re-fitting x/y/width/height to the edited anchors while keeping the rotation pivot in place"
+    },
+    {
+      "capability": "object.line.setEndpoints",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/LineEndpointHandles.tsx"
+    },
+    {
+      "capability": "object.resize",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/TransformHandles.tsx (computeResize)"
+    },
+    {
+      "capability": "object.rotate",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/TransformHandles.tsx, Inspector.tsx",
+      "note": "raw `rotation` (radians) is settable with object.update today; the command adds degrees in and the editor's snapping"
+    },
+    {
+      "capability": "object.flip",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/Inspector.tsx",
+      "note": "raw `flipH` / `flipV` are settable with object.update today; the command adds the editor's rule of negating `rotation` so a rotated object mirrors in place"
+    },
+    {
+      "capability": "object.alignToSlide",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/Inspector.tsx"
+    },
+    {
+      "capability": "object.crop.set",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/CropOverlay.tsx",
+      "note": "raw `imageRect` (absolute slide px) is settable with object.update today; the command adds crop in frame-relative terms (pan, zoom around a point, reset to fit) as the crop overlay does"
+    },
+    {
+      "capability": "object.copyTo",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/clipboard.ts",
+      "writers": ["addObjects"],
+      "note": "paste inserts the copied objects in one step with addObjects"
+    },
+    {
+      "capability": "slide.copyTo",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/slideClipboard.ts, apps/web/src/ui/slideHelpers.ts"
+    },
+    {
+      "capability": "slide.notes.set",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/SlideNotesPanel.tsx"
+    },
+    {
+      "capability": "object.slideNumber.set",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/SlideNumberPromptDialog.tsx",
+      "note": "raw `isSlideNumber` is settable with object.update today; the command adds the editor's follow-up choice (apply the page-number text style or promote the box to a component)"
+    },
+    {
+      "capability": "object.fill.gradient",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/Inspector.tsx (starting stops)",
+      "note": "a gradient `fillStyle` is settable raw with object.update today; the command adds the Inspector's starting stops seeded from the current fill colour"
+    },
+    {
+      "capability": "object.effects.shadow",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/Inspector.tsx (defaults)",
+      "note": "`shadow` is settable raw with object.update today; the command adds the Inspector's default shadow when switched on"
+    },
+    {
+      "capability": "text.setBoxTypography",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts",
+      "note": "box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has (object.update writes fontFamily raw and keeps the weight)"
+    },
+    {
+      "capability": "text.style.apply",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/ui/Inspector.tsx (applyTextStyle)"
+    },
+    {
+      "capability": "text.style.createFromObject",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx"
+    },
+    {
+      "capability": "token.textStyle.update",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx, apps/web/src/components/DeckShell.tsx (propagation)",
+      "note": "propagation to linked text moves server-side"
+    },
+    {
+      "capability": "token.textStyle.create",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx"
+    },
+    {
+      "capability": "token.textStyle.delete",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx"
+    },
+    {
+      "capability": "token.color.update",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx"
+    },
+    {
+      "capability": "token.color.create",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx",
+      "note": "with the 24-colour cap"
+    },
+    {
+      "capability": "token.color.delete",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken), apps/web/src/pages/FolderSettings.tsx"
+    },
+    {
+      "capability": "token.effectStyle.create",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (addToken)",
+      "note": "the folder document and FolderDocProvider support effect styles; no editor UI creates them yet"
+    },
+    {
+      "capability": "token.effectStyle.update",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (updateToken)",
+      "note": "the folder document and FolderDocProvider support effect styles; no editor UI edits them yet"
+    },
+    {
+      "capability": "token.effectStyle.delete",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx (deleteToken)",
+      "note": "the folder document and FolderDocProvider support effect styles; no editor UI deletes them yet"
+    },
+    {
+      "capability": "token.seedDefaults",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/FolderDocProvider.tsx"
+    },
+    {
+      "capability": "component.promote",
+      "phase": "A2",
+      "source": "web",
+      "where": "apps/web/src/state/writeComponentMasterTree.ts",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/components"
+        }
+      ],
+      "writers": ["insertObjectsWithRichText"],
+      "note": "the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)"
+    },
+    {
+      "capability": "deck.duplicate",
+      "phase": "A2",
+      "source": "new"
+    },
+    {
+      "capability": "text.replace",
+      "phase": "A2",
+      "source": "new"
+    },
+    {
+      "capability": "animation.retarget",
+      "phase": "A2",
+      "source": "new"
+    },
+    {
+      "capability": "deck.exportPdf",
+      "phase": "A3",
+      "source": "new"
+    },
+    {
+      "capability": "deck.exportPng",
+      "phase": "A3",
+      "source": "new"
+    },
+    {
+      "capability": "deck.refreshThumbnail",
+      "phase": "A3",
+      "source": "web",
+      "where": "apps/web/src/ui/SlidesPanel.tsx",
+      "routes": [
+        {
+          "method": "PUT",
+          "path": "/decks/:id/thumbnail"
+        }
+      ],
+      "note": "the browser renders the thumbnail and uploads it; the render worker takes over in A3"
+    },
+    {
+      "capability": "component.refreshThumbnail",
+      "phase": "A3",
+      "source": "web",
+      "where": "apps/web/src/pages/ComponentMasterEditor.tsx",
+      "routes": [
+        {
+          "method": "PUT",
+          "path": "/components/:id/thumbnail"
+        }
+      ],
+      "note": "the master editor renders the thumbnail and uploads it; the render worker takes over in A3"
+    },
+    {
+      "capability": "query.render",
+      "phase": "A3",
+      "source": "new"
+    },
+    {
+      "capability": "component.create",
+      "phase": "A4",
+      "source": "new",
+      "note": "create a master from objects or a spec; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data"
+    },
+    {
+      "capability": "component.restamp",
+      "phase": "A4",
+      "source": "new",
+      "note": "reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)"
+    }
+  ],
+  "allowlist": [
+    {
+      "capability": "Zoom and pan",
+      "reason": "Per-tab view state of one editor window; nothing in the document changes."
+    },
+    {
+      "capability": "Stage background colour",
+      "reason": "Per-tab editor preference, not document content."
+    },
+    {
+      "capability": "Rulers on/off",
+      "reason": "Per-browser editor preference stored in localStorage."
+    },
+    {
+      "capability": "Active tool",
+      "reason": "Transient pointer mode of one editor; agents create objects directly."
+    },
+    {
+      "capability": "Selection",
+      "reason": "Per-user editor state; agents address objects by id and read the user selection via editor.context."
+    },
+    {
+      "capability": "Group isolation (entered group)",
+      "reason": "Transient editor navigation state with no document effect."
+    },
+    {
+      "capability": "Shortcut cheatsheet",
+      "reason": "Help overlay for humans; agents read tool descriptions instead."
+    },
+    {
+      "capability": "FPS overlay",
+      "reason": "Developer diagnostics overlay with no document effect."
+    },
+    {
+      "capability": "Present-mode navigation, fullscreen, presenter window",
+      "reason": "Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide."
+    },
+    {
+      "capability": "Browser sign-in and session (Google OAuth start/callback, current user, sign-out)",
+      "reason": "The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/auth/start"
+        },
+        {
+          "method": "GET",
+          "path": "/auth/callback"
+        },
+        {
+          "method": "GET",
+          "path": "/auth/me"
+        },
+        {
+          "method": "POST",
+          "path": "/auth/logout"
+        }
+      ]
+    },
+    {
+      "capability": "Health check",
+      "reason": "Liveness probe for the Docker healthcheck and the reverse proxy; it reports no document or user state.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/health"
+        }
+      ]
+    },
+    {
+      "capability": "Prometheus metrics",
+      "reason": "Operations telemetry (connection counts, document sizes) scraped by Prometheus with METRICS_TOKEN; not a user capability and deliberately kept away from user credentials.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/metrics"
+        }
+      ]
+    }
+  ]
+}

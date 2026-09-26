@@ -29,18 +29,9 @@ import { fileURLToPath } from 'url'
 import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
-import { registerDeckRoutes } from './routes/decks.js'
-import { registerFolderRoutes } from './routes/folders.js'
-import { registerComponentRoutes } from './routes/components.js'
-import { registerTokenUsageRoutes } from './routes/tokenUsages.js'
-import { registerSharingRoutes } from './routes/sharing.js'
-import { registerPptxImportRoutes } from './routes/pptxImport.js'
-import { registerPptxExportRoutes } from './routes/pptxExport.js'
-import { registerAuthRoutes } from './routes/auth.js'
-import { registerTusPlugin } from './media/tus.js'
-import { registerMediaRoutes } from './media/routes.js'
+import { registerHttpRoutes } from './http/registerRoutes.js'
 import { closeQueueConnection } from './media/enqueue.js'
-import { registerMetricsEndpoint, metricsRegistrationDecision } from './metrics/index.js'
+import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
@@ -196,51 +187,20 @@ if (bypassAuth) {
 }
 registerAuthPlugin(app, { bypass: bypassAuth, db })
 
-// Health endpoint
-app.get('/health', async (_request, _reply) => {
-  return { status: 'ok' }
-})
-
-// Prometheus metrics endpoint.
-// /metrics leaks connection counts / doc sizes. In production it MUST be
-// gated by METRICS_TOKEN. If the token is unset/empty in prod we refuse to
-// register the route at all (rather than exposing it or boot-failing) — the
-// server keeps running, metrics are simply not reachable until a token is
-// configured. Dev keeps the loopback-only fallback (handled inside the
-// endpoint) so local scraping still works without a token.
+// Metrics: /metrics leaks connection counts / doc sizes. In production it
+// MUST be gated by METRICS_TOKEN. If the token is unset/empty in prod we
+// refuse to register the route at all (rather than exposing it or
+// boot-failing) — the server keeps running, metrics are simply not reachable
+// until a token is configured. Dev keeps the loopback-only fallback (handled
+// inside the endpoint) so local scraping still works without a token.
 const metricsDecision = metricsRegistrationDecision({
   nodeEnv,
   metricsToken: process.env['METRICS_TOKEN'],
 })
-if (metricsDecision.register) {
-  await registerMetricsEndpoint(app)
-} else {
-  app.log.warn(metricsDecision.reason)
-}
+if (!metricsDecision.register) app.log.warn(metricsDecision.reason)
 
-// Deck routes
-await registerDeckRoutes(app, db)
-
-// Folder routes (M16 P1)
-await registerFolderRoutes(app, db)
-
-// Component routes (M16 P5)
-await registerComponentRoutes(app, db)
-
-// Token usage scanning (M16 P4)
-await registerTokenUsageRoutes(app, db)
-
-// Sharing routes (permissions + share links)
-await registerSharingRoutes(app, db)
-
-// PowerPoint import — synchronous parse + Y.Doc write (M28 phase 3 MVP)
-await registerPptxImportRoutes(app, db)
-
-// PowerPoint export — synchronous Y.Doc → .pptx (pptx/ooxml/writeDeck)
-await registerPptxExportRoutes(app, db)
-
-// Server-driven OAuth flow + session cookie minting (replaces the old
-// browser-PKCE + Bearer-id_token path). Public endpoints by design.
+// Every HTTP route, in one place (http/registerRoutes.ts) so the agent-parity
+// route guard enumerates exactly what production serves.
 {
   const spaOrigin =
     process.env['SPA_ORIGIN'] ??
@@ -251,19 +211,12 @@ await registerPptxExportRoutes(app, db)
       ? `http://localhost:${API_PORT}/auth/callback`
       : `https://${process.env['DOMAIN'] ?? 'localhost'}/api/auth/callback`)
 
-  registerAuthRoutes(app, {
+  await registerHttpRoutes(app, {
     db,
-    verifier,
-    spaOrigin,
-    redirectUri,
-    isProd,
-    allowlist: allowlistConfig,
+    metrics: metricsDecision.register,
+    auth: { verifier, spaOrigin, redirectUri, isProd, allowlist: allowlistConfig },
   })
 }
-
-// Media routes: tus upload + signed URL + delete
-registerTusPlugin(app, { db })
-await registerMediaRoutes(app, { db })
 
 // ---------------------------------------------------------------------------
 // Hocuspocus WebSocket server

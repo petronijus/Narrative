@@ -32,6 +32,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
@@ -39,7 +40,7 @@ import {
 } from '@/components/ui/context-menu'
 import {
   removeObject,
-  duplicateObject,
+  duplicateObjects,
   moveObjectsLayer,
   addObjects,
   updateObject,
@@ -52,6 +53,7 @@ import {
   mergeTableCells,
   splitTableCell,
   getTableMergeInfo,
+  type LayerMove,
 } from '@narrative/slide-model'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
@@ -68,7 +70,19 @@ import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
 import { useApi } from '../api/client.js'
+import { formatKeyCombo } from '../state/useShortcuts.js'
 import type { SlideObject, SlideObjectPatch, SlideObjectType, TableObject } from '@narrative/shared'
+
+/**
+ * Layer-order items, in menu order. `keys` is the canvas shortcut bound
+ * to the same move in EditorLayout's useShortcuts.
+ */
+const LAYER_MENU_ITEMS: ReadonlyArray<{ move: LayerMove; label: string; keys: string }> = [
+  { move: 'front', label: 'Bring to front', keys: 'Mod+]' },
+  { move: 'forward', label: 'Bring forward', keys: ']' },
+  { move: 'backward', label: 'Send backward', keys: '[' },
+  { move: 'back', label: 'Send to back', keys: 'Mod+[' },
+]
 
 /**
  * Hit-test a world (slide-space) point against a TableObject's cell
@@ -270,15 +284,16 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
     if (mutationCtx === null) return
     const targets = resolveTargets()
     if (targets.length === 0) return
-    const newIds: string[] = []
-    for (const obj of targets) {
-      const dup = duplicateObject(mutationCtx, obj.id, { x: 20, y: 20 })
-      if (dup !== null) newIds.push(dup.id)
-    }
-    if (newIds.length > 0) selectMany(newIds)
+    // One transaction, one undo step — same call as Mod+D.
+    const copies = duplicateObjects(
+      mutationCtx,
+      targets.map((o) => o.id),
+      { x: 20, y: 20 },
+    )
+    if (copies.length > 0) selectMany(copies.map((c) => c.id))
   }
 
-  const handleLayerMove = (move: 'front' | 'forward' | 'backward' | 'back'): void => {
+  const handleLayerMove = (move: LayerMove): void => {
     if (mutationCtx === null) return
     const ids = targetIdsRef.current
     if (ids.length === 0) return
@@ -588,30 +603,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
             <ContextMenuSeparator />
 
-            <ContextMenuItem
-              disabled={mutationCtx === null}
-              onSelect={() => handleLayerMove('front')}
-            >
-              Bring to front
-            </ContextMenuItem>
-            <ContextMenuItem
-              disabled={mutationCtx === null}
-              onSelect={() => handleLayerMove('forward')}
-            >
-              Bring forward
-            </ContextMenuItem>
-            <ContextMenuItem
-              disabled={mutationCtx === null}
-              onSelect={() => handleLayerMove('backward')}
-            >
-              Send back
-            </ContextMenuItem>
-            <ContextMenuItem
-              disabled={mutationCtx === null}
-              onSelect={() => handleLayerMove('back')}
-            >
-              Send backward
-            </ContextMenuItem>
+            {/* Labels and shortcut hints match the canvas shortcuts in
+                EditorLayout (and the Inspector's layer-order buttons):
+                Mod+] front, ] forward, [ backward, Mod+[ back. The label
+                sits in its own span so text lookups match it exactly. */}
+            {LAYER_MENU_ITEMS.map(({ move, label, keys }) => (
+              <ContextMenuItem
+                key={move}
+                disabled={mutationCtx === null}
+                onSelect={() => handleLayerMove(move)}
+                data-layer-move={move}
+              >
+                <span>{label}</span>
+                <ContextMenuShortcut aria-hidden="true">{formatKeyCombo(keys)}</ContextMenuShortcut>
+              </ContextMenuItem>
+            ))}
 
             <ContextMenuSeparator />
 

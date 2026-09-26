@@ -22,7 +22,7 @@ Self-hosted collaborative presentation tool with Keynote-level animations, heavy
 - **Object storage**: MinIO (S3-compatible)
 - **Media pipeline**: tus.io uploads, ffmpeg workers via BullMQ + Redis, imgproxy
 - **Auth**: Google OIDC (ID-token validation against Google's JWKS, email/domain allowlist) — added in M10
-- **AI**: Anthropic API (Claude Sonnet for generation, tool use for structured output)
+- **AI**: none in-process — agents drive Narrative over MCP from the user's own Claude client; no Anthropic SDK, key or bill ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md), 2026-09-26; was: Anthropic API with Claude Sonnet for generation). Agent input is validated with zod (`packages/shared/src/schema`, added in A0).
 - **Reverse proxy**: Caddy (automatic TLS)
 - **Deploy**: Docker Compose on Proxmox LXC/VM, ZFS for storage
 - **Observability**: Sentry + basic metrics from M6, full Prometheus in M30
@@ -53,6 +53,7 @@ Self-hosted collaborative presentation tool with Keynote-level animations, heavy
 │   ├── shared/           # Shared types (slide model, object types)
 │   ├── slide-model/      # Object type registry, Yjs bindings
 │   ├── animation/        # JSON DSL + GSAP compiler + timeline runtime
+│   ├── commands/         # Capability registry — the only writer (ADR 0010, agentic A0)
 │   └── ui/               # Reusable UI primitives
 ├── infra/
 │   ├── docker-compose.yml
@@ -91,7 +92,7 @@ The animation engine can target both Pixi objects and DOM overlay objects in the
 
 ### Server-side Yjs strategy
 
-For AI slide generation (M16): direct Y.Doc manipulation in Node with broadcasts via a Hocuspocus extension. Documented via ADR before M4.
+Agents write on the server: a ServerHost runs registry commands against `hocuspocus.openDirectConnection(deckId)`, after its own access check, in one transaction per command or batch with `agentOrigin(runId)` ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md), from A1). Every write, human or agent, goes through `packages/commands` ([ADR 0010](./docs/adr/0010-command-layer-is-the-only-writer.md)). (Was: "direct Y.Doc manipulation in Node for AI slide generation (M16)"; superseded 2026-09-26.)
 
 ---
 
@@ -109,19 +110,26 @@ If any spike fails → change the stack **now**, not in M20.
 
 ---
 
-## Where the project stands (2026-09-09)
+## Where the project stands (2026-09-26)
 
-M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap. The
-work since 2026-09-07 has been **not a milestone**: production hardening, cut
-as point releases rather than milestones.
+M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap; the AI
+milestones are replaced by the agentic plan (below). Since 2026-09-07 work has
+been cut as point releases rather than milestones. Deployed: **v0.9.29**
+(`/version.json` → `v0.9.29+00890b0`, checked 2026-09-26).
 
-| Release      | Date       | Subject                                                                                                                 |
-| ------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 0.9.0        | 2026-09-07 | five production-only defects behind Cloudflare Tunnel + the production CSP; GHCR image pipeline; GitHub Actions removed |
-| 0.9.1        | 2026-09-08 | .pptx import: theme fonts + placeholder geometry inheritance                                                            |
-| 0.9.2        | 2026-09-09 | repaint the canvas when a hidden tab becomes visible                                                                    |
-| 0.9.3        | 2026-09-09 | version guard — a browser on a stale cached `index.html` reloads itself                                                 |
-| _unreleased_ | 2026-09-09 | CSP `data:` for Pixi fonts + ImageBitmap probe; Caddy config mounted as a directory (config-only, no tag)               |
+| Release         | Date                    | Subject                                                                                                                                        |
+| --------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.9.0           | 2026-09-07              | five production-only defects behind Cloudflare Tunnel + the production CSP; GHCR image pipeline; GitHub Actions removed                        |
+| 0.9.1           | 2026-09-08              | .pptx import: theme fonts + placeholder geometry inheritance                                                                                   |
+| 0.9.2           | 2026-09-09              | repaint the canvas when a hidden tab becomes visible                                                                                           |
+| 0.9.3           | 2026-09-09              | version guard — a browser on a stale cached `index.html` reloads itself                                                                        |
+| 0.9.4           | 2026-09-18              | CSP `data:` for Pixi fonts + ImageBitmap probe; Caddy config mounted as a directory (was the "unreleased" row here until 2026-09-26)           |
+| 0.9.5 – 0.9.24  | 2026-09-18 → 2026-09-23 | sidebar jump, text measurement and line height, .pptx import fidelity, append/drop into a deck, slide range selection, bullets                 |
+| 0.9.25          | 2026-09-23              | PowerPoint import and export become one translation (ADR 0009)                                                                                 |
+| 0.9.26 – 0.9.29 | 2026-09-24 → 2026-09-25 | per-paragraph line height, "no outline" from PowerPoint, deterministic export, slide duplicate (Mod+D) that draws                              |
+| _unreleased_    | 2026-09-26              | **agentic layer A0**: command registry, zod schemas, parity guards (slide-model writers + server routes), and the editor bugs the survey found |
+
+Per-release detail lives in [CHANGELOG.md](./CHANGELOG.md).
 
 Since 0.9.0 the release invariant is **git tag = package version = deployed
 image tag** ([ADR 0008](./docs/adr/0008-release-and-image-tag-discipline.md)),
@@ -129,9 +137,10 @@ and the production CSP is treated as a hard renderer constraint
 ([ADR 0007](./docs/adr/0007-csp-as-a-renderer-constraint.md)).
 
 **Read next**:
-[`docs/handoff/0.9.x-production-hardening.md`](./docs/handoff/0.9.x-production-hardening.md)
-— it carries the current next-steps list (text jumps on zoom; the slides-panel
-scrollbar report; the Cloudflare beacon; Playwright on Ubuntu 26.04).
+[`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md)
+— what A0 delivered, what it deliberately left for A1/A2, and the next step
+(A1: server host, identity, MCP). The 0.9.x production-hardening arc is in
+[`docs/handoff/0.9.x-production-hardening.md`](./docs/handoff/0.9.x-production-hardening.md).
 
 ---
 
@@ -285,8 +294,9 @@ All three goals are now covered there, along with:
 
 The plan runs in phases A0–A5:
 
-1. **A0:** foundations.
-2. **A1:** server host, identity and MCP.
+1. **A0:** foundations. **Done 2026-09-26, unreleased** — see
+   [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md).
+2. **A1:** server host, identity and MCP. **Next.**
 3. **A2:** extraction of web-only logic.
 4. **A3:** render worker (the agent can screenshot and see slides).
 5. **A4:** style packs.

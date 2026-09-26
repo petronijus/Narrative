@@ -67,12 +67,19 @@ DOM targets (`DomTargetHandle`) obdrží `HTMLElement` přímo — GSAP animuje 
 
 ## Trigger semantics
 
-| Trigger         | Chování                                                         |
-| --------------- | --------------------------------------------------------------- |
-| `onEnter`       | Spustí se při vstupu na slide. Výchozí pro první krok.          |
-| `onClick`       | Pausuje timeline. Čeká na user klik/tap (přes `InputBridge`).   |
-| `withPrevious`  | Spustí se současně s předchozím krokem (GSAP position `"<"`).   |
-| `afterPrevious` | Spustí se po dokončení předchozího kroku (GSAP position `">"`). |
+| Trigger         | Behaviour                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| `onEnter`       | Starts at the slide start (position 0 + delay) at any index. Legacy — see the note below. |
+| `onClick`       | Pauses the timeline and waits for a click/tap (via `InputBridge`).                        |
+| `withPrevious`  | Starts together with the previous step (GSAP position `"<"`).                             |
+| `afterPrevious` | Starts when the previous step ends (GSAP position `">"`).                                 |
+
+The first step (index 0) starts at position 0 whatever its trigger
+(`compiler.ts` `resolvePosition`). Since agentic-layer A0 (2026-09-26,
+unreleased) the editor creates new steps with `afterPrevious` and offers
+`onEnter` only for a step that already has it; existing `onEnter` steps are
+kept and play as before, and opening the timeline no longer rewrites them.
+(Was: `onEnter` as the default for the first step.)
 
 **onClick bez InputBridge**: pokud `ctx.inputBridge` není poskytnut, timeline se pausuje ale nikdo ji neresumuje automaticky. `runtime.advance()` lze volat manuálně.
 

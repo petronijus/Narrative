@@ -25,41 +25,20 @@ import {
   isEntireContentSelected,
   clearActiveSelectionAttrs,
   clearAllInlineRunAttrs,
+  transactTextAction,
 } from './textEditSelection.js'
+import {
+  SYSTEM_FONTS,
+  allowedWeightsFor,
+  effectiveFontWeight,
+  toNumericWeight,
+} from './fontWeights.js'
 
 interface FontFamilySelectProps {
   obj: TextObject
   patch: (p: SlideObjectPatch<TextObject>) => void
   disabled: boolean
 }
-
-/**
- * System font stacks. `weights` is the realistic list of cuts the user
- * can expect to find pre-installed on macOS / Windows (and that the
- * browser will not synthesize). System fonts typically ship only
- * Regular + Bold; Inter is the exception because Vite serves the
- * variable face that covers 100..900.
- */
-export const SYSTEM_FONTS: ReadonlyArray<{
-  label: string
-  value: string
-  weights: ReadonlyArray<number>
-}> = [
-  {
-    label: 'Inter',
-    value: 'Inter, system-ui, sans-serif',
-    weights: [100, 200, 300, 400, 500, 600, 700, 800, 900],
-  },
-  {
-    label: 'Helvetica',
-    value: "'Helvetica Neue', Helvetica, Arial, sans-serif",
-    weights: [400, 700],
-  },
-  { label: 'Georgia', value: "Georgia, 'Times New Roman', serif", weights: [400, 700] },
-  { label: 'Times', value: "'Times New Roman', Times, serif", weights: [400, 700] },
-  { label: 'Courier', value: "'Courier New', Courier, monospace", weights: [400, 700] },
-  { label: 'SF Mono', value: "'SF Mono', Menlo, monospace", weights: [400, 700] },
-]
 
 export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps) {
   const folderFontsCtx = useFolderFontsOptional()
@@ -81,14 +60,31 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
         disabled={disabled}
         onChange={(e) => {
           const value = e.target.value === '' ? undefined : e.target.value
+          // A box-wide family switch also snaps the stored weight to a cut
+          // the new family really has (Inter 300 → a folder font with only
+          // 400 + 700 stores 400), in the same patch, so what is stored,
+          // what the weight picker shows and what renders agree. This is
+          // the user's action; merely displaying a box never writes.
+          const boxWidePatch = (): SlideObjectPatch<TextObject> => {
+            const weight = effectiveFontWeight(
+              obj.fontWeight,
+              allowedWeightsFor(value, folderFontsCtx?.fonts ?? []),
+            )
+            return {
+              fontFamily: value,
+              ...(weight !== toNumericWeight(obj.fontWeight) ? { fontWeight: weight } : {}),
+            } as unknown as SlideObjectPatch<TextObject>
+          }
           const sel = getActiveTextSelection()
           if (sel !== null && sel.objectId === obj.id && value !== undefined) {
             // Cmd+A or whole-text selection: treat as a box-wide
             // change so the picker UI reflects the new value AND any
             // earlier inline overrides on individual runs are cleared.
             if (isEntireContentSelected(obj.id)) {
-              clearActiveSelectionAttrs(obj.id, ['fontFamily'])
-              patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
+              transactTextAction(obj, () => {
+                clearActiveSelectionAttrs(obj.id, ['fontFamily'])
+                patch(boxWidePatch())
+              })
               refocusActiveTextEdit(obj.id)
               return
             }
@@ -101,18 +97,20 @@ export function FontFamilySelect({ obj, patch, disabled }: FontFamilySelectProps
                 .split(',')[0]
                 ?.trim()
                 .replace(/^["']|["']$/g, '') ?? value
-            const applied = applyInlineFormatIfSelected(obj.id, { fontFamily: primary })
-            if (!applied) {
-              patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
-            }
+            transactTextAction(obj, () => {
+              const applied = applyInlineFormatIfSelected(obj.id, { fontFamily: primary })
+              if (!applied) patch(boxWidePatch())
+            })
             refocusActiveTextEdit(obj.id)
             return
           }
           // Object is selected but not in edit mode — strip every
           // run's fontFamily override so the new box-wide value
           // wins everywhere on the canvas.
-          clearAllInlineRunAttrs(obj.text, ['fontFamily'])
-          patch({ fontFamily: value } as unknown as SlideObjectPatch<TextObject>)
+          transactTextAction(obj, () => {
+            clearAllInlineRunAttrs(obj.text, ['fontFamily'])
+            patch(boxWidePatch())
+          })
         }}
         className={[
           'flex-1 min-w-0 rounded border border-input field-surface px-2 py-0.5',

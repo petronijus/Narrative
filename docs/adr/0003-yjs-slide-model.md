@@ -1,6 +1,6 @@
 # ADR-0003 — Yjs Slide Model + Object Type Registry
 
-**Status**: Accepted  
+**Status**: Accepted — extended by [ADR 0010](./0010-command-layer-is-the-only-writer.md) on 2026-09-26 (Yjs stays the single source of truth; it is written only through `packages/commands`)  
 **Datum**: 2026-04-19  
 **Autoři**: state-sync agent (M2 fáze 1)
 

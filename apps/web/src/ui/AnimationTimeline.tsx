@@ -60,6 +60,7 @@ import { useDeckRole } from '../state/DeckRoleContext.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { createPixiTargetResolver } from '../animation/targetResolver.js'
+import { triggerOptionsFor } from './animationTriggers.js'
 
 // ---------------------------------------------------------------------------
 // Layout math
@@ -565,27 +566,18 @@ export function AnimationTimeline() {
 
   const laidOut = useMemo(() => layoutSteps(animations), [animations])
 
-  // One-shot migration: rewrite any legacy onEnter steps to afterPrevious
-  // with a delay that preserves their absolute start time. onEnter is no
-  // longer exposed in the dropdown (drag also stopped converting to it),
-  // so leaving stale values around would leave the <select> showing a
-  // mismatched first option for any pre-migration step. Idempotent —
-  // once migrated, subsequent renders find no onEnter steps and bail.
-  useEffect(() => {
-    if (animationsCtx === null || isViewer) return
-    for (let i = 0; i < laidOut.length; i++) {
-      const l = laidOut[i]
-      if (l === undefined || l.step.trigger !== 'onEnter') continue
-      // anchor = prev.end (afterPrevious) for i > 0, else 0
-      const prev = i > 0 ? laidOut[i - 1] : undefined
-      const anchor = prev !== undefined ? prev.startSec + (prev.step.duration ?? 0) : 0
-      const newDelay = Math.max(0, l.startSec - anchor)
-      updateAnimation(animationsCtx, l.step.id, {
-        trigger: 'afterPrevious',
-        delay: newDelay,
-      })
-    }
-  }, [laidOut, animationsCtx, isViewer])
+  // Legacy `onEnter` steps are displayed as they are, never rewritten on
+  // open. The timeline used to "migrate" them to afterPrevious from an
+  // effect, which meant opening the panel wrote to the deck: the rewrite
+  // landed on the viewer's undo stack, went out to every collaborator,
+  // and — because the new delay was clamped at 0 — moved any onEnter step
+  // that starts before its predecessor ends, changing playback. The
+  // compiler (packages/animation `resolvePosition`) anchors onEnter at the
+  // slide start (position 0 + delay) at any index, and `layoutSteps`
+  // mirrors that, so the bar already sits where playback puts it. The
+  // trigger <select> offers onEnter only while a step still has it (see
+  // `triggerOptionsFor`); the data changes when the user picks another
+  // trigger or drags the bar.
 
   // Group laidOut steps by objectId. Base order is "first-seen in the
   // current Y.Array". If the user has a saved preference for this slide,
@@ -1682,9 +1674,11 @@ export function AnimationTimeline() {
                                     })
                                   }}
                                 >
-                                  <option value="withPrevious">withPrevious</option>
-                                  <option value="afterPrevious">afterPrevious</option>
-                                  <option value="onClick">onClick</option>
+                                  {triggerOptionsFor(step.trigger).map((t) => (
+                                    <option key={t} value={t}>
+                                      {t}
+                                    </option>
+                                  ))}
                                 </select>
                                 {/* Icon backdrop + icon — purely visual. */}
                                 <div

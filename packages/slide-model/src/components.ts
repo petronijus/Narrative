@@ -20,6 +20,10 @@
  *   - getComponentDocName  Returns `component:<id>` — Hocuspocus doc name.
  *   - pruneAnimationsToScope  Filters animation steps to those whose objectId
  *                             is in the promoted leaf set.
+ *   - richTextOpsOf        JSON-safe Quill delta of a Y.Text body, every
+ *                          attribute kept — the wire format rich text uses
+ *                          to travel through plain-object plans (see
+ *                          RICH_TEXT_OPS_KEY).
  */
 
 import { nanoid } from 'nanoid'
@@ -36,6 +40,99 @@ import { yMapToAnimationStep } from './animationBindings.js'
  */
 function isYTextLike(v: unknown): boolean {
   return v !== null && typeof v === 'object' && 'toString' in v && 'insert' in v
+}
+
+// ---------------------------------------------------------------------------
+// Rich text on the wire
+// ---------------------------------------------------------------------------
+
+/**
+ * Key under which a plain-object snapshot of a text body carries its rich
+ * text: a text object's `_richTextOps` holds the delta of its `text`, and a
+ * table cell's `_richTextOps` the delta of that cell's `text`. The sibling
+ * `text` stays a plain string (readable fallback for consumers that only
+ * need the characters, e.g. thumbnails). Same key and meaning as the
+ * clipboard's (`apps/web/src/state/clipboard.ts`), which `addObject` /
+ * `addObjects` consume for text objects; `insertObjectsWithRichText`
+ * (stampComponent.ts) consumes it for text objects AND table cells.
+ */
+export const RICH_TEXT_OPS_KEY = '_richTextOps'
+
+/** One op of a Y.Text delta: text (or a JSON embed) plus its attributes. */
+export interface RichTextOp {
+  insert: string | Record<string, unknown>
+  attributes?: Record<string, unknown>
+}
+
+/**
+ * A Y.Text body as a JSON-safe Quill delta (`Y.Text#toDelta()`), with EVERY
+ * attribute kept — inline runs (fontWeight, italic, underline, color, font
+ * size / family, …) and the paragraph attributes carried on U+2029
+ * separators (list kind, level, bullet char, number format, start-at; see
+ * richText.ts). Replaying it with `Y.Text#applyDelta` reproduces the body
+ * exactly. (richText.ts `toDelta` is NOT used: it is the renderer's
+ * projection and drops paragraph attributes.)
+ */
+export type RichTextOps = RichTextOp[]
+
+function clonePlain(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(clonePlain)
+  if (v !== null && typeof v === 'object') {
+    const o: Record<string, unknown> = {}
+    for (const [k, sv] of Object.entries(v as Record<string, unknown>)) o[k] = clonePlain(sv)
+    return o
+  }
+  return v
+}
+
+/** Yjs shared types can't travel as JSON — detected by duck type (see isYTextLike). */
+function isYjsTypeLike(v: unknown): boolean {
+  return (
+    v !== null &&
+    typeof v === 'object' &&
+    typeof (v as { observe?: unknown }).observe === 'function'
+  )
+}
+
+/**
+ * Capture a Y.Text body as {@link RichTextOps}. Duck-typed like
+ * `isYTextLike` so it works across Yjs module identities. Embeds that are
+ * themselves Yjs types are dropped (not serialisable; Narrative never
+ * inserts them); plain JSON embeds are kept.
+ */
+export function richTextOpsOf(yText: unknown): RichTextOps {
+  const toDelta = (yText as { toDelta?: unknown } | null)?.toDelta
+  if (typeof toDelta !== 'function') return []
+  const raw = toDelta.call(yText) as Array<{ insert?: unknown; attributes?: unknown }>
+  const out: RichTextOps = []
+  for (const op of raw) {
+    let insert: RichTextOp['insert']
+    if (typeof op.insert === 'string') insert = op.insert
+    else if (op.insert !== null && typeof op.insert === 'object' && !isYjsTypeLike(op.insert)) {
+      insert = clonePlain(op.insert) as Record<string, unknown>
+    } else continue
+    const e: RichTextOp = { insert }
+    if (op.attributes !== null && typeof op.attributes === 'object') {
+      const attrs = clonePlain(op.attributes) as Record<string, unknown>
+      if (Object.keys(attrs).length > 0) e.attributes = attrs
+    }
+    out.push(e)
+  }
+  return out
+}
+
+/**
+ * Plain snapshot of a Yjs-bearing value for a plan: a Y.Text under key
+ * `text` becomes its string plus `_richTextOps` on the same record; any
+ * other Y.Text becomes its string.
+ */
+function snapshotBody(out: Record<string, unknown>, key: string, v: unknown): void {
+  if (isYTextLike(v)) {
+    out[key] = (v as { toString(): string }).toString()
+    if (key === 'text') out[RICH_TEXT_OPS_KEY] = richTextOpsOf(v)
+    return
+  }
+  out[key] = v
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +223,12 @@ function collectSubtreeIds(rootIds: ReadonlySet<string>, allObjects: SlideObject
 export interface PromoteToComponentPlan {
   /** Nanoid(12) that will be the new component's id. */
   componentId: string
-  /** The master tree — all promoted objects with stable ids. */
+  /**
+   * The master tree — all promoted objects with stable ids. Text bodies are
+   * plain strings with a lossless `_richTextOps` delta alongside (on text
+   * objects and on table cells, see RICH_TEXT_OPS_KEY); write the tree with
+   * `insertObjectsWithRichText` so the formatting is replayed.
+   */
   masterTree: SlideObject[]
   /** Animation steps pruned to the promoted subtree targets. */
   masterAnimations: AnimationStep[]
@@ -237,21 +339,17 @@ export function promoteToComponent(
   const masterAnimations = pruneAnimationsToScope(allAnimations, subtreeIds)
 
   // --- Build master tree (deep clone of plain objects, stable ids) ---
-  // Plain objects are already detached from Yjs — we can spread them safely.
-  // Y.Text values (text object bodies) are serialized to string for the master
-  // doc — the component's Yjs client will promote them back to Y.Text on insert.
-  // Tables need a deeper walk because their cell `text` Y.Texts live inside
-  // rows[r][c].text and would otherwise leak references to the source deck doc
-  // (causing Yjs writeAny stack overflows when the plan gets encoded into the
-  // component doc).
+  // Plain objects are already detached from Yjs — we can spread them safely,
+  // except for Y.Text bodies, which would leak references to the source deck
+  // doc (Yjs writeAny stack overflows when the plan gets encoded into the
+  // component doc) and aren't JSON-serialisable. Each Y.Text body — a text
+  // object's `text` and every table cell's `text` — becomes its plain string
+  // plus a lossless `_richTextOps` delta (RICH_TEXT_OPS_KEY), so inline runs
+  // and paragraph attributes survive into the component doc.
   const masterTree: SlideObject[] = promotedObjects.map((obj) => {
     const clone: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(obj as unknown as Record<string, unknown>)) {
-      if (isYTextLike(v)) {
-        clone[k] = (v as { toString(): string }).toString()
-      } else {
-        clone[k] = v
-      }
+      snapshotBody(clone, k, v)
     }
     if (clone['type'] === 'table' && Array.isArray(clone['rows'])) {
       clone['rows'] = (clone['rows'] as TableCell[][]).map((row) =>
@@ -259,10 +357,10 @@ export function promoteToComponent(
           const cellOut: Record<string, unknown> = {}
           for (const [k, v] of Object.entries(cell as unknown as Record<string, unknown>)) {
             if (isYTextLike(v)) {
-              cellOut[k] = (v as { toString(): string }).toString()
+              snapshotBody(cellOut, k, v)
             } else if (v !== null && typeof v === 'object') {
-              // border / padding sub-objects — shallow clone is enough.
-              cellOut[k] = { ...(v as Record<string, unknown>) }
+              // border / padding / fillStyle sub-objects.
+              cellOut[k] = clonePlain(v)
             } else {
               cellOut[k] = v
             }

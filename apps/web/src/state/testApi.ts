@@ -18,6 +18,8 @@ import {
   LOCAL_ORIGIN,
   addObject,
   addSlide,
+  addAnimation as addAnimationMutation,
+  getSlideAnimationsCtx,
   updateObject as updateObjectMutation,
   removeObject as removeObjectMutation,
   getSlideObjectsCtx,
@@ -26,7 +28,7 @@ import {
   updateSlideTransition,
   type SlideMutationContext,
 } from '@narrative/slide-model'
-import type { Slide, SlideObject, SlideObjectPatch } from '@narrative/shared'
+import type { AnimationStep, Slide, SlideObject, SlideObjectPatch } from '@narrative/shared'
 
 /**
  * Snapshot of the Selection context written by SelectionContext in DEV
@@ -59,6 +61,16 @@ export interface AddRectOpts {
   fill: number
 }
 
+export interface AddImageOpts {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Crop source rect in ABSOLUTE slide coordinates (P11 crop model). */
+  imageRect?: { x: number; y: number; width: number; height: number }
+}
+
 export interface TestApi {
   /**
    * Wipes existing slides and seeds a 2-slide deck with the same rectangle
@@ -71,6 +83,18 @@ export interface TestApi {
    * Used by E2E specs that need deterministic positions to hit-test.
    */
   addRect(opts: AddRectOpts, slideId?: string): void
+  /**
+   * Stamp an ImageObject, optionally cropped. No asset (`assetId: ''`), so
+   * the renderer draws its placeholder — specs use it for geometry (a crop
+   * must travel with its frame), not for pixels.
+   */
+  addImage(opts: AddImageOpts, slideId?: string): void
+  /**
+   * Append an animation step to a slide (default: the first) exactly as
+   * stored — including legacy triggers such as `onEnter` — and return its
+   * generated id.
+   */
+  addAnimation(step: Omit<AnimationStep, 'id'>, slideId?: string): string
   /**
    * P15: stamp a TextObject for font tests. Default font / weight /
    * color so the test only has to specify position + content.
@@ -326,6 +350,31 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         fill: opts.fill,
         opacity: 1,
         rotation: 0,
+      })
+    },
+    addAnimation(step, slideId) {
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
+      if (targetSlideId === undefined) throw new Error('addAnimation: no slide')
+      const ctx = getSlideAnimationsCtx(liveCtx(), targetSlideId)
+      if (ctx === null) throw new Error('addAnimation: slide ctx not found')
+      return addAnimationMutation(ctx, step).id
+    },
+    addImage(opts, slideId) {
+      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
+      if (targetSlideId === undefined) throw new Error('addImage: no slide')
+      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
+      if (ctx === null) throw new Error('addImage: slide ctx not found')
+      addObject(ctx, {
+        id: opts.id,
+        type: 'image',
+        assetId: '',
+        x: opts.x,
+        y: opts.y,
+        width: opts.w,
+        height: opts.h,
+        opacity: 1,
+        rotation: 0,
+        ...(opts.imageRect !== undefined ? { imageRect: { ...opts.imageRect } } : {}),
       })
     },
     addText(opts, slideId) {

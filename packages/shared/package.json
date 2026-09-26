@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
   },
@@ -15,5 +16,8 @@
   },
   "devDependencies": {
     "yjs": "^13.6.30"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
   }
 }

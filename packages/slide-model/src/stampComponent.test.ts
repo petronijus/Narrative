@@ -12,7 +12,10 @@ import { getSlideObjectsCtx, listSlides } from './slides.js'
 import { yMapToPlainObject } from './bindings.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
 import type { RectangleObject, TextObject, SlideObject } from '@narrative/shared'
-import { stampComponent } from './stampComponent.js'
+import { insertObjectsWithRichText, stampComponent } from './stampComponent.js'
+import { promoteToComponent, type PromoteToComponentPlan } from './components.js'
+import { addObject, groupObjects, LOCAL_ORIGIN, type ObjectsMutationContext } from './mutations.js'
+import { addTable, getTableCellYMap } from './tableMutations.js'
 
 function makeDeckCtx(): SlideMutationContext {
   const { doc, slides } = createSlideDoc()
@@ -223,5 +226,183 @@ describe('stampComponent', () => {
     } else {
       expect(t).toBe('hi')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// promote → master → stamp: rich text survives the whole trip
+// ---------------------------------------------------------------------------
+
+type DeltaOp = { insert: unknown; attributes?: Record<string, unknown> }
+
+/** Every Y.Text body of a slide-object snapshot, keyed by a stable path. */
+function bodies(obj: SlideObject): Record<string, DeltaOp[]> {
+  const out: Record<string, DeltaOp[]> = {}
+  if (obj.type === 'text' && obj.text instanceof Y.Text) out['text'] = obj.text.toDelta()
+  if (obj.type === 'table') {
+    obj.rows.forEach((row, r) =>
+      row.forEach((cell, c) => {
+        if (cell.text instanceof Y.Text) out[`cell:${r}:${c}`] = cell.text.toDelta()
+      }),
+    )
+  }
+  return out
+}
+
+/** Recursively assert no `_richTextOps` marker leaked into the CRDT. */
+function expectNoOpsMarker(v: unknown): void {
+  if (v instanceof Y.Map) {
+    expect(v.has('_richTextOps')).toBe(false)
+    v.forEach((sv) => expectNoOpsMarker(sv))
+  } else if (v instanceof Y.Array) {
+    v.forEach((sv) => expectNoOpsMarker(sv))
+  }
+}
+
+/** Seed a slide with a rich text object, a rich table and a token group. */
+function seedRichSlide(objCtx: ObjectsMutationContext): { textId: string; tableId: string } {
+  const textObj = makeText('rich-text', 40, 50, '')
+  addObject(objCtx, textObj)
+  const tableId = addTable(objCtx, { x: 300, y: 50, width: 300, height: 120, rows: 2, cols: 2 })
+  const rectA = makeRect('grp-a', 40, 300)
+  const rectB = makeRect('grp-b', 160, 300)
+  addObject(objCtx, rectA)
+  addObject(objCtx, rectB)
+  groupObjects(objCtx, ['grp-a', 'grp-b'])
+
+  const textY = objCtx.objects.get(0).get('text') as Y.Text
+  const cellY = getTableCellYMap(objCtx, tableId, 1, 0)!.get('text') as Y.Text
+  const cell01 = getTableCellYMap(objCtx, tableId, 0, 1)!.get('text') as Y.Text
+  objCtx.doc.transact(() => {
+    // Inline runs + two list paragraphs carried on U+2029 separators.
+    textY.insert(0, 'Bold', { fontWeight: 700 })
+    textY.insert(4, ' red', { color: 0xff0000, italic: true })
+    textY.insert(8, ' ', { list: 'bullet', level: 0, bulletChar: '–' })
+    textY.insert(9, 'sub', { fontFamily: 'Inter', fontSize: 30 })
+    textY.insert(12, ' ', { list: 'bullet', level: 1 })
+    // Table cells: numbered list with a custom format / start, and runs.
+    cellY.insert(0, 'one', { underline: true })
+    cellY.insert(3, ' ', { list: 'number', numberFormat: 'lowerRoman', startAt: 3 })
+    cellY.insert(4, 'two')
+    cellY.insert(7, ' ', { list: 'number', numberFormat: 'lowerRoman', level: 2 })
+    cell01.insert(0, 'plain ')
+    cell01.insert(6, 'big', { fontSize: 40, fontWeight: 800 })
+  })
+  return { textId: textObj.id, tableId }
+}
+
+/** Mirror `writeComponentMasterTree`: a one-slide component doc. */
+function writeMaster(plan: PromoteToComponentPlan): Y.Doc {
+  const doc = new Y.Doc()
+  doc.transact(() => {
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    const slide = new Y.Map<unknown>()
+    const objects = new Y.Array<Y.Map<unknown>>()
+    slide.set('objects', objects)
+    slide.set('animations', new Y.Array<Y.Map<unknown>>())
+    slides.push([slide])
+    insertObjectsWithRichText(objects, plan.masterTree)
+  })
+  return doc
+}
+
+function masterObjects(doc: Y.Doc): SlideObject[] {
+  const objects = doc.getArray<Y.Map<unknown>>('slides').get(0).get('objects') as Y.Array<
+    Y.Map<unknown>
+  >
+  return objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
+}
+
+describe('promote → stamp rich-text round trip', () => {
+  it('keeps every text body delta (runs + paragraph attributes) for text objects and table cells', () => {
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    const { textId, tableId } = seedRichSlide(objCtx)
+    const sources = objCtx.objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
+    const sourceText = bodies(sources.find((o) => o.id === textId)!)
+    const sourceTable = bodies(sources.find((o) => o.id === tableId)!)
+    // Sanity: the fixture really carries paragraph attributes.
+    expect(JSON.stringify(sourceText)).toContain('bulletChar')
+    expect(JSON.stringify(sourceTable)).toContain('lowerRoman')
+
+    const plan = promoteToComponent(deckCtx, slideId, [textId, tableId], 'folder-1')
+    // The plan travels as JSON (REST / worker boundary) — must survive it.
+    const wire = JSON.parse(JSON.stringify(plan)) as PromoteToComponentPlan
+    const master = writeMaster(wire)
+    const inMaster = masterObjects(master)
+    expect(bodies(inMaster.find((o) => o.id === textId)!)).toEqual(sourceText)
+    expect(bodies(inMaster.find((o) => o.id === tableId)!)).toEqual(sourceTable)
+    expectNoOpsMarker(master.getArray('slides'))
+
+    const target = makeDeckCtx()
+    const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
+    stampComponent(targetCtx, master, { x: 0, y: 0 })
+    const stamped = targetCtx.objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
+    expect(bodies(stamped.find((o) => o.type === 'text')!)).toEqual(sourceText)
+    expect(bodies(stamped.find((o) => o.type === 'table')!)).toEqual(sourceTable)
+    expectNoOpsMarker(targetCtx.objects)
+  })
+
+  it('stamps rich text written directly in the master editor (no plan involved)', () => {
+    const master = new Y.Doc()
+    const masterCtx = (() => {
+      const slides = master.getArray<Y.Map<unknown>>('slides')
+      const slide = new Y.Map<unknown>()
+      const objects = new Y.Array<Y.Map<unknown>>()
+      master.transact(() => {
+        slide.set('objects', objects)
+        slides.push([slide])
+      })
+      return { doc: master, objects }
+    })()
+    const { textId, tableId } = seedRichSlide(masterCtx)
+    const src = masterObjects(master)
+    const target = makeDeckCtx()
+    const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
+    stampComponent(targetCtx, master, { x: 10, y: 10 })
+    const stamped = targetCtx.objects.toArray().map((m) => yMapToPlainObject<SlideObject>(m))
+    expect(bodies(stamped.find((o) => o.type === 'text')!)).toEqual(
+      bodies(src.find((o) => o.id === textId)!),
+    )
+    expect(bodies(stamped.find((o) => o.type === 'table')!)).toEqual(
+      bodies(src.find((o) => o.id === tableId)!),
+    )
+  })
+
+  it('remaps a token group to a fresh token per stamp, keeping its members together', () => {
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    seedRichSlide(objCtx)
+    const plan = promoteToComponent(deckCtx, slideId, ['grp-a', 'grp-b'], 'folder-1')
+    const masterGroup = (plan.masterTree[0] as RectangleObject).groupId
+    expect(typeof masterGroup).toBe('string')
+    const master = writeMaster(plan)
+
+    const target = makeDeckCtx()
+    const targetCtx = getSlideObjectsCtx(target, listSlides(target)[0]!.id)!
+    stampComponent(targetCtx, master, { x: 0, y: 0 })
+    stampComponent(targetCtx, master, { x: 400, y: 0 })
+    const groups = targetCtx.objects
+      .toArray()
+      .map((m) => yMapToPlainObject<RectangleObject>(m).groupId)
+    expect(groups.every((g) => typeof g === 'string')).toBe(true)
+    expect(groups[0]).toBe(groups[1])
+    expect(groups[2]).toBe(groups[3])
+    expect(groups[0]).not.toBe(groups[2])
+    expect(groups).not.toContain(masterGroup)
+  })
+
+  it('a stamp is one transaction with the local origin (one undo step)', () => {
+    const master = makeMasterDoc([makeRect('a', 0, 0), makeText('t', 10, 10, 'hi')])
+    const deckCtx = makeDeckCtx()
+    const objCtx = getSlideObjectsCtx(deckCtx, listSlides(deckCtx)[0]!.id)!
+    const origins: unknown[] = []
+    const onTx = (tr: Y.Transaction) => origins.push(tr.origin)
+    deckCtx.doc.on('afterTransaction', onTx)
+    stampComponent(objCtx, master, { x: 0, y: 0 })
+    deckCtx.doc.off('afterTransaction', onTx)
+    expect(origins).toEqual([LOCAL_ORIGIN])
   })
 })

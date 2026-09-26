@@ -1,6 +1,9 @@
 # Agentic Narrative: every capability callable by an agent, plus Woodgrove style packs
 
-Status: **accepted**, 2026-09-26. Not started. The agent surface is
+Status: **accepted**, 2026-09-26. **A0 done** on 2026-09-26 (in the
+working tree on top of `4e3c503`, not yet released; handoff:
+[`docs/handoff/A0-agentic-foundations.md`](../handoff/A0-agentic-foundations.md)).
+Next: A1. (Was "Not started" until A0 landed.) The agent surface is
 **MCP only**; an in-app agent is deferred (§13). Replaces the AI milestones
 (M16–M18 in BUILD_PLAN, renumbered M20–M22 in
 `docs/handoff/polish-phase-plan.md`); BUILD_PLAN now points here. Petr's
@@ -367,7 +370,7 @@ with source locations, is Appendix A. Here is the shape by domain:
 | animation | `add` (with defaults), `update`, `remove`, `reorder`, `retarget`\*, `setMoveTarget`, `videoTiming`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | guide     | `list`, `add`, `update`, `remove`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | media     | `upload` (bytes or URL, with SSRF guard), `status`, `url`, `delete`; `image.insert` (native size, fit into rect, or into a slot)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| component | `list`, `promote` (keeps rich text\*), `stamp` (keeps rich text and animations\*), `rename`, `delete`, `master.*` (the object/text commands pointed at a component doc)                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| component | `list`, `get` (master with slot map\*), `create` (from objects or a spec\*), `promote` (keeps rich text\*), `stamp` (fills slots, keeps provenance\*), `restamp`\*, `rename`, `delete`, `master.*` (the object/text commands pointed at a component doc)                                                                                                                                                                                                                                                                                                                                        |
 | share     | `permissions.list/invite/setRole/revoke`, `invites.list/cancel`, `links.list/create/revoke`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | style     | `pack.list/get/import/validate`, `deck.applyPack`, `slide.relayout`, `slides.restyle`, `check`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | query     | `outline`, `find`, `object`, `slide`, `tokens`, `fonts`, `render`, `check`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -417,10 +420,9 @@ or after 10 minutes of inactivity.
      with the agent origin, via `agent.applyProposal`. Because it is a
      CRDT delta, concurrent human edits made in the meantime survive.
 
-  `.claude/agents/ai-integration.md` still says "never mutate the Y.Doc
-  without user confirmation". That principle is superseded by the
-  direct-by-default decision; the brief is updated in A0 (along with its
-  `model: sonnet`, which contradicts CLAUDE.md).
+  The old `ai-integration.md` principle "never mutate the Y.Doc without
+  user confirmation" is superseded by the direct-by-default decision; the
+  brief was rewritten in A0 (and moved to Opus, per CLAUDE.md).
 
 Irreversible commands (`share.*`, `deck.delete`, `folder.delete`,
 invite emails) are the exception to direct mode: they always ask for
@@ -444,7 +446,46 @@ This gives:
 Durable revert after the doc unloads needs version history (M18). It is
 out of scope here and noted as a known limit.
 
-## 7. Style packs
+## 7. Style packs: tokens, a few components, and layouts as data
+
+**Decisions (2026-09-26): brand styles are translated into Narrative's own
+building blocks, and the agent works with those — but components are used
+sparingly.** A style pack is not a second styling system next to the
+editor. Applying a pack to a client's folder produces three things.
+
+1. **Folder tokens and fonts.** Colour tokens, text-style tokens (headline,
+   subline, copy, footnote, … with per-level list styles, §7.2) and the
+   brand fonts. Almost all styling reaches objects through these tokens.
+2. **A small, curated set of components**, only for blocks that recur on
+   many slides and that people want to change in one place:
+   - pagination (the page number);
+   - headline, subline and copy text blocks;
+   - a repeated column or grid layout (e.g. the brand's three-column or
+     card grid);
+   - little else. A brand with 100 templates does NOT become 100
+     components: that library would be unmaintainable.
+3. **Layouts as data.** The brand's templates stay in the pack as layout
+   definitions: region geometry, which slot goes where, which text style
+   and component each slot uses. They are not components. A deck with
+   100 templates is 100 small data records, not 100 masters.
+
+The agent builds a slide by picking a layout, then placing the pack's
+components (headline, subline, copy, pagination, a column grid) and plain
+objects styled with the folder's tokens into the layout's regions. It
+restyles by re-placing the same slots with another pack's layouts, tokens
+and components. The result is made of the things a designer uses by hand:
+token-styled objects plus the few shared components, so people keep editing
+an agent-built deck with the normal tools, and a component a designer
+improves in Folder Settings is what the agent uses next time.
+
+**Rule for the agent, written into the playbooks and tool descriptions:**
+use the pack's existing components for the roles they cover; never create
+a component for a one-off; propose a new component only when a block
+repeats across several slides, or when the user asks for one.
+
+The pack JSON keeps everything else: layouts, editorial rules, QA rules,
+the archetype → layout map, the variant list, imagery rules and
+provenance.
 
 ### 7.1 Format
 
@@ -475,12 +516,16 @@ condensed here:
   rings).
 - `layouts[]`: `id`, `family`, `variant`, `tone`, `purpose`,
   `needsPicture`, `background`, and `regions[]`. Each region has a `slot`,
-  a `role`, a `rect` as a fraction of the canvas, a `textStyle`, `align`,
-  `anchor`, `autofit` (`grow-down` / `fixed` / `shrink`), `insets`,
-  `aspect`, `maxLines`, `maxChars`, `required` and `fillOrder`.
-- `components[]`: recipes such as a table style, stat cards, a band, an
-  agenda row, cards, glass cards, the Tailspin flywheel. They compile to
-  ordinary objects.
+  a `role`, a `rect` as a fraction of the canvas, a `textStyle` (a folder
+  token), an optional `component` (one of the pack's few components, e.g.
+  the headline block), `align`, `anchor`, `autofit` (`grow-down` / `fixed`
+  / `shrink`), `insets`, `aspect`, `maxLines`, `maxChars`, `required` and
+  `fillOrder`. **Layouts stay data** — however many templates a brand
+  has.
+- `components[]`: the short list of blocks that become component masters
+  (pagination, headline, subline, copy, a recurring column/grid). Anything
+  used once or twice stays a recipe the builder draws with token-styled
+  objects.
 - `imagery`: a pool reference plus rights, slot aspect ratios, minimum
   dpi, default focus, whether scrims are allowed, an AI-label rule, and
   icon style.
@@ -508,25 +553,43 @@ einfügen`).
 These land before the importers, and every one of them goes through the
 command layer and the parity check.
 
-1. **Layouts and slots.**
-   - A slide gets `layout?: {packId, layoutId, variant}`.
-   - An object gets `slot?: string` and `role?: 'title' | 'subtitle' |
-'body' | … | 'furniture'`.
-   - This is the equivalent of Contoso's `data-contoso-slot`. It turns restyle and
-     re-layout into lookups instead of guesses, and PPTX export can then
-     fill a real master's placeholders when the pack has one.
+1. **Layouts, slots and component provenance.**
+   - A slide built from a pack layout records
+     `layout?: { packId, layoutId, variant }`.
+   - An object placed into a layout region gets `slot?: string` and
+     `role?: 'title' | 'subtitle' | 'body' | … | 'furniture'`.
+   - A stamped component keeps `component?: { id }` on its objects. Today
+     stamping forgets where the objects came from.
+
+   This is the equivalent of Contoso's `data-contoso-slot`. It turns restyle and
+   re-layout into lookups instead of guesses: "use the other pack's
+   equivalent layout and move each slot's content across". PPTX export can
+   then also fill a real master's placeholders when the pack has one.
+
 2. **Autofit semantics on text boxes:** `grow-down` / `fixed` / `shrink`,
    matching `spAutoFit`.
 3. **Per-level list styles on text-style tokens.** Today list attributes
    live only on paragraph runs.
-4. **Furniture objects:** locked, `role: 'furniture'`, regenerated by
-   `style.deck.applyPack` and never hand-edited. The page number reuses
-   `isSlideNumber`.
+4. **Furniture objects:** `role: 'furniture'`, regenerated by
+   `style.deck.applyPack`. Pagination is one of the pack's components and
+   reuses `isSlideNumber`; other furniture (logo, footer) is placed from the
+   layout data. Furniture may be locked for people in the editor; agents
+   ignore locks (§12, decision 9).
 5. **Font stretch** (a `wdth` axis) on text, for Fabrikam Type.
 6. **Deck-level variant** (Contoso's rule of one variant per deck), with
    `style.deck.setVariant`.
 7. **Schema debt found by the survey:** add `textStyleId` to `TextObject`.
-   It is written today through a type cast.
+   It is written today through a type cast. (Done in A0.)
+8. **Component commands the agent needs** for the few components a
+   folder has:
+   - `component.list` and `component.get` (master content with its slot
+     map);
+   - `component.stamp` with slot content filled in the same step;
+   - `component.create` from objects or from a spec;
+   - editing a master (the object and text commands pointed at a
+     component document);
+   - `component.restamp`, which re-applies a changed master to the stamps
+     that came from it, keeping their slot content.
 
 ### 7.3 Where packs come from, and who owns them
 
@@ -556,9 +619,11 @@ that Narrative mirrors the skills. So:
 | Woodgrove house   | hand-authored from `test-presentation.html`, **not** `references/template.html` (v1 contradicts SKILL.md v1.8); vw/vh → px | `test-presentation.html` / SKILL.md v1.8                                     |
 | Adatum        | extends Woodgrove: lime accent, decoration, chart palette                                                                      | `adatum-deck-design.md`                                                      |
 
-**The PPTX master reader is a real deliverable.** It also fixes "masters
-and layouts are flattened on import" for ordinary PPTX imports: slides
-imported from a branded deck keep `layout` and `slot`.
+**The PPTX master reader is a real deliverable.** It turns a client
+master's layouts into pack layout data (and its theme into tokens); it does
+not turn them into components. It also fixes "masters and layouts are
+flattened on import" for ordinary PPTX imports: slides imported from a
+branded deck keep their layout and slot provenance.
 
 ### 7.4 Contradictions resolved at bootstrap
 
@@ -653,12 +718,19 @@ interface DeckSpec {
 }
 ```
 
+Here `layout` is a pack layout (resolved by id, or through `archetypeMap`
+from `archetype`), and `drawn` primitives are the exception, used only when
+no layout region fits.
+
 `style.buildFromSpec` turns a spec into objects in one transaction:
 
-- regions become rects;
-- text styles become token refs;
-- furniture becomes locked objects;
-- every object gets its `slot` and `layout`.
+- each slide places its layout's regions: a region that names a component
+  (headline, subline, copy, a column grid) stamps it and fills it; other
+  regions become plain objects styled with the folder's tokens;
+- pagination and other furniture are placed per the pack's rules;
+- styling comes from the folder's tokens and the pack's components, never
+  from literal values in the spec;
+- every object records its slot (and component, when it came from one).
 
 Because a spec is data, the agent can revise it and rebuild. The spec is
 stored on the run, so a deck can be rebuilt with another pack.
@@ -689,23 +761,40 @@ stored on the run, so a deck can be rebuilt with another pack.
 This is `deck.insertFrom({source: deckId | pptxUpload, range?, at})`
 followed by `style.slides.restyle({slides, pack, variant, mode})`:
 
-- **Deterministic part:**
-  - remap colours to token refs by role;
-  - map fonts to text styles;
-  - regenerate furniture;
-  - replace the variant.
-- **Judgment part**, for slides without `slot` metadata:
-  - the agent classifies objects into roles (title, body, picture, and so
-    on) and picks a layout through `archetypeMap`;
-  - `slide.applyLayout` moves the classified objects into regions;
+- **Deterministic part**, for slides that carry layout and slot provenance:
+  - pick the target pack's equivalent layout (same layout family, or
+    through `archetypeMap`) and move each slot's content into its region;
+  - replace the source pack's components (headline, pagination, …) with
+    the target pack's, and remap the other objects to the target folder's
+    tokens by role;
+  - apply the target variant.
+- **Judgment part**, for slides without provenance (an old deck, a plain
+  PPTX):
+  - the agent classifies objects into slot roles (title, body, picture,
+    and so on) and picks a layout through `archetypeMap`;
+  - `slide.applyLayout` moves the classified objects into the layout's
+    regions, using the pack's components where the layout names them;
   - `query.check` verifies the result.
-- Slides that came in with slot metadata (built by a pack, or imported
-  through the master reader) skip the judgment part entirely.
+- Slides built from a pack, or imported through the master reader, never
+  need the judgment part.
 
 ## 9. Keeping parity from drifting
 
 There are three layers. The mechanical ones fail the build; the agent
 catches what they cannot.
+
+As of A0 (2026-09-26): guards 3 and 5 below are in place; guard 4 runs
+every example and a missing-id check over every command, but the
+convergence property suite has no agent ops yet; guard 2 covers
+slide-model writers, command metadata and the known-missing/allowlist
+hygiene, and routes through the server's route guard
+(`apps/server/src/routes/agentParity.test.ts`, which enumerates the real
+Fastify route table via `apps/server/src/http/registerRoutes.ts`; 45 routes),
+but not yet shortcuts or menu actions (A2); guard 1, the lint rule, is
+switched on directory by directory in A2. (A lock policy — commands
+refusing locked objects unless `force: true` — was built and removed the
+same day, 2026-09-26: locks are editor-only and agents ignore them, §12
+decision 9.)
 
 ### 9.1 Mechanical guards (run by `pnpm -r test` + `pnpm lint`)
 
@@ -815,13 +904,24 @@ needs no API key.
 Each phase ends green on the CLAUDE.md auto-run table and is a separately
 releasable version.
 
+Progress (2026-09-26): **A0 done**, unreleased — 50 commands, 81
+known-missing entries (A1 42, A2 32, A3 5, A4 2), 12 allowlisted; every server
+route is claimed (route guard). What A0 left for later is listed under
+"Deviations" in
+[`docs/handoff/A0-agentic-foundations.md`](../handoff/A0-agentic-foundations.md);
+in short: the lint rule (A2), `useCommand()` wired into the UI (A2),
+shortcut / menu enumeration and the eval suite are not in place yet.
+"Ends green" did not fully hold for A0: `pnpm size` (Tiptap chunk), the
+real-deck PPTX round trip (5 differences) and Stryker (runner incompatible
+with vitest 4) were already red at `4e3c503`.
+
 | Phase                             | Deliverable                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Notes                                                                                                                                              |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **A0 Foundations**                | ADRs (§11). zod schemas for every type in `shared`. `packages/commands` skeleton with `ops.apply`, BrowserHost, `useCommand`. `agentOrigin(runId)`. Fix the 5 origin-dropping nested transactions and the 2 writes caused by viewing. Add `textStyleId` to the schema. Fix the bugs the survey found: `duplicateObject` keeps `groupId`; `imageRect` is not moved by nudge, Inspector X/Y, align or distribute; the "Send back"/"Send backward" labels are swapped; merged-cell pointers are not shifted on row/col insert or delete; `stamp`/`promote` flatten rich text; videos in an appended .pptx are never transcoded. Wrap every existing headless slide-model mutation as a command. Parity test, allowlist and manifest wired up from day one (with a known-missing list that shrinks). `agent-parity` agent brief; repurpose the `ai-integration` brief to own the MCP surface and playbooks (and set it to Opus). | No user-visible agent yet.                                                                                                                         |
-| **A1 Server host, identity, MCP** | Personal access tokens: hashed, scoped, with expiry, created in account settings, accepted in `authPreHandler`, `onAuthenticate` and the tus upload handler. ServerHost with single-transaction wrapping. Runs and changesets (`agent_runs` / `agent_ops`), `agent.revert`, the Agent activity popover. `activeSlideId` in awareness; `editor.context`, `editor.show`; the agent as an awareness peer. `POST /api/commands` (batch). Rate limit (`@fastify/rate-limit`). **`/api/mcp`**: tools from the registry with annotations, elicitation for confirmations, the first playbooks as MCP prompts, and the `narrative` Claude Code skill in woodgrove-plugins. Then MCP OAuth for claude.ai connectors.                                                                                                                                                                                                                        | MCP ships here, per the 2026-09-26 decision: Claude Code can drive Narrative with every command A0 wrapped. Security review (`security-reviewer`). |
+| **A1 Server host, identity, MCP** | Personal access tokens: hashed, scoped, with expiry, created in account settings, accepted in `authPreHandler`, `onAuthenticate` and the tus upload handler. ServerHost with single-transaction wrapping. Runs and changesets (`agent_runs` / `agent_ops`), `agent.revert`, the Agent activity popover. `activeSlideId` in awareness; `editor.context`, `editor.show`; the agent as an awareness peer. **Component commands the agent works with (§7.2 item 8):** `component.list`, `component.get` with the slot map, `component.stamp` with slot content, editing a master (the host opens `component:<id>`). `POST /api/commands` (batch). Rate limit (`@fastify/rate-limit`). **`/api/mcp`**: tools from the registry with annotations, elicitation for confirmations, the first playbooks as MCP prompts, and the `narrative` Claude Code skill in woodgrove-plugins. Then MCP OAuth for claude.ai connectors.               | MCP ships here, per the 2026-09-26 decision: Claude Code can drive Narrative with every command A0 wrapped. Security review (`security-reviewer`). |
 | **A2 Extraction**                 | Move every web-only item in Appendix B into commands and switch the UI over. Turn the lint rule on per directory as each is migrated. Move **token seeding and text-style propagation to the server**: a Hocuspocus extension, or a command run on token update, so propagation reaches decks nobody has open. Add the notes API, `deck.duplicate`, `slide.copyTo` / `object.copyTo` (the clipboard becomes a thin UI over them), `text.set` with formatting, and `table.cell.setText`.                                                                                                                                                                                                                                                                                                                                                                                                                                      | The biggest phase. Each extracted command appears in MCP automatically. Done when the known-missing list is empty.                                 |
 | **A3 Render worker**              | Headless Chromium worker; `/render` route under the production CSP, reading the live document. Thumbnails for unopened decks. `deck.exportPdf` and `deck.exportPng`. `query.render` with single slide, contact sheet, region crop and before/after. Text-fit measurement API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | The agent can see what it built. Also three user-facing features apart from agents.                                                                |
-| **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2. `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. PPTX master/layout reader (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Woodgrove and Adatum packs; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Visual target: the decks Woodgrove builds today.                                                                                                       |
+| **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2 (component provenance and slots, `component.create`, `component.restamp`). `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. **The pack compiler: a pack becomes folder tokens, folder fonts and its short list of components (pagination, headline, subline, copy, recurring column/grid); layouts stay pack data.** PPTX master/layout reader turning client masters into layout data (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Woodgrove and Adatum into their folders; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                       | Visual target: the decks Woodgrove builds today.                                                                                                       |
 | **A5 Deck builder + restyle**     | Deck spec and `style.buildFromSpec`. The build playbook, modelled on `presentation-narrative-standard`, with the render-and-look loop. `deck.insertFrom` + `style.slides.restyle`. The full eval suite.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | The "whole deck from a brief" goal.                                                                                                                |
 
 ## 11. ADRs to write
@@ -832,8 +932,11 @@ releasable version.
   single-transaction server writes, runs and per-run revert,
   direct-by-default with opt-in propose-mode fork-and-delta, awareness
   presence and `editor.context`.
-- **0012:** style packs: format, Narrative-owned packs bootstrapped from
-  the skill library, slide layouts and slots, furniture.
+- **0012:** style packs: Narrative-owned packs bootstrapped from the AI
+  Brain skills compile into folder tokens, fonts and a few recurring
+  components; layouts stay pack data; slot and component provenance; the
+  agent builds and restyles through tokens, layouts and those components,
+  and uses components sparingly.
 - **0013:** the render worker as the one server-side renderer
   (thumbnails, PDF/PNG, fit measurement), running under the production CSP.
 - **Later, a known risk:** reorder by delete-plus-clone loses concurrent
@@ -862,6 +965,15 @@ releasable version.
 8. **Screenshots:** the agent screenshots slides and looks at them
    (`query.render`, §4.6), and the playbooks make it look after every
    visible change.
+9. **Locks are editor-only.** `locked` stops canvas drag, resize, nudge
+   and delete for a person; commands and agents ignore it.
+10. **Styles become Narrative tokens and a few components; templates stay
+    data.** A pack compiles into folder tokens, fonts and only the
+    components that recur (pagination, headline, subline, copy, a repeated
+    column/grid). Templates stay layout records in the pack, however many
+    there are — 100 templates must not become 100 components. The agent
+    uses the existing components, and proposes a new one only for a block
+    that repeats or when asked (§7).
 
 ## 13. Deferred: an in-app agent
 

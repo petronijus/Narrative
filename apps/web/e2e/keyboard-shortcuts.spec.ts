@@ -356,3 +356,209 @@ test.describe('Present mode keyboard shortcuts', () => {
     await expect.poll(() => page.url(), { timeout: 5000 }).not.toMatch(/\/present$/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Canvas object shortcuts — moves carry the crop, duplicates are one undo step
+// ---------------------------------------------------------------------------
+
+/**
+ * The undo manager merges LOCAL_ORIGIN writes that land within 500 ms of
+ * each other into one step. Seeding goes through the same origin, so a
+ * spec that undoes "the action" waits this long after seeding, or Mod+Z
+ * would take the seed with it.
+ */
+const UNDO_CAPTURE_GAP_MS = 700
+
+type Rect4 = { x: number; y: number; width: number; height: number }
+
+async function objectState(
+  page: Page,
+  id: string,
+): Promise<{ x: number; y: number; imageRect?: Rect4 } | null> {
+  return page.evaluate((objId) => {
+    const o = window.__narrative_test_api!.getObject(objId)
+    if (o === null) return null
+    return {
+      x: o['x'] as number,
+      y: o['y'] as number,
+      ...(o['imageRect'] !== undefined ? { imageRect: o['imageRect'] as Rect4 } : {}),
+    }
+  }, id)
+}
+
+/** Select `ids`, re-issuing until the editor's object list has caught up. */
+async function selectWhenKnown(page: Page, ids: string[]): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate((want) => {
+          const api = window.__narrative_test_api!
+          const sel = api.getSelection()
+          if (want.some((id) => !sel.includes(id))) api.setSelection(want)
+          return [...api.getSelection()].sort()
+        }, ids),
+      { timeout: 10_000 },
+    )
+    .toEqual([...ids].sort())
+}
+
+/** Slide-space (1920×1080) point → viewport point, via the artboard's box. */
+async function slideToViewport(
+  page: Page,
+  sx: number,
+  sy: number,
+): Promise<{ x: number; y: number }> {
+  return page.evaluate(
+    ({ x, y }) => {
+      const artboard = document.querySelector<HTMLElement>('.artboard')
+      if (artboard === null) throw new Error('artboard not found')
+      const r = artboard.getBoundingClientRect()
+      const scale = r.width / 1920
+      return { x: r.left + x * scale, y: r.top + y * scale }
+    },
+    { x: sx, y: sy },
+  )
+}
+
+test.describe('Canvas object shortcuts', () => {
+  test('arrow nudge carries a cropped image with its frame, undone together', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    const crop = { x: 150, y: 120, width: 600, height: 450 }
+    await page.evaluate(
+      (imageRect) =>
+        window.__narrative_test_api!.addImage({
+          id: 'img-nudge',
+          x: 200,
+          y: 200,
+          w: 400,
+          h: 300,
+          imageRect,
+        }),
+      crop,
+    )
+    await selectWhenKnown(page, ['img-nudge'])
+    await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)
+
+    // 1 px right: frame AND crop move — a crop left behind slides the
+    // picture inside its frame.
+    await page.keyboard.press('ArrowRight')
+    await expect
+      .poll(() => objectState(page, 'img-nudge'), { timeout: 3000 })
+      .toEqual({ x: 201, y: 200, imageRect: { ...crop, x: 151 } })
+
+    // The crop is part of the same undo step as the frame.
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect
+      .poll(() => objectState(page, 'img-nudge'), { timeout: 3000 })
+      .toEqual({ x: 200, y: 200, imageRect: crop })
+    await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)
+
+    // Shift = 10 px.
+    await page.keyboard.press('Shift+ArrowDown')
+    await expect
+      .poll(() => objectState(page, 'img-nudge'), { timeout: 3000 })
+      .toEqual({ x: 200, y: 210, imageRect: { ...crop, y: 130 } })
+  })
+
+  test('Mod+D duplicates the selection in one undo step and selects the copies', async ({
+    page,
+  }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    await page.evaluate(() => {
+      const api = window.__narrative_test_api!
+      api.addRect({ id: 'dup-a', x: 100, y: 100, w: 200, h: 120, fill: 0xff0000 })
+      api.addRect({ id: 'dup-b', x: 400, y: 100, w: 200, h: 120, fill: 0x00ff00 })
+    })
+    await selectWhenKnown(page, ['dup-a', 'dup-b'])
+    await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)
+
+    await page.keyboard.press('ControlOrMeta+d')
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectCount()), {
+        timeout: 3000,
+      })
+      .toBe(4)
+    const ids = await page.evaluate(() => window.__narrative_test_api!.objectIds())
+    const copies = ids.filter((id) => id !== 'dup-a' && id !== 'dup-b')
+    expect(copies).toHaveLength(2)
+    expect(
+      [...(await page.evaluate(() => window.__narrative_test_api!.getSelection()))].sort(),
+    ).toEqual([...copies].sort())
+
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), {
+        timeout: 3000,
+      })
+      .toEqual(['dup-a', 'dup-b'])
+  })
+
+  test('Alt-drag duplicates, drags the copy, and undoes as one step', async ({ page }) => {
+    test.setTimeout(30_000)
+    // Large enough that the artboard point we press on is not under chrome.
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    await page.evaluate(() =>
+      window.__narrative_test_api!.addRect({
+        id: 'alt-src',
+        x: 600,
+        y: 300,
+        w: 300,
+        h: 200,
+        fill: 0x3366ff,
+      }),
+    )
+    // Not pre-selected: pressing on an unselected object selects it and
+    // starts the drag in the same pointerdown, through the canvas hit-test
+    // rather than any selection chrome.
+    await expect
+      .poll(
+        () => page.evaluate(() => window.__narrative_test_api!.sceneGraphHasMountedNode('alt-src')),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+    await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)
+
+    const from = await slideToViewport(page, 750, 400)
+    const to = await slideToViewport(page, 950, 500)
+    await page.mouse.move(from.x, from.y)
+    await page.keyboard.down('Alt')
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 6 })
+    await page.mouse.up()
+    await page.keyboard.up('Alt')
+
+    // The source stays; the copy followed the pointer.
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectCount()), {
+        timeout: 3000,
+      })
+      .toBe(2)
+    expect(await objectState(page, 'alt-src')).toEqual({ x: 600, y: 300 })
+    const copyId = (await page.evaluate(() => window.__narrative_test_api!.objectIds())).find(
+      (id) => id !== 'alt-src',
+    )!
+    const copy = await objectState(page, copyId)
+    expect(copy!.x).toBeGreaterThan(600)
+    expect(copy!.y).toBeGreaterThan(300)
+    expect(await page.evaluate(() => window.__narrative_test_api!.getSelection())).toEqual([copyId])
+
+    // One Mod+Z takes back the whole gesture — copy gone, not just moved
+    // back onto the source (the old origin-less clone was not undoable).
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect
+      .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), {
+        timeout: 3000,
+      })
+      .toEqual(['alt-src'])
+    expect(await objectState(page, 'alt-src')).toEqual({ x: 600, y: 300 })
+  })
+})

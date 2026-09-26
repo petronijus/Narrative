@@ -236,49 +236,114 @@ export function createObjectOfType(
 }
 
 /**
- * Duplikuje existující objekt — vytvoří kopii s novým id a volitelným posunem.
+ * Duplicate one object. Thin wrapper over {@link duplicateObjects}: the copy
+ * gets a new id, is offset by `offset` (default 20/20 so it is visibly
+ * separate) and lands on top of the z-order. A lone copy of a group member
+ * does NOT join the source's group — see `duplicateObjects`.
  *
- * - Offset default: { x: 20, y: 20 } aby byl duplikát viditelně posunutý.
- * - Duplikát je přidán na konec Y.Array (nejvyšší z-order).
- * - Celá operace v jedné transakci → jeden undo krok.
- *
- * @returns Plain object nově přidaného duplikátu, nebo null pokud source neexistuje.
+ * @returns the plain copy, or null when the source does not exist.
  */
 export function duplicateObject(
   ctx: ObjectsMutationContext,
   id: string,
   offset: { x: number; y: number } = { x: 20, y: 20 },
 ): SlideObject | null {
-  const sourceIdx = findIndexById(ctx.objects, id)
-  if (sourceIdx === -1) {
+  const [copy] = duplicateObjects(ctx, [id], offset)
+  if (copy === undefined) {
     console.warn(`duplicateObject: object '${id}' not found`)
     return null
   }
+  return copy
+}
 
-  const sourceMap = ctx.objects.get(sourceIdx)
-  const sourcePlain = Object.fromEntries(sourceMap.entries()) as Record<string, unknown>
+/**
+ * Duplicate a set of objects in ONE transaction (one undo step).
+ *
+ * - Copies get fresh ids and are offset by `offset`; a cropped image's
+ *   `imageRect` moves with its frame so the crop stays put relative to it.
+ * - Copies are appended on top of the z-order, keeping the sources'
+ *   relative stacking order (not the order of `ids`).
+ * - Groups are remapped, never shared with the sources: every source group
+ *   with two or more members in the set becomes ONE fresh group shared by
+ *   those copies; a source group with a single member in the set yields an
+ *   ungrouped copy (a group of one means nothing). Copying a group
+ *   therefore produces an independent group, instead of silently growing
+ *   the original one.
+ * - Unknown ids are skipped.
+ *
+ * @returns the plain copies, in z-order.
+ */
+export function duplicateObjects(
+  ctx: ObjectsMutationContext,
+  ids: ReadonlyArray<string>,
+  offset: { x: number; y: number } = { x: 20, y: 20 },
+): SlideObject[] {
+  const wanted = new Set(ids)
+  const sources: Y.Map<unknown>[] = []
+  for (let i = 0; i < ctx.objects.length; i++) {
+    const m = ctx.objects.get(i)
+    if (wanted.has(m.get('id') as string)) sources.push(m)
+  }
+  if (sources.length === 0) return []
 
-  const newId = nanoid()
-  // Position is optional on some object types — only apply the offset when
-  // x/y are actually numeric, otherwise `undefined + 20` would persist NaN
-  // coords (and absent position should stay absent on the duplicate).
-  const srcX = sourcePlain['x']
-  const srcY = sourcePlain['y']
-  const clonedPlain: Record<string, unknown> = {
-    ...sourcePlain,
-    id: newId,
-    ...(typeof srcX === 'number' ? { x: srcX + offset.x } : {}),
-    ...(typeof srcY === 'number' ? { y: srcY + offset.y } : {}),
+  const membersPerGroup = new Map<string, number>()
+  for (const m of sources) {
+    const g = m.get('groupId')
+    if (typeof g === 'string' && g !== '') membersPerGroup.set(g, (membersPerGroup.get(g) ?? 0) + 1)
+  }
+  const groupRemap = new Map<string, string>()
+  for (const [g, count] of membersPerGroup) {
+    if (count >= 2) groupRemap.set(g, nanoid())
   }
 
-  // Build a fresh Y.Map for the duplicate. Any Yjs CRDT values
-  // (Y.Text / Y.Map / Y.Array) must be deep-CLONED — Yjs forbids the
-  // same CRDT instance from living in two parents at once, and reusing
-  // an already-integrated subtree blows up during _integrate (the
-  // source's _prelimContent has already been nulled). Capture Y.Text
-  // deltas so we can replay inline formatting after integration —
-  // toString() drops run attributes.
-  const richTextDeltas: Array<{ path: string[]; delta: ReturnType<Y.Text['toDelta']> }> = []
+  const prepared = sources.map((m) => buildDuplicateYMap(m, offset, groupRemap))
+  const firstNewIndex = ctx.objects.length
+  ctx.doc.transact(() => {
+    ctx.objects.push(prepared.map((p) => p.yMap))
+    for (const { yMap, richTextDeltas } of prepared) replayRichTextDeltas(yMap, richTextDeltas)
+  }, LOCAL_ORIGIN)
+
+  // yMapToPlainObject unfolds nested CRDT (table rows/cols/defaults) to the
+  // plain SlideObject shape; a flat Object.fromEntries(entries()) would leak
+  // live Y.Array/Y.Map handles for a duplicated table.
+  const copies: SlideObject[] = []
+  for (let i = firstNewIndex; i < ctx.objects.length; i++) {
+    copies.push(yMapToPlainObject(ctx.objects.get(i)))
+  }
+  return copies
+}
+
+type RichTextDelta = ReturnType<Y.Text['toDelta']>
+
+/**
+ * Build a detached Y.Map copy of `source`. Any Yjs CRDT values (Y.Text /
+ * Y.Map / Y.Array) are deep-CLONED — Yjs forbids the same CRDT instance
+ * from living in two parents at once, and reusing an already-integrated
+ * subtree blows up during _integrate. Y.Text deltas are captured so inline
+ * formatting can be replayed after integration (toString() drops run
+ * attributes, and a detached Y.Text cannot take a delta yet).
+ */
+function buildDuplicateYMap(
+  source: Y.Map<unknown>,
+  offset: { x: number; y: number },
+  groupRemap: ReadonlyMap<string, string>,
+): { yMap: Y.Map<unknown>; richTextDeltas: Array<{ path: string[]; delta: RichTextDelta }> } {
+  const plain = Object.fromEntries(source.entries()) as Record<string, unknown>
+  plain['id'] = nanoid()
+  // Position is optional on some legacy records — only offset numeric
+  // coords, otherwise `undefined + 20` would persist NaN.
+  if (typeof plain['x'] === 'number') plain['x'] = plain['x'] + offset.x
+  if (typeof plain['y'] === 'number') plain['y'] = plain['y'] + offset.y
+  const shiftedCrop = shiftedImageRect(plain['imageRect'], offset.x, offset.y)
+  if (shiftedCrop !== undefined) plain['imageRect'] = shiftedCrop
+  const g = plain['groupId']
+  if (typeof g === 'string' && g !== '') {
+    const remapped = groupRemap.get(g)
+    if (remapped === undefined) delete plain['groupId']
+    else plain['groupId'] = remapped
+  }
+
+  const richTextDeltas: Array<{ path: string[]; delta: RichTextDelta }> = []
   const cloneYjsValue = (value: unknown, path: string[]): unknown => {
     if (value instanceof Y.Text) {
       richTextDeltas.push({ path, delta: value.toDelta() })
@@ -286,9 +351,7 @@ export function duplicateObject(
     }
     if (value instanceof Y.Map) {
       const m = new Y.Map<unknown>()
-      for (const [k, v] of value.entries()) {
-        m.set(k, cloneYjsValue(v, [...path, k]))
-      }
+      for (const [k, v] of value.entries()) m.set(k, cloneYjsValue(v, [...path, k]))
       return m
     }
     if (value instanceof Y.Array) {
@@ -302,37 +365,93 @@ export function duplicateObject(
     }
     return value
   }
-  const newYMap = new Y.Map<unknown>()
-  for (const [key, value] of Object.entries(clonedPlain)) {
-    newYMap.set(key, cloneYjsValue(value, [key]))
-  }
+  const yMap = new Y.Map<unknown>()
+  for (const [key, value] of Object.entries(plain)) yMap.set(key, cloneYjsValue(value, [key]))
+  return { yMap, richTextDeltas }
+}
 
-  ctx.doc.transact(() => {
-    ctx.objects.push([newYMap])
-    for (const { path, delta } of richTextDeltas) {
-      // Walk the freshly-integrated tree to the cloned Y.Text and
-      // replay the captured delta.
-      let cursor: unknown = newYMap
-      for (const seg of path) {
-        if (cursor instanceof Y.Map) {
-          cursor = cursor.get(seg)
-        } else if (cursor instanceof Y.Array) {
-          cursor = cursor.get(Number(seg))
-        } else {
-          cursor = undefined
-          break
-        }
+/** Walk a freshly-integrated copy to each cloned Y.Text and replay its delta. */
+function replayRichTextDeltas(
+  root: Y.Map<unknown>,
+  deltas: ReadonlyArray<{ path: string[]; delta: RichTextDelta }>,
+): void {
+  for (const { path, delta } of deltas) {
+    let cursor: unknown = root
+    for (const seg of path) {
+      if (cursor instanceof Y.Map) cursor = cursor.get(seg)
+      else if (cursor instanceof Y.Array) cursor = cursor.get(Number(seg))
+      else {
+        cursor = undefined
+        break
       }
-      if (cursor instanceof Y.Text) cursor.applyDelta(delta)
+    }
+    if (cursor instanceof Y.Text) cursor.applyDelta(delta)
+  }
+}
+
+/**
+ * `imageRect` (the crop's source rect) is in ABSOLUTE slide coordinates, so
+ * every translation of an image frame must move it by the same delta, or
+ * the visible crop slides inside the frame. Returns undefined when there is
+ * nothing to shift (no crop set).
+ */
+function shiftedImageRect(
+  rect: unknown,
+  dx: number,
+  dy: number,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (typeof rect !== 'object' || rect === null) return undefined
+  const r = rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+  if (typeof r.x !== 'number' || typeof r.y !== 'number') return undefined
+  if (typeof r.width !== 'number' || typeof r.height !== 'number') return undefined
+  return { x: r.x + dx, y: r.y + dy, width: r.width, height: r.height }
+}
+
+/** Move an object's frame to (x, y), carrying its crop rect along. */
+function setPositionCarryingCrop(yMap: Y.Map<unknown>, x: number, y: number): void {
+  const oldX = (yMap.get('x') as number | undefined) ?? 0
+  const oldY = (yMap.get('y') as number | undefined) ?? 0
+  const dx = x - oldX
+  const dy = y - oldY
+  if (dx === 0 && dy === 0) return
+  yMap.set('x', x)
+  yMap.set('y', y)
+  const shifted = shiftedImageRect(yMap.get('imageRect'), dx, dy)
+  if (shifted !== undefined) yMap.set('imageRect', shifted)
+}
+
+/** One entry of {@link translateObjects}. */
+export interface ObjectTranslation {
+  id: string
+  dx: number
+  dy: number
+}
+
+/**
+ * Move objects by a delta, in one transaction. This is THE way to move an
+ * object: it carries a cropped image's absolute `imageRect` along with the
+ * frame (a raw `{x, y}` patch leaves the crop behind). Unknown ids are
+ * skipped; a zero delta is a no-op.
+ */
+export function translateObjects(
+  ctx: ObjectsMutationContext,
+  moves: ReadonlyArray<ObjectTranslation>,
+): void {
+  const effective = moves.filter((m) => m.dx !== 0 || m.dy !== 0)
+  if (effective.length === 0) return
+  ctx.doc.transact(() => {
+    for (const { id, dx, dy } of effective) {
+      const idx = findIndexById(ctx.objects, id)
+      if (idx === -1) {
+        console.warn(`translateObjects: object '${id}' not found, skipping`)
+        continue
+      }
+      const m = ctx.objects.get(idx)
+      const x = (m.get('x') as number | undefined) ?? 0
+      const y = (m.get('y') as number | undefined) ?? 0
+      setPositionCarryingCrop(m, x + dx, y + dy)
     }
   }, LOCAL_ORIGIN)
-
-  // Vrátíme plain kopii — přečteme ze Y.Array (YMap je teď v doc kontextu).
-  // yMapToPlainObject unfolds nested CRDT (table rows/cols/defaults) to the
-  // plain SlideObject shape; a flat Object.fromEntries(entries()) would leak
-  // live Y.Array/Y.Map handles for a duplicated table.
-  const insertedMap = ctx.objects.get(ctx.objects.length - 1)
-  return yMapToPlainObject(insertedMap)
 }
 
 /**
@@ -600,22 +719,22 @@ export function alignObjects(
       const m = ctx.objects.get(idx)
       switch (axis) {
         case 'left':
-          m.set('x', minX)
+          setPositionCarryingCrop(m, minX, r.y)
           break
         case 'center-x':
-          m.set('x', cx - r.width / 2)
+          setPositionCarryingCrop(m, cx - r.width / 2, r.y)
           break
         case 'right':
-          m.set('x', maxX - r.width)
+          setPositionCarryingCrop(m, maxX - r.width, r.y)
           break
         case 'top':
-          m.set('y', minY)
+          setPositionCarryingCrop(m, r.x, minY)
           break
         case 'center-y':
-          m.set('y', cy - r.height / 2)
+          setPositionCarryingCrop(m, r.x, cy - r.height / 2)
           break
         case 'bottom':
-          m.set('y', maxY - r.height)
+          setPositionCarryingCrop(m, r.x, maxY - r.height)
           break
       }
     }
@@ -652,7 +771,7 @@ export function distributeObjects(
       for (const r of rects) {
         const idx = findIndexById(ctx.objects, r.id)
         if (idx === -1) continue
-        ctx.objects.get(idx).set('x', cursor)
+        setPositionCarryingCrop(ctx.objects.get(idx), cursor, r.y)
         cursor += r.width + gap
       }
     } else {
@@ -666,7 +785,7 @@ export function distributeObjects(
       for (const r of rects) {
         const idx = findIndexById(ctx.objects, r.id)
         if (idx === -1) continue
-        ctx.objects.get(idx).set('y', cursor)
+        setPositionCarryingCrop(ctx.objects.get(idx), r.x, cursor)
         cursor += r.height + gap
       }
     }

@@ -886,7 +886,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
                 ? `Could not parse .pptx — ${error.message}`
                 : error.kind === 'noSlides'
                   ? '.pptx contains no slides'
-                  : error.kind
+                  : error.kind === 'writeFailed'
+                    ? error.documentTouched
+                      ? 'Append failed part-way — some slides may already be in the deck; check it before retrying'
+                      : 'Append failed — no slides were written'
+                    : error.kind
             throw { status_code: status, body: message }
           }
 

@@ -14,12 +14,17 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
 import { addObject } from './mutations.js'
-import { addTable } from './tableMutations.js'
+import { addTable, getTableCellYMap } from './tableMutations.js'
 import { addAnimation } from './animationMutations.js'
 import { getSlideObjectsCtx, getSlideAnimationsCtx, listSlides } from './slides.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
-import type { RectangleObject, AnimationStep, TableObject } from '@narrative/shared'
-import { getComponentDocName, pruneAnimationsToScope, promoteToComponent } from './components.js'
+import type { RectangleObject, AnimationStep, TableObject, TextObject } from '@narrative/shared'
+import {
+  getComponentDocName,
+  pruneAnimationsToScope,
+  promoteToComponent,
+  type PromoteToComponentPlan,
+} from './components.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -318,6 +323,46 @@ describe('promoteToComponent', () => {
     // The whole plan must JSON-serialize (Y.Text would throw because of
     // circular doc refs).
     expect(() => JSON.stringify(plan)).not.toThrow()
+  })
+
+  it('plan carries lossless rich-text deltas for text objects and table cells', () => {
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    addObject(objCtx, {
+      id: 't1',
+      type: 'text',
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 40,
+      rotation: 0,
+      opacity: 1,
+      text: '',
+      fontSize: 24,
+      fontWeight: 'normal',
+      color: 0,
+      align: 'left',
+    } as TextObject)
+    const tableId = addTable(objCtx, { x: 0, y: 100, width: 200, height: 80, rows: 1, cols: 2 })
+    const textY = objCtx.objects.get(0).get('text') as Y.Text
+    const cellY = getTableCellYMap(objCtx, tableId, 0, 1)!.get('text') as Y.Text
+    deckCtx.doc.transact(() => {
+      textY.insert(0, 'Hi', { fontWeight: 700, color: 0x00ff00 })
+      textY.insert(2, '\u2029', { list: 'bullet', level: 2, bulletChar: '▪' })
+      cellY.insert(0, 'x', { italic: true })
+      cellY.insert(1, '\u2029', { list: 'number', numberFormat: 'upperAlpha', startAt: 4 })
+    })
+
+    const plan = JSON.parse(
+      JSON.stringify(promoteToComponent(deckCtx, slideId, ['t1', tableId], 'folder-1')),
+    ) as PromoteToComponentPlan
+    const text = plan.masterTree.find((o) => o.id === 't1') as unknown as Record<string, unknown>
+    expect(text['text']).toBe('Hi\u2029')
+    expect(text['_richTextOps']).toEqual(textY.toDelta())
+    const table = plan.masterTree.find((o) => o.id === tableId) as TableObject
+    const cell = table.rows[0]![1] as unknown as Record<string, unknown>
+    expect(cell['text']).toBe('x\u2029')
+    expect(cell['_richTextOps']).toEqual(cellY.toDelta())
+    expect((table.rows[0]![0] as unknown as Record<string, unknown>)['_richTextOps']).toEqual([])
   })
 
   it('different calls produce different componentIds', () => {

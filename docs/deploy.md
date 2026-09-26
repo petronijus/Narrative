@@ -335,6 +335,18 @@ If the pull itself fails on space, clean up:
 ssh petr@192.0.2.147 'docker system prune -af --volumes'
 ```
 
+### `build-push.sh` fails to resolve a workspace package
+
+Each Dockerfile copies the workspace `package.json` files it needs **before**
+`pnpm install`, by an explicit list. A new workspace package that an image
+depends on has to be added to that image's list, or the install inside the
+build cannot link it. Agentic-layer A0 (2026-09-26, unreleased) added
+`packages/commands` to `apps/web/Dockerfile`; the server and video-worker
+images do not depend on it. They do now load **zod** at runtime through
+`packages/shared`, which the `--prod` install picks up from
+`packages/shared/package.json`. No image had been built with A0 when this was
+written — the first `build-push.sh` after it is the verification.
+
 ### The browser shows an old version after a deploy
 
 `index.html` is served `no-cache` and the client-side version guard reloads a

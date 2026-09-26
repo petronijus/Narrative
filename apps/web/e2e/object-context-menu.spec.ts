@@ -162,3 +162,106 @@ test('right-click on unselected object → menu opens, items fire', async ({ pag
   )
   expect(realErrors, `unexpected errors: ${realErrors.join(' | ')}`).toEqual([])
 })
+
+/**
+ * The layer items used to be wired crosswise — "Send back" moved one step
+ * and "Send backward" went all the way to the back. Each label must do
+ * what it says and show the canvas shortcut for the same move.
+ */
+test('layer items do what their labels say and show the matching shortcut', async ({ page }) => {
+  test.setTimeout(60_000)
+  await createDeckAndOpen(page)
+
+  await page.evaluate(() => {
+    const api = window.__narrative_test_api!
+    api.addRect({ id: 'L-A', x: 150, y: 300, w: 250, h: 200, fill: 0xff5555 })
+    api.addRect({ id: 'L-B', x: 550, y: 300, w: 250, h: 200, fill: 0x55ff55 })
+    api.addRect({ id: 'L-C', x: 950, y: 300, w: 250, h: 200, fill: 0x5555ff })
+  })
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), { timeout: 10_000 })
+    .toEqual(['L-A', 'L-B', 'L-C'])
+  // Right-clicks hit-test the rendered scene: wait for it, not just the doc.
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 10_000 })
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.sceneGraphHasMountedNode('L-B')), {
+      timeout: 10_000,
+    })
+    .toBe(true)
+  await page.keyboard.press('Escape')
+
+  const menu = page.locator('[data-testid="editor-context-menu-content"]')
+  const order = () => page.evaluate(() => window.__narrative_test_api!.objectIds())
+
+  // Shortcut hints: ⌘ on macOS, Ctrl elsewhere — accept either.
+  const cases: Array<{ label: string; move: string; hint: RegExp; after: string[] }> = [
+    { label: 'Send backward', move: 'backward', hint: /^\[$/, after: ['L-B', 'L-A', 'L-C'] },
+    { label: 'Bring forward', move: 'forward', hint: /^\]$/, after: ['L-A', 'L-B', 'L-C'] },
+    { label: 'Send to back', move: 'back', hint: /^(⌘|Ctrl\+)\[$/, after: ['L-B', 'L-A', 'L-C'] },
+    {
+      label: 'Bring to front',
+      move: 'front',
+      hint: /^(⌘|Ctrl\+)\]$/,
+      after: ['L-A', 'L-C', 'L-B'],
+    },
+  ]
+  for (const c of cases) {
+    // L-B keeps its position on the slide; only its stacking changes.
+    await rightClickOn(page, 675, 400)
+    await expect(menu).toBeVisible()
+    await expect(menu).toHaveAttribute('data-mode', 'object')
+    const item = menu.locator(`[data-layer-move="${c.move}"]`)
+    await expect(item.locator('span').first()).toHaveText(c.label)
+    await expect(item.locator('span').last()).toHaveText(c.hint)
+    await menu.getByText(c.label, { exact: true }).click()
+    await expect(menu).not.toBeVisible()
+    await expect.poll(order, { timeout: 3000 }).toEqual(c.after)
+  }
+})
+
+test('Duplicate from the menu is one undo step and selects the copy', async ({ page }) => {
+  test.setTimeout(60_000)
+  await createDeckAndOpen(page)
+
+  await page.evaluate(() => {
+    window.__narrative_test_api!.addRect({
+      id: 'D-A',
+      x: 200,
+      y: 200,
+      w: 300,
+      h: 200,
+      fill: 0xff5555,
+    })
+  })
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), { timeout: 10_000 })
+    .toEqual(['D-A'])
+  await expect(page.locator('.artboard')).toBeVisible({ timeout: 10_000 })
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.sceneGraphHasMountedNode('D-A')), {
+      timeout: 10_000,
+    })
+    .toBe(true)
+  await page.keyboard.press('Escape')
+  // Seeding is a LOCAL_ORIGIN write too; outside the undo manager's 500 ms
+  // capture window, Mod+Z below undoes only the duplicate.
+  await page.waitForTimeout(700)
+
+  const menu = page.locator('[data-testid="editor-context-menu-content"]')
+  await rightClickOn(page, 350, 300)
+  await expect(menu).toBeVisible()
+  await menu.getByText('Duplicate', { exact: true }).click()
+  await expect(menu).not.toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.objectCount()), { timeout: 3000 })
+    .toBe(2)
+  const copyId = (await page.evaluate(() => window.__narrative_test_api!.objectIds())).find(
+    (id) => id !== 'D-A',
+  )!
+  expect(await page.evaluate(() => window.__narrative_test_api!.getSelection())).toEqual([copyId])
+
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect
+    .poll(() => page.evaluate(() => window.__narrative_test_api!.objectIds()), { timeout: 3000 })
+    .toEqual(['D-A'])
+})

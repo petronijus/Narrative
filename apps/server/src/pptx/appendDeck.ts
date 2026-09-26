@@ -14,7 +14,17 @@
  *   - Parse pptx via `parsePptx`.
  *   - Upload every embedded image / video to MinIO under the EXISTING
  *     deck's namespace, patching the parsed shapes' `assetId` fields.
- *   - Apply the slides to the live Y.Doc at `insertAt`.
+ *   - Register the media (`registerDeckMedia`, shared with the import):
+ *     every `media_assets` row committed, then every video's transcode
+ *     enqueued.
+ *   - Only then apply the slides to the live Y.Doc at `insertAt`.
+ *
+ * Why that order: the document write is the moment connected editors see the
+ * slides, and they immediately ask for the assets those slides reference. A
+ * row written after it is a window in which they render an asset the server
+ * does not know about — and a crash inside that window leaves slides pointing
+ * at nothing, for good. Rows first means the worst a crash can leave is rows
+ * nothing points at, which is harmless (see the failure handling below).
  *
  * Why the live document and not a `deck_updates` row: Hocuspocus holds the
  * deck in memory and its persistence writes a full snapshot and then deletes
@@ -32,12 +42,17 @@
 import * as Y from 'yjs'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { deckUpdates, mediaAssets } from '../db/schema.js'
+import { deckUpdates } from '../db/schema.js'
 import { getHocuspocusInstance } from '../hocuspocus/presence.js'
 import { parsePptx, type ParsedPptx } from './parser.js'
 import { buildDeckAppendUpdate } from './writer.js'
 import type { WriteResult } from './writer.js'
-import { uploadEmbeddedImagesAndPatchAssetIds, type ImportLogger } from './importDeck.js'
+import {
+  discardDeckMedia,
+  registerDeckMedia,
+  uploadEmbeddedImagesAndPatchAssetIds,
+  type ImportLogger,
+} from './importDeck.js'
 import { hydrateSlideDoc } from '@narrative/slide-model'
 
 /**
@@ -68,7 +83,15 @@ export type AppendDeckError =
   | { kind: 'emptyBody' }
   | { kind: 'parseFailed'; message: string }
   | { kind: 'noSlides' }
-  | { kind: 'writeFailed' }
+  /**
+   * `documentTouched: false` — the deck is exactly as it was; retrying is
+   * safe. `true` — the write started on the live document and failed part-way
+   * or after it (Hocuspocus 2.15.3 runs the store hooks after the edit has
+   * already been applied and broadcast, and rethrows their failure), so some
+   * or all of the slides may be in the deck: retrying blindly can duplicate
+   * them.
+   */
+  | { kind: 'writeFailed'; documentTouched: boolean }
 
 /**
  * Run the full "buffer → slides in an open deck" pipeline. Pure server side;
@@ -117,27 +140,56 @@ export async function appendPptxToDeck(args: {
   // ─── Upload images + patch assetIds ──────────────────────────────────────
   // Images for inserted slides land under the SAME deckId namespace as the
   // existing deck's media — that matters because the deck's permission
-  // grants on `mediaAssets.deckId` apply uniformly.
-  const { mediaAssetRows, uploadedImageCount, skippedUnsupportedImages } =
-    await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  // grants on `mediaAssets.deckId` apply uniformly, and because the deck's
+  // cascade delete and bucket-prefix sweep then reap them with the deck.
+  const media = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  const { uploadedImageCount, skippedUnsupportedImages } = media
 
-  // ─── Write into the LIVE document ────────────────────────────────────────
   const hocuspocus = getHocuspocusInstance()
   let written: WriteResult | null = null
   let insertedAt = insertAt ?? -1
 
   if (hocuspocus !== null) {
-    const connection = await hocuspocus.openDirectConnection(deckId)
+    // ─── 1. Register the media: rows committed, transcodes enqueued ────────
     try {
-      await connection.transact((doc) => {
-        insertedAt = resolveInsertedAt(doc, insertAt)
-        written = buildDeckAppendUpdate(parsed, doc, insertAt)
-      })
-    } finally {
-      await connection.disconnect()
+      await registerDeckMedia({ db, deckId, ownerUserId, media, log })
+    } catch (err) {
+      // The transaction rolled back, so no row exists and nothing has
+      // touched the document: the uploaded bytes are all that is left.
+      log.warn({ err, deckId }, 'pptx-append: registering media failed, deck left untouched')
+      await discardDeckMedia({ db, deckId, media, log })
+      return { ok: false, error: { kind: 'writeFailed', documentTouched: false } }
     }
-    if (mediaAssetRows.length > 0) {
-      await db.insert(mediaAssets).values(mediaAssetRows)
+
+    // ─── 2. Write into the LIVE document ─────────────────────────────────
+    // Set as the callback's first statement: until then the document is
+    // provably unchanged, after it nothing is provable (the writer is a run
+    // of separate Yjs transactions, and the store hooks can still reject
+    // after all of them were applied and broadcast).
+    let documentTouched = false
+    try {
+      const connection = await hocuspocus.openDirectConnection(deckId)
+      try {
+        await connection.transact((doc) => {
+          documentTouched = true
+          insertedAt = resolveInsertedAt(doc, insertAt)
+          written = buildDeckAppendUpdate(parsed, doc, insertAt)
+        })
+      } finally {
+        await connection.disconnect()
+      }
+    } catch (err) {
+      log.warn({ err, deckId, documentTouched }, 'pptx-append: live document write failed')
+      // The rows registered in step 1 are now orphans or, if the document
+      // took any of the slides, live references — and which one cannot be
+      // told from here. Untouched: nothing can reference them, so they go.
+      // Touched: they stay, because deleting a row a rendered slide points
+      // at is the broken-asset bug this ordering exists to prevent, while an
+      // unreferenced deck-scoped row is inert (nothing renders an asset its
+      // document does not name) and dies with the deck (ON DELETE CASCADE +
+      // the `decks/<deckId>/` prefix sweep).
+      if (!documentTouched) await discardDeckMedia({ db, deckId, media, log })
+      return { ok: false, error: { kind: 'writeFailed', documentTouched } }
     }
   } else {
     // No sync server in this process (route-only unit tests). Fall back to
@@ -157,22 +209,40 @@ export async function appendPptxToDeck(args: {
       }
     }
     insertedAt = resolveInsertedAt(doc, insertAt)
-    written = buildDeckAppendUpdate(parsed, doc, insertAt)
-    await db.transaction(async (tx) => {
-      if (mediaAssetRows.length > 0) {
-        await tx.insert(mediaAssets).values(mediaAssetRows)
-      }
-      await tx.insert(deckUpdates).values({
+    const detached = buildDeckAppendUpdate(parsed, doc, insertAt)
+    written = detached
+    // Rows and the document update commit together here, so there is no
+    // ordering window at all; transcodes follow the commit as always.
+    try {
+      await registerDeckMedia({
+        db,
         deckId,
-        update: written!.state,
-        createdAt: new Date(),
+        ownerUserId,
+        media,
+        log,
+        alongside: async (tx) => {
+          await tx.insert(deckUpdates).values({
+            deckId,
+            update: detached.state,
+            createdAt: new Date(),
+          })
+        },
       })
-    })
+    } catch (err) {
+      log.warn({ err, deckId }, 'pptx-append: detached write failed, deck left untouched')
+      await discardDeckMedia({ db, deckId, media, log })
+      return { ok: false, error: { kind: 'writeFailed', documentTouched: false } }
+    }
   }
 
   if (written === null) {
+    // Unreachable in practice — `transact` resolving means its callback ran.
+    // If it ever is reached, the callback did not run, so the document is
+    // untouched while the media is registered: discard it like any other
+    // untouched failure.
     log.warn({ deckId }, 'pptx-append: insert produced no result')
-    return { ok: false, error: { kind: 'writeFailed' } }
+    await discardDeckMedia({ db, deckId, media, log })
+    return { ok: false, error: { kind: 'writeFailed', documentTouched: false } }
   }
   const { slideCount, objectsCreated, skipped } = written as WriteResult
 

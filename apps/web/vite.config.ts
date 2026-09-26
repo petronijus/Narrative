@@ -84,6 +84,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       '@narrative/animation': path.resolve(__dirname, '../../packages/animation/src/index.ts'),
+      '@narrative/commands': path.resolve(__dirname, '../../packages/commands/src/index.ts'),
       '@narrative/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       '@narrative/slide-model': path.resolve(__dirname, '../../packages/slide-model/src/index.ts'),
       // P1 visual foundation — shadcn/ui convention (components import via `@/lib/utils` etc.)

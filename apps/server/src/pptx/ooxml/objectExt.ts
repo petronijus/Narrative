@@ -36,6 +36,7 @@ import {
   bool,
   color,
   cornerRadius,
+  idRef,
   lineBox,
   mask,
   MAX_ANCHORS,
@@ -269,6 +270,9 @@ export function objectExtValues(
       if (o.isSlideNumber === false) ext['isSlideNumber'] = false
       // The legacy frame-wide list style is written onto the paragraphs.
       put('listStyle', o.listStyle)
+      // The link to a folder text style, and which of its fields the box
+      // overrides: PowerPoint has no notion of either.
+      put('textStyleId', o.textStyleId)
       put('textStyleOverrides', o.textStyleOverrides)
       break
     }
@@ -471,6 +475,7 @@ const FIELDS: Record<SlideObject['type'], Record<string, Schema>> = {
     fontFamily: str(200),
     isSlideNumber: bool,
     listStyle: oneOf('bullet', 'numbered'),
+    textStyleId: idRef(200),
     textStyleOverrides: arr(
       oneOf(
         'fontFamily',

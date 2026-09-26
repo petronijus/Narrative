@@ -37,6 +37,7 @@
 
 import { useState, useCallback, useLayoutEffect, useEffect, useRef } from 'react'
 import { markDeckLoadStart } from '../state/loadTimings.js'
+import { TOKEN_PROPAGATION_ORIGIN } from '../state/origins.js'
 import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
@@ -287,6 +288,12 @@ function TextStylePropagator() {
     // mutation is read-modify-write, so we batch all writes in a
     // single Yjs transaction at the deck-doc level for atomicity and
     // a single observer fan-out.
+    //
+    // Untracked ON PURPOSE: TOKEN_PROPAGATION_ORIGIN is the outermost
+    // origin, so it overrides the LOCAL_ORIGIN of the updateObject calls
+    // inside and keeps this write off the deck's undo stack — Mod+Z must
+    // not desync linked text from its folder token (see state/origins.ts;
+    // propagation moves server-side in phase A2 of the agentic-layer plan).
     const slides = listSlides(deckCtx)
     deckCtx.doc.transact(() => {
       for (const slide of slides) {
@@ -317,7 +324,7 @@ function TextStylePropagator() {
           }
         }
       }
-    })
+    }, TOKEN_PROPAGATION_ORIGIN)
   }, [tokens, deckCtx])
 
   return null

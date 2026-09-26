@@ -14,7 +14,7 @@
  */
 
 import * as Y from 'yjs'
-import { applyFormat, clearFormat, type RichAttrs } from '@narrative/slide-model'
+import { LOCAL_ORIGIN, applyFormat, clearFormat, type RichAttrs } from '@narrative/slide-model'
 
 export interface ActiveTextSelection {
   objectId: string
@@ -69,6 +69,47 @@ export function subscribeActiveTextSelection(listener: () => void): () => void {
 }
 
 /**
+ * Run one user formatting action as ONE `LOCAL_ORIGIN` transaction.
+ *
+ * A formatting gesture in the Inspector is usually two writes: strip the
+ * inline run overrides for a key (`Y.Text.format`) and patch the box-wide
+ * field (`updateObject`). Run bare, the `format` call opens its own
+ * transaction with no origin — the editor's `Y.UndoManager` tracks only
+ * `LOCAL_ORIGIN`, so the strip silently falls out of undo history while
+ * the patch lands on it, and Mod+Z restores the box value but not the
+ * runs. Wrapping the whole gesture makes it exactly one undo step and one
+ * Yjs update (nested `doc.transact` calls keep the outermost origin).
+ *
+ * The doc comes from the object's own Y.Text, or — for objects whose
+ * `text` is not a live Y.Text, e.g. a table cell edit — from the active
+ * selection when it belongs to `objectId`. With neither there is no inline
+ * run to touch, every write in `fn` is a slide-model mutation that already
+ * carries `LOCAL_ORIGIN`, and `fn` runs as is.
+ */
+export function transactTextAction(target: { id: string; text?: unknown }, fn: () => void): void {
+  const doc = docForTextAction(target)
+  if (doc === null) {
+    fn()
+    return
+  }
+  doc.transact(fn, LOCAL_ORIGIN)
+}
+
+function docForTextAction(target: { id: string; text?: unknown }): Y.Doc | null {
+  if (target.text instanceof Y.Text && target.text.doc !== null) return target.text.doc
+  const sel = slot.current
+  if (sel !== null && sel.objectId === target.id) return sel.yText.doc
+  return null
+}
+
+/** Run `fn` in a `LOCAL_ORIGIN` transaction on `yText`'s doc (or bare when detached). */
+function transactOn(yText: Y.Text, fn: () => void): void {
+  const doc = yText.doc
+  if (doc === null) fn()
+  else doc.transact(fn, LOCAL_ORIGIN)
+}
+
+/**
  * Returns `true` when the active selection covers the entire Y.Text
  * content for the given object (effectively a Cmd+A). Inspector
  * controls use this to decide whether to patch the box-wide field
@@ -93,7 +134,7 @@ export function isEntireContentSelected(objectId: string): boolean {
 export function clearAllInlineRunAttrs(text: unknown, keys: ReadonlyArray<keyof RichAttrs>): void {
   if (!(text instanceof Y.Text)) return
   if (text.length <= 0) return
-  clearFormat(text, 0, text.length, keys)
+  transactOn(text, () => clearFormat(text, 0, text.length, keys))
 }
 
 /**
@@ -109,7 +150,7 @@ export function clearActiveSelectionAttrs(
   if (sel === null || sel.objectId !== objectId) return
   const length = sel.end - sel.start
   if (length <= 0) return
-  clearFormat(sel.yText, sel.start, length, keys)
+  transactOn(sel.yText, () => clearFormat(sel.yText, sel.start, length, keys))
 }
 
 /**
@@ -142,7 +183,7 @@ export function applyInlineFormatIfSelected(objectId: string, attrs: RichAttrs):
   if (sel.objectId !== objectId) return false
   const length = sel.end - sel.start
   if (length <= 0) return false
-  applyFormat(sel.yText, sel.start, length, attrs)
+  transactOn(sel.yText, () => applyFormat(sel.yText, sel.start, length, attrs))
   return true
 }
 

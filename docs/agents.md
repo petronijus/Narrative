@@ -23,28 +23,64 @@ memory path below were reconciled with `.claude/agents/` at the same time.)_
 
 ## Build agents (write production code)
 
-| Agent            | Scope                                                                    | Key paths                                                                  |
-| ---------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| `renderer`       | PixiJS scene graph, resource manager, reconciler, DOM overlay compositor | `apps/web/src/renderer/`                                                   |
-| `state-sync`     | Yjs data model, object type registry, Hocuspocus server, persistence     | `packages/slide-model/`, `packages/shared/`, `apps/server/src/hocuspocus/` |
-| `animation`      | JSON DSL, GSAP compiler, timeline runtime, mixed-target dispatch         | `packages/animation/`                                                      |
-| `editor-ui`      | React editor shell, Tailwind UI, toolbar/inspector/panels, keyboard      | `apps/web/src/ui/`, `packages/ui/`                                         |
-| `media`          | tus uploads, MinIO, imgproxy, ffmpeg workers, preloading                 | `apps/server/src/media/`, `apps/video-worker/`                             |
-| `infra`          | Docker, Caddy, deploy + release pipeline, backups, observability         | `infra/`                                                                   |
-| `ai-integration` | Anthropic SDK, tool use, streaming, server-side Yjs client for AI        | `apps/server/src/ai/`                                                      |
+| Agent            | Scope                                                                                       | Key paths                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `renderer`       | PixiJS scene graph, resource manager, reconciler, DOM overlay compositor                    | `apps/web/src/renderer/`                                                                         |
+| `state-sync`     | Yjs data model, object type registry, Hocuspocus server, persistence, command registry core | `packages/slide-model/`, `packages/shared/`, `packages/commands/`, `apps/server/src/hocuspocus/` |
+| `animation`      | JSON DSL, GSAP compiler, timeline runtime, mixed-target dispatch                            | `packages/animation/`                                                                            |
+| `editor-ui`      | React editor shell, Tailwind UI, toolbar/inspector/panels, keyboard                         | `apps/web/src/ui/`, `packages/ui/`                                                               |
+| `media`          | tus uploads, MinIO, imgproxy, ffmpeg workers, preloading                                    | `apps/server/src/media/`, `apps/video-worker/`                                                   |
+| `infra`          | Docker, Caddy, deploy + release pipeline, backups, observability                            | `infra/`                                                                                         |
+| `ai-integration` | Agent surface: MCP server, playbooks, MCP prompts/resources, `narrative` skill              | `apps/server/src/mcp/`, `packages/commands/playbooks/`                                           |
 
 > `infra` no longer owns `.github/workflows/` — GitHub Actions was removed on
 > 2026-09-07 (commit `573ba64`). It owns the GHCR build/push + pull-deploy
 > pipeline instead (`infra/scripts/build-push.sh`, `infra/scripts/deploy.sh`).
 
+> `ai-integration` was repurposed on 2026-09-26 (was: in-app Anthropic SDK
+> integration under `apps/server/src/ai/`, never built). Narrative runs no
+> model; agents drive it over MCP from the user's own Claude client. See
+> [`plans/agentic-layer.md`](./plans/agentic-layer.md).
+
+### `packages/commands` — the command registry (agentic layer, from A0)
+
+The single writer of document state and the capability source of truth
+(ADR 0010). Every user-visible mutation is a `CommandDef` (zod input, role,
+effects, undo policy, model-facing description, examples, handler); the
+editor dispatches them through `useCommand()` (BrowserHost), agents through
+the ServerHost over MCP (ADR 0011). Headless: no React, Pixi or DOM.
+
+_State as of A0 (2026-09-26): the registry (50 commands), `ops.apply`, the
+parity machinery and `useCommand()` exist, but no component calls
+`useCommand()` yet and the ServerHost / MCP server do not exist. The editor
+still writes through slide-model directly until A2 migrates it; see
+[`handoff/A0-agentic-foundations.md`](./handoff/A0-agentic-foundations.md)._
+
+- **Owner:** `state-sync` — the registry core, the hosts, `ops.apply`, and
+  the parity machinery in `src/parity/` (`parity.test.ts`, `allowlist.ts`,
+  `knownMissing.ts`). A feature's commands are written by the agent building
+  the feature, in the same change.
+- **Guarded by:** the parity test, the server route guard
+  (`apps/server/src/routes/agentParity.test.ts`; every Fastify route claimed),
+  the schema coverage typecheck, per-command contract tests, the committed
+  manifest (`capabilities.json`,
+  `docs/capabilities.md`, regenerated with
+  `pnpm --filter @narrative/commands capabilities`), and the `agent-parity`
+  agent.
+- **Plan and phases (A0–A5):** [`plans/agentic-layer.md`](./plans/agentic-layer.md).
+
 ## Quality agents (check; do not build features)
 
-| Agent               | Scope                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------ |
-| `qa-tester`         | Unit/integration tests across packages, synthetic load, visual regression, performance baselines |
-| `e2e-tester`        | Playwright specialist — reproduces visual/rendering bugs in a real browser, owns `apps/web/e2e/` |
-| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                |
-| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                 |
+| Agent               | Scope                                                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `qa-tester`         | Unit/integration tests across packages, synthetic load, visual regression, performance baselines                                                                                                       |
+| `e2e-tester`        | Playwright specialist — reproduces visual/rendering bugs in a real browser, owns `apps/web/e2e/`                                                                                                       |
+| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                      |
+| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                       |
+| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits |
+
+Invoke `agent-parity` after any feature work, in the same breath as the
+`narrative-docs` sweep.
 
 ## Docs agents
 
@@ -64,6 +100,8 @@ the truth"; `docs-scribe` when a single, well-scoped document is wanted.
 - Approves an ADR draft before it is applied.
 - Before a milestone closes: dispatches the quality agents
   (`qa-tester` → `code-reviewer` → `security-reviewer`, as relevant).
+- After feature work: dispatches `agent-parity` (agentic coverage) alongside
+  `narrative-docs`.
 - After a milestone closes: dispatches `narrative-docs` for the handoff note.
 - Writes results into the conversation history the user can see.
 
@@ -133,15 +171,16 @@ Once the quality gate is green:
 
 ## Conflict zones (settled in advance)
 
-| Zone                | Owner                         | What the others must not do                                                                                                                 |
-| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                            |
-| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                        |
-| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                              |
-| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                  |
-| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                          |
-| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first? |
-| Anthropic API calls | `ai-integration`              | No direct API client outside `apps/server/src/ai/`.                                                                                         |
+| Zone                | Owner                         | What the others must not do                                                                                                                                                          |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                                                                     |
+| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                                                                 |
+| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                                                                       |
+| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                                                           |
+| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                                                                   |
+| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first?                                          |
+| Document writes     | `packages/commands` owner     | Nobody writes a deck/folder/component doc outside a command: no slide-model writer or `doc.transact` in the UI (ADR 0010; lint-enforced per directory from A2 — no rule exists yet). |
+| Agent surface (MCP) | `ai-integration`              | No agent-facing tool or endpoint that bypasses the registry. No Anthropic API client in the repo (in-app agent deferred, plan §13).                                                  |
 
 ---
 

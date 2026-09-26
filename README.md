@@ -1,15 +1,23 @@
 # Narrative
 
 Self-hosted collaborative presentation tool with Keynote-level animations,
-real-time multi-user editing, native tables, PowerPoint round-trip, and
-AI-assisted slide generation. Built for small teams (up to 15 simultaneous
-editors) on your own infrastructure.
+real-time multi-user editing, native tables, and PowerPoint round-trip.
+Built for small teams (up to 15 simultaneous editors) on your own
+infrastructure. Being made fully drivable by AI agents over MCP — see
+[the agentic-layer plan](./docs/plans/agentic-layer.md); no agent can reach
+it yet.
 
-Current release: **0.9.3** (2026-09-09) — see [CHANGELOG.md](./CHANGELOG.md).
+Current release: **0.9.29** (2026-09-25) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
+**[Agentic layer A0 — foundations](./docs/handoff/A0-agentic-foundations.md)**
+(2026-09-26, unreleased): the command registry every agent capability will
+go through, runtime schemas, parity guards, and a round of editor undo and
+crop fixes; it is also the current next-steps list (A1: server host,
+identity, MCP).
+Before that: the 0.9.x point releases (CHANGELOG), starting with
 **[0.9.0 → 0.9.3 — production hardening](./docs/handoff/0.9.x-production-hardening.md)**
 (2026-09-07 → 2026-09-09), which fixed ten production defects that were
-invisible in `pnpm dev`, and is also the current next-steps list.
+invisible in `pnpm dev`.
 Feature milestones before that:
 **[M28 — PowerPoint import & export](./docs/handoff/M28-pptx-import-export.md)** (2026-05-14) +
 **[M29 — first-class TableObject](./docs/handoff/0.8.0-table-object.md)** (2026-05-18).
@@ -50,9 +58,10 @@ apps/
   web/      React + Vite + TS + Tailwind (editor frontend)
   server/   Fastify + TypeScript (API + Hocuspocus, added M4)
 packages/
-  shared/       Shared types (API shapes, etc.)
+  shared/       Shared types + zod runtime schemas
   slide-model/  Yjs bindings + object type registry
   animation/    JSON DSL + GSAP compiler
+  commands/     Capability registry — every document write, for UI and agents (ADR 0010)
   ui/           Reusable React components
 infra/
   docker-compose.yml   Postgres (dev) — extended in M4/M10/M11
@@ -60,6 +69,8 @@ infra/
 docs/
   adr/       Architecture Decision Records
   handoff/   Per-milestone handoff documents
+  plans/     Multi-phase plans (agentic layer, pptx, tables)
+  capabilities.md   Generated list of agent-callable commands (`pnpm capabilities`)
 ```
 
 See [BUILD_PLAN.md](./BUILD_PLAN.md) for the full milestone roadmap and stack decisions.
@@ -82,7 +93,7 @@ Strategy + roadmap: **[docs/testing-strategy.md](./docs/testing-strategy.md)** �
 read before adding a new test or chasing a failing one. The short version:
 
 - **Pure logic = unit tests** (`packages/slide-model`, `packages/animation`,
-  `apps/server`)
+  `packages/commands`, `apps/server`)
 - **User-visible behaviour = Playwright e2e** (`apps/web/e2e/`) — anything
   that depends on focus, keyboard scope, drag/drop, multi-window sync,
   or real rendering
@@ -90,12 +101,12 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit + integration (1,542 pass, 32 skipped, 2026-09-09)
-pnpm --filter web test:e2e                      # 40 Playwright specs (see caveat below)
+pnpm test                                       # unit + integration (2,224 pass, 32 skipped, 2026-09-26)
+pnpm --filter web test:e2e                      # 50 Playwright spec files (see caveat below)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
-pnpm --filter @narrative/slide-model mutate     # Stryker mutation pilot
+pnpm --filter @narrative/slide-model mutate     # Stryker mutation pilot (broken on vitest 4, 2026-09-26)
 ```
 
 Coverage highlights:
@@ -106,7 +117,12 @@ Coverage highlights:
 - Sampled-thumbnail visual regression (catches "wrong colour", "wrong layer order"
   without cross-platform pixel-diff fragility)
 - Destructive-flow e2e (deck delete, share-link revoke + IDOR guard, folder cascade)
-- Bundle budgets via size-limit (main app chunk ≤ 210 KB gzipped)
+- Bundle budgets via size-limit (main app chunk ≤ 210 KB gzipped; the Tiptap
+  chunk is 12.64 kB over its 120 KB budget as of 2026-09-26, so `pnpm size` fails)
+- Agent parity guards in `packages/commands` and the server (every
+  slide-model writer and every Fastify route claimed by a command, the
+  known-missing list or a reasoned exclusion; every command example run as a
+  contract test; the generated capability manifest must be current)
 
 > ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
 > (`ERROR: Playwright does not support chromium on ubuntu26.04-x64`, same for
@@ -292,13 +308,13 @@ Worker-internal env (set by compose, not needed in `.env`):
 
 ### Phase 1a status
 
-The `transcodeProcessor` in `apps/video-worker/src/processors/transcode.ts` is a **stub** — it throws immediately. The worker boots and connects to Redis, queues are registered, but jobs will fail until the media agent implements the real ffmpeg pipeline in phase 2.
+Historical: in phase 1a the `transcodeProcessor` in `apps/video-worker/src/processors/transcode.ts` was a stub that threw immediately. The real ffmpeg pipeline landed in M12 phase 2 ([handoff](./docs/handoff/M12-phase2-video-pipeline.md)); the section is kept for the env reference above. (Corrected 2026-09-26 — this README still called it a stub.)
 
 ### Known TODOs (phase 2+)
 
-- Media agent implements real ffmpeg transcoding in `transcodeProcessor`
-- Server endpoint to enqueue jobs after tus upload completes
-- `GET /api/media/:id/video-info` returning HLS manifest URL for client playback
+- ~~Media agent implements real ffmpeg transcoding in `transcodeProcessor`~~ — done (M12 phase 2)
+- ~~Server endpoint to enqueue jobs after tus upload completes~~ — done (`apps/server/src/media/tus.ts` → `enqueueVideoTranscode`)
+- ~~`GET /api/media/:id/video-info` returning HLS manifest URL for client playback~~ — done (`apps/server/src/media/routes.ts`)
 - Audio-only fallback track (M14+)
 - HLS variant selection UI in the player
 - DRM / signed HLS URLs (M29+)
@@ -469,7 +485,7 @@ package.json version  ==  git tag (vX.Y.Z)  ==  GHCR image tag  ==  /version.jso
   the served artifact — `curl -sI` the public URL — never against the file on
   disk: the Caddy container reads a bind-mounted **directory** precisely
   because a single-file mount kept serving a stale inode after rsync
-  (see the `Unreleased` CHANGELOG section).
+  (see the 0.9.4 CHANGELOG section).
 
 Rationale: [ADR 0008](./docs/adr/0008-release-and-image-tag-discipline.md).
 The production CSP is a hard constraint on the renderer, not a tunable —

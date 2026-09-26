@@ -52,7 +52,8 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import {
   createObjectOfType,
   removeObject,
-  duplicateObject,
+  duplicateObjects,
+  translateObjects,
   bulkUpdateObjects,
   addObjects,
   moveObjectsLayer,
@@ -787,9 +788,20 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // over awareness as a phantom, and downstream objects.find(...) returns
   // undefined. Runs ahead of the awareness broadcast below so peers never see
   // a deleted id.
+  //
+  // Judged only against a NEW objects snapshot. `objects` is rAF-batched
+  // (slide-model subscribeToSlideObjects), so right after a local insert —
+  // duplicate, Alt-drag clone, paste — the code selects ids the snapshot
+  // does not contain yet. Pruning on that selection change dropped the
+  // fresh selection every time (Mod+D, the context menu's Duplicate and
+  // Alt-drag all ended with nothing selected). A selected id is stale once
+  // a snapshot taken after it was selected still lacks it.
   // ---------------------------------------------------------------------------
 
+  const prunedAgainstObjectsRef = useRef<SlideObject[] | null>(null)
   useEffect(() => {
+    if (prunedAgainstObjectsRef.current === objects) return
+    prunedAgainstObjectsRef.current = objects
     if (selectedIds.size === 0) return
     const present = new Set(objects.map((o) => o.id))
     let hasStale = false
@@ -1229,34 +1241,41 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
       // P15: Alt+drag duplicates instead of moving. Mirrors the Figma /
       // Keynote / Illustrator standard — pressing Alt at pointer-down
-      // clones each dragged id in place; the new ids become the drag
-      // set and follow the cursor while the originals stay put. The
-      // whole clone batch shares a single transaction so undo
-      // collapses into one step.
+      // clones the dragged set in place; the copies become the drag set
+      // and follow the cursor while the originals stay put.
+      //
+      // duplicateObjects is ONE LOCAL_ORIGIN transaction (fresh ids, the
+      // sources' relative z-order, a dragged group becomes its own new
+      // group). It used to be a loop of duplicateObject inside an outer
+      // origin-less doc.transact — the outer origin wins, so the clones
+      // never reached the undo stack and Mod+Z only slid the copies back
+      // onto the originals. Now the clone is on the stack, and the drag
+      // writes that follow (LOCAL_ORIGIN, continuous, inside the undo
+      // manager's 500 ms capture window) merge into the same step — the
+      // same mechanism that makes a plain drag one step. With a zero
+      // offset each copy starts exactly on its source, crop rect
+      // included, so the copies' own snapshot is the drag's start frame.
       let activeDragIds = dragIds
       let activeInitialPositions = initialPositions
       let activeInitialImageRects = initialImageRects
       if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
-        const newIds: string[] = []
-        const newPositions: typeof initialPositions = []
-        const newImageRects = new Map<
-          string,
-          { x: number; y: number; width: number; height: number }
-        >()
-        // Yjs collapses nested doc.transact calls — duplicateObject
-        // wraps its own transact internally, but our outer wrapper
-        // here makes the whole batch one undo step.
-        mutationCtx.doc.transact(() => {
-          for (const id of dragIds) {
-            const dup = duplicateObject(mutationCtx, id, { x: 0, y: 0 })
-            if (dup === null) continue
-            newIds.push(dup.id)
-            newPositions.push({ id: dup.id, x: dup.x, y: dup.y })
-            const rect = initialImageRects.get(id)
-            if (rect !== undefined) newImageRects.set(dup.id, rect)
+        const copies = duplicateObjects(mutationCtx, dragIds, { x: 0, y: 0 })
+        if (copies.length > 0) {
+          const newIds = copies.map((c) => c.id)
+          const newPositions: typeof initialPositions = copies.map((c) => ({
+            id: c.id,
+            x: c.x,
+            y: c.y,
+          }))
+          const newImageRects = new Map<
+            string,
+            { x: number; y: number; width: number; height: number }
+          >()
+          for (const c of copies) {
+            if (c.type === 'image' && c.imageRect !== undefined) {
+              newImageRects.set(c.id, { ...c.imageRect })
+            }
           }
-        })
-        if (newIds.length > 0) {
           activeDragIds = newIds
           activeInitialPositions = newPositions
           activeInitialImageRects = newImageRects
@@ -1439,6 +1458,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         return
       }
       // Object drag
+      //
+      // Deliberately NOT translateObjects (which the nudge and the
+      // Inspector's X/Y use): every pointermove writes ABSOLUTE positions
+      // derived from the frozen pointer-down snapshot (`initialPositions`
+      // + `initialImageRects`, crop carried by the same total delta). That
+      // makes each frame idempotent — snapping can pull the selection
+      // back and forth without drift — whereas translateObjects adds a
+      // delta to the live value, so a per-frame delta would have to be
+      // computed against positions this closure only sees a render late. The write stays a
+      // single bulkUpdateObjects (one LOCAL_ORIGIN transaction, one Yjs
+      // update per frame for the whole selection at 60 Hz), and the
+      // frames merge into one undo step in the undo manager's capture
+      // window, exactly as before.
       const drag = dragRef.current
       if (drag === null || !drag.active) return
       if (mutationCtx === null) return
@@ -2046,6 +2078,22 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     },
   ])
 
+  // Arrow-key nudge (1 px, Shift 10 px). translateObjects is the one
+  // correct way to move objects: it carries a cropped image's absolute
+  // `imageRect` along with the frame (the old raw `{ x, y }` patch left
+  // the crop behind, so every nudge slid the picture inside its frame),
+  // and it adds the delta to the live position, so key-repeat faster than
+  // React re-renders cannot swallow steps. Locked objects stay put.
+  const nudgeSelection = (dx: number, dy: number): void => {
+    if (selectedIds.size === 0 || mutationCtx === null) return
+    const moves = [...selectedIds].flatMap((id) => {
+      const obj = objects.find((o) => o.id === id)
+      if (obj === undefined || obj.locked === true) return []
+      return [{ id, dx, dy }]
+    })
+    if (moves.length > 0) translateObjects(mutationCtx, moves)
+  }
+
   // Canvas-scoped shortcuts — only fire when the artboard area has focus.
   useShortcuts([
     {
@@ -2072,12 +2120,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       description: 'Duplicate selected object(s)',
       handler: () => {
         if (selectedIds.size > 0 && mutationCtx !== null) {
-          const newIds: string[] = []
-          for (const id of selectedIds) {
-            const dup = duplicateObject(mutationCtx, id, { x: 20, y: 20 })
-            if (dup !== null) newIds.push(dup.id)
-          }
-          if (newIds.length > 0) selectMany(newIds)
+          // One transaction, one undo step; a selected group comes out as
+          // its own new group instead of each copy handled on its own.
+          const copies = duplicateObjects(mutationCtx, [...selectedIds], { x: 20, y: 20 })
+          if (copies.length > 0) selectMany(copies.map((c) => c.id))
         }
       },
     },
@@ -2181,14 +2227,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Nudge left (hold Shift for ×10)',
       handler: (e) => {
-        if (selectedIds.size === 0 || mutationCtx === null) return
         const step = e.shiftKey ? 10 : 1
-        const updates = [...selectedIds].flatMap((id) => {
-          const obj = objects.find((o) => o.id === id)
-          if (obj === undefined || obj.locked === true) return []
-          return [{ id, patch: { x: obj.x - step, y: obj.y } }]
-        })
-        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+        nudgeSelection(-step, 0)
       },
     },
     {
@@ -2197,14 +2237,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Nudge right (hold Shift for ×10)',
       handler: (e) => {
-        if (selectedIds.size === 0 || mutationCtx === null) return
         const step = e.shiftKey ? 10 : 1
-        const updates = [...selectedIds].flatMap((id) => {
-          const obj = objects.find((o) => o.id === id)
-          if (obj === undefined || obj.locked === true) return []
-          return [{ id, patch: { x: obj.x + step, y: obj.y } }]
-        })
-        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+        nudgeSelection(step, 0)
       },
     },
     {
@@ -2213,14 +2247,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Nudge up (hold Shift for ×10)',
       handler: (e) => {
-        if (selectedIds.size === 0 || mutationCtx === null) return
         const step = e.shiftKey ? 10 : 1
-        const updates = [...selectedIds].flatMap((id) => {
-          const obj = objects.find((o) => o.id === id)
-          if (obj === undefined || obj.locked === true) return []
-          return [{ id, patch: { x: obj.x, y: obj.y - step } }]
-        })
-        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+        nudgeSelection(0, -step)
       },
     },
     {
@@ -2229,14 +2257,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Nudge down (hold Shift for ×10)',
       handler: (e) => {
-        if (selectedIds.size === 0 || mutationCtx === null) return
         const step = e.shiftKey ? 10 : 1
-        const updates = [...selectedIds].flatMap((id) => {
-          const obj = objects.find((o) => o.id === id)
-          if (obj === undefined || obj.locked === true) return []
-          return [{ id, patch: { x: obj.x, y: obj.y + step } }]
-        })
-        if (updates.length > 0) bulkUpdateObjects(mutationCtx, updates)
+        nudgeSelection(0, step)
       },
     },
   ])

@@ -37,6 +37,11 @@ export const str =
   (maxLength: number): Schema<string> =>
   (v) =>
     typeof v === 'string' && v.length <= maxLength ? v : undefined
+/** An id reference (e.g. a folder token id): a non-empty string, as the model's `IdSchema` requires. */
+export const idRef =
+  (maxLength: number): Schema<string> =>
+  (v) =>
+    typeof v === 'string' && v.length > 0 && v.length <= maxLength ? v : undefined
 export const oneOf =
   <T extends string | number>(...values: T[]): Schema<T> =>
   (v) =>

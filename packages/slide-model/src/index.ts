@@ -22,7 +22,8 @@ export {
   removeObject,
   updateObject,
   createObjectOfType,
-  duplicateObject,
+  duplicateObjects,
+  translateObjects,
   bulkUpdateObjects,
   moveObjectsLayer,
   moveObjectToIndex,
@@ -38,10 +39,15 @@ export type {
   /** @deprecated Use ObjectsMutationContext */
   MutationContext,
   BulkUpdate,
+  ObjectTranslation,
   LayerMove,
   AlignAxis,
   DistributeAxis,
 } from './mutations.js'
+
+// Transaction origins for non-human writers (agentic layer A0)
+export { agentOrigin, releaseAgentOrigin, isAgentOrigin } from './origins.js'
+export type { AgentOrigin } from './origins.js'
 
 // Mutations — animations (M6)
 export {
@@ -77,6 +83,9 @@ export {
   getSlideAnimationsCtx,
   getSlideNotes,
 } from './slides.js'
+
+// Slide-level primitives for the command layer (agentic layer A0)
+export { clearSlideTransitionDirection, getSlideNotesText } from './slideMeta.js'
 
 // P11: deck-level rulers + guides
 export {
@@ -171,11 +180,17 @@ export {
 export { createUndoManager } from './undo.js'
 
 // Component helpers (M16 P5)
-export { promoteToComponent, getComponentDocName, pruneAnimationsToScope } from './components.js'
-export type { PromoteToComponentPlan } from './components.js'
+export {
+  promoteToComponent,
+  getComponentDocName,
+  pruneAnimationsToScope,
+  richTextOpsOf,
+  RICH_TEXT_OPS_KEY,
+} from './components.js'
+export type { PromoteToComponentPlan, RichTextOp, RichTextOps } from './components.js'
 
 // Component stamp helper (refactor: components-as-stamps)
-export { stampComponent } from './stampComponent.js'
+export { stampComponent, insertObjectsWithRichText } from './stampComponent.js'
 
 // Shape-as-image-mask mutation (moved out of apps/web — mutations live here)
 export {

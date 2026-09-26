@@ -20,6 +20,7 @@
 
 import * as Y from 'yjs'
 import {
+  LOCAL_ORIGIN,
   applyParagraphPatch,
   indentParagraphs,
   readParagraphAttrsForRange,
@@ -51,9 +52,15 @@ function resolveTarget(obj: TextObject): Target | null {
   return { yText: obj.text, from: 0, to: obj.text.length }
 }
 
+/**
+ * Run one list action as ONE `LOCAL_ORIGIN` transaction. The editor's
+ * `Y.UndoManager` tracks only `LOCAL_ORIGIN`, and nested transactions keep
+ * the OUTERMOST origin — an origin-less wrapper here used to take every
+ * paragraph edit (and the legacy migration's `patch`) out of undo history.
+ */
 function transact(yText: Y.Text, fn: () => void): void {
   const doc = yText.doc
-  if (doc !== null) doc.transact(fn)
+  if (doc !== null) doc.transact(fn, LOCAL_ORIGIN)
   else fn()
 }
 
@@ -80,11 +87,15 @@ export function currentParagraphAttrs(obj: TextObject): ParagraphAttrs {
 }
 
 function applyPatch(obj: TextObject, patch: PatchFn, p: ParagraphPatch): void {
-  if (!(obj.text instanceof Y.Text)) return
-  migrateLegacy(obj, patch)
-  const t = resolveTarget(obj)
-  if (t === null) return
-  transact(t.yText, () => applyParagraphPatch(t.yText, t.from, t.to, p))
+  const text = obj.text
+  if (!(text instanceof Y.Text)) return
+  // Migration + edit share the transaction: one user action, one undo step.
+  transact(text, () => {
+    migrateLegacy(obj, patch)
+    const t = resolveTarget(obj)
+    if (t === null) return
+    applyParagraphPatch(t.yText, t.from, t.to, p)
+  })
 }
 
 /** Set (or clear, with `null`) the list kind on the targeted paragraphs. */
@@ -126,9 +137,12 @@ export function setStartAt(obj: TextObject, n: number | null, patch: PatchFn): v
 
 /** Indent (+1) or outdent (−1) the targeted paragraphs. */
 export function indentList(obj: TextObject, delta: number, patch: PatchFn): void {
-  if (!(obj.text instanceof Y.Text)) return
-  migrateLegacy(obj, patch)
-  const t = resolveTarget(obj)
-  if (t === null) return
-  transact(t.yText, () => indentParagraphs(t.yText, t.from, t.to, delta))
+  const text = obj.text
+  if (!(text instanceof Y.Text)) return
+  transact(text, () => {
+    migrateLegacy(obj, patch)
+    const t = resolveTarget(obj)
+    if (t === null) return
+    indentParagraphs(t.yText, t.from, t.to, delta)
+  })
 }

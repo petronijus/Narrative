@@ -49,6 +49,12 @@ npx tsx src/scripts/pptxRoundtrip.ts --matrix --out matrix.pptx
 Adding a model field: put it in `roundtripMatrix.ts` in a non-default state;
 the round-trip test fails until both directions carry it.
 
+Known state (2026-09-26): the real-deck script is **not** at 0 differences.
+It reports 5 at `v0.9.29` (`4e3c503`, clean checkout) — `fillStyle.centerY`,
+`text.length`, and `fontSize` 27.99 → 28 — while 0.9.25 recorded 0 on the
+Proseware deck. Not bisected; which real deck produced the 5 was not recorded.
+Until it is fixed, "0 differences" means "no differences beyond these 5".
+
 Visual check against an independent renderer:
 
 ```bash

@@ -179,7 +179,11 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
         if (error.kind === 'emptyBody') {
           return reply.status(400).send({ error: 'Empty body' })
         }
-        return reply.status(500).send({ error: 'Append failed — no slides were written' })
+        return reply.status(500).send({
+          error: error.documentTouched
+            ? 'Append failed part-way — some slides may already be in the deck; check it before retrying'
+            : 'Append failed — no slides were written',
+        })
       }
 
       return reply.status(200).send(appendResult.result)

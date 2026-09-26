@@ -44,6 +44,7 @@ import {
   setTableCellStyle,
   setTableDefaultsPatch,
   splitTableCell,
+  translateObjects,
   updateObject,
 } from '@narrative/slide-model'
 import {
@@ -124,6 +125,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   const patchObject = (p: SlideObjectPatch<SlideObject>): void => {
     if (isViewer) return
     updateObject(mutationCtx, obj.id, p)
+  }
+  const translateObject = (dx: number, dy: number): void => {
+    if (isViewer) return
+    translateObjects(mutationCtx, [{ id: obj.id, dx, dy }])
   }
 
   // Re-render when the active text selection (cell editor publishes
@@ -269,7 +274,12 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     'vAlign',
   ] as const
   const DEFAULTS_ONLY_KEYS = ['fontFamily', 'paragraphSpaceBefore', 'paragraphSpaceAfter'] as const
+  // One Typography gesture can write to cells AND defaults (and the shared
+  // section may strip inline runs first) — keep it one undo step.
   const patchDefaultsAsTextObject = (p: SlideObjectPatch<TextObject>): void => {
+    mutationCtx.doc.transact(() => routeTypographyPatch(p), LOCAL_ORIGIN)
+  }
+  const routeTypographyPatch = (p: SlideObjectPatch<TextObject>): void => {
     const src = p as Record<string, unknown>
 
     // Preset application short-circuit: any write that touches the
@@ -522,30 +532,36 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   /**
    * Set the table to exactly `n` rows. Larger N appends blank rows at
    * the end; smaller N deletes from the end. Bounded at ≥1 so the
-   * table never collapses to zero rows. Same logic for columns.
+   * table never collapses to zero rows. Same logic for columns. The
+   * per-row mutations share one LOCAL_ORIGIN transaction, so "3 → 10
+   * rows" is one undo step and one Yjs update.
    */
   const setRowCount = (n: number): void => {
     const target = Math.max(1, Math.floor(n))
     const cur = obj.rows.length
     if (target === cur) return
-    if (target > cur) {
-      for (let i = 0; i < target - cur; i++) insertTableRow(mutationCtx, obj.id, -1)
-    } else {
-      // Delete from the bottom up until we reach `target`. The mutation
-      // refuses to drop below 1 anyway; the explicit min above keeps
-      // the loop bound safe.
-      for (let i = cur - 1; i >= target; i--) deleteTableRow(mutationCtx, obj.id, i)
-    }
+    mutationCtx.doc.transact(() => {
+      if (target > cur) {
+        for (let i = 0; i < target - cur; i++) insertTableRow(mutationCtx, obj.id, -1)
+      } else {
+        // Delete from the bottom up until we reach `target`. The mutation
+        // refuses to drop below 1 anyway; the explicit min above keeps
+        // the loop bound safe.
+        for (let i = cur - 1; i >= target; i--) deleteTableRow(mutationCtx, obj.id, i)
+      }
+    }, LOCAL_ORIGIN)
   }
   const setColCount = (n: number): void => {
     const target = Math.max(1, Math.floor(n))
     const cur = obj.colWidths.length
     if (target === cur) return
-    if (target > cur) {
-      for (let i = 0; i < target - cur; i++) insertTableCol(mutationCtx, obj.id, -1)
-    } else {
-      for (let i = cur - 1; i >= target; i--) deleteTableCol(mutationCtx, obj.id, i)
-    }
+    mutationCtx.doc.transact(() => {
+      if (target > cur) {
+        for (let i = 0; i < target - cur; i++) insertTableCol(mutationCtx, obj.id, -1)
+      } else {
+        for (let i = cur - 1; i >= target; i--) deleteTableCol(mutationCtx, obj.id, i)
+      }
+    }, LOCAL_ORIGIN)
   }
 
   const applyAndRefocus = (attrs: Parameters<typeof applyInlineFormatIfSelected>[1]): void => {
@@ -592,6 +608,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       <PositionSection
         obj={obj}
         patch={patchObject}
+        translate={translateObject}
         disabled={isViewer}
         layerMutationCtx={mutationCtx}
       />
@@ -833,7 +850,6 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           objectId={obj.id}
           animations={animations}
           mutationCtx={animMutationCtx}
-          totalAnimations={animations.length}
         />
       )}
 
@@ -1155,7 +1171,10 @@ function TableAppearance({
     // Table-wide: erase per-cell overrides for the keys we're writing
     // so the new default wins everywhere — Keynote-style "paint the
     // whole table" semantics. Wrap in a transact so the clear + set
-    // land in a single Yjs update.
+    // land in a single Yjs update — with LOCAL_ORIGIN: the outermost
+    // transaction's origin wins, and the undo manager tracks only
+    // LOCAL_ORIGIN, so an origin-less wrapper took the whole fill
+    // change out of undo history.
     const rows = obj.rows.length
     const cols = obj.colWidths.length
     mutationCtx.doc.transact(() => {
@@ -1180,7 +1199,7 @@ function TableAppearance({
       // check the same way the rest of the file's WithUndefined
       // patches do.
       patchDefault(patch as Partial<TableObject['defaults']>)
-    })
+    }, LOCAL_ORIGIN)
   }
 
   const patchShim = (p: SlideObjectPatch<FilledShape>): void => {

@@ -1,5 +1,6 @@
 // @narrative/shared — shared types across apps and packages
-// Pure TypeScript — no runtime dependencies.
+// Pure TypeScript, except ./schema, which carries the zod runtime schemas
+// used to validate agent input (see schema/index.ts).
 
 export { SLIDE_WIDTH, SLIDE_HEIGHT, PPTX_WIDE_EMU_WIDTH, PPTX_WIDE_EMU_HEIGHT } from './canvas.js'
 
@@ -89,3 +90,5 @@ export {
   type VideoTranscodeJobData,
   type VideoTranscodeResult,
 } from './video-queue.js'
+
+export * from './schema/index.js'

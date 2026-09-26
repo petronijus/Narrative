@@ -9,6 +9,9 @@ export default defineConfig({
     alias: {
       '@narrative/shared': path.resolve(__dirname, '../../packages/shared/src/index.ts'),
       '@narrative/slide-model': path.resolve(__dirname, '../../packages/slide-model/src/index.ts'),
+      // Test-only: the agent-parity route guard (routes/agentParity.test.ts)
+      // reads the command registry. Not a runtime dependency of the server.
+      '@narrative/commands': path.resolve(__dirname, '../../packages/commands/src/index.ts'),
     },
   },
   test: {

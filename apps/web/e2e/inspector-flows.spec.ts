@@ -156,6 +156,156 @@ test.describe('Inspector — text behaviour', () => {
   })
 })
 
+/** Select `ids`, re-issuing until the editor's object list has caught up. */
+async function selectWhenKnown(page: Page, ids: string[]): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate((want) => {
+          const api = window.__narrative_test_api!
+          const sel = api.getSelection()
+          if (want.some((id) => !sel.includes(id))) api.setSelection(want)
+          return [...api.getSelection()].sort()
+        }, ids),
+      { timeout: 10_000 },
+    )
+    .toEqual([...ids].sort())
+}
+
+test.describe('Inspector — position edits carry a crop', () => {
+  // A cropped image's `imageRect` is in absolute slide coordinates. A raw
+  // `{ x }` patch moved the frame and left the crop behind, so the picture
+  // slid inside its frame; position edits now go through translateObjects.
+  const crop = { x: 150, y: 120, width: 600, height: 450 }
+
+  test('typing X moves the crop with the frame', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await page.evaluate(
+      (imageRect) =>
+        window.__narrative_test_api!.addImage({
+          id: 'img-x',
+          x: 200,
+          y: 200,
+          w: 400,
+          h: 300,
+          imageRect,
+        }),
+      crop,
+    )
+    await selectWhenKnown(page, ['img-x'])
+
+    await page.getByLabel('X position').fill('500')
+    await expect
+      .poll(async () => {
+        const o = await getObject(page, 'img-x')
+        return { x: o?.['x'], imageRect: o?.['imageRect'] }
+      })
+      .toEqual({ x: 500, imageRect: { ...crop, x: 450 } })
+  })
+
+  test('align to slide moves the crop with the frame', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await page.evaluate(
+      (imageRect) =>
+        window.__narrative_test_api!.addImage({
+          id: 'img-align',
+          x: 200,
+          y: 200,
+          w: 400,
+          h: 300,
+          imageRect,
+        }),
+      crop,
+    )
+    await selectWhenKnown(page, ['img-align'])
+
+    await page.getByLabel('Align top edge of slide').click()
+    await expect
+      .poll(async () => {
+        const o = await getObject(page, 'img-align')
+        return { y: o?.['y'], imageRect: o?.['imageRect'] }
+      })
+      .toEqual({ y: 0, imageRect: { ...crop, y: -80 } })
+  })
+})
+
+test.describe('Viewing never writes', () => {
+  test('a weight the family lacks is shown as its fallback, not rewritten', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    // Helvetica's curated stack has only 400 + 700; 600 renders as 700.
+    const helvetica = "'Helvetica Neue', Helvetica, Arial, sans-serif"
+    await page.evaluate((fontFamily) => {
+      const api = window.__narrative_test_api!
+      api.addText({ id: 'text-w', x: 100, y: 100, w: 500, h: 80, text: 'Semibold', fontSize: 32 })
+      api.updateObject('text-w', { fontFamily, fontWeight: 600 })
+    }, helvetica)
+    await selectWhenKnown(page, ['text-w'])
+
+    const weight = page.locator('#inspector-fontweight-text-w')
+    await expect(weight).toHaveValue('700')
+    // The old picker "fixed" the value from an effect as soon as the box
+    // was displayed. Give any such write ample time to land.
+    await page.waitForTimeout(1000)
+    expect((await getObject(page, 'text-w'))!['fontWeight']).toBe(600)
+
+    // Picking a weight is a user action and does write.
+    await weight.selectOption('400')
+    await expect.poll(async () => (await getObject(page, 'text-w'))!['fontWeight']).toBe(400)
+  })
+
+  test('a legacy onEnter step is shown as is, not migrated on open', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    await page.evaluate(() => {
+      const api = window.__narrative_test_api!
+      api.addRect({ id: 'anim-a', x: 100, y: 100, w: 200, h: 120, fill: 0xff0000 })
+      api.addRect({ id: 'anim-b', x: 500, y: 100, w: 200, h: 120, fill: 0x0000ff })
+      api.addAnimation({
+        objectId: 'anim-a',
+        preset: 'fadeIn',
+        trigger: 'afterPrevious',
+        duration: 1,
+        delay: 0.5,
+        easing: 'power2.out',
+      })
+      // Anchored at the slide start: begins at 0.2 s, before step 1 ends
+      // (1.5 s). The old on-open migration rewrote it to afterPrevious with
+      // a delay clamped to 0 — moving it to 1.5 s.
+      api.addAnimation({
+        objectId: 'anim-b',
+        preset: 'fadeIn',
+        trigger: 'onEnter',
+        duration: 1,
+        delay: 0.2,
+        easing: 'power2.out',
+      })
+    })
+    await selectWhenKnown(page, ['anim-b'])
+
+    // The Inspector's trigger picker names the stored trigger.
+    await expect(page.getByLabel('Trigger', { exact: true })).toHaveValue('onEnter')
+    await page.waitForTimeout(1000)
+    const steps = await page.evaluate(() =>
+      window
+        .__narrative_test_api!.listSlides()[0]!
+        .animations.map((a) => ({ objectId: a.objectId, trigger: a.trigger, delay: a.delay })),
+    )
+    expect(steps).toEqual([
+      { objectId: 'anim-a', trigger: 'afterPrevious', delay: 0.5 },
+      { objectId: 'anim-b', trigger: 'onEnter', delay: 0.2 },
+    ])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Slides panel — active slide reflection
 // ---------------------------------------------------------------------------

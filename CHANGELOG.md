@@ -4,6 +4,95 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+Phase A0 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)):
+the foundations an agent will build on, plus the editor bugs the capability
+survey turned up. No agent can reach Narrative yet — the MCP server is phase
+A1. Handoff: [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md).
+
+### Added
+
+- **The command registry (`packages/commands`).** Every document change an
+  agent will be able to make is a command with a validated input, a required
+  role, an undo policy and a description written for a model: 50 commands
+  across slides, objects, text, tables, animations, guides and read-only
+  queries, plus `ops.apply`, which runs a batch of them as one change — all
+  of it or none of it. The list of what exists and what is still missing is
+  generated into [`docs/capabilities.md`](./docs/capabilities.md)
+  (`pnpm capabilities`); a test fails when it is stale, another when a new
+  slide-model mutation reaches no command, and another when a new server
+  route is not claimed by a command, the known-missing list or a reasoned
+  exclusion. Object locks do not restrict commands: a lock is an editor-only
+  flag that stops a person dragging, resizing, nudging or deleting an object
+  on the canvas, and agents ignore it (decided 2026-09-26; an earlier draft
+  of the same day had commands refuse locked objects unless the caller
+  passed `force: true` — removed before release)
+  ([ADR 0010](./docs/adr/0010-command-layer-is-the-only-writer.md),
+  [ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md)). The editor does
+  not dispatch through it yet (phase A2).
+- **Runtime schemas for every object type** (`packages/shared/src/schema`,
+  zod). Agent input is checked against them; the typecheck fails when a
+  property is added to a type but not to its schema.
+
+### Changed
+
+- **A new animation starts "after previous"** instead of the legacy "on
+  enter" trigger the pickers no longer offer. The first animation on a slide
+  still starts with the slide, so playback is the same.
+
+### Fixed
+
+- **Alt-drag copies can be undone.** Undo after Alt-dragging a copy slid the
+  copy back onto the original and left it there; the copy was never on the
+  undo stack. The copy and the drag are now one undo step.
+- **Duplicating selects the copies**, from Ctrl/⌘+D, the context menu and
+  Alt-drag alike — all three ended with nothing selected. The context menu's
+  Duplicate is also one undo step for several objects instead of one per
+  object.
+- **A duplicated group is a new group.** Copies kept the original's group,
+  so duplicating a group grew the original instead of making a second one;
+  a lone copy of a group member is now ungrouped.
+- **A cropped image keeps its crop when it moves.** The arrow-key nudge, the
+  Inspector's X/Y fields, align to slide, align/distribute, and the 20 px
+  offset of a duplicate moved the frame but left the crop behind, so the
+  picture slid inside its frame (only a mouse drag carried it).
+- **The layer items in the context menu say what they do.** "Send back" and
+  "Send backward" were swapped; the items now read Bring to front, Bring
+  forward, Send backward, Send to back, with their shortcuts.
+- **Undo covers every formatting gesture.** A table-wide fill change, list
+  changes (bullets, numbering, indent), and clearing a run's own formatting
+  when setting a box-wide value were missing from the undo history, or only
+  half in it. Each is now exactly one undo step, as is changing a table's
+  row or column count with the steppers.
+- **Opening a deck no longer edits it.** Viewing a text box whose stored
+  font weight its family lacks rewrote the weight, and opening the animation
+  timeline rewrote legacy "on enter" steps — each write landed on the
+  viewer's undo stack, went out to every collaborator, and (for the
+  timeline) could change playback. The weight picker now shows the face the
+  browser actually renders; the timeline shows legacy steps where they play.
+- **Inserting or deleting table rows and columns keeps merged cells.**
+  Merged cells kept pointing at their old positions, and the table did not
+  grow or shrink with the row or column. Merges now extend, shrink or move
+  the way PowerPoint does them; deleting the row or column a merged cell
+  starts in keeps its text and styling; borders stay on their lines and the
+  outer edge stays outside.
+- **A text box keeps its link to a folder text style through PowerPoint.**
+  Exporting to .pptx and importing the file again kept which fields the box
+  overrides but dropped the style it is linked to, so later changes to the
+  style no longer reached it.
+- **Components keep rich text.** Making a component from a selection, and
+  stamping one onto a slide, flattened text boxes and table cells to plain
+  text — bold runs, colours and lists were lost.
+- **Videos in an appended .pptx play.** Inserting a PowerPoint deck into an
+  existing one never asked for its videos to be transcoded, so they stayed
+  "processing" forever. The append now registers its media through the same
+  code as a new import, before the slides appear in the deck, so an editor
+  never sees a slide whose media the server does not know yet. A failed
+  append says whether any slides may already be in the deck.
+
+---
+
 ## 0.9.29 — Duplicated slides that draw (2026-09-25)
 
 ### Fixed

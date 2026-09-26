@@ -15,7 +15,10 @@
  *   - Upload every embedded image / video to MinIO under the new deck's
  *     namespace, patching the parsed shapes' `assetId` fields.
  *   - Build a Y.Doc state buffer via `buildDeckUpdate`.
- *   - Insert deck + permission + media_assets + deck_updates in one tx.
+ *   - `registerDeckMedia`: insert deck + permission + deck_updates +
+ *     media_assets in one tx, then enqueue a transcode per video once it has
+ *     committed. The append path (`appendDeck.ts`) registers its media
+ *     through the same function, so the two cannot drift apart again.
  *
  * The function is loader-friendly: callers pass their own logger so the
  * tus path can use `fastify.log`'s child logger while the route path uses
@@ -27,11 +30,12 @@ import { Readable } from 'node:stream'
 import { createRequire } from 'node:module'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { nanoid } from 'nanoid'
-import { eq } from 'drizzle-orm'
+import { eq, inArray, TransactionRollbackError } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
+import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import { downscaleForStorage } from '../media/storedImageLimits.js'
 import { parsePptx, type ParsedEmbeddedImage, type ParsedPptx } from './parser.js'
@@ -146,72 +150,56 @@ export async function importDeckFromPptxBytes(args: {
   const title = deriveTitle(filenameForTitle)
   const now = new Date()
 
-  const {
-    mediaAssetRows,
-    uploadedImageCount,
-    skippedUnsupportedImages,
-    uploadedFontCount,
-    skippedFontCount,
-    videoTranscodeJobs,
-  } = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  const media = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  const { uploadedImageCount, skippedUnsupportedImages, uploadedFontCount, skippedFontCount } =
+    media
 
   const { state, slideCount, objectsCreated, skipped } = buildDeckUpdate(parsed)
 
-  const insertedDeck = await db.transaction(async (tx) => {
-    const [deck] = await tx
-      .insert(decks)
-      .values({
-        id: deckId,
-        title,
-        ownerUserId,
-        folderId,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-    if (!deck) return null
-
-    await tx.insert(deckPermissions).values({
+  // The deck, its owner grant and its first document state commit in the
+  // same transaction as the media rows — the rows reference the deck, and a
+  // deck whose document points at rows that never landed must not exist.
+  try {
+    await registerDeckMedia({
+      db,
       deckId,
-      userId: ownerUserId,
-      role: 'owner',
-      grantedAt: now,
-      grantedBy: ownerUserId,
+      ownerUserId,
+      media,
+      log,
+      alongside: async (tx) => {
+        const [deck] = await tx
+          .insert(decks)
+          .values({
+            id: deckId,
+            title,
+            ownerUserId,
+            folderId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning()
+        if (!deck) tx.rollback()
+
+        await tx.insert(deckPermissions).values({
+          deckId,
+          userId: ownerUserId,
+          role: 'owner',
+          grantedAt: now,
+          grantedBy: ownerUserId,
+        })
+
+        await tx.insert(deckUpdates).values({
+          deckId,
+          update: state,
+          createdAt: now,
+        })
+      },
     })
-
-    if (mediaAssetRows.length > 0) {
-      await tx.insert(mediaAssets).values(mediaAssetRows)
+  } catch (err) {
+    if (err instanceof TransactionRollbackError) {
+      return { ok: false, error: { kind: 'deckInsertFailed' } }
     }
-
-    await tx.insert(deckUpdates).values({
-      deckId,
-      update: state,
-      createdAt: now,
-    })
-
-    return deck
-  })
-
-  if (!insertedDeck) {
-    return { ok: false, error: { kind: 'deckInsertFailed' } }
-  }
-
-  // Enqueue HLS transcode for every imported video. We do this AFTER the
-  // tx commits so the worker never picks up a job before the media_assets
-  // row exists. Same pattern as the tus upload path — failures are logged
-  // and don't fail the import; the operator can re-enqueue manually.
-  for (const job of videoTranscodeJobs) {
-    try {
-      await enqueueVideoTranscode({
-        assetId: job.assetId,
-        deckId,
-        storageKey: job.storageKey,
-        uploaderUserId: ownerUserId,
-        mimeType: job.mimeType,
-      })
-    } catch (err) {
-      log.warn({ err, assetId: job.assetId }, 'pptx: enqueueVideoTranscode failed')
-    }
+    throw err
   }
 
   // Walk the parsed shapes once to gather every font-family that any
@@ -258,6 +246,107 @@ export async function importDeckFromPptxBytes(args: {
   }
 }
 
+/** A Drizzle transaction handle, as `db.transaction` hands it to its callback. */
+export type DbTransaction = Parameters<Parameters<Database['transaction']>[0]>[0]
+
+/**
+ * A parsed deck's embedded media after `uploadEmbeddedImagesAndPatchAssetIds`:
+ * the bytes are in MinIO and the parsed shapes point at the new asset ids, but
+ * no `media_assets` row exists yet and no transcode has been asked for.
+ */
+export type StagedDeckMedia = Awaited<ReturnType<typeof uploadEmbeddedImagesAndPatchAssetIds>>
+
+/**
+ * Register a parsed deck's staged media — THE one code path for it, shared by
+ * the new-deck import and the append into an existing deck.
+ *
+ *   1. One transaction: `alongside` first (it may create the deck the rows
+ *      reference), then every `media_assets` row.
+ *   2. Only after that commits: one HLS transcode job per video. Enqueuing
+ *      earlier would let the worker pick up a job for a row that does not
+ *      exist yet; not enqueuing at all leaves the row `pending` forever — the
+ *      bug the append path had while it carried its own copy of step 1.
+ *
+ * A failed enqueue is logged and swallowed, the same policy as the tus video
+ * branch: the row is durable, and `db:backfill-video` re-enqueues it.
+ *
+ * Throws when the transaction fails; nothing is registered in that case (the
+ * uploaded bytes are the caller's to discard — see `discardDeckMedia`).
+ * Returns whatever `alongside` returned.
+ */
+export async function registerDeckMedia<T = void>(args: {
+  db: Database
+  deckId: string
+  ownerUserId: string
+  media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  log: ImportLogger
+  /** Writes that must commit atomically with the media rows. */
+  alongside?: (tx: DbTransaction) => Promise<T>
+}): Promise<T | undefined> {
+  const { db, deckId, ownerUserId, media, log, alongside } = args
+
+  const result = await db.transaction(async (tx) => {
+    const r = alongside !== undefined ? await alongside(tx) : undefined
+    if (media.mediaAssetRows.length > 0) {
+      await tx.insert(mediaAssets).values(media.mediaAssetRows)
+    }
+    return r
+  })
+
+  for (const job of media.videoTranscodeJobs) {
+    try {
+      await enqueueVideoTranscode({
+        assetId: job.assetId,
+        deckId,
+        storageKey: job.storageKey,
+        uploaderUserId: ownerUserId,
+        mimeType: job.mimeType,
+      })
+    } catch (err) {
+      log.warn({ err, assetId: job.assetId, deckId }, 'pptx: enqueueVideoTranscode failed')
+    }
+  }
+
+  return result
+}
+
+/**
+ * Undo `uploadEmbeddedImagesAndPatchAssetIds` (+ `registerDeckMedia`, if it
+ * got that far) for media that provably nothing references: delete the rows
+ * and the stored originals. Only ever call this when no document can hold the
+ * asset ids — a row deleted from under a rendered slide is a broken image.
+ *
+ * Best effort, never throws: whatever survives is deck-scoped, so the deck's
+ * ON DELETE CASCADE and `purgeDeckBucketPrefix` still reap it. A transcode
+ * job enqueued for a discarded video finds its source gone and fails after
+ * its retries, updating zero rows; if it won the race and already fetched the
+ * source, its outputs land under `decks/<deckId>/videos/` — the same prefix
+ * sweep covers them.
+ */
+export async function discardDeckMedia(args: {
+  db: Database
+  deckId: string
+  media: Pick<StagedDeckMedia, 'mediaAssetRows'>
+  log: ImportLogger
+}): Promise<void> {
+  const { db, deckId, media, log } = args
+  const ids = media.mediaAssetRows.map((r) => r.id).filter((id): id is string => id !== undefined)
+  if (ids.length === 0) return
+  try {
+    await db.delete(mediaAssets).where(inArray(mediaAssets.id, ids))
+  } catch (err) {
+    log.warn({ err, deckId, assetIds: ids }, 'pptx: discarding unreferenced media rows failed')
+  }
+  const result = await purgeExplicitKeys(
+    media.mediaAssetRows.map((r) => r.storageKey),
+    {
+      warn: (o, m) => log.warn(o, m),
+      info: (o, m) => log.info(o, m),
+    },
+  )
+  log.info({ deckId, assetIds: ids, ...result }, 'pptx: discarded unreferenced media')
+}
+
 /**
  * Walk the parsed deck's embedded media (images + videos), upload each
  * to MinIO under the new deck's namespace, and patch the parsed shapes'
@@ -265,7 +354,8 @@ export async function importDeckFromPptxBytes(args: {
  * media_assets rows. Unsupported MIME types (e.g. WMF, EMF) are skipped
  * and counted so the caller can surface the loss.
  *
- * Public for reuse by the append-pptx route which mirrors this step.
+ * Stages only: nothing is written to the database here. Hand the result to
+ * `registerDeckMedia`, which both the import and the append path use.
  */
 export async function uploadEmbeddedImagesAndPatchAssetIds(
   parsed: ParsedPptx,

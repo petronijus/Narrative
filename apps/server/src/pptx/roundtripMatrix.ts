@@ -592,6 +592,7 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       fontFamily: 'Inter, sans-serif',
       strokeWidth: 3,
       isSlideNumber: false,
+      textStyleId: 'ts-heading',
       textStyleOverrides: ['fontSize', 'color'],
       textTransform: 'none',
       flipV: true,

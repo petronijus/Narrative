@@ -85,6 +85,7 @@ import {
   isEntireContentSelected,
   clearActiveSelectionAttrs,
   clearAllInlineRunAttrs,
+  transactTextAction,
 } from './textEditSelection.js'
 import {
   currentParagraphAttrs,
@@ -95,6 +96,7 @@ import {
   indentList,
 } from './textListOps.js'
 import { useSelection } from '../state/SelectionContext.js'
+import { triggerOptionsFor } from './animationTriggers.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
@@ -108,6 +110,7 @@ import { useCropMode } from '../state/CropModeContext.js'
 import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import {
   updateObject,
+  translateObjects,
   addAnimation,
   removeAnimation,
   updateAnimation,
@@ -871,6 +874,13 @@ export function Inspector() {
     updateObject(mutationCtx, obj.id, p)
   }
 
+  // Position edits move the crop with the frame — see PositionSection.
+  function translate(dx: number, dy: number) {
+    if (isViewer) return
+    if (obj === undefined || mutationCtx === null) return
+    translateObjects(mutationCtx, [{ id: obj.id, dx, dy }])
+  }
+
   // M29 Phase 2 — Table object has its own inspector with row/col +
   // defaults + active-cell override controls. Skips the generic shape
   // chrome below (fill/stroke/etc. live inside the table's `defaults`).
@@ -964,7 +974,13 @@ export function Inspector() {
           alignment row | X+Y row | rotation + flip row.
           Single-object alignment snaps to the slide canvas (not to the
           selection union — that's the multi-select inspector's job). */}
-      <PositionSection obj={obj} patch={patch} disabled={isViewer} layerMutationCtx={mutationCtx} />
+      <PositionSection
+        obj={obj}
+        patch={patch}
+        translate={translate}
+        disabled={isViewer}
+        layerMutationCtx={mutationCtx}
+      />
 
       {/* Transparency for object types that don't render an Appearance
           section (text / image / video / line / arrow). Same control,
@@ -1047,7 +1063,6 @@ export function Inspector() {
           objectId={obj.id}
           animations={animations}
           mutationCtx={animMutationCtx}
-          totalAnimations={animations.length}
         />
       )}
 
@@ -2016,6 +2031,14 @@ function BackgroundSection({
 interface PositionSectionProps {
   obj: SlideObject
   patch: (p: SlideObjectPatch<SlideObject>) => void
+  /**
+   * Move the object by a delta. Position edits (X / Y fields, align to
+   * slide) must go through this — i.e. `translateObjects` — never through
+   * an `{ x, y }` patch: a cropped image's `imageRect` is in absolute
+   * slide coordinates and has to travel with the frame, or the picture
+   * slides inside its crop.
+   */
+  translate: (dx: number, dy: number) => void
   disabled: boolean
   /** Optional layer-order mutation context — when present, a row of
    *  Front/Forward/Backward/Back icon buttons is rendered at the top of
@@ -2039,31 +2062,37 @@ interface PositionSectionProps {
 export function PositionSection({
   obj,
   patch,
+  translate,
   disabled,
   layerMutationCtx = null,
 }: PositionSectionProps) {
   const rotationDeg = radToDeg(obj.rotation)
 
+  // Absolute targets are turned into deltas against the value the user
+  // is looking at; translateObjects applies them to the live position.
+  const moveXTo = (x: number): void => translate(x - obj.x, 0)
+  const moveYTo = (y: number): void => translate(0, y - obj.y)
+
   const alignToCanvas = (axis: AlignAxis): void => {
     if (disabled) return
     switch (axis) {
       case 'left':
-        patch({ x: 0 })
+        moveXTo(0)
         return
       case 'right':
-        patch({ x: SLIDE_WIDTH - obj.width })
+        moveXTo(SLIDE_WIDTH - obj.width)
         return
       case 'center-x':
-        patch({ x: Math.round((SLIDE_WIDTH - obj.width) / 2) })
+        moveXTo(Math.round((SLIDE_WIDTH - obj.width) / 2))
         return
       case 'top':
-        patch({ y: 0 })
+        moveYTo(0)
         return
       case 'bottom':
-        patch({ y: SLIDE_HEIGHT - obj.height })
+        moveYTo(SLIDE_HEIGHT - obj.height)
         return
       case 'center-y':
-        patch({ y: Math.round((SLIDE_HEIGHT - obj.height) / 2) })
+        moveYTo(Math.round((SLIDE_HEIGHT - obj.height) / 2))
         return
     }
   }
@@ -2174,7 +2203,7 @@ export function PositionSection({
           ariaLabel="X position"
           value={obj.x}
           disabled={disabled}
-          onChange={(v) => patch({ x: v })}
+          onChange={moveXTo}
         />
         <CompactNumberField
           id={`inspector-y-${obj.id}`}
@@ -2182,7 +2211,7 @@ export function PositionSection({
           ariaLabel="Y position"
           value={obj.y}
           disabled={disabled}
-          onChange={(v) => patch({ y: v })}
+          onChange={moveYTo}
         />
       </div>
 
@@ -3843,19 +3872,23 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
     const next = Math.max(1, parsed)
     lastExternalRef.current = next
     setDraft(String(next))
-    const sel = getActiveTextSelection()
-    if (sel !== null && sel.objectId === obj.id) {
-      if (isEntireContentSelected(obj.id)) {
-        clearActiveSelectionAttrs(obj.id, ['fontSize'])
-        patch({ fontSize: next })
+    // One gesture = one undo step: the run strip and the box patch share
+    // a LOCAL_ORIGIN transaction (see transactTextAction).
+    transactTextAction(obj, () => {
+      const sel = getActiveTextSelection()
+      if (sel !== null && sel.objectId === obj.id) {
+        if (isEntireContentSelected(obj.id)) {
+          clearActiveSelectionAttrs(obj.id, ['fontSize'])
+          patch({ fontSize: next })
+          return
+        }
+        const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
+        if (!applied) patch({ fontSize: next })
         return
       }
-      const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
-      if (!applied) patch({ fontSize: next })
-      return
-    }
-    clearAllInlineRunAttrs(obj.text, ['fontSize'])
-    patch({ fontSize: next })
+      clearAllInlineRunAttrs(obj.text, ['fontSize'])
+      patch({ fontSize: next })
+    })
   }
 
   return (
@@ -4162,15 +4195,17 @@ export function TypographySection({
                             // word, a coloured span) are wiped too.
                             // The user's mental model is "back to the
                             // preset, no exceptions".
-                            clearAllInlineRunAttrs(obj.text, [
-                              'fontFamily',
-                              'fontWeight',
-                              'fontSize',
-                              'color',
-                              'italic',
-                              'underline',
-                            ])
-                            applyTextStyle(linkedTextStyle.id)
+                            transactTextAction(obj, () => {
+                              clearAllInlineRunAttrs(obj.text, [
+                                'fontFamily',
+                                'fontWeight',
+                                'fontSize',
+                                'color',
+                                'italic',
+                                'underline',
+                              ])
+                              applyTextStyle(linkedTextStyle.id)
+                            })
                             setPresetMenuOpen(false)
                           }}
                           className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
@@ -4271,17 +4306,19 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const next = (effectiveBold ? 400 : 700) as 400 | 700
-                if (selAttrs !== null) {
-                  if (isEntireContentSelected(obj.id)) {
-                    clearActiveSelectionAttrs(obj.id, ['fontWeight'])
-                    patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                transactTextAction(obj, () => {
+                  if (selAttrs !== null) {
+                    if (isEntireContentSelected(obj.id)) {
+                      clearActiveSelectionAttrs(obj.id, ['fontWeight'])
+                      patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                      return
+                    }
+                    applyInlineFormatIfSelected(obj.id, { fontWeight: next })
                     return
                   }
-                  applyInlineFormatIfSelected(obj.id, { fontWeight: next })
-                  return
-                }
-                clearAllInlineRunAttrs(obj.text, ['fontWeight'])
-                patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                  clearAllInlineRunAttrs(obj.text, ['fontWeight'])
+                  patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
+                })
               }}
               aria-pressed={effectiveBold}
               title="Bold"
@@ -4299,21 +4336,23 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const nextItalic = !effectiveItalic
-                if (selAttrs !== null) {
-                  if (isEntireContentSelected(obj.id)) {
-                    clearActiveSelectionAttrs(obj.id, ['italic'])
-                    patch({
-                      italic: nextItalic ? true : undefined,
-                    } as unknown as SlideObjectPatch<TextObject>)
+                transactTextAction(obj, () => {
+                  if (selAttrs !== null) {
+                    if (isEntireContentSelected(obj.id)) {
+                      clearActiveSelectionAttrs(obj.id, ['italic'])
+                      patch({
+                        italic: nextItalic ? true : undefined,
+                      } as unknown as SlideObjectPatch<TextObject>)
+                      return
+                    }
+                    applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
                     return
                   }
-                  applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
-                  return
-                }
-                clearAllInlineRunAttrs(obj.text, ['italic'])
-                patch({
-                  italic: nextItalic ? true : undefined,
-                } as unknown as SlideObjectPatch<TextObject>)
+                  clearAllInlineRunAttrs(obj.text, ['italic'])
+                  patch({
+                    italic: nextItalic ? true : undefined,
+                  } as unknown as SlideObjectPatch<TextObject>)
+                })
               }}
               aria-pressed={effectiveItalic}
               title="Italic"
@@ -4331,21 +4370,23 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const nextUnderline = !effectiveUnderline
-                if (selAttrs !== null) {
-                  if (isEntireContentSelected(obj.id)) {
-                    clearActiveSelectionAttrs(obj.id, ['underline'])
-                    patch({
-                      underline: nextUnderline ? true : undefined,
-                    } as unknown as SlideObjectPatch<TextObject>)
+                transactTextAction(obj, () => {
+                  if (selAttrs !== null) {
+                    if (isEntireContentSelected(obj.id)) {
+                      clearActiveSelectionAttrs(obj.id, ['underline'])
+                      patch({
+                        underline: nextUnderline ? true : undefined,
+                      } as unknown as SlideObjectPatch<TextObject>)
+                      return
+                    }
+                    applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
                     return
                   }
-                  applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
-                  return
-                }
-                clearAllInlineRunAttrs(obj.text, ['underline'])
-                patch({
-                  underline: nextUnderline ? true : undefined,
-                } as unknown as SlideObjectPatch<TextObject>)
+                  clearAllInlineRunAttrs(obj.text, ['underline'])
+                  patch({
+                    underline: nextUnderline ? true : undefined,
+                  } as unknown as SlideObjectPatch<TextObject>)
+                })
               }}
               aria-pressed={effectiveUnderline}
               title="Underline"
@@ -4505,19 +4546,21 @@ export function TypographySection({
                 // so applyInlineFormatIfSelected still hits the right
                 // range without needing focus on the editor.
                 const next = hexToNumber(hex)
-                const sel = getActiveTextSelection()
-                if (sel !== null && sel.objectId === obj.id) {
-                  if (isEntireContentSelected(obj.id)) {
-                    clearActiveSelectionAttrs(obj.id, ['color'])
-                    patch({ color: next })
+                transactTextAction(obj, () => {
+                  const sel = getActiveTextSelection()
+                  if (sel !== null && sel.objectId === obj.id) {
+                    if (isEntireContentSelected(obj.id)) {
+                      clearActiveSelectionAttrs(obj.id, ['color'])
+                      patch({ color: next })
+                      return
+                    }
+                    const applied = applyInlineFormatIfSelected(obj.id, { color: next })
+                    if (!applied) patch({ color: next })
                     return
                   }
-                  const applied = applyInlineFormatIfSelected(obj.id, { color: next })
-                  if (!applied) patch({ color: next })
-                  return
-                }
-                clearAllInlineRunAttrs(obj.text, ['color'])
-                patch({ color: next })
+                  clearAllInlineRunAttrs(obj.text, ['color'])
+                  patch({ color: next })
+                })
               }}
               ariaLabel="Text color"
               showHex
@@ -5220,8 +5263,6 @@ interface AnimationsSectionProps {
   objectId: string
   animations: AnimationStep[]
   mutationCtx: AnimationsMutationContext
-  /** Total animation count on slide — for computing default trigger for new animation. */
-  totalAnimations: number
 }
 
 /**
@@ -5234,13 +5275,14 @@ function animationLabel(step: AnimationStep): string {
 }
 
 /**
- * Defaultní trigger pro novou animaci:
- * - První animace na slide → onEnter (spustí se automaticky po zobrazení slide)
- * - Další → afterPrevious (spustí se po dokončení předchozí)
+ * Trigger for a newly added animation: always afterPrevious. As the first
+ * step on a slide it starts at the slide start (the compiler anchors index
+ * 0 at position 0 whatever the trigger), so it plays exactly as the legacy
+ * `onEnter` default did — without seeding the legacy trigger that the
+ * trigger pickers no longer offer (and that the timeline used to rewrite,
+ * as a write-on-view, the moment it opened).
  */
-function defaultTrigger(totalAnimations: number): AnimationTrigger {
-  return totalAnimations === 0 ? 'onEnter' : 'afterPrevious'
-}
+const NEW_ANIMATION_TRIGGER: AnimationTrigger = 'afterPrevious'
 
 const ADD_BUTTON_CLASS = [
   'rounded-md border border-input px-2 py-0.5 text-xs text-foreground/90',
@@ -5252,9 +5294,10 @@ const ADD_BUTTON_CLASS = [
  * Per-animation row inside the inspector. Mirrors the AnimationTimeline
  * controls (trigger / duration / delay / easing) so authors can edit a
  * single animation without opening the timeline panel. Trigger options
- * intentionally exclude `onEnter` — the first non-onClick step in the
- * sequence runs onEnter implicitly (see compileSteps), so exposing it
- * here would be redundant.
+ * exclude the legacy `onEnter` for new choices — the first time-driven
+ * step starts at the slide start anyway (see compileSteps) — but show it
+ * for a step that still has it (`triggerOptionsFor`), so the picker never
+ * claims a trigger the step does not have.
  */
 function AnimationItem({
   step,
@@ -5325,9 +5368,11 @@ function AnimationItem({
             className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
             onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
           >
-            <option value="withPrevious">withPrevious</option>
-            <option value="afterPrevious">afterPrevious</option>
-            <option value="onClick">onClick</option>
+            {triggerOptionsFor(step.trigger).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
           </select>
         </label>
         <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
@@ -5496,12 +5541,7 @@ function AnimationItem({
   )
 }
 
-export function AnimationsSection({
-  objectId,
-  animations,
-  mutationCtx,
-  totalAnimations,
-}: AnimationsSectionProps) {
+export function AnimationsSection({ objectId, animations, mutationCtx }: AnimationsSectionProps) {
   // Animace patřící tomuto objektu
   const objectAnimations = animations.filter((a) => a.objectId === objectId)
   const { selectedAnimationId, setSelectedAnimationId, selectOne } = useSelection()
@@ -5521,7 +5561,7 @@ export function AnimationsSection({
     addAnimation(mutationCtx, {
       objectId,
       preset,
-      trigger: defaultTrigger(totalAnimations),
+      trigger: NEW_ANIMATION_TRIGGER,
       duration: 0.6,
       delay: 0,
       easing: 'power2.out',
