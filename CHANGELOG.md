@@ -4,13 +4,13 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.10.0 — Agents over MCP (2026-09-27)
 
 Phases A0 and A1 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)).
-A0 (committed as `9e0e853`): the foundations — the command registry, runtime
-schemas, parity guards — plus the editor bugs the capability survey turned
-up. A1 (working tree on top of `9e0e853`, 2026-09-27): Claude Code and
-claude.ai can now drive Narrative over MCP. Handoffs:
+A0 (`9e0e853`): the foundations — the command registry, runtime schemas,
+parity guards — plus the editor bugs the capability survey turned up. A1
+(`624a3bd`, `e27e9bc`): Claude Code and claude.ai can now drive Narrative
+over MCP. Handoffs:
 [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md),
 [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 

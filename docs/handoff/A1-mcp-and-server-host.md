@@ -1,11 +1,10 @@
 # A1 — MCP server, server host and agent identity — handoff (2026-09-27)
 
-**Status:** complete in the working tree, **uncommitted, unreleased, not
-deployed.** Base: `9e0e853` (A0, committed, untagged) on top of the
-`v0.9.29` tag at `00890b0`. Production serves `{"version":"v0.9.29+00890b0"}`
-(checked 2026-09-27); tag, workspace versions (all eight `package.json` at
-`0.9.29`) and prod agree. CHANGELOG: the `Unreleased` section (A0 and A1).
-No version number has been chosen.
+**Status:** committed (`624a3bd`, plugin `e27e9bc`, on top of A0 `9e0e853`)
+and released together with A0 as **v0.10.0** (CHANGELOG "0.10.0 — Agents
+over MCP"). Verified on the Linux desktop on 2026-09-27 before the release —
+see "Desktop verification" under Findings. The deploy itself is recorded in
+`docs/deploy.md` and the release commit.
 
 Plan: [`docs/plans/agentic-layer.md`](../plans/agentic-layer.md) §10, row
 **A1 Server host, identity, MCP**. Decisions:
@@ -277,26 +276,23 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
 
 ## Findings
 
-- **The eval replay harness still honours `confirmed: true`.**
-  `tests/agent-eval/lib/mcpNames.ts` splits a `confirmed` argument out as a
-  transport field and `lib/memoryWorld.ts` (lines ~452–461) runs a
-  `confirm: 'always'` command when it is set; both header comments still
-  describe it as "the non-eliciting client's confirmation". The server now
-  rejects that argument as `invalid_input` (`mcp/mcp.test.ts`, "never treats
-  a model-sent flag as a confirmation"). No recording contains it today, and
-  a divergent replay would fail rather than pass, so it is latent — but the
-  memory world should model `confirmationId` / out-of-band like the server.
-  Code change for `ai-integration`; not touched by the docs sweep.
+- **Resolved before release — the eval replay harness no longer honours
+  `confirmed: true`.** Checked on the desktop 2026-09-27: `lib/mcpNames.ts`
+  splits out only `confirmationId`, and `lib/memoryWorld.ts` refuses a
+  `confirm: 'always'` command unless the harness itself passes
+  `explicitConfirm` (the equivalent of a script's `confirm: [id]`), so the
+  memory world models the server's out-of-band confirmation. The finding
+  was written against an earlier state of the A1 working tree.
 - **Migration `0019`'s header comment describes the removed flag**
   (`explicit` = "the model retried with confirmed: true"). Do not edit an
   applied migration (its hash changes); the current meaning is in
   `agent/runStore.ts` (`OpConfirmation`).
-- **Sentry scrubber covers `nrt_` but not the OAuth token formats** inside
-  strings (`nmo_`, `nmr_`, `nmc_`, `nms_`; `observability/sentry.ts`
-  `PAT_RE`). Headers are filtered, so a bearer in `Authorization` is safe;
-  a token quoted in an error message would not be. Whether the Sentry SDK
-  attaches `/oauth/token` form bodies (`sendDefaultPii: false`) is
-  unverified. For `security-reviewer`.
+- **Resolved before release — the Sentry scrubber covers every Narrative
+  credential.** `observability/sentry.ts` masks `nrt_`, `nmo_`, `nmr_`,
+  `nmc_` and `nms_` inside any string (`CREDENTIAL_RE`), and
+  `sentry.test.ts` checks all four OAuth prefixes in an `/oauth/token` form
+  body. Written against an earlier state of the working tree, like the eval
+  finding above.
 - **`tools/list` is ≈ 148 KB against a 120 KB target** — see TODO.
 - **`pnpm size` still exits 1, on the Tiptap chunk only** (132.64 kB gz vs
   120, +12.64 — unchanged since A0). Measured 2026-09-27: main app chunk
@@ -304,11 +300,26 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   **total first paint 633.9 kB of 800 (A0: 605.45, +28.45 kB)** — A1's pages
   are lazy routes, so where the +28 kB of first-paint payload comes from was
   not investigated.
-- Carried over from A0, not re-checked: real-deck PPTX round trip (5
-  differences), Stryker broken on vitest 4, `m16-component-flows.spec.ts`
-  hardcoded Drafts id. A1 touched `pptx/writer.ts`, `appendDeck.ts` and added
-  `exportDeck.ts`; the round-trip matrix is green in `pnpm -r test`, the
-  real-deck script was not run.
+- **Real-deck PPTX round trip: A0 + A1 add no difference.** Run on
+  2026-09-27 on two client decks from the desktop's backup (Tailspin Brand
+  Language Examples, 12 slides; Contoso FoM V7, 36 slides): HEAD reports 22 and
+  41 differences, and a clean `v0.9.29` worktree reports the **identical**
+  22 and 41 (byte-identical reports apart from timings). So A1's changes to
+  `pptx/writer.ts` / `appendDeck.ts` / `exportDeck.ts` are neutral, but the
+  "5 differences" recorded for 0.9.26–0.9.29 is deck-specific: other real
+  decks are much further from 0 (`fontSize` 27.99 → 28, `text.length`,
+  geometry and `strokeWidth` on the Contoso deck, run `attrs` lost on 4 slides).
+  The Proseware deck the "5" came from is not on the desktop.
+- Carried over from A0, not re-checked: Stryker broken on vitest 4,
+  `m16-component-flows.spec.ts` hardcoded Drafts id.
+- **Desktop verification (petronijus-PC, Ubuntu 26.04, 2026-09-27).**
+  `pnpm typecheck` green; `pnpm lint` 0 errors (218 warnings);
+  `pnpm -r test` 3,199 passed / 32 skipped; `test:integration` 21/21 against
+  the dev Postgres after migrations 0016–0023 applied on `pnpm dev`; e2e
+  `access-tokens|agent-activity|agent-confirm|destructive-flows` with
+  `PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1`: 14 passed, 1
+  skipped (the share-link revoke assertion, skipped by design under
+  `BYPASS_AUTH`).
 
 ## Traps worth knowing
 
@@ -377,8 +388,6 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
     around it.
 - Prod env: `AGENT_PRINCIPAL_KEY_SECRET` and the real
   `CLOUDFLARED_TRUSTED_PROXIES` (above).
-- Fix the eval memory world's `confirmed` handling; add the OAuth token
-  formats to the Sentry scrubber.
 - The `narrative` skill regenerates with `pnpm --filter @narrative/commands skill`;
   its freshness test makes a playbook change without regeneration fail.
 - CLAUDE.md is stale (test counts, e2e count, no A1 prod secret, placeholder

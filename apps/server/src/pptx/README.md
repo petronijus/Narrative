@@ -55,6 +55,14 @@ It reports 5 at `v0.9.29` (`4e3c503`, clean checkout) — `fillStyle.centerY`,
 Proseware deck. Not bisected; which real deck produced the 5 was not recorded.
 Until it is fixed, "0 differences" means "no differences beyond these 5".
 
+Other real decks are further off, and were already at `v0.9.29` (checked
+2026-09-27, identical reports at `v0.9.29` and at 0.10.0): a Tailspin brand deck
+(12 slides) shows 22 differences (`fontSize` 27.99 → 28 in objects and runs,
+one `text.length`), a Contoso deck (36 slides) 41 (`text.length`, `strokeWidth`,
+geometry, and run `attrs` lost on 4 slides). For a change to this module,
+"no new differences" is measured against the same deck at the previous
+release, not against 0.
+
 Visual check against an independent renderer:
 
 ```bash
