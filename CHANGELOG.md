@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.10.1 — A lighter tool list for agents (2026-09-28)
 
 ### Changed
 
