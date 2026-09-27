@@ -161,6 +161,21 @@ describe('compactInputSchema', () => {
     expect(Object.keys(out['$defs'] as object).sort()).toEqual(['big', 'tree'])
   })
 
+  it('says identical union alternatives once, and unwraps a union left with one', () => {
+    const colour = { type: 'string', pattern: '^#[0-9a-f]{6}$' }
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        stroke: { anyOf: [colour, { ...colour }], description: 'Outline colour' },
+        width: { anyOf: [{ type: 'number' }, { type: 'number' }, { type: 'string' }] },
+      },
+    })
+    const props = out['properties'] as Record<string, object>
+    expect(props['stroke']).toEqual({ ...colour, description: 'Outline colour' })
+    expect(props['width']).toEqual({ anyOf: [{ type: 'number' }, { type: 'string' }] })
+    expect(valid(out, { stroke: '#aabbcc', width: 'x' })).toBe(true)
+  })
+
   it('keeps additionalProperties: false only at the root', () => {
     const out = compactInputSchema({
       type: 'object',

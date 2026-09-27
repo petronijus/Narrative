@@ -49,12 +49,24 @@ them existed.)_
     replay detection, a redirect allowlist of the claude.ai callback plus
     Claude Code's loopback callbacks on any port (`MCP_OAUTH_REDIRECT_URIS`
     adds more), and the consent page; Google sign-in is only the login step;
-  - tool generation and compaction (`mcp/tools.ts`, `mcp/schemaCompact.ts`)
-    under the size budget in `mcp/toolListBudget.test.ts` (160,000 bytes for
-    `tools/list`, 16,000 per tool; measured 148,207–151,119 bytes on
-    2026-09-27 depending on the confirmation mode), sessions
-    (`mcp/sessions.ts`, one user + one credential each, swept every minute),
-    and the server `instructions` (`mcp/guidance.ts`).
+  - tool generation and compaction (`mcp/tools.ts`, `mcp/schemaCompact.ts`,
+    and `mcp/vocabulary.ts`: 27 field descriptions shared across tools,
+    stripped from every schema and said once in the instructions; guarded
+    both ways by `mcp/vocabulary.test.ts`) under the size budget in
+    `mcp/toolListBudget.test.ts` (132,000 bytes for `tools/list`, 16,000 per
+    tool; measured 128,349–129,309 bytes on 2026-09-28 depending on the
+    confirmation mode — was 160,000 and 148–151 KB on 2026-09-27). Settled
+    2026-09-28: no dynamic toolsets behind `list_changed` (Claude Code
+    already defers MCP tools behind ToolSearch, same-turn use is flaky
+    without it, claude.ai reportedly caches tool lists); shrink the list
+    statically. Per-tool text says only what is specific to that tool — the
+    target arguments, `runId`, the confirmation procedure and shared fields
+    live in the instructions, and an example call only where the input
+    needs one (`needsExample`). The remaining bulk is command descriptions
+    carrying real guidance (radians, crop/flip gotchas, run formatting,
+    animation triggers); cutting it loses guidance and is Petr's call;
+  - sessions (`mcp/sessions.ts`, one user + one credential each, swept
+    every minute), and the server `instructions` (`mcp/guidance.ts`).
 - `packages/commands/playbooks/` — Narrative's own playbooks as markdown,
   written using the Woodgrove skill library as inspiration only. Today:
   `basics` (prepended to every prompt), `edit`, `find-replace`,
@@ -134,12 +146,17 @@ editor's UndoManager track remote origins.
 - New command in the registry → it appears in MCP automatically; check its
   annotations and read its description as a model would.
 - Change to a playbook, prompt or tool description → run `pnpm agent:eval`
-  (headless Claude Code against the local stack, plan §9.3; ≈ 2 USD per full
-  run) and report the graded results; `--record` refreshes the replay
+  (headless Claude Code with ToolSearch on against the local stack, plan
+  §9.3; $1.62 for a full run on 2026-09-28, was ≈ 2 USD without ToolSearch)
+  and report the graded results; `--record` refreshes the replay
   recordings when a scenario or command behaviour changed on purpose.
 - Tool list grew past the budget → look at what grew (the failure lists the
   largest tools) before raising it; a sentence repeated on every tool belongs
-  in the server instructions or `basics`.
+  in the server instructions or `basics`, and a field description repeated
+  across tools belongs in `mcp/vocabulary.ts` (its test names the ones that
+  qualify). The next dedupable candidate (2026-09-28): `animation.add` and
+  `animation.update` share ≈ 700 characters (the presets list duplicates the
+  enum; triggers and rotation units repeated).
 - MCP or auth change → `security-reviewer` before the milestone closes.
 - After any feature work → `agent-parity` for coverage, `narrative-docs` for
   the doc sweep.
@@ -170,7 +187,15 @@ editor's UndoManager track remote origins.
   and a new `claude -p` is a new session.
 - **A bare `claude -p` loads the developer's whole setup** (208 tools,
   ~208k context tokens measured 2026-09-27); the eval isolates it with
-  `--strict-mcp-config`, `--setting-sources project` and `--tools` — see
-  `tests/agent-eval/README.md`.
+  `--strict-mcp-config`, `--setting-sources project` and `--tools` (resource
+  reads + ToolSearch only) — see `tests/agent-eval/README.md`.
+- **With ToolSearch on, Claude Code defers MCP tools**: the model sees names
+  and loads a schema with `ToolSearch select:<name>`. The eval runs that way
+  since 2026-09-28, like a user's session; ToolSearch calls land in
+  transcripts as non-Narrative calls (`command: null`), skipped by grading
+  and replay. Without ToolSearch the whole tool list rides on every request
+  (≈ 100k tokens measured 2026-09-28) and a tool added mid-session via
+  `list_changed` is usable in the same turn only 4/10 times
+  (`pnpm agent:probe:list-changed`).
 - A playbook needs a capability the registry lacks → ask the
   `packages/commands` owner for a command; do not script around it.

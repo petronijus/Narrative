@@ -7,12 +7,16 @@ service commands). No LLM judges anything. See
 `docs/plans/agentic-layer.md` §9.3.
 
 > **Cost warning.** A real run uses the developer's own Claude subscription
-> (or `ANTHROPIC_API_KEY`, if set). Each turn carries ~50k context tokens
-> (the Narrative tool list is most of it: ≈ 148 KB of JSON, down from 235 KB
-> — ~87k tokens per turn — before the 2026-09-27 compaction); a full run is
-> roughly 14 sessions, ≈ 2 USD list-price equivalent. The report
-> shows the cost Claude Code reports (list-price equivalent). On a
-> subscription it counts against your plan limits.
+> (or `ANTHROPIC_API_KEY`, if set). Claude Code runs with ToolSearch on, as in
+> a user's session, so the Narrative tools are deferred: the model sees their
+> names and loads a tool's schema when it needs it, instead of the whole
+> ≈ 129 KB tool list riding on every request (without ToolSearch that list was
+> ~100k tokens a request; measured 2026-09-28 with
+> `pnpm agent:probe:list-changed`). A full run is 14 sessions; the report
+> shows the cost Claude Code reports (list-price equivalent): $1.62 for the
+> 13 scenarios of a full run on 2026-09-28 (opus, Claude Code 2.1.283; was
+> ≈ 2 USD without ToolSearch). On a subscription it counts against your
+> plan limits.
 
 ## When to run it
 
@@ -27,6 +31,17 @@ service commands). No LLM judges anything. See
 
 The dev stack must be running (`pnpm dev`: web on :5173, API on :3001). The
 harness never starts or restarts it.
+
+On Ubuntu 26.04, where Playwright cannot install its bundled browser, set
+`PLAYWRIGHT_USE_SYSTEM_CHROME=1` (or `PLAYWRIGHT_CHROME_EXECUTABLE`) for
+`selected-slide-context`, the one scenario that opens an editor tab —
+without it that scenario errors instead of running (2026-09-28:
+`browserType.launch: Executable doesn't exist at
+~/.cache/ms-playwright/chromium_headless_shell-1223/…`):
+
+```bash
+PLAYWRIGHT_USE_SYSTEM_CHROME=1 pnpm agent:eval
+```
 
 ```bash
 pnpm agent:eval                        # every scenario
@@ -78,9 +93,13 @@ and the user's SessionStart hooks ran. So `lib/claude.ts` runs:
   expands from the environment, so the token never touches disk.
 - `--setting-sources project`, `--disable-slash-commands`: no user settings,
   plugins, hooks, skills or CLAUDE.md.
-- `--tools ListMcpResourcesTool,ReadMcpResourceTool`: no built-in tools except
-  resource reads. The server's instructions point at
-  `narrative://playbooks/basics`.
+- `--tools ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch`: no built-in
+  tools except resource reads (the server's instructions point at
+  `narrative://playbooks/basics`) and ToolSearch. With ToolSearch, Claude Code
+  defers the MCP tools as it does in a user's session: the model sees the
+  names and loads a schema with `ToolSearch select:<name>` when it needs it.
+  Those ToolSearch calls appear in the transcript as non-Narrative calls
+  (`command: null`), which grading and replay skip.
 - `ENABLE_CLAUDEAI_MCP_SERVERS=false` and `--no-session-persistence`.
 - `--input-format stream-json`: a multi-step scenario ("do X", then "undo what
   you just did") is one conversation and one MCP session, as it is for a
@@ -171,9 +190,9 @@ Claude Code upgrade before designing anything around tool-list changes.
 not need the dev stack. Results: `docs/handoff/A1-mcp-and-server-host.md`,
 "Known TODO".
 
-Note that this suite runs Claude Code **without** ToolSearch (`--tools`
-limits the built-ins), so every request carries the full tool list; a user's
-session with default tools defers MCP tools and pays a fraction of it.
+The suite itself runs Claude Code **with** ToolSearch (lib/claude.ts), as a
+user's session has it; the probe's `no-toolsearch` rows show what a client
+that loads the whole list pays.
 
 ## Files
 

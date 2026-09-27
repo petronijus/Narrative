@@ -97,8 +97,16 @@ agent:eval`** (`tests/agent-eval/`, 14 scenarios, 14/14 on 2026-09-27;
   passing live run (`pnpm agent:eval --filter <id> --record`). Report a
   missing scenario with its intended prompt and grader.
 - **`tools/list` has a byte budget** (`apps/server/src/mcp/toolListBudget.test.ts`,
-  160,000 bytes; ≈ 148–151 KB on 2026-09-27). A new command's description
-  and schema cost every MCP user context on every turn — flag verbose ones.
+  132,000 bytes; ≈ 128–129 KB on 2026-09-28, so a new command has only
+  ≈ 2.7 KB of headroom — was 160,000 and ≈ 148–151 KB on 2026-09-27). A new
+  command's description and schema cost every MCP user context — flag
+  verbose ones. Also check whether its field descriptions belong in
+  `apps/server/src/mcp/vocabulary.ts` (fields that mean the same on every
+  tool, said once in the server instructions): reuse an existing
+  `.describe()` text word for word where the field means the same, and
+  `mcp/vocabulary.test.ts` fails when a description repeated on ≥ 3 tools
+  (≥ 100 bytes) is missing there, or when a reworded one no longer matches
+  its entry.
 - **Still missing:** the ESLint `no-restricted-imports` rule, shortcut and
   menu-action enumeration, and any component calling `useCommand()` (all A2).
 

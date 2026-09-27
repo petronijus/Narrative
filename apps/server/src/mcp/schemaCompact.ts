@@ -4,7 +4,7 @@
  * into the model's context (≈ 235 KB of JSON before this existed), so bytes
  * here are paid on every turn of every session.
  *
- * Four passes, all pure and per tool (every tool's schema stays
+ * Five passes, all pure and per tool (every tool's schema stays
  * self-contained: `$defs` never cross tools):
  *
  *   0. Bounds that tell a model nothing are dropped: `minLength: 1` (197
@@ -35,6 +35,12 @@
  *      their properties, which is what a model goes by; repeating the
  *      closedness on every nested shape cost ≈ 5 KB. The server validates
  *      strictly at every level and names an unknown key in its error.
+ *   4. Identical alternatives of a union are said once. Merging the kinds
+ *      of a discriminated union (pass 1), inlining (pass 2) and dropping
+ *      nested closedness (pass 3) can leave `anyOf: [X, X]` — on
+ *      `object.create` the stroke and alpha fields were the same schema per
+ *      kind. Duplicates are dropped; a union left with one alternative
+ *      becomes that alternative (its siblings, e.g. a description, kept).
  */
 
 type JsonSchema = Record<string, unknown>
@@ -322,6 +328,29 @@ function dropNestedClosedness(value: unknown, depth: number): unknown {
   return out
 }
 
+// ---------------------------------------------------------------------------
+// 4. Identical union alternatives
+// ---------------------------------------------------------------------------
+
+function dedupeUnionAlternatives(node: JsonSchema): JsonSchema {
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const branches = node[key]
+    if (!Array.isArray(branches)) continue
+    const seen = new Set<string>()
+    const distinct = branches.filter((b) => {
+      const json = JSON.stringify(b)
+      if (seen.has(json)) return false
+      seen.add(json)
+      return true
+    })
+    if (distinct.length === branches.length) continue
+    const { [key]: _all, ...siblings } = node
+    if (distinct.length === 1 && isObject(distinct[0])) return { ...distinct[0], ...siblings }
+    return { ...siblings, [key]: distinct }
+  }
+  return node
+}
+
 /** The passes, in order. Returns a new schema; `root` is not modified. */
 export function compactInputSchema(input: JsonSchema): JsonSchema {
   const root = mapSchema(input, dropUninformativeBounds) as JsonSchema
@@ -340,5 +369,5 @@ export function compactInputSchema(input: JsonSchema): JsonSchema {
   const inlined = inlineCheapDefinitions(
     Object.keys(defs).length > 0 ? { ...collapsed, $defs: defs } : collapsed,
   )
-  return dropNestedClosedness(inlined, 0) as JsonSchema
+  return mapSchema(dropNestedClosedness(inlined, 0), dedupeUnionAlternatives) as JsonSchema
 }

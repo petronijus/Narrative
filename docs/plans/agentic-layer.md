@@ -809,7 +809,9 @@ must accept a component master, only deck-scoped commands may), and
 The contract suite now also checks idempotence against the server fakes'
 state and result (not only the document), and runs every deck command
 against a component master in both directions (accepts ↔ `acceptsComponent`).
-`apps/server/src/mcp/toolListBudget.test.ts` caps `tools/list` at 160 KB.
+`apps/server/src/mcp/toolListBudget.test.ts` caps `tools/list` at 132,000
+bytes (160 KB at A1 close; lowered 2026-09-28 when the shared field
+vocabulary brought the list to ≈ 129 KB, see §10).
 (A lock policy — commands
 refusing locked objects unless `force: true` — was built and removed the
 same day, 2026-09-26: locks are editor-only and agents ignore them, §12
@@ -906,12 +908,15 @@ judgment), for example:
 For the last one the grader runs `query.check`: zero errors, all required
 slots filled.
 
-How they run: `pnpm agent:eval` starts the local stack, creates a test
-token, and drives each scenario through **headless Claude Code**
-(`claude -p` with the Narrative MCP server configured), then grades the
-resulting document. That exercises the real MCP surface and the real
-playbooks, on the developer's own Claude subscription; Narrative still
-needs no API key.
+How they run: `pnpm agent:eval` runs against an already running local
+stack (`pnpm dev`; as built in A1 the harness never starts it — planned here
+as starting it), mints test tokens, and drives each scenario through
+**headless Claude Code** (`claude -p` with only the Narrative MCP server
+configured and ToolSearch on, so MCP tools are deferred as in a user's
+session — since 2026-09-28, before that without ToolSearch and the whole
+tool list on every request), then grades the resulting document. That
+exercises the real MCP surface and the real playbooks, on the developer's
+own Claude subscription; Narrative still needs no API key.
 
 - They run on demand: before a release, and after any change to
   playbooks, prompts or tool descriptions.
@@ -925,7 +930,8 @@ needs no API key.
 Each phase ends green on the CLAUDE.md auto-run table and is a separately
 releasable version.
 
-Progress (2026-09-27): **A0 and A1 done**, unreleased — 94 commands (53 of
+Progress (2026-09-27): **A0 and A1 done**, released together as v0.10.0
+(2026-09-27) — 94 commands (53 of
 them also work on a component master), 39 known-missing entries (A2 32, A3 5,
 A4 2), 18 allowlisted; all 69 server routes are claimed (route guard). At A0
 close (2026-09-26) it was 50 commands, 81 known-missing (A1 42, A2 32, A3 5,
@@ -934,7 +940,8 @@ A4 2), 12 allowlisted. What A0 left for later is listed under
 [`docs/handoff/A0-agentic-foundations.md`](../handoff/A0-agentic-foundations.md);
 in short: the lint rule (A2), `useCommand()` wired into the UI (A2) and
 shortcut / menu enumeration are not in place yet. The eval suite is (A1:
-`pnpm agent:eval`, 14 scenarios, 14/14 on 2026-09-27; 11 replay free in
+`pnpm agent:eval`, 14 scenarios, 14/14 on 2026-09-27 and on 2026-09-28
+with ToolSearch on; 11 replay free in
 `pnpm -r test`). A1 handoff:
 [`docs/handoff/A1-mcp-and-server-host.md`](../handoff/A1-mcp-and-server-host.md).
 "Ends green" did not fully hold for A0: `pnpm size` (Tiptap chunk), the
@@ -949,6 +956,12 @@ with vitest 4) were already red at `4e3c503`.
 | **A3 Render worker**              | Headless Chromium worker; `/render` route under the production CSP, reading the live document. Thumbnails for unopened decks. `deck.exportPdf` and `deck.exportPng`. `query.render` with single slide, contact sheet, region crop and before/after. Text-fit measurement API.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | The agent can see what it built. Also three user-facing features apart from agents.                                                                                                                                                                                                                                                                      |
 | **A4 Style packs**                | Pack schema and validator. The slide-model changes in §7.2 (component provenance and slots, `component.create`, `component.restamp`). `style.pack.*` CRUD and the Style pack tab in Folder Settings. Packs served as MCP resources. **The pack compiler: a pack becomes folder tokens, folder fonts and its short list of components (pagination, headline, subline, copy, recurring column/grid); layouts stay pack data.** PPTX master/layout reader turning client masters into layout data (in the parser, so ordinary imports keep layouts too). Bootstrap Contoso, Fabrikam, Tailspin, Woodgrove and Adatum into their folders; upload their brand fonts. Deck-scoped font access for shared-deck editors. Pack-driven `query.check`. `style.deck.applyPack`, `slide.applyLayout`.                                                                                                                                                                                                                                                         | Visual target: the decks Woodgrove builds today.                                                                                                                                                                                                                                                                                                             |
 | **A5 Deck builder + restyle**     | Deck spec and `style.buildFromSpec`. The build playbook, modelled on `presentation-narrative-standard`, with the render-and-look loop. `style.slides.restyle` over `deck.insertFrom` (which already shipped in A1). The full eval suite.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | The "whole deck from a brief" goal.                                                                                                                                                                                                                                                                                                                      |
+
+A1 follow-up (2026-09-28, after v0.10.0, unreleased): `tools/list` compacted
+further to ≈ 129 KB — field descriptions shared across tools said once in the
+server instructions (`mcp/vocabulary.ts`), example calls only where the input
+needs one, the confirmation procedure said once — and no dynamic toolsets.
+Decision and measurements: the A1 handoff, "Known TODO".
 
 ## 11. ADRs to write
 

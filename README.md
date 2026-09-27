@@ -113,10 +113,10 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit + integration (3,192 pass, 32 skipped, 223 files, 2026-09-27)
+pnpm test                                       # unit + integration (3,205 pass, 32 skipped, 225 files, 2026-09-28)
 pnpm --filter web test:e2e                      # 53 Playwright spec files (see caveat below)
 pnpm --filter @narrative/server test:integration  # Drizzle stores against the local Postgres (3 files; not in `pnpm test`)
-pnpm agent:eval                                 # 14 agent scenarios via headless Claude Code (costs usage, ~2 USD/run)
+pnpm agent:eval                                 # 14 agent scenarios via headless Claude Code (costs usage, ~1.6 USD/run on 2026-09-28)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -138,7 +138,7 @@ Coverage highlights:
   known-missing list or a reasoned exclusion; every command example run as a
   contract test; the generated capability manifest must be current)
 - MCP server over real HTTP with the SDK client, the OAuth flow and its
-  failure paths, a `tools/list` size budget (160 KB), and the agent eval
+  failure paths, a `tools/list` size budget (132,000 bytes), and the agent eval
   suite's free replay subset (11 recorded scenarios, no model) inside
   `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
 

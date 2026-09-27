@@ -4,6 +4,44 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **Agents start with a smaller tool list.** Narrative's MCP tool list, loaded
+  into the model's context when a client connects, is ≈ 129 KB instead of
+  ≈ 150 KB (form-mode clients 148,207 → 128,349 bytes; link-mode 151,119 →
+  129,213). It only changes how Narrative presents itself over MCP. Commands,
+  their input schemas and the capability manifest are unchanged, and the
+  server still validates every call against the full schema:
+  - field descriptions repeated across tools (the slide reference is on 45
+    of them, as well as object and table ids, text bodies, fonts and colours,
+    fills, file inputs, share roles) are said once in the server
+    instructions instead of on every tool (`mcp/vocabulary.ts`, 27 fields;
+    a test fails when a reworded description would put one back on every
+    tool, or when a new widely repeated one is missing);
+  - an example call only on tools whose input needs one (several forms, a
+    nested object or list, more than two fields), and without its title;
+  - each confirming tool now says only how this client asks the user; what
+    a declined, dismissed or unanswerable question means, and the retry
+    with `confirmationId`, are said once in the instructions;
+  - identical alternatives in a schema union are said once (mostly
+    `object_create`).
+
+  The instructions grow to 3,945 bytes, so a session starts ≈ 17.5 KB
+  (form) to ≈ 19.5 KB (link) lighter. The size budget test now caps the
+  list at 132,000 bytes (was 160,000).
+
+- **The agent eval runs Claude Code as users do, with ToolSearch.** Claude Code
+  then defers MCP tools and loads a tool's schema only when the model needs
+  it, instead of sending the whole tool list with every request. On
+  2026-09-28 (opus, Claude Code 2.1.283) all 14 scenarios passed: 13 in the
+  full run for $1.62 list-price equivalent (was ≈ 2 USD), and
+  `selected-slide-context`, whose browser failed to start there, on a rerun
+  with the system Chrome.
+
+---
+
 ## 0.10.0 — Agents over MCP (2026-09-27)
 
 Phases A0 and A1 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)).

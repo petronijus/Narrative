@@ -1,21 +1,27 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-09-27 (was 2026-09-26; before that 2026-09-09 and 2026-05-09).
-> Current state, **measured** with `pnpm -r test` on 2026-09-27 (working
-> tree of agentic-layer phase A1 on top of `9e0e853`) — all green, and
-> `pnpm typecheck` + `pnpm lint` exit 0 (lint: 0 errors, 218 warnings in
-> `apps/web`):
+> Last updated 2026-09-28 (was 2026-09-27; before that 2026-09-26, 2026-09-09 and 2026-05-09).
+> Current state, **measured** with `pnpm -r test` on 2026-09-28 (working
+> tree of the MCP tool-list compaction on top of `ee705da` / v0.10.0) — all
+> green in the docs sweep's run; an earlier run the same day hit the server
+> flake under _Known flaky unit tests_. `pnpm typecheck` green and `pnpm lint`
+> 0 errors on the same tree (reported with the change, not re-run by the
+> sweep):
 >
 > | Package                | Files   | Passed    | Skipped |
 > | ---------------------- | ------- | --------- | ------- |
-> | `apps/server`          | 79      | 1,126     | 1       |
+> | `apps/server`          | 80      | 1,133     | 1       |
 > | `apps/web`             | 75      | 686       | 30      |
-> | `packages/commands`    | 20      | 639       | 0       |
+> | `packages/commands`    | 21      | 645       | 0       |
 > | `packages/slide-model` | 27      | 392       | 0       |
 > | `packages/shared`      | 8       | 193       | 0       |
 > | `packages/animation`   | 13      | 144       | 0       |
 > | `apps/video-worker`    | 1       | 12        | 1       |
-> | **Total**              | **223** | **3,192** | **32**  |
+> | **Total**              | **225** | **3,205** | **32**  |
+>
+> (2026-09-27, A1 working tree on top of `9e0e853`: 223 files, 3,192 passed —
+> server 79 / 1,126, commands 20 / 639; `pnpm typecheck` + `pnpm lint` exit 0,
+> lint 0 errors, 218 warnings in `apps/web`.)
 >
 > (At A0 close, 2026-09-26: 167 files, 2,188 passed — server 36 / 497,
 > web 69 / 639, commands 13 / 328, slide-model 381, shared 187.)
@@ -24,7 +30,8 @@
 > re-run by the docs sweep of 2026-09-27), **3 server integration test
 > files** against a real Postgres (`pnpm --filter @narrative/server
 test:integration`, not part of `pnpm test`), and the **agent eval suite**
-> (`pnpm agent:eval`, 14 scenarios, 14/14 on 2026-09-27 — see below).
+> (`pnpm agent:eval`, 14 scenarios, 14/14 on 2026-09-27 and again on
+> 2026-09-28 with ToolSearch on — see below).
 >
 > (`packages/commands` was 364 before the lock policy was removed later on
 > 2026-09-26 — its locked re-run of every example went with it; was 1,542
@@ -58,8 +65,13 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >   (`hocuspocus/awareness*.test.ts`), the Hocuspocus auth-context regression
 >   over a real WebSocket (`hocuspocus/authenticate.context.test.ts`), Sentry
 >   scrubbing, and **`mcp/toolListBudget.test.ts`** — `tools/list` must stay
->   ≤ 160,000 bytes (≤ 16,000 per tool); it measured 148,207 (form mode) to
->   151,119 bytes (link mode) on 2026-09-27.
+>   ≤ 132,000 bytes (≤ 16,000 per tool); it measured 128,349 (form mode) to
+>   129,309 bytes (url mode) on 2026-09-28 (was ≤ 160,000, measured 148,207
+>   to 151,119 on 2026-09-27, before the shared field vocabulary). Its
+>   companion **`mcp/vocabulary.test.ts`** (2026-09-28) keeps
+>   `mcp/vocabulary.ts` honest both ways: an entry that no longer matches any
+>   command's description fails, and so does a description repeated on ≥ 3
+>   tools (≥ 100 bytes to repeat) that is not in it.
 > - **Integration** (`*.integration.test.ts`, `vitest.integration.config.ts`,
 >   needs the local Postgres from `.env`): the run store
 >   (`agent/runStore.integration.test.ts`), paged deck/folder lists
@@ -283,6 +295,18 @@ Whether the suite _passes_ with those vars set was not measured during the
 default to system Chrome when the bundled browser is absent, or run the suite
 in a container with a supported base image.
 
+### Known flaky unit tests
+
+- `apps/server/src/services/editor.test.ts` — "ignores a state another
+  user's connection forged under the caller's client id" failed once with
+  "condition not met in time" during a full `pnpm -r test` on 2026-09-28,
+  while the web and server suites ran in parallel. It passed 5/5 alone and
+  in a full server-suite rerun (1,133 passed / 1 skipped). A wait-for timeout
+  under load, not a regression; not fixed. Rerun the server suite before
+  blaming your change.
+- `multi-client-collab` e2e, "three clients … converge" — flaky as of
+  2026-09-26 (CLAUDE.md records the numbers).
+
 ### Diagnostic probes are not tests
 
 A spec written to _measure_ production behaviour — not to assert a contract —
@@ -344,7 +368,8 @@ target or retire an existing one. Examples of the policy:
   (CLAUDE.md has carried this row since A0; was noted here as missing.)
 - Touch playbooks, MCP prompts/instructions or a command's description,
   schema or examples → `pnpm agent:eval` (real headless Claude Code, costs
-  subscription usage, ≈ 2 USD per full run); refresh recordings with
+  subscription usage: $1.62 list-price equivalent for a full run on
+  2026-09-28 with ToolSearch on, was ≈ 2 USD without it); refresh recordings with
   `pnpm agent:eval --record` when a scenario or command behaviour changes on
   purpose. CLAUDE.md has this row as of A1.
 - Touch bundle entry points / dynamic imports → also run `pnpm size`.

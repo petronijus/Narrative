@@ -162,7 +162,10 @@ describe('tools are generated from the registry', () => {
     expect(tool.description).not.toMatch(/\btext\.format\b/)
     // The target rules are said once, in the instructions, not on every tool.
     expect(tool.description).not.toMatch(/Target:/)
-    expect(tool.description).toMatch(/Example \(.+\): \{"deckId":"<deckId>"/)
+    expect(tool.description).toMatch(/Example: \{"deckId":"<deckId>"/)
+    // A trivial input is fully said by its schema: no example.
+    const rename = (await tools(await w.client(token1))).get('deck_rename')!
+    expect(rename.description).not.toMatch(/Example:/)
   })
 
   it('accepts every command example as a valid call of its tool (JSON Schema)', async () => {
@@ -197,8 +200,11 @@ describe('tools are generated from the registry', () => {
     expect(entry.tools.link.description).not.toMatch(/asks the user/)
     // A URL download says the same per mode; a tool needing nothing says nothing.
     expect(catalog.get('media_upload')!.tools.link.description).toMatch(
-      /downloaded only for a host the user approves/,
+      /A URL download needs its host approved by the user/,
     )
+    // What follows (declined, dismissed, the retry) is in the instructions only.
+    expect(entry.tools.link.description).not.toMatch(/retry|declined/)
+    expect(entry.tools.link.inputSchema.properties!['confirmationId']).toEqual({ type: 'string' })
     expect(catalog.get('object_move')!.tools.link).toBe(catalog.get('object_move')!.tools.form)
   })
 

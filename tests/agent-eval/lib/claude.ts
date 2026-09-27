@@ -13,10 +13,17 @@
  *   --strict-mcp-config --mcp-config <file>   only the Narrative server
  *   --setting-sources project                 no user settings, plugins, hooks, CLAUDE.md
  *   --disable-slash-commands                  no skills
- *   --tools ListMcpResourcesTool,ReadMcpResourceTool
+ *   --tools ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch
  *                                             no built-ins but resource reads (the
  *                                             server's instructions point at
- *                                             narrative://playbooks/basics)
+ *                                             narrative://playbooks/basics) and
+ *                                             ToolSearch — with it Claude Code defers
+ *                                             MCP tools (names only, a schema loaded on
+ *                                             demand) exactly as in a user's session,
+ *                                             so the eval sees Narrative the way
+ *                                             people do and does not pay the whole
+ *                                             tool list on every request (measured
+ *                                             2026-09-28, probes/listChanged.ts)
  *   ENABLE_CLAUDEAI_MCP_SERVERS=false         no claude.ai connectors
  *   --no-session-persistence                  nothing written to ~/.claude/projects
  * The MCP config names the token as `${NARRATIVE_EVAL_TOKEN}`, which Claude
@@ -98,7 +105,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }),
     { mode: 0o600 },
   )
-  const resourceTools = 'ListMcpResourcesTool,ReadMcpResourceTool'
+  const builtInTools = 'ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch'
   const args = [
     '-p',
     '--input-format',
@@ -118,9 +125,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     '--disable-slash-commands',
     '--no-session-persistence',
     '--tools',
-    resourceTools,
+    builtInTools,
     '--allowedTools',
-    `mcp__${MCP_SERVER_NAME}__*,${resourceTools}`,
+    `mcp__${MCP_SERVER_NAME}__*,${builtInTools}`,
     ...(opts.maxBudgetUsd !== undefined ? ['--max-budget-usd', String(opts.maxBudgetUsd)] : []),
   ]
   const started = Date.now()

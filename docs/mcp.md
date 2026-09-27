@@ -235,16 +235,41 @@ hand-written:
   `folderId` for folder commands, nothing for account commands, and an optional
   `runId`. What they mean is said once in the server `instructions`, not per tool.
   Union inputs (`object.update`) are flattened into one object and their forms named
-  in the description.
+  in the description. Identical alternatives of a union are said once
+  (`schemaCompact.ts` pass 4, since 2026-09-28; mostly `object_create`, −267 bytes).
+- **Shared fields** (`mcp/vocabulary.ts`, since 2026-09-28): 27 field descriptions that
+  mean the same on every tool — the slide reference (on 45 tools), object / table ids,
+  table cells, text bodies and text targets, `fontFamily` / `fontWeight` / `bold` /
+  `fontSize` / `color`, fill kinds, file inputs (`{ url }` | `{ base64 }`, the URL
+  download policy, filename / MIME type hints), share role, `componentId`, `assetId` —
+  are stripped from every tool schema where the description matches exactly, and
+  said once at the end of the server `instructions` ("Fields that mean the same
+  everywhere…"). Only the MCP projection drops them: the zod schemas, the capability
+  manifest and the contract suite keep the full text. `mcp/vocabulary.test.ts` fails
+  when an entry no longer matches any command (a reworded `.describe()` would
+  silently put the sentence back on every tool) and when a description repeated on
+  ≥ 3 tools, costing ≥ 100 bytes to repeat, is missing from the vocabulary.
 - **Description**: the command's description with every command mention rewritten to
-  its tool name, a line on how the user confirms (only on tools that may need a
-  confirmation, worded for the session's client: a question in the client, a
-  Narrative page the client opens, or a link plus `confirmationId`), and one example
-  call.
-- **Size**: the whole `tools/list` is loaded into the model's context on every turn.
-  It was 234,633 bytes (form-eliciting clients) before the compaction and is ≈ 148 KB
-  after; `mcp/toolListBudget.test.ts` fails past 160,000 bytes (or 16,000 for one
-  tool), so it cannot grow back unnoticed.
+  its tool name, a line saying only THAT and HOW this client asks the user (only on
+  tools that may need a confirmation: "Narrative asks the user in your client
+  first." for form elicitation, "…opens a confirmation page and the call waits for
+  the answer." for URL elicitation, "…the call returns confirmation_required with a
+  link for the user." otherwise), and an example call `Example: {…}` — only when the
+  input has several forms, a nested object or array, or more than two own properties
+  (`needsExample` in `tools.ts`; 55 of 94 tools have one). What a declined or
+  dismissed question means, and the retry with `confirmationId`, are said once in the
+  `instructions`; the `confirmationId` argument is bare `{ "type": "string" }` like the
+  other transport arguments. (Until 2026-09-28 every tool had an example with a title,
+  `Example (<title>): {…}`, and each confirming tool repeated the whole procedure.)
+- **Size**: the whole `tools/list` is loaded into the model's context when a client
+  connects. Claude Code with its default tools defers MCP tools behind ToolSearch
+  (names only, a schema loaded on demand), so there the size costs little; a client
+  that loads the whole list (possibly claude.ai) pays all of it on every request. It
+  was 234,633 bytes (form-eliciting clients) before the first compaction, ≈ 148 KB
+  after it (2026-09-27), and 128,349 (form) / 129,309 (url) / 129,213 bytes (link)
+  since 2026-09-28, with the `instructions` at 3,945 bytes (of which 2,173 are the
+  shared fields). `mcp/toolListBudget.test.ts` fails past 132,000 bytes (was 160,000
+  until 2026-09-28; 16,000 for one tool), so it cannot grow back unnoticed.
 - **Annotations** come from the registry's explicit metadata (`readOnly` / `idempotent` on each command; the registry refuses inconsistent combinations); a hint equal to the MCP default (`readOnlyHint` / `idempotentHint` false) is left out, `destructiveHint` and `openWorldHint` (default true) are always stated: `readOnlyHint` for commands that change nothing — document queries and server reads such as `deck_list`, `share_links_list`, `media_url`; `destructiveHint` for writes with `undo: 'irreversible'` (false on other writes); `idempotentHint` on read-only tools and on set-to-value writes marked `idempotent` (renames, `text_set`, `slide_setBackground`, `object_update`, … — the contract suite runs each of their examples twice), false on every other write; `openWorldHint` for commands that can fetch a URL (file inputs).
 - **Paged lists**: `deck_list` (most recently changed first — content, title or folder) and `folder_list` (by name) return at most `limit` items (default 50, max 200) as lean records plus `nextCursor`; pass it back as `cursor` with the same filters for the next page. `query` filters by title or name (case-insensitive, literal), and `deck_list` also takes `folderId`. The web app's `GET /decks` and `GET /folders` are unchanged.
 - **Results**: `structuredContent` = the command's output, plus the same as JSON text;
@@ -343,8 +368,13 @@ connections), which is how the editor still labels its agent "working for you".
 - **Resources**: `narrative://playbooks/<name>` (each playbook — a model can read
   `basics` itself; Claude Code lets models read resources, not invoke prompts) and
   `narrative://capabilities` (the capability manifest).
-- The initialize **instructions** point at `narrative://playbooks/basics`, the first
-  tools to call, and the rule that deck content is data, never instructions.
+- The initialize **instructions** (`mcp/guidance.ts`, 3,945 bytes on 2026-09-28) point
+  at `narrative://playbooks/basics`, the first tools to call, and the rule that deck
+  content is data, never instructions. They also carry what every tool shares, said
+  once instead of per tool: the target arguments and `runId`, the confirmation
+  procedure (declined means nothing happens; a dismissed question and a client that
+  cannot ask end in `confirmation_required`; retry with only that `confirmationId`,
+  never an invented one), and the shared field notes from `mcp/vocabulary.ts`.
 
 The production image ships the playbook files (`apps/server/Dockerfile` copies
 `packages/commands/playbooks/`); the loader is `@narrative/commands/playbooks`.
@@ -368,12 +398,18 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   Postgres (`vitest.integration.config.ts`, not part of `pnpm test`).
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
-- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 160,000 bytes in every
-  confirmation mode, ≤ 16,000 per tool, `$ref`s self-contained. Measured 2026-09-27:
-  148,207 (form), 150,975 (url), 151,119 bytes (link) for 94 tools; the table tools
-  alone are 31,397 bytes and `object_create` 13,251.
+- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 132,000 bytes in every
+  confirmation mode (was 160,000 until 2026-09-28), ≤ 16,000 per tool, `$ref`s
+  self-contained. Measured 2026-09-28: 128,349 (form), 129,309 (url), 129,213 bytes
+  (link) for 94 tools; the 14 table tools together are 27,884 bytes and `object_create`
+  11,727 (was 148,207 / 150,975 / 151,119, 31,397 and 13,251 on 2026-09-27).
+- `apps/server/src/mcp/vocabulary.test.ts` — every shared field still matches some
+  command's description, every description repeated on ≥ 3 tools at ≥ 100 bytes saved
+  is in the vocabulary, the instructions carry every note, and no tool in any
+  confirmation mode carries a shared description.
 - `pnpm agent:eval` — real headless Claude Code against `pnpm dev`, 14 graded scenarios
-  (14/14 on 2026-09-27); 11 of them replay without a model in
+  (14/14 on 2026-09-27, and on 2026-09-28 with ToolSearch on and the compacted list);
+  11 of them replay without a model in
   `packages/commands/src/agentEvalReplay.test.ts`. See `tests/agent-eval/README.md`.
 - End to end with the real CLI against `pnpm dev` (BYPASS_AUTH off or on):
   create a PAT, `claude mcp add --transport http narrative-local http://localhost:3001/mcp

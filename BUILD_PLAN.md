@@ -110,14 +110,16 @@ If any spike fails → change the stack **now**, not in M20.
 
 ---
 
-## Where the project stands (2026-09-27)
+## Where the project stands (2026-09-28)
 
 M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap; the AI
 milestones are replaced by the agentic plan (below). Since 2026-09-07 work has
-been cut as point releases rather than milestones. Deployed: **v0.9.29**
-(`/version.json` → `v0.9.29+00890b0`, checked 2026-09-27). Agentic A0 is
-committed (`9e0e853`) and A1 is complete in the working tree; neither is
-released.
+been cut as point releases rather than milestones. Deployed: **v0.10.0**
+(`/version.json` → `v0.10.0+a48b122`, checked 2026-09-28) — agentic A0 and
+A1 released together (was v0.9.29 with A0 + A1 unreleased until 2026-09-27).
+In the working tree, not committed: the A1 follow-up that compacts the MCP
+tool list to ≈ 129 KB and runs the agent eval with ToolSearch (CHANGELOG
+"Unreleased").
 
 | Release         | Date                    | Subject                                                                                                                                                                          |
 | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -129,8 +131,8 @@ released.
 | 0.9.5 – 0.9.24  | 2026-09-18 → 2026-09-23 | sidebar jump, text measurement and line height, .pptx import fidelity, append/drop into a deck, slide range selection, bullets                                                   |
 | 0.9.25          | 2026-09-23              | PowerPoint import and export become one translation (ADR 0009)                                                                                                                   |
 | 0.9.26 – 0.9.29 | 2026-09-24 → 2026-09-25 | per-paragraph line height, "no outline" from PowerPoint, deterministic export, slide duplicate (Mod+D) that draws                                                                |
-| _unreleased_    | 2026-09-26              | **agentic layer A0**: command registry, zod schemas, parity guards (slide-model writers + server routes), and the editor bugs the survey found                                   |
-| _unreleased_    | 2026-09-27              | **agentic layer A1**: personal access tokens + MCP OAuth, server host with runs / revert / audit log, 44 server commands, MCP server at `/api/mcp`, playbooks, `pnpm agent:eval` |
+| 0.10.0          | 2026-09-26              | **agentic layer A0**: command registry, zod schemas, parity guards (slide-model writers + server routes), and the editor bugs the survey found                                   |
+| 0.10.0          | 2026-09-27              | **agentic layer A1**: personal access tokens + MCP OAuth, server host with runs / revert / audit log, 44 server commands, MCP server at `/api/mcp`, playbooks, `pnpm agent:eval` |
 
 Per-release detail lives in [CHANGELOG.md](./CHANGELOG.md).
 

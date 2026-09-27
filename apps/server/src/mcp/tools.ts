@@ -10,13 +10,17 @@
  *                command mention rewritten to its tool name, the input forms
  *                of a union input, one line on how the user confirms (only
  *                for tools that may need it, worded for the session's
- *                client — see `ConfirmationMode`), and one example call.
- *                The target rules and `runId` are NOT repeated per tool:
- *                the server instructions say them once (guidance.ts).
+ *                client — see `ConfirmationMode`), and one example call
+ *                unless the input is trivial (see `needsExample`). The
+ *                target rules, `runId`, how a confirmation proceeds, and
+ *                the fields that mean the same everywhere
+ *                (vocabulary.ts) are NOT repeated per tool: the server
+ *                instructions say them once (guidance.ts).
  *   inputSchema  the command's input as JSON Schema (zod, `io: 'input'`),
  *                compacted (schemaCompact.ts: uninformative bounds dropped,
  *                discriminated unions collapsed, cheap `$defs` inlined —
- *                the tool list is in every session's context), plus the
+ *                the tool list is in every session's context) and without
+ *                the shared field descriptions (vocabulary.ts), plus the
  *                transport arguments, bare (`{ type: 'string' }`):
  *                  deck scope    `deckId`; also `componentId` for commands
  *                                that accept a component master
@@ -66,6 +70,7 @@ import { z } from 'zod'
 import type { Tool } from '@modelcontextprotocol/sdk/types.js'
 import type { ElicitationSupport } from './confirm.js'
 import { compactInputSchema } from './schemaCompact.js'
+import { SHARED_DESCRIPTIONS } from './vocabulary.js'
 import {
   commandFetchesUrls,
   rewriteCommandMentionsAsToolNames,
@@ -95,12 +100,8 @@ const TARGET_SCHEMAS = {
 /** Optional on every tool; the instructions explain it (a run from agent_startRun). */
 const RUN_ID_SCHEMA = { type: 'string' } as const
 
-const CONFIRMATION_ID_SCHEMA = {
-  type: 'string',
-  description:
-    'Only the id a confirmation_required error gave you, after the user said they approved it on the ' +
-    'linked page; same arguments as that call.',
-} as const
+/** Bare like the others: the instructions say where it comes from and when to send it. */
+const CONFIRMATION_ID_SCHEMA = { type: 'string' } as const
 
 /** Confirmation ids are 22 base64url characters (agent/confirmations.ts). */
 const CONFIRMATION_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
@@ -146,18 +147,21 @@ function confirmationLine(def: AnyCommandDef, mode: ConfirmationMode): string | 
   const always = def.confirm === 'always'
   const conditional = typeof def.confirmWhen === 'function'
   if (!always && !conditional) return null
+  // What follows a confirmation (declined, dismissed, the retry with a
+  // confirmationId) is said once in the instructions; this line says only
+  // THAT the user is asked, and how in this client.
   const what = always
     ? conditional
-      ? 'Irreversible, and a file given by URL is downloaded only for a host the user approves (inline base64 is not asked about):'
+      ? 'Irreversible, and a URL download needs its host approved by the user (base64 does not):'
       : 'Irreversible:'
-    : 'A file given by URL is downloaded only for a host the user approves (inline base64 is not asked about):'
+    : 'A URL download needs its host approved by the user (base64 does not):'
   switch (mode) {
     case 'form':
-      return `${what} Narrative asks the user in your client first; declined means nothing happens (a dismissed question turns into confirmation_required).`
+      return `${what} Narrative asks the user in your client first.`
     case 'url':
-      return `${what} Narrative opens a confirmation page for the user and the call waits for their answer; declined means nothing happens.`
+      return `${what} Narrative opens a confirmation page and the call waits for the answer.`
     case 'link':
-      return `${what} the first call returns confirmation_required with a link for the user; retry with its confirmationId only after they approved.`
+      return `${what} the call returns confirmation_required with a link for the user.`
   }
 }
 
@@ -238,6 +242,18 @@ function objectRoot(schema: JsonSchema, commandId: string): { root: JsonSchema; 
   return { root, forms }
 }
 
+/** Drop every `description` the instructions already give once (vocabulary.ts). */
+function stripSharedDescriptions(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripSharedDescriptions)
+  if (value === null || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === 'description' && typeof v === 'string' && SHARED_DESCRIPTIONS.has(v)) continue
+    out[k] = stripSharedDescriptions(v)
+  }
+  return out
+}
+
 /** Rewrite command mentions inside every `description` of a JSON Schema. */
 function rewriteSchemaDescriptions(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(rewriteSchemaDescriptions)
@@ -252,7 +268,15 @@ function rewriteSchemaDescriptions(value: unknown): unknown {
   )
 }
 
-export function commandInputJsonSchema(def: AnyCommandDef): { root: JsonSchema; forms: string[] } {
+/**
+ * A command's input as the tool's JSON Schema. `keepShared` keeps the
+ * descriptions vocabulary.ts moves to the instructions — for the test that
+ * checks the vocabulary against what the commands really say.
+ */
+export function commandInputJsonSchema(
+  def: AnyCommandDef,
+  { keepShared = false }: { keepShared?: boolean } = {},
+): { root: JsonSchema; forms: string[] } {
   let raw: JsonSchema
   try {
     raw = z.toJSONSchema(def.input, { io: 'input', reused: 'ref' }) as JsonSchema
@@ -262,7 +286,8 @@ export function commandInputJsonSchema(def: AnyCommandDef): { root: JsonSchema; 
     )
   }
   const { root, forms } = objectRoot(stripSchemaDialect(raw), def.id)
-  return { root: compactInputSchema(rewriteSchemaDescriptions(root) as JsonSchema), forms }
+  const compact = compactInputSchema(rewriteSchemaDescriptions(root) as JsonSchema)
+  return { root: keepShared ? compact : (stripSharedDescriptions(compact) as JsonSchema), forms }
 }
 
 function targetArgumentsFor(
@@ -290,9 +315,49 @@ function targetArgumentsFor(
   return ['deckId', 'componentId'] as const
 }
 
-function exampleCall(def: AnyCommandDef, scope: CommandScope): string | null {
+/** Transport argument names: not part of what an example has to show. */
+const TRANSPORT_ARGUMENTS: ReadonlySet<string> = new Set<TransportArgument>([
+  'deckId',
+  'componentId',
+  'folderId',
+  'runId',
+  'confirmationId',
+])
+
+/**
+ * Whether an example call earns its bytes: the input is a union (several
+ * input forms, flattened by `objectRoot`), or has a nested
+ * object or an array, or more than two properties. A tool whose input is at
+ * most two plain values (deck_rename's `title`, share_links_revoke's link
+ * id) is fully said by its schema; 39 tools, ≈ 3 KB of the list.
+ */
+function needsExample(root: JsonSchema, hasForms: boolean): boolean {
+  if (hasForms) return true
+  const own = Object.entries((root['properties'] ?? {}) as Record<string, JsonSchema>).filter(
+    ([k]) => !TRANSPORT_ARGUMENTS.has(k),
+  )
+  if (own.length > 2) return true
+  return own.some(([, v]) => {
+    const json = JSON.stringify(v)
+    return (
+      v['type'] === 'array' || json.includes('"properties"') || /"(anyOf|oneOf|\$ref)"/.test(json)
+    )
+  })
+}
+
+/**
+ * The first example as a call, target placeholder first (the argument a
+ * model most often forgets). No title: the call says what it does, and the
+ * titles were ≈ 3 KB of the list.
+ */
+function exampleCall(
+  def: AnyCommandDef,
+  scope: CommandScope,
+  root: JsonSchema,
+  hasForms: boolean,
+): string | null {
   const example = def.examples[0]
-  if (example === undefined) return null
+  if (example === undefined || !needsExample(root, hasForms)) return null
   const target =
     scope === 'deck' ? { deckId: '<deckId>' } : scope === 'folder' ? { folderId: '<folderId>' } : {}
   const input =
@@ -301,7 +366,7 @@ function exampleCall(def: AnyCommandDef, scope: CommandScope): string | null {
       : {}
   const args =
     def.id === 'ops.apply' ? { ...target, ...opsInToolNames(input) } : { ...target, ...input }
-  return `Example (${rewriteCommandMentionsAsToolNames(example.title)}): ${JSON.stringify(args)}`
+  return `Example: ${JSON.stringify(args)}`
 }
 
 /** Show `ops.apply` examples with tool names inside `ops`, as the model sees the tools. */
@@ -361,7 +426,7 @@ function buildEntry(def: AnyCommandDef): ToolEntry {
       rewriteCommandMentionsAsToolNames(def.description),
       forms.length > 0 ? `Input forms (send exactly one): ${forms.join(' | ')}.` : null,
       confirmationLine(def, mode),
-      exampleCall(def, scope),
+      exampleCall(def, scope, root, forms.length > 0),
     ]
       .filter((x): x is string => x !== null)
       .join('\n\n')

@@ -119,7 +119,10 @@ db:revoke-user <email|sub> [--dry-run]`, in the image as
   `_`; schemas compacted (`schemaCompact.ts`); annotations from explicit
   `readOnly` / `idempotent` metadata; descriptions rewritten to tool names,
   one example each; confirmation wording per client capability. Budget test:
-  `toolListBudget.test.ts` (160,000 bytes).
+  `toolListBudget.test.ts` (160,000 bytes). (Follow-up 2026-09-28, not in
+  v0.10.0: examples only where the input needs one, shared field
+  descriptions said once in the instructions, budget 132,000 — see Known
+  TODO.)
 - **Confirmation** (`confirm.ts`, `agent/confirmations.ts`,
   `agent/confirmationSummary.ts`): form elicitation → URL-mode elicitation →
   out-of-band page with a server-issued `confirmationId` (5 minutes, single
@@ -294,6 +297,8 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   body. Written against an earlier state of the working tree, like the eval
   finding above.
 - **`tools/list` is ≈ 148 KB against a 120 KB target** — see TODO.
+  (Decided and done 2026-09-28: static compaction to ≈ 129 KB; the 120 KB
+  target is deliberately not reached.)
 - **`pnpm size` still exits 1, on the Tiptap chunk only** (132.64 kB gz vs
   120, +12.64 — unchanged since A0). Measured 2026-09-27: main app chunk
   40.67 kB (A0: 38.67), Pixi 160.24, React 121.07, Yjs 8.95, GSAP 26.89,
@@ -368,7 +373,8 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
 
 ## Known TODO
 
-- **Tool list 148 KB vs a 120 KB target.** The target is not recorded in
+- **Tool list 148 KB vs a 120 KB target — decided and done 2026-09-28**
+  (resolution at the end of this item). The target is not recorded in
   code (the test budget is 160,000 bytes). Measured by the docs sweep on
   2026-09-27, form mode, 94 tools = 148,207 bytes (descriptions 52,211,
   schemas 81,366, annotations 5,286); url mode 150,975, link mode 151,119.
@@ -416,6 +422,70 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   (`object_create`'s union, the example tails) helps every client without
   dynamic behaviour. Where the size really costs is the eval harness, which
   runs without ToolSearch.
+
+  **Resolution (2026-09-28, working tree on top of `ee705da`, uncommitted
+  at the time of writing; CHANGELOG "Unreleased"):**
+  - **No dynamic toolsets.** Every tool stays in `tools/list` from the
+    start; nothing is deferred behind `list_changed`.
+  - **Static compaction, MCP projection only** (`apps/server/src/mcp/`; the
+    zod schemas, command descriptions and capability manifest are
+    untouched):
+    - `mcp/vocabulary.ts`: 27 field descriptions repeated across tools
+      (slide reference on 45 tools, object / table ids, cells, text bodies
+      and targets, font fields, fill kinds, file `{ url }` | `{ base64 }`
+      and the download policy, share role, `componentId`, `assetId`) are
+      stripped from every schema by exact match and said once in the
+      instructions. `mcp/vocabulary.test.ts` guards both directions (an
+      entry must still match some command; any description on ≥ 3 tools
+      costing ≥ 100 bytes to repeat must be listed).
+    - Example calls only where the input has several forms, a nested
+      object / array or more than two own properties (`needsExample`);
+      39 of 94 tools lost theirs, and the title is gone (`Example: {…}`).
+    - The per-tool confirmation line says only that / how this client
+      asks; declined, dismissed and the `confirmationId` retry are said
+      once in the instructions; `confirmationId` is bare `{ type: 'string' }`.
+    - `schemaCompact.ts` pass 4: identical union alternatives said once
+      (mostly `object_create`, −267 bytes).
+  - **Measured** (bytes of `JSON.stringify({ tools })`, 94 tools):
+
+    | Mode | 2026-09-27 | 2026-09-28 |
+    | ---- | ---------- | ---------- |
+    | form | 148,207    | 128,349    |
+    | url  | 150,975    | 129,309    |
+    | link | 151,119    | 129,213    |
+
+    Form mode now: descriptions 44,178 (was 52,211), schemas 68,286 (was
+    81,366), annotations 5,286; the 14 `table_*` tools 27,884,
+    `object_create` 11,727 (was 13,251). The instructions grew from
+    ≈ 1.6 KB to 3,945 bytes (the shared-field paragraph is 2,173), so the
+    net saving per session is ≈ 17.5 KB (form) to ≈ 19.5 KB (link).
+    `TOOL_LIST_BUDGET_BYTES` 160,000 → 132,000 (per tool 16,000 unchanged).
+
+  - **The 120 KB target is not reached, on purpose.** What remains is
+    mostly command descriptions carrying real guidance (radians, crop /
+    flip gotchas, run formatting, animation trigger semantics); cutting
+    further loses guidance and is Petr's call. The one dedupable candidate
+    left: `animation.add` / `animation.update` share ≈ 700 characters (the
+    presets list duplicates the enum; triggers and rotation units
+    repeated).
+  - **The eval runs with ToolSearch** (`tests/agent-eval/lib/claude.ts`:
+    `--tools ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch`, also in
+    `--allowedTools`), so it sees Narrative the way users' Claude Code
+    does. ToolSearch calls land in transcripts as non-Narrative calls
+    (`command: null`), which grading and replay skip. Result on 2026-09-28
+    (opus, Claude Code 2.1.283, `results/2026-09-27T22-38-11-223Z.json`,
+    UTC stamp, git `ee705da+dirty`): 13 pass + 1 error in the full run,
+    $1.62 list-price equivalent (was ≈ 2 USD), 90 tool calls of which 17
+    ToolSearch. The error was `selected-slide-context`: Playwright's bundled
+    browser is missing on Ubuntu 26.04; it passed on a rerun with
+    `PLAYWRIGHT_USE_SYSTEM_CHROME=1` ($0.07). So 14/14.
+  - **Verified with the change:** `pnpm typecheck` green, `pnpm lint`
+    0 errors, `pnpm -r test` green (3,205 passed / 32 skipped in the docs
+    sweep's run). One earlier full run hit a timing flake in
+    `services/editor.test.ts` (recorded in `docs/testing-strategy.md`,
+    "Known flaky unit tests").
+  - **Not verified:** claude.ai with the new list (needs a public
+    deployment); the change is not released or deployed.
 
 - The `narrative` skill regenerates with `pnpm --filter @narrative/commands skill`;
   its freshness test makes a playbook change without regeneration fail.
