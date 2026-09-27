@@ -95,74 +95,39 @@ If it did happen, the fix is just to rebuild and push the same tag: GHCR keeps
 whatever was pushed last, and the previous release's tag is untouched, so
 production and rollback are never at risk from a wrong-arch push.
 
-## Releasing the agentic layer (A1) — one-time steps
+## Releasing the agentic layer (A1) — done in v0.10.0
 
-The first release that carries agentic-layer A1 (MCP server, personal access
-tokens, OAuth; unreleased as of 2026-09-27, CHANGELOG "Unreleased") needs
-these on top of the normal procedure. Delete this section once that release
-is live.
+The first release with agentic A1 (MCP server, personal access tokens,
+OAuth) went live as **v0.10.0 on 2026-09-27**. What it needed is now in
+place, and stays load-bearing if the prod env is ever rebuilt:
 
-1. **Add `AGENT_PRINCIPAL_KEY_SECRET` to the prod env — before building.**
+1. **`AGENT_PRINCIPAL_KEY_SECRET` is required** (≥ 32 chars, not the dev
+   default — `apps/server/src/agent/principalKeySecret.ts`).
    `docker-compose.prod.yml` declares it `${AGENT_PRINCIPAL_KEY_SECRET:?…}`,
-   so Compose refuses to even parse the file without it:
-   `required variable AGENT_PRINCIPAL_KEY_SECRET is missing a value`
-   (reproduced with `docker compose … config` on 2026-09-27). That hits
-   **`build-push.sh` on the build machine first** (it runs `docker compose
-build` with the local `infra/.env.prod`), then `deploy.sh` on the VM; the
-   server itself also exits at start in production without it (≥ 32 chars,
-   not the dev default — `apps/server/src/agent/principalKeySecret.ts`).
+   so without it Compose refuses to parse the file — **`build-push.sh` on
+   the build machine fails first**, then `deploy.sh`, then the server.
+   It lives in `env.prod.sops`; to regenerate, add
+   `AGENT_PRINCIPAL_KEY_SECRET=<openssl rand -base64 48>` with
+   `./scripts/secrets-edit.sh prod` (generate it straight into the file,
+   never paste it into a chat), then `./scripts/secrets-decrypt.sh prod`
+   and `scp infra/.env.prod` to the VM. Rotating it needs no migration.
+2. **`CLOUDFLARED_TRUSTED_PROXIES`** holds the shared cloudflared
+   connector's real LAN address (in `env.prod.sops`; this repo only ever
+   shows `192.0.2.x` placeholders). It was read on 2026-09-27 from Caddy's
+   `remote_ip` for tunnel traffic, and the post-deploy check confirmed
+   tunnel requests reach Caddy from exactly that address. If the connector
+   moves, re-read it the same way (see "Client IP" below) and update it —
+   left wrong, every visitor shares one rate-limit bucket and one
+   WebSocket failed-auth throttle.
+3. Migrations `0016`–`0023` and the Caddyfile's root
+   `/.well-known/oauth-*` routes shipped with v0.10.0.
 
-   ```bash
-   ./scripts/secrets-edit.sh prod      # add: AGENT_PRINCIPAL_KEY_SECRET=<openssl rand -base64 48>
-   ./scripts/secrets-decrypt.sh prod   # materialise infra/.env.prod locally (build-push needs it)
-   scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod   # the VM's copy is never rsynced
-   ```
-
-   Commit the updated `env.prod.sops` in the private overlay.
-
-   **In the same edit, set `CLOUDFLARED_TRUSTED_PROXIES` to the real LAN
-   address of the host running the shared cloudflared** (e.g.
-   `CLOUDFLARED_TRUSTED_PROXIES=<real-ip>/32`). The addresses in this repo
-   are documentation-range placeholders (`192.0.2.x`, RFC 5737 — the real
-   narrative VM is on a `192.168.x.x` LAN, see `~/.ssh/config`), and the
-   shared-tunnel overlay's default `192.0.2.101/32` is that placeholder
-   **used as a live value**: it can never match the real peer, so Caddy would
-   overwrite `CF-Connecting-IP` on every tunnelled request with the
-   cloudflared host's address and every visitor would share one rate-limit
-   bucket and one WebSocket failed-auth throttle (30 failures / 10 min for
-   everybody). Unverified which address the connector really has — look it
-   up on the VM (the Caddy access log's `remote_ip`, step 4) rather than
-   guessing. Every other new variable has a working compose default (table
-   under "Environment secrets").
-
-2. **Migrations `0016`–`0023` run in `deploy.sh`** (personal access tokens,
-   agent runs/ops, MCP OAuth tables, `users.email_verified`). `0020` gives
-   any token without an expiry `created_at + 365 days` — there are none in
-   prod before this release. Forward-only, as always: rolling the image back
-   to v0.9.29 afterwards leaves unused tables behind, which is harmless.
-
-3. **The Caddyfile changed** (OAuth discovery at the host root, and the
-   client-IP block that overwrites a `CF-Connecting-IP` not sent by
-   cloudflared). It ships with the rsync; `deploy.sh`'s `compose up`
-   recreates Caddy when its environment changes (the new
-   `CLOUDFLARED_TRUSTED_PROXIES`). Verify it on the live host, not on disk.
-
-4. **After the deploy, run the three OAuth `curl`s and the client-IP check**
-   under "Verifying the deploy" below. The client-IP check is the one the
-   security review of 2026-09-27 left open: it confirms the assumption that
-   tunnel traffic reaches Caddy from the cloudflared host's own address
-   (not a Docker gateway), and that this address is exactly what
-   `CLOUDFLARED_TRUSTED_PROXIES` holds. If the `remote_ip` is anything else,
-   every visitor shares one rate-limit bucket and one WebSocket failed-auth
-   throttle — fix `CLOUDFLARED_TRUSTED_PROXIES` in `.env.prod`, redeploy, and
-   check again before announcing the MCP server. (If you could not look the
-   address up before the deploy, this is where you find it: set it, redeploy.)
-
-5. **Smoke-test an agent against prod**: Access tokens → create an `mcp`
-   token, then from any machine
-   `claude mcp add --transport http narrative https://<domain>/api/mcp --header "Authorization: Bearer <token>" --scope local`
-   and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
-   Revoke the token afterwards if it was only for the test.
+**Still open after the release:** the agent smoke test against prod needs a
+person signed in to create the token — Access tokens → create an `mcp`
+token, then
+`claude mcp add --transport http narrative https://<domain>/api/mcp --header "Authorization: Bearer <token>" --scope local`
+and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
+Revoke the token afterwards if it was only for the test.
 
 ## Quick deploy (copy-paste)
 
@@ -442,10 +407,10 @@ peer address unless the peer is the cloudflared connector**
 (`infra/caddy/Caddyfile`, "Client IP"). Which peers count as the connector is
 `CLOUDFLARED_TRUSTED_PROXIES` in the Caddy container:
 
-| Topology                                                            | Value                                                                                                                                                                                        | Why                                                                                    |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Shared tunnel (`docker-compose.prod.shared-tunnel.yml`, prod today) | the cloudflared host's real LAN address, set in `.env.prod` — the overlay default `192.0.2.101/32` is a documentation placeholder and never matches (see "Releasing the agentic layer (A1)") | The docker VM running the shared cloudflared; port 80 is reachable from the whole LAN. |
-| Bundled cloudflared (`docker-compose.prod.yml` alone)               | `private_ranges` (default)                                                                                                                                                                   | Caddy publishes no port; its only peers are containers on the compose network.         |
+| Topology                                                            | Value                                                                                                                                                                                                         | Why                                                                                    |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Shared tunnel (`docker-compose.prod.shared-tunnel.yml`, prod today) | the cloudflared host's real LAN address, set in `.env.prod` — the overlay default `192.0.2.101/32` is a documentation placeholder and never matches (see "Releasing the agentic layer (A1)", done in v0.10.0) | The docker VM running the shared cloudflared; port 80 is reachable from the whole LAN. |
+| Bundled cloudflared (`docker-compose.prod.yml` alone)               | `private_ranges` (default)                                                                                                                                                                                    | Caddy publishes no port; its only peers are containers on the compose network.         |
 
 Set it in `.env.prod` to the connector's real address (the overlay default
 is a documentation placeholder, see above). **Assumption, verify after
