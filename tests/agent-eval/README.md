@@ -159,6 +159,22 @@ command's behaviour changes on purpose: `pnpm agent:eval --record` (all
 scenarios) or `--filter <id> --record`. Signed URLs are redacted before a
 recording is written.
 
+## Probe: tool-list changes and size (`pnpm agent:probe:list-changed`)
+
+Not a scenario — a client-behaviour probe. It drives headless Claude Code
+against a tiny in-process MCP server with Narrative's transport shape and
+reports whether a tool added mid-session (`notifications/tools/list_changed`)
+becomes usable in the same turn or the next, with and without ToolSearch,
+and what a Narrative-sized tool list costs in context. Re-run it after a
+Claude Code upgrade before designing anything around tool-list changes.
+`--only <label prefix>` and `--repeat N` narrow and repeat cases; it does
+not need the dev stack. Results: `docs/handoff/A1-mcp-and-server-host.md`,
+"Known TODO".
+
+Note that this suite runs Claude Code **without** ToolSearch (`--tools`
+limits the built-ins), so every request carries the full tool list; a user's
+session with default tools defers MCP tools and pays a fraction of it.
+
 ## Files
 
 ```

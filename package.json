@@ -24,7 +24,8 @@
     "load:hotedit": "tsx tests/load/hotEdit.ts",
     "load:awareness": "tsx tests/load/awarenessFlood.ts",
     "load:growth": "tsx tests/load/docGrowth.ts",
-    "agent:eval": "tsx tests/agent-eval/run.ts"
+    "agent:eval": "tsx tests/agent-eval/run.ts",
+    "agent:probe:list-changed": "tsx tests/agent-eval/probes/listChanged.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -383,11 +383,40 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
     another.
     Mechanism options: domain toolsets announced with
     `notifications/tools/list_changed`, or a small `tools_enable`-style meta
-    tool. Whether Claude Code and claude.ai re-read the list on
-    `list_changed` mid-session is **unverified** — test before designing
-    around it.
-- Prod env: `AGENT_PRINCIPAL_KEY_SECRET` and the real
-  `CLOUDFLARED_TRUSTED_PROXIES` (above).
+    tool.
+
+  **Measured 2026-09-28** (Claude Code 2.1.283, haiku,
+  `pnpm agent:probe:list-changed`, the full matrix once plus `--repeat 4` of
+  the same-/next-turn cases, both routes pooled — an in-process server with Narrative's
+  transport shape; `tests/agent-eval/probes/listChanged.ts`):
+
+  | Claude Code setup                                         | re-reads `tools/list` on `list_changed` | new tool usable, same turn                 | next turn | 86 filler tools ≈ 148 KB cost per request |
+  | --------------------------------------------------------- | --------------------------------------- | ------------------------------------------ | --------- | ----------------------------------------- |
+  | default tools (ToolSearch on — a user's session)          | yes, ~25 ms after, on both routes       | **10/10**                                  | 10/10     | **+2.6k tokens** (71.3k → 73.9k)          |
+  | `--tools ""` (no ToolSearch — how `pnpm agent:eval` runs) | yes                                     | **4/10, flaky** ("No such tool available") | 10/10     | **+99.8k tokens** (14.7k → 114.5k)        |
+
+  Both notification routes (the session's standalone GET stream, and the
+  tools/call response stream) behave the same; Claude Code opens the GET
+  stream right after `initialized`. With ToolSearch on, Claude Code defers
+  MCP tools: the model sees names only and loads a schema with
+  `ToolSearch select:<name>`, so the tool list's size barely matters there.
+
+  **claude.ai: not testable locally** (a connector needs a public HTTPS
+  URL). Its connector docs do not mention `list_changed`, and an open
+  issue (anthropics/claude-ai-mcp#1044, 2026-09-16) reports claude.ai
+  keeping a connector's old tool list per URL even across Disconnect /
+  Connect and remove + re-add, although the server served the new list. A
+  tool list that changes mid-session is therefore likely to strand the
+  deferred tools there.
+
+  **Consequence for the decision before A2:** deferring toolsets behind
+  `list_changed` buys nothing in Claude Code as users run it (already
+  deferred), is flaky within a turn without ToolSearch, and is probably
+  broken in claude.ai. If the list must shrink, static compaction
+  (`object_create`'s union, the example tails) helps every client without
+  dynamic behaviour. Where the size really costs is the eval harness, which
+  runs without ToolSearch.
+
 - The `narrative` skill regenerates with `pnpm --filter @narrative/commands skill`;
   its freshness test makes a playbook change without regeneration fail.
 - CLAUDE.md is stale (test counts, e2e count, no A1 prod secret, placeholder
