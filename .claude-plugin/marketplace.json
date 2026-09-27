@@ -1,0 +1,13 @@
+{
+  "name": "narrative",
+  "owner": {
+    "name": "Woodgrove Digital"
+  },
+  "plugins": [
+    {
+      "name": "narrative",
+      "source": "./claude-plugin/narrative",
+      "description": "The narrative skill: how Claude Code works with Narrative decks through the Narrative MCP server."
+    }
+  ]
+}

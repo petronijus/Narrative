@@ -194,12 +194,14 @@ tree `9e0e853+dirty`): **14/14 pass, 80 turns, 65 tool calls, 194 s,
 ### The `narrative` Claude Code skill
 
 `packages/commands/scripts/skill.ts` generates it from the playbooks
-(`pnpm --filter @narrative/commands skill -- --out <woodgrove-plugins>/plugins/narrative/skills/narrative`).
-The implementing session reported it generated, uncommitted, in the
-woodgrove-plugins repo. **Not verified by the docs sweep**: the only woodgrove-plugins
-clone on this MacBook (`~/.claude/plugins/marketplaces/woodgrove-plugins`, clean
-at `10972a1`) has no `plugins/narrative`. The generator itself runs (it wrote
-`SKILL.md` + 5 references to a scratch directory on 2026-09-27).
+(`pnpm --filter @narrative/commands skill`). **It lives in this repo**, as
+the Claude Code plugin `claude-plugin/narrative/` with a root
+`.claude-plugin/marketplace.json` (install:
+`/plugin marketplace add petronijus/Narrative`), and
+`packages/commands/scripts/skill.test.ts` fails when it is stale. (Was: it
+had been generated into the Woodgrove woodgrove-plugins repo. Petr, 2026-09-27:
+nothing about Narrative belongs there — the unpushed commit was removed and
+the skill moved here.)
 
 ### Registry and guard numbers (end of A1)
 
@@ -343,7 +345,7 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
    the two env values above, bump all eight `package.json`, turn
    `Unreleased` into the version section, tag, `build-push.sh`, deploy, run
    the post-deploy checks incl. the client-IP check, smoke-test an agent
-   against prod. Commit and publish the `narrative` skill in woodgrove-plugins.
+   against prod.
 2. **A2 — extraction** (plan §10): move every web-only item in Appendix B
    into commands and switch the UI to `useCommand()`, turning on the
    `no-restricted-imports` rule per directory; move token seeding and
@@ -377,8 +379,8 @@ add … http://localhost:3001/mcp --header …`, `claude -p "…"`).
   `CLOUDFLARED_TRUSTED_PROXIES` (above).
 - Fix the eval memory world's `confirmed` handling; add the OAuth token
   formats to the Sentry scrubber.
-- Commit / publish the `narrative` skill in woodgrove-plugins; decide who
-  regenerates it on playbook changes (`skill -- --check` exists).
+- The `narrative` skill regenerates with `pnpm --filter @narrative/commands skill`;
+  its freshness test makes a playbook change without regeneration fail.
 - CLAUDE.md is stale (test counts, e2e count, no A1 prod secret, placeholder
   IPs) — Petr's edit.
 - From A0, still open: Drafts id in `m16-component-flows.spec.ts`, the 5

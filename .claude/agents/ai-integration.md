@@ -63,11 +63,12 @@ them existed.)_
   `packages/commands/src/playbooks/` (`playbooks.test.ts`).
 - **MCP prompts** (the playbooks) and **MCP resources** (style packs: tokens,
   layouts, editorial rules, once A4 lands).
-- The **`narrative` Claude Code skill** in woodgrove-plugins, generated from the
-  same playbook files by `packages/commands/scripts/skill.ts`
-  (`pnpm --filter @narrative/commands skill -- --out <woodgrove-plugins>/plugins/narrative/skills/narrative`,
-  `--check` to verify). Generated at the end of A1 but, as of 2026-09-27,
-  not committed or published in woodgrove-plugins.
+- The **`narrative` Claude Code skill**, shipped from THIS repo as the
+  plugin `claude-plugin/narrative/` (root `.claude-plugin/marketplace.json`;
+  install with `/plugin marketplace add petronijus/Narrative`). Generated
+  from the playbook files by `pnpm --filter @narrative/commands skill`; a
+  test fails when it is stale. Everything Narrative stays in this repo —
+  never put it into woodgrove-plugins or another Woodgrove repo (Petr, 2026-09-27).
 - **The agent eval suite** (`tests/agent-eval/`, `pnpm agent:eval`): scenario
   prompts through headless Claude Code, deterministic graders, recordings for
   the free replay in `packages/commands/src/agentEvalReplay.test.ts`.

@@ -29,13 +29,15 @@ Code: `apps/server/src/mcp/`. Endpoint: **`https://<domain>/api/mcp`** (dev:
    consent page — the same flow as claude.ai below, with a warning that the
    approval returns to a program on your computer.
 
-3. `claude mcp list` shows it connected. The `narrative` skill for the woodgrove-plugins
-   marketplace (`plugins/narrative`) teaches Claude Code the playbooks; it is
-   generated from the same files the server serves (see "Prompts" below) with
-   `pnpm --filter @narrative/commands skill -- --out <dir>`. As of 2026-09-27 it
-   has been generated but not yet committed or published in woodgrove-plugins, so the
-   marketplace does not offer it yet; the server's own prompts and
-   `narrative://playbooks/*` resources carry the same text meanwhile.
+3. `claude mcp list` shows it connected. Optionally install the `narrative`
+   skill, which teaches Claude Code the playbooks: it ships from this repo as
+   the plugin `claude-plugin/narrative/` —
+   `/plugin marketplace add petronijus/Narrative`, then
+   `/plugin install narrative@narrative`. It is generated from the same files
+   the server serves (see "Prompts" below) with
+   `pnpm --filter @narrative/commands skill`, and a test fails when the
+   committed copy is stale. Without it, the server's prompts and
+   `narrative://playbooks/*` resources carry the same text.
 
 ### claude.ai (custom connector, OAuth)
 
