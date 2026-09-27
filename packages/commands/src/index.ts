@@ -12,6 +12,12 @@ export type {
   CommandDef,
   CommandExample,
   CommandInvocation,
+  CommandScope,
+  CommandTarget,
+  ConditionalConfirmation,
+  ConfirmationDetail,
+  AgentRunInfo,
+  AgentSessionInfo,
   ConfirmPolicy,
   Domain,
   Effect,
@@ -22,11 +28,78 @@ export type {
 } from './types.js'
 export { ROLE_RANK } from './types.js'
 export { CommandError, type CommandErrorCode, type CommandIssue } from './errors.js'
-export { CommandRegistry, defineCommand, type AnyCommandDef } from './registry.js'
-export { runBatch, runCommand, runCommandSync, type BatchResult } from './run.js'
+export {
+  CommandRegistry,
+  commandConfirmationProblems,
+  commandMetadataProblems,
+  commandTargetProblems,
+  defineCommand,
+  type AnyCommandDef,
+} from './registry.js'
+export {
+  commandUsesDocument,
+  isBatchable,
+  prepareInvocation,
+  runBatch,
+  runCommand,
+  runCommandSync,
+  type BatchResult,
+  type PreparedInvocation,
+} from './run.js'
+export {
+  FileSourceSchema,
+  fileSourceUrlHost,
+  urlFetchConfirmation,
+} from './commands/serverShared.js'
 export { SlideRefSchema, ObjectIdSchema, ObjectIdsSchema, type SlideRef } from './refs.js'
 export { createDefaultRegistry } from './catalog.js'
+export {
+  COMMAND_DOMAINS,
+  PLANNED_MARKER,
+  TOOL_NAME_MAX,
+  commandFetchesUrls,
+  commandIdForToolName,
+  commandMentionPattern,
+  danglingCommandMentions,
+  findCommandMentions,
+  rewriteCommandMentionsAsToolNames,
+  toolNameForCommand,
+  type CommandMention,
+} from './agentSurface.js'
 export { buildManifest, renderManifestMarkdown, type CapabilityManifest } from './manifest.js'
 export { normaliseRoute, routeCoverage, routeKey, type RouteCoverage } from './parity/routes.js'
 export { KNOWN_MISSING, type KnownMissing } from './parity/knownMissing.js'
 export { AGENT_ALLOWLIST, type AllowlistEntry } from './parity/allowlist.js'
+export {
+  requireServices,
+  type ServerServices,
+  type DeckService,
+  type FolderService,
+  type SharingService,
+  type MediaService,
+  type ComponentService,
+  type PptxService,
+  type TokenService,
+  type EditorService,
+  type AgentRunService,
+} from './services.js'
+export type * from './services/types.js'
+export { MAX_LIST_PAGE_SIZE } from './services/common.js'
+export type {
+  AgentRunStatus,
+  AgentRunSummary,
+  NotRevertibleReason,
+  RunDocument,
+  StartRunArgs,
+  ListRunsArgs,
+  RevertRunArgs,
+  RevertRunResult,
+} from './services/runs.js'
+export {
+  EDITOR_SHOW_MESSAGE_TYPE,
+  type EditorShowMessage,
+  type OpenEditorState,
+  type EditorContextArgs,
+  type EditorShowArgs,
+  type PresentUrlArgs,
+} from './services/editor.js'

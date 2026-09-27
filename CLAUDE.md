@@ -20,7 +20,9 @@ touched. Always run unit + typecheck + lint as the baseline.
 | `packages/slide-model/src/**`                                                                                                                   | `pnpm --filter @narrative/slide-model test` (incl. property-based CRDT)                                                                                                                                                                                                                                                                                                      |
 | `packages/animation/src/**`                                                                                                                     | `pnpm --filter @narrative/animation test`                                                                                                                                                                                                                                                                                                                                    |
 | `packages/commands/**`, or ANY new/changed user capability (UI control, shortcut, menu item, server route, object property, slide-model export) | `pnpm --filter @narrative/commands test` (contract + parity guards) + `pnpm --filter @narrative/commands capabilities --check` (regenerate with `pnpm capabilities`) + `pnpm --filter server test` (route guard `routes/agentParity.test.ts`) + invoke the **`agent-parity`** agent. Plan §9, ADR 0010.                                                                      |
+| `packages/commands/playbooks/**`, MCP prompts/instructions, command descriptions/schemas/examples                                               | `pnpm agent:eval` (real headless Claude Code against the local dev stack; costs subscription usage — run before a release too). The free replay subset runs in `pnpm --filter @narrative/commands test`; refresh recordings with `pnpm agent:eval --record` when a scenario or command behaviour changes on purpose. See `tests/agent-eval/README.md`                        |
 | `apps/server/src/**` (routes, auth, hocuspocus, media)                                                                                          | `pnpm --filter server test` — covers lifecycle + leak guards                                                                                                                                                                                                                                                                                                                 |
+| Drizzle stores (`apps/server/src/**/*Store.ts`, `mcp/oauth/store.ts`, `agent/runStore.ts`), migrations                                          | `pnpm --filter server test:integration` (runs the Drizzle stores against the dev Postgres from `.env`; it writes rows there)                                                                                                                                                                                                                                                 |
 | `apps/web/src/renderer/**` or any Pixi-touching code                                                                                            | unit tests + the sampled-thumbnail e2e: `pnpm --filter web test:e2e -g "renderer-visual\|inspector-flows"`                                                                                                                                                                                                                                                                   |
 | `apps/web/src/ui/**` or `apps/web/src/components/**`                                                                                            | unit + relevant e2e: `pnpm --filter web test:e2e -g "<feature>"`                                                                                                                                                                                                                                                                                                             |
 | Keyboard shortcuts, focus scope, drag/drop                                                                                                      | `pnpm --filter web test:e2e -g "keyboard-shortcuts"`                                                                                                                                                                                                                                                                                                                         |
@@ -83,9 +85,10 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 2,188 tests / 167 files (32 skipped) — 2026-09-26
-pnpm --filter web test:e2e                     # 50 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
+pnpm -r test                                   # 3,192 tests / 223 files (32 skipped) — 2026-09-27
+pnpm --filter web test:e2e                     # 53 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
 pnpm capabilities                              # regenerate docs/capabilities.md + packages/commands/capabilities.json
+pnpm agent:eval                                # agent eval: headless Claude Code vs the local stack (--filter/--keep/--record)
 pnpm size                                      # bundle budgets
 pnpm load:all                                  # load tests + drift detection
 pnpm lighthouse                                # Core Web Vitals (built preview)
@@ -160,6 +163,12 @@ ssh pve                # → root@100.64.0.100 (Proxmox host + jump host, Tailsc
 - **There is no CI.** Both GitHub Actions workflows were deleted in 0.9.0 (they had
   been failing since 2026-06-17). Nothing gates a push — the auto-run policy above
   is the only safety net, so actually run it.
+- **Agentic layer (A1) needs prod config before its first deploy** — see
+  `docs/deploy.md` "Releasing the agentic layer (A1)": `AGENT_PRINCIPAL_KEY_SECRET`
+  is REQUIRED (compose uses `:?`, so even `build-push.sh`'s `compose build` fails
+  without it), `CLOUDFLARED_TRUSTED_PROXIES` must be the real cloudflared
+  address (the committed default is a documentation placeholder), migrations
+  0016–0023, and the Caddy root `/.well-known/oauth-*` routes.
 - **Version invariant** (since 0.9.0): git tag = package version = GHCR image tag =
   what `/version.json` serves. Releasing means bump every workspace
   `package.json`, write the CHANGELOG section, tag `vX.Y.Z`, then build-push with

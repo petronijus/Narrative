@@ -1,0 +1,74 @@
+/**
+ * `FolderService` — defined here, implemented by apps/server/src/services/folders.ts.
+ * See ../services.ts for the pattern: the /folders and /api/folders/:id/fonts
+ * routes and the `folder.*` commands call these same methods.
+ */
+
+import type { BinarySource, FontFaceInfo, ListKeyset } from './common.js'
+
+/** A folder in the list view. */
+export interface FolderSummary {
+  id: string
+  name: string
+  /** ISO timestamp. */
+  createdAt: string
+  deckCount: number
+}
+
+export interface FolderListPageArgs {
+  userId: string
+  /** Only folders whose name contains this text, ignoring case (matched literally). */
+  query?: string | undefined
+  /** Page size, 1 to MAX_LIST_PAGE_SIZE. */
+  limit: number
+  /** Continue after this position (a previous page's `next`). */
+  after?: ListKeyset | undefined
+}
+
+export interface FolderListPage {
+  /** By name A→Z ignoring case, then id. */
+  folders: FolderSummary[]
+  /** Where the next page starts; null when this page is the last. */
+  next: ListKeyset | null
+}
+
+/** A folder row. */
+export interface FolderRecord {
+  id: string
+  ownerUserId: string
+  name: string
+  createdAt: string
+}
+
+export interface FolderService {
+  list(args: { userId: string }): Promise<FolderSummary[]>
+  /**
+   * The caller's folders, filtered, sorted by name and keyset-paged — for the
+   * agent's `folder.list`. `list` keeps serving the web app.
+   */
+  listPage(args: FolderListPageArgs): Promise<FolderListPage>
+  create(args: { userId: string; name: string }): Promise<FolderRecord & { deckCount: number }>
+  rename(args: { userId: string; folderId: string; name: string }): Promise<FolderRecord>
+  /** Delete the folder and every deck in it. The Drafts folder cannot be deleted. */
+  delete(args: { userId: string; folderId: string }): Promise<{ deletedDeckCount: number }>
+  listFonts(args: { userId: string; folderId: string }): Promise<FontFaceInfo[]>
+  /**
+   * Add a font file (TTF / OTF / WOFF / WOFF2, at most 10 MB) to the folder.
+   * `familyOverride` binds it to a family name other than the one in the file.
+   */
+  uploadFont(args: {
+    userId: string
+    folderId: string
+    source: BinarySource
+    familyOverride?: string | undefined
+  }): Promise<FontFaceInfo>
+  /**
+   * Remove a folder font. Decks in the folder that the user owns get a
+   * deck-scoped copy so they keep rendering.
+   */
+  deleteFont(args: {
+    userId: string
+    folderId: string
+    assetId: string
+  }): Promise<{ promotedToDeckCount: number }>
+}

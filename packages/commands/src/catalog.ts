@@ -16,6 +16,15 @@ import { tableCommands } from './commands/tables.js'
 import { animationCommands } from './commands/animations.js'
 import { guideCommands } from './commands/guides.js'
 import { queryCommands } from './commands/queries.js'
+import { agentCommands } from './commands/agent.js'
+import { editorCommands } from './commands/editor.js'
+import { deckCommands } from './commands/decks.js'
+import { folderCommands } from './commands/folders.js'
+import { shareCommands } from './commands/sharing.js'
+import { mediaCommands } from './commands/media.js'
+import { componentCommands } from './commands/components.js'
+import { pptxCommands } from './commands/pptx.js'
+import { tokenCommands } from './commands/tokens.js'
 import { createOpsApply } from './commands/ops.js'
 
 export function createDefaultRegistry(): CommandRegistry {
@@ -28,6 +37,15 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(animationCommands)
   registry.registerAll(guideCommands)
   registry.registerAll(queryCommands)
+  registry.registerAll(agentCommands)
+  registry.registerAll(editorCommands)
+  registry.registerAll(deckCommands)
+  registry.registerAll(folderCommands)
+  registry.registerAll(shareCommands)
+  registry.registerAll(mediaCommands)
+  registry.registerAll(componentCommands)
+  registry.registerAll(pptxCommands)
+  registry.registerAll(tokenCommands)
   registry.register(createOpsApply(registry))
   return registry
 }

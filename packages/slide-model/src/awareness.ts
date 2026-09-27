@@ -13,7 +13,14 @@
  */
 
 import { nanoid } from 'nanoid'
-import type { PeerAwarenessState, PeerInfo } from '@narrative/shared'
+import {
+  AGENT_PRINCIPAL_KEY_LENGTH,
+  PEER_USER_NAME_MAX,
+  sanitizePeerLabel,
+  type PeerAgentInfo,
+  type PeerAwarenessState,
+  type PeerInfo,
+} from '@narrative/shared'
 export { peerColorFromId } from '@narrative/shared'
 
 // ---------------------------------------------------------------------------
@@ -89,9 +96,53 @@ export function toPeerInfo(
     cursor,
   }
 
+  // Agentic A1 — both fields are optional and additive. Clients older than
+  // A1 publish neither, so an absent or malformed value is simply left out:
+  // it must never make the whole peer invalid (the peer still shows up with
+  // its selection and cursor, exactly as before).
+  const activeSlideId = s['activeSlideId']
+  if (typeof activeSlideId === 'string' || activeSlideId === null) {
+    state.activeSlideId = activeSlideId
+  }
+  const agent = parseAgentInfo(s['agent'])
+  if (agent !== null) state.agent = agent
+
   return {
     clientId,
     state,
     isLocal: clientId === localClientId,
   }
 }
+
+/**
+ * The `agent` field of an agent peer (ADR 0011), or null when absent or
+ * malformed. `runId` and `surface` are required: without them the value
+ * cannot be an agent run, so the peer is treated as a plain peer instead.
+ *
+ * `principalName` and `principalKey` are optional on the wire (a server
+ * older than them sends neither) and come out as null when absent or
+ * malformed. The name is re-sanitised here: awareness is client-asserted,
+ * so a received label is untrusted even though the server sanitises what it
+ * publishes. The key must look like one (base64url, the exact length) or it
+ * is dropped. A legacy `onBehalfOf` is ignored — older servers put the
+ * user's Google sub there, and it must never reach a label.
+ */
+function parseAgentInfo(raw: unknown): PeerAgentInfo | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const a = raw as Record<string, unknown>
+  const { runId, surface, principalName, principalKey } = a
+  if (typeof runId !== 'string' || runId === '') return null
+  if (surface !== 'mcp' && surface !== 'api') return null
+  return {
+    runId,
+    surface,
+    principalName:
+      typeof principalName === 'string'
+        ? sanitizePeerLabel(principalName, PEER_USER_NAME_MAX)
+        : null,
+    principalKey:
+      typeof principalKey === 'string' && PRINCIPAL_KEY_RE.test(principalKey) ? principalKey : null,
+  }
+}
+
+const PRINCIPAL_KEY_RE = new RegExp(`^[A-Za-z0-9_-]{${AGENT_PRINCIPAL_KEY_LENGTH}}$`)

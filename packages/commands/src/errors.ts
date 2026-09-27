@@ -17,6 +17,20 @@ export type CommandErrorCode =
   | 'not_found'
   | 'conflict'
   | 'not_batchable'
+  /**
+   * A command that needs the user's explicit confirmation (`confirm:
+   * 'always'`, or `confirmWhen` for this input) arrived without a valid one
+   * (MCP elicitation, an approved out-of-band confirmation, or an explicit
+   * per-command confirmation on the command API). Enforced by the server
+   * host. Retry once the user has confirmed.
+   */
+  | 'confirmation_required'
+  /**
+   * The user was asked and said no (declined or cancelled the question, or
+   * declined on Narrative's confirmation page). Nothing ran; do not retry
+   * without asking the user again.
+   */
+  | 'not_confirmed'
   | 'failed'
 
 export interface CommandIssue {

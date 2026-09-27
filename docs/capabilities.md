@@ -4,144 +4,186 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **50**. Known missing: **81**. Deliberately excluded: **12**.
+Commands: **94**. Known missing: **39**. Deliberately excluded: **18**.
+
+## agent
+
+| Command          | What it does        | Role   | Undo | Confirm | Hints     |
+| ---------------- | ------------------- | ------ | ---- | ------- | --------- |
+| `agent.revert`   | Revert an agent run | editor | n/a  | never   |           |
+| `agent.runs`     | List agent runs     | editor | n/a  | never   | read-only |
+| `agent.startRun` | Start an agent run  | editor | n/a  | never   |           |
 
 ## animation
 
-| Command             | What it does       | Role   | Undo     | Confirm |
-| ------------------- | ------------------ | ------ | -------- | ------- |
-| `animation.add`     | Add animation      | editor | undoable | never   |
-| `animation.remove`  | Remove animations  | editor | undoable | never   |
-| `animation.reorder` | Reorder animations | editor | undoable | never   |
-| `animation.update`  | Update animation   | editor | undoable | never   |
+| Command             | What it does       | Role   | Undo     | Confirm | Hints      |
+| ------------------- | ------------------ | ------ | -------- | ------- | ---------- |
+| `animation.add`     | Add animation      | editor | undoable | never   |            |
+| `animation.remove`  | Remove animations  | editor | undoable | never   |            |
+| `animation.reorder` | Reorder animations | editor | undoable | never   |            |
+| `animation.update`  | Update animation   | editor | undoable | never   | idempotent |
+
+## component
+
+| Command            | What it does     | Role   | Undo         | Confirm | Hints      |
+| ------------------ | ---------------- | ------ | ------------ | ------- | ---------- |
+| `component.delete` | Delete component | owner  | irreversible | always  |            |
+| `component.get`    | Read component   | owner  | n/a          | never   | read-only  |
+| `component.list`   | List components  | owner  | n/a          | never   | read-only  |
+| `component.rename` | Rename component | owner  | undoable     | never   | idempotent |
+| `component.stamp`  | Stamp component  | editor | undoable     | never   |            |
+
+## deck
+
+| Command              | What it does                      | Role   | Undo         | Confirm                    | Hints      |
+| -------------------- | --------------------------------- | ------ | ------------ | -------------------------- | ---------- |
+| `deck.activeEditors` | Who is editing                    | owner  | n/a          | never                      | read-only  |
+| `deck.create`        | Create deck                       | owner  | undoable     | never                      |            |
+| `deck.delete`        | Delete deck                       | owner  | irreversible | always                     |            |
+| `deck.exportPptx`    | Export PowerPoint                 | editor | n/a          | never                      |            |
+| `deck.fonts.list`    | Deck fonts                        | viewer | n/a          | never                      | read-only  |
+| `deck.get`           | Deck details                      | viewer | n/a          | never                      | read-only  |
+| `deck.importPptx`    | Import PowerPoint                 | owner  | undoable     | never (asks for URL files) |            |
+| `deck.insertFrom`    | Insert slides from a file or deck | editor | undoable     | never (asks for URL files) |            |
+| `deck.list`          | List decks                        | viewer | n/a          | never                      | read-only  |
+| `deck.moveToFolder`  | Move deck to folder               | owner  | irreversible | always                     | idempotent |
+| `deck.rename`        | Rename deck                       | editor | undoable     | never                      | idempotent |
+
+## editor
+
+| Command               | What it does                        | Role   | Undo | Confirm | Hints     |
+| --------------------- | ----------------------------------- | ------ | ---- | ------- | --------- |
+| `editor.context`      | Read the user's editor context      | viewer | n/a  | never   | read-only |
+| `editor.present.link` | Link to present mode                | viewer | n/a  | never   | read-only |
+| `editor.show`         | Show something in the user's editor | viewer | n/a  | never   |           |
+
+## folder
+
+| Command               | What it does       | Role   | Undo         | Confirm                    | Hints      |
+| --------------------- | ------------------ | ------ | ------------ | -------------------------- | ---------- |
+| `folder.create`       | Create folder      | owner  | undoable     | never                      |            |
+| `folder.delete`       | Delete folder      | owner  | irreversible | always                     |            |
+| `folder.fonts.delete` | Delete folder font | owner  | irreversible | always                     |            |
+| `folder.fonts.list`   | Folder fonts       | owner  | n/a          | never                      | read-only  |
+| `folder.fonts.upload` | Upload folder font | owner  | undoable     | never (asks for URL files) |            |
+| `folder.list`         | List folders       | viewer | n/a          | never                      | read-only  |
+| `folder.rename`       | Rename folder      | owner  | undoable     | never                      | idempotent |
 
 ## guide
 
-| Command        | What it does  | Role   | Undo     | Confirm |
-| -------------- | ------------- | ------ | -------- | ------- |
-| `guide.add`    | Add guide     | editor | undoable | never   |
-| `guide.remove` | Remove guides | editor | undoable | never   |
-| `guide.update` | Move guide    | editor | undoable | never   |
+| Command        | What it does  | Role   | Undo     | Confirm | Hints      |
+| -------------- | ------------- | ------ | -------- | ------- | ---------- |
+| `guide.add`    | Add guide     | editor | undoable | never   |            |
+| `guide.remove` | Remove guides | editor | undoable | never   |            |
+| `guide.update` | Move guide    | editor | undoable | never   | idempotent |
+
+## media
+
+| Command         | What it does  | Role   | Undo         | Confirm                    | Hints     |
+| --------------- | ------------- | ------ | ------------ | -------------------------- | --------- |
+| `media.delete`  | Delete media  | owner  | irreversible | always                     |           |
+| `media.fontUrl` | Font file URL | owner  | n/a          | never                      | read-only |
+| `media.status`  | Video status  | viewer | n/a          | never                      | read-only |
+| `media.upload`  | Upload media  | editor | undoable     | never (asks for URL files) |           |
+| `media.url`     | Image URL     | viewer | n/a          | never                      | read-only |
 
 ## object
 
-| Command              | What it does                | Role   | Undo     | Confirm |
-| -------------------- | --------------------------- | ------ | -------- | ------- |
-| `object.align`       | Align objects to each other | editor | undoable | never   |
-| `object.create`      | Create object               | editor | undoable | never   |
-| `object.delete`      | Delete objects              | editor | undoable | never   |
-| `object.distribute`  | Distribute objects evenly   | editor | undoable | never   |
-| `object.duplicate`   | Duplicate objects           | editor | undoable | never   |
-| `object.group`       | Group objects               | editor | undoable | never   |
-| `object.layer`       | Change stacking order       | editor | undoable | never   |
-| `object.mask.apply`  | Mask an image with a shape  | editor | undoable | never   |
-| `object.mask.remove` | Remove image mask           | editor | undoable | never   |
-| `object.move`        | Move objects                | editor | undoable | never   |
-| `object.ungroup`     | Ungroup objects             | editor | undoable | never   |
-| `object.update`      | Update object properties    | editor | undoable | never   |
+| Command              | What it does                | Role   | Undo     | Confirm | Hints      |
+| -------------------- | --------------------------- | ------ | -------- | ------- | ---------- |
+| `object.align`       | Align objects to each other | editor | undoable | never   | idempotent |
+| `object.create`      | Create object               | editor | undoable | never   |            |
+| `object.delete`      | Delete objects              | editor | undoable | never   |            |
+| `object.distribute`  | Distribute objects evenly   | editor | undoable | never   | idempotent |
+| `object.duplicate`   | Duplicate objects           | editor | undoable | never   |            |
+| `object.group`       | Group objects               | editor | undoable | never   |            |
+| `object.layer`       | Change stacking order       | editor | undoable | never   |            |
+| `object.mask.apply`  | Mask an image with a shape  | editor | undoable | never   |            |
+| `object.mask.remove` | Remove image mask           | editor | undoable | never   |            |
+| `object.move`        | Move objects                | editor | undoable | never   |            |
+| `object.ungroup`     | Ungroup objects             | editor | undoable | never   |            |
+| `object.update`      | Update object properties    | editor | undoable | never   | idempotent |
 
 ## ops
 
-| Command     | What it does                | Role   | Undo     | Confirm |
-| ----------- | --------------------------- | ------ | -------- | ------- |
-| `ops.apply` | Apply several edits at once | editor | undoable | never   |
+| Command     | What it does                | Role   | Undo     | Confirm | Hints |
+| ----------- | --------------------------- | ------ | -------- | ------- | ----- |
+| `ops.apply` | Apply several edits at once | editor | undoable | never   |       |
 
 ## query
 
-| Command        | What it does | Role   | Undo | Confirm |
-| -------------- | ------------ | ------ | ---- | ------- |
-| `query.deck`   | Deck outline | viewer | n/a  | never   |
-| `query.object` | Read object  | viewer | n/a  | never   |
-| `query.slide`  | Read slide   | viewer | n/a  | never   |
+| Command        | What it does | Role   | Undo | Confirm | Hints     |
+| -------------- | ------------ | ------ | ---- | ------- | --------- |
+| `query.deck`   | Deck outline | viewer | n/a  | never   | read-only |
+| `query.object` | Read object  | viewer | n/a  | never   | read-only |
+| `query.slide`  | Read slide   | viewer | n/a  | never   | read-only |
+
+## share
+
+| Command                     | What it does               | Role  | Undo         | Confirm | Hints      |
+| --------------------------- | -------------------------- | ----- | ------------ | ------- | ---------- |
+| `share.invites.cancel`      | Cancel an invite           | owner | irreversible | always  |            |
+| `share.invites.list`        | List pending invites       | owner | n/a          | never   | read-only  |
+| `share.links.create`        | Create a share link        | owner | irreversible | always  |            |
+| `share.links.list`          | List share links           | owner | n/a          | never   | read-only  |
+| `share.links.revoke`        | Revoke a share link        | owner | irreversible | always  |            |
+| `share.permissions.invite`  | Share with a person        | owner | irreversible | always  |            |
+| `share.permissions.list`    | List collaborators         | owner | n/a          | never   | read-only  |
+| `share.permissions.revoke`  | Remove a collaborator      | owner | irreversible | always  |            |
+| `share.permissions.setRole` | Change a collaborator role | owner | irreversible | always  | idempotent |
 
 ## slide
 
-| Command               | What it does               | Role   | Undo     | Confirm |
-| --------------------- | -------------------------- | ------ | -------- | ------- |
-| `slide.add`           | Add slide                  | editor | undoable | never   |
-| `slide.collapse`      | Collapse slide section     | editor | undoable | never   |
-| `slide.delete`        | Delete slides              | editor | undoable | never   |
-| `slide.duplicate`     | Duplicate slide            | editor | undoable | never   |
-| `slide.indent`        | Set slide outline level    | editor | undoable | never   |
-| `slide.move`          | Move slides                | editor | undoable | never   |
-| `slide.rename`        | Rename slide               | editor | undoable | never   |
-| `slide.setBackground` | Set slide background       | editor | undoable | never   |
-| `slide.setTransition` | Set slide transition       | editor | undoable | never   |
-| `slide.skip`          | Skip slide in presentation | editor | undoable | never   |
+| Command               | What it does               | Role   | Undo     | Confirm | Hints      |
+| --------------------- | -------------------------- | ------ | -------- | ------- | ---------- |
+| `slide.add`           | Add slide                  | editor | undoable | never   |            |
+| `slide.collapse`      | Collapse slide section     | editor | undoable | never   | idempotent |
+| `slide.delete`        | Delete slides              | editor | undoable | never   |            |
+| `slide.duplicate`     | Duplicate slide            | editor | undoable | never   |            |
+| `slide.indent`        | Set slide outline level    | editor | undoable | never   | idempotent |
+| `slide.move`          | Move slides                | editor | undoable | never   |            |
+| `slide.rename`        | Rename slide               | editor | undoable | never   | idempotent |
+| `slide.setBackground` | Set slide background       | editor | undoable | never   | idempotent |
+| `slide.setTransition` | Set slide transition       | editor | undoable | never   | idempotent |
+| `slide.skip`          | Skip slide in presentation | editor | undoable | never   | idempotent |
 
 ## table
 
-| Command                | What it does                 | Role   | Undo     | Confirm |
-| ---------------------- | ---------------------------- | ------ | -------- | ------- |
-| `table.border.preset`  | Apply a table border preset  | editor | undoable | never   |
-| `table.border.segment` | Style one table grid line    | editor | undoable | never   |
-| `table.col.delete`     | Delete table columns         | editor | undoable | never   |
-| `table.col.insert`     | Insert table columns         | editor | undoable | never   |
-| `table.insert`         | Insert table                 | editor | undoable | never   |
-| `table.merge`          | Merge table cells            | editor | undoable | never   |
-| `table.resizeColumn`   | Resize table column          | editor | undoable | never   |
-| `table.resizeRow`      | Resize table row             | editor | undoable | never   |
-| `table.row.delete`     | Delete table rows            | editor | undoable | never   |
-| `table.row.insert`     | Insert table rows            | editor | undoable | never   |
-| `table.split`          | Split merged cell            | editor | undoable | never   |
-| `table.style.cell`     | Style a table cell           | editor | undoable | never   |
-| `table.style.range`    | Style a range of table cells | editor | undoable | never   |
-| `table.style.table`    | Style a whole table          | editor | undoable | never   |
+| Command                | What it does                 | Role   | Undo     | Confirm | Hints      |
+| ---------------------- | ---------------------------- | ------ | -------- | ------- | ---------- |
+| `table.border.preset`  | Apply a table border preset  | editor | undoable | never   | idempotent |
+| `table.border.segment` | Style one table grid line    | editor | undoable | never   | idempotent |
+| `table.col.delete`     | Delete table columns         | editor | undoable | never   |            |
+| `table.col.insert`     | Insert table columns         | editor | undoable | never   |            |
+| `table.insert`         | Insert table                 | editor | undoable | never   |            |
+| `table.merge`          | Merge table cells            | editor | undoable | never   |            |
+| `table.resizeColumn`   | Resize table column          | editor | undoable | never   |            |
+| `table.resizeRow`      | Resize table row             | editor | undoable | never   |            |
+| `table.row.delete`     | Delete table rows            | editor | undoable | never   |            |
+| `table.row.insert`     | Insert table rows            | editor | undoable | never   |            |
+| `table.split`          | Split merged cell            | editor | undoable | never   |            |
+| `table.style.cell`     | Style a table cell           | editor | undoable | never   | idempotent |
+| `table.style.range`    | Style a range of table cells | editor | undoable | never   | idempotent |
+| `table.style.table`    | Style a whole table          | editor | undoable | never   | idempotent |
 
 ## text
 
-| Command       | What it does        | Role   | Undo     | Confirm |
-| ------------- | ------------------- | ------ | -------- | ------- |
-| `text.format` | Format text range   | editor | undoable | never   |
-| `text.list`   | Set list formatting | editor | undoable | never   |
-| `text.set`    | Set text            | editor | undoable | never   |
+| Command       | What it does        | Role   | Undo     | Confirm | Hints      |
+| ------------- | ------------------- | ------ | -------- | ------- | ---------- |
+| `text.format` | Format text range   | editor | undoable | never   | idempotent |
+| `text.list`   | Set list formatting | editor | undoable | never   |            |
+| `text.set`    | Set text            | editor | undoable | never   | idempotent |
+
+## token
+
+| Command        | What it does          | Role  | Undo | Confirm | Hints     |
+| -------------- | --------------------- | ----- | ---- | ------- | --------- |
+| `token.usages` | Where a token is used | owner | n/a  | never   | read-only |
 
 ## Known missing
 
 | Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                               |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `component.stamp`             | A1    | packages/slide-model/src/stampComponent.ts                                                    | needs the component document loaded by a host; the server host provides it in A1                                                                                                                   |
-| `component.master.edit`       | A1    | apps/web/src/pages/ComponentMasterEditor.tsx                                                  | editing a component master = the object/text/table commands run against a component document instead of a deck; needs the server host to open `component:<id>`                                     |
-| `component.get`               | A1    | new                                                                                           | a master's objects with their slot map, so the agent can pick a component and fill it (plan §7.2 item 8)                                                                                           |
-| `deck.list`                   | A1    | `GET /decks`                                                                                  |                                                                                                                                                                                                    |
-| `deck.get`                    | A1    | `GET /decks/:id`                                                                              |                                                                                                                                                                                                    |
-| `deck.create`                 | A1    | `POST /decks`                                                                                 |                                                                                                                                                                                                    |
-| `deck.rename`                 | A1    | `PATCH /decks/:id`                                                                            |                                                                                                                                                                                                    |
-| `deck.delete`                 | A1    | `DELETE /decks/:id`                                                                           |                                                                                                                                                                                                    |
-| `deck.moveToFolder`           | A1    | `POST /folders/:id/move-decks`                                                                |                                                                                                                                                                                                    |
-| `deck.importPptx`             | A1    | `POST /folders/:folderId/import-pptx`                                                         |                                                                                                                                                                                                    |
-| `deck.insertFrom`             | A1    | `POST /decks/:id/append-pptx`                                                                 |                                                                                                                                                                                                    |
-| `deck.exportPptx`             | A1    | `GET /decks/:id/export.pptx`                                                                  |                                                                                                                                                                                                    |
-| `deck.activeEditors`          | A1    | `GET /folders/:id/active-editors`                                                             |                                                                                                                                                                                                    |
-| `deck.fonts.list`             | A1    | `GET /api/decks/:deckId/fonts`                                                                | the fonts a deck's editors may load (its folder's fonts), for any role on the deck                                                                                                                 |
-| `folder.list`                 | A1    | `GET /folders`                                                                                |                                                                                                                                                                                                    |
-| `folder.create`               | A1    | `POST /folders`                                                                               |                                                                                                                                                                                                    |
-| `folder.rename`               | A1    | `PATCH /folders/:id`                                                                          |                                                                                                                                                                                                    |
-| `folder.delete`               | A1    | `DELETE /folders/:id`                                                                         |                                                                                                                                                                                                    |
-| `folder.fonts.list`           | A1    | `GET /api/folders/:folderId/fonts`                                                            |                                                                                                                                                                                                    |
-| `folder.fonts.upload`         | A1    | `POST /api/folders/:folderId/fonts`                                                           |                                                                                                                                                                                                    |
-| `folder.fonts.delete`         | A1    | `DELETE /api/folders/:folderId/fonts/:assetId`                                                |                                                                                                                                                                                                    |
-| `component.list`              | A1    | `GET /folders/:folderId/components`                                                           |                                                                                                                                                                                                    |
-| `component.rename`            | A1    | `PATCH /components/:id`                                                                       |                                                                                                                                                                                                    |
-| `component.delete`            | A1    | `DELETE /components/:id`                                                                      |                                                                                                                                                                                                    |
-| `token.usages`                | A1    | `GET /folders/:folderId/tokens/:category/:tokenId/usages`                                     |                                                                                                                                                                                                    |
-| `share.permissions.list`      | A1    | `GET /decks/:id/permissions`                                                                  |                                                                                                                                                                                                    |
-| `share.permissions.invite`    | A1    | `POST /decks/:id/permissions`                                                                 |                                                                                                                                                                                                    |
-| `share.permissions.revoke`    | A1    | `DELETE /decks/:id/permissions/:userId`                                                       |                                                                                                                                                                                                    |
-| `share.invites.list`          | A1    | `GET /decks/:id/invites`                                                                      |                                                                                                                                                                                                    |
-| `share.invites.cancel`        | A1    | `DELETE /decks/:id/invites/:inviteId`                                                         |                                                                                                                                                                                                    |
-| `share.links.list`            | A1    | `GET /decks/:id/share-links`                                                                  |                                                                                                                                                                                                    |
-| `share.links.create`          | A1    | `POST /decks/:id/share-links`                                                                 |                                                                                                                                                                                                    |
-| `share.links.revoke`          | A1    | `DELETE /decks/:id/share-links/:linkId`                                                       |                                                                                                                                                                                                    |
-| `media.upload`                | A1    | `ALL /api/uploads`, `ALL /api/uploads/*`                                                      | the tus endpoint; the command takes bytes or a URL (with an SSRF guard) instead of speaking tus                                                                                                    |
-| `media.status`                | A1    | `GET /api/media/:assetId/video-info`                                                          |                                                                                                                                                                                                    |
-| `media.url`                   | A1    | `GET /api/media/:assetId/url`                                                                 |                                                                                                                                                                                                    |
-| `media.fontUrl`               | A1    | `GET /api/media/:assetId/font-url`                                                            | signed URL of an uploaded font file                                                                                                                                                                |
-| `media.delete`                | A1    | `DELETE /api/media/:assetId`                                                                  |                                                                                                                                                                                                    |
-| `editor.context`              | A1    | new                                                                                           |                                                                                                                                                                                                    |
-| `editor.show`                 | A1    | new                                                                                           |                                                                                                                                                                                                    |
-| `editor.present.link`         | A1    | new                                                                                           |                                                                                                                                                                                                    |
-| `agent.revert`                | A1    | new                                                                                           |                                                                                                                                                                                                    |
 | `object.path.create`          | A2    | apps/web/src/components/EditorLayout.tsx (PenSession)                                         |                                                                                                                                                                                                    |
 | `object.path.fromShape`       | A2    | apps/web/src/components/EditorLayout.tsx (convertToPathAndPlace)                              |                                                                                                                                                                                                    |
 | `object.path.setAnchors`      | A2    | apps/web/src/ui/PathPointsOverlay.tsx                                                         | the raw path fields are settable with object.update today; the command adds the point editor's rule of re-fitting x/y/width/height to the edited anchors while keeping the rotation pivot in place |
@@ -184,17 +226,23 @@ Commands: **50**. Known missing: **81**. Deliberately excluded: **12**.
 
 ## Deliberately excluded
 
-| Capability                                                                        | Routes                                                                       | Reason                                                                                                                                                                                                        |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Zoom and pan                                                                      |                                                                              | Per-tab view state of one editor window; nothing in the document changes.                                                                                                                                     |
-| Stage background colour                                                           |                                                                              | Per-tab editor preference, not document content.                                                                                                                                                              |
-| Rulers on/off                                                                     |                                                                              | Per-browser editor preference stored in localStorage.                                                                                                                                                         |
-| Active tool                                                                       |                                                                              | Transient pointer mode of one editor; agents create objects directly.                                                                                                                                         |
-| Selection                                                                         |                                                                              | Per-user editor state; agents address objects by id and read the user selection via editor.context.                                                                                                           |
-| Group isolation (entered group)                                                   |                                                                              | Transient editor navigation state with no document effect.                                                                                                                                                    |
-| Shortcut cheatsheet                                                               |                                                                              | Help overlay for humans; agents read tool descriptions instead.                                                                                                                                               |
-| FPS overlay                                                                       |                                                                              | Developer diagnostics overlay with no document effect.                                                                                                                                                        |
-| Present-mode navigation, fullscreen, presenter window                             |                                                                              | Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide.                                                                                                     |
-| Browser sign-in and session (Google OAuth start/callback, current user, sign-out) | `GET /auth/start`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout` | The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user. |
-| Health check                                                                      | `GET /health`                                                                | Liveness probe for the Docker healthcheck and the reverse proxy; it reports no document or user state.                                                                                                        |
-| Prometheus metrics                                                                | `GET /metrics`                                                               | Operations telemetry (connection counts, document sizes) scraped by Prometheus with METRICS_TOKEN; not a user capability and deliberately kept away from user credentials.                                    |
+| Capability                                                                                        | Routes                                                                                                                                                                                                                                                                                                                                                  | Reason                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Zoom and pan                                                                                      |                                                                                                                                                                                                                                                                                                                                                         | Per-tab view state of one editor window; nothing in the document changes.                                                                                                                                                                                                                                                                                                            |
+| Stage background colour                                                                           |                                                                                                                                                                                                                                                                                                                                                         | Per-tab editor preference, not document content.                                                                                                                                                                                                                                                                                                                                     |
+| Rulers on/off                                                                                     |                                                                                                                                                                                                                                                                                                                                                         | Per-browser editor preference stored in localStorage.                                                                                                                                                                                                                                                                                                                                |
+| Active tool                                                                                       |                                                                                                                                                                                                                                                                                                                                                         | Transient pointer mode of one editor; agents create objects directly.                                                                                                                                                                                                                                                                                                                |
+| Selection                                                                                         |                                                                                                                                                                                                                                                                                                                                                         | Per-user editor state; agents address objects by id and read the user selection via editor.context.                                                                                                                                                                                                                                                                                  |
+| Group isolation (entered group)                                                                   |                                                                                                                                                                                                                                                                                                                                                         | Transient editor navigation state with no document effect.                                                                                                                                                                                                                                                                                                                           |
+| Shortcut cheatsheet                                                                               |                                                                                                                                                                                                                                                                                                                                                         | Help overlay for humans; agents read tool descriptions instead.                                                                                                                                                                                                                                                                                                                      |
+| FPS overlay                                                                                       |                                                                                                                                                                                                                                                                                                                                                         | Developer diagnostics overlay with no document effect.                                                                                                                                                                                                                                                                                                                               |
+| Present-mode navigation, fullscreen, presenter window                                             |                                                                                                                                                                                                                                                                                                                                                         | Human presentation runtime, not document state; agents get editor.present.link to open a deck at a slide.                                                                                                                                                                                                                                                                            |
+| Browser sign-in and session (Google OAuth start/callback, current user, sign-out)                 | `GET /auth/start`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout`                                                                                                                                                                                                                                                                            | The interactive browser login that mints the session cookie. Agents never sign in this way: they authenticate with a personal access token (or MCP OAuth) and every MCP session is already bound to one user.                                                                                                                                                                        |
+| Personal access tokens (list, create, revoke)                                                     | `GET /access-tokens`, `POST /access-tokens`, `DELETE /access-tokens/:id`                                                                                                                                                                                                                                                                                | Credential management. An agent must not mint or revoke credentials: a leaked agent token that could create tokens would outlive its own revocation. The routes accept only the browser session cookie and reject any personal access token (apps/server/src/routes/accessTokens.ts).                                                                                                |
+| Command API transport (POST /commands, public /api/commands)                                      | `POST /commands`                                                                                                                                                                                                                                                                                                                                        | Not a capability of its own: the HTTP transport that runs registered commands for scripts, exactly as the MCP server does for Claude clients. Everything it can do is a command in this registry, authorised and logged by the server host.                                                                                                                                          |
+| MCP transport (GET/POST/DELETE /mcp, public /api/mcp)                                             | `GET /mcp`, `POST /mcp`, `DELETE /mcp`                                                                                                                                                                                                                                                                                                                  | Not a capability of its own: the Streamable HTTP transport that serves this registry to Claude clients. Every tool is generated from a registered command and runs through the server host, which authorises, confirms irreversible commands and logs each op (apps/server/src/mcp/).                                                                                                |
+| MCP OAuth authorization server (metadata, client registration, authorize, consent, token, revoke) | `GET /.well-known/oauth-protected-resource`, `GET /.well-known/oauth-protected-resource/*`, `GET /.well-known/oauth-authorization-server`, `GET /.well-known/oauth-authorization-server/*`, `POST /oauth/register`, `GET /oauth/authorize`, `GET /oauth/authorize/consent`, `POST /oauth/authorize/decision`, `POST /oauth/token`, `POST /oauth/revoke` | Protocol plumbing, not a user capability: how claude.ai connectors obtain a token for /mcp (RFC 9728, 8414, 7591, 7636, 7009), with the Google sign-in session as the login step. An agent never signs in this way; it is what gives the agent its session in the first place.                                                                                                       |
+| Connected MCP apps (list, disconnect)                                                             | `GET /oauth/connections`, `DELETE /oauth/connections/:id`                                                                                                                                                                                                                                                                                               | Credential management, like personal access tokens: an agent must not see or revoke the grants that give agents access. Session-cookie only (authPreHandler rejects every token).                                                                                                                                                                                                    |
+| Approving or declining an agent request (the confirmation page)                                   | `GET /agent-confirmations/:id`, `POST /agent-confirmations/:id/decision`                                                                                                                                                                                                                                                                                | The human side of the human in the loop: a signed-in person approves or declines an agent call that needs their confirmation (irreversible commands, URL downloads). An agent must never be able to approve its own request, so the routes accept only the browser session cookie from Narrative's own origin and reject every token (apps/server/src/routes/agentConfirmations.ts). |
+| Health check                                                                                      | `GET /health`                                                                                                                                                                                                                                                                                                                                           | Liveness probe for the Docker healthcheck and the reverse proxy; it reports no document or user state.                                                                                                                                                                                                                                                                               |
+| Prometheus metrics                                                                                | `GET /metrics`                                                                                                                                                                                                                                                                                                                                          | Operations telemetry (connection counts, document sizes) scraped by Prometheus with METRICS_TOKEN; not a user capability and deliberately kept away from user credentials.                                                                                                                                                                                                           |

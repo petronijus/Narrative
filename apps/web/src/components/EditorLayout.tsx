@@ -26,6 +26,8 @@ import { LineEndpointHandles } from '../ui/LineEndpointHandles'
 import { SnapGuides } from '../ui/SnapGuides'
 import { PeerCursors } from '../ui/PeerCursors'
 import { PeerSelectionOverlays } from '../ui/PeerSelectionOverlays'
+import { EditorShowHighlight, EditorShowNotice } from '../ui/EditorShowOverlay'
+import { useEditorShow } from '../ui/useEditorShow'
 import { LockBadges } from '../ui/LockBadges'
 import { useSelection } from '../state/SelectionContext'
 import { useTool } from '../state/ToolContext'
@@ -591,10 +593,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   zoomRef.current = zoom
 
   // M8: Awareness updater — broadcast cursor + selection
-  const { setCursor, setSelection } = useAwarenessUpdater()
+  const { setCursor, setSelection, setActiveSlide } = useAwarenessUpdater()
   const { activeSlideId } = useActiveSlide()
   const activeSlideIdRef = useRef(activeSlideId)
   activeSlideIdRef.current = activeSlideId
+
+  // Agentic A1: `editor.show` — an agent points this editor at a slide and
+  // objects (switch, select, flash; never a document write).
+  const editorShow = useEditorShow()
 
   /** Ref na canvas container div — pro bounding rect výpočty */
   const canvasContainerRef = useRef<HTMLDivElement>(null)
@@ -822,6 +828,15 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   useEffect(() => {
     setSelection([...selectedIds])
   }, [selectedIds, setSelection])
+
+  // Agentic A1: publish the slide this editor shows, so the server's
+  // `editor.context` can tell an agent what "this slide" is. Runs on the
+  // first resolution and on every switch; the unmount effect below clears
+  // it, so a tab that leaves for present mode stops claiming a slide.
+  useEffect(() => {
+    setActiveSlide(activeSlideId)
+  }, [activeSlideId, setActiveSlide])
+  useEffect(() => () => setActiveSlide(null), [setActiveSlide])
 
   // ---------------------------------------------------------------------------
   // (removed) component-instance edit-mode guard + auto-fit:
@@ -2547,6 +2562,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {/* M8: Peer selection highlights — dashed outlines ve barvách peerů */}
                     <PeerSelectionOverlays />
 
+                    {/* Agentic A1: outline flashed around what an agent showed. */}
+                    <EditorShowHighlight
+                      highlight={editorShow.highlight}
+                      onDone={editorShow.endHighlight}
+                    />
+
                     {/* P5a: padlock badge over each locked object. */}
                     <LockBadges />
 
@@ -2859,6 +2880,13 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
       {/* P9: Keyboard shortcuts cheatsheet — triggered by Mod+/ */}
       <ShortcutsCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
+
+      {/* Agentic A1: an agent's `editor.show` parked while the user edits. */}
+      <EditorShowNotice
+        pending={editorShow.pending}
+        onShow={editorShow.acceptPending}
+        onDismiss={editorShow.dismissPending}
+      />
     </div>
   )
 }

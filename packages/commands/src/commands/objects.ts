@@ -34,6 +34,7 @@ const objectEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 const Finite = z.number().finite()
@@ -228,6 +229,7 @@ export const objectUngroup = defineCommand({
 export const objectAlign = defineCommand({
   ...objectEditor,
   id: 'object.align',
+  idempotent: true,
   title: 'Align objects to each other',
   description:
     "Align two or more objects to the edges or centre of their combined bounding box (e.g. 'left' moves every " +
@@ -245,8 +247,8 @@ export const objectAlign = defineCommand({
   implementedWith: ['alignObjects'],
   examples: [
     {
-      title: 'Align tops of a rectangle and an ellipse',
-      input: { slide: 's1', objects: ['r1', 'e1'], axis: 'top' },
+      title: 'Align the left edges of a rectangle and an ellipse',
+      input: { slide: 's1', objects: ['r1', 'e1'], axis: 'left' },
     },
   ],
   handler(ctx, input) {
@@ -262,6 +264,7 @@ export const objectAlign = defineCommand({
 export const objectDistribute = defineCommand({
   ...objectEditor,
   id: 'object.distribute',
+  idempotent: true,
   title: 'Distribute objects evenly',
   description:
     'Space three or more objects so the gaps between neighbours are equal, horizontally or vertically. ' +
@@ -277,8 +280,8 @@ export const objectDistribute = defineCommand({
   implementedWith: ['distributeObjects'],
   examples: [
     {
-      title: 'Distribute three shapes horizontally',
-      input: { slide: 's1', objects: ['r1', 'e1', 't1'], axis: 'horizontal' },
+      title: 'Distribute three shapes vertically',
+      input: { slide: 's1', objects: ['r1', 'e1', 't1'], axis: 'vertical' },
     },
   ],
   handler(ctx, input) {

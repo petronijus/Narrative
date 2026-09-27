@@ -12,7 +12,15 @@
  *   Ctrl/Cmd+Enter → present mode.
  */
 
-import { useCallback, useEffect, useRef, useState, type ComponentType, type SVGProps } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type SVGProps,
+} from 'react'
 import { useShortcuts } from '../state/useShortcuts.js'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
@@ -52,7 +60,7 @@ import {
   getComponentDoc,
 } from '../state/componentDocCache.js'
 import { addTable, stampComponent, type ObjectsMutationContext } from '@narrative/slide-model'
-import type { ComponentSummary } from '../api/client.js'
+import type { AgentRunTarget, ComponentSummary } from '../api/client.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
 import { useRulers } from '../state/RulersContext.js'
@@ -60,6 +68,7 @@ import type { ActiveTool } from '../state/ToolContext.js'
 import { useUndoManager } from '../state/useUndoManager.js'
 import { useDeckFontsOptional } from '../state/useDeckFonts.js'
 import { AvatarChips } from './AvatarChips.js'
+import { AgentActivityButton } from './AgentActivityPopover.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { ShareDialog } from './ShareDialog.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
@@ -138,7 +147,9 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     typeof (location.state as { from: unknown }).from === 'string'
       ? (location.state as { from: string }).from
       : null
-  const { id } = useParams<{ id: string }>()
+  // `id` on the deck route; `componentId` on the component master editor's
+  // route (/folder/:folderId/component/:componentId), where masterMode is set.
+  const { id, componentId } = useParams<{ id: string; componentId: string }>()
   const api = useApi()
   // M28: in-flight state for the Export button. We use fetch+blob (not a
   // plain location nav) so the user gets a spinner during the ~1-2 s pptx
@@ -166,6 +177,10 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   const [shareOpen, setShareOpen] = useState(false)
   const isViewer = role === 'viewer'
   const isOwner = role === 'owner'
+  const agentRunTarget = useMemo<AgentRunTarget | null>(() => {
+    if (masterMode) return componentId === undefined ? null : { componentId }
+    return id === undefined ? null : { deckId: id }
+  }, [masterMode, componentId, id])
   const { undo, redo, canUndo, canRedo } = useUndoManager()
   const { visible: rulersVisible, toggle: toggleRulers } = useRulers()
   const deckFontsCtx = useDeckFontsOptional()
@@ -741,6 +756,14 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
 
         {/* M8: Connected collaborators avatar chips */}
         <AvatarChips />
+
+        {/* Agentic A1: recent agent runs on this deck — or on this component
+            master in the master editor, since agents edit masters too — +
+            Revert. Editors and owners only: reverting is an edit, and the
+            run list is editor-scoped on the server too. */}
+        {agentRunTarget !== null && (role === 'editor' || role === 'owner') && (
+          <AgentActivityButton target={agentRunTarget} />
+        )}
 
         {/* M10: Share button — owner only */}
         {isOwner && id !== undefined && (

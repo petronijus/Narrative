@@ -15,6 +15,8 @@ import { SLIDE_MODEL_EXPORTS } from './slideModelExports.js'
 import { FINISHED_PHASES, KNOWN_MISSING } from './knownMissing.js'
 import { AGENT_ALLOWLIST } from './allowlist.js'
 import { normaliseRoute, routeCoverage, routeKey } from './routes.js'
+import { COMMAND_DOMAINS, danglingCommandMentions } from '../agentSurface.js'
+import { commandMetadataProblems } from '../registry.js'
 
 const registry = createDefaultRegistry()
 const commands = registry.list()
@@ -139,60 +141,22 @@ describe('route claims (the server suite checks them against the Fastify route t
  * a dead end. Every `<domain>.<name>` it mentions must be registered, or be
  * followed by "(planned, not available yet)" (and then give today's
  * workaround). `table.style.*` / `table.resize*` wildcards must match a
- * registered command.
+ * registered command. The rule lives in agentSurface.ts, shared with the
+ * playbook tests, so all model-facing prose follows one rule.
  */
-const DOMAIN_NAMES = [
-  'deck',
-  'folder',
-  'token',
-  'slide',
-  'object',
-  'text',
-  'table',
-  'animation',
-  'guide',
-  'media',
-  'component',
-  'share',
-  'style',
-  'query',
-  'editor',
-  'ops',
-  'agent',
-]
-const COMMAND_MENTION = new RegExp(
-  `\\b(?:${DOMAIN_NAMES.join('|')})(?:\\.[a-z][a-zA-Z]*)+(\\.?\\*)?`,
-  'g',
-)
-const PLANNED = ' (planned, not available yet)'
-
 describe('command descriptions', () => {
-  it('only name commands that exist, or mark them planned', () => {
-    const ids = commands.map((c) => c.id)
+  it('only name commands that exist, or mark them planned (and never mark a registered one planned)', () => {
     const dangling = commands.flatMap((c) =>
-      [...c.description.matchAll(COMMAND_MENTION)].flatMap((m) => {
-        const mention = m[0]
-        const wildcard = m[1] !== undefined
-        const id = wildcard ? mention.slice(0, mention.length - m[1]!.length) : mention
-        if (wildcard) return ids.some((x) => x.startsWith(id)) ? [] : [`${c.id} names ${mention}`]
-        if (registry.has(id)) return []
-        return c.description.startsWith(PLANNED, m.index + mention.length)
-          ? []
-          : [`${c.id} names ${id}`]
-      }),
+      danglingCommandMentions(c.description, registry).map((d) => `${c.id}: ${d}`),
     )
     expect(dangling).toEqual([])
   })
 
-  it('never mark a registered command as planned', () => {
-    const stale = commands.flatMap((c) =>
-      [...c.description.matchAll(COMMAND_MENTION)]
-        .filter(
-          (m) => registry.has(m[0]) && c.description.startsWith(PLANNED, m.index + m[0].length),
-        )
-        .map((m) => `${c.id} calls ${m[0]} planned`),
+  it('use only domains the mention pattern knows', () => {
+    const unknown = [...new Set(commands.map((c) => c.domain))].filter(
+      (d) => !(COMMAND_DOMAINS as readonly string[]).includes(d),
     )
-    expect(stale).toEqual([])
+    expect(unknown).toEqual([])
   })
 })
 
@@ -202,6 +166,44 @@ describe('command metadata quality', () => {
       .filter((c) => c.undo === 'irreversible' && c.confirm !== 'always')
       .map((c) => c.id)
     expect(unconfirmed).toEqual([])
+  })
+
+  it('keeps read-only and idempotent metadata consistent (registry.ts commandMetadataProblems)', () => {
+    const problems = commands.flatMap((c) => commandMetadataProblems(c).map((p) => `${c.id}: ${p}`))
+    expect(problems).toEqual([])
+  })
+
+  it('marks every server read read-only (a list / get / status command that changes nothing)', () => {
+    // A command that changes nothing but forgets `readOnly` would make every
+    // Claude client ask the user before a harmless read. The registry cannot
+    // see that a server call is a read, so the reads are pinned by name here:
+    // a new one is added to this list together with its `readOnly: true`.
+    const serverReads = [
+      'agent.runs',
+      'component.get',
+      'component.list',
+      'deck.activeEditors',
+      'deck.fonts.list',
+      'deck.get',
+      'deck.list',
+      'editor.context',
+      'folder.fonts.list',
+      'folder.list',
+      'media.fontUrl',
+      'media.status',
+      'media.url',
+      'share.invites.list',
+      'share.links.list',
+      'share.permissions.list',
+      'token.usages',
+    ]
+    expect(serverReads.filter((id) => registry.get(id)?.readOnly !== true)).toEqual([])
+    // …and every command named like a read is on that list or effect-free.
+    const unlisted = commands
+      .filter((c) => /\.(list|get|status|url|fontUrl|usages|runs|context)$/.test(c.id))
+      .filter((c) => c.undo === 'n/a' && c.effects.length > 0 && !serverReads.includes(c.id))
+      .map((c) => c.id)
+    expect(unlisted).toEqual([])
   })
 
   it('marks read-only commands as viewer-safe and effect-free', () => {

@@ -30,6 +30,13 @@ export interface SlideDocContextValue {
   awareness: Awareness
   /** Local user identity — deterministic from session ID. */
   localUser: PeerUser
+  /**
+   * The Hocuspocus document this context is synced to (a deck's name is its
+   * id), or null for a local-only document (the component master editor).
+   * Agent peers identify the user they work for by a key scoped to it
+   * (ui/peerPresence.ts).
+   */
+  documentName: string | null
 }
 
 export const SlideDocContext = createContext<SlideDocContextValue | null>(null)
@@ -121,6 +128,7 @@ export function createMockSlideDocValue(
     } as unknown as Y.UndoManager,
     wsStatus: 'connected',
     awareness: mockAwareness,
+    documentName: null,
     localUser: {
       id: 'test-peer-id',
       name: 'User test',

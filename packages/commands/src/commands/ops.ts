@@ -35,6 +35,7 @@ export function createOpsApply(registry: CommandRegistry) {
     undo: 'undoable',
     confirm: 'never',
     hosts: ['browser', 'server'],
+    acceptsComponent: true,
     transaction: 'self',
     implementedWith: [],
     examples: [

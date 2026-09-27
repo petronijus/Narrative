@@ -1,0 +1,274 @@
+{
+  "scenario": "revert-last-run",
+  "tag": "ev1416f9",
+  "recordedAt": "2026-09-27T10:41:19.409Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "WheKRcKFOTIT",
+    "title": "Pitch ev1416f9"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative deck \"Pitch ev1416f9\" (deckId WheKRcKFOTIT), change the title on slide 1 to \"Draft title\" and delete the rectangle on slide 2.",
+        "calls": [
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "WheKRcKFOTIT"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 2,
+              "slides": [
+                {
+                  "id": "VIlafGYGDteQY7TshmdL3",
+                  "index": 0,
+                  "title": "Original title",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "8ByKEspxFKdYQpv8OJ0gt",
+                  "index": 1,
+                  "title": "Keep this note.",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"VIlafGYGDteQY7TshmdL3\",\"index\":0,\"title\":\"Original title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"8ByKEspxFKdYQpv8OJ0gt\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "WheKRcKFOTIT",
+              "slide": "VIlafGYGDteQY7TshmdL3"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "VIlafGYGDteQY7TshmdL3",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "tC_7dWFWdZCAO0S4gxvL_",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Original title",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "aOmx72ANTHTjqwX7JZl1J",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "Three reasons to invest.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"VIlafGYGDteQY7TshmdL3\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"tC_7dWFWdZCAO0S4gxvL_\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Original title\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"aOmx72ANTHTjqwX7JZl1J\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Three reasons to invest.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "WheKRcKFOTIT",
+              "slide": "8ByKEspxFKdYQpv8OJ0gt"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "8ByKEspxFKdYQpv8OJ0gt",
+              "index": 1,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "ZsbqIssJMzj8g_wrJb5C8",
+                  "type": "rectangle",
+                  "name": "Callout box",
+                  "x": 200,
+                  "y": 300,
+                  "width": 600,
+                  "height": 300,
+                  "rotation": 0,
+                  "fill": "#f2b705",
+                  "opacity": 1
+                },
+                {
+                  "id": "R8i3SqSE2m7zdBdbluNZm",
+                  "type": "text",
+                  "x": 900,
+                  "y": 280,
+                  "width": 800,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "Keep this note.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"8ByKEspxFKdYQpv8OJ0gt\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"ZsbqIssJMzj8g_wrJb5C8\",\"type\":\"rectangle\",\"name\":\"Callout box\",\"x\":200,\"y\":300,\"width\":600,\"height\":300,\"rotation\":0,\"fill\":\"#f2b705\",\"opacity\":1},{\"id\":\"R8i3SqSE2m7zdBdbluNZm\",\"type\":\"text\",\"x\":900,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Keep this note.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "WheKRcKFOTIT",
+              "request": "Change slide 1 title to \"Draft title\" and delete the rectangle on slide 2"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_EVd8u1SN1YCBxG60"
+            },
+            "text": "{\"runId\":\"run_EVd8u1SN1YCBxG60\"}"
+          },
+          {
+            "tool": "ops_apply",
+            "command": "ops.apply",
+            "input": {
+              "deckId": "WheKRcKFOTIT",
+              "ops": [
+                {
+                  "command": "text_set",
+                  "input": {
+                    "target": {
+                      "slide": "VIlafGYGDteQY7TshmdL3",
+                      "object": "tC_7dWFWdZCAO0S4gxvL_"
+                    },
+                    "text": "Draft title"
+                  }
+                },
+                {
+                  "command": "object_delete",
+                  "input": {
+                    "slide": "8ByKEspxFKdYQpv8OJ0gt",
+                    "objects": ["ZsbqIssJMzj8g_wrJb5C8"]
+                  }
+                }
+              ]
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "results": [
+                {
+                  "length": 11,
+                  "paragraphs": 1
+                },
+                {
+                  "deleted": ["ZsbqIssJMzj8g_wrJb5C8"],
+                  "removedAnimations": []
+                }
+              ]
+            },
+            "text": "{\"results\":[{\"length\":11,\"paragraphs\":1},{\"deleted\":[\"ZsbqIssJMzj8g_wrJb5C8\"],\"removedAnimations\":[]}]}"
+          }
+        ],
+        "finalText": "I made both changes in \"Pitch ev1416f9\":\n\n- **Slide 1:** The title now reads \"Draft title\" instead of \"Original title\". Its formatting is unchanged: 64 px, bold, black.\n- **Slide 2:** I deleted the yellow rectangle named \"Callout box\". The \"Keep this note.\" text box is still there.\n\nBoth edits were saved as a single change (run `run_EVd8u1SN1YCBxG60`), so you can undo them together if needed.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      },
+      {
+        "prompt": "Undo what you just did.",
+        "calls": [
+          {
+            "tool": "agent_revert",
+            "command": "agent.revert",
+            "input": {
+              "deckId": "WheKRcKFOTIT",
+              "runId": "run_EVd8u1SN1YCBxG60"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_EVd8u1SN1YCBxG60",
+              "revertedChanges": 1,
+              "remainingChanges": 0,
+              "status": "reverted"
+            },
+            "text": "{\"runId\":\"run_EVd8u1SN1YCBxG60\",\"revertedChanges\":1,\"remainingChanges\":0,\"status\":\"reverted\"}"
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "WheKRcKFOTIT"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 2,
+              "slides": [
+                {
+                  "id": "VIlafGYGDteQY7TshmdL3",
+                  "index": 0,
+                  "title": "Original title",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "8ByKEspxFKdYQpv8OJ0gt",
+                  "index": 1,
+                  "title": "Keep this note.",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"VIlafGYGDteQY7TshmdL3\",\"index\":0,\"title\":\"Original title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"8ByKEspxFKdYQpv8OJ0gt\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+          }
+        ],
+        "finalText": "I undid both edits, and the deck is back to how it was:\n\n- **Slide 1:** The title reads \"Original title\" again.\n- **Slide 2:** The \"Callout box\" rectangle is back, and the slide has two objects again.",
+        "turns": 3,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

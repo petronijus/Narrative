@@ -9,6 +9,10 @@
 # Routing:
 #   {$DOMAIN}              → React SPA (static files)
 #   {$DOMAIN}/api/*        → Fastify HTTP API (port 3001)
+#   {$DOMAIN}/.well-known/oauth-authorization-server[/*],
+#   {$DOMAIN}/.well-known/oauth-protected-resource[/*]
+#                          → Fastify HTTP API, path NOT stripped (OAuth
+#                            discovery for MCP connectors, see below)
 #   {$DOMAIN}/ws*          → Hocuspocus WebSocket (port 3002)
 #   {$DOMAIN}/storage/*    → MinIO S3 API (port 9000) for presigned URL fetches [M11]
 #   {$DOMAIN}/imgproxy/*   → imgproxy image transforms (port 8080) [M11]
@@ -39,6 +43,21 @@ http://{$DOMAIN:localhost} {
     Referrer-Policy strict-origin-when-cross-origin
   }
 
+  # ── Client IP: never trust a client-supplied CF-Connecting-IP ──────────────
+  # The API keys anonymous rate-limit buckets, its per-IP pre-limit and the
+  # WebSocket failed-authentication throttle on CF-Connecting-IP
+  # (CLIENT_IP_HEADER, apps/server/src/http/clientIp.ts). Cloudflare's edge
+  # sets that header on every request that comes through the tunnel, but
+  # anything that reaches this port directly — another host on the LAN in the
+  # shared-tunnel topology, where :80 is published — could send its own and
+  # pick (or poison) any bucket. So unless the TCP peer is the cloudflared
+  # connector (CLOUDFLARED_TRUSTED_PROXIES, set per topology in the compose
+  # overlays; see docs/deploy.md "Client IP"), the header is overwritten with
+  # the peer's real address before any upstream sees it. `remote_ip` matches
+  # the immediate peer, never a forwarded address.
+  @untrusted_client_ip not remote_ip {$CLOUDFLARED_TRUSTED_PROXIES:private_ranges}
+  request_header @untrusted_client_ip CF-Connecting-IP {remote_host}
+
   # ── REST API ────────────────────────────────────────────────────────────────
   handle_path /api/* {
     reverse_proxy server:3001 {
@@ -51,6 +70,28 @@ http://{$DOMAIN:localhost} {
       # POST with, and reconstructs it from this header
       # (see buildPublicUploadUrl in apps/server/src/media/tus.ts).
       header_up X-Forwarded-Prefix /api
+    }
+  }
+
+  # ── OAuth discovery at the host root (MCP connectors) ──────────────────────
+  # claude.ai and Claude Code discover Narrative's OAuth authorization server
+  # from its RFC 8414 metadata. The issuer is https://{$DOMAIN}/api, and a
+  # client builds the metadata URL by inserting the well-known name BEFORE the
+  # issuer's path, at the host root:
+  #   https://{$DOMAIN}/.well-known/oauth-authorization-server/api
+  # which is outside /api, so without this route it would hit the SPA
+  # fallback and discovery would fail. The RFC 9728 root form of the MCP
+  # resource's metadata (/.well-known/oauth-protected-resource/api/mcp) takes
+  # the same way; the server answers only the paths that name its issuer and
+  # resource (404 otherwise). The path is passed through unchanged (`handle`,
+  # not `handle_path`): the API registers these routes at its root
+  # (apps/server/src/mcp/oauth/routes.ts, docs/mcp.md).
+  # JSON only — the SPA Content-Security-Policy is not involved and stays as
+  # it is (ADR 0007).
+  @oauth_discovery path /.well-known/oauth-authorization-server /.well-known/oauth-authorization-server/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+  handle @oauth_discovery {
+    reverse_proxy server:3001 {
+      header_up Host {upstream_hostport}
     }
   }
 

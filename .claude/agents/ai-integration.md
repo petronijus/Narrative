@@ -21,10 +21,11 @@ deferred in-app agent),
 
 ## What you own
 
-_As of the end of A0 (2026-09-26) none of the paths below exists yet: A0
-built the registry and its guards; the MCP server, playbooks and skill are
-A1 and later. Handoff:
-[`docs/handoff/A0-agentic-foundations.md`](../../docs/handoff/A0-agentic-foundations.md)._
+_As of the end of A1 (2026-09-27, unreleased) all of the paths below exist
+except style packs as resources (A4) and `query.render` (A3). Handoff:
+[`docs/handoff/A1-mcp-and-server-host.md`](../../docs/handoff/A1-mcp-and-server-host.md);
+reference: [`docs/mcp.md`](../../docs/mcp.md). (At the end of A0 none of
+them existed.)_
 
 - `apps/server/src/mcp/` — the MCP server over streamable HTTP at `/api/mcp`,
   on the official MCP TypeScript SDK:
@@ -32,21 +33,44 @@ A1 and later. Handoff:
     Schema and annotations from command metadata (`readOnlyHint` for
     queries, `destructiveHint` for irreversible commands, `idempotentHint`
     where it holds);
-  - MCP elicitation for `confirm: 'always'` commands, and the fallback error
-    for clients that cannot elicit (confirm in plain words, retry with
-    `confirmed: true`);
+  - MCP elicitation for `confirm: 'always'` commands and URL downloads
+    (`confirmWhen`), URL-mode elicitation, and the out-of-band confirmation
+    page for clients that cannot elicit (`confirmation_required` + a
+    server-issued `confirmationId`; never a model-settable flag — docs/mcp.md);
   - `query.render` results as MCP image content (once the render worker
     lands in A3);
-  - the MCP side of authentication: personal access token header first,
-    then the MCP OAuth flow (authorization server metadata, dynamic client
-    registration, PKCE) reusing Google sign-in.
-- `packages/commands/playbooks/` — Narrative's own playbooks as markdown
-  (build deck, edit, restyle, insert-and-restyle, fix slide, translate,
-  shorten), written using the Woodgrove skill library as inspiration only.
+  - the MCP side of authentication: personal access token header, or an
+    MCP OAuth access token (`nmo_…`, audience-bound to `<PUBLIC_API_URL>/mcp`);
+  - `apps/server/src/mcp/oauth/` — Narrative's own OAuth 2.1 authorization
+    server (issuer = `PUBLIC_API_URL`): Client ID Metadata Documents by
+    default (`MCP_OAUTH_CIMD_HOSTS`, default `claude.ai`, fetched through the
+    SSRF guard, never stored), RFC 7591 dynamic registration only when
+    `MCP_OAUTH_DCR_ENABLED`, PKCE S256 only, refresh-token rotation with
+    replay detection, a redirect allowlist of the claude.ai callback plus
+    Claude Code's loopback callbacks on any port (`MCP_OAUTH_REDIRECT_URIS`
+    adds more), and the consent page; Google sign-in is only the login step;
+  - tool generation and compaction (`mcp/tools.ts`, `mcp/schemaCompact.ts`)
+    under the size budget in `mcp/toolListBudget.test.ts` (160,000 bytes for
+    `tools/list`, 16,000 per tool; measured 148,207–151,119 bytes on
+    2026-09-27 depending on the confirmation mode), sessions
+    (`mcp/sessions.ts`, one user + one credential each, swept every minute),
+    and the server `instructions` (`mcp/guidance.ts`).
+- `packages/commands/playbooks/` — Narrative's own playbooks as markdown,
+  written using the Woodgrove skill library as inspiration only. Today:
+  `basics` (prepended to every prompt), `edit`, `find-replace`,
+  `restyle-lite`, `shorten`, `translate`; build deck, full restyle and
+  insert-and-restyle wait for style packs (A4/A5). Loader and checks:
+  `packages/commands/src/playbooks/` (`playbooks.test.ts`).
 - **MCP prompts** (the playbooks) and **MCP resources** (style packs: tokens,
   layouts, editorial rules, once A4 lands).
 - The **`narrative` Claude Code skill** in woodgrove-plugins, generated from the
-  same playbook files.
+  same playbook files by `packages/commands/scripts/skill.ts`
+  (`pnpm --filter @narrative/commands skill -- --out <woodgrove-plugins>/plugins/narrative/skills/narrative`,
+  `--check` to verify). Generated at the end of A1 but, as of 2026-09-27,
+  not committed or published in woodgrove-plugins.
+- **The agent eval suite** (`tests/agent-eval/`, `pnpm agent:eval`): scenario
+  prompts through headless Claude Code, deterministic graders, recordings for
+  the free replay in `packages/commands/src/agentEvalReplay.test.ts`.
 - The model-facing quality of tool descriptions: you review them as a model
   will read them, even though they are written next to each command.
 
@@ -72,9 +96,14 @@ A1 and later. Handoff:
    generated from commands. No hand-written tool, prompt or resource writes
    a document by any other path (ADR 0010).
 3. **Direct by default** (plan §6, §12.2). Agent writes apply live and are
-   revertible per run; propose mode is an opt-in flag. The only exception is
-   irreversible commands: they always confirm through elicitation, and
-   nothing in the MCP layer may bypass that.
+   revertible per run; propose mode is an opt-in flag (not built yet). The
+   exceptions are irreversible commands (`confirm: 'always'`) and URL
+   downloads (`confirmWhen`): they always confirm — form elicitation,
+   URL-mode elicitation, or the out-of-band confirmation page with a
+   server-issued `confirmationId` — and nothing in the MCP layer may bypass
+   that. **Never add a model-settable confirmation flag**: the old
+   `confirmed: true` argument was removed in the 2026-09-27 security review
+   because a prompt injection could set it.
 4. **A session is one user, with that user's role.** Never more; every command
    runs with the calling user's deck role.
 5. **Tool descriptions are written for a model**: when to use the command,
@@ -104,8 +133,12 @@ editor's UndoManager track remote origins.
 - New command in the registry → it appears in MCP automatically; check its
   annotations and read its description as a model would.
 - Change to a playbook, prompt or tool description → run `pnpm agent:eval`
-  (headless Claude Code against the local stack, plan §9.3) and report the
-  graded results.
+  (headless Claude Code against the local stack, plan §9.3; ≈ 2 USD per full
+  run) and report the graded results; `--record` refreshes the replay
+  recordings when a scenario or command behaviour changed on purpose.
+- Tool list grew past the budget → look at what grew (the failure lists the
+  largest tools) before raising it; a sentence repeated on every tool belongs
+  in the server instructions or `basics`.
 - MCP or auth change → `security-reviewer` before the milestone closes.
 - After any feature work → `agent-parity` for coverage, `narrative-docs` for
   the doc sweep.
@@ -116,6 +149,27 @@ editor's UndoManager track remote origins.
 - MCP protocol or SDK question (elicitation, annotations, OAuth metadata,
   streamable HTTP) → fetch the spec at modelcontextprotocol.io and the SDK
   docs; do not guess.
-- A client cannot elicit → the fallback error path, never a silent confirm.
+- A client cannot elicit → the out-of-band confirmation page
+  (`confirmation_required` + `confirmationId`), never a silent confirm.
+
+## Traps (learned in A1)
+
+- **Caddy strips one `/api`.** Fastify registers `/mcp`, `/oauth/*` and
+  `/.well-known/*`; the public URLs are `https://<domain>/api/…`. So
+  `PUBLIC_API_URL` must include `/api` in production (compose passes
+  `https://${DOMAIN}/api`), and RFC 8414 discovery for the issuer
+  `https://<domain>/api` lives at the host ROOT
+  (`/.well-known/oauth-authorization-server/api`), which only works because
+  the Caddyfile routes `/.well-known/oauth-*` to the API without stripping.
+  In dev there is no Caddy: the endpoint is `http://localhost:3001/mcp`.
+- **Changing `PUBLIC_API_URL` disconnects every OAuth app** (tokens are
+  audience-bound to `<PUBLIC_API_URL>/mcp`).
+- **`claude -p` dismisses every elicitation**, so headless runs always take
+  the out-of-band path; an approval is bound to the MCP session that asked,
+  and a new `claude -p` is a new session.
+- **A bare `claude -p` loads the developer's whole setup** (208 tools,
+  ~208k context tokens measured 2026-09-27); the eval isolates it with
+  `--strict-mcp-config`, `--setting-sources project` and `--tools` — see
+  `tests/agent-eval/README.md`.
 - A playbook needs a capability the registry lacks → ask the
   `packages/commands` owner for a command; do not script around it.

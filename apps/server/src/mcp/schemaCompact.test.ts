@@ -1,0 +1,181 @@
+/**
+ * schemaCompact.ts — each pass on its own, plus the property that matters
+ * most: a compacted schema still accepts what the original accepted (the
+ * compaction may loosen a schema, never tighten it; the server validates
+ * against the real zod schema anyway). mcp.test.ts checks the same for
+ * every command example against the generated tools.
+ */
+
+import { describe, expect, it } from 'vitest'
+import { Ajv2020 } from 'ajv/dist/2020.js'
+import { compactInputSchema } from './schemaCompact.js'
+
+const ajv = new Ajv2020({ strict: false })
+const valid = (schema: object, value: unknown): boolean => ajv.validate(schema, value) as boolean
+
+describe('compactInputSchema', () => {
+  it('drops bounds that carry no information, keeps short caps', () => {
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        id: { type: 'string', minLength: 1, maxLength: 64 },
+        code: { type: 'string', maxLength: 2 },
+        n: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      },
+    })
+    expect(out['properties']).toEqual({
+      id: { type: 'string' },
+      code: { type: 'string', maxLength: 2 },
+      n: { type: 'integer', minimum: 0 },
+    })
+  })
+
+  it('collapses a discriminated union into one object and says which kind takes what', () => {
+    const shape = (kind: string, extra: Record<string, unknown>, required: string[] = []) => ({
+      type: 'object',
+      properties: { kind: { type: 'string', const: kind }, x: { type: 'number' }, ...extra },
+      required: ['kind', ...required],
+      additionalProperties: false,
+    })
+    const original = {
+      type: 'object',
+      properties: {
+        shape: {
+          oneOf: [
+            shape('rect', { radius: { type: 'number' } }),
+            shape('circle', { r: { type: 'number' } }, ['r']),
+            shape('image', { assetId: { type: 'string' } }, ['assetId']),
+          ],
+        },
+      },
+      required: ['shape'],
+      additionalProperties: false,
+    }
+    const out = compactInputSchema(original)
+    const collapsed = (out['properties'] as Record<string, Record<string, unknown>>)['shape']!
+    expect(collapsed).not.toHaveProperty('oneOf')
+    expect(collapsed['properties']).toMatchObject({
+      kind: { enum: ['rect', 'circle', 'image'] },
+      x: { type: 'number' },
+      radius: {},
+      r: {},
+      assetId: {},
+    })
+    expect(collapsed['required']).toEqual(['kind'])
+    expect(collapsed['description']).toMatch(/Every kind takes x\./)
+    expect(collapsed['description']).toMatch(/radius: rect/)
+    expect(collapsed['description']).toMatch(/r \(required\): circle/)
+    // Looser, never tighter.
+    for (const value of [
+      { shape: { kind: 'rect', x: 1, radius: 2 } },
+      { shape: { kind: 'circle', r: 3 } },
+      { shape: { kind: 'image', assetId: 'a' } },
+    ]) {
+      expect(valid(original, value)).toBe(true)
+      expect(valid(out, value)).toBe(true)
+    }
+  })
+
+  it('leaves unions without a discriminator alone', () => {
+    const union = {
+      anyOf: [
+        { type: 'object', properties: { a: { type: 'string' } } },
+        { type: 'object', properties: { b: { type: 'string' } } },
+        { type: 'object', properties: { c: { type: 'string' } } },
+      ],
+    }
+    const out = compactInputSchema({ type: 'object', properties: { u: union } })
+    expect((out['properties'] as Record<string, unknown>)['u']).toEqual(union)
+  })
+
+  it('merges closed single-key alternatives into one object with exactly one key', () => {
+    const ref = {
+      anyOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+          required: ['id'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          properties: { index: { type: 'integer', minimum: 0 } },
+          required: ['index'],
+          additionalProperties: false,
+        },
+      ],
+      description: 'Slide id, or { id }, or { index }',
+    }
+    const original = { type: 'object', properties: { slide: ref } }
+    const out = compactInputSchema(original)
+    expect((out['properties'] as Record<string, unknown>)['slide']).toEqual({
+      description: 'Slide id, or { id }, or { index }',
+      anyOf: [
+        { type: 'string' },
+        {
+          type: 'object',
+          properties: { id: { type: 'string' }, index: { type: 'integer', minimum: 0 } },
+          minProperties: 1,
+          maxProperties: 1,
+        },
+      ],
+    })
+    for (const slide of ['s1', { id: 's1' }, { index: 2 }]) expect(valid(out, { slide })).toBe(true)
+    expect(valid(out, { slide: { id: 's1', index: 2 } })).toBe(false)
+  })
+
+  it('inlines definitions that are cheaper inline, keeps shared large and recursive ones', () => {
+    const large = {
+      type: 'object',
+      properties: Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [
+          `p${i}`,
+          { type: 'string', description: `field ${i}` },
+        ]),
+      ),
+    }
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        a: { $ref: '#/$defs/num' },
+        b: { $ref: '#/$defs/num' },
+        c: { $ref: '#/$defs/big' },
+        d: { $ref: '#/$defs/big' },
+        e: { $ref: '#/$defs/tree' },
+      },
+      $defs: {
+        num: { type: 'number' },
+        big: large,
+        tree: {
+          type: 'object',
+          properties: { children: { type: 'array', items: { $ref: '#/$defs/tree' } } },
+        },
+        unused: { type: 'string' },
+      },
+    })
+    const props = out['properties'] as Record<string, unknown>
+    expect(props['a']).toEqual({ type: 'number' })
+    expect(props['c']).toEqual({ $ref: '#/$defs/big' })
+    expect(props['e']).toEqual({ $ref: '#/$defs/tree' })
+    expect(Object.keys(out['$defs'] as object).sort()).toEqual(['big', 'tree'])
+  })
+
+  it('keeps additionalProperties: false only at the root', () => {
+    const out = compactInputSchema({
+      type: 'object',
+      properties: {
+        inner: {
+          type: 'object',
+          properties: { x: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    })
+    expect(out['additionalProperties']).toBe(false)
+    expect((out['properties'] as Record<string, object>)['inner']).not.toHaveProperty(
+      'additionalProperties',
+    )
+  })
+})

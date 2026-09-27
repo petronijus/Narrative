@@ -29,6 +29,19 @@ services:
     # 0.0.0.0:80 — restricted by upstream firewall / Docker NAT.
     ports:
       - '80:80'
+    environment:
+      # Port 80 is reachable from the whole LAN here, so only the external
+      # cloudflared host may hand Caddy a CF-Connecting-IP; every other peer
+      # gets the header overwritten with its own address (Caddyfile, "Client
+      # IP"). 192.0.2.101 stands for the docker VM running the shared
+      # cloudflared (docs/deploy.md, "Production topology") — a
+      # documentation-range placeholder like every 192.0.2.x address in this
+      # repo, so it never matches a real peer: prod MUST set the real address
+      # in .env.prod (docs/deploy.md "Releasing the agentic layer (A1)").
+      # Docker's published-port DNAT keeps the LAN source address, so that is
+      # the address Caddy sees — verify with the check in docs/deploy.md
+      # ("Client IP").
+      CLOUDFLARED_TRUSTED_PROXIES: ${CLOUDFLARED_TRUSTED_PROXIES:-192.0.2.101/32}
 
   # Strip ALL 127.0.0.1: host-port bindings on internal services. They are
   # reachable from sibling containers via Docker's internal `narrative_default`

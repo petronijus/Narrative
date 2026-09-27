@@ -62,6 +62,7 @@ const objectEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 const OBJECT_TYPES: readonly SlideObjectType[] = [
@@ -101,9 +102,7 @@ function stepsTargeting(anims: AnimationsMutationContext, ids: ReadonlySet<strin
 // object.create
 // ---------------------------------------------------------------------------
 
-const assetId = IdSchema.describe(
-  'Id of an already uploaded asset (uploading is not available to agents yet)',
-)
+const assetId = IdSchema.describe('Id of an asset already uploaded to the deck (media.upload)')
 const TrackCount = z.number().int().min(1).max(MAX_TABLE_TRACKS)
 
 const CreateObjectSchema = z.discriminatedUnion('type', [
@@ -172,7 +171,7 @@ export const objectCreate = defineCommand({
     'table. Only `type` is required; every property you omit takes the editor default (e.g. a 200 x 150 blue ' +
     'rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or ' +
     '{ paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of ' +
-    'an asset already uploaded to the deck. A table takes rows/cols/defaults (same as table.insert) and is filled ' +
+    'an asset already uploaded to the deck (media.upload). A table takes rows/cols/defaults (same as table.insert) and is filled ' +
     'with text.set. New objects go on top of the stacking order; use object.layer to reorder. ' +
     UNITS,
   input: z.strictObject({ slide: SlideRefSchema, object: CreateObjectSchema }),
@@ -387,6 +386,7 @@ function preparePatch(
 export const objectUpdate = defineCommand({
   ...objectEditor,
   id: 'object.update',
+  idempotent: true,
   title: 'Update object properties',
   description:
     'ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate (planned, ' +

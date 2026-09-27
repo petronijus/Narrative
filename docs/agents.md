@@ -23,15 +23,15 @@ memory path below were reconciled with `.claude/agents/` at the same time.)_
 
 ## Build agents (write production code)
 
-| Agent            | Scope                                                                                       | Key paths                                                                                        |
-| ---------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `renderer`       | PixiJS scene graph, resource manager, reconciler, DOM overlay compositor                    | `apps/web/src/renderer/`                                                                         |
-| `state-sync`     | Yjs data model, object type registry, Hocuspocus server, persistence, command registry core | `packages/slide-model/`, `packages/shared/`, `packages/commands/`, `apps/server/src/hocuspocus/` |
-| `animation`      | JSON DSL, GSAP compiler, timeline runtime, mixed-target dispatch                            | `packages/animation/`                                                                            |
-| `editor-ui`      | React editor shell, Tailwind UI, toolbar/inspector/panels, keyboard                         | `apps/web/src/ui/`, `packages/ui/`                                                               |
-| `media`          | tus uploads, MinIO, imgproxy, ffmpeg workers, preloading                                    | `apps/server/src/media/`, `apps/video-worker/`                                                   |
-| `infra`          | Docker, Caddy, deploy + release pipeline, backups, observability                            | `infra/`                                                                                         |
-| `ai-integration` | Agent surface: MCP server, playbooks, MCP prompts/resources, `narrative` skill              | `apps/server/src/mcp/`, `packages/commands/playbooks/`                                           |
+| Agent            | Scope                                                                                                                                                                                                            | Key paths                                                                                                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `renderer`       | PixiJS scene graph, resource manager, reconciler, DOM overlay compositor                                                                                                                                         | `apps/web/src/renderer/`                                                                                                                                                   |
+| `state-sync`     | Yjs data model, object type registry, Hocuspocus server, persistence, command registry core, the ServerHost, agent runs / origins / revert                                                                       | `packages/slide-model/`, `packages/shared/`, `packages/commands/`, `apps/server/src/hocuspocus/`, `apps/server/src/agent/`                                                 |
+| `animation`      | JSON DSL, GSAP compiler, timeline runtime, mixed-target dispatch                                                                                                                                                 | `packages/animation/`                                                                                                                                                      |
+| `editor-ui`      | React editor shell, Tailwind UI, toolbar/inspector/panels, keyboard                                                                                                                                              | `apps/web/src/ui/`, `packages/ui/`                                                                                                                                         |
+| `media`          | tus uploads, MinIO, imgproxy, ffmpeg workers, preloading, agent file sources (URL / base64)                                                                                                                      | `apps/server/src/media/`, `apps/video-worker/`, `apps/server/src/services/{media,binarySource,downloadSlots}.ts`, `apps/server/src/net/`                                   |
+| `infra`          | Docker, Caddy, deploy + release pipeline, backups, observability                                                                                                                                                 | `infra/`                                                                                                                                                                   |
+| `ai-integration` | Agent surface: MCP server, its OAuth authorization server, tool generation and schema compaction, confirmation over MCP, playbooks, MCP prompts/resources, the `narrative` skill generator, the agent eval suite | `apps/server/src/mcp/` (incl. `mcp/oauth/`), `packages/commands/playbooks/`, `packages/commands/src/playbooks/`, `packages/commands/scripts/skill.ts`, `tests/agent-eval/` |
 
 > `infra` no longer owns `.github/workflows/` — GitHub Actions was removed on
 > 2026-09-07 (commit `573ba64`). It owns the GHCR build/push + pull-deploy
@@ -50,16 +50,29 @@ effects, undo policy, model-facing description, examples, handler); the
 editor dispatches them through `useCommand()` (BrowserHost), agents through
 the ServerHost over MCP (ADR 0011). Headless: no React, Pixi or DOM.
 
-_State as of A0 (2026-09-26): the registry (50 commands), `ops.apply`, the
-parity machinery and `useCommand()` exist, but no component calls
-`useCommand()` yet and the ServerHost / MCP server do not exist. The editor
-still writes through slide-model directly until A2 migrates it; see
-[`handoff/A0-agentic-foundations.md`](./handoff/A0-agentic-foundations.md)._
+_State as of A1 (2026-09-27, unreleased): 94 commands (50 document commands
+that run in the browser or on the server, 44 server-only ones backed by
+`apps/server/src/services/`), the ServerHost (`apps/server/src/agent/`), the
+MCP server (`apps/server/src/mcp/`) and `POST /api/commands` exist. No
+component calls `useCommand()` yet; the editor still writes through
+slide-model directly until A2 migrates it. See
+[`handoff/A1-mcp-and-server-host.md`](./handoff/A1-mcp-and-server-host.md)
+(was, at A0: 50 commands, no ServerHost, no MCP server —
+[`handoff/A0-agentic-foundations.md`](./handoff/A0-agentic-foundations.md))._
 
-- **Owner:** `state-sync` — the registry core, the hosts, `ops.apply`, and
-  the parity machinery in `src/parity/` (`parity.test.ts`, `allowlist.ts`,
-  `knownMissing.ts`). A feature's commands are written by the agent building
-  the feature, in the same change.
+- **Owner:** `state-sync` — the registry core, the hosts (BrowserHost, and
+  the ServerHost in `apps/server/src/agent/` with runs, `agentOrigin`,
+  per-run revert and the audit log), `ops.apply`, and the parity machinery in
+  `src/parity/` (`parity.test.ts`, `allowlist.ts`, `knownMissing.ts`). A
+  feature's commands are written by the agent building the feature, in the
+  same change; a server command's domain logic lives in
+  `apps/server/src/services/`, shared with the REST route for the same
+  action (one implementation, two callers).
+- **Around it (A1):** personal access tokens and the account kill switch
+  (`apps/server/src/auth/{personalAccessTokens,agentCredentials,signInPolicy}.ts`)
+  and rate limits (`apps/server/src/http/`) — reviewed by `security-reviewer`,
+  env vars and Caddy routes integrated by `infra`; the Access tokens page,
+  the Agent activity popover and the confirmation page — `editor-ui`.
 - **Guarded by:** the parity test, the server route guard
   (`apps/server/src/routes/agentParity.test.ts`; every Fastify route claimed),
   the schema coverage typecheck, per-command contract tests, the committed
@@ -171,16 +184,17 @@ Once the quality gate is green:
 
 ## Conflict zones (settled in advance)
 
-| Zone                | Owner                         | What the others must not do                                                                                                                                                          |
-| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                                                                     |
-| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                                                                 |
-| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                                                                       |
-| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                                                           |
-| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                                                                   |
-| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first?                                          |
-| Document writes     | `packages/commands` owner     | Nobody writes a deck/folder/component doc outside a command: no slide-model writer or `doc.transact` in the UI (ADR 0010; lint-enforced per directory from A2 — no rule exists yet). |
-| Agent surface (MCP) | `ai-integration`              | No agent-facing tool or endpoint that bypasses the registry. No Anthropic API client in the repo (in-app agent deferred, plan §13).                                                  |
+| Zone                | Owner                         | What the others must not do                                                                                                                                                                                                                 |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                                                                                                                            |
+| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                                                                                                                        |
+| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                                                                                                                              |
+| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                                                                                                                  |
+| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                                                                                                                          |
+| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first?                                                                                                 |
+| Document writes     | `packages/commands` owner     | Nobody writes a deck/folder/component doc outside a command: no slide-model writer or `doc.transact` in the UI (ADR 0010; lint-enforced per directory from A2 — no rule exists yet).                                                        |
+| Agent surface (MCP) | `ai-integration`              | No agent-facing tool or endpoint that bypasses the registry. No Anthropic API client in the repo (in-app agent deferred, plan §13).                                                                                                         |
+| Agent writes        | `state-sync` (ServerHost)     | Nobody opens `openDirectConnection` for an agent outside the ServerHost, and nothing accepts a token on the Hocuspocus WebSocket (ADR 0011): the host's access check, confirmation gate, run attribution and audit log are the only way in. |
 
 ---
 
@@ -209,11 +223,13 @@ where the boundaries are. Per `CLAUDE.md`, sub-agents in this repo run on
 
 ## Memory & handoff across sessions
 
-- `docs/handoff/` — the primary resume point. Newest first; the 0.9.x note is
-  the current one.
+- `docs/handoff/` — the primary resume point. The current one is
+  `A1-mcp-and-server-host.md` (2026-09-27; was the 0.9.x note until the
+  agentic layer began).
 - `docs/adr/` — architectural memory (why, not what).
 - `BUILD_PLAN.md` — where the project stands + the milestone roadmap.
-- Claude user memory (`~/.claude/projects/-home-petronijus-Documents-Dev-Narrative/memory/`)
+- Claude user memory (`~/.claude/projects/-home-petronijus-Documents-Dev-Narrative/memory/`
+  on Linux, `-Users-petronijus-Documents-Dev-Narrative` on the MacBook)
   — user preferences and persistent context across sessions. Maintained
   separately; documentation agents do not edit it.
 - Git history + tags — what happened when, and what shipped.

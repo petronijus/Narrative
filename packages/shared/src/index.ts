@@ -78,8 +78,24 @@ export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animati
 
 export { isAnimationPreset, isAnimationTrigger } from './animation.js'
 
-export type { PeerUser, PeerCursor, PeerAwarenessState, PeerInfo } from './awareness.js'
-export { peerColorFromId } from './awareness.js'
+export type {
+  PeerUser,
+  PeerCursor,
+  PeerAwarenessState,
+  PeerAgentInfo,
+  PeerAgentWireInfo,
+  PeerInfo,
+  AgentPrincipalMessage,
+} from './awareness.js'
+export {
+  peerColorFromId,
+  agentPrincipalKeyInput,
+  AGENT_PRINCIPAL_KEY_LENGTH,
+  AGENT_PRINCIPAL_MESSAGE_TYPE,
+  parseAgentPrincipalMessage,
+  PEER_USER_NAME_MAX,
+  sanitizePeerLabel,
+} from './awareness.js'
 
 export { sanitizeHref } from './sanitize.js'
 

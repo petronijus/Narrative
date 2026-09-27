@@ -16,6 +16,9 @@
  * Thumbnail:
  *   Mirrors the deck thumbnail pattern — NULL until the editor uploads a snapshot.
  *   Served via signImgproxyUrl exactly as deck thumbnails are.
+ *
+ * Shared implementation: the handlers call services/components.ts (list, rename, delete) — the same code the
+ * `component.*` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
@@ -28,6 +31,9 @@ import { authPreHandler } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
+import { createComponentsService } from '../services/components.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 /**
  * Hard cap on the data-URL payload — protects against giant uploads.
@@ -120,24 +126,16 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
     '/folders/:folderId/components',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { folderId } = request.params
-      const userId = request.user!.sub
-
-      const folderResult = await checkFolderOwner(db, folderId, userId)
-      if (folderResult === 'not_found') {
-        return reply.status(404).send({ error: 'Folder not found' })
+      try {
+        return reply.send(
+          await createComponentsService(routeDeps(app, db, request.log)).list({
+            userId: request.user!.sub,
+            folderId: request.params.folderId,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      if (folderResult === 'forbidden') {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
-
-      const rows = await db
-        .select()
-        .from(components)
-        .where(eq(components.folderId, folderId))
-        .orderBy(components.createdAt)
-
-      return reply.send(rows.map(withThumbnailUrl))
     },
   )
 
@@ -194,36 +192,16 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
     '/components/:id',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { id } = request.params
-      const userId = request.user!.sub
-
-      const componentResult = await checkComponentOwner(db, id, userId)
-      if (componentResult === 'not_found') {
-        return reply.status(404).send({ error: 'Component not found' })
+      try {
+        const updated = await createComponentsService(routeDeps(app, db, request.log)).rename({
+          userId: request.user!.sub,
+          componentId: request.params.id,
+          name: request.body?.name as string,
+        })
+        return reply.send(updated)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      if (componentResult === 'forbidden') {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
-
-      const rawName = (request.body?.name as string | undefined)?.trim()
-      if (!rawName || rawName.length === 0) {
-        return reply.status(400).send({ error: 'name is required' })
-      }
-      if (rawName.length > 200) {
-        return reply.status(400).send({ error: 'name too long (max 200)' })
-      }
-
-      const [updated] = await db
-        .update(components)
-        .set({ name: rawName, updatedAt: new Date() })
-        .where(eq(components.id, id))
-        .returning()
-
-      if (!updated) {
-        return reply.status(404).send({ error: 'Component not found' })
-      }
-
-      return reply.send(withThumbnailUrl(updated))
     },
   )
 
@@ -310,21 +288,15 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
     '/components/:id',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { id } = request.params
-      const userId = request.user!.sub
-
-      const componentResult = await checkComponentOwner(db, id, userId)
-      if (componentResult === 'not_found') {
-        return reply.status(404).send({ error: 'Component not found' })
+      try {
+        await createComponentsService(routeDeps(app, db, request.log)).delete({
+          userId: request.user!.sub,
+          componentId: request.params.id,
+        })
+        return reply.status(204).send()
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      if (componentResult === 'forbidden') {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
-
-      // component_updates cascade-delete via FK ON DELETE CASCADE.
-      await db.delete(components).where(eq(components.id, id))
-
-      return reply.status(204).send()
     },
   )
 }

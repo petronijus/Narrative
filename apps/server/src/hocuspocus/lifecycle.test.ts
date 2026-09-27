@@ -24,6 +24,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createHocuspocusServer } from './index.js'
+import { createAgentPrincipalKeys } from '../agent/presence.js'
+import { DEV_AGENT_PRINCIPAL_KEY_SECRET } from '../agent/principalKeySecret.js'
 import type { Database } from '../db/client.js'
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,7 @@ describe('Hocuspocus lifecycle', () => {
       port: 0, // not used — we only exercise direct connections
       db: makeMockDb(),
       bypass: true, // dev-mode auth path; dev-user is auto-authenticated
+      principalKeys: createAgentPrincipalKeys(DEV_AGENT_PRINCIPAL_KEY_SECRET),
     })
   })
 

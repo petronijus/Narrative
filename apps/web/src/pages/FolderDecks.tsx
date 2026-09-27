@@ -15,9 +15,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, LogOut, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
-import { useAuth } from '../state/AuthContext.js'
+import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
 import { MoveDeckModal } from '../ui/MoveDeckModal.js'
 import { deleteDeckThumbnail, getAllDeckThumbnails } from '../state/deckThumbnailCache.js'
@@ -61,7 +61,6 @@ function FolderDecksInner() {
   const { folderId } = useParams<{ folderId: string }>()
   const navigate = useNavigate()
   const api = useApi()
-  const { user, logout } = useAuth()
 
   const [folder, setFolder] = useState<FolderSummary | null>(null)
   const [decks, setDecks] = useState<DeckSummary[]>([])
@@ -289,22 +288,7 @@ function FolderDecksInner() {
           </div>
 
           <div className="flex items-center gap-3">
-            {user !== null && (
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:block text-sm text-muted-foreground">
-                  {user.name ?? user.email ?? user.sub.slice(0, 8)}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => void logout()}
-                  aria-label="Sign out"
-                  className="h-8 w-8"
-                >
-                  <LogOut className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </div>
-            )}
+            <UserMenu />
             <Button
               onClick={() => void handleCreateDeck()}
               disabled={creating}

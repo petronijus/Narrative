@@ -1,0 +1,301 @@
+{
+  "scenario": "table-merge-add-column",
+  "tag": "ev1416f9",
+  "recordedAt": "2026-09-27T10:39:38.020Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "CsussoDwDA9y",
+    "title": "Regional results ev1416f9",
+    "tableId": "9nFf0wm9SjA_WRkEesv15"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the table on slide 1 of the Narrative deck \"Regional results ev1416f9\" (deckId CsussoDwDA9y): first merge the entire top row into one header cell, then add one new column at the right end of the table (the new column does not need to be part of the header).",
+        "calls": [
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "CsussoDwDA9y",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "wT_R1pMIGqhq-Tycc4BGl",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "bwHanxTTj9KGCHcHIR4lY",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Regional results",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "9nFf0wm9SjA_WRkEesv15",
+                  "type": "table",
+                  "x": 160,
+                  "y": 260,
+                  "width": 900,
+                  "height": 300,
+                  "rotation": 0,
+                  "opacity": 1,
+                  "colWidths": [300, 300, 300],
+                  "rowHeights": [100, 100, 100],
+                  "defaults": {
+                    "fontSize": 18,
+                    "fontWeight": "normal",
+                    "color": "#111111",
+                    "align": "left",
+                    "vAlign": "middle",
+                    "border": {
+                      "color": "#cccccc",
+                      "width": 1
+                    },
+                    "padding": {
+                      "top": 8,
+                      "right": 8,
+                      "bottom": 8,
+                      "left": 8
+                    }
+                  },
+                  "rows": [
+                    [
+                      {
+                        "text": "Region"
+                      },
+                      {
+                        "text": "Q1"
+                      },
+                      {
+                        "text": "Q2"
+                      }
+                    ],
+                    [
+                      {
+                        "text": "EMEA"
+                      },
+                      {
+                        "text": "12"
+                      },
+                      {
+                        "text": "14"
+                      }
+                    ],
+                    [
+                      {
+                        "text": "APAC"
+                      },
+                      {
+                        "text": "9"
+                      },
+                      {
+                        "text": "8"
+                      }
+                    ]
+                  ]
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"wT_R1pMIGqhq-Tycc4BGl\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"bwHanxTTj9KGCHcHIR4lY\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Regional results\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"9nFf0wm9SjA_WRkEesv15\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":900,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\"},{\"text\":\"Q1\"},{\"text\":\"Q2\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"}]]}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "CsussoDwDA9y",
+              "request": "Merge the table's top row into a header cell, then add a column at the right"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_3GCOWEizLl310c_D"
+            },
+            "text": "{\"runId\":\"run_3GCOWEizLl310c_D\"}"
+          },
+          {
+            "tool": "ops_apply",
+            "command": "ops.apply",
+            "input": {
+              "deckId": "CsussoDwDA9y",
+              "ops": [
+                {
+                  "command": "table_merge",
+                  "input": {
+                    "slide": {
+                      "index": 0
+                    },
+                    "table": "9nFf0wm9SjA_WRkEesv15",
+                    "range": {
+                      "from": {
+                        "row": 0,
+                        "col": 0
+                      },
+                      "to": {
+                        "row": 0,
+                        "col": 2
+                      }
+                    }
+                  }
+                },
+                {
+                  "command": "table_col_insert",
+                  "input": {
+                    "slide": {
+                      "index": 0
+                    },
+                    "table": "9nFf0wm9SjA_WRkEesv15"
+                  }
+                }
+              ]
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "results": [
+                {
+                  "origin": {
+                    "row": 0,
+                    "col": 0
+                  },
+                  "rowSpan": 1,
+                  "colSpan": 3
+                },
+                {
+                  "rows": 3,
+                  "cols": 4
+                }
+              ]
+            },
+            "text": "{\"results\":[{\"origin\":{\"row\":0,\"col\":0},\"rowSpan\":1,\"colSpan\":3},{\"rows\":3,\"cols\":4}]}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "CsussoDwDA9y",
+              "slide": {
+                "index": 0
+              },
+              "object": "9nFf0wm9SjA_WRkEesv15"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "wT_R1pMIGqhq-Tycc4BGl",
+                "index": 0
+              },
+              "stackIndex": 1,
+              "object": {
+                "id": "9nFf0wm9SjA_WRkEesv15",
+                "type": "table",
+                "x": 160,
+                "y": 260,
+                "width": 1200,
+                "height": 300,
+                "rotation": 0,
+                "opacity": 1,
+                "colWidths": [300, 300, 300, 300],
+                "rowHeights": [100, 100, 100],
+                "defaults": {
+                  "fontSize": 18,
+                  "fontWeight": "normal",
+                  "color": "#111111",
+                  "align": "left",
+                  "vAlign": "middle",
+                  "border": {
+                    "color": "#cccccc",
+                    "width": 1
+                  },
+                  "padding": {
+                    "top": 8,
+                    "right": 8,
+                    "bottom": 8,
+                    "left": 8
+                  }
+                },
+                "rows": [
+                  [
+                    {
+                      "text": "Region",
+                      "gridSpan": 3,
+                      "rowSpan": 1
+                    },
+                    {
+                      "text": "Q1",
+                      "mergeOriginR": 0,
+                      "mergeOriginC": 0
+                    },
+                    {
+                      "text": "Q2",
+                      "mergeOriginR": 0,
+                      "mergeOriginC": 0
+                    },
+                    {
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "text": "EMEA"
+                    },
+                    {
+                      "text": "12"
+                    },
+                    {
+                      "text": "14"
+                    },
+                    {
+                      "text": ""
+                    }
+                  ],
+                  [
+                    {
+                      "text": "APAC"
+                    },
+                    {
+                      "text": "9"
+                    },
+                    {
+                      "text": "8"
+                    },
+                    {
+                      "text": ""
+                    }
+                  ]
+                ]
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"wT_R1pMIGqhq-Tycc4BGl\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"9nFf0wm9SjA_WRkEesv15\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":1200,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\",\"gridSpan\":3,\"rowSpan\":1},{\"text\":\"Q1\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"Q2\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"},{\"text\":\"\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"},{\"text\":\"\"}]]},\"animations\":[]}"
+          }
+        ],
+        "finalText": "I made both changes to the table on slide 1 and checked the result:\n\n1. **Header merged:** the three cells of the top row are now one header cell showing \"Region\". The old \"Q1\" and \"Q2\" labels are hidden inside the merged cell, and they would show again if the cell were split.\n2. **Column added:** there is a new, empty column at the right end. It is 300 px wide like the others, which makes the table 1200 px wide instead of 900. As you asked, it is not part of the merged header, so the top row now has the 3-column header plus one separate empty cell.\n\nAll of this was done as one step in a single run, so you can undo it in one go if needed.",
+        "turns": 5,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

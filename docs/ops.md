@@ -13,8 +13,9 @@ resolved, and the production section is new.)_
 
 ## Production at a glance
 
-Four checks answer "is the deployed thing the thing I think it is". Run them
-against the public URL — not against the VM, and not against the repo.
+Four checks answer "is the deployed thing the thing I think it is" (a fifth
+once the agentic layer is released). Run them against the public URL — not
+against the VM, and not against the repo.
 
 ```bash
 # 1. Which version is live
@@ -31,6 +32,11 @@ curl -sI https://narrative.bastla.com | grep -i content-security-policy
 # 4. API health
 curl -s https://narrative.bastla.com/api/health
 # {"status":"ok"}
+
+# 5. (from the agentic A1 release on) OAuth discovery for MCP clients — JSON,
+#    not the SPA's HTML; HTML means claude.ai connectors cannot sign in
+curl -s https://narrative.bastla.com/.well-known/oauth-authorization-server/api | head -c 80
+# {"issuer":"https://narrative.bastla.com/api", …
 ```
 
 On the VM (`ssh narrative`, user `petr`, only reachable via the `pve` jump
@@ -212,15 +218,50 @@ See `infra/docker-compose.yml` for the details.
 # Dev migrations (run automatically when the server starts in dev mode)
 pnpm --filter server db:migrate
 
-# Manual migration (prod) — normally run by deploy.sh
-pnpm --filter server db:migrate
+# Manual migration (prod) — normally run by deploy.sh. The VM has no pnpm and
+# no source checkout; run the compiled migrator in the server image:
+cd /opt/narrative/infra && docker compose -f docker-compose.yml \
+  -f docker-compose.prod.yml -f docker-compose.prod.shared-tunnel.yml \
+  --env-file .env.prod run --rm --entrypoint "" server \
+  node apps/server/dist/apps/server/src/db/migrate.js
 ```
+
+(Was documented here as `pnpm --filter server db:migrate` for prod too, which
+cannot work on the VM; corrected 2026-09-27 to what `infra/scripts/deploy.sh`
+runs.)
 
 Migrations are forward-only. To undo one, write a new migration; do not drop
 tables by hand.
 
 Backups: `infra/scripts/backup.sh` (gzip'd `pg_dump`, retention `RETAIN_DAYS`,
 cron'd daily at 03:00 on the VM).
+
+---
+
+## Agents (MCP) — operating notes
+
+From the agentic-layer A1 release on (unreleased as of 2026-09-27).
+Reference: [`mcp.md`](./mcp.md); env vars, Caddy routes, kill switch and
+retention: [`deploy.md`](./deploy.md).
+
+- **A server restart drops agent state that lives in memory**: open MCP
+  sessions (clients re-initialise on their own), pending out-of-band
+  confirmations (the agent must ask again), and the per-run undo history —
+  **runs made before the restart can no longer be reverted** (ADR 0011,
+  "Revert works only while the document is loaded"). Restarting is still the
+  way to cut an MCP session off immediately after `revokeUserAccess`.
+- **Cutting someone off**: `revokeUserAccess` (deploy.md "Revoking a user");
+  exit code 2 means they could still sign in again.
+- **Log events worth alerting on** once M30 lands:
+  `event: "mcp_oauth_refresh_replay"` (a refresh token was reused; the
+  connection is flagged under Connected apps, and revoked unless it was the
+  client racing itself).
+- **Housekeeping runs in-process** (nothing to schedule): agent runs/ops
+  after 90 days, PPTX exports after a day, expired OAuth tokens and
+  authorisations hourly.
+- **Rate limits are in process memory** and reset on restart; claude.ai
+  traffic arrives from Anthropic's egress `160.79.104.0/21`, so per-IP limits
+  are shared by all claude.ai users (agent bearers are counted per token).
 
 ---
 

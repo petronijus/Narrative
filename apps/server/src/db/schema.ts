@@ -34,6 +34,9 @@ import {
   primaryKey,
   boolean,
   integer,
+  bigserial,
+  jsonb,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // Custom type for bytea (Yjs updates are Uint8Array)
@@ -389,6 +392,12 @@ export const users = pgTable(
     /** Google OIDC `sub` claim — also the value stored in `*.user_id` columns. */
     sub: text('sub').primaryKey(),
     email: text('email').notNull(),
+    /**
+     * Google's `email_verified` claim at the last sign-in (migration 0020).
+     * NULL for accounts that have not signed in since the column was added;
+     * treated as unverified until they do.
+     */
+    emailVerified: boolean('email_verified'),
     name: text('name'),
     pictureUrl: text('picture_url'),
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
@@ -451,6 +460,255 @@ export const sessions = pgTable(
 )
 
 // ---------------------------------------------------------------------------
+// Agentic layer A1 (migration 0016, ADR 0011)
+// ---------------------------------------------------------------------------
+
+/**
+ * Personal access tokens — the identity Claude Code (MCP) and scripts (batch
+ * API) use instead of the browser session cookie. Only the SHA-256 of the
+ * raw token is stored; `prefix` lets the owner recognise a token in a list.
+ */
+export const personalAccessTokens = pgTable(
+  'personal_access_tokens',
+  {
+    /** nanoid — public id used to revoke a token. */
+    id: text('id').primaryKey(),
+    userSub: text('user_sub').notNull(),
+    /** Human label chosen at creation ("MacBook Claude Code"). */
+    name: text('name').notNull(),
+    /** SHA-256 hex of the raw token. */
+    tokenHash: text('token_hash').notNull(),
+    /** First characters of the raw token, shown in the token list. */
+    prefix: text('prefix').notNull(),
+    /** Granted scopes, e.g. `mcp`, `api`. */
+    scopes: text('scopes').array().notNull().default([]),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    /** Every token expires, at most 365 days after creation (migration 0020). */
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('personal_access_tokens_token_hash_idx').on(t.tokenHash),
+    index('personal_access_tokens_user_sub_idx').on(t.userSub),
+  ],
+)
+
+/**
+ * One agent run: one MCP session's (or API client's) work on one deck, the
+ * unit of attribution and of revert. Every write of the run uses
+ * `agentOrigin(id)` as its Yjs transaction origin.
+ */
+export const agentRuns = pgTable(
+  'agent_runs',
+  {
+    id: text('id').primaryKey(),
+    userSub: text('user_sub').notNull(),
+    /** The deck the run works on (null for component-master or account/folder-level runs). */
+    deckId: text('deck_id').references(() => decks.id, { onDelete: 'cascade' }),
+    /** The component master the run edits instead of a deck (migration 0017). */
+    componentId: text('component_id').references(() => components.id, { onDelete: 'cascade' }),
+    /** `mcp` | `api` */
+    surface: text('surface').notNull(),
+    /** Client name the MCP session reported (e.g. "claude-code"). */
+    clientName: text('client_name'),
+    /** The user's request as the agent stated it when starting the run. */
+    request: text('request'),
+    /** `open` | `closed` | `reverted` */
+    status: text('status').notNull().default('open'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    revertedAt: timestamp('reverted_at', { withTimezone: true }),
+    revertedBySub: text('reverted_by_sub'),
+  },
+  (t) => [
+    index('agent_runs_deck_id_idx').on(t.deckId, t.createdAt),
+    index('agent_runs_user_sub_idx').on(t.userSub, t.createdAt),
+    index('agent_runs_component_id_idx').on(t.componentId, t.createdAt),
+  ],
+)
+
+/** Every command an agent run executed, in order — the audit trail. */
+export const agentOps = pgTable(
+  'agent_ops',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    runId: text('run_id')
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    command: text('command').notNull(),
+    input: jsonb('input').notNull(),
+    /** The target the host authorised ({ deckId } | { componentId } | { folderId } | {}); migration 0017. */
+    target: jsonb('target'),
+    result: jsonb('result'),
+    error: jsonb('error'),
+    /**
+     * How an op that needed the user's confirmation was confirmed:
+     * `{ via: 'elicitation' | 'out_of_band' | 'explicit', by, surface, at, reasons?,
+     * hosts?, confirmationId?, approvedAt? }` (migration 0019; agent/runStore.ts).
+     */
+    confirmation: jsonb('confirmation'),
+    /**
+     * Every host the op's downloads contacted — the requested one and each
+     * redirect hop (migration 0023). NULL when it fetched nothing.
+     */
+    fetchedHosts: text('fetched_hosts').array(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('agent_ops_run_seq_idx').on(t.runId, t.seq)],
+)
+
+// ---------------------------------------------------------------------------
+// MCP OAuth (migration 0018) — Narrative as the OAuth 2.1 authorization server
+// for MCP clients such as claude.ai connectors. apps/server/src/mcp/oauth/.
+// Only SHA-256 hashes of codes, tokens and client secrets are stored.
+// ---------------------------------------------------------------------------
+
+/** A dynamically registered OAuth client (RFC 7591). */
+export const mcpOauthClients = pgTable('mcp_oauth_clients', {
+  /** client_id (random). */
+  id: text('id').primaryKey(),
+  clientName: text('client_name').notNull(),
+  /** The claude.ai callback, loopback `/callback` URIs and MCP_OAUTH_REDIRECT_URIS only (mcp/oauth/redirects.ts). */
+  redirectUris: text('redirect_uris').array().notNull(),
+  /** `none` | `client_secret_post` | `client_secret_basic` */
+  tokenEndpointAuthMethod: text('token_endpoint_auth_method').notNull(),
+  clientSecretHash: text('client_secret_hash'),
+  clientUri: text('client_uri'),
+  softwareId: text('software_id'),
+  softwareVersion: text('software_version'),
+  /**
+   * The scopes the client registered (migration 0022). NULL on registrations
+   * made before it: every supported scope, as they were treated then.
+   */
+  scopes: text('scopes').array(),
+  /**
+   * The grant types the client registered (migration 0022; RFC 7591 default
+   * `authorization_code` when it sent none). A refresh token is issued only
+   * to a client whose grant types include `refresh_token`. NULL on older
+   * registrations: both grant types, as before.
+   */
+  grantTypes: text('grant_types').array(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+})
+
+/** A user's approval of one client: the identity behind its tokens. */
+export const mcpOauthGrants = pgTable(
+  'mcp_oauth_grants',
+  {
+    id: text('id').primaryKey(),
+    /**
+     * A registered (RFC 7591) client. Exactly one of `clientId` and
+     * `clientMetadataUrl` is set (CHECK, migration 0021).
+     */
+    clientId: text('client_id').references(() => mcpOauthClients.id, { onDelete: 'cascade' }),
+    /** A Client ID Metadata Document client: its client_id URL (never a row in mcp_oauth_clients). */
+    clientMetadataUrl: text('client_metadata_url'),
+    /** The client's name when the user approved it (migration 0021; NULL before). */
+    clientName: text('client_name'),
+    /** The redirect URI the user approved (migration 0021; NULL before). */
+    redirectUri: text('redirect_uri'),
+    userSub: text('user_sub').notNull(),
+    scopes: text('scopes').array().notNull(),
+    /**
+     * The client's grant types when the user approved it (migration 0022), so
+     * the token endpoint never refetches a metadata document. NULL on older
+     * grants: refresh allowed, as before.
+     */
+    grantTypes: text('grant_types').array(),
+    /** The MCP resource (RFC 8707) the tokens are bound to. */
+    resource: text('resource').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    /** Set when a refresh token of the grant was replayed (migration 0022; see service.ts). */
+    flaggedAt: timestamp('flagged_at', { withTimezone: true }),
+    flagReason: text('flag_reason'),
+  },
+  (t) => [
+    index('mcp_oauth_grants_user_sub_idx').on(t.userSub),
+    index('mcp_oauth_grants_client_id_idx').on(t.clientId),
+  ],
+)
+
+/** One authorization request: parameters, consent decision and one-time code. */
+export const mcpOauthAuthorizations = pgTable(
+  'mcp_oauth_authorizations',
+  {
+    id: text('id').primaryKey(),
+    /** Registered client, or `clientMetadataUrl` for a CIMD client — exactly one (migration 0021). */
+    clientId: text('client_id').references(() => mcpOauthClients.id, { onDelete: 'cascade' }),
+    clientMetadataUrl: text('client_metadata_url'),
+    /** Display snapshot of the client when the request was made (migration 0021). */
+    clientName: text('client_name'),
+    /** Every redirect URI the client had when the request was made (migration 0021). */
+    clientRedirectUris: text('client_redirect_uris').array(),
+    redirectUri: text('redirect_uri').notNull(),
+    /**
+     * Whether /authorize received `redirect_uri` explicitly (migration 0022).
+     * When it did, the token request must repeat it exactly (RFC 6749 §4.1.3).
+     */
+    redirectUriProvided: boolean('redirect_uri_provided').notNull().default(true),
+    /** The client's grant types when the request was made (migration 0022). */
+    clientGrantTypes: text('client_grant_types').array(),
+    /** PKCE S256 challenge. */
+    codeChallenge: text('code_challenge').notNull(),
+    scopes: text('scopes').array().notNull(),
+    resource: text('resource').notNull(),
+    state: text('state'),
+    /** SHA-256 of the consent form's CSRF token. */
+    csrfHash: text('csrf_hash').notNull(),
+    /** The signed-in user who saw the consent page (bound on first view). */
+    userSub: text('user_sub'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    /** `approved` | `denied` */
+    decision: text('decision'),
+    codeHash: text('code_hash'),
+    codeExpiresAt: timestamp('code_expires_at', { withTimezone: true }),
+    exchangedAt: timestamp('exchanged_at', { withTimezone: true }),
+    grantId: text('grant_id').references(() => mcpOauthGrants.id, { onDelete: 'set null' }),
+  },
+  (t) => [
+    uniqueIndex('mcp_oauth_authorizations_code_hash_idx').on(t.codeHash),
+    index('mcp_oauth_authorizations_expires_at_idx').on(t.expiresAt),
+    index('mcp_oauth_authorizations_client_id_idx').on(t.clientId),
+  ],
+)
+
+/** Access and refresh tokens of a grant. */
+export const mcpOauthTokens = pgTable(
+  'mcp_oauth_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    grantId: text('grant_id')
+      .notNull()
+      .references(() => mcpOauthGrants.id, { onDelete: 'cascade' }),
+    /** `access` | `refresh` */
+    kind: text('kind').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Refresh tokens: when it was rotated (single use). */
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    /**
+     * Refresh tokens: SHA-256 of the rotating request's client IP and
+     * User-Agent (migration 0022), to tell a client racing itself from a
+     * replay by someone else (service.ts, refresh replay).
+     */
+    usedByFingerprint: text('used_by_fingerprint'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('mcp_oauth_tokens_grant_id_idx').on(t.grantId),
+    index('mcp_oauth_tokens_expires_at_idx').on(t.expiresAt),
+  ],
+)
+
+// ---------------------------------------------------------------------------
 // Inferred types
 // ---------------------------------------------------------------------------
 
@@ -478,3 +736,9 @@ export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type DeckInvite = typeof deckInvites.$inferSelect
 export type NewDeckInvite = typeof deckInvites.$inferInsert
+export type PersonalAccessToken = typeof personalAccessTokens.$inferSelect
+export type NewPersonalAccessToken = typeof personalAccessTokens.$inferInsert
+export type AgentRun = typeof agentRuns.$inferSelect
+export type NewAgentRun = typeof agentRuns.$inferInsert
+export type AgentOp = typeof agentOps.$inferSelect
+export type NewAgentOp = typeof agentOps.$inferInsert

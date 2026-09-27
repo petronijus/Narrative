@@ -1,0 +1,214 @@
+{
+  "scenario": "slide-duplicate-retitle",
+  "tag": "ev1416f9",
+  "recordedAt": "2026-09-27T10:38:42.214Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "66HWNGsDWmen",
+    "title": "Quarterly review ev1416f9",
+    "slideIds": ["N9oSv9EtGltVBzZWH3yLs", "o6q2spvhlT0LY2ga_OYL8", "FWSP6RGUbNiAh_cPzTFr7"]
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative deck \"Quarterly review ev1416f9\" (deckId 66HWNGsDWmen), duplicate slide 2 and change the title on the copy to \"Market outlook 2027\".",
+        "calls": [
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "66HWNGsDWmen"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 3,
+              "slides": [
+                {
+                  "id": "N9oSv9EtGltVBzZWH3yLs",
+                  "index": 0,
+                  "title": "Quarterly review",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "o6q2spvhlT0LY2ga_OYL8",
+                  "index": 1,
+                  "title": "Market overview",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "FWSP6RGUbNiAh_cPzTFr7",
+                  "index": 2,
+                  "title": "Next steps",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"N9oSv9EtGltVBzZWH3yLs\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"o6q2spvhlT0LY2ga_OYL8\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"FWSP6RGUbNiAh_cPzTFr7\",\"index\":2,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "66HWNGsDWmen",
+              "slide": "o6q2spvhlT0LY2ga_OYL8"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "o6q2spvhlT0LY2ga_OYL8",
+              "index": 1,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "4ou5q6ercfvG0Z2mMrns2",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Market overview",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "qpBK44b6APzalYCx-NAhe",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "EMEA grew 12% while APAC was flat.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"o6q2spvhlT0LY2ga_OYL8\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"4ou5q6ercfvG0Z2mMrns2\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Market overview\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"qpBK44b6APzalYCx-NAhe\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"EMEA grew 12% while APAC was flat.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "66HWNGsDWmen",
+              "request": "Duplicate slide 2 and retitle the copy \"Market outlook 2027\""
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_zv9a1vFhLIighyOg"
+            },
+            "text": "{\"runId\":\"run_zv9a1vFhLIighyOg\"}"
+          },
+          {
+            "tool": "slide_duplicate",
+            "command": "slide.duplicate",
+            "input": {
+              "deckId": "66HWNGsDWmen",
+              "slide": "o6q2spvhlT0LY2ga_OYL8"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideId": "o0Vu65Lc4mr4ksSURF2Az"
+            },
+            "text": "{\"slideId\":\"o0Vu65Lc4mr4ksSURF2Az\"}"
+          },
+          {
+            "tool": "text_set",
+            "command": "text.set",
+            "input": {
+              "deckId": "66HWNGsDWmen",
+              "target": {
+                "slide": "o0Vu65Lc4mr4ksSURF2Az",
+                "object": "4ou5q6ercfvG0Z2mMrns2"
+              },
+              "text": "Market outlook 2027"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "length": 19,
+              "paragraphs": 1
+            },
+            "text": "{\"length\":19,\"paragraphs\":1}"
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "66HWNGsDWmen"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 4,
+              "slides": [
+                {
+                  "id": "N9oSv9EtGltVBzZWH3yLs",
+                  "index": 0,
+                  "title": "Quarterly review",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "o6q2spvhlT0LY2ga_OYL8",
+                  "index": 1,
+                  "title": "Market overview",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "o0Vu65Lc4mr4ksSURF2Az",
+                  "index": 2,
+                  "title": "Market outlook 2027",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "FWSP6RGUbNiAh_cPzTFr7",
+                  "index": 3,
+                  "title": "Next steps",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"N9oSv9EtGltVBzZWH3yLs\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"o6q2spvhlT0LY2ga_OYL8\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"o0Vu65Lc4mr4ksSURF2Az\",\"index\":2,\"title\":\"Market outlook 2027\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"FWSP6RGUbNiAh_cPzTFr7\",\"index\":3,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+          }
+        ],
+        "finalText": "I duplicated slide 2 (\"Market overview\") and titled the copy \"Market outlook 2027\". The copy is now slide 3, and \"Next steps\" has moved to slide 4. I checked the deck afterwards and the new title is there. The title keeps its original formatting (64 px, bold).\n\nThe copy's body text is unchanged: it still says \"EMEA grew 12% while APAC was flat.\" You may want to update it for the outlook.\n\nIf you want to undo this, I can revert the run (`run_zv9a1vFhLIighyOg`).",
+        "turns": 7,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

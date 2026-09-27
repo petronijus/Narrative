@@ -52,6 +52,7 @@ import {
   registerDeckMedia,
   uploadEmbeddedImagesAndPatchAssetIds,
   type ImportLogger,
+  type StagedDeckMedia,
 } from './importDeck.js'
 import { hydrateSlideDoc } from '@narrative/slide-model'
 
@@ -63,6 +64,8 @@ export interface AppendDeckResult {
   deckId: string
   /** Slides INSERTED, not the deck's new total. */
   appendedSlides: number
+  /** Ids of the inserted slides, in file order. */
+  slideIds: string[]
   objectsCreated: number
   skipped: { images: number; unknownShapes: number }
   ignoredElements: string[]
@@ -94,6 +97,94 @@ export type AppendDeckError =
   | { kind: 'writeFailed'; documentTouched: boolean }
 
 /**
+ * A parsed `.pptx` whose embedded media is stored in the bucket under the
+ * target deck's namespace (and whose shapes point at the new asset ids),
+ * but which is not registered and not written yet.
+ */
+export interface StagedPptxInsert {
+  deckId: string
+  ownerUserId: string
+  parsed: ParsedPptx
+  media: StagedDeckMedia
+}
+
+/**
+ * Stage 1 of an insert: parse the bytes and store the embedded media under
+ * the EXISTING deck's namespace — the deck's permission grants on
+ * `mediaAssets.deckId` apply uniformly, and the deck's cascade delete and
+ * bucket-prefix sweep reap them with the deck. Nothing is registered and the
+ * document is not touched.
+ */
+export async function stagePptxInsert(args: {
+  bytes: Buffer
+  deckId: string
+  ownerUserId: string
+  log: ImportLogger
+}): Promise<{ ok: true; staged: StagedPptxInsert } | { ok: false; error: AppendDeckError }> {
+  const { bytes, deckId, ownerUserId, log } = args
+  if (bytes.byteLength === 0) {
+    return { ok: false, error: { kind: 'emptyBody' } }
+  }
+  let parsed: ParsedPptx
+  try {
+    parsed = await parsePptx(bytes)
+  } catch (err) {
+    log.warn({ err, deckId }, 'pptx-append: parse failed')
+    return {
+      ok: false,
+      error: {
+        kind: 'parseFailed',
+        message: err instanceof Error ? err.message : 'unknown error',
+      },
+    }
+  }
+  if (parsed.slides.length === 0) {
+    return { ok: false, error: { kind: 'noSlides' } }
+  }
+  const media = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
+  return { ok: true, staged: { deckId, ownerUserId, parsed, media } }
+}
+
+/**
+ * Stage 2 of an insert: write the staged slides into `doc` (the live deck
+ * document, or a detached replay) at `insertAt`, synchronously. Register the
+ * staged media BEFORE calling this (see the module header for why). Returns
+ * the writer's result and where the first slide actually landed.
+ */
+export function writeStagedPptx(
+  staged: StagedPptxInsert,
+  doc: Y.Doc,
+  insertAt: number | undefined,
+): { written: WriteResult; insertedAt: number } {
+  const insertedAt = resolveInsertedAt(doc, insertAt)
+  const written = buildDeckAppendUpdate(staged.parsed, doc, insertAt)
+  return { written, insertedAt }
+}
+
+/** The route / tus result for a finished insert. */
+export function appendResultOf(
+  staged: StagedPptxInsert,
+  written: WriteResult,
+  insertedAt: number,
+): AppendDeckResult {
+  const { parsed, media, deckId } = staged
+  return {
+    deckId,
+    appendedSlides: written.slideCount,
+    slideIds: written.slideIds,
+    objectsCreated: written.objectsCreated,
+    skipped: {
+      images: written.skipped.images + media.skippedUnsupportedImages,
+      unknownShapes: written.skipped.unknownShapes,
+    },
+    ignoredElements: parsed.ignoredElements,
+    slideWidth: parsed.slideWidth,
+    slideHeight: parsed.slideHeight,
+    insertedAt,
+  }
+}
+
+/**
  * Run the full "buffer → slides in an open deck" pipeline. Pure server side;
  * no HTTP primitives. The caller has already established that this user may
  * edit this deck.
@@ -115,35 +206,11 @@ export async function appendPptxToDeck(args: {
 }): Promise<{ ok: true; result: AppendDeckResult } | { ok: false; error: AppendDeckError }> {
   const { bytes, deckId, ownerUserId, insertAt, db, log } = args
 
-  if (bytes.byteLength === 0) {
-    return { ok: false, error: { kind: 'emptyBody' } }
-  }
-
-  // ─── Parse ───────────────────────────────────────────────────────────────
-  let parsed: ParsedPptx
-  try {
-    parsed = await parsePptx(bytes)
-  } catch (err) {
-    log.warn({ err, deckId }, 'pptx-append: parse failed')
-    return {
-      ok: false,
-      error: {
-        kind: 'parseFailed',
-        message: err instanceof Error ? err.message : 'unknown error',
-      },
-    }
-  }
-  if (parsed.slides.length === 0) {
-    return { ok: false, error: { kind: 'noSlides' } }
-  }
-
-  // ─── Upload images + patch assetIds ──────────────────────────────────────
-  // Images for inserted slides land under the SAME deckId namespace as the
-  // existing deck's media — that matters because the deck's permission
-  // grants on `mediaAssets.deckId` apply uniformly, and because the deck's
-  // cascade delete and bucket-prefix sweep then reap them with the deck.
-  const media = await uploadEmbeddedImagesAndPatchAssetIds(parsed, deckId, ownerUserId, log)
-  const { uploadedImageCount, skippedUnsupportedImages } = media
+  // ─── Parse + upload images + patch assetIds ─────────────────────────────
+  const stagedResult = await stagePptxInsert({ bytes, deckId, ownerUserId, log })
+  if (!stagedResult.ok) return stagedResult
+  const staged = stagedResult.staged
+  const { media } = staged
 
   const hocuspocus = getHocuspocusInstance()
   let written: WriteResult | null = null
@@ -163,17 +230,21 @@ export async function appendPptxToDeck(args: {
 
     // ─── 2. Write into the LIVE document ─────────────────────────────────
     // Set as the callback's first statement: until then the document is
-    // provably unchanged, after it nothing is provable (the writer is a run
-    // of separate Yjs transactions, and the store hooks can still reject
-    // after all of them were applied and broadcast).
+    // provably unchanged, after it nothing is provable (the store hooks can
+    // still reject after the write was applied and broadcast). The write is
+    // ONE Yjs transaction, so editors receive the inserted slides as one
+    // update instead of a burst of partial states.
     let documentTouched = false
     try {
       const connection = await hocuspocus.openDirectConnection(deckId)
       try {
         await connection.transact((doc) => {
           documentTouched = true
-          insertedAt = resolveInsertedAt(doc, insertAt)
-          written = buildDeckAppendUpdate(parsed, doc, insertAt)
+          doc.transact(() => {
+            const out = writeStagedPptx(staged, doc, insertAt)
+            insertedAt = out.insertedAt
+            written = out.written
+          })
         })
       } finally {
         await connection.disconnect()
@@ -208,8 +279,9 @@ export async function appendPptxToDeck(args: {
         log.warn({ err, deckId }, 'pptx-append: skipping corrupt deck_updates row')
       }
     }
-    insertedAt = resolveInsertedAt(doc, insertAt)
-    const detached = buildDeckAppendUpdate(parsed, doc, insertAt)
+    const out = writeStagedPptx(staged, doc, insertAt)
+    insertedAt = out.insertedAt
+    const detached = out.written
     written = detached
     // Rows and the document update commit together here, so there is no
     // ordering window at all; transcodes follow the commit as always.
@@ -244,38 +316,23 @@ export async function appendPptxToDeck(args: {
     await discardDeckMedia({ db, deckId, media, log })
     return { ok: false, error: { kind: 'writeFailed', documentTouched: false } }
   }
-  const { slideCount, objectsCreated, skipped } = written as WriteResult
+  const result = appendResultOf(staged, written as WriteResult, insertedAt)
 
   log.info(
     {
       deckId,
-      appendedSlides: slideCount,
+      appendedSlides: result.appendedSlides,
       insertedAt,
-      objectsCreated,
-      skippedImages: skipped.images + skippedUnsupportedImages,
-      skippedUnknown: skipped.unknownShapes,
-      uploadedImages: uploadedImageCount,
-      ignored: parsed.ignoredElements,
+      objectsCreated: result.objectsCreated,
+      skippedImages: result.skipped.images,
+      skippedUnknown: result.skipped.unknownShapes,
+      uploadedImages: media.uploadedImageCount,
+      ignored: staged.parsed.ignoredElements,
     },
     'pptx-append: slides inserted',
   )
 
-  return {
-    ok: true,
-    result: {
-      deckId,
-      appendedSlides: slideCount,
-      objectsCreated,
-      skipped: {
-        images: skipped.images + skippedUnsupportedImages,
-        unknownShapes: skipped.unknownShapes,
-      },
-      ignoredElements: parsed.ignoredElements,
-      slideWidth: parsed.slideWidth,
-      slideHeight: parsed.slideHeight,
-      insertedAt,
-    },
-  }
+  return { ok: true, result }
 }
 
 /**

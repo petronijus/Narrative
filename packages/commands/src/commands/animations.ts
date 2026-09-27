@@ -41,6 +41,7 @@ const animationEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 /**
@@ -200,6 +201,7 @@ export const animationAdd = defineCommand({
 export const animationUpdate = defineCommand({
   ...animationEditor,
   id: 'animation.update',
+  idempotent: true,
   title: 'Update animation',
   description:
     'Change an animation step: preset, trigger, duration (s), delay (s), easing, params. `params` is MERGED into ' +

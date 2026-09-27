@@ -26,6 +26,9 @@
  * - Žádné pointer listeners → canvas je read-only (pointer-events:none).
  * - Keyboard: Escape → editor, Arrow/Space/Page → slide navigation.
  * - Fullscreen API: klávesa F nebo F11.
+ * - `?slide=N` (1-based, every slide counted): start at slide N instead of
+ *   the active slide — see presentStartSlide.ts (agentic A1,
+ *   `editor.present.link`).
  *
  * Accessibility:
  * - role="application" s aria-label pro screen reader context.
@@ -55,6 +58,7 @@ import type { AnimationRuntime } from '@narrative/animation'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { VideoObject } from '@narrative/shared'
 import { sanitizeHref } from '@narrative/shared'
+import { presentStartSlideId } from './presentStartSlide.js'
 
 /** Vypočte scale-to-fit pro slide do daného viewportu při zachování aspect ratio. */
 function computeScale(viewportW: number, viewportH: number): number {
@@ -107,6 +111,20 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
   // M9: slide list + active slide for navigation
   const slides = useSlides()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
+
+  // `?slide=N`: jump there once the slide list is known. Remembered per
+  // parameter value, so the jump happens once per link — the presenter then
+  // navigates freely — and a same-tab navigation to another link (only the
+  // query changes, the layout stays mounted) jumps again.
+  const startSlideParam = searchParams.get('slide')
+  const appliedStartParamRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (startSlideParam === null || appliedStartParamRef.current === startSlideParam) return
+    if (slides.length === 0) return
+    appliedStartParamRef.current = startSlideParam
+    const target = presentStartSlideId(startSlideParam, slides)
+    if (target !== null) setActiveSlideId(target)
+  }, [startSlideParam, slides, setActiveSlideId])
 
   // M12: active slide objects for VideoOverlay
   const { objects } = useSlideObjects()

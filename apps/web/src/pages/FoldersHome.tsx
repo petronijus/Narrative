@@ -16,7 +16,6 @@ import {
   FileUp,
   Folder,
   FolderPlus,
-  LogOut,
   MoreVertical,
   Pencil,
   Plus,
@@ -24,7 +23,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useApi } from '../api/client.js'
-import { useAuth } from '../state/AuthContext.js'
+import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
 import type { FolderSummary } from '../api/client.js'
 import { NewDeckDialog } from '../ui/NewDeckDialog.js'
@@ -37,7 +36,6 @@ import { usePptxImport } from '../ui/usePptxImport.js'
 export function FoldersHome() {
   const navigate = useNavigate()
   const api = useApi()
-  const { user, logout } = useAuth()
   const [folders, setFolders] = useState<FolderSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -151,22 +149,7 @@ export function FoldersHome() {
       <header className="panel border-b border-border px-8 py-4">
         <div className="flex items-center justify-end">
           <div className="flex items-center gap-3">
-            {user !== null && (
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:block text-sm text-muted-foreground">
-                  {user.name ?? user.email ?? user.sub.slice(0, 8)}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => void logout()}
-                  aria-label="Sign out"
-                  className="h-8 w-8"
-                >
-                  <LogOut className="h-4 w-4" aria-hidden="true" />
-                </Button>
-              </div>
-            )}
+            <UserMenu />
             <Button
               onClick={() => void handleCreateFolder()}
               disabled={creating}

@@ -48,6 +48,30 @@ function prepare(
   if (def.effects.includes('doc') && ctx.deck === undefined) {
     throw new CommandError('no_target', `command '${commandId}' needs a target deck document`)
   }
+  const scope = def.scope ?? 'deck'
+  // A server-side invocation must say which deck/folder it acts on, so the
+  // host's authorisation and the handler agree on the target. (The editor's
+  // browser host always has its open deck in `ctx.deck`.)
+  if (
+    scope === 'deck' &&
+    ctx.deck === undefined &&
+    ctx.target?.deckId === undefined &&
+    ctx.target?.componentId === undefined
+  ) {
+    throw new CommandError(
+      'no_target',
+      `command '${commandId}' acts on a deck; name the deck (deckId)`,
+    )
+  }
+  if (scope === 'folder' && ctx.target?.folderId === undefined) {
+    throw new CommandError(
+      'no_target',
+      `command '${commandId}' acts on a folder; name the folder (folderId)`,
+    )
+  }
+  if (def.effects.includes('server') && ctx.services === undefined) {
+    throw new CommandError('wrong_host', `command '${commandId}' needs the server host`)
+  }
   return { def, input: parsed.data }
 }
 
@@ -68,9 +92,14 @@ function finish(def: AnyCommandDef, raw: unknown): unknown {
   return parsed.data
 }
 
-function executeSync(def: AnyCommandDef, ctx: CommandContext, input: unknown): unknown {
+function executeSync(
+  def: AnyCommandDef,
+  ctx: CommandContext,
+  input: unknown,
+  loaded?: unknown,
+): unknown {
   const invoke = (): unknown => {
-    const result = def.handler(ctx, input)
+    const result = def.handler(ctx, input, loaded)
     if (result instanceof Promise) {
       throw new CommandError(
         'failed',
@@ -99,7 +128,70 @@ export function runCommandSync(
   rawInput: unknown,
 ): unknown {
   const { def, input } = prepare(registry, ctx, commandId, rawInput)
+  if (def.load !== undefined) {
+    throw new CommandError(
+      'failed',
+      `command '${commandId}' loads data asynchronously first; run it with runCommand`,
+    )
+  }
   return executeSync(def, ctx, input)
+}
+
+/**
+ * Whether a command's handler reads or writes the target document, so a
+ * server host must provide `ctx.deck`: every `doc` command, every
+ * effect-free command (document queries), and commands that declare
+ * `readsDocument` (they resolve refs against the document but act elsewhere).
+ */
+export function commandUsesDocument(def: AnyCommandDef): boolean {
+  return def.effects.includes('doc') || def.effects.length === 0 || def.readsDocument === true
+}
+
+/**
+ * An invocation that has been looked up, authorised, validated and whose
+ * asynchronous `load` phase has already run. What is left is the write.
+ */
+export interface PreparedInvocation {
+  def: AnyCommandDef
+  /**
+   * True for document commands (`doc` effect, or `transaction: 'self'`):
+   * `execute()` then runs synchronously, opening ONE transaction on
+   * `ctx.deck.doc` with `ctx.origin`, and returns the output. Otherwise
+   * `execute()` returns a promise of the output.
+   */
+  synchronous: boolean
+  /** Run the handler. Throws (or rejects with) `CommandError`. Call at most once. */
+  execute(): unknown
+}
+
+/**
+ * Everything before the write: look up, authorise, validate, and await the
+ * command's `load` phase. A host that has to put the write inside a
+ * transaction of its own (the server host wraps it in Hocuspocus'
+ * `connection.transact`) awaits this first and then calls `execute()`
+ * synchronously inside that transaction, so no `await` ever separates the
+ * handler from the transaction it must run in.
+ */
+export async function prepareInvocation(
+  registry: CommandRegistry,
+  ctx: CommandContext,
+  commandId: string,
+  rawInput: unknown,
+): Promise<PreparedInvocation> {
+  const { def, input } = prepare(registry, ctx, commandId, rawInput)
+  const loaded = def.load === undefined ? undefined : await def.load(ctx, input)
+  const synchronous = def.effects.includes('doc') || def.transaction === 'self'
+  let used = false
+  return {
+    def,
+    synchronous,
+    execute() {
+      if (used) throw new CommandError('failed', `invocation of '${commandId}' executed twice`)
+      used = true
+      if (synchronous) return executeSync(def, ctx, input, loaded)
+      return Promise.resolve(def.handler(ctx, input, loaded)).then((raw) => finish(def, raw))
+    },
+  }
 }
 
 /** Run any command, synchronous or not. Throws (rejects with) `CommandError`. */
@@ -109,13 +201,28 @@ export async function runCommand(
   commandId: string,
   rawInput: unknown,
 ): Promise<unknown> {
-  const { def, input } = prepare(registry, ctx, commandId, rawInput)
-  if (def.effects.includes('doc') || def.transaction === 'self') return executeSync(def, ctx, input)
-  return finish(def, await def.handler(ctx, input))
+  const prepared = await prepareInvocation(registry, ctx, commandId, rawInput)
+  return prepared.execute()
 }
 
-function isBatchable(def: AnyCommandDef): boolean {
-  return def.transaction !== 'self' && def.effects.every((e) => e === 'doc')
+/**
+ * Whether a command may run inside `ops.apply`. A batch runs synchronously
+ * on a fork of the deck document and is applied as ONE unconfirmed change,
+ * so only document-only commands qualify, and never one that must ask the
+ * user first: `confirm: 'always'`, an input-dependent `confirmWhen`, or an
+ * irreversible edit (which the registry also forces to `confirm: 'always'`,
+ * registry.ts `commandConfirmationProblems`). A command with an async
+ * `load` phase cannot run in a synchronous batch either.
+ */
+export function isBatchable(def: AnyCommandDef): boolean {
+  return (
+    def.transaction !== 'self' &&
+    def.load === undefined &&
+    def.effects.every((e) => e === 'doc') &&
+    def.confirm !== 'always' &&
+    def.confirmWhen === undefined &&
+    def.undo !== 'irreversible'
+  )
 }
 
 export interface BatchResult {

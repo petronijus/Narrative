@@ -53,15 +53,14 @@ import { useAuth } from './AuthContext.js'
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import { Awareness } from 'y-protocols/awareness'
-import {
-  createUndoManager,
-  generatePeerId,
-  peerColorFromId,
-  hydrateSlideDoc,
-} from '@narrative/slide-model'
+import { createUndoManager, generatePeerId, hydrateSlideDoc } from '@narrative/slide-model'
 import type { SlideMutationContext } from '@narrative/slide-model'
-import type { PeerUser } from '@narrative/shared'
+import { parseAgentPrincipalMessage } from '@narrative/shared'
+import type { PeerAwarenessState, PeerUser } from '@narrative/shared'
+import { localPeerUser, restoredLocalState } from './localAwarenessState.js'
+import { AgentPrincipalStoreContext, createAgentPrincipalStore } from './agentPrincipal.js'
 import { SlideDocContext } from './slideDocContext.js'
+import { EditorShowBusContext, createEditorShowBus, parseEditorShowMessage } from './editorShow.js'
 import type { SlideDocContextValue, WsStatus } from './slideDocContext.js'
 import { markWsConnected, markWsSynced } from './loadTimings.js'
 
@@ -135,6 +134,29 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     awareness: Awareness
   } | null>(null)
   const teardownRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // `editor.show` messages of this deck connection (agentic A1). One bus per
+  // provider instance: the editor subscribes once, whatever socket is live.
+  const [showBus] = useState(createEditorShowBus)
+  // This user's agent principal key on the deck, sent by the server over the
+  // socket (state/agentPrincipal.ts). One store per provider instance.
+  const [principalStore] = useState(createAgentPrincipalStore)
+
+  // E2E (DEV only): feed a stateless payload through the same path the
+  // socket uses, so specs can drive the editor's `editor.show` handling
+  // without a server round trip — same pattern as SelectionContext's
+  // `narrative:test-set-selection`.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const handler = (e: Event): void => {
+      const payload = (e as CustomEvent<{ payload?: unknown }>).detail?.payload
+      const message = parseEditorShowMessage(payload)
+      if (message !== null) showBus.emit(message)
+      const principal = parseAgentPrincipalMessage(payload)
+      if (principal !== null) principalStore.set(principal)
+    }
+    window.addEventListener('narrative:test-stateless', handler)
+    return () => window.removeEventListener('narrative:test-stateless', handler)
+  }, [showBus, principalStore])
 
   useEffect(() => {
     const destroyNow = (held: NonNullable<typeof providerRef.current>): void => {
@@ -185,15 +207,14 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     }
 
     const doc = new Y.Doc()
+    // A key told for the previous deck must not label this one's agents.
+    principalStore.set(null)
 
-    // M8: Local peer identity — stable for the entire session tab
-    // M10: Prefer authenticated user name/id when available
+    // M8: Local peer identity — stable for the entire session tab. Never the
+    // Google sub or the email: awareness reaches share-link viewers too
+    // (localPeerUser).
     const peerId = getOrCreatePeerId()
-    const localUser: PeerUser = {
-      id: user?.sub ?? peerId,
-      name: user?.name ?? user?.email ?? `User ${peerId.slice(0, 4)}`,
-      color: peerColorFromId(peerId),
-    }
+    const localUser: PeerUser = localPeerUser(peerId, user?.name)
 
     // M10: share_token from URL query params — passed as WS parameter for the
     // anonymous viewer path.
@@ -208,6 +229,11 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     const authOptions =
       shareToken !== null ? { parameters: { share_token: shareToken } } : { token: 'cookie' }
 
+    // Last non-null local awareness state, kept so a reconnect can restore
+    // it (see restoredLocalState). Fed by the awareness 'update' listener
+    // installed below, once the provider exists.
+    let lastLocalState: PeerAwarenessState | null = null
+
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,
       name: deckId,
@@ -217,14 +243,20 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
         markWsConnected()
         setWsStatus('connected')
         // M8: Restore awareness state on (re)connect — Hocuspocus clears it after reconnect.
-        provider.awareness?.setLocalState({
-          user: localUser,
-          selectedObjectIds: [],
-          cursor: null,
-        })
+        const current = (provider.awareness?.getLocalState() ?? null) as PeerAwarenessState | null
+        provider.awareness?.setLocalState(restoredLocalState(localUser, current ?? lastLocalState))
       },
       onDisconnect() {
         setWsStatus('disconnected')
+      },
+      // Agentic A1: the server addresses this user's open editors with
+      // stateless messages — `editor.show`, and the user's agent principal
+      // key right after connecting. Anything else is ignored.
+      onStateless({ payload }: { payload: string }) {
+        const message = parseEditorShowMessage(payload)
+        if (message !== null) showBus.emit(message)
+        const principal = parseAgentPrincipalMessage(payload)
+        if (principal !== null && principal.documentName === deckId) principalStore.set(principal)
       },
       onStatus({ status }: { status: string }) {
         if (status === 'connected' || status === 'connecting' || status === 'disconnected') {
@@ -269,7 +301,13 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     const slides = doc.getArray('slides') as SlideMutationContext['slides']
     const earlyDeckCtx: SlideMutationContext = { doc, slides }
     const undoManager = createUndoManager(earlyDeckCtx)
-    setValue({ deckCtx: earlyDeckCtx, undoManager, awareness: provider.awareness!, localUser })
+    setValue({
+      deckCtx: earlyDeckCtx,
+      undoManager,
+      awareness: provider.awareness!,
+      localUser,
+      documentName: deckId,
+    })
 
     // M8: Set initial awareness state immediately (even before WS connect —
     // awareness.setLocalState works locally, broadcast happens after connect).
@@ -278,11 +316,13 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       throw new Error('HocuspocusProvider.awareness is null — provider not initialized')
     }
     providerRef.current = { deckId, provider, doc, awareness }
-    awareness.setLocalState({
-      user: localUser,
-      selectedObjectIds: [],
-      cursor: null,
+    awareness.on('update', () => {
+      const local = awareness.getLocalState() as PeerAwarenessState | null
+      if (local !== null) lastLocalState = local
     })
+    // `activeSlideId: null` until the editor publishes the slide it shows;
+    // present mode never does (it is not an editing context).
+    awareness.setLocalState(restoredLocalState(localUser, null))
 
     // M9: Do NOT hydrate before onSynced fires. hydrateSlideDoc() seeds a
     // default empty slide when the doc has no slides — but if WS sync is still
@@ -295,7 +335,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     // fast-refresh re-render) reclaims this provider instead of trading it for
     // a fresh doc and socket. A real unmount just runs it late.
     return scheduleTeardown(provider)
-  }, [deckId])
+  }, [deckId, showBus, principalStore])
 
   // Memoize the merged context value — without this, every parent re-render
   // creates a fresh `{...value, wsStatus}` object reference, which forces
@@ -317,7 +357,13 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
     )
   }
 
-  return <SlideDocContext value={fullValue}>{children}</SlideDocContext>
+  return (
+    <SlideDocContext value={fullValue}>
+      <AgentPrincipalStoreContext value={principalStore}>
+        <EditorShowBusContext value={showBus}>{children}</EditorShowBusContext>
+      </AgentPrincipalStoreContext>
+    </SlideDocContext>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -350,14 +396,11 @@ interface ExternalDocSlideProviderProps {
 function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlideProviderProps) {
   const { user } = useAuth()
 
-  const localUser = useMemo<PeerUser>(() => {
-    const peerId = getOrCreatePeerId()
-    return {
-      id: user?.sub ?? peerId,
-      name: user?.name ?? user?.email ?? `User ${peerId.slice(0, 4)}`,
-      color: peerColorFromId(peerId),
-    }
-  }, [user])
+  const profileName = user?.name
+  const localUser = useMemo<PeerUser>(
+    () => localPeerUser(getOrCreatePeerId(), profileName),
+    [profileName],
+  )
 
   const value = useMemo<SlideDocContextValue>(() => {
     const slides = doc.getArray('slides') as SlideMutationContext['slides']
@@ -366,16 +409,14 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
     // Local-only awareness — y-protocols Awareness with this doc is a valid
     // "no peers" implementation that the rest of the editor can read from.
     const awareness = new Awareness(doc)
-    awareness.setLocalState({
-      user: localUser,
-      selectedObjectIds: [],
-      cursor: null,
-    })
+    awareness.setLocalState(restoredLocalState(localUser, null))
     return {
       deckCtx,
       undoManager,
       awareness,
       localUser,
+      // Local-only: no server, so no peers (and no agent peers) to identify.
+      documentName: null,
       wsStatus: 'connected',
     }
   }, [doc, localUser])

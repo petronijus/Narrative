@@ -31,6 +31,12 @@ import { users, type User } from '../db/schema.js'
 export interface UpsertUserInput {
   sub: string
   email: string
+  /**
+   * Google's `email_verified` claim at this sign-in. Stored so personal
+   * access token verification can re-apply the sign-in allowlist's domain
+   * rule (which requires a verified email) without an id_token in hand.
+   */
+  emailVerified: boolean
   name: string | null
   pictureUrl?: string | null
 }
@@ -46,6 +52,7 @@ export async function upsertUser(db: Database, input: UpsertUserInput): Promise<
     .values({
       sub: input.sub,
       email: emailLower,
+      emailVerified: input.emailVerified,
       name: input.name,
       pictureUrl: input.pictureUrl ?? null,
     })
@@ -53,6 +60,7 @@ export async function upsertUser(db: Database, input: UpsertUserInput): Promise<
       target: users.sub,
       set: {
         email: emailLower,
+        emailVerified: input.emailVerified,
         name: input.name,
         pictureUrl: input.pictureUrl ?? null,
         lastSeenAt: sql`now()`,

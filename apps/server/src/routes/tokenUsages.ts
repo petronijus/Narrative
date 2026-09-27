@@ -24,27 +24,18 @@
  *
  * No Hocuspocus connections are opened — we read directly from the DB and
  * apply updates via Y.applyUpdate on fresh Y.Doc instances.
+ *
+ * Shared implementation: the handlers call services/tokens.ts — the same code the
+ * `token.usages` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
-import { eq, inArray } from 'drizzle-orm'
+import type { TokenCategory } from '@narrative/commands'
 import type { Database } from '../db/client.js'
-import {
-  folders,
-  decks,
-  components,
-  deckUpdates,
-  folderUpdates,
-  componentUpdates,
-} from '../db/schema.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
-import {
-  scanDeckDoc,
-  scanComponentDoc,
-  scanFolderDoc,
-  type UsageEntry,
-} from '@narrative/slide-model'
-import { replayUpdates } from '../media/replayDoc.js'
+import { createTokensService } from '../services/tokens.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 // ---------------------------------------------------------------------------
 // Route registration
@@ -61,135 +52,18 @@ export async function registerTokenUsageRoutes(app: FastifyInstance, db: Databas
     { preHandler: authPreHandler },
     async (request, reply) => {
       const { folderId, category, tokenId } = request.params
-
-      // Whitelist the token category at the boundary — anything else
-      // would silently produce an empty result set against a fabricated
-      // tokenKey, which is confusing for callers.
-      const VALID_CATEGORIES = ['colors', 'textStyles', 'effectStyles'] as const
-      type ValidCategory = (typeof VALID_CATEGORIES)[number]
-      if (!(VALID_CATEGORIES as readonly string[]).includes(category)) {
-        return reply.status(400).send({
-          error: `Invalid token category. Allowed: ${VALID_CATEGORIES.join(', ')}`,
+      try {
+        const result = await createTokensService(routeDeps(app, db, request.log)).usages({
+          userId: request.user!.sub,
+          folderId,
+          // Validated by the service (400 for an unknown category).
+          category: category as TokenCategory,
+          tokenId,
         })
+        return reply.send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      const safeCategory = category as ValidCategory
-      const userId = request.user!.sub
-
-      // Verify folder exists and caller is the owner
-      const [folder] = await db
-        .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-        .from(folders)
-        .where(eq(folders.id, folderId))
-        .limit(1)
-
-      if (!folder) {
-        return reply.status(404).send({ error: 'Folder not found' })
-      }
-      if (folder.ownerUserId !== userId) {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
-
-      const tokenKey = `${safeCategory}.${tokenId}`
-      const usages: UsageEntry[] = []
-
-      // -----------------------------------------------------------------------
-      // 1. Folder doc — textStyle color refs (only for colors category)
-      // -----------------------------------------------------------------------
-      if (safeCategory === 'colors') {
-        const folderUpdateRows = await db
-          .select({ update: folderUpdates.update })
-          .from(folderUpdates)
-          .where(eq(folderUpdates.folderId, folderId))
-          .orderBy(folderUpdates.id)
-
-        if (folderUpdateRows.length > 0) {
-          const folderDoc = replayUpdates(folderUpdateRows)
-          try {
-            usages.push(...scanFolderDoc(folderDoc, tokenKey))
-          } finally {
-            folderDoc.destroy()
-          }
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // 2. Decks in the folder — batch-load all updates in one query, group
-      //    in memory by deckId. Eliminates N+1 (was: 1 query per deck).
-      // -----------------------------------------------------------------------
-      const deckRows = await db
-        .select({ id: decks.id, title: decks.title })
-        .from(decks)
-        .where(eq(decks.folderId, folderId))
-        .orderBy(decks.createdAt)
-
-      if (deckRows.length > 0) {
-        const deckIds = deckRows.map((d) => d.id)
-        const allDeckUpdates = await db
-          .select({ deckId: deckUpdates.deckId, id: deckUpdates.id, update: deckUpdates.update })
-          .from(deckUpdates)
-          .where(inArray(deckUpdates.deckId, deckIds))
-          .orderBy(deckUpdates.deckId, deckUpdates.id)
-
-        const updatesByDeck = new Map<string, Array<{ update: Uint8Array }>>()
-        for (const row of allDeckUpdates) {
-          const arr = updatesByDeck.get(row.deckId)
-          if (arr) arr.push({ update: row.update })
-          else updatesByDeck.set(row.deckId, [{ update: row.update }])
-        }
-
-        for (const deck of deckRows) {
-          const updateRows = updatesByDeck.get(deck.id)
-          if (!updateRows || updateRows.length === 0) continue
-          const deckDoc = replayUpdates(updateRows)
-          try {
-            usages.push(...scanDeckDoc(deckDoc, deck.id, deck.title, tokenKey))
-          } finally {
-            deckDoc.destroy()
-          }
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // 3. Components in the folder — same batched-load pattern.
-      // -----------------------------------------------------------------------
-      const componentRows = await db
-        .select({ id: components.id, name: components.name })
-        .from(components)
-        .where(eq(components.folderId, folderId))
-        .orderBy(components.createdAt)
-
-      if (componentRows.length > 0) {
-        const componentIds = componentRows.map((c) => c.id)
-        const allComponentUpdates = await db
-          .select({
-            componentId: componentUpdates.componentId,
-            id: componentUpdates.id,
-            update: componentUpdates.update,
-          })
-          .from(componentUpdates)
-          .where(inArray(componentUpdates.componentId, componentIds))
-          .orderBy(componentUpdates.componentId, componentUpdates.id)
-
-        const updatesByComponent = new Map<string, Array<{ update: Uint8Array }>>()
-        for (const row of allComponentUpdates) {
-          const arr = updatesByComponent.get(row.componentId)
-          if (arr) arr.push({ update: row.update })
-          else updatesByComponent.set(row.componentId, [{ update: row.update }])
-        }
-
-        for (const component of componentRows) {
-          const updateRows = updatesByComponent.get(component.id)
-          if (!updateRows || updateRows.length === 0) continue
-          const componentDoc = replayUpdates(updateRows)
-          try {
-            usages.push(...scanComponentDoc(componentDoc, component.id, component.name, tokenKey))
-          } finally {
-            componentDoc.destroy()
-          }
-        }
-      }
-
-      return reply.send({ usages })
     },
   )
 }

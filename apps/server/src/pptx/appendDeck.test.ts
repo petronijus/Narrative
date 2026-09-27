@@ -443,3 +443,71 @@ describe('importDeckFromPptxBytes — media rows and transcodes', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// deck.insertFrom's .pptx path (services/pptx.ts prepareInsert → apply)
+// ---------------------------------------------------------------------------
+
+describe('PptxService.prepareInsert — the agent path shares the staging and the writer', () => {
+  it('registers media before the write, then inserts the slides in the host transaction and returns their ids', async () => {
+    const { createPptxService } = await import('../services/pptx.js')
+    const fake = makeFakeDb()
+    const service = createPptxService({ db: fake.db, log: log as never, hocuspocus: () => null })
+
+    const prepared = await service.prepareInsert({
+      userId: 'user-1',
+      deckId: 'deck-1',
+      source: {
+        kind: 'pptx',
+        file: { kind: 'base64', data: (await videoDeckPptx()).toString('base64') },
+      },
+    })
+    // Staged and registered; the document has not been touched yet.
+    expect(prepared.slideCount).toBe(1)
+    expect(videoRowOf(fake)['deckId']).toBe('deck-1')
+    expect(events).toContain('commit:media_assets')
+    expect(events.some((e) => e.startsWith('enqueue:'))).toBe(true)
+
+    const doc = liveDoc()
+    const deck = hydrateSlideDoc(doc)
+    const updates: unknown[] = []
+    doc.on('update', (_u: Uint8Array, origin: unknown) => updates.push(origin))
+    const origin = { run: 'r1' }
+    let result
+    doc.transact(() => {
+      result = prepared.apply(deck, 0)
+    }, origin)
+    const out = result as unknown as {
+      slideIds: string[]
+      insertedAt: number
+      mediaRegistered: number
+    }
+
+    // ONE update, attributed to the caller's origin (the agent run).
+    expect(updates).toEqual([origin])
+    expect(out.insertedAt).toBe(0)
+    expect(out.mediaRegistered).toBe(2)
+    expect(listSlides(deck).map((s) => s.id)).toEqual([out.slideIds[0], expect.any(String)])
+  })
+
+  it('refuses a file that is not a .pptx with 400, registering nothing', async () => {
+    const { createPptxService } = await import('../services/pptx.js')
+    const fake = makeFakeDb()
+    const service = createPptxService({ db: fake.db, log: log as never, hocuspocus: () => null })
+    const err = await service
+      .prepareInsert({
+        userId: 'user-1',
+        deckId: 'deck-1',
+        source: {
+          kind: 'pptx',
+          file: { kind: 'base64', data: Buffer.from('not a zip').toString('base64') },
+        },
+      })
+      .then(
+        () => null,
+        (e: unknown) => e as { status?: number },
+      )
+    expect(err?.status).toBe(400)
+    expect(fake.committed.get('media_assets') ?? []).toEqual([])
+  })
+})

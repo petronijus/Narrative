@@ -44,6 +44,7 @@ const slideEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 export const slideAdd = defineCommand({
@@ -160,6 +161,7 @@ export const slideMove = defineCommand({
 export const slideRename = defineCommand({
   ...slideEditor,
   id: 'slide.rename',
+  idempotent: true,
   title: 'Rename slide',
   description:
     'Set the name shown for a slide in the slides panel and the presenter view. ' +
@@ -178,6 +180,7 @@ export const slideRename = defineCommand({
 export const slideSkip = defineCommand({
   ...slideEditor,
   id: 'slide.skip',
+  idempotent: true,
   title: 'Skip slide in presentation',
   description:
     'Mark a slide as skipped (hidden from present mode, still visible and editable in the editor) ' +
@@ -198,6 +201,7 @@ export const slideSkip = defineCommand({
 export const slideIndent = defineCommand({
   ...slideEditor,
   id: 'slide.indent',
+  idempotent: true,
   title: 'Set slide outline level',
   description:
     `Set a slide's outline indent level (0 = top level, max ${MAX_SLIDE_INDENT}). ` +
@@ -233,6 +237,7 @@ export const slideIndent = defineCommand({
 export const slideCollapse = defineCommand({
   ...slideEditor,
   id: 'slide.collapse',
+  idempotent: true,
   title: 'Collapse slide section',
   description:
     "Collapse or expand a slide's outline children in the slides panel. Purely a panel view setting " +
@@ -255,6 +260,7 @@ const transitionShape = SlideTransitionSchema.shape
 export const slideSetTransition = defineCommand({
   ...slideEditor,
   id: 'slide.setTransition',
+  idempotent: true,
   title: 'Set slide transition',
   description:
     'Set how present mode moves INTO this slide: `kind` none | fade | push | cube | magic (Magic Move animates ' +
@@ -305,6 +311,7 @@ export const slideSetTransition = defineCommand({
 export const slideSetBackground = defineCommand({
   ...slideEditor,
   id: 'slide.setBackground',
+  idempotent: true,
   title: 'Set slide background',
   description:
     'Set a slide\'s background: { kind: "color", color, alpha? }, { kind: "linearGradient", angleDeg, stops }, ' +

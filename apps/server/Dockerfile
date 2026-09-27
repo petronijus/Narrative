@@ -12,6 +12,7 @@ COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
+COPY packages/commands/package.json      packages/commands/package.json
 
 # --ignore-scripts přeskočí "prepare: husky" v root package.json
 RUN pnpm install --frozen-lockfile --ignore-scripts
@@ -38,6 +39,7 @@ COPY apps/server/package.json            apps/server/package.json
 COPY packages/shared/package.json        packages/shared/package.json
 COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
+COPY packages/commands/package.json      packages/commands/package.json
 
 # Instalace jen prod deps, bez lifecycle scripts (husky není potřeba v runtime)
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
@@ -62,8 +64,16 @@ COPY --from=builder /app/packages/shared/package.json       packages/shared/pack
 COPY --from=builder /app/apps/server/dist/packages/shared/src       packages/shared/src/
 COPY --from=builder /app/packages/slide-model/package.json  packages/slide-model/package.json
 COPY --from=builder /app/apps/server/dist/packages/slide-model/src  packages/slide-model/src/
-RUN sed -i 's|./src/index.ts|./src/index.js|g' \
-      packages/shared/package.json packages/slide-model/package.json
+COPY --from=builder /app/packages/commands/package.json     packages/commands/package.json
+COPY --from=builder /app/apps/server/dist/packages/commands/src     packages/commands/src/
+# The agent playbooks (Markdown) the MCP server serves as prompts/resources.
+# The compiled loader (packages/commands/src/playbooks/index.js) reads them
+# from ../../playbooks/, i.e. packages/commands/playbooks/.
+COPY --from=builder /app/packages/commands/playbooks        packages/commands/playbooks/
+# Point every `main` / `exports` entry at the compiled .js (the commands
+# package also exports the `./playbooks` subpath).
+RUN sed -i -E 's#"\./src/([A-Za-z0-9_/-]+)\.ts"#"./src/\1.js"#g' \
+      packages/shared/package.json packages/slide-model/package.json packages/commands/package.json
 
 EXPOSE 3001 3002
 

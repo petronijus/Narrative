@@ -35,11 +35,9 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { createHash, randomBytes } from 'node:crypto'
-import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import type { AllowlistConfig, JwtVerifier } from '../auth/jwt.js'
-import { isAllowedByEnv } from '../auth/jwt.js'
-import { deckInvites, deckPermissions, users } from '../db/schema.js'
+import { isAllowedToSignIn } from '../auth/signInPolicy.js'
 import {
   createSession,
   lookupSession,
@@ -75,7 +73,7 @@ export interface AuthRoutesOpts {
   redirectUri: string
   isProd: boolean
   /** Env-configured allowlist. The DB-based implicit allowlist (pending
-   *  invite or existing permission) extends this — see `isAllowedToSignIn`. */
+   *  invite or existing permission) extends this — see auth/signInPolicy.ts. */
   allowlist: AllowlistConfig
 }
 
@@ -312,9 +310,13 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
     // allowlist (pending invite or existing deck permission). This is the
     // gate that lets an `bela@example.com` log in when she was
     // invited to a deck, even though she's not in OIDC_ALLOWED_EMAILS.
-    const envOk = isAllowedByEnv(userPayload, allowlist)
-    const dbOk = envOk ? false : await isAllowedByDb(db, userPayload.email)
-    if (!envOk && !dbOk) {
+    // The same rule re-runs on every personal access token verification
+    // (auth/signInPolicy.ts), so tokens die with the account's access.
+    const allowed = await isAllowedToSignIn(db, allowlist, {
+      email: userPayload.email,
+      emailVerified: userPayload.emailVerified === true,
+    })
+    if (!allowed) {
       request.log.info(
         { email: userPayload.email },
         '[auth] sign-in denied — not on env allowlist and no invite/permission',
@@ -328,6 +330,7 @@ export function registerAuthRoutes(app: FastifyInstance, opts: AuthRoutesOpts): 
     await upsertUser(db, {
       sub: userPayload.sub,
       email: userPayload.email,
+      emailVerified: userPayload.emailVerified === true,
       name: userPayload.name ?? null,
     })
 
@@ -400,45 +403,4 @@ async function redirectWithError(
   const url = new URL('/auth/error', spaOrigin)
   url.searchParams.set('reason', code)
   await reply.redirect(url.toString(), 302)
-}
-
-// ---------------------------------------------------------------------------
-// Implicit DB-based allowlist
-//
-// An email is implicitly allowed to sign in if either:
-//   (a) it has a non-expired, non-accepted invite in `deck_invites`, or
-//   (b) it has an existing `deck_permissions` row (via `users.email` join).
-//
-// Case (a) is the new-collaborator flow — owner sends invite, invitee
-// signs in, /auth/callback consumes the invite into a permission.
-// Case (b) is the returning-collaborator flow — already accepted, has
-// ongoing access. Without this they'd be locked out the first time their
-// session cookie expired if they aren't on the env allowlist.
-// ---------------------------------------------------------------------------
-
-async function isAllowedByDb(db: Database, email: string): Promise<boolean> {
-  const lower = email.toLowerCase()
-
-  const [pending] = await db
-    .select({ id: deckInvites.id })
-    .from(deckInvites)
-    .where(
-      and(
-        sql`LOWER(${deckInvites.email}) = ${lower}`,
-        isNull(deckInvites.acceptedAt),
-        gt(deckInvites.expiresAt, new Date()),
-      ),
-    )
-    .limit(1)
-  if (pending) return true
-
-  const [perm] = await db
-    .select({ deckId: deckPermissions.deckId })
-    .from(deckPermissions)
-    .innerJoin(users, eq(users.sub, deckPermissions.userId))
-    .where(sql`LOWER(${users.email}) = ${lower}`)
-    .limit(1)
-  if (perm) return true
-
-  return false
 }

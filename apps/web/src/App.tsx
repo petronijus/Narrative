@@ -36,6 +36,7 @@ import { VersionChip } from './ui/VersionChip.js'
 import { ThemeToggle } from './ui/ThemeToggle.js'
 import { PerfHudToggle } from './ui/PerfHudToggle.js'
 import { PerfHud } from './ui/PerfHud.js'
+import { ACCESS_TOKENS_PATH } from './ui/UserMenu.js'
 
 // PERF-5: heavy editor routes, lazily loaded so vendor-pixi / vendor-tiptap
 // / vendor-gsap split into their own chunks and stay off the dashboard +
@@ -49,6 +50,14 @@ const DeckEditor = lazy(() =>
 )
 const DeckPresent = lazy(() =>
   import('./pages/DeckPresent.js').then((m) => ({ default: m.DeckPresent })),
+)
+// Account settings: small, rarely visited — kept off the dashboard chunk.
+const AccessTokens = lazy(() =>
+  import('./pages/AccessTokens.js').then((m) => ({ default: m.AccessTokens })),
+)
+// The agent confirmation page: opened from a link an agent hands the user.
+const ConfirmAgentAction = lazy(() =>
+  import('./pages/ConfirmAgentAction.js').then((m) => ({ default: m.ConfirmAgentAction })),
 )
 const ComponentMasterEditor = lazy(() =>
   import('./pages/ComponentMasterEditor.js').then((m) => ({
@@ -92,6 +101,8 @@ export function App() {
                   <Route path="/" element={<FoldersHome />} />
                   <Route path="/folder/:folderId" element={<FolderDecks />} />
                   <Route path="/folder/:folderId/settings" element={<FolderSettings />} />
+                  <Route path={ACCESS_TOKENS_PATH} element={<AccessTokens />} />
+                  <Route path="/confirm/:id" element={<ConfirmAgentAction />} />
                   <Route
                     path="/folder/:folderId/component/:componentId"
                     element={<ComponentMasterEditor />}

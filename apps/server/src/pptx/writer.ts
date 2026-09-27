@@ -105,6 +105,8 @@ export interface WriteResult {
   objectsCreated: number
   /** Per-kind tally of shapes we skipped (mostly images in v1). */
   skipped: { images: number; unknownShapes: number }
+  /** Ids of the slides written from the parsed deck, in file order. */
+  slideIds: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -1376,6 +1378,7 @@ export function buildDeckUpdate(parsed: ParsedPptx): WriteResult {
 
   const state = Buffer.from(Y.encodeStateAsUpdate(ctx.doc))
   return {
+    slideIds: created,
     state,
     slideCount: listSlides(ctx).length,
     objectsCreated,
@@ -1447,6 +1450,7 @@ export function buildDeckAppendUpdate(
 
   const state = Buffer.from(Y.encodeStateAsUpdate(existingDoc, sv))
   return {
+    slideIds: created,
     state,
     slideCount: parsed.slides.length,
     objectsCreated,

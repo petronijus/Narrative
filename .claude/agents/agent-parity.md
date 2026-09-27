@@ -49,27 +49,61 @@ the diff, never committing.
 
 ## 1. The locations you must know
 
-| What                             | Where                                                                                                                      |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Command registry                 | `packages/commands/src/` (one `CommandDef` per capability; `ops.apply` for batches)                                        |
-| Permanent, reasoned exclusions   | `packages/commands/src/parity/allowlist.ts`                                                                                |
-| Temporary A0 debt (only shrinks) | `packages/commands/src/parity/knownMissing.ts`                                                                             |
-| Parity test                      | `packages/commands/src/parity/parity.test.ts`                                                                              |
-| Generated manifest (committed)   | `packages/commands/capabilities.json`, `docs/capabilities.md`                                                              |
-| zod schemas for every type       | `packages/shared/src/schema/` (mirrors the types in `packages/shared/src/slide.ts`)                                        |
-| Slide-model writers              | `packages/slide-model/src/` (`mutations.ts`, `richText.ts`, `tableMutations.ts`, `animationMutations.ts`, `deckGuides.ts`) |
-| Transaction origins              | `packages/slide-model/src/origins.ts` (`agentOrigin(runId)`)                                                               |
-| Shortcuts                        | `apps/web/src/state/useShortcuts.ts`                                                                                       |
-| Menus / toolbar actions          | `apps/web/src/ui/EditorContextMenu.tsx`, `apps/web/src/ui/Toolbar.tsx`, Inspector panels in `apps/web/src/ui/`             |
-| Server routes                    | `apps/server/src/http/registerRoutes.ts` (the route table); guard `apps/server/src/routes/agentParity.test.ts`             |
-| MCP surface                      | `apps/server/src/mcp/` (tools are generated from the registry; owner `ai-integration`)                                     |
-| Playbooks                        | `packages/commands/playbooks/` (served as MCP prompts; owner `ai-integration`)                                             |
-| PPTX round-trip matrix           | `apps/server/src/pptx/roundtripMatrix.ts`, `apps/server/src/pptx/README.md`                                                |
+| What                           | Where                                                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Command registry               | `packages/commands/src/` (one `CommandDef` per capability; `ops.apply` for batches)                                        |
+| Permanent, reasoned exclusions | `packages/commands/src/parity/allowlist.ts`                                                                                |
+| Temporary debt (only shrinks)  | `packages/commands/src/parity/knownMissing.ts` (A2–A4 entries left after A1)                                               |
+| Parity test                    | `packages/commands/src/parity/parity.test.ts`                                                                              |
+| Generated manifest (committed) | `packages/commands/capabilities.json`, `docs/capabilities.md`                                                              |
+| zod schemas for every type     | `packages/shared/src/schema/` (mirrors the types in `packages/shared/src/slide.ts`)                                        |
+| Slide-model writers            | `packages/slide-model/src/` (`mutations.ts`, `richText.ts`, `tableMutations.ts`, `animationMutations.ts`, `deckGuides.ts`) |
+| Transaction origins            | `packages/slide-model/src/origins.ts` (`agentOrigin(runId)`)                                                               |
+| Shortcuts                      | `apps/web/src/state/useShortcuts.ts`                                                                                       |
+| Menus / toolbar actions        | `apps/web/src/ui/EditorContextMenu.tsx`, `apps/web/src/ui/Toolbar.tsx`, Inspector panels in `apps/web/src/ui/`             |
+| Server routes                  | `apps/server/src/http/registerRoutes.ts` (the route table); guard `apps/server/src/routes/agentParity.test.ts`             |
+| MCP surface                    | `apps/server/src/mcp/` (tools are generated from the registry; owner `ai-integration`)                                     |
+| Playbooks                      | `packages/commands/playbooks/` (served as MCP prompts; owner `ai-integration`)                                             |
+| PPTX round-trip matrix         | `apps/server/src/pptx/roundtripMatrix.ts`, `apps/server/src/pptx/README.md`                                                |
 
 Some of these land during A0–A4 and may not exist yet. A missing file is a
 finding ("guard not wired yet"), never a reason to skip the check silently.
 
-State at the end of A0 (2026-09-26) — check again, but do not assume more:
+State at the end of A1 (2026-09-27, unreleased) — check again, but do not
+assume more:
+
+- **Exists now (new in A1):** 94 commands (44 of them server-only, backed by
+  `apps/server/src/services/` and exercised against the fakes in
+  `packages/commands/src/testing/fake*.ts` by `serverCommands.test.ts`);
+  `knownMissing.ts` 39 entries (A2 32, A3 5, A4 2) with
+  `FINISHED_PHASES = ['A0', 'A1']`; `allowlist.ts` 18; the route guard sees
+  69 routes, all claimed. The ServerHost (`apps/server/src/agent/`), the MCP
+  server (`apps/server/src/mcp/`, tools generated from the registry),
+  `POST /api/commands`, `packages/commands/playbooks/`, and **`pnpm
+agent:eval`** (`tests/agent-eval/`, 14 scenarios, 14/14 on 2026-09-27;
+  11 replay free in `packages/commands/src/agentEvalReplay.test.ts`).
+- **New registry rules** (enforced by `registry.test.ts` / the registry
+  itself): target metadata — `acceptsComponent`, and
+  `commandTargetProblems`: every document edit must accept a component
+  master, only deck-scoped commands may; `undoneBy` — every server-side
+  `undoable` command names its counter-command; `confirmWhen` — every
+  command that can download a URL declares it; `readOnly` / `idempotent`
+  are explicit and become MCP annotations. The contract suite also checks
+  idempotence against the server fakes' state and runs every deck command
+  against a component master.
+- **An eval scenario is now a real check**, not a placeholder: a new
+  command should come with a scenario in `tests/agent-eval/scenarios/`
+  (listed in `scenarios/index.ts`) and, if replayable, a recording from a
+  passing live run (`pnpm agent:eval --filter <id> --record`). Report a
+  missing scenario with its intended prompt and grader.
+- **`tools/list` has a byte budget** (`apps/server/src/mcp/toolListBudget.test.ts`,
+  160,000 bytes; ≈ 148–151 KB on 2026-09-27). A new command's description
+  and schema cost every MCP user context on every turn — flag verbose ones.
+- **Still missing:** the ESLint `no-restricted-imports` rule, shortcut and
+  menu-action enumeration, and any component calling `useCommand()` (all A2).
+
+State at the end of A0 (2026-09-26), kept for the record (superseded by the
+block above where they differ):
 
 - **Exists:** the registry (50 commands), `allowlist.ts` (12), `knownMissing.ts`
   (81: A1 42, A2 32, A3 5, A4 2; `FINISHED_PHASES = ['A0']`), `parity.test.ts`,
@@ -115,18 +149,18 @@ spans two):
 
 ## 3. For each change, check that it exists and is good
 
-| Check                        | What "good" means                                                                                                                                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Command**                  | A `CommandDef` covers it, and the UI path dispatches that command through `useCommand()` instead of writing directly. Correct `role`, `effects`, `undo` (`irreversible` for share/invite/delete/export), `confirm`, `hosts`. |
-| **Description**              | Written for a model: when to use it, what it does NOT do, which neighbouring command to use instead. At least 40 characters is the test's floor, not the bar.                                                                |
-| **Input schema**             | zod, validated at the host boundary. Takes ids or selectors, never "the current selection". Units stated (degrees in, radians stored; px on the 1920×1080 canvas).                                                           |
-| **Examples**                 | At least one, exercising the changed behaviour, not a trivial case.                                                                                                                                                          |
-| **Contract test**            | Each example runs against a fixture doc; the result is compared structurally via `listSlides()`, never by CRDT bytes.                                                                                                        |
-| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `pnpm agent:eval` suite (plan §9.3). Until the suite exists, report the scenario as missing with its intended prompt and grader.           |
-| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `pnpm --filter @narrative/commands capabilities` and part of the same change; never hand-edited.                                           |
-| **Schema coverage**          | A new property exists in its zod schema in `packages/shared/src/schema/`; the `z.infer` equality check typechecks.                                                                                                           |
-| **Style-pack representable** | If it affects appearance, a pack can express it (for example a new text property must be representable in the pack's `textStyles`, per level if it is a list property).                                                      |
-| **PPTX round-trip**          | If it is a model field, it is in `roundtripMatrix.ts` in a non-default state and the server suite passes (ADR 0009).                                                                                                         |
+| Check                        | What "good" means                                                                                                                                                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Command**                  | A `CommandDef` covers it, and the UI path dispatches that command through `useCommand()` instead of writing directly. Correct `role`, `effects`, `undo` (`irreversible` for share/invite/delete/export), `confirm`, `hosts`.              |
+| **Description**              | Written for a model: when to use it, what it does NOT do, which neighbouring command to use instead. At least 40 characters is the test's floor, not the bar.                                                                             |
+| **Input schema**             | zod, validated at the host boundary. Takes ids or selectors, never "the current selection". Units stated (degrees in, radians stored; px on the 1920×1080 canvas).                                                                        |
+| **Examples**                 | At least one, exercising the changed behaviour, not a trivial case.                                                                                                                                                                       |
+| **Contract test**            | Each example runs against a fixture doc; the result is compared structurally via `listSlides()`, never by CRDT bytes.                                                                                                                     |
+| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `pnpm agent:eval` suite (plan §9.3; `tests/agent-eval/scenarios/`, since A1). If none exists, report it as missing with its intended prompt and grader. |
+| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `pnpm --filter @narrative/commands capabilities` and part of the same change; never hand-edited.                                                        |
+| **Schema coverage**          | A new property exists in its zod schema in `packages/shared/src/schema/`; the `z.infer` equality check typechecks.                                                                                                                        |
+| **Style-pack representable** | If it affects appearance, a pack can express it (for example a new text property must be representable in the pack's `textStyles`, per level if it is a list property).                                                                   |
+| **PPTX round-trip**          | If it is a model field, it is in `roundtripMatrix.ts` in a non-default state and the server suite passes (ADR 0009).                                                                                                                      |
 
 ## 4. Run the guards
 
@@ -164,7 +198,7 @@ These pass a casual read. Look for them on purpose:
   state (view state, present-mode runtime); anything that changes a document
   belongs in a command. Allowlist additions are reviewed changes: flag each
   one for the tech-lead, even when the reason is good.
-- **New work parked in `knownMissing.ts`.** That list is A0 debt and only
+- **New work parked in `knownMissing.ts`.** That list is pre-A2 debt and only
   shrinks. A new capability added to it is a missing command, not a
   deferral.
 - **A command that reads "the current selection"** or other editor state

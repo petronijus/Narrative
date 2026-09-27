@@ -22,22 +22,23 @@
  *   Workaround (Option A): GET /decks queries by BOTH ownerUserId IN ('demo-user', 'dev-user')
  *   when in bypass mode. Remove this when M10 ships to production and demo-user is migrated.
  *   TODO(post-M10): remove demo-user fallback once infra migration script runs in production.
+ *
+ * Shared implementation: the handlers call services/decks.ts — the same code the
+ * `deck.*` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
-import { nanoid } from 'nanoid'
-import { eq, inArray, sql, and } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { decks, deckPermissions, folders, mediaAssets } from '../db/schema.js'
+import { decks } from '../db/schema.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
-import { resolveDeckAccess } from '../auth/permissions.js'
-import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
-import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { parseDataUrl } from '../media/dataUrl.js'
-import { getOrProvisionDrafts } from './folders.js'
+import { createDecksService, deckRecord } from '../services/decks.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 interface CreateDeckBody {
   title?: string
@@ -57,37 +58,6 @@ interface CreateDeckBody {
  */
 const MAX_THUMBNAIL_BYTES = 6 * 1024 * 1024
 
-interface DeckRow {
-  id: string
-  title: string
-  ownerUserId: string
-  folderId: string
-  thumbnailKey: string | null
-  thumbnailUpdatedAt: Date | null
-  createdAt: Date
-  updatedAt: Date
-}
-
-/**
- * Decorates a deck row with a signed imgproxy thumbnail URL so the home
- * page can render previews without exposing the underlying MinIO key.
- * The `?v=<ms>` query string busts client + imgproxy caches whenever
- * the editor uploads a fresh snapshot.
- */
-function withThumbnailUrl(row: DeckRow): DeckRow & { thumbnailUrl: string | null } {
-  let thumbnailUrl: string | null = null
-  if (row.thumbnailKey !== null) {
-    const base = signImgproxyUrl({
-      storageKey: row.thumbnailKey,
-      variant: 'thumb',
-      extension: 'jpg',
-    })
-    const v = row.thumbnailUpdatedAt?.getTime() ?? 0
-    thumbnailUrl = v > 0 ? `${base}?v=${v}` : base
-  }
-  return { ...row, thumbnailUrl }
-}
-
 export async function registerDeckRoutes(app: FastifyInstance, db: Database): Promise<void> {
   // ---------------------------------------------------------------------------
   // GET /decks — list decks accessible to the authenticated user
@@ -97,92 +67,16 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   //   verified; attempting to filter by another user's folder returns 403.
   // ---------------------------------------------------------------------------
   app.get('/decks', { preHandler: authPreHandler }, async (request, reply) => {
-    const userId = request.user!.sub
     const query = request.query as Record<string, string>
-    const filterFolderId = query['folderId'] ?? null
-
-    // Determine if running in bypass/dev mode by checking bypass flag on plugin opts.
-    const isBypass =
-      (app as FastifyInstance & { _authOpts?: { bypass?: boolean } })._authOpts?.bypass === true
-
-    // If a folder filter was requested, verify the caller owns that folder.
-    if (filterFolderId !== null) {
-      const [folder] = await db
-        .select({ ownerUserId: folders.ownerUserId })
-        .from(folders)
-        .where(eq(folders.id, filterFolderId))
-        .limit(1)
-
-      if (!folder) {
-        return reply.status(404).send({ error: 'Folder not found' })
-      }
-
-      // In bypass mode the synthesized userId is 'dev-user'; also allow demo-user's folders.
-      const allowedOwners = isBypass ? [userId, 'demo-user'] : [userId]
-      if (!allowedOwners.includes(folder.ownerUserId)) {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
+    try {
+      const list = await createDecksService(routeDeps(app, db, request.log)).list({
+        userId: request.user!.sub,
+        folderId: query['folderId'],
+      })
+      return reply.send(list)
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    if (isBypass) {
-      // BYPASS_AUTH=true dev fallback: query both 'dev-user' and legacy 'demo-user' owned decks.
-      // TODO(post-M10): remove when production migration script has run.
-      const ownerCondition = inArray(decks.ownerUserId, ['dev-user', 'demo-user'])
-      const whereClause =
-        filterFolderId !== null
-          ? and(ownerCondition, eq(decks.folderId, filterFolderId))
-          : ownerCondition
-
-      const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-      // In bypass mode dev-user always has owner role on their own decks.
-      return reply.send(rows.map((r) => ({ ...withThumbnailUrl(r), viewerRole: 'owner' as const })))
-    }
-
-    // Production: return decks where user has any explicit permission row.
-    // Uses a subquery to avoid N+1 (deck.ownerUserId is already denormalized for fast lookup,
-    // but deck_permissions is the authoritative access list post-M10).
-    const accessibleDeckIds = db
-      .select({ deckId: deckPermissions.deckId })
-      .from(deckPermissions)
-      .where(eq(deckPermissions.userId, userId))
-
-    const accessCondition = sql`${decks.id} IN (${accessibleDeckIds})`
-    const whereClause =
-      filterFolderId !== null
-        ? and(accessCondition, eq(decks.folderId, filterFolderId))
-        : accessCondition
-
-    const rows = await db.select().from(decks).where(whereClause).orderBy(decks.createdAt)
-
-    // Stamp each row with the caller's effective role on that deck. One
-    // small follow-up query — typically <50 decks — much cheaper than the
-    // alternative (a CTE + window function in the main query) and easier
-    // to read.
-    const rolesByDeck = new Map<string, 'owner' | 'editor' | 'viewer'>()
-    if (rows.length > 0) {
-      const permRows = await db
-        .select({ deckId: deckPermissions.deckId, role: deckPermissions.role })
-        .from(deckPermissions)
-        .where(
-          and(
-            eq(deckPermissions.userId, userId),
-            inArray(
-              deckPermissions.deckId,
-              rows.map((r) => r.id),
-            ),
-          ),
-        )
-      for (const p of permRows) rolesByDeck.set(p.deckId, p.role as 'owner' | 'editor' | 'viewer')
-    }
-
-    return reply.send(
-      rows.map((r) => ({
-        ...withThumbnailUrl(r),
-        // Default to viewer if no permission row was found (shouldn't happen
-        // — the IN clause guarantees one exists — but defensive).
-        viewerRole: rolesByDeck.get(r.id) ?? 'viewer',
-      })),
-    )
   })
 
   // ---------------------------------------------------------------------------
@@ -212,18 +106,16 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       }
     }
 
-    const access = await resolveDeckAccess(db, { deckId: id, userId, shareToken })
-    if (!access) {
-      return reply.status(403).send({ error: 'Forbidden' })
+    try {
+      const deck = await createDecksService(routeDeps(app, db, request.log)).get({
+        userId,
+        deckId: id,
+        shareToken,
+      })
+      return reply.send(deck)
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    const [deck] = await db.select().from(decks).where(eq(decks.id, id)).limit(1)
-
-    if (!deck) {
-      return reply.status(404).send({ error: 'Deck not found' })
-    }
-
-    return reply.send({ ...withThumbnailUrl(deck), viewerRole: access.role })
   })
 
   // ---------------------------------------------------------------------------
@@ -237,66 +129,17 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     '/decks',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { title = 'Untitled Deck', folderId: requestedFolderId } = request.body ?? {}
-      const ownerUserId = request.user!.sub
-
-      // Resolve the target folder — verify ownership when explicitly provided.
-      let targetFolderId: string
-      if (requestedFolderId) {
-        const [folder] = await db
-          .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-          .from(folders)
-          .where(eq(folders.id, requestedFolderId))
-          .limit(1)
-
-        if (!folder) {
-          return reply.status(404).send({ error: 'Folder not found' })
-        }
-        if (folder.ownerUserId !== ownerUserId) {
-          return reply.status(403).send({ error: 'Forbidden' })
-        }
-        targetFolderId = folder.id
-      } else {
-        // Auto-provision Drafts if the user doesn't have one yet.
-        targetFolderId = await getOrProvisionDrafts(db, ownerUserId)
-      }
-
-      const id = nanoid(12)
-      const now = new Date()
-
-      // Transactional: insert deck + owner permission row together.
-      // This keeps decks.owner_user_id and deck_permissions in sync from the start.
-      const deck = await db.transaction(async (tx) => {
-        const [inserted] = await tx
-          .insert(decks)
-          .values({
-            id,
-            title,
-            ownerUserId,
-            folderId: targetFolderId,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning()
-
-        if (!inserted) return null
-
-        await tx.insert(deckPermissions).values({
-          deckId: id,
-          userId: ownerUserId,
-          role: 'owner',
-          grantedAt: now,
-          grantedBy: ownerUserId,
+      const { title, folderId } = request.body ?? {}
+      try {
+        const deck = await createDecksService(routeDeps(app, db, request.log)).create({
+          userId: request.user!.sub,
+          title,
+          folderId,
         })
-
-        return inserted
-      })
-
-      if (!deck) {
-        return reply.status(500).send({ error: 'Failed to create deck' })
+        return reply.status(201).send(deck)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      return reply.status(201).send(deck)
     },
   )
 
@@ -307,25 +150,15 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     '/decks/:id',
     { preHandler: [authPreHandler, requireDeckRole('editor')] },
     async (request, reply) => {
-      const { id } = request.params
-      const title = request.body?.title?.trim()
-      if (title === undefined || title === '') {
-        return reply.status(400).send({ error: 'title is required' })
+      try {
+        const updated = await createDecksService(routeDeps(app, db, request.log)).rename({
+          deckId: request.params.id,
+          title: request.body?.title ?? '',
+        })
+        return reply.send(updated)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      if (title.length > 200) {
-        return reply.status(400).send({ error: 'title too long (max 200)' })
-      }
-
-      const [updated] = await db
-        .update(decks)
-        .set({ title, updatedAt: new Date() })
-        .where(eq(decks.id, id))
-        .returning()
-
-      if (!updated) {
-        return reply.status(404).send({ error: 'Deck not found' })
-      }
-      return reply.send(updated)
     },
   )
 
@@ -398,7 +231,7 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
       if (!updated) {
         return reply.status(404).send({ error: 'Deck not found' })
       }
-      return reply.send(withThumbnailUrl(updated))
+      return reply.send(deckRecord(updated))
     },
   )
 
@@ -409,44 +242,14 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
     '/decks/:id',
     { preHandler: [authPreHandler, requireDeckRole('owner')] },
     async (request, reply) => {
-      const { id } = request.params
-
-      // Collect every storage key BEFORE the cascade removes the
-      // media_assets rows. tus-uploaded originals live at a compound key
-      // (`<assetId>:<deckId>:<base64>`) outside the decks/<id>/ prefix, so
-      // the prefix sweep alone would orphan them — pass them to
-      // purgeExplicitKeys below.
-      const assetRows = await db
-        .select({
-          storageKey: mediaAssets.storageKey,
-          playbackKey: mediaAssets.playbackKey,
-          posterKey: mediaAssets.posterKey,
-          thumbnailKey: mediaAssets.thumbnailKey,
+      try {
+        await createDecksService(routeDeps(app, db, request.log)).delete({
+          deckId: request.params.id,
         })
-        .from(mediaAssets)
-        .where(eq(mediaAssets.deckId, id))
-
-      const deleted = await db.delete(decks).where(eq(decks.id, id)).returning({ id: decks.id })
-
-      if (deleted.length === 0) {
-        return reply.status(404).send({ error: 'Deck not found' })
+        return reply.status(204).send()
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      const explicitKeys = assetRows.flatMap((r) =>
-        [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
-          (k): k is string => typeof k === 'string' && k !== '',
-        ),
-      )
-
-      // Pass 1: sweep decks/<id>/ (deck thumbnail + worker video outputs).
-      // Pass 2: explicit keys (tus originals + their .info sidecars).
-      // Both loss-tolerant: errors are logged and swallowed.
-      await Promise.all([
-        purgeDeckBucketPrefix(id, request.log),
-        purgeExplicitKeys(explicitKeys, request.log),
-      ])
-
-      return reply.status(204).send()
     },
   )
 }

@@ -6,12 +6,120 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
-Phase A0 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)):
-the foundations an agent will build on, plus the editor bugs the capability
-survey turned up. No agent can reach Narrative yet — the MCP server is phase
-A1. Handoff: [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md).
+Phases A0 and A1 of the agentic layer ([`docs/plans/agentic-layer.md`](./docs/plans/agentic-layer.md)).
+A0 (committed as `9e0e853`): the foundations — the command registry, runtime
+schemas, parity guards — plus the editor bugs the capability survey turned
+up. A1 (working tree on top of `9e0e853`, 2026-09-27): Claude Code and
+claude.ai can now drive Narrative over MCP. Handoffs:
+[`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agentic-foundations.md),
+[`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 
-### Added
+**Before deploying this:** production needs the new secret
+`AGENT_PRINCIPAL_KEY_SECRET` in `infra/.env.prod` (and in the encrypted
+`env.prod.sops`) — without it `build-push.sh`, `deploy.sh` and the server all
+refuse to start. Eight migrations (`0016`–`0023`) run on deploy; the Caddyfile
+gains the OAuth discovery and client-IP blocks. Checklist:
+[`docs/deploy.md`](./docs/deploy.md) "Releasing the agentic layer (A1)".
+
+### Added (A1 — agents over MCP)
+
+- **Drive Narrative from Claude Code or claude.ai.** An MCP server at
+  `https://<domain>/api/mcp` exposes every command as a tool — 94 of them,
+  generated from the registry, never hand-written — with read-only,
+  idempotent and destructive hints, one example call each, and a size budget
+  on the whole tool list. Claude Code connects with a personal access token
+  (or signs in with OAuth); claude.ai adds Narrative as a custom connector
+  and signs in with Google through Narrative's consent page. Setup:
+  [`docs/mcp.md`](./docs/mcp.md), local:
+  [`SETUP.md`](./SETUP.md) §9.
+- **Personal access tokens** (account menu → **Access tokens**). Scoped to
+  `mcp` or `api`, expiring after 30, 90 or 365 days (never "never"), at most
+  20 active per person, stored only as a hash and shown once. A token stops
+  working the moment its owner could no longer sign in, and revoking a
+  person's access revokes their tokens and connected apps with it. The same
+  page lists **Connected apps** (claude.ai connections) with a Disconnect
+  button, and flags one whose refresh token was replayed.
+- **The agent works in the deck like a colleague.** It appears as a peer
+  named "Claude (MCP)" with its own colour and selection; your own agent is
+  labelled "working for you". It can read which slide and objects you have
+  selected ("make this bold"), jump your editor to a slide and highlight
+  objects, and hand you a presenter link.
+- **Agent activity** (a popover in the editor, and in the component master
+  editor): every agent change belongs to a run you can see and **revert**,
+  undoing exactly what that run changed and nothing a person did meanwhile,
+  component masters included. Revert works while the deck is loaded on the
+  server (someone has it open or a run is active); after a server restart
+  or an unload it is no longer possible. Each agent command reaches your
+  editor as one update, not a burst of partial states. Mod+Z still undoes
+  only your own edits.
+- **Nothing irreversible happens without you.** Sharing, invitations,
+  deleting decks, folders, fonts, media or components, and moving a deck ask
+  first — in the Claude client when it can ask, otherwise on a Narrative
+  confirmation page you approve in your signed-in browser. The question is
+  written by Narrative from the exact call (titles, recipient, role), never
+  by the model. Downloading a file from a URL asks too, naming the host.
+- **Agents can work beyond one deck**: list, create, rename, move and delete
+  decks and folders; import a .pptx or insert slides from another deck or a
+  .pptx; export the live document to .pptx (a download link); upload images,
+  videos and fonts; list, stamp, rename and delete components and edit a
+  component master; manage share links, invitations and collaborators; read
+  token usages. Routes and agent commands share one implementation per
+  action, so the web app and an agent cannot drift apart.
+- **An audit trail.** Every agent command is logged with its run, what it
+  targeted, how it was confirmed and every host it downloaded from — inputs
+  redacted (file bytes and `data:` URLs become size + hash, URL query strings
+  stripped), deleted 90 days after the run's last activity.
+- **`POST /api/commands`** runs one command or an atomic batch for scripts,
+  with an `api`-scoped token or the browser session.
+- **Playbooks** (`packages/commands/playbooks/`: basics, edit, find-replace,
+  restyle-lite, shorten, translate) served as MCP prompts and resources, and
+  the generator of the `narrative` Claude Code skill
+  (`pnpm --filter @narrative/commands skill`).
+- **`pnpm agent:eval`**: 14 scenarios driven through headless Claude Code
+  against the local stack and graded deterministically from the resulting
+  document (14/14 passing on 2026-09-27, ≈ 2 USD list-price equivalent per
+  run); 11 of them also replay free, without a model, inside `pnpm -r test`.
+- **`db:revoke-user`** (`revokeUserAccess` in the image): one command cuts a
+  person off — sessions, tokens, OAuth grants — and warns if they could still
+  sign in again.
+
+### Changed (A1)
+
+- **Presence no longer publishes who you are to share-link viewers.** Editors
+  broadcast a random per-tab id and their display name instead of their
+  Google account id and email; read-only and share-link connections receive
+  awareness with ids replaced and email-looking values removed.
+- **Rate limits** (`@fastify/rate-limit`) on the API: per session or token for
+  signed-in callers, per client IP otherwise, with agent bearer tokens
+  budgeted per token so claude.ai users behind Anthropic's shared egress do
+  not share one budget.
+- **Uploads by URL or base64 from an agent are capped lower than browser
+  uploads** (.pptx and video 200 MB with a 120 s deadline, images 25 MB,
+  fonts 8–10 MB), downloaded through an SSRF guard to a temp file, at most two
+  at a time per person.
+- **A deck moved to another folder keeps its look.** Its colour and
+  text-style references pointed into the old folder's tokens; they now move
+  to the destination's token of the same name, or become the literal colour
+  they showed (a text-style link without a match is detached, keeping its
+  typography). Slides inserted from a deck in another folder get the same
+  treatment (`services/tokenRebind.ts`).
+- **Error reports no longer carry credentials**: Sentry events are scrubbed
+  of `Authorization` / `Cookie` headers, personal access tokens and session
+  cookie values.
+
+### Fixed (A1)
+
+- **Live editor connections knew who they were again.** A race in how
+  Hocuspocus 2.15 copies the connection context meant a connection often ran
+  with no user id or role, so revoking someone's sessions did not close
+  their open editor, and the "who is editing" bubbles could miss people. The
+  context is now set where it survives.
+- **Personal access tokens are refused on the collaboration WebSocket**
+  instead of falling back to a cookie or share link: agents write only
+  through the server, where every change is validated, confirmed where
+  needed, attributed and logged.
+
+### Added (A0)
 
 - **The command registry (`packages/commands`).** Every document change an
   agent will be able to make is a command with a validated input, a required
@@ -35,13 +143,13 @@ A1. Handoff: [`docs/handoff/A0-agentic-foundations.md`](./docs/handoff/A0-agenti
   zod). Agent input is checked against them; the typecheck fails when a
   property is added to a type but not to its schema.
 
-### Changed
+### Changed (A0)
 
 - **A new animation starts "after previous"** instead of the legacy "on
   enter" trigger the pickers no longer offer. The first animation on a slide
   still starts with the slide, so playback is the same.
 
-### Fixed
+### Fixed (A0)
 
 - **Alt-drag copies can be undone.** Undo after Alt-dragging a copy slid the
   copy back onto the original and left it there; the copy was never on the

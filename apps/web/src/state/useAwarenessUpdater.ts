@@ -44,6 +44,13 @@ export interface AwarenessUpdater {
    * Aktualizuje display name lokálního peera. Immediate (velmi nízká frekvence).
    */
   setUserName: (name: string) => void
+  /**
+   * Publishes the slide this editor shows (agentic A1): the server's
+   * `editor.context` reads it to resolve "this slide" for an agent.
+   * `null` = this tab shows no slide (present mode, or the editor is
+   * unmounting). Immediate; a no-op when the value is unchanged.
+   */
+  setActiveSlide: (activeSlideId: string | null) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -169,12 +176,22 @@ export function useAwarenessUpdater(): AwarenessUpdater {
     [awareness, readCurrentState],
   )
 
+  const setActiveSlide = useCallback(
+    (activeSlideId: string | null) => {
+      const current = readCurrentState()
+      // Skip identical writes: every setLocalState is a broadcast.
+      if (current.activeSlideId === activeSlideId) return
+      awareness.setLocalState({ ...current, activeSlideId })
+    },
+    [awareness, readCurrentState],
+  )
+
   // Memoize the returned object so the AwarenessUpdater reference is stable
   // across re-renders. Without this, any consumer that uses the returned
   // value as a useEffect dependency re-runs on every render of this hook's
   // owner (EditorLayout passes setSelection into a useEffect dep array).
   return useMemo(
-    () => ({ setCursor, setSelection, setUserName }),
-    [setCursor, setSelection, setUserName],
+    () => ({ setCursor, setSelection, setUserName, setActiveSlide }),
+    [setCursor, setSelection, setUserName, setActiveSlide],
   )
 }

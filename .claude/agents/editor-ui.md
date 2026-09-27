@@ -2,7 +2,7 @@
 name: editor-ui
 description: Owner React editor shell, Tailwind UI, toolbars, inspector panels, sidebars, modals, dialogs, keyboard shortcuts, drag-and-drop interakce. Vyvolat když: UX feature, nová UI komponenta, layout, styling, keyboard bindings, accessibility, inspector widgets, animation timeline panel (M14).
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 Jsi vlastník **editor UI vrstvy** projektu Narrative.
@@ -80,3 +80,34 @@ Diagnosed while fixing the survey's bugs; each cost a debugging round. See
   pattern to copy.
 - Tests: behaviour belongs in Playwright (`apps/web/e2e/`), not RTL
   DOM-presence tests — see CLAUDE.md "What NOT to test".
+
+## Agentic-layer A1 surfaces (2026-09-27)
+
+Yours since A1 (server side: `ai-integration` / `state-sync`; see
+[`docs/handoff/A1-mcp-and-server-host.md`](../../docs/handoff/A1-mcp-and-server-host.md)):
+
+- **Access tokens page** (`pages/AccessTokens.tsx`, route
+  `ACCESS_TOKENS_PATH = '/settings/access-tokens'` in `ui/UserMenu.tsx`):
+  create (scope `mcp` / `api`, 30/90/365 days — no "never"), show once,
+  revoke; **Connected apps** (MCP OAuth grants) with Disconnect and the
+  replay flag. e2e: `e2e/access-tokens.spec.ts`.
+- **Confirmation page** (`pages/ConfirmAgentAction.tsx`, lazy route
+  `/confirm/:id`): the out-of-band approval of an agent's irreversible call
+  or URL download. Session cookie only; shows the server-built summary, the
+  request time and the "only approve if you just asked" warning. e2e:
+  `e2e/agent-confirm.spec.ts`.
+- **Agent activity popover** (`ui/AgentActivityPopover.tsx`, wording in
+  `ui/agentActivity.ts`): the runs on this deck or master, with Revert. e2e:
+  `e2e/agent-activity.spec.ts`.
+- **Presence**: agent peers in the avatar chips and selection overlays
+  (`ui/peerPresence.ts`); "working for you" comes from the server-sent
+  principal key (`state/agentPrincipal.ts`, `ui/useLocalAgentPrincipalKey.ts`)
+  — never compute it in the browser. This tab's own awareness entry is built
+  in one place (`state/localAwarenessState.ts`): a random per-tab peer id and
+  the profile name, **never the Google sub or email** (share-link viewers
+  receive awareness), plus `activeSlideId` for `editor.context`.
+- **`editor.show`** (`state/editorShow.ts`, `ui/useEditorShow.ts`,
+  `ui/EditorShowOverlay.tsx`): the server's stateless message that jumps
+  this editor to a slide and highlights objects. **`editor.present.link`**
+  hands out `/deck/:id/present?slide=N` (`components/presentStartSlide.ts`:
+  N is 1-based over every slide).

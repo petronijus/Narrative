@@ -22,6 +22,11 @@
  * Security:
  *   - storageKey is server-constructed — never user-supplied (no path traversal).
  *   - Share token (viewer) path does NOT grant upload rights — only JWT users with editor/owner role may upload.
+ *   - A personal access token (scope `api` or `mcp`) may upload media only —
+ *     image/*, video/* and fonts. A .pptx by token is refused at create, and
+ *     at every PATCH/finish (M2): deck import/append by an agent goes through
+ *     `deck.importPptx` / `deck.insertFrom`, which the server host validates,
+ *     attributes and audits.
  *   - MIME checked via Upload-Metadata content-type; probe-image-size confirms on finalize.
  *
  * Known limitations / TODOs:
@@ -31,7 +36,6 @@
  *   - Video width/height not available at upload time — filled by worker after ffprobe.
  */
 
-import { createRequire } from 'node:module'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Readable } from 'node:stream'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
@@ -40,59 +44,44 @@ import { Server as TusServer } from '@tus/server'
 import type { Upload } from '@tus/server'
 import { S3Store } from '@tus/s3-store'
 import type { S3ClientConfig } from '@aws-sdk/client-s3'
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { createMediaAsset } from './assets.js'
-import { sanitizeSvg, sniffIsSvg, magicBytesMatch, MAGIC_CHECKED_MIMES } from './svgSanitize.js'
-import { enqueueVideoTranscode } from './enqueue.js'
-import { parseFontMetadata } from './fontMetadata.js'
+import { finalizeMediaUpload, UploadRejected } from './finalizeUpload.js'
 import {
-  canDownscaleStoredImage,
-  downscaleForStorage,
-  exceedsStoredImageLimits,
-} from './storedImageLimits.js'
+  MAX_FONT_UPLOAD_SIZE,
+  MAX_IMAGE_UPLOAD_SIZE,
+  MAX_PPTX_UPLOAD_SIZE,
+  MAX_VIDEO_UPLOAD_SIZE,
+  PPTX_MIME,
+  classifyUpload,
+  extensionFromMimeOrFilename,
+  isFontUpload,
+} from './uploadPolicy.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { eq } from 'drizzle-orm'
 import { folders, decks } from '../db/schema.js'
 import { DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
 import { appendPptxToDeck } from '../pptx/appendDeck.js'
-import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
+import { hasAnyScope, resolveRequestIdentity } from '../auth/identity.js'
+import {
+  createDrizzlePatStore,
+  createPatService,
+  refuseAllPatOwners,
+  type PatScope,
+  type PatService,
+} from '../auth/personalAccessTokens.js'
 import { subsystemLogger } from '../observability/logger.js'
 
 const log = subsystemLogger('tus')
-
-// probe-image-size is CommonJS — import via createRequire so ESM build works
-const require = createRequire(import.meta.url)
-
-const probe: (stream: Readable) => Promise<ProbeResult | null> = require('probe-image-size')
-
-interface ProbeResult {
-  width: number
-  height: number
-  type: string
-  mime: string
-}
 
 // ---------------------------------------------------------------------------
 // Config constants
 // ---------------------------------------------------------------------------
 
-/** Max size for image uploads. */
-const MAX_FONT_UPLOAD_SIZE = Number(process.env['MAX_FONT_UPLOAD_SIZE'] ?? 8_000_000)
-const MAX_IMAGE_UPLOAD_SIZE = Number(process.env['MAX_UPLOAD_SIZE'] ?? 25_000_000)
-/** Max size for video uploads. */
-const MAX_VIDEO_UPLOAD_SIZE = Number(process.env['MAX_VIDEO_UPLOAD_SIZE'] ?? 500_000_000)
-/**
- * Max size for `.pptx` imports. Default 2 GB (kept high by product
- * requirement — large decks must import). The pptx path doesn't create a
- * `media_assets` row; instead the `onUploadFinish` hook runs the full
- * deck-import pipeline against the freshly-uploaded blob. DoS protection
- * comes from the parser's decompression-bomb guard (`assertNotZipBomb`),
- * which rejects pathological archives without limiting legitimate large
- * files — not from this on-the-wire cap.
- */
-const MAX_PPTX_UPLOAD_SIZE = Number(process.env['MAX_PPTX_UPLOAD_SIZE'] ?? 2 * 1024 * 1024 * 1024)
+// Per-kind limits, the accepted kinds and the MIME → extension map live in
+// ./uploadPolicy.ts, shared with the server-side upload agents use.
+
 /** tus server-level maxSize — set to the largest of the four; per-MIME enforcement is in onUploadCreate. */
 const MAX_UPLOAD_SIZE = Math.max(
   MAX_IMAGE_UPLOAD_SIZE,
@@ -100,45 +89,6 @@ const MAX_UPLOAD_SIZE = Math.max(
   MAX_FONT_UPLOAD_SIZE,
   MAX_PPTX_UPLOAD_SIZE,
 )
-const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-
-/**
- * P15: classifies an upload as a font from its MIME or filename
- * extension. Browsers send wildly inconsistent MIME for fonts —
- * `font/ttf`, `font/otf`, `font/sfnt` (modern, RFC 8081), the legacy
- * `application/x-font-*` family, and `application/octet-stream` when
- * they don't know better. We accept all of them, but require a
- * .ttf / .otf filename extension as a sanity gate when the MIME is
- * generic.
- */
-const FONT_MIME_TYPES = new Set([
-  'font/ttf',
-  'font/otf',
-  'font/sfnt',
-  'font/collection',
-  'application/font-ttf',
-  'application/font-otf',
-  'application/font-sfnt',
-  'application/x-font-ttf',
-  'application/x-font-otf',
-  'application/x-font-opentype',
-  'application/x-font-truetype',
-  'application/vnd.ms-opentype',
-])
-
-function isFontUpload(mime: string, filename?: string): boolean {
-  const m = mime.toLowerCase()
-  if (FONT_MIME_TYPES.has(m)) return true
-  // Browsers on Windows commonly report file.type as '' for .ttf/.otf
-  // because the OS lacks a MIME registry entry. Accept empty / generic
-  // MIME when the filename has a font extension.
-  const isGenericMime = m === '' || m === 'application/octet-stream'
-  if (isGenericMime && filename) {
-    const lower = filename.toLowerCase()
-    return lower.endsWith('.ttf') || lower.endsWith('.otf')
-  }
-  return false
-}
 const BUCKET = process.env['MEDIA_BUCKET'] ?? 'narrative-media'
 
 // ---------------------------------------------------------------------------
@@ -196,88 +146,6 @@ function parseMetadata(raw: string | string[] | undefined): Record<string, strin
   return result
 }
 
-/** Derives a file extension from a MIME type or filename. */
-function extensionFromMimeOrFilename(mime: string, filename?: string): string {
-  const mimeMap: Record<string, string> = {
-    'image/jpeg': 'jpg',
-    'image/jpg': 'jpg',
-    'image/png': 'png',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/avif': 'avif',
-    'image/svg+xml': 'svg',
-    'image/tiff': 'tiff',
-    'image/bmp': 'bmp',
-    'image/heic': 'heic',
-    'image/heif': 'heif',
-    'video/mp4': 'mp4',
-    'video/quicktime': 'mov',
-    'video/webm': 'webm',
-    'video/x-msvideo': 'avi',
-    'video/x-matroska': 'mkv',
-    'video/mpeg': 'mpg',
-    'video/3gpp': '3gp',
-    'video/ogg': 'ogv',
-    // P15 fonts — preserve the filename extension when possible so
-    // browsers don't choke on a generic .bin extension via @font-face.
-    'font/ttf': 'ttf',
-    'font/otf': 'otf',
-    'font/sfnt': 'ttf',
-    'application/font-ttf': 'ttf',
-    'application/font-otf': 'otf',
-    'application/x-font-ttf': 'ttf',
-    'application/x-font-otf': 'otf',
-    'application/x-font-opentype': 'otf',
-    'application/x-font-truetype': 'ttf',
-    'application/vnd.ms-opentype': 'otf',
-    [PPTX_MIME]: 'pptx',
-  }
-
-  const fromMime = mimeMap[mime.toLowerCase()]
-  if (fromMime) return fromMime
-
-  if (filename) {
-    const lastDot = filename.lastIndexOf('.')
-    if (lastDot !== -1) return filename.slice(lastDot + 1).toLowerCase()
-  }
-
-  return 'bin'
-}
-
-// ---------------------------------------------------------------------------
-// Image dimension probe
-// ---------------------------------------------------------------------------
-
-/**
- * Reads the first 64 KB of the S3 object at storageKey and probes image dimensions.
- * Returns undefined if probe fails (non-fatal — asset row is inserted without dims).
- */
-async function probeImageDimensions(
-  s3: S3Client,
-  storageKey: string,
-): Promise<{ width: number; height: number } | undefined> {
-  try {
-    const response = await s3.send(
-      new GetObjectCommand({
-        Bucket: BUCKET,
-        Key: storageKey,
-        Range: 'bytes=0-65535',
-      }),
-    )
-
-    if (!response.Body) return undefined
-
-    // probe-image-size accepts a Readable stream
-    const result = await probe(response.Body as Readable)
-    if (!result) return undefined
-
-    return { width: result.width, height: result.height }
-  } catch (err) {
-    log.warn({ storageKey, err }, 'image probe failed')
-    return undefined
-  }
-}
-
 /**
  * Best-effort MinIO delete. Used for transient pptx blobs (which are
  * parsed in onUploadFinish and then thrown away). A failed delete just
@@ -290,17 +158,6 @@ async function deleteMinIOObject(s3: S3Client, storageKey: string): Promise<void
   } catch (err) {
     log.warn({ storageKey, err }, 'DeleteObject failed')
   }
-}
-
-/** Reads the full S3 object at storageKey into a Buffer. Throws on failure. */
-async function getObjectBytes(s3: S3Client, storageKey: string): Promise<Buffer> {
-  const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: storageKey }))
-  if (!obj.Body) throw new Error(`S3 returned empty body for ${storageKey}`)
-  const chunks: Buffer[] = []
-  for await (const chunk of obj.Body as Readable) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
-  }
-  return Buffer.concat(chunks)
 }
 
 // `decks` is imported up top to satisfy the unused-import lint; the
@@ -318,24 +175,58 @@ void decks
 type AppWithAuthOpts = FastifyInstance & {
   _authOpts?: {
     bypass?: boolean
+    pats?: PatService
   }
 }
 
-async function resolveUserIdFromReq(
+/**
+ * PAT scopes that may upload media: agents upload through the command
+ * surface (MCP or the batch API), so a token with either scope qualifies.
+ */
+const UPLOAD_TOKEN_SCOPES: readonly PatScope[] = ['api', 'mcp']
+
+/**
+ * What a personal access token may upload through tus: media only — images,
+ * videos and fonts. A .pptx import or append by token must go through the
+ * commands (`deck.importPptx`, `deck.insertFrom`), which the server host
+ * validates, attributes to a run and records in the audit log; the tus pptx
+ * path would do the same import with none of that.
+ */
+export function tokenMayUpload(mime: string, filename?: string): boolean {
+  return classifyUpload(mime, filename) !== null
+}
+
+const TOKEN_PPTX_REFUSED =
+  'Forbidden: a personal access token cannot upload a .pptx through tus; ' +
+  'import it with deck.importPptx or add its slides with deck.insertFrom'
+
+interface Uploader {
+  userId: string
+  /** Authenticated with a personal access token (not a browser session). */
+  viaToken: boolean
+}
+
+async function resolveUploader(
   req: IncomingMessage,
   db: Database,
   app: AppWithAuthOpts,
-): Promise<string | null> {
-  const bypassAuth = app._authOpts?.bypass === true
-  if (bypassAuth) return 'dev-user'
-
-  // tus hooks receive the raw IncomingMessage, so Fastify's cookie parser
-  // isn't on it. Pull the narrative_session cookie out of the Cookie header
-  // manually and resolve it the same way authPreHandler does.
-  const rawId = readCookieFromHeader(req.headers['cookie'], SESSION_COOKIE_NAME)
-  if (!rawId) return null
-  const session = await lookupSession(db, rawId)
-  return session?.userSub ?? null
+): Promise<Uploader | null> {
+  // tus hooks receive the raw IncomingMessage — the same object Fastify
+  // handed to tusServer.handle(), so the identity resolved for it (by the
+  // rate limiter or an earlier hook of this request) is reused. Resolution
+  // follows authPreHandler: a PAT (`Authorization: Bearer nrt_…`), else
+  // BYPASS_AUTH's dev-user, else the narrative_session cookie.
+  const result = await resolveRequestIdentity(req, {
+    db,
+    bypass: app._authOpts?.bypass === true,
+    pats:
+      app._authOpts?.pats ??
+      createPatService(createDrizzlePatStore(db), { isOwnerAllowed: refuseAllPatOwners }),
+  })
+  if (result.status !== 'ok') return null
+  const { user, auth } = result.identity
+  if (auth.kind === 'token' && !hasAnyScope(auth, UPLOAD_TOKEN_SCOPES)) return null
+  return { userId: user.sub, viaToken: auth.kind === 'token' }
 }
 
 /**
@@ -369,10 +260,11 @@ async function requireUploadCreatorAndAccess(
   db: Database,
   app: AppWithAuthOpts,
 ): Promise<void> {
-  const userId = await resolveUserIdFromReq(req, db, app)
-  if (!userId) {
+  const uploader = await resolveUploader(req, db, app)
+  if (!uploader) {
     throw { status_code: 401, body: 'Unauthorized' }
   }
+  const { userId } = uploader
 
   // (a) creator binding — must match the user who created this upload.
   const creatorUserId = upload.metadata?.[CREATOR_META_KEY] ?? null
@@ -401,6 +293,9 @@ async function requireUploadCreatorAndAccess(
   const folderId = upload.metadata?.['folderId'] ?? null
 
   if (mime === PPTX_MIME) {
+    // M2: even the user's own browser-started pptx upload cannot be
+    // continued or finished with a token (the finish runs the import).
+    if (uploader.viaToken) throw { status_code: 403, body: TOKEN_PPTX_REFUSED }
     // A pptx upload is bound to EITHER a deck (insert into it — the slides
     // panel's drop) or a folder (create a new deck in it). The binding
     // decides which access is re-asserted: inserting slides into a deck is
@@ -583,10 +478,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       upload: Upload,
     ): Promise<{ res: ServerResponse; metadata?: Upload['metadata'] }> => {
       // 1. Auth
-      const userId = await resolveUserIdFromReq(req, db, appWithAuth)
-      if (!userId) {
+      const uploader = await resolveUploader(req, db, appWithAuth)
+      if (!uploader) {
         throw { status_code: 401, body: 'Unauthorized' }
       }
+      const { userId } = uploader
 
       // 2. Parse metadata from Upload-Metadata header
       const meta = parseMetadata(req.headers['upload-metadata'])
@@ -613,6 +509,18 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           { headers: meta, uploadMetadata: upload.metadata },
           'onUploadCreate: no MIME in metadata',
         )
+      }
+
+      // M2: a token uploads media only; decks go through the commands.
+      if (uploader.viaToken) {
+        const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
+        if (mime === PPTX_MIME) throw { status_code: 403, body: TOKEN_PPTX_REFUSED }
+        if (!tokenMayUpload(mime, filename)) {
+          throw {
+            status_code: 415,
+            body: `Unsupported media type for a token upload: ${mime || 'none'}. Only image/*, video/* and font files are accepted.`,
+          }
+        }
       }
 
       // TUS-1: persist the creating user (and the resolved deck/folder/mime
@@ -797,11 +705,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // would have a media_assets row written against the encoded deck. Require
       // the live session user to be the upload's creator AND still hold
       // editor/folder access. (Bypass mode: creator was stored as 'dev-user'
-      // and resolveUserIdFromReq returns 'dev-user', so the check passes.)
+      // and resolveUploader returns 'dev-user', so the check passes.)
       await requireUploadCreatorAndAccess(req, upload, db, appWithAuth)
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
-      const userId = (await resolveUserIdFromReq(req, db, appWithAuth)) ?? 'unknown'
+      const userId = (await resolveUploader(req, db, appWithAuth))?.userId ?? 'unknown'
 
       // Parse metadata for filename + mime
       const meta = parseMetadata(req.headers['upload-metadata'])
@@ -951,312 +859,88 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         }
       }
 
-      const isVideo = mimeRaw.startsWith('video/')
-      const isFont = isFontUpload(mimeRaw, filename)
-
-      if (isFont) {
-        // -----------------------------------------------------------------------
-        // Font branch: fetch the bytes, parse OpenType metadata, insert row.
-        // We READ the full file (TTF/OTF are typically <2 MB; the size cap
-        // is 8 MB) so opentype.js can walk the tables. If parsing fails the
-        // upload is rejected and the partial S3 object stays orphaned for
-        // the M29 GC sweep.
-        // -----------------------------------------------------------------------
-        let metadata
-        try {
-          const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: storageKey }))
-          if (!obj.Body) throw new Error('S3 returned empty body for font asset')
-          // The Body is a Readable stream — collect into a Buffer for opentype.
-          const chunks: Buffer[] = []
-          for await (const chunk of obj.Body as Readable) {
-            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
-          }
-          const buf = Buffer.concat(chunks)
-          // Pass an ArrayBuffer slice so opentype gets exactly the byte range
-          // it expects (Buffer's underlying ArrayBuffer may be larger).
-          const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-          metadata = parseFontMetadata(ab as ArrayBuffer)
-        } catch (err) {
-          log.error({ err }, 'parseFontMetadata failed')
-          throw {
-            status_code: 400,
-            body: `Failed to parse font file. Make sure it's a valid TTF or OTF.`,
-          }
-        }
-
-        try {
-          await createMediaAsset(db, {
-            id: assetId,
-            deckId,
-            uploaderUserId: userId,
-            mimeType: mimeRaw,
-            sizeBytes,
-            storageKey,
-            ...(filename !== undefined ? { originalFilename: filename } : {}),
-            kind: 'font',
-            fontFamily: metadata.family,
-            fontWeight: metadata.weight,
-            fontStyle: metadata.style,
-            fontPostscriptName: metadata.postscriptName,
-          })
-        } catch (err) {
-          log.error({ err }, 'createMediaAsset (font) failed')
-          throw { status_code: 500, body: 'Failed to persist font asset metadata' }
-        }
-
-        return {
-          res,
-          status_code: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Narrative-Asset-Id': assetId,
-          },
-          body: JSON.stringify({
-            assetId,
-            storageKey,
-            mimeType: mimeRaw,
-            sizeBytes,
-            kind: 'font',
-            fontFamily: metadata.family,
-            fontWeight: metadata.weight,
-            fontStyle: metadata.style,
-            fontPostscriptName: metadata.postscriptName,
-          }),
-        }
-      }
-
-      if (isVideo) {
-        // -----------------------------------------------------------------------
-        // Video branch: create asset row with pending transcode status, enqueue job
-        // -----------------------------------------------------------------------
-        try {
-          await createMediaAsset(db, {
-            id: assetId,
-            deckId,
-            uploaderUserId: userId,
-            mimeType: mimeRaw,
-            sizeBytes,
-            storageKey,
-            ...(filename !== undefined ? { originalFilename: filename } : {}),
-            // width/height left null — worker fills them after ffprobe
-            kind: 'video',
-            transcodeStatus: 'pending',
-          })
-        } catch (err) {
-          log.error({ err }, 'createMediaAsset (video) failed')
-          throw { status_code: 500, body: 'Failed to persist video asset metadata' }
-        }
-
-        try {
-          await enqueueVideoTranscode({
-            assetId,
-            deckId,
-            storageKey,
-            uploaderUserId: userId,
-            mimeType: mimeRaw,
-          })
-        } catch (err) {
-          log.error({ err }, 'enqueueVideoTranscode failed')
-          // Asset row already exists — log the failure but don't rollback.
-          // Operator can re-enqueue manually. Do not fail the upload response.
-        }
-
-        return {
-          res,
-          status_code: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Narrative-Asset-Id': assetId,
-          },
-          body: JSON.stringify({
-            assetId,
-            storageKey,
-            mimeType: mimeRaw,
-            sizeBytes,
-            transcodeStatus: 'pending',
-          }),
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // Image branch: validate content, then probe dimensions + insert row.
-      //
-      // XSS-3 defense-in-depth: an uploaded "image" can be (a) an SVG carrying
-      // active content, or (b) a raster MIME whose bytes are actually something
-      // else (a script / PE binary renamed .png). We read the head bytes, and:
-      //   - if it sniffs as SVG (declared image/svg+xml OR `.png`-renamed SVG),
-      //     sanitize the full bytes through DOMPurify and write the cleaned
-      //     version back to the SAME key/content-type, or reject if nothing
-      //     usable survives;
-      //   - else, for a declared raster MIME we magic-check, reject when the
-      //     signature doesn't match the declared type.
-      // This runs BEFORE the media_assets row is created, so a rejected upload
-      // never produces a DB record (and the stored object is deleted).
-      // -----------------------------------------------------------------------
-      {
-        let headBytes: Buffer
-        try {
-          // First ~64 KB is enough to sniff SVG/XML and any raster signature.
-          const obj = await s3.send(
-            new GetObjectCommand({ Bucket: BUCKET, Key: storageKey, Range: 'bytes=0-65535' }),
-          )
-          if (!obj.Body) throw new Error('empty body')
-          const chunks: Buffer[] = []
-          for await (const chunk of obj.Body as Readable) {
-            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
-          }
-          headBytes = Buffer.concat(chunks)
-        } catch (err) {
-          log.error({ err }, 'image content read failed')
-          await deleteMinIOObject(s3, storageKey)
-          throw { status_code: 400, body: 'Failed to read uploaded image for validation.' }
-        }
-
-        const declaredMime = mimeRaw.toLowerCase()
-        const looksSvg = declaredMime === 'image/svg+xml' || sniffIsSvg(headBytes)
-
-        if (looksSvg) {
-          // Sanitize the FULL object (not just the 64 KB head) so we never
-          // truncate a large legitimate SVG. Re-read in full.
-          let fullBytes: Buffer
-          try {
-            fullBytes = await getObjectBytes(s3, storageKey)
-          } catch (err) {
-            log.error({ err }, 'SVG full read failed')
-            await deleteMinIOObject(s3, storageKey)
-            throw { status_code: 400, body: 'Failed to read uploaded SVG for sanitization.' }
-          }
-
-          const cleaned = sanitizeSvg(fullBytes)
-          if (!cleaned) {
-            await deleteMinIOObject(s3, storageKey)
-            throw {
-              status_code: 400,
-              body: 'SVG rejected: no valid graphic content after sanitization.',
-            }
-          }
-
-          // Only rewrite when sanitization actually changed the bytes.
-          if (!cleaned.equals(fullBytes)) {
-            try {
-              await s3.send(
-                new PutObjectCommand({
-                  Bucket: BUCKET,
-                  Key: storageKey,
-                  Body: cleaned,
-                  ContentType: 'image/svg+xml',
-                }),
-              )
-              sizeBytes = cleaned.byteLength
-            } catch (err) {
-              log.error({ err }, 'sanitized SVG PutObject failed')
-              await deleteMinIOObject(s3, storageKey)
-              throw { status_code: 500, body: 'Failed to store sanitized SVG.' }
-            }
-          }
-        } else if (
-          MAGIC_CHECKED_MIMES.has(declaredMime) &&
-          !magicBytesMatch(declaredMime, headBytes)
-        ) {
-          // Declared a raster type whose actual signature disagrees — reject.
-          await deleteMinIOObject(s3, storageKey)
-          throw {
-            status_code: 400,
-            body: `Upload rejected: file content does not match declared type ${mimeRaw}.`,
-          }
-        }
-      }
-
-      // Probe image dimensions (non-fatal if probe fails)
-      let dims: { width: number; height: number } | undefined
-      dims = await probeImageDimensions(s3, storageKey)
-      if (!dims) {
-        log.warn({ storageKey }, 'probe-image-size returned no result')
-        // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
-      }
-
-      // A raster above imgproxy's source limit would never render (imgproxy
-      // answers 422), so it is brought under the limit now, in its own
-      // format, under the same key — see storedImageLimits.ts. The head probe
-      // above decides; only an oversize image pays for the full read. A
-      // failed downscale keeps the original rather than losing the upload.
-      if (
-        dims !== undefined &&
-        exceedsStoredImageLimits(dims.width, dims.height) &&
-        canDownscaleStoredImage(mimeRaw)
-      ) {
-        try {
-          const downscaled = await downscaleForStorage(
-            await getObjectBytes(s3, storageKey),
-            mimeRaw,
-          )
-          if (downscaled !== null) {
-            await s3.send(
-              new PutObjectCommand({
-                Bucket: BUCKET,
-                Key: storageKey,
-                Body: downscaled.bytes,
-                ContentType: mimeRaw,
-              }),
-            )
-            log.info(
-              {
-                storageKey,
-                fromBytes: sizeBytes,
-                toBytes: downscaled.bytes.byteLength,
-                from: dims,
-                to: { width: downscaled.width, height: downscaled.height },
-              },
-              'downscaled oversize image to the stored-image limits',
-            )
-            sizeBytes = downscaled.bytes.byteLength
-            dims = { width: downscaled.width, height: downscaled.height }
-          }
-        } catch (err) {
-          log.error({ err, storageKey }, 'downscaling an oversize image failed, keeping original')
-        }
-      }
-
-      // Insert media_assets row
+      // ─── Image / video / font: the shared finalize step ───────────────
+      // media/finalizeUpload.ts — the same code the server-side upload agents
+      // use (services/media.ts), so both paths apply identical checks.
+      let finalized
       try {
-        await createMediaAsset(db, {
-          id: assetId,
-          deckId,
-          uploaderUserId: userId,
-          mimeType: mimeRaw,
-          sizeBytes,
+        finalized = await finalizeMediaUpload({
+          db,
+          s3,
           storageKey,
-          ...(filename !== undefined ? { originalFilename: filename } : {}),
-          ...(dims !== undefined ? { width: dims.width, height: dims.height } : {}),
-          kind: 'image',
+          assetId,
+          deckId,
+          userId,
+          mimeType: mimeRaw,
+          filename,
+          sizeBytes,
+          log,
         })
       } catch (err) {
-        log.error({ err }, 'createMediaAsset failed')
-        throw { status_code: 500, body: 'Failed to persist media asset metadata' }
+        if (err instanceof UploadRejected) throw { status_code: err.status, body: err.message }
+        throw err
+      }
+
+      if (finalized.kind === 'font') {
+        return {
+          res,
+          status_code: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Narrative-Asset-Id': assetId,
+          },
+          body: JSON.stringify({
+            assetId,
+            storageKey,
+            mimeType: mimeRaw,
+            sizeBytes: finalized.sizeBytes,
+            kind: 'font',
+            fontFamily: finalized.fontFamily,
+            fontWeight: finalized.fontWeight,
+            fontStyle: finalized.fontStyle,
+            fontPostscriptName: finalized.fontPostscriptName,
+          }),
+        }
+      }
+
+      if (finalized.kind === 'video') {
+        return {
+          res,
+          status_code: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Narrative-Asset-Id': assetId,
+          },
+          body: JSON.stringify({
+            assetId,
+            storageKey,
+            mimeType: mimeRaw,
+            sizeBytes: finalized.sizeBytes,
+            transcodeStatus: 'pending',
+          }),
+        }
       }
 
       // Return finalization body (non-standard but supported by most tus clients)
-      const responseBody = JSON.stringify({
-        assetId,
-        storageKey,
-        mimeType: mimeRaw,
-        sizeBytes,
-        width: dims?.width ?? null,
-        height: dims?.height ?? null,
-      })
-
       const imageHeaders: Record<string, string | number> = {
         'Content-Type': 'application/json',
         'X-Narrative-Asset-Id': assetId,
       }
-      if (dims?.width !== undefined) imageHeaders['X-Narrative-Width'] = dims.width
-      if (dims?.height !== undefined) imageHeaders['X-Narrative-Height'] = dims.height
+      if (finalized.width !== null) imageHeaders['X-Narrative-Width'] = finalized.width
+      if (finalized.height !== null) imageHeaders['X-Narrative-Height'] = finalized.height
 
       return {
         res,
         status_code: 200,
         headers: imageHeaders,
-        body: responseBody,
+        body: JSON.stringify({
+          assetId,
+          storageKey,
+          mimeType: mimeRaw,
+          sizeBytes: finalized.sizeBytes,
+          width: finalized.width,
+          height: finalized.height,
+        }),
       }
     },
   })

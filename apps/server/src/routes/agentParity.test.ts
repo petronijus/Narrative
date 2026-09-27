@@ -26,6 +26,8 @@ import {
 import { registerHttpRoutes } from '../http/registerRoutes.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
+import type { AgentRuntime } from '../agent/runtime.js'
+import type { McpRuntime } from '../mcp/runtime.js'
 
 async function registeredRoutes(): Promise<RouteRef[]> {
   const app = Fastify({ logger: false })
@@ -48,6 +50,11 @@ async function registeredRoutes(): Promise<RouteRef[]> {
       isProd: false,
       allowlist: { allowedEmails: [], allowedDomain: undefined },
     },
+    // Like the database: the agent routes close over the agent host and
+    // registering them never touches it.
+    agent: {} as AgentRuntime,
+    // The MCP routes read their runtime only when a request arrives.
+    mcp: { mcp: {} as McpRuntime, allowedOrigins: [] },
   })
   // Plugins registered with app.register() add their routes when loaded.
   await app.ready()

@@ -65,6 +65,7 @@ const tableEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 /** Upper bound on rows and on columns (a guard against runaway agent input). */
@@ -601,6 +602,7 @@ export const tableSplit = defineCommand({
 export const tableStyleCell = defineCommand({
   ...tableEditor,
   id: 'table.style.cell',
+  idempotent: true,
   title: 'Style a table cell',
   description:
     'Set or clear style overrides on one cell (fill, text colour, font size/weight, alignment, padding, …). ' +
@@ -644,6 +646,7 @@ export const tableStyleCell = defineCommand({
 export const tableStyleRange = defineCommand({
   ...tableEditor,
   id: 'table.style.range',
+  idempotent: true,
   title: 'Style a range of table cells',
   description:
     'Set or clear the same style overrides on every visible cell of a rectangle (e.g. colour a header row or a ' +
@@ -683,6 +686,7 @@ export const tableStyleRange = defineCommand({
 export const tableStyleTable = defineCommand({
   ...tableEditor,
   id: 'table.style.table',
+  idempotent: true,
   title: 'Style a whole table',
   description:
     'Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, ' +
@@ -734,6 +738,7 @@ const BorderPresetSchema = z.enum([
 export const tableBorderPreset = defineCommand({
   ...tableEditor,
   id: 'table.border.preset',
+  idempotent: true,
   title: 'Apply a table border preset',
   description:
     'Draw grid lines on a range of cells (default: the whole table) with a preset: all, outer (perimeter), inside ' +
@@ -790,6 +795,7 @@ export const tableBorderPreset = defineCommand({
 export const tableBorderSegment = defineCommand({
   ...tableEditor,
   id: 'table.border.segment',
+  idempotent: true,
   title: 'Style one table grid line',
   description:
     'Set or clear the style of ONE grid-line segment. A horizontal segment {orientation: "horizontal", row, col} is ' +

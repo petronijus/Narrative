@@ -19,13 +19,42 @@
  *     cookie value is opaque and resolved via auth/session.ts → DB row.
  *   - The previous Bearer-id_token path is gone — id_tokens never leave
  *     the server now.
+ *
+ * Personal access tokens (agentic layer A1, ADR 0011):
+ *   - `Authorization: Bearer nrt_…` resolves to the token's user
+ *     (auth/identity.ts, auth/personalAccessTokens.ts).
+ *   - `authPreHandler` stays SESSION-ONLY: it rejects a valid PAT with 403.
+ *     Every route that exists today is a browser route, and the agent
+ *     surface has exactly one door (ADR 0010/0011): the command registry
+ *     behind /api/mcp and /api/commands. A PAT that worked on every legacy
+ *     route would open a second door that bypasses command validation,
+ *     confirmation (`confirm: 'always'`), run attribution and the audit log.
+ *   - `requireTokenScope(scope)` is the pre-handler for agent routes: it
+ *     authenticates the request itself (use it INSTEAD of authPreHandler)
+ *     and requires a PAT carrying `scope`.
+ *   - Either way `request.auth` says how the caller authenticated
+ *     (`kind: 'session' | 'token'`, the token's scopes and id).
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { JwtPayload } from './jwt.js'
-import { lookupSession, SESSION_COOKIE_NAME } from './session.js'
 import { resolveDeckAccess, roleAtLeast, type DeckRole } from './permissions.js'
 import type { Database } from '../db/client.js'
+import { BearerCache } from '../http/bearerCache.js'
+import {
+  createDrizzlePatStore,
+  createPatService,
+  refuseAllPatOwners,
+  type PatScope,
+  type PatService,
+} from './personalAccessTokens.js'
+import {
+  resolveRequestIdentity,
+  type Identity,
+  type IdentityDeps,
+  type IdentityResult,
+  type RequestAuth,
+} from './identity.js'
 
 // ---------------------------------------------------------------------------
 // FastifyRequest augmentation
@@ -34,6 +63,8 @@ import type { Database } from '../db/client.js'
 declare module 'fastify' {
   interface FastifyRequest {
     user?: JwtPayload
+    /** How `user` authenticated — set together with `user`. */
+    auth?: RequestAuth
     deckAccess?: { role: DeckRole; reason: string }
   }
 }
@@ -79,22 +110,51 @@ export function assertAuthBootSafety(opts: { bypassAuth: boolean; nodeEnv: strin
 export interface AuthPluginOpts {
   bypass?: boolean
   db: Database
+  /**
+   * Personal access token service. Production passes the one built with the
+   * sign-in policy (index.ts); tests inject one over an in-memory store.
+   * Without it, tokens are refused (`refuseAllPatOwners`): fail closed.
+   */
+  pats?: PatService
+  /**
+   * Recently failed / admitted bearer tokens (http/bearerCache.ts), shared by
+   * the credential resolvers and the rate limiter's pre-limit. Default: one
+   * instance per app, created here, so every consumer that reads the auth
+   * options (`getIdentityDeps`, `registerRateLimit`, the MCP routes) shares it.
+   */
+  bearers?: BearerCache
+}
+
+/** The resolved auth options every pre-handler and hook reads. */
+export interface ResolvedAuthOpts extends AuthPluginOpts {
+  pats: PatService
+  bearers: BearerCache
 }
 
 /**
  * Registers the auth plugin on the Fastify instance.
- * Decorates the request with `user` and `deckAccess` fields.
- * Makes `authPreHandler` and `requireDeckRole` available to route definitions.
+ * Decorates the request with `user`, `auth` and `deckAccess` fields.
+ * Makes `authPreHandler`, `requireTokenScope` and `requireDeckRole` available
+ * to route definitions.
  */
 export function registerAuthPlugin(app: FastifyInstance, opts: AuthPluginOpts): void {
   // Decorate so Fastify's type system doesn't complain about unknown fields.
   // Using undefined as initial value satisfies strict TypeScript (no null/JwtPayload mismatch).
   app.decorateRequest('user')
+  app.decorateRequest('auth')
   app.decorateRequest('deckAccess')
+
+  const resolved: ResolvedAuthOpts = {
+    ...opts,
+    pats:
+      opts.pats ??
+      createPatService(createDrizzlePatStore(opts.db), { isOwnerAllowed: refuseAllPatOwners }),
+    bearers: opts.bearers ?? new BearerCache(),
+  }
 
   // Attach opts to app for route-level access (via closure in factory functions).
   // We store on the app instance so factory functions can close over them.
-  ;(app as FastifyInstance & { _authOpts: AuthPluginOpts })._authOpts = opts
+  ;(app as FastifyInstance & { _authOpts: ResolvedAuthOpts })._authOpts = resolved
 }
 
 // ---------------------------------------------------------------------------
@@ -105,12 +165,41 @@ export function registerAuthPlugin(app: FastifyInstance, opts: AuthPluginOpts): 
  * Internal helper — retrieves auth opts attached by registerAuthPlugin.
  * Throws if registerAuthPlugin was not called before this route fires.
  */
-function getOpts(req: FastifyRequest): AuthPluginOpts {
-  const opts = (req.server as FastifyInstance & { _authOpts?: AuthPluginOpts })._authOpts
+function getOpts(req: FastifyRequest): ResolvedAuthOpts {
+  return getAuthOpts(req.server)
+}
+
+/**
+ * The auth options registered on `app` (by registerAuthPlugin). For code
+ * outside a Fastify pre-handler — the tus hooks, the rate limiter.
+ */
+export function getAuthOpts(app: FastifyInstance): ResolvedAuthOpts {
+  const opts = (app as FastifyInstance & { _authOpts?: ResolvedAuthOpts })._authOpts
   if (!opts) {
     throw new Error('[auth] registerAuthPlugin must be called before route handlers')
   }
   return opts
+}
+
+/** The identity-resolution dependencies for requests served by `app`. */
+export function getIdentityDeps(app: FastifyInstance): IdentityDeps {
+  const opts = getAuthOpts(app)
+  return { db: opts.db, bypass: opts.bypass === true, pats: opts.pats, bearers: opts.bearers }
+}
+
+/** Resolve (memoised per request) who is calling. */
+export function resolveFastifyIdentity(req: FastifyRequest): Promise<IdentityResult> {
+  return resolveRequestIdentity(req.raw, getIdentityDeps(req.server))
+}
+
+function attachIdentity(req: FastifyRequest, identity: Identity): void {
+  req.user = identity.user
+  req.auth = identity.auth
+}
+
+/** RFC 6750 challenge so token clients (MCP) know how to authenticate. */
+function bearerChallenge(extra?: string): string {
+  return extra ? `Bearer realm="narrative", ${extra}` : 'Bearer realm="narrative"'
 }
 
 // ---------------------------------------------------------------------------
@@ -118,10 +207,13 @@ function getOpts(req: FastifyRequest): AuthPluginOpts {
 // ---------------------------------------------------------------------------
 
 /**
- * Pre-handler hook: reads the `narrative_session` cookie, resolves it to a
- * session row, attaches the user to `request.user`.
+ * Pre-handler hook for browser routes: reads the `narrative_session` cookie,
+ * resolves it to a session row, attaches the user to `request.user` (and
+ * `request.auth = { kind: 'session' }`).
  *
  * On failure → 401.
+ * A valid personal access token → 403: PATs are accepted only on the agent
+ * surface (`requireTokenScope`), see the file header.
  * In bypass mode → synthesizes { sub: 'dev-user' } without DB lookup.
  *
  * Share-link access is handled by routes themselves via `share_token` query
@@ -129,29 +221,90 @@ function getOpts(req: FastifyRequest): AuthPluginOpts {
  * and the route must handle the null user.
  */
 export async function authPreHandler(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const opts = getOpts(req)
-
-  if (opts.bypass) {
-    req.user = { sub: 'dev-user', email: 'dev@localhost', name: 'Dev User' }
-    return
-  }
-
-  const rawId = req.cookies?.[SESSION_COOKIE_NAME]
-  if (!rawId) {
+  const result = await resolveFastifyIdentity(req)
+  if (result.status !== 'ok') {
     await reply.status(401).send({ error: 'Unauthorized' })
     return
   }
-
-  const session = await lookupSession(opts.db, rawId)
-  if (!session) {
-    await reply.status(401).send({ error: 'Unauthorized' })
+  if (result.identity.auth.kind === 'token') {
+    await reply.status(403).send({
+      error: 'token_not_accepted',
+      message:
+        'Personal access tokens are accepted only on the agent endpoints (/api/mcp, /api/commands).',
+    })
     return
   }
+  attachIdentity(req, result.identity)
+}
 
-  req.user = {
-    sub: session.userSub,
-    email: session.userEmail,
-    ...(session.userName ? { name: session.userName } : {}),
+// ---------------------------------------------------------------------------
+// requireTokenScope
+// ---------------------------------------------------------------------------
+
+export interface RequireTokenScopeOpts {
+  /**
+   * Also admit a signed-in browser session (default false: the route is a
+   * token door). Sessions carry no scopes; admitting one means "a person
+   * signed in to the web app may use this route as themselves".
+   */
+  allowSession?: boolean
+}
+
+/**
+ * Authentication pre-handler for the agent surface (`/api/mcp` with `'mcp'`,
+ * `/api/commands` with `'api'`). Use it INSTEAD of `authPreHandler`; it can
+ * be followed by `requireDeckRole`.
+ *
+ *   - no credential / invalid credential → 401 with a Bearer challenge;
+ *   - a PAT without `scope`              → 403 `insufficient_scope`;
+ *   - a session                          → 401 unless `allowSession`;
+ *   - BYPASS_AUTH's dev-user             → admitted (dev only).
+ *
+ * On success `request.user` and `request.auth` are set.
+ */
+export function requireTokenScope(
+  scope: PatScope,
+  opts: RequireTokenScopeOpts = {},
+): (req: FastifyRequest, reply: FastifyReply) => Promise<void> {
+  return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const result = await resolveFastifyIdentity(req)
+    if (result.status !== 'ok') {
+      await reply
+        .status(401)
+        .header(
+          'www-authenticate',
+          bearerChallenge(result.status === 'invalid' ? 'error="invalid_token"' : undefined),
+        )
+        .send({ error: 'Unauthorized' })
+      return
+    }
+    const { auth } = result.identity
+    if (auth.kind === 'token') {
+      if (!auth.scopes.includes(scope)) {
+        await reply
+          .status(403)
+          .header(
+            'www-authenticate',
+            bearerChallenge(`error="insufficient_scope", scope="${scope}"`),
+          )
+          .send({
+            error: 'insufficient_scope',
+            message: `This token lacks the "${scope}" scope.`,
+            scope,
+          })
+        return
+      }
+    } else if (!auth.bypass && opts.allowSession !== true) {
+      await reply
+        .status(401)
+        .header('www-authenticate', bearerChallenge())
+        .send({
+          error: 'token_required',
+          message: `This endpoint needs a personal access token with the "${scope}" scope.`,
+        })
+      return
+    }
+    attachIdentity(req, result.identity)
   }
 }
 

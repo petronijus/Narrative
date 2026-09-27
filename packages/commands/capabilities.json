@@ -1,6 +1,56 @@
 {
   "commands": [
     {
+      "id": "agent.revert",
+      "domain": "agent",
+      "title": "Revert an agent run",
+      "description": "Undo an agent run's changes to this deck (or component master): the whole run, or only its last N changes (`lastOps`). Only that run's changes are undone — edits people (or other runs) made in the meantime stay, although an object the run created disappears together with anything added to it. Use it when the user asks to undo what you did; find the runId with agent.runs (or keep the one agent.startRun returned). It is the safety net, so it never asks for confirmation. It only works while the deck or master is loaded on the server (someone has it open, or a run on it is active): once the document unloads, or after a server restart, the run reports it is no longer revertible and the changes have to be undone by editing. Deck renames, sharing and other server-side actions of the run are not undone — only document edits.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/agent-runs/:runId/revert"
+        }
+      ]
+    },
+    {
+      "id": "agent.runs",
+      "domain": "agent",
+      "title": "List agent runs",
+      "description": "List the recent agent runs on this deck (or component master), newest first: who asked, the request, when, how many commands ran and how many of them changed something, the status (open, closed, reverted) and whether the run can still be reverted (with the reason when it cannot). Covers runs of every agent session and user on the document, not just yours. Use it to find the runId to pass to agent.revert, or to tell the user what agents did to it. Read-only.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/agent-runs"
+        },
+        {
+          "method": "GET",
+          "path": "/components/:id/agent-runs"
+        }
+      ]
+    },
+    {
+      "id": "agent.startRun",
+      "domain": "agent",
+      "title": "Start an agent run",
+      "description": "Start a new run on this deck (or component master) for the user's current request, and return its runId. Call it once at the start of every new user request that will change the document (\"make slide 3 shorter\", \"restyle the deck\"), before the first edit, with the request in a short sentence. Everything you change afterwards belongs to this run, is listed under it in the Agent activity popover the user sees in the editor (deck or master), and can be undone as one unit with agent.revert — so one run per request is what makes \"undo that\" precise. Without it your edits still land in an automatic run per session and document (split after 10 minutes of inactivity), which lumps separate requests together. Starting a run closes your previous run on the same deck or master; it changes nothing in the document.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
       "id": "animation.add",
       "domain": "animation",
       "title": "Add animation",
@@ -42,7 +92,437 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "component.delete",
+      "domain": "component",
+      "title": "Delete component",
+      "description": "Delete a component master from the folder. Objects already stamped from it stay on their slides (stamps are independent copies); it just cannot be stamped any more. Cannot be undone; confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/components/:id"
+        }
+      ]
+    },
+    {
+      "id": "component.get",
+      "domain": "component",
+      "title": "Read component",
+      "description": "One component's master: its objects with every property (the shapes query.slide returns), its animations, its bounding box, and its slot map — every NAMED object is a slot; text slots show their placeholder text. Read it before component.stamp to know which slot names to fill. To change the master itself, target the component (componentId) with the ordinary document commands.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
+      "id": "component.list",
+      "domain": "component",
+      "title": "List components",
+      "description": "The folder's components (id, name, thumbnail URL), oldest first. A folder keeps only a few — the blocks that recur on many slides, such as the headline block, the pagination or a card grid. Prefer them for those roles: component.get shows one with its slots, component.stamp places it. Do not expect a component for every layout; build one-off content from plain objects styled with the folder tokens.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:folderId/components"
+        }
+      ]
+    },
+    {
+      "id": "component.rename",
+      "domain": "component",
+      "title": "Rename component",
+      "description": "Rename a component of the folder. Stamps already on slides are unaffected. Undo: rename it back.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/components/:id"
+        }
+      ]
+    },
+    {
+      "id": "component.stamp",
+      "domain": "component",
+      "title": "Stamp component",
+      "description": "Place one of the deck's folder components on a slide and fill its text slots in the same step. The master's objects are copied as ordinary objects with fresh ids — rich text, groups and table content included; the master's animations are not copied — so editing the master later does not change this stamp. Without `at` the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the slot's formatting, { paragraphs } sets it explicitly. Returns the new object ids in stacking order. Use the folder's existing components for the roles they cover; do not stamp for one-off content. Access differs: stamping needs the editor role on the deck, but component.list and component.get are folder commands for the folder's owner only — an editor who does not own the folder cannot look components up, so ask the user which component to use.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "deck.activeEditors",
+      "domain": "deck",
+      "title": "Who is editing",
+      "description": "Which decks of a folder people have open right now, and who (user id, email, name) — for example before a large change, to warn the user that colleagues are working in the deck. Decks nobody has open are left out. Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders/:id/active-editors"
+        }
+      ]
+    },
+    {
+      "id": "deck.create",
+      "domain": "deck",
+      "title": "Create deck",
+      "description": "Create a new, empty deck owned by the user — in `folderId` (one of their folders; folder.list) or, without it, in their Drafts folder. The deck already holds one empty slide (`firstSlideId`), so you can start editing it at once: target the returned `id` with slide.add, object.create, text.set and the other document commands. To start from a PowerPoint file use deck.importPptx instead. Undo: deck.delete.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks"
+        }
+      ]
+    },
+    {
+      "id": "deck.delete",
+      "domain": "deck",
+      "title": "Delete deck",
+      "description": "Permanently delete the deck: its slides, speaker notes, collaborators, share links and uploaded media. Cannot be undone, and people who have it open lose it — always confirm with the user first, naming the deck. Owner only. To remove slides use slide.delete; to tidy up, deck.moveToFolder.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "id": "deck.exportPptx",
+      "domain": "deck",
+      "title": "Export PowerPoint",
+      "description": "Export the deck as a .pptx file, exactly as it is right now (including edits made seconds ago). By default returns a download URL valid for 15 minutes. It is a bearer link: anyone who has it can download the deck without signing in, so give it only to the user who asked (or fetch it yourself) — never put it in a slide, a share, or a message to someone else. `delivery: \"base64\"` returns the file inline instead, only for files up to 8 MB. Colour tokens are written as their colours; everything the PowerPoint format can hold round-trips back through deck.importPptx.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/export.pptx"
+        }
+      ]
+    },
+    {
+      "id": "deck.fonts.list",
+      "domain": "deck",
+      "title": "Deck fonts",
+      "description": "Fonts bound to this deck itself — copies kept when a folder font the deck may use was deleted from the folder — with family, weight, style and a download URL. The fonts most decks use are their folder's: see folder.fonts.list. A family listed here or there can be used as fontFamily in text.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/decks/:deckId/fonts"
+        }
+      ]
+    },
+    {
+      "id": "deck.get",
+      "domain": "deck",
+      "title": "Deck details",
+      "description": "The deck's record: title, folder, owner, thumbnail URL, created / updated times and the caller's role on it. It says nothing about the content — for slides and objects use query.deck and query.slide.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "id": "deck.importPptx",
+      "domain": "deck",
+      "title": "Import PowerPoint",
+      "description": "Create a NEW deck in the folder from a .pptx file (public URL or base64): slides, shapes, text with its formatting, tables, images, videos, speaker notes and embedded fonts are converted to Narrative objects. Returns the new deck id and what could not be carried over (skipped shapes, unsupported images, ignored elements) plus the font families the slides use — upload missing ones with folder.fonts.upload. To add a file's slides to an existing deck use deck.insertFrom. A .pptx by URL or base64 is limited to 200 MB; larger decks import through the browser. Undo: deck.delete.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "confirmWhen": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:folderId/import-pptx"
+        }
+      ]
+    },
+    {
+      "id": "deck.insertFrom",
+      "domain": "deck",
+      "title": "Insert slides from a file or deck",
+      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; their media is copied into this deck. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle them next if they should match this deck. For a new deck from a file use deck.importPptx.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "confirmWhen": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/append-pptx"
+        }
+      ]
+    },
+    {
+      "id": "deck.list",
+      "domain": "deck",
+      "title": "List decks",
+      "description": "Find decks: the decks the user can open — their own and those shared with them — most recently changed first, one page at a time. Each item is { id, title, folderId, updatedAt, role } (role = the user's role on it: owner / editor / viewer); `updatedAt` is the last change to its content, title or folder. Narrow it with `query` (title contains, ignoring case) or `folderId` (one of your folders; folder.list gives their ids) rather than paging through everything. A page holds `limit` decks (default 50, at most 200); when `nextCursor` is not null there are more — call again with `cursor: nextCursor` and the same filters. For a deck's full record use deck.get; to read its slides use query.deck.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks"
+        }
+      ]
+    },
+    {
+      "id": "deck.moveToFolder",
+      "domain": "deck",
+      "title": "Move deck to folder",
+      "description": "Move the deck into another of your folders (folder.list), and rebind its design tokens to that folder: every colour / text-style / effect reference is pointed at the destination token with the same name (case and spacing ignored); a colour with no same-named token becomes its literal colour and a text style with none is detached (the text keeps its look), so the deck looks the same afterwards. Returns how many references were rebound, literalised and detached. Moving back does not re-link literalised colours, so confirm with the user first. Only the deck owner can move it, and only between their own folders.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders/:id/move-decks"
+        }
+      ]
+    },
+    {
+      "id": "deck.rename",
+      "domain": "deck",
+      "title": "Rename deck",
+      "description": "Change the deck's title (what the deck list and the browser tab show). Slide names are slide.rename; text on slides is text.set. Undo: rename it back.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/decks/:id"
+        }
+      ]
+    },
+    {
+      "id": "editor.context",
+      "domain": "editor",
+      "title": "Read the user's editor context",
+      "description": "Read what the user is looking at in their open editor on this deck: the active slide (id and 0-based index) and the ids of the objects they have selected. Call it whenever the user says \"this\", \"here\", \"these\", \"the selected…\" or \"the current slide\", then pass the returned ids to the edit commands — edit commands never act on \"the selection\" themselves. `open: false` means the user has no editor open on the deck (ask them which slide or object they mean). With several tabs open, the top-level fields describe the most recently active tab and `editors` lists all of them. Reads presence only; changes nothing.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
+      "id": "editor.present.link",
+      "domain": "editor",
+      "title": "Link to present mode",
+      "description": "Get the URL that opens this deck in present mode, starting at a given slide (default: the first). Give it to the user when they want to present or preview the deck full screen; opening it needs their normal access to the deck. Presenting itself (next slide, fullscreen, presenter view) is done by the person, not by an agent. Changes nothing.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"]
+    },
+    {
+      "id": "editor.show",
+      "domain": "editor",
+      "title": "Show something in the user's editor",
+      "description": "Point the user's open editor(s) on this deck at a slide and, optionally, highlight objects on it — e.g. after an edit, to show the user what you changed (\"here is the new chart\"). Each tab switches to that slide and selects the objects, flashing an outline around them for a moment; a show without `objects` clears the tab's selection. Nothing in the document changes and other people are not affected; only the calling user's own tabs receive it. If the user is busy in a tab — typing in a text box, cropping an image, editing path points or a table cell — that tab does not move: it shows a \"Show\" notice instead and switches only if the user clicks it within 20 seconds, so do not assume they are looking at it. `delivered` is the number of the user's tabs the request reached, not views that changed; 0 means no editor open on the deck — tell them where to look instead, or give them editor.present.link.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
+      "id": "folder.create",
+      "domain": "folder",
+      "title": "Create folder",
+      "description": "Create an empty folder owned by the user, e.g. for a new client. Put decks in it with deck.create (folderId) or deck.moveToFolder, fonts with folder.fonts.upload. Undo: folder.delete.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/folders"
+        }
+      ]
+    },
+    {
+      "id": "folder.delete",
+      "domain": "folder",
+      "title": "Delete folder",
+      "description": "Permanently delete the folder AND every deck in it, with their media, plus the folder's tokens, fonts and components. Cannot be undone; always confirm with the user first, saying how many decks go with it (folder.list shows deckCount). The Drafts folder cannot be deleted. To keep the decks, move them out first with deck.moveToFolder.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/folders/:id"
+        }
+      ]
+    },
+    {
+      "id": "folder.fonts.delete",
+      "domain": "folder",
+      "title": "Delete folder font",
+      "description": "Remove a font face from the folder (asset id from folder.fonts.list). Decks in the folder that the user owns keep a private copy so they still render; other decks fall back to another face. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/api/folders/:folderId/fonts/:assetId"
+        }
+      ]
+    },
+    {
+      "id": "folder.fonts.list",
+      "domain": "folder",
+      "title": "Folder fonts",
+      "description": "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the folder can use these families as fontFamily in text (text.set, text.format, object.update). Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/folders/:folderId/fonts"
+        }
+      ]
+    },
+    {
+      "id": "folder.fonts.upload",
+      "domain": "folder",
+      "title": "Upload folder font",
+      "description": "Add one font face (a TTF, OTF, WOFF or WOFF2 file, at most 10 MB) to the folder, from a public URL or as base64, so every deck in the folder can use it. Upload each weight / style as its own file. The file is parsed to read its family, weight and style; `fontFamily` binds it to another family name instead (e.g. the name an imported PowerPoint uses). A face whose postscript name the folder already has is refused. Only upload fonts the user has the right to use. Undo: folder.fonts.delete.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "confirmWhen": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/api/folders/:folderId/fonts"
+        }
+      ]
+    },
+    {
+      "id": "folder.list",
+      "domain": "folder",
+      "title": "List folders",
+      "description": "The user's folders, by name A→Z, one page at a time: { id, name, createdAt, deckCount } each. A folder is a client or brand: it holds decks plus the design tokens, fonts and components they share. Every user has a \"Drafts\" folder. Narrow it with `query` (name contains, ignoring case). A page holds `limit` folders (default 50, at most 200); when `nextCursor` is not null there are more — call again with `cursor: nextCursor` and the same `query`. Decks in a folder: deck.list with folderId.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/folders"
+        }
+      ]
+    },
+    {
+      "id": "folder.rename",
+      "domain": "folder",
+      "title": "Rename folder",
+      "description": "Rename the folder. Its decks, tokens, fonts and components are unaffected. Undo: rename it back.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "PATCH",
+          "path": "/folders/:id"
+        }
+      ]
     },
     {
       "id": "guide.add",
@@ -75,7 +555,101 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "media.delete",
+      "domain": "media",
+      "title": "Delete media",
+      "description": "Remove an asset from the deck's media library. Any slide object still showing it breaks (an empty image / video box), so first delete or re-point those objects (object.delete, object.update). Cannot be undone; confirm with the user first. Deck owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/api/media/:assetId"
+        }
+      ]
+    },
+    {
+      "id": "media.fontUrl",
+      "domain": "media",
+      "title": "Font file URL",
+      "description": "A short-lived download URL of one of the folder's font files, with its family, weight and style (asset id from folder.fonts.list). Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/font-url"
+        }
+      ]
+    },
+    {
+      "id": "media.status",
+      "domain": "media",
+      "title": "Video status",
+      "description": "Transcode state of an uploaded video — pending, processing, done or failed (with the error) — plus its duration, size and playback / poster / thumbnail URLs once done. Poll it after media.upload until `transcodeStatus` is \"done\" (typically seconds to a few minutes). Images and fonts need no processing: they are ready as soon as media.upload returns.",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/video-info"
+        }
+      ]
+    },
+    {
+      "id": "media.upload",
+      "domain": "media",
+      "title": "Upload media",
+      "description": "Add an image (PNG, JPEG, GIF, WebP, AVIF, SVG, …), a video (MP4, MOV, WebM, …) or a font file to the deck from a public URL or as base64, and get its asset id. It does NOT place anything on a slide: create an image or video object with object.create and this assetId (width / height tell you its native size). The file gets the same checks as a browser upload: size limits per kind (images 25 MB, videos 200 MB, fonts 8 MB — a larger video goes through the browser upload, up to 500 MB), at most 2 URL downloads at once per user, SVGs are sanitised, a file whose content does not match its type is refused, very large images are scaled down. A video is transcoded in the background: poll media.status until it is done before presenting it.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "confirmWhen": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "ALL",
+          "path": "/api/uploads"
+        },
+        {
+          "method": "ALL",
+          "path": "/api/uploads/*"
+        }
+      ]
+    },
+    {
+      "id": "media.url",
+      "domain": "media",
+      "title": "Image URL",
+      "description": "A signed URL of one of the deck's images, in a size variant: thumb (small), preview, display (default, slide size) or original. Use it to look at an image a slide shows, or to hand it to the user. For videos use media.status; slide screenshots are query.render (planned, not available yet).",
+      "role": "viewer",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/media/:assetId/url"
+        }
+      ]
     },
     {
       "id": "object.align",
@@ -86,13 +660,14 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
       "id": "object.create",
       "domain": "object",
       "title": "Create object",
-      "description": "Create one object on a slide: rectangle, ellipse, triangle, polygon, line, arrow, path, text, image, video or table. Only `type` is required; every property you omit takes the editor default (e.g. a 200 x 150 blue rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or { paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of an asset already uploaded to the deck. A table takes rows/cols/defaults (same as table.insert) and is filled with text.set. New objects go on top of the stacking order; use object.layer to reorder. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "description": "Create one object on a slide: rectangle, ellipse, triangle, polygon, line, arrow, path, text, image, video or table. Only `type` is required; every property you omit takes the editor default (e.g. a 200 x 150 blue rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or { paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of an asset already uploaded to the deck (media.upload). A table takes rows/cols/defaults (same as table.insert) and is filled with text.set. New objects go on top of the stacking order; use object.layer to reorder. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -119,6 +694,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -207,6 +783,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -229,6 +806,7 @@
       "effects": [],
       "undo": "n/a",
       "confirm": "never",
+      "readOnly": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -240,18 +818,171 @@
       "effects": [],
       "undo": "n/a",
       "confirm": "never",
+      "readOnly": true,
       "hosts": ["browser", "server"]
     },
     {
       "id": "query.slide",
       "domain": "query",
       "title": "Read slide",
-      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object.",
+      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
       "confirm": "never",
+      "readOnly": true,
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "share.invites.cancel",
+      "domain": "share",
+      "title": "Cancel an invite",
+      "description": "Withdraw a pending email invite (id from share.invites.list): the link in the email stops working. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/invites/:inviteId"
+        }
+      ]
+    },
+    {
+      "id": "share.invites.list",
+      "domain": "share",
+      "title": "List pending invites",
+      "description": "Email invites to the deck that have not been accepted yet (id, email, role, sent and expiry time). An invite turns into a collaborator when the person signs in.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/invites"
+        }
+      ]
+    },
+    {
+      "id": "share.links.create",
+      "domain": "share",
+      "title": "Create a share link",
+      "description": "Create a link that opens the deck for ANYONE who has it, without an account, with the given role (usually viewer; an editor link lets strangers change the deck). Optionally expiring. Returns the URL to hand out. Confirm with the user first; revoke with share.links.revoke.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/share-links"
+        }
+      ]
+    },
+    {
+      "id": "share.links.list",
+      "domain": "share",
+      "title": "List share links",
+      "description": "Active share links of the deck: anyone holding one opens the deck with its role, without signing in. Lists id, role, creation and expiry time; the URL itself is only returned when a link is created.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/share-links"
+        }
+      ]
+    },
+    {
+      "id": "share.links.revoke",
+      "domain": "share",
+      "title": "Revoke a share link",
+      "description": "Revoke a share link (id from share.links.list): it stops working at once and people who opened the deck with it are disconnected. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/share-links/:linkId"
+        }
+      ]
+    },
+    {
+      "id": "share.permissions.invite",
+      "domain": "share",
+      "title": "Share with a person",
+      "description": "Share the deck with someone by email. If they already use Narrative they get the role immediately (`kind: \"granted\"`); otherwise a pending invite is created and an invitation EMAIL is sent to them (`kind: \"pending\"`), which they accept by signing in. Inviting an existing collaborator changes their role. Always confirm the address and role with the user first — this reaches a real person. To change the role of someone listed by share.permissions.list without emailing, use share.permissions.setRole.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/permissions"
+        }
+      ]
+    },
+    {
+      "id": "share.permissions.list",
+      "domain": "share",
+      "title": "List collaborators",
+      "description": "Who has access to the deck: every collaborator with user id, email, name, role and when it was granted. People invited by email who have not signed in yet are share.invites.list; anonymous links are share.links.list.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/decks/:id/permissions"
+        }
+      ]
+    },
+    {
+      "id": "share.permissions.revoke",
+      "domain": "share",
+      "title": "Remove a collaborator",
+      "description": "Remove a collaborator's access (user id from share.permissions.list); their open editors are disconnected. You cannot remove yourself, and the last owner cannot be removed. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "DELETE",
+          "path": "/decks/:id/permissions/:userId"
+        }
+      ]
+    },
+    {
+      "id": "share.permissions.setRole",
+      "domain": "share",
+      "title": "Change a collaborator role",
+      "description": "Change the role of an existing collaborator (user id from share.permissions.list). Their open editors reconnect with the new role at once — a downgrade to viewer makes the deck read-only for them. You cannot change your own role. Sends no email. Confirm with the user first.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "irreversible",
+      "confirm": "always",
+      "idempotent": true,
+      "hosts": ["server"]
     },
     {
       "id": "slide.add",
@@ -273,6 +1004,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -306,6 +1038,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -328,6 +1061,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -339,6 +1073,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -350,6 +1085,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -361,6 +1097,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -372,6 +1109,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -383,6 +1121,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -493,6 +1232,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -504,6 +1244,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -515,6 +1256,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -526,6 +1268,7 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -548,443 +1291,29 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
-    }
-  ],
-  "knownMissing": [
-    {
-      "capability": "component.stamp",
-      "phase": "A1",
-      "source": "slide-model",
-      "where": "packages/slide-model/src/stampComponent.ts",
-      "writers": ["stampComponent"],
-      "note": "needs the component document loaded by a host; the server host provides it in A1"
     },
     {
-      "capability": "component.master.edit",
-      "phase": "A1",
-      "source": "web",
-      "where": "apps/web/src/pages/ComponentMasterEditor.tsx",
-      "note": "editing a component master = the object/text/table commands run against a component document instead of a deck; needs the server host to open `component:<id>`"
-    },
-    {
-      "capability": "component.get",
-      "phase": "A1",
-      "source": "new",
-      "note": "a master's objects with their slot map, so the agent can pick a component and fill it (plan §7.2 item 8)"
-    },
-    {
-      "capability": "deck.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks"
-        }
-      ]
-    },
-    {
-      "capability": "deck.get",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks/:id"
-        }
-      ]
-    },
-    {
-      "capability": "deck.create",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/decks"
-        }
-      ]
-    },
-    {
-      "capability": "deck.rename",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "PATCH",
-          "path": "/decks/:id"
-        }
-      ]
-    },
-    {
-      "capability": "deck.delete",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/decks/:id"
-        }
-      ]
-    },
-    {
-      "capability": "deck.moveToFolder",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/folders/:id/move-decks"
-        }
-      ]
-    },
-    {
-      "capability": "deck.importPptx",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/folders/:folderId/import-pptx"
-        }
-      ]
-    },
-    {
-      "capability": "deck.insertFrom",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/decks/:id/append-pptx"
-        }
-      ]
-    },
-    {
-      "capability": "deck.exportPptx",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks/:id/export.pptx"
-        }
-      ]
-    },
-    {
-      "capability": "deck.activeEditors",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/folders/:id/active-editors"
-        }
-      ]
-    },
-    {
-      "capability": "deck.fonts.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/api/decks/:deckId/fonts"
-        }
-      ],
-      "note": "the fonts a deck's editors may load (its folder's fonts), for any role on the deck"
-    },
-    {
-      "capability": "folder.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/folders"
-        }
-      ]
-    },
-    {
-      "capability": "folder.create",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/folders"
-        }
-      ]
-    },
-    {
-      "capability": "folder.rename",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "PATCH",
-          "path": "/folders/:id"
-        }
-      ]
-    },
-    {
-      "capability": "folder.delete",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/folders/:id"
-        }
-      ]
-    },
-    {
-      "capability": "folder.fonts.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/api/folders/:folderId/fonts"
-        }
-      ]
-    },
-    {
-      "capability": "folder.fonts.upload",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/api/folders/:folderId/fonts"
-        }
-      ]
-    },
-    {
-      "capability": "folder.fonts.delete",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/api/folders/:folderId/fonts/:assetId"
-        }
-      ]
-    },
-    {
-      "capability": "component.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/folders/:folderId/components"
-        }
-      ]
-    },
-    {
-      "capability": "component.rename",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "PATCH",
-          "path": "/components/:id"
-        }
-      ]
-    },
-    {
-      "capability": "component.delete",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/components/:id"
-        }
-      ]
-    },
-    {
-      "capability": "token.usages",
-      "phase": "A1",
-      "source": "route",
+      "id": "token.usages",
+      "domain": "token",
+      "title": "Where a token is used",
+      "description": "Every place that uses one of the folder's design tokens: objects and text runs on each deck slide (deck, slide index, object, field), component masters, and — for a colour — the text styles whose colour is that token. Check it before changing or deleting a token to know what will change. Reads the saved documents, so edits from the last few seconds may be missing. Folder owner only.",
+      "role": "owner",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["server"],
       "routes": [
         {
           "method": "GET",
           "path": "/folders/:folderId/tokens/:category/:tokenId/usages"
         }
       ]
-    },
-    {
-      "capability": "share.permissions.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks/:id/permissions"
-        }
-      ]
-    },
-    {
-      "capability": "share.permissions.invite",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/decks/:id/permissions"
-        }
-      ]
-    },
-    {
-      "capability": "share.permissions.revoke",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/decks/:id/permissions/:userId"
-        }
-      ]
-    },
-    {
-      "capability": "share.invites.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks/:id/invites"
-        }
-      ]
-    },
-    {
-      "capability": "share.invites.cancel",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/decks/:id/invites/:inviteId"
-        }
-      ]
-    },
-    {
-      "capability": "share.links.list",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/decks/:id/share-links"
-        }
-      ]
-    },
-    {
-      "capability": "share.links.create",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "POST",
-          "path": "/decks/:id/share-links"
-        }
-      ]
-    },
-    {
-      "capability": "share.links.revoke",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/decks/:id/share-links/:linkId"
-        }
-      ]
-    },
-    {
-      "capability": "media.upload",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "ALL",
-          "path": "/api/uploads"
-        },
-        {
-          "method": "ALL",
-          "path": "/api/uploads/*"
-        }
-      ],
-      "note": "the tus endpoint; the command takes bytes or a URL (with an SSRF guard) instead of speaking tus"
-    },
-    {
-      "capability": "media.status",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/api/media/:assetId/video-info"
-        }
-      ]
-    },
-    {
-      "capability": "media.url",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/api/media/:assetId/url"
-        }
-      ]
-    },
-    {
-      "capability": "media.fontUrl",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "GET",
-          "path": "/api/media/:assetId/font-url"
-        }
-      ],
-      "note": "signed URL of an uploaded font file"
-    },
-    {
-      "capability": "media.delete",
-      "phase": "A1",
-      "source": "route",
-      "routes": [
-        {
-          "method": "DELETE",
-          "path": "/api/media/:assetId"
-        }
-      ]
-    },
-    {
-      "capability": "editor.context",
-      "phase": "A1",
-      "source": "new"
-    },
-    {
-      "capability": "editor.show",
-      "phase": "A1",
-      "source": "new"
-    },
-    {
-      "capability": "editor.present.link",
-      "phase": "A1",
-      "source": "new"
-    },
-    {
-      "capability": "agent.revert",
-      "phase": "A1",
-      "source": "new"
-    },
+    }
+  ],
+  "knownMissing": [
     {
       "capability": "object.path.create",
       "phase": "A2",
@@ -1307,6 +1636,126 @@
         {
           "method": "POST",
           "path": "/auth/logout"
+        }
+      ]
+    },
+    {
+      "capability": "Personal access tokens (list, create, revoke)",
+      "reason": "Credential management. An agent must not mint or revoke credentials: a leaked agent token that could create tokens would outlive its own revocation. The routes accept only the browser session cookie and reject any personal access token (apps/server/src/routes/accessTokens.ts).",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/access-tokens"
+        },
+        {
+          "method": "POST",
+          "path": "/access-tokens"
+        },
+        {
+          "method": "DELETE",
+          "path": "/access-tokens/:id"
+        }
+      ]
+    },
+    {
+      "capability": "Command API transport (POST /commands, public /api/commands)",
+      "reason": "Not a capability of its own: the HTTP transport that runs registered commands for scripts, exactly as the MCP server does for Claude clients. Everything it can do is a command in this registry, authorised and logged by the server host.",
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/commands"
+        }
+      ]
+    },
+    {
+      "capability": "MCP transport (GET/POST/DELETE /mcp, public /api/mcp)",
+      "reason": "Not a capability of its own: the Streamable HTTP transport that serves this registry to Claude clients. Every tool is generated from a registered command and runs through the server host, which authorises, confirms irreversible commands and logs each op (apps/server/src/mcp/).",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/mcp"
+        },
+        {
+          "method": "POST",
+          "path": "/mcp"
+        },
+        {
+          "method": "DELETE",
+          "path": "/mcp"
+        }
+      ]
+    },
+    {
+      "capability": "MCP OAuth authorization server (metadata, client registration, authorize, consent, token, revoke)",
+      "reason": "Protocol plumbing, not a user capability: how claude.ai connectors obtain a token for /mcp (RFC 9728, 8414, 7591, 7636, 7009), with the Google sign-in session as the login step. An agent never signs in this way; it is what gives the agent its session in the first place.",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-protected-resource"
+        },
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-protected-resource/*"
+        },
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-authorization-server"
+        },
+        {
+          "method": "GET",
+          "path": "/.well-known/oauth-authorization-server/*"
+        },
+        {
+          "method": "POST",
+          "path": "/oauth/register"
+        },
+        {
+          "method": "GET",
+          "path": "/oauth/authorize"
+        },
+        {
+          "method": "GET",
+          "path": "/oauth/authorize/consent"
+        },
+        {
+          "method": "POST",
+          "path": "/oauth/authorize/decision"
+        },
+        {
+          "method": "POST",
+          "path": "/oauth/token"
+        },
+        {
+          "method": "POST",
+          "path": "/oauth/revoke"
+        }
+      ]
+    },
+    {
+      "capability": "Connected MCP apps (list, disconnect)",
+      "reason": "Credential management, like personal access tokens: an agent must not see or revoke the grants that give agents access. Session-cookie only (authPreHandler rejects every token).",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/oauth/connections"
+        },
+        {
+          "method": "DELETE",
+          "path": "/oauth/connections/:id"
+        }
+      ]
+    },
+    {
+      "capability": "Approving or declining an agent request (the confirmation page)",
+      "reason": "The human side of the human in the loop: a signed-in person approves or declines an agent call that needs their confirmation (irreversible commands, URL downloads). An agent must never be able to approve its own request, so the routes accept only the browser session cookie from Narrative's own origin and reject every token (apps/server/src/routes/agentConfirmations.ts).",
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/agent-confirmations/:id"
+        },
+        {
+          "method": "POST",
+          "path": "/agent-confirmations/:id/decision"
         }
       ]
     },

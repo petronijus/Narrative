@@ -27,6 +27,15 @@ export interface CapabilityEntry {
   effects: string[]
   undo: string
   confirm: string
+  /**
+   * Asks the user for some inputs even when `confirm` is `never` (only
+   * present when true): `confirmWhen` — today a file given by URL.
+   */
+  confirmWhen?: true
+  /** Changes nothing (only present when true); MCP's readOnlyHint. */
+  readOnly?: true
+  /** A write whose repeat changes nothing more (only present when true); MCP's idempotentHint. */
+  idempotent?: true
   hosts: string[]
   /** API routes the command is the agent-facing equivalent of (only present when it wraps any). */
   routes?: RouteRef[]
@@ -49,6 +58,9 @@ export function buildManifest(registry: CommandRegistry): CapabilityManifest {
       effects: [...def.effects],
       undo: def.undo,
       confirm: def.confirm,
+      ...(typeof def.confirmWhen === 'function' ? { confirmWhen: true as const } : {}),
+      ...(def.readOnly === true ? { readOnly: true as const } : {}),
+      ...(def.idempotent === true ? { idempotent: true as const } : {}),
       hosts: [...def.hosts],
       ...(def.routes !== undefined && def.routes.length > 0 ? { routes: [...def.routes] } : {}),
     })),
@@ -82,11 +94,16 @@ export function renderManifestMarkdown(manifest: CapabilityManifest): string {
     lines.push(
       `## ${domain}`,
       '',
-      '| Command | What it does | Role | Undo | Confirm |',
-      '| --- | --- | --- | --- | --- |',
+      '| Command | What it does | Role | Undo | Confirm | Hints |',
+      '| --- | --- | --- | --- | --- | --- |',
     )
     for (const c of manifest.commands.filter((x) => x.domain === domain)) {
-      lines.push(`| \`${c.id}\` | ${cell(c.title)} | ${c.role} | ${c.undo} | ${c.confirm} |`)
+      const hints = [c.readOnly ? 'read-only' : '', c.idempotent ? 'idempotent' : '']
+        .filter((h) => h !== '')
+        .join(', ')
+      lines.push(
+        `| \`${c.id}\` | ${cell(c.title)} | ${c.role} | ${c.undo} | ${c.confirm}${c.confirmWhen ? ' (asks for URL files)' : ''} | ${hints} |`,
+      )
     }
     lines.push('')
   }

@@ -2,7 +2,7 @@
 name: renderer
 description: Owner of the PixiJS render layer. Scene graph, resource manager (textures / video frames / Lottie rasters / 3D render targets), reconciler (state → Pixi scene diff), text rasterisation and alignment, render scheduling. Invoke for: work in apps/web/src/renderer/, Pixi performance, texture lifecycle, scene diffing, offscreen canvas → Pixi texture bridge, DOM overlay compositor, blank-canvas / wrong-font / text-jump bugs. NOT for: the Yjs state model, the GSAP DSL, editor UI chrome.
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 You own the **render layer** of Narrative (a self-hosted presentation tool).

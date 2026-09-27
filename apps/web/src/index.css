@@ -60,6 +60,20 @@
     from { height: var(--radix-accordion-content-height); }
     to { height: 0; }
   }
+
+  /* Agentic A1 — `editor.show` outline: two pulses, then fade (2 s, the
+     same as SHOW_HIGHLIGHT_MS in ui/useEditorShow.ts). */
+  --animate-show-highlight: show-highlight 2s ease-in-out forwards;
+
+  @keyframes show-highlight {
+    0% { opacity: 0; }
+    12% { opacity: 1; }
+    30% { opacity: 0.35; }
+    48% { opacity: 1; }
+    66% { opacity: 0.35; }
+    84% { opacity: 1; }
+    100% { opacity: 0; }
+  }
 }
 
 /* ── Container utility (replaces v3 container config) ──────────────────── */

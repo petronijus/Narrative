@@ -71,8 +71,19 @@ Enumerate with `ls *.md docs/*.md docs/*/*.md` plus
 - **docs/capabilities.md** + `packages/commands/capabilities.json` — generated, never hand-edited: when a capability changed, check both were regenerated (`pnpm --filter @narrative/commands capabilities`) in the same change.
 - **docs/audits/\*.md**, **docs/plans/\*.md**, **docs/storage.md** — living topic
   docs; correct in place.
-- **Package READMEs** (`packages/animation`, `tests/load`, `tests/fixtures/pptx`,
-  `apps/server/drizzle`) — update when their subject changes.
+- **docs/mcp.md** (since agentic A1) — the MCP server reference: connecting,
+  auth, OAuth, env vars, tools, confirmation, awareness privacy. Update with
+  any change under `apps/server/src/mcp/`, the confirmation flow or the
+  env vars; keep its measured numbers (tool-list bytes) dated.
+- **Package READMEs** (`packages/animation`, `packages/commands/playbooks`,
+  `tests/load`, `tests/agent-eval`, `tests/fixtures/pptx`,
+  `apps/server/drizzle`, `apps/server/src/pptx`) — update when their subject
+  changes. `tests/agent-eval/README.md` carries the scenario table and the
+  cost note; re-date the cost when a full run is measured.
+- **Placeholder addresses**: every `192.0.2.x` IP in this repo is a
+  documentation-range placeholder (the real hosts are in `~/.ssh/config`).
+  Never "correct" docs to real addresses, but flag any place where a
+  placeholder is used as a live value (e.g. a compose default).
 - **.claude/agents/\*.md** — keep the ownership briefs matching what the code
   actually does now. A diagnosed failure mode or a settled convention that
   isn't written into the brief will be re-derived at full cost next session.

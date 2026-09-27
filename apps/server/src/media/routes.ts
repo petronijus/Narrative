@@ -38,183 +38,37 @@
  *     so a revoked share/permission can't keep fetching media past the TTL.
  *     MinIO still serves byte-range requests against a presigned URL so a
  *     plain <video> can seek without HLS.
+ *
+ * Shared implementation: the handlers call services/media.ts, services/folders.ts and services/decks.ts — the same code the
+ * `media.*, folder.fonts.* and deck.fonts.list` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { and, eq } from 'drizzle-orm'
-import { nanoid } from 'nanoid'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Database } from '../db/client.js'
-import { decks, folders, mediaAssets } from '../db/schema.js'
-import {
-  getMediaAsset,
-  getVideoAsset,
-  getFontAsset,
-  deleteMediaAsset,
-  listFolderFontAssets,
-  listDeckFontAssets,
-  getFolderFontAsset,
-  folderFontPostscriptCollides,
-} from './assets.js'
-import { signImgproxyUrl, type ImgproxyVariant } from './imgproxyUrl.js'
 import { authPreHandler } from '../auth/fastifyAuth.js'
-import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
-import { parseFontMetadata } from './fontMetadata.js'
-import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from './s3Client.js'
-import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { resolveDeckAccess } from '../auth/permissions.js'
+import { createMediaService, isImageVariant, IMAGE_VARIANTS } from '../services/media.js'
+import {
+  ALLOWED_FONT_MIME_TYPES,
+  createFoldersService,
+  MAX_FOLDER_FONT_BYTES,
+} from '../services/folders.js'
+import { createDecksService } from '../services/decks.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Presigned-URL TTLs (MEDIA-1)
-// ---------------------------------------------------------------------------
-//
-// The media bucket is private; clients reach video/font bytes only through
-// short-lived S3 presigned URLs. The TTL must be long enough that a single
-// consumption session never sees a mid-use 403, but short enough that a
-// revoked share/permission loses access reasonably quickly.
-//
-// VIDEO playback: a <video> element issues many byte-range GETs against the
-// SAME presigned URL over the lifetime of playback. If the URL expires while
-// a presentation is still running, later ranges 403 and playback stalls. We
-// therefore pick a TTL that comfortably exceeds any realistic single
-// presentation (long keynote + Q&A) — 6 h. The client also re-fetches a
-// fresh URL on demand (useVideoInfo refresh), so this is a safety floor, not
-// the only line of defence.
-//
-// FONT bytes: fetched ONCE by FontFace.load() at install time; the decoded
-// face then lives in memory for the session, so the URL only needs to be
-// valid at the moment of fetch. 1 h is ample. Folder/deck font LIST endpoints
-// reuse this via presignGetUrl's default; the client re-lists (and re-presigns)
-// whenever the editor remounts the font set.
-const VIDEO_PLAYBACK_URL_TTL_SEC = Number(
-  process.env['MEDIA_VIDEO_URL_TTL_SEC'] ?? 6 * 60 * 60, // 6 hours
-)
-const FONT_URL_TTL_SEC = Number(
-  process.env['MEDIA_FONT_URL_TTL_SEC'] ?? 60 * 60, // 1 hour
-)
+// Presigned-URL TTLs, the folder-font limits and MIME allowlist, and every
+// handler's logic live in the services the agent commands call too
+// (services/media.ts, services/folders.ts, services/decks.ts).
+
+const MAX_FONT_BYTES = MAX_FOLDER_FONT_BYTES
 
 export interface MediaRoutesOpts {
   db: Database
-}
-
-const ALLOWED_VARIANTS: ImgproxyVariant[] = ['thumb', 'preview', 'display', 'original']
-
-function isImgproxyVariant(v: string): v is ImgproxyVariant {
-  return (ALLOWED_VARIANTS as string[]).includes(v)
-}
-
-// ---------------------------------------------------------------------------
-// Folder font upload — constants + helpers
-// ---------------------------------------------------------------------------
-
-const MAX_FONT_BYTES = 10 * 1024 * 1024 // 10 MB
-
-// Browsers send WILDLY inconsistent MIME types for font files —
-// even within the same browser, the value depends on the OS's MIME
-// registry. macOS Safari sends 'font/otf' for .otf; Chrome on
-// Windows sends 'application/vnd.ms-opentype'; Firefox sometimes
-// sends 'application/font-sfnt' or 'application/x-font-opentype'
-// for the same file; Chrome on Linux often sends an empty string.
-// Be permissive: accept every spelling we've seen plus
-// octet-stream and an empty string (we re-validate the bytes via
-// opentype.js anyway, so the MIME is just metadata).
-const ALLOWED_FONT_MIME_TYPES = new Set([
-  'font/ttf',
-  'font/otf',
-  'font/woff',
-  'font/woff2',
-  'font/sfnt',
-  'application/font-woff',
-  'application/font-woff2',
-  'application/font-sfnt',
-  'application/vnd.ms-opentype',
-  'application/vnd.ms-fontobject',
-  'application/x-font-ttf',
-  'application/x-font-otf',
-  'application/x-font-opentype',
-  'application/x-font-truetype',
-  'application/x-font-woff',
-  'application/x-font-sfnt',
-  // Some clients send application/octet-stream or empty MIME;
-  // we check the extension too.
-  'application/octet-stream',
-  '',
-])
-
-const FONT_MIME_TO_EXT: Record<string, string> = {
-  'font/ttf': 'ttf',
-  'font/otf': 'otf',
-  'font/woff': 'woff',
-  'font/woff2': 'woff2',
-  'font/sfnt': 'ttf',
-  'application/font-woff': 'woff',
-  'application/font-woff2': 'woff2',
-  'application/font-sfnt': 'ttf',
-  'application/vnd.ms-opentype': 'otf',
-  'application/x-font-ttf': 'ttf',
-  'application/x-font-otf': 'otf',
-  'application/x-font-opentype': 'otf',
-  'application/x-font-truetype': 'ttf',
-  'application/x-font-woff': 'woff',
-  'application/x-font-sfnt': 'ttf',
-}
-
-function fontExtFromMime(mime: string, originalName?: string): string {
-  const fromMime = FONT_MIME_TO_EXT[mime]
-  if (fromMime) return fromMime
-  if (originalName) {
-    const dot = originalName.lastIndexOf('.')
-    if (dot !== -1) {
-      const ext = originalName.slice(dot + 1).toLowerCase()
-      if (['ttf', 'otf', 'woff2'].includes(ext)) return ext
-    }
-  }
-  return 'ttf'
-}
-
-/**
- * Resolve folder row and verify the caller owns it.
- * Returns true on success; on failure sends a reply and returns false.
- */
-async function requireFolderOwner(
-  db: Database,
-  folderId: string,
-  userId: string,
-  reply: FastifyReply,
-): Promise<boolean> {
-  const [folder] = await db
-    .select({ id: folders.id, ownerUserId: folders.ownerUserId })
-    .from(folders)
-    .where(eq(folders.id, folderId))
-    .limit(1)
-
-  if (!folder) {
-    void reply.status(404).send({ error: 'Folder not found' })
-    return false
-  }
-  if (folder.ownerUserId !== userId) {
-    void reply.status(403).send({ error: 'Forbidden' })
-    return false
-  }
-  return true
-}
-
-function serializeFolderFontRow(
-  row: Awaited<ReturnType<typeof listFolderFontAssets>>[number],
-  url: string,
-) {
-  return {
-    assetId: row.id,
-    family: row.fontFamily,
-    weight: row.fontWeight,
-    style: row.fontStyle,
-    postscriptName: row.fontPostscriptName,
-    url,
-    sizeBytes: row.sizeBytes,
-    uploadedAt: row.createdAt.toISOString(),
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,41 +145,23 @@ export async function registerMediaRoutes(
     Params: { assetId: string }
     Querystring: { variant?: string }
   }>('/api/media/:assetId/url', { preHandler: authPreHandler }, async (request, reply) => {
-    const { assetId } = request.params
     const variantParam = request.query.variant ?? 'display'
-
-    if (!isImgproxyVariant(variantParam)) {
+    if (!isImageVariant(variantParam)) {
       return reply.status(400).send({
-        error: `Invalid variant. Allowed: ${ALLOWED_VARIANTS.join(', ')}`,
+        error: `Invalid variant. Allowed: ${IMAGE_VARIANTS.join(', ')}`,
       })
     }
-
-    // 1. Look up the asset
-    const asset = await getMediaAsset(db, assetId)
-    if (!asset) {
-      return reply.status(404).send({ error: 'Asset not found' })
+    try {
+      const result = await createMediaService(routeDeps(app, db, request.log)).url({
+        userId: request.user?.sub ?? null,
+        shareToken: (request.query as Record<string, string>)['share_token'] ?? null,
+        assetId: request.params.assetId,
+        variant: variantParam,
+      })
+      return reply.header('Cache-Control', 'public, max-age=600').send(result)
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    // 2. Resolve deck access — viewer is sufficient for reads
-    const userId = request.user?.sub ?? null
-    const shareToken = (request.query as Record<string, string>)['share_token'] ?? null
-    const access = await resolveDeckAccess(db, {
-      deckId: asset.deckId ?? '',
-      userId,
-      shareToken,
-    })
-
-    if (!access || !roleAtLeast(access.role, 'viewer')) {
-      return reply.status(403).send({ error: 'Forbidden' })
-    }
-
-    // 3. Sign the imgproxy URL
-    const url = signImgproxyUrl({
-      storageKey: asset.storageKey,
-      variant: variantParam,
-    })
-
-    return reply.header('Cache-Control', 'public, max-age=600').send({ url })
   })
 
   // -------------------------------------------------------------------------
@@ -338,48 +174,17 @@ export async function registerMediaRoutes(
     Params: { assetId: string }
     Querystring: { share_token?: string }
   }>('/api/media/:assetId/video-info', { preHandler: authPreHandler }, async (request, reply) => {
-    const { assetId } = request.params
-
-    const asset = await getVideoAsset(db, assetId)
-    if (!asset) {
-      return reply.status(404).send({ error: 'Video asset not found' })
+    try {
+      return reply.send(
+        await createMediaService(routeDeps(app, db, request.log)).videoInfo({
+          userId: request.user?.sub ?? null,
+          shareToken: request.query.share_token ?? null,
+          assetId: request.params.assetId,
+        }),
+      )
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    const userId = request.user?.sub ?? null
-    const shareToken = request.query.share_token ?? null
-    const access = await resolveDeckAccess(db, { deckId: asset.deckId, userId, shareToken })
-
-    if (!access || !roleAtLeast(access.role, 'viewer')) {
-      return reply.status(403).send({ error: 'Forbidden' })
-    }
-
-    const posterUrl = asset.posterKey
-      ? signImgproxyUrl({ storageKey: asset.posterKey, variant: 'display', extension: 'jpg' })
-      : null
-
-    const thumbnailUrl = asset.thumbnailKey
-      ? signImgproxyUrl({ storageKey: asset.thumbnailKey, variant: 'thumb', extension: 'jpg' })
-      : null
-
-    // Progressive MP4: short-TTL presigned URL (MEDIA-1, private bucket).
-    // MinIO serves byte-range requests against a presigned URL so a plain
-    // <video src> seeks fine; the TTL is sized to outlast a presentation
-    // session (see VIDEO_PLAYBACK_URL_TTL_SEC).
-    const playbackUrl = asset.playbackKey
-      ? await presignGetUrl(asset.playbackKey, VIDEO_PLAYBACK_URL_TTL_SEC)
-      : null
-
-    return reply.send({
-      assetId: asset.id,
-      transcodeStatus: asset.transcodeStatus,
-      durationSec: asset.durationSec,
-      width: asset.width,
-      height: asset.height,
-      posterUrl,
-      thumbnailUrl,
-      playbackUrl,
-      transcodeError: asset.transcodeError ?? null,
-    })
   })
 
   // -------------------------------------------------------------------------
@@ -391,42 +196,22 @@ export async function registerMediaRoutes(
   app.get<{
     Params: { assetId: string }
   }>('/api/media/:assetId/font-url', { preHandler: authPreHandler }, async (request, reply) => {
-    const { assetId } = request.params
-
-    const asset = await getFontAsset(db, assetId)
-    if (!asset) {
-      return reply.status(404).send({ error: 'Font asset not found' })
-    }
-
-    if (!asset.folderId) {
-      // Legacy deck-scoped row (should have been migrated by 0009). Reject —
-      // no caller path expects this branch any more.
-      return reply.status(404).send({ error: 'Font asset is not folder-scoped' })
-    }
-
     const userId = (request as FastifyRequest & { user?: { sub: string } }).user?.sub ?? null
     if (!userId) {
       return reply.status(401).send({ error: 'Unauthenticated' })
     }
-    const ok = await requireFolderOwner(db, asset.folderId, userId, reply)
-    if (!ok) return
-
-    // Short-TTL presigned URL (MEDIA-1, private bucket). The font bytes are
-    // fetched once by FontFace.load(); the URL only needs to be valid at
-    // fetch time. NOTE: the response is no longer immutable-cacheable — the
-    // presigned URL rotates per TTL, so we cap browser caching well under
-    // FONT_URL_TTL_SEC and mark it private (the URL embeds auth).
-    const url = await presignGetUrl(asset.storageKey, FONT_URL_TTL_SEC)
-
-    return reply.header('Cache-Control', 'private, max-age=300').send({
-      assetId: asset.id,
-      url,
-      family: asset.fontFamily,
-      weight: asset.fontWeight,
-      style: asset.fontStyle,
-      postscriptName: asset.fontPostscriptName,
-      mimeType: asset.mimeType,
-    })
+    try {
+      const info = await createMediaService(routeDeps(app, db, request.log)).fontUrl({
+        userId,
+        assetId: request.params.assetId,
+      })
+      // Short-TTL presigned URL (MEDIA-1, private bucket): not immutable-
+      // cacheable any more — the URL rotates per TTL, so browser caching is
+      // capped well under the TTL and private (the URL embeds auth).
+      return reply.header('Cache-Control', 'private, max-age=300').send(info)
+    } catch (err) {
+      return sendServiceError(reply, err)
+    }
   })
 
   // -------------------------------------------------------------------------
@@ -449,9 +234,6 @@ export async function registerMediaRoutes(
   }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
     const { folderId } = request.params
     const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
-
-    const ok = await requireFolderOwner(db, folderId, userId, reply)
-    if (!ok) return
 
     // Read the raw body. Fastify exposes it as Buffer on request.body when
     // Content-Type is not JSON. For font uploads the browser sends the file
@@ -493,106 +275,34 @@ export async function registerMediaRoutes(
           : undefined
     }
 
-    if (fileBuffer.length === 0) {
-      return reply.status(400).send({ error: 'Font file is empty' })
-    }
-    if (fileBuffer.length > MAX_FONT_BYTES) {
-      return reply
-        .status(413)
-        .send({ error: `Font exceeds 10 MB limit (got ${fileBuffer.length} bytes)` })
-    }
-
-    // Parse font metadata — throws on invalid OpenType/TrueType data
-    let meta: ReturnType<typeof parseFontMetadata>
+    // Folder ownership, the empty / 10 MB checks, parsing and the postscript
+    // collision check all happen in the service, in that order.
     try {
-      const arrayBuf = fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength,
-      ) as ArrayBuffer
-      meta = parseFontMetadata(arrayBuf)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return reply.status(422).send({ error: `Invalid font file: ${msg}` })
-    }
-
-    const collides = await folderFontPostscriptCollides(db, folderId, meta.postscriptName)
-    if (collides) {
-      return reply.status(409).send({
-        error: 'A font with this postscript name already exists in this folder',
-        postscriptName: meta.postscriptName,
+      const font = await createFoldersService(routeDeps(app, db, request.log)).uploadFont({
+        userId,
+        folderId,
+        source: { kind: 'bytes', bytes: fileBuffer, mimeType, filename: originalFilename },
+        familyOverride: request.query.fontFamily,
       })
+      return reply.status(201).send(font)
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    const assetId = nanoid(21)
-    const ext = fontExtFromMime(mimeType, originalFilename)
-    const storageKey = `fonts/${folderId}/${assetId}/original.${ext}`
-
-    const s3 = buildS3Client()
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: MEDIA_BUCKET,
-        Key: storageKey,
-        Body: fileBuffer,
-        ContentType: mimeType,
-        ContentLength: fileBuffer.length,
-      }),
-    )
-
-    const familyOverride =
-      typeof request.query.fontFamily === 'string' && request.query.fontFamily.trim() !== ''
-        ? request.query.fontFamily.trim()
-        : null
-    const effectiveFamily = familyOverride ?? meta.family
-
-    await db.insert(mediaAssets).values({
-      id: assetId,
-      deckId: null,
-      folderId,
-      uploaderUserId: userId,
-      mimeType,
-      sizeBytes: fileBuffer.length,
-      storageKey,
-      originalFilename: originalFilename ?? null,
-      kind: 'font',
-      fontFamily: effectiveFamily,
-      fontWeight: meta.weight,
-      fontStyle: meta.style,
-      fontPostscriptName: meta.postscriptName,
-    })
-
-    const url = await presignGetUrl(storageKey)
-
-    return reply.status(201).send({
-      assetId,
-      family: effectiveFamily,
-      weight: meta.weight,
-      style: meta.style,
-      postscriptName: meta.postscriptName,
-      url,
-      sizeBytes: fileBuffer.length,
-      uploadedAt: new Date().toISOString(),
-    })
   })
 
   // GET /api/folders/:folderId/fonts — list folder fonts
   app.get<{
     Params: { folderId: string }
   }>('/api/folders/:folderId/fonts', { preHandler: authPreHandler }, async (request, reply) => {
-    const { folderId } = request.params
-    const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
-
-    const ok = await requireFolderOwner(db, folderId, userId, reply)
-    if (!ok) return
-
-    const rows = await listFolderFontAssets(db, folderId)
-    const fonts = await Promise.all(
-      rows.map(async (row) => {
-        const url = await presignGetUrl(row.storageKey)
-        return serializeFolderFontRow(row, url)
-      }),
-    )
-
-    return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+    try {
+      const fonts = await createFoldersService(routeDeps(app, db, request.log)).listFonts({
+        userId: (request as FastifyRequest & { user?: { sub: string } }).user!.sub,
+        folderId: request.params.folderId,
+      })
+      return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+    } catch (err) {
+      return sendServiceError(reply, err)
+    }
   })
 
   // DELETE /api/folders/:folderId/fonts/:assetId — remove a folder font
@@ -602,76 +312,16 @@ export async function registerMediaRoutes(
     '/api/folders/:folderId/fonts/:assetId',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { folderId, assetId } = request.params
-      const userId = (request as FastifyRequest & { user?: { sub: string } }).user!.sub
-
-      const ok = await requireFolderOwner(db, folderId, userId, reply)
-      if (!ok) return
-
-      const asset = await getFolderFontAsset(db, assetId, folderId)
-      if (!asset) {
-        return reply.status(404).send({ error: 'Font asset not found' })
+      try {
+        const result = await createFoldersService(routeDeps(app, db, request.log)).deleteFont({
+          userId: (request as FastifyRequest & { user?: { sub: string } }).user!.sub,
+          folderId: request.params.folderId,
+          assetId: request.params.assetId,
+        })
+        return reply.status(200).send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      // Find decks in the folder. Each one gets a deck-scoped clone so any
-      // presentation that references the font keeps rendering — the editor
-      // surfaces a "deck-specific font" notice for those decks. We can't
-      // cheaply scan Yjs docs to know which decks actually use the font;
-      // cloning to all decks in the folder is the safe deterministic
-      // option (storage is shared via the same MinIO key, so the only
-      // cost is N media_assets rows).
-      //
-      // IDOR-1: a deck can sit in this folder while being owned by another
-      // user (folder membership != deck ownership). Cloning a media_assets
-      // row onto a deck the caller doesn't own is cross-tenant row creation.
-      // Scope the clone to decks the CALLER owns — the caller is already the
-      // verified folder owner (requireFolderOwner above), so this writes only
-      // rows the caller is entitled to create.
-      const folderDecks = await db
-        .select({ id: decks.id })
-        .from(decks)
-        .where(and(eq(decks.folderId, folderId), eq(decks.ownerUserId, userId)))
-
-      let promotedToDeckCount = 0
-      if (folderDecks.length > 0) {
-        await db.insert(mediaAssets).values(
-          folderDecks.map((d) => ({
-            id: nanoid(),
-            deckId: d.id,
-            folderId: null,
-            uploaderUserId: asset.uploaderUserId,
-            mimeType: asset.mimeType,
-            sizeBytes: asset.sizeBytes,
-            storageKey: asset.storageKey,
-            originalFilename: asset.originalFilename,
-            kind: 'font' as const,
-            fontFamily: asset.fontFamily,
-            fontWeight: asset.fontWeight,
-            fontStyle: asset.fontStyle,
-            fontPostscriptName: asset.fontPostscriptName,
-          })),
-        )
-        promotedToDeckCount = folderDecks.length
-      }
-
-      await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId))
-
-      // S3 object intentionally NOT deleted when clones exist — they share
-      // the same storageKey. Only collect the orphan when no decks were
-      // promoted (folder had no decks).
-      if (promotedToDeckCount === 0) {
-        try {
-          const s3 = buildS3Client()
-          await s3.send(new DeleteObjectCommand({ Bucket: MEDIA_BUCKET, Key: asset.storageKey }))
-        } catch (err) {
-          request.log.warn(
-            { err, key: asset.storageKey },
-            '[folderFonts] MinIO delete failed (orphaned)',
-          )
-        }
-      }
-
-      return reply.status(200).send({ promotedToDeckCount })
     },
   )
 
@@ -693,15 +343,12 @@ export async function registerMediaRoutes(
     const access = await resolveDeckAccess(db, { deckId, userId, shareToken })
     if (!access) return reply.status(403).send({ error: 'Forbidden' })
 
-    const rows = await listDeckFontAssets(db, deckId)
-    const fonts = await Promise.all(
-      rows.map(async (row) => {
-        const url = await presignGetUrl(row.storageKey)
-        return serializeFolderFontRow(row, url)
-      }),
-    )
-
-    return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+    try {
+      const fonts = await createDecksService(routeDeps(app, db, request.log)).listFonts({ deckId })
+      return reply.header('Cache-Control', 'private, no-cache').send({ fonts })
+    } catch (err) {
+      return sendServiceError(reply, err)
+    }
   })
 
   // -------------------------------------------------------------------------
@@ -710,27 +357,14 @@ export async function registerMediaRoutes(
   app.delete<{
     Params: { assetId: string }
   }>('/api/media/:assetId', { preHandler: authPreHandler }, async (request, reply) => {
-    const { assetId } = request.params
-
-    const asset = await getMediaAsset(db, assetId)
-    if (!asset) {
-      return reply.status(404).send({ error: 'Asset not found' })
+    try {
+      await createMediaService(routeDeps(app, db, request.log)).delete({
+        userId: request.user?.sub ?? '',
+        assetId: request.params.assetId,
+      })
+      return reply.status(204).send()
+    } catch (err) {
+      return sendServiceError(reply, err)
     }
-
-    const userId = request.user?.sub ?? null
-    const access = await resolveDeckAccess(db, {
-      deckId: asset.deckId ?? '',
-      userId,
-      shareToken: null,
-    })
-
-    if (!access || !roleAtLeast(access.role, 'owner')) {
-      return reply.status(403).send({ error: 'Forbidden: owner role required' })
-    }
-
-    // NOTE: MinIO object remains — see TODO(M29) for GC job.
-    await deleteMediaAsset(db, assetId)
-
-    return reply.status(204).send()
   })
 }

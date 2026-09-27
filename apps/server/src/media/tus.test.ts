@@ -157,7 +157,7 @@ vi.mock('../auth/permissions.js', () => ({
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
-import { registerTusPlugin } from './tus.js'
+import { registerTusPlugin, tokenMayUpload } from './tus.js'
 
 // ---------------------------------------------------------------------------
 // Types used in hook calls
@@ -792,5 +792,169 @@ describe('onUploadFinish hook', () => {
       `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>`,
       'utf8',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: personal access tokens (agentic A1)
+// ---------------------------------------------------------------------------
+
+describe('tus upload with a personal access token', () => {
+  // Built with a real PAT service over an in-memory store, auth NOT bypassed.
+  async function buildPatApp() {
+    const { createPatService } = await import('../auth/personalAccessTokens.js')
+    const { createMemoryPatStore, allowAllPatOwners } =
+      await import('../test-support/memoryPatStore.js')
+    const pats = createPatService(createMemoryPatStore(), { isOwnerAllowed: allowAllPatOwners })
+    capturedTusOptions = {}
+    const app = Fastify({ logger: false })
+    const db = {} as unknown as Database
+    registerAuthPlugin(app, { bypass: false, db, pats })
+    registerTusPlugin(app, { db })
+    await app.ready()
+    return { app, pats }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+  })
+
+  it.each([[['api']], [['mcp']]] as const)(
+    'accepts a PAT with scope %j and records its user as the upload creator',
+    async (scopes) => {
+      const { pats } = await buildPatApp()
+      const { token } = await pats.create('pat-user', {
+        name: 'agent',
+        scopes: [...scopes],
+        expiresInDays: 365,
+      })
+      const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+
+      const req = buildRequest({
+        authHeader: `Bearer ${token}`,
+        uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+      })
+      const result = await hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } })
+      expect(result).toMatchObject({
+        metadata: expect.objectContaining({ creatorUserId: 'pat-user' }),
+      })
+      expect(resolveDeckAccess).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'pat-user' }),
+      )
+    },
+  )
+
+  it('rejects a revoked PAT with 401', async () => {
+    const { pats } = await buildPatApp()
+    const { token, summary } = await pats.create('pat-user', {
+      name: 'agent',
+      scopes: ['api'],
+      expiresInDays: 365,
+    })
+    await pats.revoke('pat-user', summary.id)
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+
+    const req = buildRequest({
+      authHeader: `Bearer ${token}`,
+      uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+    })
+    await expect(
+      hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } }),
+    ).rejects.toMatchObject({
+      status_code: 401,
+    })
+  })
+
+  it('lets the creating PAT continue its own upload (PATCH)', async () => {
+    const { pats } = await buildPatApp()
+    const { token } = await pats.create('pat-user', {
+      name: 'agent',
+      scopes: ['api'],
+      expiresInDays: 365,
+    })
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+    mockStoredUpload = {
+      id: 'asset-x:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png', creatorUserId: 'pat-user' },
+    }
+    const req = buildRequest({ method: 'PATCH', authHeader: `Bearer ${token}` })
+    await expect(hook(req, buildResponse(), 'asset-x:deck-1:abc')).resolves.toBeUndefined()
+  })
+
+  const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+
+  it('refuses a .pptx from a PAT, deck- or folder-bound: decks go through the commands', async () => {
+    const { pats } = await buildPatApp()
+    const { token } = await pats.create('pat-user', {
+      name: 'agent',
+      scopes: ['api', 'mcp'],
+      expiresInDays: 30,
+    })
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+    for (const binding of [{ deckId: 'deck-1' }, { folderId: 'folder-1' }]) {
+      const req = buildRequest({
+        authHeader: `Bearer ${token}`,
+        uploadMetadata: tusMetadata({ ...binding, 'content-type': PPTX }),
+      })
+      await expect(hook(req, buildResponse(), { metadata: binding })).rejects.toMatchObject({
+        status_code: 403,
+        body: expect.stringContaining('deck.importPptx'),
+      })
+    }
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('refuses anything but image, video and font from a PAT', async () => {
+    const { pats } = await buildPatApp()
+    const { token } = await pats.create('pat-user', {
+      name: 'agent',
+      scopes: ['api'],
+      expiresInDays: 30,
+    })
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+    for (const type of ['application/pdf', 'text/html', '']) {
+      const req = buildRequest({
+        authHeader: `Bearer ${token}`,
+        uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': type }),
+      })
+      await expect(
+        hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } }),
+      ).rejects.toMatchObject({ status_code: 415 })
+    }
+  })
+
+  it('refuses to continue or finish a .pptx upload with a PAT, even the user’s own', async () => {
+    const { pats } = await buildPatApp()
+    const { token } = await pats.create('pat-user', {
+      name: 'agent',
+      scopes: ['api'],
+      expiresInDays: 30,
+    })
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+    mockStoredUpload = {
+      id: 'asset-p:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': PPTX, creatorUserId: 'pat-user' },
+    }
+    const req = buildRequest({ method: 'PATCH', authHeader: `Bearer ${token}` })
+    await expect(hook(req, buildResponse(), 'asset-p:deck-1:abc')).rejects.toMatchObject({
+      status_code: 403,
+    })
+  })
+})
+
+describe('tokenMayUpload', () => {
+  it('allows images, videos and fonts only', () => {
+    expect(tokenMayUpload('image/png')).toBe(true)
+    expect(tokenMayUpload('video/mp4')).toBe(true)
+    expect(tokenMayUpload('font/ttf')).toBe(true)
+    expect(tokenMayUpload('application/octet-stream', 'Brand.otf')).toBe(true)
+    expect(
+      tokenMayUpload('application/vnd.openxmlformats-officedocument.presentationml.presentation'),
+    ).toBe(false)
+    expect(tokenMayUpload('application/pdf')).toBe(false)
+    expect(tokenMayUpload('')).toBe(false)
   })
 })

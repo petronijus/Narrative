@@ -2,7 +2,7 @@
 name: infra
 description: Infrastructure owner. Docker Compose, Caddy + the production CSP, the GHCR build/push + pull-deploy release pipeline, pnpm workspace config, TypeScript build, deploy scripts, backup scripts (pg_dump, mc mirror, ZFS snapshots), Google OIDC env wiring (M10), observability (Sentry, Prometheus). Invoke for: docker-compose, deploy, release tagging, env vars, TLS/ingress, CSP headers, backups, Proxmox setup, monitoring.
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 You own the **infrastructure** of the Narrative project.
@@ -86,6 +86,33 @@ pnpm -r test`.
 - **`build-push.sh` must keep passing `VITE_BUILD_VERSION`.** A Docker build
   context has no `.git`, so without it every build of a version gets an
   identical fallback string and the version guard is blind.
+- **A `${VAR:?…}` in a prod compose file breaks the BUILD too**, not just the
+  deploy: `build-push.sh` runs `docker compose build` with the local
+  `infra/.env.prod`, and Compose refuses to parse a file with a missing
+  required variable. `AGENT_PRINCIPAL_KEY_SECRET` (agentic A1) is such a
+  variable — add it to `env.prod.sops` before the first A1 build
+  (`docs/deploy.md` "Releasing the agentic layer (A1)").
+- **The OAuth discovery route must NOT strip the path.** MCP clients look up
+  `https://<domain>/.well-known/oauth-authorization-server/api` (RFC 8414
+  path insertion for the issuer `https://<domain>/api`) — outside `/api`.
+  The Caddyfile's "OAuth discovery" block uses `handle`, not `handle_path`,
+  before the SPA fallback; an HTML answer there means claude.ai cannot
+  connect.
+- **Never trust a client-sent `CF-Connecting-IP`.** The server keys its
+  anonymous rate limits and the WebSocket failed-auth throttle on it
+  (`CLIENT_IP_HEADER`); in the shared-tunnel topology Caddy's :80 is
+  reachable from the whole LAN, so the Caddyfile overwrites the header unless
+  the TCP peer is in `CLOUDFLARED_TRUSTED_PROXIES` (`private_ranges` by
+  default; the shared-tunnel overlay's default `192.0.2.101/32` is a
+  documentation-range placeholder like every `192.0.2.x` address in this
+  repo, so prod must set the real connector address in `.env.prod`). After any network
+  change, check the peer in Caddy's access log (`docs/deploy.md` "Client IP").
+- **A new workspace dependency needs a `COPY` line in each Dockerfile that
+  uses it** (manifests are copied before `pnpm install`). A1 made the server
+  depend on `packages/commands`, so `apps/server/Dockerfile` copies its
+  manifest, its compiled `src/`, and `packages/commands/playbooks/` (the MCP
+  server reads the Markdown at start), and rewrites every `./src/*.ts`
+  export to `.js`.
 
 ## Workflow
 

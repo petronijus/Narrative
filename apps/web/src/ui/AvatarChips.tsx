@@ -15,12 +15,19 @@
  * - Popover je button s aria-expanded.
  *
  * Pointer-events: auto — chipy jsou interaktivní.
+ *
+ * Agentic A1: the peer the server publishes for an agent run ("Claude
+ * (MCP)") renders as a rounded square with a bot glyph instead of a round
+ * initials chip, and its tooltip says whom it works for.
  */
 
 import { useState } from 'react'
+import { Bot } from 'lucide-react'
 import { useAwareness } from '../state/useAwareness.js'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { PeerInfo } from '@narrative/shared'
+import { agentPeerLabel, isAgentPeer } from './peerPresence.js'
+import { useLocalAgentPrincipalKey } from './useLocalAgentPrincipalKey.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +43,8 @@ const CHIP_SIZE = 26 // px
 interface AvatarChipProps {
   peer: PeerInfo
   isLocal: boolean
+  /** The local user's agent principal key, to say "working for you" (peerPresence.ts). */
+  localPrincipalKey: string | null
 }
 
 function getInitials(name: string): string {
@@ -49,9 +58,43 @@ function getInitials(name: string): string {
   return trimmed.slice(0, 2).toUpperCase()
 }
 
-function AvatarChip({ peer, isLocal }: AvatarChipProps) {
+function peerLabel(peer: PeerInfo, isLocal: boolean, localPrincipalKey: string | null): string {
+  if (isAgentPeer(peer)) return agentPeerLabel(peer, localPrincipalKey)
+  return isLocal ? `${peer.state.user.name} (you)` : peer.state.user.name
+}
+
+function AgentChip({ peer, label }: { peer: PeerInfo; label: string }) {
+  return (
+    <li
+      role="listitem"
+      className="relative flex-shrink-0"
+      data-agent-peer={peer.state.agent?.runId}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            aria-label={label}
+            tabIndex={0}
+            className="flex cursor-default items-center justify-center rounded-md text-white ring-1 ring-white/40 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            style={{
+              width: CHIP_SIZE,
+              height: CHIP_SIZE,
+              backgroundColor: peer.state.user.color,
+            }}
+          >
+            <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{label}</TooltipContent>
+      </Tooltip>
+    </li>
+  )
+}
+
+function AvatarChip({ peer, isLocal, localPrincipalKey }: AvatarChipProps) {
+  const label = peerLabel(peer, isLocal, localPrincipalKey)
+  if (isAgentPeer(peer)) return <AgentChip peer={peer} label={label} />
   const initials = getInitials(peer.state.user.name)
-  const label = isLocal ? `${peer.state.user.name} (you)` : peer.state.user.name
 
   return (
     <li role="listitem" className="relative flex-shrink-0">
@@ -89,9 +132,10 @@ function AvatarChip({ peer, isLocal }: AvatarChipProps) {
 interface OverflowPopoverProps {
   hiddenPeers: PeerInfo[]
   localClientId: number
+  localPrincipalKey: string | null
 }
 
-function OverflowPopover({ hiddenPeers, localClientId }: OverflowPopoverProps) {
+function OverflowPopover({ hiddenPeers, localClientId, localPrincipalKey }: OverflowPopoverProps) {
   const [open, setOpen] = useState(false)
   const count = hiddenPeers.length
 
@@ -121,7 +165,8 @@ function OverflowPopover({ hiddenPeers, localClientId }: OverflowPopoverProps) {
           >
             {hiddenPeers.map((peer) => {
               const isLocal = peer.clientId === localClientId
-              const label = isLocal ? `${peer.state.user.name} (you)` : peer.state.user.name
+              const label = peerLabel(peer, isLocal, localPrincipalKey)
+              const agent = isAgentPeer(peer)
               return (
                 <li
                   key={peer.clientId}
@@ -131,10 +176,13 @@ function OverflowPopover({ hiddenPeers, localClientId }: OverflowPopoverProps) {
                 >
                   <span
                     aria-hidden="true"
-                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-white font-semibold"
+                    className={
+                      'flex h-5 w-5 flex-shrink-0 items-center justify-center text-white font-semibold ' +
+                      (agent ? 'rounded-sm' : 'rounded-full')
+                    }
                     style={{ backgroundColor: peer.state.user.color, fontSize: 9 }}
                   >
-                    {getInitials(peer.state.user.name)}
+                    {agent ? <Bot className="h-3 w-3" /> : getInitials(peer.state.user.name)}
                   </span>
                   {label}
                 </li>
@@ -157,6 +205,7 @@ function OverflowPopover({ hiddenPeers, localClientId }: OverflowPopoverProps) {
  */
 export function AvatarChips() {
   const { peers, localClientId } = useAwareness()
+  const localPrincipalKey = useLocalAgentPrincipalKey()
 
   if (peers.length === 0) return null
 
@@ -166,11 +215,20 @@ export function AvatarChips() {
   return (
     <ul role="list" aria-label="Connected collaborators" className="flex items-center gap-1">
       {visiblePeers.map((peer) => (
-        <AvatarChip key={peer.clientId} peer={peer} isLocal={peer.clientId === localClientId} />
+        <AvatarChip
+          key={peer.clientId}
+          peer={peer}
+          isLocal={peer.clientId === localClientId}
+          localPrincipalKey={localPrincipalKey}
+        />
       ))}
 
       {hiddenPeers.length > 0 && (
-        <OverflowPopover hiddenPeers={hiddenPeers} localClientId={localClientId} />
+        <OverflowPopover
+          hiddenPeers={hiddenPeers}
+          localClientId={localClientId}
+          localPrincipalKey={localPrincipalKey}
+        />
       )}
     </ul>
   )

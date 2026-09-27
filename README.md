@@ -3,17 +3,24 @@
 Self-hosted collaborative presentation tool with Keynote-level animations,
 real-time multi-user editing, native tables, and PowerPoint round-trip.
 Built for small teams (up to 15 simultaneous editors) on your own
-infrastructure. Being made fully drivable by AI agents over MCP — see
-[the agentic-layer plan](./docs/plans/agentic-layer.md); no agent can reach
-it yet.
+infrastructure. Drivable by AI agents over MCP from Claude Code and
+claude.ai — see [Agents (MCP)](#agents-mcp) and
+[the agentic-layer plan](./docs/plans/agentic-layer.md). Not in a release
+yet as of 2026-09-27 (CHANGELOG "Unreleased"); production still runs 0.9.29
+without it.
 
 Current release: **0.9.29** (2026-09-25) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
-**[Agentic layer A0 — foundations](./docs/handoff/A0-agentic-foundations.md)**
-(2026-09-26, unreleased): the command registry every agent capability will
-go through, runtime schemas, parity guards, and a round of editor undo and
-crop fixes; it is also the current next-steps list (A1: server host,
-identity, MCP).
+**[Agentic layer A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
+(2026-09-27, unreleased): personal access tokens and OAuth for claude.ai,
+the server-side command host with per-run revert and an audit log, 44
+server-backed commands, the MCP server at `/api/mcp`, playbooks, and the
+`pnpm agent:eval` suite; it is also the current next-steps list (release
+A0 + A1, then A2: extraction).
+Before that:
+**[A0 — foundations](./docs/handoff/A0-agentic-foundations.md)**
+(2026-09-26, commit `9e0e853`, unreleased): the command registry, runtime
+schemas, parity guards, and a round of editor undo and crop fixes.
 Before that: the 0.9.x point releases (CHANGELOG), starting with
 **[0.9.0 → 0.9.3 — production hardening](./docs/handoff/0.9.x-production-hardening.md)**
 (2026-09-07 → 2026-09-09), which fixed ten production defects that were
@@ -61,15 +68,20 @@ packages/
   shared/       Shared types + zod runtime schemas
   slide-model/  Yjs bindings + object type registry
   animation/    JSON DSL + GSAP compiler
-  commands/     Capability registry — every document write, for UI and agents (ADR 0010)
+  commands/     Capability registry — every document write, for UI and agents (ADR 0010);
+                playbooks/ = agent guidance served as MCP prompts + the `narrative` skill
   ui/           Reusable React components
 infra/
   docker-compose.yml   Postgres (dev) — extended in M4/M10/M11
   scripts/             Deploy + backup scripts
+tests/
+  agent-eval/   `pnpm agent:eval` — headless Claude Code scenarios, graded from the document
+  load/         Load / soak harness (`pnpm load:all`)
 docs/
   adr/       Architecture Decision Records
   handoff/   Per-milestone handoff documents
   plans/     Multi-phase plans (agentic layer, pptx, tables)
+  mcp.md     The MCP server: connecting, auth, OAuth, tools, confirmation
   capabilities.md   Generated list of agent-callable commands (`pnpm capabilities`)
 ```
 
@@ -101,8 +113,10 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit + integration (2,224 pass, 32 skipped, 2026-09-26)
-pnpm --filter web test:e2e                      # 50 Playwright spec files (see caveat below)
+pnpm test                                       # unit + integration (3,192 pass, 32 skipped, 223 files, 2026-09-27)
+pnpm --filter web test:e2e                      # 53 Playwright spec files (see caveat below)
+pnpm --filter @narrative/server test:integration  # Drizzle stores against the local Postgres (3 files; not in `pnpm test`)
+pnpm agent:eval                                 # 14 agent scenarios via headless Claude Code (costs usage, ~2 USD/run)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -123,6 +137,10 @@ Coverage highlights:
   slide-model writer and every Fastify route claimed by a command, the
   known-missing list or a reasoned exclusion; every command example run as a
   contract test; the generated capability manifest must be current)
+- MCP server over real HTTP with the SDK client, the OAuth flow and its
+  failure paths, a `tools/list` size budget (160 KB), and the agent eval
+  suite's free replay subset (11 recorded scenarios, no model) inside
+  `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
 
 > ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
 > (`ERROR: Playwright does not support chromium on ubuntu26.04-x64`, same for
@@ -151,6 +169,33 @@ pnpm typecheck && pnpm lint && pnpm -r test     # the baseline, always
 @narrative/slide-model mutate` are deliberately not part of that baseline —
 they either need a representative machine (load, lighthouse) or take long
 enough that they belong before a release rather than on every save.
+
+## Agents (MCP)
+
+Narrative runs no model. Claude Code and claude.ai drive it through an MCP
+server that is part of the API — `https://<domain>/api/mcp` in production,
+`http://localhost:3001/mcp` in dev — so the model, its key and its bill stay
+in the user's own Claude client
+([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md)).
+
+- **Tools** are generated from the command registry (94 commands as of
+  2026-09-27, list in [`docs/capabilities.md`](./docs/capabilities.md)); every
+  call runs on the server with the calling user's role, as one change, logged
+  to a run the user can revert from the editor's Agent activity popover.
+- **Claude Code**: account menu → **Access tokens** → a token with the `mcp`
+  scope, then `claude mcp add --transport http narrative https://<domain>/api/mcp --header "Authorization: Bearer <token>"`.
+  Without the header it signs in with OAuth instead.
+- **claude.ai**: Settings → Connectors → Add custom connector →
+  `https://<domain>/api/mcp`; sign in with Google and approve on Narrative's
+  consent page. Disconnect under Access tokens → Connected apps.
+- Irreversible actions (sharing, invitations, deletes, moving a deck) and URL
+  downloads are confirmed by the user — in the client, or on a Narrative
+  confirmation page — never by the model.
+
+Full reference (auth, OAuth, rate limits, confirmation, awareness privacy):
+[`docs/mcp.md`](./docs/mcp.md). Local setup: [`SETUP.md`](./SETUP.md) §9.
+Production env and the Caddy routes it needs:
+[`docs/deploy.md`](./docs/deploy.md).
 
 ## Authentication
 
@@ -395,9 +440,15 @@ Single domain, Caddy as reverse proxy with automatic TLS:
 
 ```
 https://DOMAIN/          → React SPA (static files, Caddy file_server)
-https://DOMAIN/api/*     → Fastify HTTP API (port 3001)
+https://DOMAIN/api/*     → Fastify HTTP API (port 3001; Caddy strips /api) — incl. the MCP server at /api/mcp
+https://DOMAIN/.well-known/oauth-{authorization-server,protected-resource}[/*]
+                         → Fastify HTTP API, path NOT stripped (OAuth discovery for MCP clients)
 wss://DOMAIN/ws          → Hocuspocus WebSocket (port 3002)
 ```
+
+(Production actually terminates TLS at Cloudflare and reaches Caddy through a
+tunnel on plain HTTP — [`docs/deploy.md`](./docs/deploy.md) "Production
+topology".)
 
 ### Prod-like local test (all services in containers)
 
@@ -498,8 +549,13 @@ Migrations run automatically during deploy. To run manually:
 ```bash
 cd infra
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-  run --rm server node apps/server/dist/db/migrate.js
+  --env-file .env.prod run --rm --entrypoint "" server \
+  node apps/server/dist/apps/server/src/db/migrate.js
 ```
+
+(The compiled server mirrors the repo layout under `dist/` — was documented
+here as `dist/db/migrate.js`, which does not exist in the image; corrected
+2026-09-27 to match `infra/scripts/deploy.sh`.)
 
 ### Backup
 
@@ -549,6 +605,12 @@ still has to reach the VM. After changing a prod secret:
 scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod
 ssh narrative 'cd /opt/narrative && ./infra/scripts/deploy.sh prod'
 ```
+
+The agentic-layer release (A1) adds one **required** prod secret,
+`AGENT_PRINCIPAL_KEY_SECRET` (`openssl rand -base64 48`): without it in the
+decrypted `infra/.env.prod`, Compose will not parse the prod file, so
+`build-push.sh` fails before building (checklist:
+[`docs/deploy.md`](./docs/deploy.md) "Releasing the agentic layer (A1)").
 
 The encrypted `env.prod.sops` is the source of truth — ad-hoc edits made
 directly on the VM (e.g. `USE_SHARED_TUNNEL=1`) should be folded back into it via

@@ -125,6 +125,37 @@ below if you're actively testing the real OIDC flow.
 5. Set `BYPASS_AUTH=false` and `VITE_BYPASS_AUTH=false`
 6. Restart `pnpm dev`
 
+## 9. Optional: drive Narrative from Claude Code (MCP)
+
+The MCP server is part of the API: `http://localhost:3001/mcp` in dev. Nothing
+has to be configured for local use — `PUBLIC_API_URL` defaults to
+`http://localhost:<API_PORT>` (the MCP resource every OAuth token is bound to is
+`<PUBLIC_API_URL>/mcp`), and the OAuth redirect allowlist already holds Claude
+Code's loopback callbacks and the claude.ai callback. Set
+`MCP_OAUTH_REDIRECT_URIS` only for another MCP client with its own callback
+(https, or http on `localhost` / `127.0.0.1`, any port).
+
+1. Account menu → **Access tokens** → create a token with the `mcp` scope.
+2. In a scratch directory:
+   `claude mcp add --transport http narrative-local http://localhost:3001/mcp --header "Authorization: Bearer <token>" --scope local`
+3. `claude -p "List my 5 most recently updated decks with narrative-local" --allowedTools "mcp__narrative-local__*"`
+
+Without `--header`, Claude Code signs in through Narrative's OAuth flow instead
+(its client metadata document, a loopback callback, then the consent page).
+Details: [`docs/mcp.md`](./docs/mcp.md).
+
+Dev notes:
+
+- `AGENT_PRINCIPAL_KEY_SECRET` is optional in dev (a built-in dev-only key is
+  used); production refuses to start without it.
+- Under `BYPASS_AUTH=true` the Access tokens page works as the dev user; that
+  is also what `pnpm agent:eval` relies on to mint its own tokens
+  ([`tests/agent-eval/README.md`](./tests/agent-eval/README.md)).
+- A confirmation link (`/confirm/<id>`, for deletes, sharing and URL
+  downloads from a client that cannot ask) opens in the web app on :5173.
+- `claude -p` runs headless and dismisses every confirmation question, so an
+  irreversible call from it always goes through that page.
+
 ## Verifying everything works
 
 | Check                                                                                                      | Pass                           |
@@ -143,7 +174,7 @@ below if you're actively testing the real OIDC flow.
 - **`Bucket ready` never logs** — `minio` container failed health check. `docker compose logs minio` — usually `MINIO_ROOT_PASSWORD` < 8 chars.
 - **Image upload renders gray** — `IMGPROXY_ENDPOINT` is still pointing at `127.0.0.1:8080` direct. Set it to `http://localhost:5173/imgproxy` in `.env` and restart `pnpm dev`.
 - **`/decks` returns empty in incognito** — `BYPASS_AUTH=true` returns dev-user-owned decks only; create one from the home page first.
-- **Server, web or tests fail to resolve a package right after a `git pull`** — the range added a workspace package or a dependency (agentic-layer A0 added `packages/commands` and `zod`; a 0.9.x range added `sharp`, which killed the dev server until installed). Run `pnpm install`, then restart `pnpm dev`.
+- **Server, web or tests fail to resolve a package right after a `git pull`** — the range added a workspace package or a dependency (agentic-layer A0 added `packages/commands` and `zod`; A1 added `@modelcontextprotocol/sdk`, `@fastify/rate-limit` and `yaml`, and made the server depend on `@narrative/commands`; a 0.9.x range added `sharp`, which killed the dev server until installed). Run `pnpm install`, then restart `pnpm dev`. New migrations (A1: `0016`–`0023`) apply on the next dev server start.
 - **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.

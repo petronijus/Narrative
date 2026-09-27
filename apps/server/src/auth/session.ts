@@ -34,6 +34,9 @@
  *   would need wiring through the auth callback, every mutating route, the
  *   client, and the tus upload path (whose custom headers CORS strips), so
  *   it's owned by the security-reviewer pass, not assumed to exist here.
+ *   Routes that run arbitrary state changes with the caller's role (the
+ *   session-authenticated command API) additionally require an allowed
+ *   `Origin` via `requireSameOrigin` (http/sameOrigin.ts).
  */
 
 import { randomBytes, createHash } from 'node:crypto'
@@ -41,6 +44,10 @@ import { and, eq, gt, isNull, lt, or } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { sessions, type Session } from '../db/schema.js'
 import { closeUserConnections } from '../hocuspocus/connections.js'
+import {
+  revokeAllAgentCredentialsForUser,
+  type RevokedAgentCredentials,
+} from './agentCredentials.js'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -184,17 +191,35 @@ export async function revokeSession(db: Database, rawId: string): Promise<void> 
   if (userSub) closeUserConnections(userSub)
 }
 
-/** Revoke every active session for a given user (e.g. on allowlist removal). */
-export async function revokeAllSessionsForUser(db: Database, userSub: string): Promise<void> {
-  await db
+export interface RevokedUserAccess extends RevokedAgentCredentials {
+  sessions: number
+}
+
+/**
+ * Revoke every active session for a given user (e.g. on allowlist removal),
+ * AND every agent credential of theirs (personal access tokens, and any
+ * future OAuth tokens — auth/agentCredentials.ts). An account-level kill
+ * switch that left a token alive would not be one.
+ */
+export async function revokeAllSessionsForUser(
+  db: Database,
+  userSub: string,
+): Promise<RevokedUserAccess> {
+  const revokedSessions = await db
     .update(sessions)
     .set({ revokedAt: new Date() })
     .where(and(eq(sessions.userSub, userSub), isNull(sessions.revokedAt)))
+    .returning({ idHash: sessions.idHash })
+
+  const agentCredentials = await revokeAllAgentCredentialsForUser(db, userSub)
 
   // CONN-1: every session for this user is now dead — close all their live
   // connections across all docs. Their cookies are revoked so reconnect will
-  // fail at onAuthenticate.
+  // fail at onAuthenticate. (In-process only: a caller in another process,
+  // such as the revokeUserAccess script, cannot reach the live sockets.)
   closeUserConnections(userSub)
+
+  return { sessions: revokedSessions.length, ...agentCredentials }
 }
 
 /**

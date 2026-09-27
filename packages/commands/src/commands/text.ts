@@ -53,6 +53,7 @@ const textEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,7 @@ const textEditor = {
 export const textSet = defineCommand({
   ...textEditor,
   id: 'text.set',
+  idempotent: true,
   title: 'Set text',
   description:
     'Replace the WHOLE body of a text box or of one table cell (`target.cell`). Pass a plain string — a blank line ' +
@@ -169,6 +171,7 @@ function inlineSegments(raw: string, r: RawRange): RawRange[] {
 export const textFormat = defineCommand({
   ...textEditor,
   id: 'text.format',
+  idempotent: true,
   title: 'Format text range',
   description:
     'Apply (`set`) and/or remove (`clear`) inline formatting — bold, fontWeight, italic, underline, color, ' +

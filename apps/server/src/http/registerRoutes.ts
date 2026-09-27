@@ -22,9 +22,14 @@ import { registerSharingRoutes } from '../routes/sharing.js'
 import { registerPptxImportRoutes } from '../routes/pptxImport.js'
 import { registerPptxExportRoutes } from '../routes/pptxExport.js'
 import { registerAuthRoutes, type AuthRoutesOpts } from '../routes/auth.js'
+import { registerAccessTokenRoutes } from '../routes/accessTokens.js'
 import { registerTusPlugin } from '../media/tus.js'
 import { registerMediaRoutes } from '../media/routes.js'
 import { registerMetricsEndpoint } from '../metrics/index.js'
+import { registerAgentRoutes } from '../routes/agent.js'
+import { registerAgentConfirmationRoutes } from '../routes/agentConfirmations.js'
+import type { AgentRuntime } from '../agent/runtime.js'
+import { registerMcpRoutes, type McpRouteDeps } from '../mcp/routes.js'
 
 export interface HttpRouteDeps {
   db: Database
@@ -36,6 +41,17 @@ export interface HttpRouteDeps {
   metrics: boolean
   /** Options of the server-driven OAuth routes (`db` comes from above). */
   auth: Omit<AuthRoutesOpts, 'db'>
+  /**
+   * The agent host (agent/runtime.ts) behind POST /api/commands and the
+   * Agent activity routes. Route handlers close over it; registering the
+   * routes never touches it.
+   */
+  agent: AgentRuntime
+  /**
+   * The MCP server (/mcp) and its OAuth authorization server (mcp/). Like
+   * `agent`, only its handlers read it.
+   */
+  mcp: McpRouteDeps
 }
 
 export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDeps): Promise<void> {
@@ -75,7 +91,22 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   // browser-PKCE + Bearer-id_token path). Public endpoints by design.
   registerAuthRoutes(app, { db, ...deps.auth })
 
+  // Personal access tokens (agentic A1) — session-cookie only, never a PAT.
+  registerAccessTokenRoutes(app)
+
   // Media routes: tus upload + signed URL + delete
   registerTusPlugin(app, { db })
   await registerMediaRoutes(app, { db })
+
+  // Agent host (agentic A1, ADR 0011): the command API for scripts, and the
+  // Agent activity popover's run list + revert.
+  await registerAgentRoutes(app, { agent: deps.agent })
+
+  // The confirmation page's API: a signed-in person approves or declines an
+  // agent call that needs their confirmation (session cookie only).
+  await registerAgentConfirmationRoutes(app, { confirmations: () => deps.agent.confirmations })
+
+  // MCP server (agentic A1, ADR 0011): /mcp for Claude clients, plus the
+  // OAuth routes claude.ai connectors sign in through.
+  await registerMcpRoutes(app, deps.mcp)
 }

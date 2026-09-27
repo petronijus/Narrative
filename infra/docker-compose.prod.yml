@@ -30,6 +30,35 @@ services:
       NODE_ENV: production
       # In prod Caddy sends Origin as DOMAIN
       CORS_ORIGIN: https://${DOMAIN}
+      # Real client IP for the anonymous rate-limit buckets, the per-IP
+      # pre-limit and the WebSocket failed-auth throttle. Every request reaches
+      # the server from Caddy's container address, so without this all
+      # anonymous traffic would share one bucket. Cloudflare's edge sets
+      # CF-Connecting-IP on every tunnelled request (overwriting a client-sent
+      # one), and Caddy overwrites it for any peer that is not cloudflared
+      # (CLOUDFLARED_TRUSTED_PROXIES below). Fastify's trustProxy stays off —
+      # see apps/server/src/http/rateLimit.ts.
+      CLIENT_IP_HEADER: cf-connecting-ip
+      # MCP server + its OAuth authorization server (docs/mcp.md). The public
+      # base of the API: the MCP resource is <base>/mcp — exactly the URL
+      # users paste into claude.ai — and every OAuth token is bound to it.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://${DOMAIN}/api}
+      # Extra OAuth redirect URIs besides the built-in claude.ai and Claude
+      # Code callbacks (comma-separated; https, or http loopback). Usually empty.
+      MCP_OAUTH_REDIRECT_URIS: ${MCP_OAUTH_REDIRECT_URIS:-}
+      # Hosts whose OAuth Client ID Metadata Documents are accepted
+      # (comma-separated; `none` = none). claude.ai serves Claude Code's.
+      MCP_OAUTH_CIMD_HOSTS: ${MCP_OAUTH_CIMD_HOSTS:-claude.ai}
+      # OAuth dynamic client registration (RFC 7591). Off: Claude Code and
+      # claude.ai use metadata documents.
+      MCP_OAUTH_DCR_ENABLED: ${MCP_OAUTH_DCR_ENABLED:-false}
+      # Hostnames agent URL downloads may reach without the user confirming
+      # the host (comma-separated, exact). Empty: every download is confirmed.
+      AGENT_URL_FETCH_ALLOWED_HOSTS: ${AGENT_URL_FETCH_ALLOWED_HOSTS:-}
+      # HMAC key of the opaque "working for" key on agent peers (awareness).
+      # REQUIRED in prod (server refuses to start without it, >= 32 chars).
+      # Generate: openssl rand -base64 48
+      AGENT_PRINCIPAL_KEY_SECRET: ${AGENT_PRINCIPAL_KEY_SECRET:?AGENT_PRINCIPAL_KEY_SECRET env var is required}
     ports:
       # Bind to 127.0.0.1 only — Caddy reverse-proxies
       - '127.0.0.1:${API_PORT:-3001}:3001'
@@ -115,6 +144,13 @@ services:
       - web_static:/srv/web:ro
     environment:
       DOMAIN: ${DOMAIN:?DOMAIN env var is required}
+      # Peers whose CF-Connecting-IP header Caddy passes through (Caddyfile,
+      # "Client IP"); every other peer gets it overwritten with its own
+      # address. Here Caddy publishes no port, so its only peers are the
+      # containers on the compose network, cloudflared among them — the
+      # private ranges cover that network. The shared-tunnel overlay narrows
+      # this to the external cloudflared host.
+      CLOUDFLARED_TRUSTED_PROXIES: ${CLOUDFLARED_TRUSTED_PROXIES:-private_ranges}
     depends_on:
       server:
         condition: service_healthy

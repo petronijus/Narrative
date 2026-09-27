@@ -5,7 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { peerColorFromId } from './awareness.js'
+import {
+  AGENT_PRINCIPAL_MESSAGE_TYPE,
+  agentPrincipalKeyInput,
+  parseAgentPrincipalMessage,
+  peerColorFromId,
+  sanitizePeerLabel,
+} from './awareness.js'
 
 describe('peerColorFromId', () => {
   it('returns same color for same id (deterministic)', () => {
@@ -50,5 +56,65 @@ describe('peerColorFromId', () => {
     const id = 'stable-session-id-xyz'
     const results = Array.from({ length: 5 }, () => peerColorFromId(id))
     expect(new Set(results).size).toBe(1)
+  })
+})
+
+describe('agentPrincipalKeyInput', () => {
+  it('is domain-separated, versioned and scoped to the document', () => {
+    // The server MACs exactly this string (agent/presence.ts, HMAC-SHA256
+    // with AGENT_PRINCIPAL_KEY_SECRET).
+    expect(agentPrincipalKeyInput('deck_abc', '108234567890123456789')).toBe(
+      'narrative:agent-principal:v2\ndeck_abc\n108234567890123456789',
+    )
+    expect(agentPrincipalKeyInput('deck_a', 'u')).not.toBe(agentPrincipalKeyInput('deck_b', 'u'))
+  })
+})
+
+describe('parseAgentPrincipalMessage', () => {
+  const key = 'Nr0FXJtfxptAS_duWznRdk'
+  const msg = (extra: Record<string, unknown>): string =>
+    JSON.stringify({
+      type: AGENT_PRINCIPAL_MESSAGE_TYPE,
+      documentName: 'deck_1',
+      principalKey: key,
+      ...extra,
+    })
+
+  it('parses a well-formed message', () => {
+    expect(parseAgentPrincipalMessage(msg({}))).toEqual({
+      type: AGENT_PRINCIPAL_MESSAGE_TYPE,
+      documentName: 'deck_1',
+      principalKey: key,
+    })
+  })
+
+  it('ignores other messages and malformed payloads without throwing', () => {
+    expect(parseAgentPrincipalMessage('{"type":"narrative.editorShow","slideId":"s"}')).toBeNull()
+    expect(parseAgentPrincipalMessage('not json')).toBeNull()
+    expect(parseAgentPrincipalMessage(42)).toBeNull()
+    expect(parseAgentPrincipalMessage('[]')).toBeNull()
+    expect(parseAgentPrincipalMessage(msg({ principalKey: 'short' }))).toBeNull()
+    expect(parseAgentPrincipalMessage(msg({ principalKey: 'x'.repeat(21) + '/' }))).toBeNull()
+    expect(parseAgentPrincipalMessage(msg({ documentName: '' }))).toBeNull()
+    expect(parseAgentPrincipalMessage(msg({ documentName: 7 }))).toBeNull()
+  })
+})
+
+describe('sanitizePeerLabel', () => {
+  it('strips control, format and markup characters and collapses whitespace', () => {
+    expect(sanitizePeerLabel('  a\u0000b\u200Bc\u202Ed  <x>`y`  ', 40)).toBe('abcd xy')
+    expect(sanitizePeerLabel('tab\tand\nnewline', 40)).toBe('tab and newline')
+  })
+
+  it('returns null for nothing left, or for a non-string', () => {
+    expect(sanitizePeerLabel('\u202E\u200B', 40)).toBeNull()
+    expect(sanitizePeerLabel(null, 40)).toBeNull()
+    expect(sanitizePeerLabel(undefined, 40)).toBeNull()
+  })
+
+  it('truncates by code points with an ellipsis', () => {
+    const long = sanitizePeerLabel('é'.repeat(50), 40)!
+    expect(Array.from(long)).toHaveLength(40)
+    expect(long.endsWith('…')).toBe(true)
   })
 })

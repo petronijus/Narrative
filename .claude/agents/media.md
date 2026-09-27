@@ -2,7 +2,7 @@
 name: media
 description: Owner of the media pipeline. tus.io uploads, MinIO storage, imgproxy variants, ffmpeg workers (HLS video, poster frames, thumbnails), BullMQ queue, preloading pipeline, IndexedDB cache. Invoke for: upload flow, video processing, storage bucket layout, imgproxy URLs, worker jobs, media preloading for present mode. Not active before M11.
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 You own the **media pipeline** of Narrative.
@@ -17,6 +17,16 @@ You own the **media pipeline** of Narrative.
   `editor-ui`)
 - The present-mode preloading pipeline (scan URLs, `Image()`/manifest fetch,
   progress, IndexedDB cache)
+- Agent file sources (agentic A1, 2026-09-27): `{ url }` / `{ base64 }`
+  inputs of `media.upload`, `folder.fonts.upload`, `deck.importPptx` and
+  `deck.insertFrom` — `apps/server/src/services/{media,binarySource,downloadSlots}.ts`,
+  the SSRF guard and fetch audit in `apps/server/src/net/`, and the shared
+  finalisation with tus (`media/finalizeUpload.ts`, `media/uploadPolicy.ts`).
+  Caps are lower than browser uploads (.pptx / video 200 MB with a 120 s
+  deadline, images 25 MB, fonts 8–10 MB), downloads stream to a temp file,
+  and at most two run per user. A personal access token on tus uploads media
+  only; a .pptx from an agent goes through the commands. Table:
+  `docs/deploy.md` "Agent data retention and download limits".
 
 ## What you do not own
 

@@ -8,6 +8,7 @@ import { CommandError } from './errors.js'
 import { createDefaultRegistry } from './catalog.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
 import type { CommandContext } from './types.js'
+import type { ServerServices } from './services.js'
 
 function ctxFor(
   deck = createFixtureDeck(),
@@ -64,6 +65,7 @@ describe('runCommandSync — the gatekeeping every host relies on', () => {
         output: z.object({}),
         role: 'viewer',
         effects: [],
+        readOnly: true,
         undo: 'n/a',
         confirm: 'never',
         hosts: ['server'],
@@ -103,6 +105,7 @@ describe('runCommandSync — the gatekeeping every host relies on', () => {
         output: z.object({ n: z.number() }),
         role: 'viewer',
         effects: [],
+        readOnly: true,
         undo: 'n/a',
         confirm: 'never',
         hosts: ['browser'],
@@ -221,7 +224,15 @@ describe('runBatch — atomic batches', () => {
       }),
     )
     expect(
-      code(() => runBatch(registry2, ctxFor(), [{ command: 'deck.exportFake', input: {} }])),
+      code(() =>
+        runBatch(
+          registry2,
+          // The server host provides services; without them the runner would
+          // stop earlier with wrong_host.
+          ctxFor(undefined, { host: 'server', services: {} as ServerServices }),
+          [{ command: 'deck.exportFake', input: {} }],
+        ),
+      ),
     ).toBe('not_batchable')
   })
 

@@ -1,0 +1,157 @@
+/**
+ * `DeckService` — defined here, implemented by apps/server/src/services/decks.ts.
+ * See ../services.ts for the pattern: the HTTP routes under /decks and the
+ * `deck.*` commands call these same methods.
+ *
+ * Failures are thrown as `CommandError` (the server throws a subclass that
+ * also carries the HTTP status and body its route answers with).
+ */
+
+import type { DeckRole, FontFaceInfo, ListKeyset } from './common.js'
+
+/** A deck row as the API returns it. Timestamps are ISO strings. */
+export interface DeckRecord {
+  id: string
+  title: string
+  ownerUserId: string
+  folderId: string | null
+  thumbnailKey: string | null
+  thumbnailUpdatedAt: string | null
+  /** Signed imgproxy URL of the deck thumbnail; null until one was rendered. */
+  thumbnailUrl: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** A deck plus the caller's effective role on it. */
+export interface DeckWithRole extends DeckRecord {
+  viewerRole: DeckRole
+}
+
+/** A freshly created deck: its document already holds one empty slide. */
+export interface CreatedDeck extends DeckRecord {
+  firstSlideId: string
+}
+
+/**
+ * A deck in a paged list: only what finding a deck needs (the agent's
+ * `deck.list`; the full record is `get`).
+ */
+export interface DeckListItem {
+  id: string
+  title: string
+  folderId: string | null
+  /**
+   * ISO timestamp of the deck's last change: its content (the latest stored
+   * document state), its title or its folder — whichever is newest.
+   */
+  updatedAt: string
+  /** The caller's effective role on the deck. */
+  role: DeckRole
+}
+
+export interface DeckListPageArgs {
+  userId: string
+  /** Only decks in this folder, which must be the caller's own (as in `list`). */
+  folderId?: string | undefined
+  /** Only decks whose title contains this text, ignoring case (matched literally). */
+  query?: string | undefined
+  /** Page size, 1 to MAX_LIST_PAGE_SIZE. */
+  limit: number
+  /** Continue after this position (a previous page's `next`). */
+  after?: ListKeyset | undefined
+}
+
+export interface DeckListPage {
+  /** Most recently changed first (`updatedAt` descending, then id descending). */
+  decks: DeckListItem[]
+  /** Where the next page starts; null when this page is the last. */
+  next: ListKeyset | null
+}
+
+export interface ActiveEditorsEntry {
+  deckId: string
+  users: Array<{ userId: string; email: string | null; name: string | null }>
+}
+
+/**
+ * What moving a deck did to its token references (see
+ * apps/server/src/services/tokenRebind.ts for the rule): references to a
+ * source-folder token are pointed at the destination token of the same
+ * category and name; without one, a colour reference becomes its literal
+ * colour and a text-style link is detached (the text keeps its formatting).
+ */
+export interface TokenRebindReport {
+  deckId: string
+  /** References now pointing at a same-named destination token. */
+  rebound: number
+  /** Colour references replaced by their literal value (no same-named token). */
+  literalised: number
+  /** Text-style links removed (no same-named text style). */
+  detached: number
+  /** References left untouched: dangling already, or an effect style without a match. */
+  unmatched: number
+  /** Set when the document could not be rewritten; the move itself still happened. */
+  error?: string
+}
+
+export interface MoveDecksResult {
+  movedCount: number
+  tokens: TokenRebindReport[]
+}
+
+export interface DeckService {
+  /** Decks the user can open, optionally only those in one of the user's folders. */
+  list(args: { userId: string; folderId?: string | undefined }): Promise<DeckWithRole[]>
+  /**
+   * The same decks as `list`, as lean items, filtered, sorted by last change
+   * (newest first) and keyset-paged — for callers that cannot take the whole
+   * list at once (the agent's `deck.list`). `list` keeps serving the web app.
+   */
+  listPage(args: DeckListPageArgs): Promise<DeckListPage>
+  /** One deck; `userId` may be null when a share token grants access. */
+  get(args: {
+    userId: string | null
+    deckId: string
+    shareToken?: string | null | undefined
+  }): Promise<DeckWithRole>
+  /**
+   * Create a deck (in `folderId`, which the user must own, else in their
+   * Drafts folder) together with its first document state: one empty slide,
+   * so it can be edited right away without a browser having opened it.
+   */
+  create(args: {
+    userId: string
+    title?: string | undefined
+    folderId?: string | undefined
+  }): Promise<CreatedDeck>
+  rename(args: { deckId: string; title: string }): Promise<DeckRecord>
+  /** Delete the deck, its document, permissions, share links and media (rows and storage). */
+  delete(args: { deckId: string }): Promise<void>
+  /**
+   * Move decks the user owns from one of their folders to another, and
+   * rebind the decks' token references to the destination folder's tokens.
+   * `origin` is the Yjs transaction origin of the document rewrites.
+   */
+  moveDecks(args: {
+    userId: string
+    sourceFolderId: string
+    deckIds: readonly string[]
+    destFolderId: string
+    origin?: unknown
+  }): Promise<MoveDecksResult>
+  /** `moveDecks` for one deck, from whichever folder it is in now. */
+  moveDeck(args: {
+    userId: string
+    deckId: string
+    destFolderId: string
+    origin?: unknown
+  }): Promise<MoveDecksResult>
+  /** Who has each deck of the folder open right now (folder owner only). */
+  activeEditors(args: { userId: string; folderId: string }): Promise<ActiveEditorsEntry[]>
+  /**
+   * Fonts bound to the deck itself (copies made when a folder font the deck
+   * may use was deleted). The folder's own fonts are `FolderService.listFonts`.
+   */
+  listFonts(args: { deckId: string }): Promise<FontFaceInfo[]>
+}

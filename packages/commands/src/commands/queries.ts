@@ -35,9 +35,11 @@ const query = {
   domain: 'query',
   role: 'viewer',
   effects: [],
+  readOnly: true,
   undo: 'n/a',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 const TITLE_MAX = 80
@@ -154,7 +156,9 @@ export const querySlide = defineCommand({
     'Everything on one slide: every object with all its properties in stacking order (first = backmost), the ' +
     'animation steps in play order, the transition, the background (null = default white) and the speaker notes ' +
     'as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs ' +
-    'and list attributes when formatted; colours as "#rrggbb" or { $token }. For one object use query.object.',
+    'and list attributes when formatted; colours as "#rrggbb" or { $token }. For one object use query.object. ' +
+    'It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit ' +
+    'the master with the same object and text commands.',
   input: z.strictObject({ slide: SlideRefSchema }),
   output: z.object({
     id: z.string(),

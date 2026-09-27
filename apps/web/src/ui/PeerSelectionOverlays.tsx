@@ -18,12 +18,26 @@
  * - Tooltip (title element) na každém pathu vypíše všechny peery se daný objekt.
  *
  * Pointer-events: none — nesmí blokovat canvas input.
+ *
+ * Agentic A1:
+ * - A peer that publishes `activeSlideId` (every A1 client, and the agent
+ *   peer "Claude (MCP)") has its selection drawn only on that slide — see
+ *   `peerSelectionOnSlide`. Older peers keep the scene-graph lookup.
+ * - Re-renders on the active slide's objects snapshot as well as on
+ *   awareness, like LockBadges: an agent's selection names objects its
+ *   command just created or moved, and the awareness update can land
+ *   before the reconciler has them — the outline must appear (and follow
+ *   the object) once the scene graph catches up.
  */
 
 import type { PeerInfo } from '@narrative/shared'
 import { useAwareness } from '../state/useAwareness.js'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import type { ObjectBounds } from '../renderer/types.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useSlideObjects } from '../state/useSlideObjects.js'
+import { peerSelectionOnSlide } from './peerPresence.js'
+import { useBoundsSettled } from './useBoundsSettled.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,6 +104,20 @@ function PeerObjectOutline({
 export function PeerSelectionOverlays() {
   const { remotePeers } = useAwareness()
   const canvasInstance = useCanvasInstance()
+  const { activeSlideId } = useActiveSlide()
+  // Subscribed for its re-renders only (see the header): bounds are read
+  // from the scene graph, which the reconciler updates from these objects.
+  useSlideObjects()
+
+  // Each peer's selection as far as it applies to this slide.
+  const selections = remotePeers.map((peer) => ({
+    peer,
+    ids: peerSelectionOnSlide(peer, activeSlideId),
+  }))
+  useBoundsSettled(
+    canvasInstance?.sceneGraph ?? null,
+    selections.flatMap(({ ids }) => ids),
+  )
 
   // Pokud canvas není ready nebo žádní remote peeri, nerenderujeme nic
   if (canvasInstance === null || remotePeers.length === 0) return null
@@ -98,8 +126,8 @@ export function PeerSelectionOverlays() {
 
   // Sbíráme: objectId → peer[]  (pro tooltip multi-peer)
   const objectPeers = new Map<string, PeerInfo[]>()
-  for (const peer of remotePeers) {
-    for (const objId of peer.state.selectedObjectIds) {
+  for (const { peer, ids } of selections) {
+    for (const objId of ids) {
       const existing = objectPeers.get(objId)
       if (existing !== undefined) {
         existing.push(peer)
@@ -122,8 +150,8 @@ export function PeerSelectionOverlays() {
   // Per-objectId: index peera (pro stacking offset)
   const objectPeerIndex = new Map<string, number>()
 
-  for (const peer of remotePeers) {
-    for (const objId of peer.state.selectedObjectIds) {
+  for (const { peer, ids } of selections) {
+    for (const objId of ids) {
       const bounds = sceneGraph.getBounds(objId)
       if (bounds === null) continue
 

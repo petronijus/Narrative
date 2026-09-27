@@ -113,6 +113,62 @@
       "when": 1778190043369,
       "tag": "0015_media_assets_kind_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790455000007,
+      "tag": "0016_agentic_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790455000017,
+      "tag": "0017_agent_run_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790541000018,
+      "tag": "0018_mcp_oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790541000019,
+      "tag": "0019_agent_op_confirmation",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790541000020,
+      "tag": "0020_pat_expiry_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790541000021,
+      "tag": "0021_mcp_oauth_cimd",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790541000022,
+      "tag": "0022_mcp_oauth_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790541000023,
+      "tag": "0023_agent_op_fetched_hosts",
+      "breakpoints": true
     }
   ]
 }

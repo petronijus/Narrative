@@ -16,8 +16,16 @@
  */
 
 import { useMemo } from 'react'
+import type { AgentRunSummary, RevertRunResult } from '@narrative/commands'
 
 const API_URL = import.meta.env['VITE_API_URL'] ?? 'http://localhost:3001'
+
+/**
+ * The document whose agent runs the Agent activity popover lists: a deck, or
+ * a component master (agents edit masters too, and their runs revert the
+ * same way).
+ */
+export type AgentRunTarget = { deckId: string } | { componentId: string }
 
 // ---------------------------------------------------------------------------
 // Core request function
@@ -155,6 +163,182 @@ export interface ApiClient {
    * a few seconds for large folders — callers should show a loading indicator.
    */
   listTokenUsages(folderId: string, category: string, tokenId: string): Promise<TokenUsage[]>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A1 — personal access tokens (session cookie only)
+  // ---------------------------------------------------------------------------
+  /** The signed-in user's personal access tokens (never the secret). */
+  listAccessTokens(): Promise<AccessTokenSummary[]>
+  /**
+   * Create a personal access token. The raw `token` in the result is shown
+   * once and can never be fetched again. Throws with `status` + `body`
+   * (`{ error, message }`) on 400 (invalid input) and 409 (token cap).
+   */
+  createAccessToken(body: CreateAccessTokenBody): Promise<CreatedAccessToken>
+  /** Revoke one of the user's tokens. Idempotent (a 404 counts as done). */
+  revokeAccessToken(id: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A1 — connected apps: MCP OAuth connections (session cookie only)
+  // ---------------------------------------------------------------------------
+  /** The signed-in user's live OAuth connections (claude.ai connectors, …), newest first. */
+  listOAuthConnections(): Promise<OAuthConnection[]>
+  /**
+   * Disconnect an app: revokes the connection's grant and every token of it,
+   * and ends its open MCP sessions. Idempotent (a 404 counts as done).
+   */
+  disconnectOAuthConnection(id: string): Promise<void>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A1 — confirmation page (session cookie only)
+  // ---------------------------------------------------------------------------
+  /** A pending agent request of the signed-in user; null when unknown or not theirs. */
+  getAgentConfirmation(id: string): Promise<AgentConfirmation | null>
+  /**
+   * Approve or decline it. Resolves to the updated confirmation; throws
+   * `ApiRequestError` (409 when it expired or was already answered).
+   */
+  decideAgentConfirmation(id: string, decision: 'approve' | 'decline'): Promise<AgentConfirmation>
+
+  // ---------------------------------------------------------------------------
+  // Agentic A1 — Agent activity popover (editor role on the deck)
+  // ---------------------------------------------------------------------------
+  /**
+   * Recent agent runs on a deck or a component master, newest first. Throws
+   * `ApiRequestError` (403 for viewers).
+   */
+  listAgentRuns(target: AgentRunTarget, limit?: number): Promise<AgentRunSummary[]>
+  /**
+   * Revert an agent run (or only its last `lastOps` changes). Throws
+   * `ApiRequestError` carrying the server's message — 409 when the run is
+   * no longer revertible (already reverted, unloaded, expired), 404, 403.
+   */
+  revertAgentRun(runId: string, lastOps?: number): Promise<RevertRunResult>
+}
+
+/**
+ * A failed request whose response carried the command API's error body
+ * (`{ ok: false, error: { code, message } }`). `message` is the server's
+ * own sentence, written to be shown to the user.
+ */
+export class ApiRequestError extends Error {
+  readonly status: number
+  readonly code: string | null
+  constructor(status: number, code: string | null, message: string) {
+    super(message)
+    this.name = 'ApiRequestError'
+    this.status = status
+    this.code = code
+  }
+}
+
+/** Build an `ApiRequestError` from a failed response, falling back to `HTTP <status>`. */
+async function apiRequestError(res: Response): Promise<ApiRequestError> {
+  let code: string | null = null
+  let message = `HTTP ${res.status}`
+  try {
+    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown } }
+    if (typeof body.error?.code === 'string') code = body.error.code
+    if (typeof body.error?.message === 'string' && body.error.message !== '') {
+      message = body.error.message
+    }
+  } catch {
+    /* non-JSON body — keep the status text */
+  }
+  return new ApiRequestError(res.status, code, message)
+}
+
+// ---------------------------------------------------------------------------
+// Agentic A1 — personal access token types
+// ---------------------------------------------------------------------------
+
+export type AccessTokenScope = 'mcp' | 'api'
+
+export interface AccessTokenSummary {
+  id: string
+  name: string
+  /** First characters of the token (`nrt_` + 6), to recognise it. */
+  prefix: string
+  scopes: AccessTokenScope[]
+  createdAt: string
+  lastUsedAt: string | null
+  /** Every token expires, at most a year after creation. */
+  expiresAt: string
+  expired: boolean
+}
+
+/** The expiry choices the server accepts, in days. */
+export const ACCESS_TOKEN_EXPIRY_DAYS = [30, 90, 365] as const
+export type AccessTokenExpiryDays = (typeof ACCESS_TOKEN_EXPIRY_DAYS)[number]
+
+export interface CreateAccessTokenBody {
+  name: string
+  scopes: AccessTokenScope[]
+  /** 30, 90 or 365 — there is no "never". */
+  expiresInDays: AccessTokenExpiryDays
+}
+
+export interface CreatedAccessToken {
+  /** The raw token. Shown once; the server keeps only its hash. */
+  token: string
+  accessToken: AccessTokenSummary
+}
+
+// ---------------------------------------------------------------------------
+// Agentic A1 — connected apps (MCP OAuth connections)
+// ---------------------------------------------------------------------------
+
+/** An app the user connected to Narrative through OAuth (GET /oauth/connections). */
+export interface OAuthConnection {
+  /** The grant id; DELETE /oauth/connections/:id disconnects it. */
+  id: string
+  /** The name the app registered with (self-asserted by the app). */
+  clientName: string
+  /** Hosts of the app's registered callbacks — where sign-ins were sent back to. */
+  redirectHosts: string[]
+  scopes: string[]
+  createdAt: string
+  lastUsedAt: string | null
+  /**
+   * Set when one of the app's refresh tokens was used twice — a sign its
+   * credentials may have been copied (the server revokes the connection when
+   * the second use did not come from the app itself). Null otherwise.
+   */
+  flaggedAt: string | null
+  /** Why it was flagged, in words; null when not flagged. */
+  flagReason: string | null
+}
+
+/**
+ * An agent request waiting for the user's confirmation
+ * (GET /agent-confirmations/:id). Everything in `summary` was built by the
+ * server from the exact call, never from text the agent wrote.
+ */
+export interface AgentConfirmation {
+  id: string
+  status: 'pending' | 'approved' | 'declined' | 'used' | 'expired'
+  summary: {
+    commandId: string
+    title: string
+    action: string
+    target: { kind: 'deck' | 'component' | 'folder' | 'account'; label: string | null }
+    details: Array<{ label: string; value: string }>
+    reasons: Array<'irreversible' | 'url_fetch'>
+    hosts: string[]
+    clientName: string | null
+  }
+  createdAt: string
+  expiresAt: string
+  decidedAt: string | null
+}
+
+/**
+ * Public URL of the MCP endpoint, derived from the API base the SPA talks to
+ * (prod `https://<domain>/api` → `https://<domain>/api/mcp`; Caddy strips
+ * `/api`, so the server route is `/mcp`).
+ */
+export function mcpEndpointUrl(): string {
+  return `${API_URL.replace(/\/+$/, '')}/mcp`
 }
 
 export interface DeckSummary {
@@ -684,6 +868,112 @@ export function createApiClient(): ApiClient {
         `/folders/${folderId}/tokens/${encodeURIComponent(category)}/${encodeURIComponent(tokenId)}/usages`,
       )
       return data.usages
+    },
+
+    // -------------------------------------------------------------------------
+    // Agentic A1 — personal access tokens
+    // -------------------------------------------------------------------------
+
+    listAccessTokens: async () => {
+      const data = await requestJson<{ tokens: AccessTokenSummary[] }>('/access-tokens')
+      return data.tokens
+    },
+
+    createAccessToken: async (body) => {
+      const res = await request('/access-tokens', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        let detail: unknown
+        try {
+          detail = await res.json()
+        } catch {
+          detail = {}
+        }
+        throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, body: detail })
+      }
+      return (await res.json()) as CreatedAccessToken
+    },
+
+    revokeAccessToken: async (id) => {
+      const res = await request(`/access-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    // -------------------------------------------------------------------------
+    // Agentic A1 — connected apps
+    // -------------------------------------------------------------------------
+
+    listOAuthConnections: async () => {
+      const data = await requestJson<{ connections: OAuthConnection[] }>('/oauth/connections')
+      return data.connections
+    },
+
+    disconnectOAuthConnection: async (id) => {
+      const res = await request(`/oauth/connections/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    // -------------------------------------------------------------------------
+    // Agentic A1 — confirmation page
+    // -------------------------------------------------------------------------
+
+    getAgentConfirmation: async (id) => {
+      const res = await request(`/agent-confirmations/${encodeURIComponent(id)}`)
+      if (res.status === 404) return null
+      if (!res.ok) throw await apiRequestError(res)
+      return (await res.json()) as AgentConfirmation
+    },
+
+    decideAgentConfirmation: async (id, decision) => {
+      const res = await request(`/agent-confirmations/${encodeURIComponent(id)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      })
+      if (!res.ok) {
+        let message = `HTTP ${res.status}`
+        let code: string | null = null
+        try {
+          const body = (await res.json()) as { error?: unknown; message?: unknown }
+          if (typeof body.error === 'string') code = body.error
+          if (typeof body.message === 'string') message = body.message
+        } catch {
+          /* keep the status */
+        }
+        throw new ApiRequestError(res.status, code, message)
+      }
+      return (await res.json()) as AgentConfirmation
+    },
+
+    // -------------------------------------------------------------------------
+    // Agentic A1 — Agent activity popover
+    // -------------------------------------------------------------------------
+
+    listAgentRuns: async (target, limit) => {
+      const query = limit === undefined ? '' : `?limit=${encodeURIComponent(String(limit))}`
+      const base =
+        'deckId' in target
+          ? `/decks/${encodeURIComponent(target.deckId)}`
+          : `/components/${encodeURIComponent(target.componentId)}`
+      const res = await request(`${base}/agent-runs${query}`)
+      if (!res.ok) throw await apiRequestError(res)
+      const data = (await res.json()) as { runs: AgentRunSummary[] }
+      return data.runs
+    },
+
+    revertAgentRun: async (runId, lastOps) => {
+      const res = await request(`/agent-runs/${encodeURIComponent(runId)}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(lastOps === undefined ? {} : { lastOps }),
+      })
+      if (!res.ok) throw await apiRequestError(res)
+      return (await res.json()) as RevertRunResult
     },
   }
 }

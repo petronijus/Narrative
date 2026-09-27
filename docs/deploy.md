@@ -95,6 +95,75 @@ If it did happen, the fix is just to rebuild and push the same tag: GHCR keeps
 whatever was pushed last, and the previous release's tag is untouched, so
 production and rollback are never at risk from a wrong-arch push.
 
+## Releasing the agentic layer (A1) — one-time steps
+
+The first release that carries agentic-layer A1 (MCP server, personal access
+tokens, OAuth; unreleased as of 2026-09-27, CHANGELOG "Unreleased") needs
+these on top of the normal procedure. Delete this section once that release
+is live.
+
+1. **Add `AGENT_PRINCIPAL_KEY_SECRET` to the prod env — before building.**
+   `docker-compose.prod.yml` declares it `${AGENT_PRINCIPAL_KEY_SECRET:?…}`,
+   so Compose refuses to even parse the file without it:
+   `required variable AGENT_PRINCIPAL_KEY_SECRET is missing a value`
+   (reproduced with `docker compose … config` on 2026-09-27). That hits
+   **`build-push.sh` on the build machine first** (it runs `docker compose
+build` with the local `infra/.env.prod`), then `deploy.sh` on the VM; the
+   server itself also exits at start in production without it (≥ 32 chars,
+   not the dev default — `apps/server/src/agent/principalKeySecret.ts`).
+
+   ```bash
+   ./scripts/secrets-edit.sh prod      # add: AGENT_PRINCIPAL_KEY_SECRET=<openssl rand -base64 48>
+   ./scripts/secrets-decrypt.sh prod   # materialise infra/.env.prod locally (build-push needs it)
+   scp infra/.env.prod narrative:/opt/narrative/infra/.env.prod   # the VM's copy is never rsynced
+   ```
+
+   Commit the updated `env.prod.sops` in the private overlay.
+
+   **In the same edit, set `CLOUDFLARED_TRUSTED_PROXIES` to the real LAN
+   address of the host running the shared cloudflared** (e.g.
+   `CLOUDFLARED_TRUSTED_PROXIES=<real-ip>/32`). The addresses in this repo
+   are documentation-range placeholders (`192.0.2.x`, RFC 5737 — the real
+   narrative VM is on a `192.168.x.x` LAN, see `~/.ssh/config`), and the
+   shared-tunnel overlay's default `192.0.2.101/32` is that placeholder
+   **used as a live value**: it can never match the real peer, so Caddy would
+   overwrite `CF-Connecting-IP` on every tunnelled request with the
+   cloudflared host's address and every visitor would share one rate-limit
+   bucket and one WebSocket failed-auth throttle (30 failures / 10 min for
+   everybody). Unverified which address the connector really has — look it
+   up on the VM (the Caddy access log's `remote_ip`, step 4) rather than
+   guessing. Every other new variable has a working compose default (table
+   under "Environment secrets").
+
+2. **Migrations `0016`–`0023` run in `deploy.sh`** (personal access tokens,
+   agent runs/ops, MCP OAuth tables, `users.email_verified`). `0020` gives
+   any token without an expiry `created_at + 365 days` — there are none in
+   prod before this release. Forward-only, as always: rolling the image back
+   to v0.9.29 afterwards leaves unused tables behind, which is harmless.
+
+3. **The Caddyfile changed** (OAuth discovery at the host root, and the
+   client-IP block that overwrites a `CF-Connecting-IP` not sent by
+   cloudflared). It ships with the rsync; `deploy.sh`'s `compose up`
+   recreates Caddy when its environment changes (the new
+   `CLOUDFLARED_TRUSTED_PROXIES`). Verify it on the live host, not on disk.
+
+4. **After the deploy, run the three OAuth `curl`s and the client-IP check**
+   under "Verifying the deploy" below. The client-IP check is the one the
+   security review of 2026-09-27 left open: it confirms the assumption that
+   tunnel traffic reaches Caddy from the cloudflared host's own address
+   (not a Docker gateway), and that this address is exactly what
+   `CLOUDFLARED_TRUSTED_PROXIES` holds. If the `remote_ip` is anything else,
+   every visitor shares one rate-limit bucket and one WebSocket failed-auth
+   throttle — fix `CLOUDFLARED_TRUSTED_PROXIES` in `.env.prod`, redeploy, and
+   check again before announcing the MCP server. (If you could not look the
+   address up before the deploy, this is where you find it: set it, redeploy.)
+
+5. **Smoke-test an agent against prod**: Access tokens → create an `mcp`
+   token, then from any machine
+   `claude mcp add --transport http narrative https://<domain>/api/mcp --header "Authorization: Bearer <token>" --scope local`
+   and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
+   Revoke the token afterwards if it was only for the test.
+
 ## Quick deploy (copy-paste)
 
 From the project root (`~/Documents/Dev/Narrative`):
@@ -187,6 +256,22 @@ curl -sI https://narrative.example.com | grep -i content-security-policy
 curl https://narrative.example.com/api/health
 # {"status":"ok"}
 
+# MCP / OAuth discovery (claude.ai connectors). Both must be JSON from the
+# API — an HTML answer means Caddy's root /.well-known/oauth-* route is
+# missing and connecting from claude.ai will fail (see "MCP server" below).
+curl -s https://narrative.example.com/.well-known/oauth-authorization-server/api | head -c 120
+# {"issuer":"https://narrative.example.com/api", …
+curl -s https://narrative.example.com/.well-known/oauth-protected-resource/api/mcp
+# {"resource":"https://narrative.example.com/api/mcp","authorization_servers":["https://narrative.example.com/api"], …
+curl -s -o /dev/null -D - https://narrative.example.com/api/mcp | grep -i www-authenticate
+# www-authenticate: Bearer realm="narrative", resource_metadata="…/api/.well-known/oauth-protected-resource/mcp", scope="mcp"
+
+# Client IP: the peer Caddy sees must be the cloudflared host, or every
+# visitor shares one rate-limit bucket (see "Client IP" below). Load the site
+# once first so there is traffic to look at.
+ssh petr@192.0.2.147 "docker logs --since 10m narrative-caddy 2>&1 | grep -o '\"remote_ip\":\"[^\"]*\"' | sort | uniq -c"
+# expected: only "remote_ip":"192.0.2.101" (plus 127.0.0.1 from the healthcheck)
+
 # On the VM — container status and the image tags actually running
 ssh petr@192.0.2.147 'docker ps --format "table {{.Names}}\t{{.Status}}"'
 ssh petr@192.0.2.147 'docker ps --format "{{.Names}}|{{.Image}}"'
@@ -274,18 +359,110 @@ ssh petr@192.0.2.147 'nano /opt/narrative/infra/.env.prod'
 
 Key secrets and where they come from:
 
-| Variable                | Source                                            |
-| ----------------------- | ------------------------------------------------- |
-| `POSTGRES_PASSWORD`     | `openssl rand -hex 32` (generated at setup)       |
-| `OIDC_CLIENT_ID`        | Google Cloud → petr-apps → OAuth credentials      |
-| `OIDC_CLIENT_SECRET`    | Same (1Password: `google petr-apps OAuth client`) |
-| `SESSION_COOKIE_SECRET` | `openssl rand -hex 32` (generated at setup)       |
-| `MINIO_ROOT_USER/PASS`  | Chosen at setup                                   |
-| `IMGPROXY_KEY/SALT`     | `openssl rand -hex 32` each (generated at setup)  |
-| `RESEND_API_KEY`        | Resend dashboard                                  |
+| Variable                     | Source                                                                                                                                                                                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`          | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                          |
+| `OIDC_CLIENT_ID`             | Google Cloud → petr-apps → OAuth credentials                                                                                                                                                                                                                         |
+| `OIDC_CLIENT_SECRET`         | Same (1Password: `google petr-apps OAuth client`)                                                                                                                                                                                                                    |
+| `SESSION_COOKIE_SECRET`      | `openssl rand -hex 32` (generated at setup)                                                                                                                                                                                                                          |
+| `MINIO_ROOT_USER/PASS`       | Chosen at setup                                                                                                                                                                                                                                                      |
+| `IMGPROXY_KEY/SALT`          | `openssl rand -hex 32` each (generated at setup)                                                                                                                                                                                                                     |
+| `RESEND_API_KEY`             | Resend dashboard                                                                                                                                                                                                                                                     |
+| `AGENT_PRINCIPAL_KEY_SECRET` | `openssl rand -base64 48` (≥ 32 chars; required — the server refuses to start without it). HMAC key of the "working for" key agent peers carry in awareness; rotating it needs no migration (open editors relabel their agent by display name until they reconnect). |
+
+The per-IP rate-limit pre-limit (3000 requests/minute) does not apply to agent
+bearer tokens: requests with a well-formed `nmo_`/`nrt_` token are pre-limited per
+token, so claude.ai users behind Anthropic's shared egress (160.79.104.0/21) do not
+share a budget. New, unseen tokens are capped at 300 per minute per client IP;
+tokens that failed verification are remembered for 60 s and cost no database
+lookup. All in process memory, no configuration.
+
+Non-secret settings with compose defaults (set them in `.env.prod` only to
+override):
+
+| Variable                        | Default (docker-compose.prod.yml) | Meaning                                                                                                                                                                                                               |
+| ------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_API_URL`                | `https://${DOMAIN}/api`           | Public base of the API. The MCP endpoint is `<base>/mcp` — the URL users paste into claude.ai — and every MCP OAuth token is bound to it (changing it invalidates connected apps).                                    |
+| `MCP_OAUTH_REDIRECT_URIS`       | empty                             | Extra OAuth callbacks besides the built-in claude.ai and Claude Code ones: comma-separated https URLs (exact), or http URLs on `localhost` / `127.0.0.1` (any port). Checked at start.                                |
+| `MCP_OAUTH_CIMD_HOSTS`          | `claude.ai`                       | Hosts whose OAuth Client ID Metadata Documents are accepted (comma-separated; `none` = none). Checked at start.                                                                                                       |
+| `MCP_OAUTH_DCR_ENABLED`         | `false`                           | `true` enables OAuth dynamic client registration (not needed for Claude Code / claude.ai). Checked at start.                                                                                                          |
+| `AGENT_URL_FETCH_ALLOWED_HOSTS` | empty                             | Hostnames agent URL downloads may reach without the user confirming the host (comma-separated, exact, no port). Empty: every URL download is confirmed. Such a download may only be redirected to other listed hosts. |
 
 If `.env.prod` is lost, regenerate all secrets, update the Postgres
 password via `psql`, and redeploy.
+
+### MCP server (`/api/mcp`) and its OAuth discovery
+
+Claude Code (personal access token) and claude.ai custom connectors (OAuth)
+reach Narrative at `https://<domain>/api/mcp` (docs/mcp.md). The OAuth
+authorization server's issuer is `https://<domain>/api`, so its RFC 8414
+metadata lives at the host root with the path inserted —
+`/.well-known/oauth-authorization-server/api` — outside `/api`. The Caddyfile
+therefore routes `/.well-known/oauth-authorization-server[/*]` and
+`/.well-known/oauth-protected-resource[/*]` to the API **without** stripping
+the path (the "OAuth discovery" block, before the SPA fallback; the SPA CSP is
+untouched). It is a Caddyfile change, so it ships as a config-only change
+(above) and must be checked on the live host with the `curl`s under
+"Verifying the deploy".
+
+Anthropic calls these endpoints from `160.79.104.0/21` and expects discovery,
+registration and token answers within 10 s (refresh 30 s); all of them are
+answered from memory or with a few indexed queries. Every claude.ai user shares
+that egress range, so the per-IP limits (the 3000/min pre-limit, the anonymous
+600/min bucket, `/oauth/token` 300/min, `/oauth/register` 30/hour) are shared
+by all claude.ai users together — ample for this team; authenticated `/mcp`
+traffic is limited per OAuth grant instead (240/min).
+
+Housekeeping (nothing to schedule): hourly, and once a minute after start,
+the server deletes expired OAuth tokens and authorization requests, and
+**dynamically registered clients that have had no live grant and no use for 7
+days** — claude.ai and other DCR clients register a new client on every fresh
+connection. Clients that use a Client ID Metadata Document (Claude Code does,
+because Narrative advertises it) are never stored at all.
+
+### Client IP (`CLIENT_IP_HEADER`, `CLOUDFLARED_TRUSTED_PROXIES`)
+
+Not secrets, but load-bearing. `CLIENT_IP_HEADER=cf-connecting-ip` is set in
+`infra/docker-compose.prod.yml`. The server keys three things on the client
+IP it reads from that header (`apps/server/src/http/clientIp.ts`): the
+anonymous rate-limit buckets, the per-IP pre-limit that runs before any
+credential lookup (3000 requests/minute), and the WebSocket
+failed-authentication throttle (30 failures per 10 minutes). Signed-in
+callers' own buckets are keyed by session or token, not IP. Behind Caddy
+every request comes from Caddy's container address, so the real IP has to
+come from the header Cloudflare's edge sets; Fastify's `trustProxy` is
+deliberately off (the rate-limit module explains why).
+
+Cloudflare overwrites a client-sent `CF-Connecting-IP`, but only for traffic
+that goes through the tunnel. In the shared-tunnel topology Caddy publishes
+port 80 on the LAN, so any LAN host could reach it directly and send its own
+header — picking or poisoning any bucket, or getting another address
+throttled. Caddy therefore **overwrites `CF-Connecting-IP` with the real TCP
+peer address unless the peer is the cloudflared connector**
+(`infra/caddy/Caddyfile`, "Client IP"). Which peers count as the connector is
+`CLOUDFLARED_TRUSTED_PROXIES` in the Caddy container:
+
+| Topology                                                            | Value                                                                                                                                                                                        | Why                                                                                    |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Shared tunnel (`docker-compose.prod.shared-tunnel.yml`, prod today) | the cloudflared host's real LAN address, set in `.env.prod` — the overlay default `192.0.2.101/32` is a documentation placeholder and never matches (see "Releasing the agentic layer (A1)") | The docker VM running the shared cloudflared; port 80 is reachable from the whole LAN. |
+| Bundled cloudflared (`docker-compose.prod.yml` alone)               | `private_ranges` (default)                                                                                                                                                                   | Caddy publishes no port; its only peers are containers on the compose network.         |
+
+Set it in `.env.prod` to the connector's real address (the overlay default
+is a documentation placeholder, see above). **Assumption, verify after
+any network change:** Docker's published-port DNAT keeps the LAN source
+address, so tunnel traffic reaches Caddy from `192.0.2.101` itself. If Docker
+ever rewrites the source (a userland proxy, rootless Docker), every tunnelled
+request would carry the Docker gateway address instead and all visitors
+would share one IP bucket — the WebSocket throttle would then hit everyone at
+once. Check it with the Caddy access log, which records the peer:
+
+```bash
+ssh petr@192.0.2.147 "docker logs --since 10m narrative-caddy 2>&1 | grep -o '\"remote_ip\":\"[^\"]*\"' | sort | uniq -c"
+# expected: only "remote_ip":"192.0.2.101" (plus 127.0.0.1 from the healthcheck)
+```
+
+If ingress ever stops going through Cloudflare, unset `CLIENT_IP_HEADER` —
+the header would then be client-controlled.
 
 ## Adding a new allowed user
 
@@ -301,6 +478,74 @@ ssh petr@192.0.2.147 'cd /opt/narrative/infra && \
     -f docker-compose.prod.shared-tunnel.yml \
     --env-file .env.prod up -d --force-recreate server'
 ```
+
+## Revoking a user (kill switch)
+
+To cut someone off completely — a leaked laptop, someone leaving — revoke
+every session **and** every agent credential (personal access tokens, and
+every MCP OAuth grant — the user's connected apps — with its access and
+refresh tokens; `apps/server/src/auth/agentCredentials.ts`) in one step:
+
+```bash
+ssh petr@192.0.2.147 'docker exec narrative-server \
+  node apps/server/dist/apps/server/src/scripts/revokeUserAccess.js friend@gmail.com --dry-run'
+ssh petr@192.0.2.147 'docker exec narrative-server \
+  node apps/server/dist/apps/server/src/scripts/revokeUserAccess.js friend@gmail.com'
+# dev: pnpm --filter @narrative/server db:revoke-user <email|sub> [--dry-run]
+```
+
+- It accepts an email or a Google `sub`, prints what it revoked, and exits
+  `2` with a warning when the user **could still sign in again** — through
+  `OIDC_ALLOWED_EMAILS` / `OIDC_ALLOWED_DOMAIN` (edit `.env.prod`, see above),
+  a pending invite, or a deck permission (remove it in the share dialog).
+  Revoking credentials does not take that access away; you have to.
+- HTTP requests, tus uploads and MCP calls re-verify their credential on every
+  request, so they stop at once. The script runs in its own process, so it
+  cannot close anything the running server holds: **open MCP sessions (and
+  their SSE streams) end within a minute** — the server's sweep re-verifies
+  every open session's credential and sign-in policy each minute — and **open
+  editor tabs keep their WebSocket** until they reconnect (which is refused).
+  For an immediate cut-off restart the server afterwards
+  (`… up -d --force-recreate server`, as above). Inside the server the same
+  kill switch (`revokeAllSessionsForUser`) also ends the user's MCP sessions at
+  once and expires their not-yet-exchanged OAuth authorizations, and revoking
+  one access token in the web app ends that token's MCP sessions.
+- Removing someone from the allowlist alone also stops their tokens: every
+  token verification re-applies the sign-in rule to the token's owner.
+
+Personal access tokens always expire — 30, 90 or 365 days, chosen at
+creation; migration `0020_pat_expiry_cap` gave tokens created without an
+expiry `created_at + 365 days`. They are accepted on the HTTP API, tus
+(images, videos and fonts only) and MCP — never on the Hocuspocus WebSocket
+(ADR 0011).
+
+## Agent data retention and download limits
+
+Housekeeping the server does by itself (owned by the agent runtime,
+`apps/server/src/agent/runtime.ts`; nothing to schedule):
+
+- **Agent runs and their ops** (`agent_runs`, `agent_ops`) are deleted 90
+  days after their last activity — at startup and then every 24 hours. Open
+  runs are never deleted. Op inputs and results are stored redacted: inline
+  file bytes and `data:` URLs become `{ bytes, sha256 }`, URL query strings
+  and fragments are stripped.
+- **PPTX exports** (`decks/*/exports/` in MinIO) are deleted once older than
+  one day — first sweep 5 minutes after start, then every 6 hours (on top of
+  the per-deck sweep on re-export).
+
+Files an agent hands over by URL or base64 (not through the browser's tus
+upload) are capped lower than browser uploads and downloaded to a temp file,
+never buffered whole in memory:
+
+| Kind  | By URL / base64                             | Browser upload (tus) |
+| ----- | ------------------------------------------- | -------------------- |
+| .pptx | 200 MB, 120 s download deadline             | 2 GB                 |
+| Video | 200 MB, 120 s download deadline             | 500 MB               |
+| Image | 25 MB                                       | 25 MB                |
+| Font  | 8 MB (`media.upload`), 10 MB (folder fonts) | same                 |
+
+At most two URL downloads run at once per user; a third is refused with
+"another download is in progress".
 
 ## Backups
 

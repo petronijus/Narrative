@@ -119,6 +119,104 @@ describe('toPeerInfo', () => {
 })
 
 // ---------------------------------------------------------------------------
+// toPeerInfo — agentic A1 fields (activeSlideId, agent)
+// ---------------------------------------------------------------------------
+
+describe('toPeerInfo — activeSlideId and agent', () => {
+  const agent = {
+    runId: 'run_1',
+    surface: 'mcp' as const,
+    principalName: 'Alice Example',
+    principalKey: 'Nr0FXJtfxptAS_duWznRdk',
+  }
+
+  it('leaves both fields out for a pre-A1 client that publishes neither', () => {
+    const result = toPeerInfo(1, makeState(), 99)
+    expect(result).not.toBeNull()
+    expect(result!.state).not.toHaveProperty('activeSlideId')
+    expect(result!.state).not.toHaveProperty('agent')
+  })
+
+  it('passes a string or null activeSlideId through', () => {
+    expect(toPeerInfo(1, makeState({ activeSlideId: 's2' }), 99)!.state.activeSlideId).toBe('s2')
+    expect(toPeerInfo(1, makeState({ activeSlideId: null }), 99)!.state.activeSlideId).toBeNull()
+  })
+
+  it('drops a malformed activeSlideId without rejecting the peer', () => {
+    const result = toPeerInfo(1, { ...makeState(), activeSlideId: 7 }, 99)
+    expect(result).not.toBeNull()
+    expect(result!.state).not.toHaveProperty('activeSlideId')
+  })
+
+  it('parses an agent peer as the server publishes it', () => {
+    const raw = {
+      user: { id: 'agent:run_1', name: 'Claude (MCP)', color: 'hsl(10, 70%, 55%)' },
+      selectedObjectIds: ['o1'],
+      cursor: null,
+      activeSlideId: 's1',
+      agent,
+    }
+    const result = toPeerInfo(5, raw, 99)
+    expect(result!.state.agent).toEqual(agent)
+    expect(result!.state.activeSlideId).toBe('s1')
+    expect(result!.state.selectedObjectIds).toEqual(['o1'])
+  })
+
+  it('parses the rollout wire form and drops the legacy onBehalfOf', () => {
+    const result = toPeerInfo(
+      5,
+      { ...makeState(), agent: { ...agent, onBehalfOf: agent.principalKey } },
+      99,
+    )
+    expect(result!.state.agent).toEqual(agent)
+    expect(result!.state.agent).not.toHaveProperty('onBehalfOf')
+  })
+
+  it('tolerates a server older than principalName / principalKey, never surfacing its sub', () => {
+    const legacy = { runId: 'r', onBehalfOf: '108234567890123456789', surface: 'api' }
+    const result = toPeerInfo(5, { ...makeState(), agent: legacy }, 99)
+    expect(result!.state.agent).toEqual({
+      runId: 'r',
+      surface: 'api',
+      principalName: null,
+      principalKey: null,
+    })
+    expect(JSON.stringify(result)).not.toContain('108234567890123456789')
+  })
+
+  it('re-sanitises a received principal name and drops a malformed key', () => {
+    const result = toPeerInfo(
+      5,
+      {
+        ...makeState(),
+        agent: {
+          runId: 'r',
+          surface: 'mcp',
+          principalName: 'Eve\u202E <b>' + 'x'.repeat(90),
+          principalKey: 'not a key',
+        },
+      },
+      99,
+    )
+    const info = result!.state.agent!
+    expect(info.principalName).not.toMatch(/[\u202E<>]/)
+    expect(Array.from(info.principalName!)).toHaveLength(60)
+    expect(info.principalKey).toBeNull()
+  })
+
+  it.each([
+    ['not an object', 'mcp'],
+    ['missing runId', { principalName: 'u', surface: 'mcp' }],
+    ['empty runId', { runId: '', surface: 'mcp' }],
+    ['unknown surface', { runId: 'r', principalName: 'u', surface: 'cli' }],
+  ])('treats an agent field that is %s as a plain peer', (_label, value) => {
+    const result = toPeerInfo(1, { ...makeState(), agent: value }, 99)
+    expect(result).not.toBeNull()
+    expect(result!.state).not.toHaveProperty('agent')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // generatePeerId
 // ---------------------------------------------------------------------------
 

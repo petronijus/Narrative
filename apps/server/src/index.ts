@@ -30,12 +30,26 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
+import { createAgentRuntime, parseUrlFetchAllowedHosts } from './agent/runtime.js'
+import { createAgentPrincipalKeys } from './agent/presence.js'
+import { agentPrincipalKeySecretFromEnv } from './agent/principalKeySecret.js'
 import { closeQueueConnection } from './media/enqueue.js'
 import { metricsRegistrationDecision } from './metrics/index.js'
 import { initSentry } from './observability/sentry.js'
 import { createJwtVerifier } from './auth/jwt.js'
 import { registerAuthPlugin, assertAuthBootSafety } from './auth/fastifyAuth.js'
+import {
+  createDrizzlePatStore,
+  createPatOwnerPolicy,
+  createPatService,
+} from './auth/personalAccessTokens.js'
 import { registerBodylessRequestCompat } from './http/bodylessCompat.js'
+import { registerRateLimit } from './http/rateLimit.js'
+import { registerSameOriginPolicy } from './http/sameOrigin.js'
+import { mcpPublicConfigFromEnv } from './mcp/config.js'
+import { createMcpRuntime } from './mcp/runtime.js'
+import { createDrizzleOAuthStore } from './mcp/oauth/store.js'
+import { readServerVersion } from './mcp/version.js'
 
 const API_PORT = Number(process.env['API_PORT'] ?? process.env['PORT'] ?? 3001)
 const HOCUSPOCUS_PORT = Number(process.env['HOCUSPOCUS_PORT'] ?? 3002)
@@ -167,6 +181,10 @@ await app.register(cors, {
   ],
 })
 
+// The origins allowed to use the session cookie on routes that opt into
+// `requireSameOrigin` (http/sameOrigin.ts) — the same list CORS allows.
+registerSameOriginPolicy(app, { allowedOrigins: corsOriginEnv })
+
 // Cookie parser. The secret is used to sign the short-lived OAuth state
 // cookie that carries the PKCE verifier between /auth/start and /auth/callback.
 // In dev a default keeps things working; prod MUST set SESSION_COOKIE_SECRET.
@@ -185,7 +203,22 @@ await initSentry(app)
 if (bypassAuth) {
   app.log.warn('BYPASS_AUTH=true — all requests run as dev-user. DO NOT USE IN PRODUCTION.')
 }
-registerAuthPlugin(app, { bypass: bypassAuth, db })
+// One personal access token service for HTTP routes and tus uploads, so they
+// share its `last_used_at` write throttle. (The Hocuspocus WebSocket does not
+// accept tokens at all — hocuspocus/authenticate.ts.)
+// Every verification re-applies the sign-in allowlist to the token's owner
+// (auth/signInPolicy.ts); BYPASS_AUTH has no allowlist to apply.
+const pats = createPatService(createDrizzlePatStore(db), {
+  isOwnerAllowed: bypassAuth ? async () => true : createPatOwnerPolicy(db, allowlistConfig),
+})
+registerAuthPlugin(app, { bypass: bypassAuth, db, pats })
+
+// Rate limits (http/rateLimit.ts): per identity, IP fallback. After the auth
+// plugin (the key reads the caller's identity), before any route (the plugin
+// hooks routes as they are registered). CLIENT_IP_HEADER names the header
+// carrying the real client IP behind the proxy chain (prod:
+// cf-connecting-ip); see http/rateLimit.ts for why trustProxy stays off.
+await registerRateLimit(app, { clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined })
 
 // Metrics: /metrics leaks connection counts / doc sizes. In production it
 // MUST be gated by METRICS_TOKEN. If the token is unset/empty in prod we
@@ -199,12 +232,76 @@ const metricsDecision = metricsRegistrationDecision({
 })
 if (!metricsDecision.register) app.log.warn(metricsDecision.reason)
 
+// ---------------------------------------------------------------------------
+// Hocuspocus WebSocket server
+// ---------------------------------------------------------------------------
+
+// Whom an agent peer works for is an HMAC keyed with AGENT_PRINCIPAL_KEY_SECRET
+// (required in production; agent/principalKeySecret.ts). One instance for the
+// agent presence and the WebSocket server that tells each editor its own key.
+const principalKeys = createAgentPrincipalKeys(
+  agentPrincipalKeySecretFromEnv(process.env, { isProd }),
+)
+
+const hocuspocus = createHocuspocusServer({
+  port: HOCUSPOCUS_PORT,
+  db,
+  bypass: bypassAuth,
+  clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined,
+  principalKeys,
+})
+
+// The web app's public origin: OAuth redirects back to it, and agents hand
+// users links into it (editor.present.link).
+const spaOrigin =
+  process.env['SPA_ORIGIN'] ??
+  (isDev ? 'http://localhost:5173' : `https://${process.env['DOMAIN'] ?? 'localhost'}`)
+
+// ---------------------------------------------------------------------------
+// Agent host (agentic A1, ADR 0011) — runs commands for MCP and the command
+// API against the live Hocuspocus documents. Created before the routes that
+// call it; configured (not listening) Hocuspocus is enough.
+// ---------------------------------------------------------------------------
+
+const agent = await createAgentRuntime({
+  db,
+  log: app.log,
+  hocuspocus,
+  appOrigin: spaOrigin,
+  principalKeys,
+  bypass: bypassAuth,
+  // Hosts agent URL downloads may reach without the user confirming the host
+  // (empty by default: every download is confirmed). See docs/mcp.md.
+  urlFetchAllowedHosts: parseUrlFetchAllowedHosts(process.env['AGENT_URL_FETCH_ALLOWED_HOSTS']),
+})
+
+// ---------------------------------------------------------------------------
+// MCP server (agentic A1, ADR 0011): /api/mcp for Claude Code (personal access
+// token) and claude.ai connectors (OAuth, Narrative as the authorization
+// server). PUBLIC_API_URL is the API's public base (mcp/config.ts); it names
+// the MCP resource every OAuth token is bound to. MCP_OAUTH_REDIRECT_URIS adds
+// https callbacks besides claude.ai's. See docs/mcp.md.
+// ---------------------------------------------------------------------------
+
+const mcp = createMcpRuntime({
+  agent,
+  config: mcpPublicConfigFromEnv(process.env, { apiPort: API_PORT, isProd, spaOrigin }),
+  oauthStore: createDrizzleOAuthStore(db),
+  // The same sign-in policy personal access tokens re-check on every use.
+  isOwnerAllowed: bypassAuth ? async () => true : createPatOwnerPolicy(db, allowlistConfig),
+  // The session sweep re-checks each open session's token (mcp/sessions.ts).
+  pats,
+  version: readServerVersion(),
+  log: app.log,
+})
+app.log.info(
+  { resource: mcp.config.resource, tools: mcp.catalog.entries().length },
+  'MCP server ready',
+)
+
 // Every HTTP route, in one place (http/registerRoutes.ts) so the agent-parity
 // route guard enumerates exactly what production serves.
 {
-  const spaOrigin =
-    process.env['SPA_ORIGIN'] ??
-    (isDev ? 'http://localhost:5173' : `https://${process.env['DOMAIN'] ?? 'localhost'}`)
   const redirectUri =
     process.env['OIDC_REDIRECT_URI'] ??
     (isDev
@@ -215,18 +312,14 @@ if (!metricsDecision.register) app.log.warn(metricsDecision.reason)
     db,
     metrics: metricsDecision.register,
     auth: { verifier, spaOrigin, redirectUri, isProd, allowlist: allowlistConfig },
+    agent,
+    mcp: {
+      mcp,
+      clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined,
+      allowedOrigins: corsOriginEnv,
+    },
   })
 }
-
-// ---------------------------------------------------------------------------
-// Hocuspocus WebSocket server
-// ---------------------------------------------------------------------------
-
-const hocuspocus = createHocuspocusServer({
-  port: HOCUSPOCUS_PORT,
-  db,
-  bypass: bypassAuth,
-})
 
 // ---------------------------------------------------------------------------
 // Graceful shutdown
@@ -240,6 +333,15 @@ const shutdown = async (signal: string) => {
     console.log('[server] Fastify closed')
   } catch (err) {
     console.error('[server] Error closing Fastify:', err)
+  }
+
+  // Before Hocuspocus: close open agent runs (recorded as closed) and let go
+  // of the documents the agent host holds, so they store and unload cleanly.
+  try {
+    await agent.shutdown()
+    console.log('[server] Agent host closed')
+  } catch (err) {
+    console.error('[server] Error closing the agent host:', err)
   }
 
   try {

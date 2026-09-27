@@ -18,13 +18,17 @@
  * a job-enqueue is a small refactor.
  *
  * Auth: same as POST /decks — caller must own the destination folder.
+ *
+ * Shared implementation: the handlers call services/pptx.ts — the same code the
+ * `deck.importPptx / deck.insertFrom` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
-import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
-import { appendPptxToDeck } from '../pptx/appendDeck.js'
+import { createPptxService } from '../services/pptx.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 export const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
 
@@ -87,38 +91,18 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
       }
 
       const filenameHeader = request.headers['x-narrative-filename']
-      const filenameForTitle = Array.isArray(filenameHeader) ? filenameHeader[0] : filenameHeader
+      const filename = Array.isArray(filenameHeader) ? filenameHeader[0] : filenameHeader
 
-      const importResult = await importDeckFromPptxBytes({
-        bytes: body,
-        folderId,
-        ownerUserId,
-        ...(typeof filenameForTitle === 'string' ? { filenameForTitle } : {}),
-        db,
-        log: request.log,
-      })
-
-      if (!importResult.ok) {
-        const { error } = importResult
-        if (error.kind === 'folderNotFound') {
-          return reply.status(404).send({ error: 'Folder not found' })
-        }
-        if (error.kind === 'forbidden') {
-          return reply.status(403).send({ error: 'Forbidden' })
-        }
-        if (error.kind === 'parseFailed') {
-          return reply.status(400).send({ error: `Could not parse .pptx — ${error.message}` })
-        }
-        if (error.kind === 'noSlides') {
-          return reply.status(400).send({ error: '.pptx contains no slides' })
-        }
-        if (error.kind === 'emptyBody') {
-          return reply.status(400).send({ error: 'Empty body' })
-        }
-        return reply.status(500).send({ error: 'Failed to create deck' })
+      try {
+        const result = await createPptxService(routeDeps(app, db, request.log)).importPptx({
+          userId: ownerUserId,
+          folderId,
+          source: { kind: 'bytes', bytes: body, filename },
+        })
+        return reply.status(201).send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      return reply.status(201).send(importResult.result)
     },
   )
 
@@ -159,34 +143,17 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
         return reply.status(400).send({ error: '`at` must be a non-negative integer' })
       }
 
-      const appendResult = await appendPptxToDeck({
-        bytes: body,
-        deckId,
-        ownerUserId,
-        ...(insertAt !== undefined ? { insertAt } : {}),
-        db,
-        log: request.log,
-      })
-
-      if (!appendResult.ok) {
-        const { error } = appendResult
-        if (error.kind === 'parseFailed') {
-          return reply.status(400).send({ error: `Could not parse .pptx — ${error.message}` })
-        }
-        if (error.kind === 'noSlides') {
-          return reply.status(400).send({ error: '.pptx contains no slides' })
-        }
-        if (error.kind === 'emptyBody') {
-          return reply.status(400).send({ error: 'Empty body' })
-        }
-        return reply.status(500).send({
-          error: error.documentTouched
-            ? 'Append failed part-way — some slides may already be in the deck; check it before retrying'
-            : 'Append failed — no slides were written',
+      try {
+        const result = await createPptxService(routeDeps(app, db, request.log)).appendPptx({
+          userId: ownerUserId,
+          deckId,
+          bytes: body,
+          insertAt,
         })
+        return reply.status(200).send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      return reply.status(200).send(appendResult.result)
     },
   )
 }

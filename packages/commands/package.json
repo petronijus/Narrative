@@ -5,19 +5,22 @@
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./playbooks": "./src/playbooks/index.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src scripts",
     "test": "node ../../node_modules/vitest/vitest.mjs run",
-    "capabilities": "tsx scripts/capabilities.ts"
+    "capabilities": "tsx scripts/capabilities.ts",
+    "skill": "tsx scripts/skill.ts"
   },
   "dependencies": {
     "@narrative/shared": "workspace:*",
     "@narrative/slide-model": "workspace:*",
     "nanoid": "^5.0.9",
+    "yaml": "^2.9.1",
     "yjs": "^13.6.30",
     "zod": "^4.6.5"
   },

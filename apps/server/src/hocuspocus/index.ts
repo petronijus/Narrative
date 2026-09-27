@@ -8,13 +8,20 @@
  *   /ws/* → hocuspocus:3002
  *   /*    → api:3001 or web
  *
- * Auth (M10 phase 2):
- *   onAuthenticate — validates JWT Bearer token OR share_token from WS query params.
+ * Auth (M10 phase 2 — see ./authenticate.ts):
+ *   onAuthenticate — validates the session cookie or a share_token from WS
+ *   query params. Personal access tokens are refused: agents write through
+ *   the server host (ADR 0011), never over a raw Yjs connection.
  *   Stores role + userId on connection.context for downstream hooks.
  *   Viewer role: connection is marked readOnly so Hocuspocus rejects their writes at
  *   the protocol level (no client changes broadcast). Additionally,
  *   PostgresPersistence.onStoreDocument checks role and skips persisting viewer updates
  *   as a defense-in-depth measure.
+ *
+ * Awareness (security review of A1): awarenessOwnership.ts binds client ids
+ * to the connection that announced them; awarenessRedaction.ts strips account
+ * ids and emails from what read-only / share-link connections receive;
+ * agentPrincipal.ts sends each signed-in editor its agent principal key.
  *
  * Doc name routing (M16 P2):
  *   `deck:<id>`   → deck access via resolveDeckAccess (existing path)
@@ -26,14 +33,13 @@ import { Server } from '@hocuspocus/server'
 import type { Database } from '../db/client.js'
 import { PostgresPersistence } from './persistence.js'
 import { metrics } from '../metrics/index.js'
-import {
-  resolveDeckAccess,
-  resolveFolderAccess,
-  resolveComponentAccess,
-} from '../auth/permissions.js'
-import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { setHocuspocusInstance } from './presence.js'
 import { subsystemLogger } from '../observability/logger.js'
+import { createOnAuthenticate } from './authenticate.js'
+import { awarenessOwnershipExtension } from './awarenessOwnership.js'
+import { awarenessRedactionExtension } from './awarenessRedaction.js'
+import { agentPrincipalExtension } from './agentPrincipal.js'
+import type { AgentPrincipalKeys } from '../agent/presence.js'
 
 const log = subsystemLogger('hocuspocus')
 
@@ -41,6 +47,17 @@ export interface HocuspocusServerOptions {
   port: number
   db: Database
   bypass?: boolean
+  /**
+   * Header carrying the real client IP behind the proxy chain (production:
+   * `cf-connecting-ip`); keys the failed-authentication throttle.
+   */
+  clientIpHeader?: string | undefined
+  /**
+   * The agent principal keys (agent/presence.ts, MACed with
+   * AGENT_PRINCIPAL_KEY_SECRET) — the same instance the agent runtime uses.
+   * Each signed-in editor is told its own key when it connects.
+   */
+  principalKeys: AgentPrincipalKeys
 }
 
 export function createHocuspocusServer(opts: HocuspocusServerOptions) {
@@ -49,7 +66,18 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
   const server = Server.configure({
     port: opts.port,
 
-    extensions: [new PostgresPersistence({ db })],
+    extensions: [
+      new PostgresPersistence({ db }),
+      // Binds awareness client ids to the connection (principal) that first
+      // announced them, so editor.context never trusts a forged state (M9).
+      awarenessOwnershipExtension({ log }),
+      // Read-only and share-link connections receive awareness without
+      // account ids or email-looking values (defence in depth; editors
+      // publish only a random peer id and a display name).
+      awarenessRedactionExtension({ log }),
+      // Tells each signed-in editor its agent principal key (ADR 0011 point 8).
+      agentPrincipalExtension({ principalKeys: opts.principalKeys }),
+    ],
 
     // Doc lifecycle — Hocuspocus auto-unloads docs when their last connection
     // drops, so the in-memory `documents` map can't grow unboundedly across
@@ -68,141 +96,10 @@ export function createHocuspocusServer(opts: HocuspocusServerOptions) {
     debounce: 2_000,
     maxDebounce: 10_000,
 
-    async onAuthenticate(data) {
-      const { documentName, connection, requestParameters, requestHeaders } = data
-
-      // Share token may arrive as a query param in the WS upgrade URL.
-      // e.g. ws://host:3002?share_token=<id>
-      // HocuspocusProvider appends query params to the WS URL and Hocuspocus
-      // exposes them as `requestParameters: URLSearchParams` in the payload.
-      const shareToken = requestParameters.get('share_token')
-
-      let userId: string | null = null
-
-      if (shareToken) {
-        // Share-token access — skip session validation entirely.
-        // resolveDeckAccess will validate the token below.
-        // Note: folder docs do NOT support share-token access.
-      } else if (bypass) {
-        userId = 'dev-user'
-      } else {
-        // Authenticated path. The Hocuspocus client sends a sentinel `token`
-        // value purely to trigger this hook (Hocuspocus runs onAuthenticate
-        // only when an auth frame arrives, and the client only sends one
-        // when configured with `token`). The actual identity comes from the
-        // `narrative_session` HttpOnly cookie carried on the WS upgrade,
-        // which is same-origin with the SPA so the browser sends it
-        // automatically. We ignore the `token` value entirely.
-        const rawId = readCookieFromHeader(requestHeaders['cookie'], SESSION_COOKIE_NAME)
-        if (!rawId) throw new Error('Invalid credentials')
-        const session = await lookupSession(db, rawId)
-        if (!session) throw new Error('Invalid credentials')
-        userId = session.userSub
-      }
-
-      // ---------------------------------------------------------------------------
-      // Route auth by doc name prefix
-      // ---------------------------------------------------------------------------
-
-      if (documentName.startsWith('folder:')) {
-        // Folder doc — owner-only, no share-link support.
-        const folderId = documentName.slice('folder:'.length)
-
-        if (!userId) {
-          // Share-token path reached for a folder doc — not allowed.
-          throw new Error('Forbidden')
-        }
-
-        const access = await resolveFolderAccess(db, { folderId, userId })
-        if (!access) {
-          throw new Error('Forbidden')
-        }
-
-        data.context.userId = userId
-        data.context.folderId = folderId
-        data.context.role = access.role
-
-        // Folders are always read-write for the owner.
-        connection.readOnly = false
-
-        log.info(
-          { doc: documentName, user: userId, role: access.role, reason: access.reason },
-          'authenticate',
-        )
-        return
-      }
-
-      if (documentName.startsWith('component:')) {
-        // Component doc — owner-only (folder owner), no share-link support.
-        const componentId = documentName.slice('component:'.length)
-
-        if (!userId) {
-          throw new Error('Forbidden')
-        }
-
-        const access = await resolveComponentAccess(db, { componentId, userId })
-        if (!access) {
-          throw new Error('Forbidden')
-        }
-
-        data.context.userId = userId
-        data.context.componentId = componentId
-        data.context.role = access.role
-
-        connection.readOnly = false
-
-        log.info(
-          { doc: documentName, user: userId, role: access.role, reason: access.reason },
-          'authenticate',
-        )
-        return
-      }
-
-      // Deck doc (deck:<id> prefix or legacy bare id)
-      const access = await resolveDeckAccess(db, {
-        deckId: documentName,
-        userId,
-        shareToken,
-      })
-
-      if (!access) {
-        throw new Error('Forbidden')
-      }
-
-      const displayId = userId ?? `share:${shareToken?.slice(0, 8)}`
-
-      // Mutate context — Hocuspocus merges the returned value into context
-      // and passes it to all subsequent hooks (onConnect, onStoreDocument, etc).
-
-      data.context.userId = displayId
-
-      data.context.deckId = documentName
-
-      data.context.role = access.role
-
-      // CONN-1: record the principal that authorised this connection so a
-      // later revocation can target exactly the right live connections.
-      //   - share-token connections carry the full token (userId is only the
-      //     truncated `share:<8>` display id, not enough to disambiguate).
-      //   - authenticated connections carry the real userId via displayId.
-      if (shareToken) {
-        data.context.shareToken = shareToken
-      }
-      // Resolve the bare deck id (strip the optional `deck:` prefix) so
-      // revoke sites can match on the same id the DB / routes use.
-      data.context.deckIdResolved = documentName.startsWith('deck:')
-        ? documentName.slice('deck:'.length)
-        : documentName
-
-      // Mark connection as readOnly for viewer role.
-      // Hocuspocus won't accept update messages from readOnly connections.
-      connection.readOnly = access.role === 'viewer'
-
-      log.info(
-        { doc: documentName, user: displayId, role: access.role, reason: access.reason },
-        'authenticate',
-      )
-    },
+    // Credential + document-access resolution lives in ./authenticate.ts
+    // (session cookie or share token; personal access tokens are refused —
+    // agents write through the server host, ADR 0011).
+    onAuthenticate: createOnAuthenticate({ db, bypass, clientIpHeader: opts.clientIpHeader }),
 
     async onConnect(data) {
       metrics.incConnections()

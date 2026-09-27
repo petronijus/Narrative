@@ -20,25 +20,18 @@
  *
  * Share link URL format: ${PUBLIC_URL}/deck/<deckId>?share_token=<id>
  * PUBLIC_URL env var must be set in production.
+ *
+ * Shared implementation: the handlers call services/sharing.ts — the same code the
+ * `share.*` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
-import {
-  grantPermission,
-  revokePermission,
-  listPermissions,
-  type DeckRole,
-} from '../auth/permissions.js'
-import { createShareLink, revokeShareLink, listShareLinks } from '../auth/shareLinks.js'
-import { closeDeckConnections } from '../hocuspocus/connections.js'
-import { createInvite, listPendingInvitesForDeck, revokeInvite } from '../auth/invites.js'
-import { getUserByEmail, getUserBySub, listUsersBySubs } from '../auth/users.js'
-import { sendEmail } from '../email/client.js'
-import { renderDeckInviteEmail } from '../email/templates/deckInvite.js'
-import { and, eq } from 'drizzle-orm'
-import { decks, deckPermissions } from '../db/schema.js'
+import type { DeckRole } from '../auth/permissions.js'
+import { createSharingService } from '../services/sharing.js'
+import { routeDeps } from '../services/http.js'
+import { sendServiceError } from '../services/errors.js'
 
 // ---------------------------------------------------------------------------
 // JSON schema helpers
@@ -88,30 +81,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/permissions',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id } = request.params
-      const permissions = await listPermissions(db, id)
-
-      // Enrich each row with display fields from `users`. One round-trip via
-      // an IN list — typically <10 collaborators per deck.
-      const subs = permissions.map((p) => p.userId)
-      const usersList = await listUsersBySubs(db, subs)
-      const usersBySub = new Map(usersList.map((u) => [u.sub, u]))
-
-      const enriched = permissions.map((p) => {
-        const u = usersBySub.get(p.userId)
-        return {
-          userId: p.userId,
-          role: p.role,
-          grantedAt: p.grantedAt,
-          grantedBy: p.grantedBy,
-          // Fall back to sub if the directory row is missing (shouldn't
-          // happen post-migration, but defensive).
-          email: u?.email ?? null,
-          name: u?.name ?? null,
-        }
-      })
-
-      return reply.send(enriched)
+      try {
+        return reply.send(
+          await createSharingService(routeDeps(app, db, request.log)).listPermissions({
+            deckId: request.params.id,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 
@@ -136,105 +114,17 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/permissions',
     { schema: invitePermissionSchema, preHandler: ownerGuard },
     async (request, reply) => {
-      const { id } = request.params
-      const { email, role } = request.body
-      const inviterSub = request.user!.sub
-
-      const existingUser = await getUserByEmail(db, email)
-
-      if (existingUser) {
-        // Self-change guard: only another owner can change your role. This
-        // prevents the foot-gun where you click your own dropdown, pick a
-        // lower role, and lock yourself out of the dialog you're standing in.
-        if (existingUser.sub === inviterSub) {
-          return reply.status(409).send({
-            error: 'You cannot change your own role. Ask another owner to change it for you.',
-          })
-        }
-        await grantPermission(db, {
-          deckId: id,
-          userId: existingUser.sub,
-          role,
-          grantedBy: inviterSub,
+      try {
+        const result = await createSharingService(routeDeps(app, db, request.log)).invite({
+          deckId: request.params.id,
+          inviterUserId: request.user!.sub,
+          email: request.body.email,
+          role: request.body.role,
         })
-
-        // CONN-1: a role change (editor → viewer downgrade in particular)
-        // doesn't re-run onAuthenticate on the already-open WS, so the user
-        // would keep their old (higher) access until reconnect. Close their
-        // live connections on this deck — they immediately reconnect and pick
-        // up the new role (read-only for viewers). Closing on an UPGRADE is
-        // harmless (a brief reconnect), so we don't bother distinguishing.
-        closeDeckConnections(id, { userId: existingUser.sub })
-
-        return reply.status(200).send({
-          kind: 'granted',
-          user: {
-            userId: existingUser.sub,
-            email: existingUser.email,
-            name: existingUser.name,
-            role,
-          },
-        })
+        return reply.status(result.kind === 'granted' ? 200 : 201).send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      const invite = await createInvite(db, {
-        deckId: id,
-        email,
-        role,
-        invitedBySub: inviterSub,
-      })
-
-      // Fire-and-forget invite email. The DB row is already created, so
-      // the invitee can still be onboarded by hand even if delivery fails.
-      // We resolve deck title + inviter display name here so the template
-      // reads like a personal note rather than a system blast.
-      void (async () => {
-        try {
-          const [deckRow] = await db
-            .select({ title: decks.title })
-            .from(decks)
-            .where(eq(decks.id, id))
-            .limit(1)
-          const inviter = await getUserBySub(db, inviterSub)
-          if (!deckRow || !inviter) return
-          const spaOrigin =
-            process.env['SPA_ORIGIN'] ??
-            process.env['PUBLIC_URL'] ??
-            `https://${process.env['DOMAIN'] ?? 'localhost'}`
-          const returnTo = encodeURIComponent(`/deck/${id}`)
-          const signInUrl = `${spaOrigin}/api/auth/start?returnTo=${returnTo}`
-          const { subject, html, text } = renderDeckInviteEmail({
-            recipientEmail: email.toLowerCase(),
-            deckTitle: deckRow.title,
-            inviterName: inviter.name ?? inviter.email,
-            inviterEmail: inviter.email,
-            role,
-            signInUrl,
-          })
-          await sendEmail({
-            to: email.toLowerCase(),
-            subject,
-            html,
-            text,
-            // Reply lands at the actual inviter rather than a noreply
-            // mailbox — both better UX and a transactional-email signal.
-            replyTo: inviter.email,
-          })
-        } catch (err) {
-          request.log.warn({ err, deckId: id, email }, '[invite] email send failed')
-        }
-      })()
-
-      return reply.status(201).send({
-        kind: 'pending',
-        invite: {
-          id: invite.id,
-          email: email.toLowerCase(),
-          role,
-          expiresAt: invite.expiresAt,
-          replaced: invite.replaced,
-        },
-      })
     },
   )
 
@@ -245,39 +135,16 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/permissions/:userId',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id, userId } = request.params
-      const callerSub = request.user!.sub
-
-      // Self-revoke is forbidden: removing your own permission while
-      // standing in a dialog that requires it is a lockout.  Ask another
-      // owner to do it.
-      if (userId === callerSub) {
-        return reply.status(409).send({
-          error: 'You cannot remove yourself from a deck. Ask another owner to remove you.',
+      try {
+        await createSharingService(routeDeps(app, db, request.log)).revoke({
+          deckId: request.params.id,
+          callerUserId: request.user!.sub,
+          userId: request.params.userId,
         })
+        return reply.status(204).send()
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-
-      // Safeguard: refuse to revoke the last owner.
-      const owners = await db
-        .select({ userId: deckPermissions.userId })
-        .from(deckPermissions)
-        .where(and(eq(deckPermissions.deckId, id), eq(deckPermissions.role, 'owner')))
-
-      const isTargetOwner = owners.some((o) => o.userId === userId)
-      if (isTargetOwner && owners.length <= 1) {
-        return reply
-          .status(409)
-          .send({ error: 'Cannot revoke the last owner — assign another owner first.' })
-      }
-
-      await revokePermission(db, { deckId: id, userId })
-
-      // CONN-1: kick the revoked user's live editing connections on this deck
-      // so they can't keep read-writing until they happen to disconnect.
-      // Targeted by userId — other collaborators and the owner stay connected.
-      closeDeckConnections(id, { userId })
-
-      return reply.status(204).send()
     },
   )
 
@@ -288,17 +155,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/invites',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id } = request.params
-      const pending = await listPendingInvitesForDeck(db, id)
-      return reply.send(
-        pending.map((p) => ({
-          id: p.id,
-          email: p.email,
-          role: p.role,
-          invitedAt: p.invitedAt,
-          expiresAt: p.expiresAt,
-        })),
-      )
+      try {
+        return reply.send(
+          await createSharingService(routeDeps(app, db, request.log)).listInvites({
+            deckId: request.params.id,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 
@@ -309,9 +174,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/invites/:inviteId',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id, inviteId } = request.params
-      await revokeInvite(db, { deckId: id, inviteId })
-      return reply.status(204).send()
+      try {
+        await createSharingService(routeDeps(app, db, request.log)).cancelInvite({
+          deckId: request.params.id,
+          inviteId: request.params.inviteId,
+        })
+        return reply.status(204).send()
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 
@@ -322,9 +193,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/share-links',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id } = request.params
-      const links = await listShareLinks(db, id)
-      return reply.send(links.filter((l) => !l.revoked))
+      try {
+        return reply.send(
+          await createSharingService(routeDeps(app, db, request.log)).listLinks({
+            deckId: request.params.id,
+          }),
+        )
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 
@@ -338,22 +215,17 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/share-links',
     { schema: createShareLinkSchema, preHandler: ownerGuard },
     async (request, reply) => {
-      const { id } = request.params
-      const { role, expiresAt: expiresAtStr } = request.body
-
-      const expiresAt = expiresAtStr ? new Date(expiresAtStr) : null
-
-      const link = await createShareLink(db, {
-        deckId: id,
-        role,
-        createdBy: request.user!.sub,
-        expiresAt,
-      })
-
-      const publicUrl = process.env['PUBLIC_URL'] ?? ''
-      const url = `${publicUrl}/deck/${id}?share_token=${link.id}`
-
-      return reply.status(201).send({ id: link.id, url })
+      try {
+        const link = await createSharingService(routeDeps(app, db, request.log)).createLink({
+          deckId: request.params.id,
+          userId: request.user!.sub,
+          role: request.body.role,
+          expiresAt: request.body.expiresAt ?? null,
+        })
+        return reply.status(201).send(link)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 
@@ -364,9 +236,15 @@ export async function registerSharingRoutes(app: FastifyInstance, db: Database):
     '/decks/:id/share-links/:linkId',
     { preHandler: ownerGuard },
     async (request, reply) => {
-      const { id, linkId } = request.params
-      await revokeShareLink(db, linkId, id)
-      return reply.status(204).send()
+      try {
+        await createSharingService(routeDeps(app, db, request.log)).revokeLink({
+          deckId: request.params.id,
+          linkId: request.params.linkId,
+        })
+        return reply.status(204).send()
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
     },
   )
 }

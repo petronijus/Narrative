@@ -1,0 +1,395 @@
+{
+  "scenario": "heading-one-font",
+  "tag": "ev1416f9",
+  "recordedAt": "2026-09-27T10:38:58.644Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "7XMrzKUGfeUE",
+    "title": "Results overview ev1416f9",
+    "headings": ["tToS3oY7cARWLF5TPhWmz", "f5PauGQ_OAD8BjyE8NU96", "thNeRGNUrIBhqwBoWqQR_"],
+    "bodies": ["b-X4Sg4Nk42Kdu0UAo59b", "96Sc1FRlFzliPmupV56Id", "P03amSJAkcCgRIxBi40Gn"]
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "On slide 1 of the Narrative deck \"Results overview ev1416f9\" (deckId 7XMrzKUGfeUE), make every heading use the font Inter Bold. Leave the body text exactly as it is.",
+        "calls": [
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "7XMrzKUGfeUE",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "NdI-5VaQ_T1ugXJlyOYMd",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "tToS3oY7cARWLF5TPhWmz",
+                  "type": "text",
+                  "x": 100,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Revenue",
+                  "fontSize": 44,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                },
+                {
+                  "id": "b-X4Sg4Nk42Kdu0UAo59b",
+                  "type": "text",
+                  "x": 100,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "Revenue grew 12% on strong EMEA demand.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                },
+                {
+                  "id": "f5PauGQ_OAD8BjyE8NU96",
+                  "type": "text",
+                  "x": 700,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Operating costs",
+                  "fontSize": 44,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Arial",
+                  "paragraphs": [
+                    {
+                      "runs": [
+                        {
+                          "text": "Operating "
+                        },
+                        {
+                          "text": "costs",
+                          "fontFamily": "Courier New"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "96Sc1FRlFzliPmupV56Id",
+                  "type": "text",
+                  "x": 700,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "Costs stayed flat year over year.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                },
+                {
+                  "id": "thNeRGNUrIBhqwBoWqQR_",
+                  "type": "text",
+                  "x": 1300,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Outlook",
+                  "fontSize": 44,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Verdana"
+                },
+                {
+                  "id": "P03amSJAkcCgRIxBi40Gn",
+                  "type": "text",
+                  "x": 1300,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "We expect growth to continue.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"NdI-5VaQ_T1ugXJlyOYMd\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"tToS3oY7cARWLF5TPhWmz\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"b-X4Sg4Nk42Kdu0UAo59b\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"f5PauGQ_OAD8BjyE8NU96\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Arial\",\"paragraphs\":[{\"runs\":[{\"text\":\"Operating \"},{\"text\":\"costs\",\"fontFamily\":\"Courier New\"}]}]},{\"id\":\"96Sc1FRlFzliPmupV56Id\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"thNeRGNUrIBhqwBoWqQR_\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Verdana\"},{\"id\":\"P03amSJAkcCgRIxBi40Gn\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "deck_get",
+            "command": "deck.get",
+            "input": {
+              "deckId": "7XMrzKUGfeUE"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "7XMrzKUGfeUE",
+              "title": "Results overview ev1416f9",
+              "folderId": "3n_tWS5c4fsp",
+              "ownerUserId": "dev-user",
+              "thumbnailUrl": null,
+              "createdAt": "2026-09-27T10:38:42.221Z",
+              "updatedAt": "2026-09-27T10:38:42.221Z",
+              "viewerRole": "owner"
+            },
+            "text": "{\"id\":\"7XMrzKUGfeUE\",\"title\":\"Results overview ev1416f9\",\"folderId\":\"3n_tWS5c4fsp\",\"ownerUserId\":\"dev-user\",\"thumbnailUrl\":null,\"createdAt\":\"2026-09-27T10:38:42.221Z\",\"updatedAt\":\"2026-09-27T10:38:42.221Z\",\"viewerRole\":\"owner\"}"
+          },
+          {
+            "tool": "folder_fonts_list",
+            "command": "folder.fonts.list",
+            "input": {
+              "folderId": "3n_tWS5c4fsp"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "fonts": []
+            },
+            "text": "{\"fonts\":[]}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "7XMrzKUGfeUE",
+              "request": "Make every heading on slide 1 use Inter Bold"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_Wb7z37ZYbSh5rV1S"
+            },
+            "text": "{\"runId\":\"run_Wb7z37ZYbSh5rV1S\"}"
+          },
+          {
+            "tool": "ops_apply",
+            "command": "ops.apply",
+            "input": {
+              "deckId": "7XMrzKUGfeUE",
+              "ops": [
+                {
+                  "command": "text_format",
+                  "input": {
+                    "target": {
+                      "slide": "NdI-5VaQ_T1ugXJlyOYMd",
+                      "object": "f5PauGQ_OAD8BjyE8NU96"
+                    },
+                    "clear": ["fontFamily", "fontWeight", "bold"]
+                  }
+                },
+                {
+                  "command": "object_update",
+                  "input": {
+                    "slide": "NdI-5VaQ_T1ugXJlyOYMd",
+                    "updates": [
+                      {
+                        "object": "tToS3oY7cARWLF5TPhWmz",
+                        "patch": {
+                          "fontFamily": "Inter",
+                          "fontWeight": 700
+                        }
+                      },
+                      {
+                        "object": "f5PauGQ_OAD8BjyE8NU96",
+                        "patch": {
+                          "fontFamily": "Inter",
+                          "fontWeight": 700
+                        }
+                      },
+                      {
+                        "object": "thNeRGNUrIBhqwBoWqQR_",
+                        "patch": {
+                          "fontFamily": "Inter",
+                          "fontWeight": 700
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "results": [
+                {
+                  "ranges": 1
+                },
+                {
+                  "updated": [
+                    "tToS3oY7cARWLF5TPhWmz",
+                    "f5PauGQ_OAD8BjyE8NU96",
+                    "thNeRGNUrIBhqwBoWqQR_"
+                  ]
+                }
+              ]
+            },
+            "text": "{\"results\":[{\"ranges\":1},{\"updated\":[\"tToS3oY7cARWLF5TPhWmz\",\"f5PauGQ_OAD8BjyE8NU96\",\"thNeRGNUrIBhqwBoWqQR_\"]}]}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "7XMrzKUGfeUE",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "NdI-5VaQ_T1ugXJlyOYMd",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "tToS3oY7cARWLF5TPhWmz",
+                  "type": "text",
+                  "x": 100,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Revenue",
+                  "fontSize": 44,
+                  "fontWeight": 700,
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Inter"
+                },
+                {
+                  "id": "b-X4Sg4Nk42Kdu0UAo59b",
+                  "type": "text",
+                  "x": 100,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "Revenue grew 12% on strong EMEA demand.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                },
+                {
+                  "id": "f5PauGQ_OAD8BjyE8NU96",
+                  "type": "text",
+                  "x": 700,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Operating costs",
+                  "fontSize": 44,
+                  "fontWeight": 700,
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Inter"
+                },
+                {
+                  "id": "96Sc1FRlFzliPmupV56Id",
+                  "type": "text",
+                  "x": 700,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "Costs stayed flat year over year.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                },
+                {
+                  "id": "thNeRGNUrIBhqwBoWqQR_",
+                  "type": "text",
+                  "x": 1300,
+                  "y": 120,
+                  "width": 520,
+                  "height": 80,
+                  "rotation": 0,
+                  "text": "Outlook",
+                  "fontSize": 44,
+                  "fontWeight": 700,
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Inter"
+                },
+                {
+                  "id": "P03amSJAkcCgRIxBi40Gn",
+                  "type": "text",
+                  "x": 1300,
+                  "y": 230,
+                  "width": 520,
+                  "height": 200,
+                  "rotation": 0,
+                  "text": "We expect growth to continue.",
+                  "fontSize": 22,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "fontFamily": "Georgia"
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"NdI-5VaQ_T1ugXJlyOYMd\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"tToS3oY7cARWLF5TPhWmz\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":700,\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"b-X4Sg4Nk42Kdu0UAo59b\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"f5PauGQ_OAD8BjyE8NU96\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":700,\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"96Sc1FRlFzliPmupV56Id\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"thNeRGNUrIBhqwBoWqQR_\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":700,\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"P03amSJAkcCgRIxBi40Gn\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
+          }
+        ],
+        "finalText": "All three headings on slide 1 are now set in Inter Bold, and I read the slide back to confirm it.\n\n- **Revenue**: changed from Georgia regular.\n- **Operating costs**: changed from Arial regular. The word \"costs\" had its own Courier New font applied inside the box, so I removed that too, and the whole heading is now Inter Bold.\n- **Outlook**: changed from Verdana bold.\n\nThe three body text boxes are still Georgia, 22 px, regular, and nothing else in them changed.\n\nThe deck's folder has no uploaded fonts, so Inter only displays correctly if Narrative supplies it by default. If the headings show up in a fallback font in the editor, you'd need to upload the Inter Bold font file to the folder.\n\nAll of this was done as one change. If you want to undo it, I can revert run `run_Wb7z37ZYbSh5rV1S`.",
+        "turns": 7,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

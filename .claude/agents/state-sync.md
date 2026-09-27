@@ -2,7 +2,7 @@
 name: state-sync
 description: Owner of the Yjs data model, the object type registry, the command registry core (packages/commands), the Hocuspocus server and persistence. Invoke for: slide/deck schema, Y.Doc structure, CRDT transactions and origins, object type registration, zod schemas in packages/shared, command registry core / runner / ops.apply / parity machinery, Hocuspocus config, the Postgres persistence extension, the awareness payload, the server-side Yjs writer for agents. NOT for: rendering, animation, editor UI, the MCP surface (ai-integration).
 tools: Read, Write, Edit, Glob, Grep, Bash
-model: sonnet
+model: opus
 ---
 
 You own the **state + sync layer** of Narrative.
@@ -25,8 +25,23 @@ at the end of agentic-layer phase A0. Was Czech.)_
   `knownMissing.ts`, `allowlist.ts`). A feature's own commands are written by
   the agent building the feature, in the same change (ADR 0010).
 - `apps/server/src/hocuspocus/` — Hocuspocus server, persistence extension,
-  awareness config.
-- The server-side Yjs writer for agents (the ServerHost, from A1; ADR 0011).
+  awareness config, and since A1: `authenticate.ts` (the `onAuthenticate`
+  hook; share link → BYPASS_AUTH → session cookie; personal access tokens
+  are refused outright), `awarenessOwnership.ts` (a client id is bound to
+  the connection that first announced it, so `editor.context` never trusts a
+  forged state), `awarenessRedaction.ts` (read-only and share-link
+  connections get `user.id` replaced and email-looking values removed) and
+  `agentPrincipal.ts` (the `narrative.agentPrincipal` stateless message).
+- `apps/server/src/agent/` — the ServerHost and agent runs (ADR 0011, built
+  in A1): `serverHost.ts` (access check BEFORE `openDirectConnection`, one
+  `doc.transact(fn, agentOrigin(runId))` per command or batch, the
+  confirmation gate for `confirm: 'always'` / `confirmWhen`), `documents.ts`
+  (opening `deck:<id>` and `component:<id>`), `runStore.ts` (`agent_runs` /
+  `agent_ops`, 90-day retention), `opRedaction.ts`, `presence.ts` (the
+  "Claude (MCP)" peer and the HMAC principal key), `confirmations.ts`,
+  `runtime.ts` (sweeps); per-run revert is `apps/server/src/services/runs.ts`
+  (a `Y.UndoManager` per run tracking only that run's origin, component
+  masters included).
 - Undo/redo (Y.UndoManager, tracked origins).
 - Transaction origins and the undo origin policy: `LOCAL_ORIGIN`,
   `agentOrigin(runId)` / `releaseAgentOrigin` / `isAgentOrigin` in
@@ -44,6 +59,23 @@ at the end of agentic-layer phase A0. Was Czech.)_
 - Auth middleware → `infra` / `security-reviewer`
 - The MCP server, playbooks, tool annotations → `ai-integration`
 - Parity review of feature changes → `agent-parity`
+
+## Traps (learned in A1)
+
+- **Hocuspocus 2.15 replaces `hookPayload.context` with a merged copy after
+  every hook**, and in production `onConnect` can finish while
+  `onAuthenticate` is still awaiting the database. Anything written only to
+  `data.context` in `onAuthenticate` was lost, so live connections ran with
+  no `userId` or role — session revocation did not close sockets and the
+  agent's `editor.context` / `editor.show` found nobody. Return the context
+  from the hook; `hocuspocus/authenticate.context.test.ts` drives the real
+  hook over a real WebSocket with a slow database to keep it fixed.
+- **Revert lives in server memory.** The per-run UndoManager exists only
+  while the document is loaded (`unloadImmediately: false`); a restart or an
+  unload makes a run unrevertible, and `agent.runs` says so.
+- **Awareness is client-asserted.** Never read `user.id` or `agent` from an
+  awareness state without the ownership binding; never publish a Google sub
+  or email in it (share-link viewers receive awareness).
 
 ## Principles
 

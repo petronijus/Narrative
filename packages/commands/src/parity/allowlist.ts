@@ -65,6 +65,80 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
     ],
   },
   {
+    capability: 'Personal access tokens (list, create, revoke)',
+    reason:
+      'Credential management. An agent must not mint or revoke credentials: a leaked agent token that could create ' +
+      'tokens would outlive its own revocation. The routes accept only the browser session cookie and reject any ' +
+      'personal access token (apps/server/src/routes/accessTokens.ts).',
+    routes: [
+      { method: 'GET', path: '/access-tokens' },
+      { method: 'POST', path: '/access-tokens' },
+      { method: 'DELETE', path: '/access-tokens/:id' },
+    ],
+  },
+  {
+    capability: 'Command API transport (POST /commands, public /api/commands)',
+    reason:
+      'Not a capability of its own: the HTTP transport that runs registered commands for scripts, exactly as the ' +
+      'MCP server does for Claude clients. Everything it can do is a command in this registry, authorised and ' +
+      'logged by the server host.',
+    routes: [{ method: 'POST', path: '/commands' }],
+  },
+  {
+    capability: 'MCP transport (GET/POST/DELETE /mcp, public /api/mcp)',
+    reason:
+      'Not a capability of its own: the Streamable HTTP transport that serves this registry to Claude clients. Every ' +
+      'tool is generated from a registered command and runs through the server host, which authorises, confirms ' +
+      'irreversible commands and logs each op (apps/server/src/mcp/).',
+    routes: [
+      { method: 'GET', path: '/mcp' },
+      { method: 'POST', path: '/mcp' },
+      { method: 'DELETE', path: '/mcp' },
+    ],
+  },
+  {
+    capability:
+      'MCP OAuth authorization server (metadata, client registration, authorize, consent, token, revoke)',
+    reason:
+      'Protocol plumbing, not a user capability: how claude.ai connectors obtain a token for /mcp (RFC 9728, 8414, ' +
+      '7591, 7636, 7009), with the Google sign-in session as the login step. An agent never signs in this way; it ' +
+      'is what gives the agent its session in the first place.',
+    routes: [
+      { method: 'GET', path: '/.well-known/oauth-protected-resource' },
+      { method: 'GET', path: '/.well-known/oauth-protected-resource/*' },
+      { method: 'GET', path: '/.well-known/oauth-authorization-server' },
+      { method: 'GET', path: '/.well-known/oauth-authorization-server/*' },
+      { method: 'POST', path: '/oauth/register' },
+      { method: 'GET', path: '/oauth/authorize' },
+      { method: 'GET', path: '/oauth/authorize/consent' },
+      { method: 'POST', path: '/oauth/authorize/decision' },
+      { method: 'POST', path: '/oauth/token' },
+      { method: 'POST', path: '/oauth/revoke' },
+    ],
+  },
+  {
+    capability: 'Connected MCP apps (list, disconnect)',
+    reason:
+      'Credential management, like personal access tokens: an agent must not see or revoke the grants that give ' +
+      'agents access. Session-cookie only (authPreHandler rejects every token).',
+    routes: [
+      { method: 'GET', path: '/oauth/connections' },
+      { method: 'DELETE', path: '/oauth/connections/:id' },
+    ],
+  },
+  {
+    capability: 'Approving or declining an agent request (the confirmation page)',
+    reason:
+      'The human side of the human in the loop: a signed-in person approves or declines an agent call that needs ' +
+      'their confirmation (irreversible commands, URL downloads). An agent must never be able to approve its own ' +
+      "request, so the routes accept only the browser session cookie from Narrative's own origin and reject every " +
+      'token (apps/server/src/routes/agentConfirmations.ts).',
+    routes: [
+      { method: 'GET', path: '/agent-confirmations/:id' },
+      { method: 'POST', path: '/agent-confirmations/:id/decision' },
+    ],
+  },
+  {
     capability: 'Health check',
     reason:
       'Liveness probe for the Docker healthcheck and the reverse proxy; it reports no document or user state.',

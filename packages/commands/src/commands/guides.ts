@@ -24,6 +24,7 @@ const guideEditor = {
   undo: 'undoable',
   confirm: 'never',
   hosts: ['browser', 'server'],
+  acceptsComponent: true,
 } as const
 
 export const SLIDE_WIDTH = 1920
@@ -91,6 +92,7 @@ export const guideAdd = defineCommand({
 export const guideUpdate = defineCommand({
   ...guideEditor,
   id: 'guide.update',
+  idempotent: true,
   title: 'Move guide',
   description: `Move a guide to a new position. Its orientation cannot change (remove it and add a new one). ${PLACEMENT}`,
   input: z.strictObject({ guide: GuideIdSchema, position: z.number() }),

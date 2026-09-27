@@ -6,27 +6,85 @@
  *   2. every document command, pointed at ids that do not exist, fails with
  *      `not_found` and leaves the document byte-for-byte unchanged (the
  *      "validate before the first write" rule — a Yjs transaction cannot be
- *      rolled back, so a half-applied command would be permanent).
+ *      rolled back, so a half-applied command would be permanent);
+ *   3. every command marked `idempotent` runs each example twice, and the
+ *      second run succeeds, returns the same result, and leaves the document
+ *      structurally as the first left it AND the server fakes' state exactly
+ *      as the first left it (MCP's idempotentHint promises exactly that;
+ *      without the fakes' state a server command such as `deck.rename`
+ *      would pass vacuously — it never touches the document). Structural
+ *      equality (`Y.Doc#toJSON`), never bytes: a repeated write adds Yjs
+ *      items even when it sets the same value;
+ *   4. every deck command runs its examples against a component master
+ *      (target `{ componentId }`): one with `acceptsComponent` must accept
+ *      it (any failure is about the input, never the target), one without
+ *      must refuse it with `no_target` — so the metadata the MCP tools and
+ *      the host rely on matches what the handlers really do.
+ *
+ * Examples run the way the server host runs them: `runCommand` on the
+ * server host, with the fixture deck as the target document and in-memory
+ * fakes of the server services (testing/fakeServices.ts), so commands with
+ * the `server` effect or an async `load` phase are held to the same
+ * standard as document commands instead of being exempted.
  */
 
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { LOCAL_ORIGIN } from '@narrative/slide-model'
 import { createDefaultRegistry } from './catalog.js'
-import { runCommandSync } from './run.js'
+import { runCommand } from './run.js'
 import { CommandError } from './errors.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
-import type { CommandContext } from './types.js'
+import {
+  FIXTURE_COMPONENT_ID,
+  FIXTURE_DECK_ID,
+  FIXTURE_FOLDER_ID,
+  createFakeServices,
+  type FakeServices,
+} from './testing/fakeServices.js'
+import type { CommandContext, CommandTarget } from './types.js'
 
 const registry = createDefaultRegistry()
 
-function ctxFor(): CommandContext {
+function ctxFor(
+  target: CommandTarget = { deckId: FIXTURE_DECK_ID, folderId: FIXTURE_FOLDER_ID },
+): CommandContext & { services: FakeServices } {
   return {
     actor: { userId: 'u1', role: 'owner', kind: 'agent' },
     host: 'server',
     origin: LOCAL_ORIGIN,
     deck: createFixtureDeck(),
+    target,
+    services: createFakeServices(),
+    session: { key: 'mcp:contract', surface: 'mcp', clientName: 'contract-suite' },
   }
+}
+
+/**
+ * The document as plain data, including what `Y.Doc#toJSON` drops: a Y.Text
+ * becomes its delta (formatting attributes included), so `text.format` is
+ * compared on what it changes. Structural, never bytes (see the header).
+ */
+function structure(value: unknown): unknown {
+  if (value instanceof Y.Doc)
+    return Object.fromEntries(
+      [...value.share.keys()].sort().map((k) => [k, structure(value.get(k))]),
+    )
+  if (value instanceof Y.Text) return { text: value.toDelta() as unknown }
+  if (value instanceof Y.Map)
+    return Object.fromEntries([...value.keys()].sort().map((k) => [k, structure(value.get(k))]))
+  if (value instanceof Y.Array) return value.toArray().map(structure)
+  if (value instanceof Y.AbstractType) return value.toJSON()
+  return value
+}
+
+/**
+ * Idempotent commands whose output reports what THIS call changed, so a
+ * repeat legitimately answers differently (the state still must not move).
+ * Their second and third answers must agree instead.
+ */
+const REPORTS_ITS_OWN_CHANGE: Readonly<Record<string, string>> = {
+  'deck.moveToFolder': '`moved` is false on a repeat: the deck already is in that folder',
 }
 
 /** Every id that exists in the fixture deck. */
@@ -86,14 +144,72 @@ describe('command contract', () => {
       })
 
       def.examples.forEach((example, i) => {
-        it(`example ${i + 1} runs: ${example.title}`, () => {
+        it(`example ${i + 1} runs: ${example.title}`, async () => {
           const ctx = ctxFor()
-          expect(() => runCommandSync(registry, ctx, def.id, example.input)).not.toThrow()
+          // Rejects on any failure, including output that violates the schema.
+          await runCommand(registry, ctx, def.id, example.input)
         })
       })
 
+      if (def.idempotent === true) {
+        it('is idempotent: repeating an example changes nothing more', async () => {
+          let changedSomething = false
+          for (const example of def.examples) {
+            const ctx = ctxFor()
+            const state = () => ({
+              doc: structure(ctx.deck!.doc),
+              services: ctx.services.snapshot(),
+            })
+            const before = state()
+            const first = await runCommand(registry, ctx, def.id, example.input)
+            const once = state()
+            const second = await runCommand(registry, ctx, def.id, example.input)
+            expect(state(), example.title).toEqual(once)
+            if (REPORTS_ITS_OWN_CHANGE[def.id] === undefined) {
+              expect(second, example.title).toEqual(first)
+            } else {
+              const third = await runCommand(registry, ctx, def.id, example.input)
+              expect(third, example.title).toEqual(second)
+              expect(state(), example.title).toEqual(once)
+            }
+            if (JSON.stringify(once) !== JSON.stringify(before)) changedSomething = true
+          }
+          // Not vacuous: some example changes something the check can see (an
+          // example may set the value already there, but not all of them).
+          expect(changedSomething, 'no example changes the document or the server state').toBe(true)
+        })
+      }
+
+      if ((def.scope ?? 'deck') === 'deck') {
+        const accepts = def.acceptsComponent === true
+        it(`${accepts ? 'accepts' : 'refuses'} a component master as its target`, async () => {
+          for (const example of def.examples) {
+            const ctx = ctxFor({ componentId: FIXTURE_COMPONENT_ID })
+            let error: unknown
+            try {
+              await runCommand(registry, ctx, def.id, example.input)
+            } catch (e) {
+              error = e
+            }
+            if (accepts) {
+              // The fixture master may lack an id the example names (a run
+              // of the deck, say); what matters is that the target is taken.
+              if (error !== undefined) {
+                expect(error, example.title).toBeInstanceOf(CommandError)
+                expect(['no_target', 'wrong_host'], example.title).not.toContain(
+                  (error as CommandError).code,
+                )
+              }
+            } else {
+              expect(error, example.title).toBeInstanceOf(CommandError)
+              expect((error as CommandError).code, example.title).toBe('no_target')
+            }
+          }
+        })
+      }
+
       if (def.effects.includes('doc') && def.transaction !== 'self') {
-        it('fails cleanly on missing ids without touching the document', () => {
+        it('fails cleanly on missing ids without touching the document', async () => {
           const broken = def.examples.map((e) => breakRefs(e.input)).filter((b) => b.changed)
           if (broken.length === 0) return // nothing to break (e.g. slide.add with no refs)
           for (const { value } of broken) {
@@ -101,7 +217,9 @@ describe('command contract', () => {
             const before = Y.encodeStateVector(ctx.deck!.doc)
             let error: unknown
             try {
-              runCommandSync(registry, ctx, def.id, value)
+              // runCommand, not runCommandSync: commands with a `load` phase
+              // (component.stamp, deck.insertFrom) must hold to this too.
+              await runCommand(registry, ctx, def.id, value)
             } catch (e) {
               error = e
             }
