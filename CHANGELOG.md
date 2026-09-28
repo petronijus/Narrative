@@ -4,10 +4,20 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.10.10 — Agents upload local files; snapping can be switched off (2026-09-29)
 
 ### Added
 
+- **`media.uploadSession`: an agent with a shell uploads a local picture,
+  video or font** without writing its bytes through the model (which only
+  worked for tiny files as base64). It gets a one-time token and a ready
+  `curl` command that sends the file in one request to the tus upload the
+  editor uses; the answer carries the asset id. The token is stored only as
+  a hash, works for one upload into one deck for 15 minutes (2 hours to
+  finish a started one), authenticates nothing but that upload, and is
+  redacted in the agent audit log. The agent names the file's size when it
+  asks, and the token then takes exactly that file. The `basics` playbook
+  points agents at it for local files.
 - **Snapping can be switched off**: a magnet toggle next to the rulers
   button in the toolbar (on by default, remembered per browser). Holding
   ⌘ (macOS) / Ctrl during a drag or a resize inverts it for as long as it
@@ -23,21 +33,24 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   Shift or ⌘ / Ctrl mid-drag re-applies the frame at once instead of on the
   next pointer move.
 
----
+### Security
 
-## 0.10.10 — Agents upload local files through the editor's upload (2026-09-28)
-
-### Added
-
-- **`media.uploadSession`: an agent with a shell uploads a local picture,
-  video or font** without writing its bytes through the model (which only
-  worked for tiny files as base64). It gets a one-time token and a ready
-  `curl` command that sends the file in one request to the tus upload the
-  editor uses; the answer carries the asset id. The token is stored only as
-  a hash, works for one upload into one deck for 15 minutes (2 hours to
-  finish a started one), authenticates nothing but that upload, and is
-  redacted in the agent audit log. The `basics` playbook points agents at
-  it for local files.
+- **An upload token uploads exactly the declared file**: its size and kind
+  are fixed when it is issued; a different size, another kind, a deferred
+  length, a GET of the upload, or HEAD / PATCH / DELETE of any other upload
+  are refused.
+- **Revoking an access token or an MCP connection ends its upload
+  sessions**, and so does the account kill switch; a user holds at most 10
+  unused ones.
+- **An agent's upload must prove its type** (image signature or readable
+  dimensions, video container signature, a font that parses); sizes are
+  capped per kind before any byte is read.
+- **The collaboration WebSocket refuses every agent credential**, not only
+  personal access tokens (MCP OAuth tokens and codes, upload tokens).
+- **Every credential format is masked** in error reports, the agent audit
+  log and the agent eval's recordings and reports.
+- **The server refuses to start with a non-https PUBLIC_API_URL** (except
+  localhost / 127.0.0.1 / [::1]): bearer tokens travel to it.
 
 ### Internal
 
@@ -47,6 +60,14 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   reaches the services. The agent eval harness can give a scenario files
   and a shell (`workspace`); new scenario `local-logo-upload`, e2e spec
   `agent-upload-session` runs the returned curl line for real.
+- Migration 0025 binds an upload session to its credential, size and
+  kind; the credential key reaches command handlers
+  (`AgentSessionInfo.credential`); auth/credentialPatterns.ts lists every
+  credential prefix for the scrubbers and the WebSocket. The eval shell is
+  `curl` and `wc` only.
+- Snapping: `SnappingContext` (toggle, per-browser), `useDragModifierReplay`
+  re-applies a drag frame when Shift or ⌘ / Ctrl changes; the toggle is on
+  the parity allowlist (a view preference, not a document write).
 - MCP tools/list budget 157,000 → 159,000 bytes.
 
 ---

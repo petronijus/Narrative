@@ -1,17 +1,17 @@
 {
   "scenario": "revert-last-run",
-  "tag": "evd4934d",
-  "recordedAt": "2026-09-28T20:54:31.937Z",
+  "tag": "ev8c2dee",
+  "recordedAt": "2026-09-28T21:57:59.099Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "pyj9Lge9yom2",
-    "title": "Pitch evd4934d"
+    "deckId": "iKLA9DUuwUZ7",
+    "title": "Pitch ev8c2dee"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In the Narrative deck \"Pitch evd4934d\" (deckId pyj9Lge9yom2), change the title on slide 1 to \"Draft title\" and delete the rectangle on slide 2.",
+        "prompt": "In the Narrative deck \"Pitch ev8c2dee\" (deckId iKLA9DUuwUZ7), change the title on slide 1 to \"Draft title\" and delete the rectangle on slide 2.",
         "calls": [
           {
             "tool": "ToolSearch",
@@ -41,7 +41,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "pyj9Lge9yom2"
+              "deckId": "iKLA9DUuwUZ7"
             },
             "isError": false,
             "errorCode": null,
@@ -49,7 +49,7 @@
               "slideCount": 2,
               "slides": [
                 {
-                  "id": "__uKbqaCktoK4b2MAZslb",
+                  "id": "gJn3ut-TQDcbhgEX4m6Nw",
                   "index": 0,
                   "title": "Original title",
                   "transition": "none",
@@ -57,7 +57,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "7gJuyUsB6MiUWp-x1qSRS",
+                  "id": "hInrz-qqlxawMcLc7UISG",
                   "index": 1,
                   "title": "Keep this note.",
                   "transition": "none",
@@ -67,13 +67,13 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"__uKbqaCktoK4b2MAZslb\",\"index\":0,\"title\":\"Original title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"7gJuyUsB6MiUWp-x1qSRS\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"gJn3ut-TQDcbhgEX4m6Nw\",\"index\":0,\"title\":\"Original title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"hInrz-qqlxawMcLc7UISG\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "pyj9Lge9yom2",
+              "deckId": "iKLA9DUuwUZ7",
               "slide": {
                 "index": 0
               }
@@ -81,7 +81,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "__uKbqaCktoK4b2MAZslb",
+              "id": "gJn3ut-TQDcbhgEX4m6Nw",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -90,7 +90,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "BTU4vyn2kdeDZ7PsRgKPx",
+                  "id": "zfJW0bqzh9AtVHwRl7W7O",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -105,7 +105,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "oxoLeT1CPJzBwFwLbgbhK",
+                  "id": "7DUYIks3ZzDqdrq3txY12",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -123,13 +123,13 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"__uKbqaCktoK4b2MAZslb\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"BTU4vyn2kdeDZ7PsRgKPx\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Original title\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"oxoLeT1CPJzBwFwLbgbhK\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Three reasons to invest.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"gJn3ut-TQDcbhgEX4m6Nw\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"zfJW0bqzh9AtVHwRl7W7O\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Original title\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"7DUYIks3ZzDqdrq3txY12\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Three reasons to invest.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "pyj9Lge9yom2",
+              "deckId": "iKLA9DUuwUZ7",
               "slide": {
                 "index": 1
               }
@@ -137,7 +137,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "7gJuyUsB6MiUWp-x1qSRS",
+              "id": "hInrz-qqlxawMcLc7UISG",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -146,7 +146,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "vwVAyFl38Kx4wE1bMIiNZ",
+                  "id": "Qnn6zIhIBL6rCB_s8UB2j",
                   "type": "rectangle",
                   "name": "Callout box",
                   "x": 200,
@@ -158,7 +158,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "Tw85jl9Mat-8uN7CKnuDV",
+                  "id": "u5mHcvuyZuwhqV84SdT0u",
                   "type": "text",
                   "x": 900,
                   "y": 280,
@@ -176,35 +176,35 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"7gJuyUsB6MiUWp-x1qSRS\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"vwVAyFl38Kx4wE1bMIiNZ\",\"type\":\"rectangle\",\"name\":\"Callout box\",\"x\":200,\"y\":300,\"width\":600,\"height\":300,\"rotation\":0,\"fill\":\"#f2b705\",\"opacity\":1},{\"id\":\"Tw85jl9Mat-8uN7CKnuDV\",\"type\":\"text\",\"x\":900,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Keep this note.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"hInrz-qqlxawMcLc7UISG\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"Qnn6zIhIBL6rCB_s8UB2j\",\"type\":\"rectangle\",\"name\":\"Callout box\",\"x\":200,\"y\":300,\"width\":600,\"height\":300,\"rotation\":0,\"fill\":\"#f2b705\",\"opacity\":1},{\"id\":\"u5mHcvuyZuwhqV84SdT0u\",\"type\":\"text\",\"x\":900,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Keep this note.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "pyj9Lge9yom2",
+              "deckId": "iKLA9DUuwUZ7",
               "request": "Change slide 1 title to \"Draft title\" and delete the rectangle on slide 2"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_CDrhI87cjOucAiLC"
+              "runId": "run_GrYREtMLSexT_uip"
             },
-            "text": "{\"runId\":\"run_CDrhI87cjOucAiLC\"}"
+            "text": "{\"runId\":\"run_GrYREtMLSexT_uip\"}"
           },
           {
             "tool": "ops_apply",
             "command": "ops.apply",
             "input": {
-              "deckId": "pyj9Lge9yom2",
-              "runId": "run_CDrhI87cjOucAiLC",
+              "deckId": "iKLA9DUuwUZ7",
+              "runId": "run_GrYREtMLSexT_uip",
               "ops": [
                 {
                   "command": "text_set",
                   "input": {
                     "target": {
-                      "slide": "__uKbqaCktoK4b2MAZslb",
-                      "object": "BTU4vyn2kdeDZ7PsRgKPx"
+                      "slide": "gJn3ut-TQDcbhgEX4m6Nw",
+                      "object": "zfJW0bqzh9AtVHwRl7W7O"
                     },
                     "text": "Draft title"
                   }
@@ -212,8 +212,8 @@
                 {
                   "command": "object_delete",
                   "input": {
-                    "slide": "7gJuyUsB6MiUWp-x1qSRS",
-                    "objects": ["vwVAyFl38Kx4wE1bMIiNZ"]
+                    "slide": "hInrz-qqlxawMcLc7UISG",
+                    "objects": ["Qnn6zIhIBL6rCB_s8UB2j"]
                   }
                 }
               ]
@@ -227,18 +227,18 @@
                   "paragraphs": 1
                 },
                 {
-                  "deleted": ["vwVAyFl38Kx4wE1bMIiNZ"],
+                  "deleted": ["Qnn6zIhIBL6rCB_s8UB2j"],
                   "removedAnimations": []
                 }
               ]
             },
-            "text": "{\"results\":[{\"length\":11,\"paragraphs\":1},{\"deleted\":[\"vwVAyFl38Kx4wE1bMIiNZ\"],\"removedAnimations\":[]}]}"
+            "text": "{\"results\":[{\"length\":11,\"paragraphs\":1},{\"deleted\":[\"Qnn6zIhIBL6rCB_s8UB2j\"],\"removedAnimations\":[]}]}"
           },
           {
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "pyj9Lge9yom2"
+              "deckId": "iKLA9DUuwUZ7"
             },
             "isError": false,
             "errorCode": null,
@@ -246,7 +246,7 @@
               "slideCount": 2,
               "slides": [
                 {
-                  "id": "__uKbqaCktoK4b2MAZslb",
+                  "id": "gJn3ut-TQDcbhgEX4m6Nw",
                   "index": 0,
                   "title": "Draft title",
                   "transition": "none",
@@ -254,7 +254,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "7gJuyUsB6MiUWp-x1qSRS",
+                  "id": "hInrz-qqlxawMcLc7UISG",
                   "index": 1,
                   "title": "Keep this note.",
                   "transition": "none",
@@ -264,10 +264,10 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"__uKbqaCktoK4b2MAZslb\",\"index\":0,\"title\":\"Draft title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"7gJuyUsB6MiUWp-x1qSRS\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"gJn3ut-TQDcbhgEX4m6Nw\",\"index\":0,\"title\":\"Draft title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"hInrz-qqlxawMcLc7UISG\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0}],\"guides\":[]}"
           }
         ],
-        "finalText": "I made both changes to \"Pitch evd4934d\" and checked the deck afterwards:\n\n- **Slide 1:** The title now reads \"Draft title\" instead of \"Original title\". Its font size, weight and colour are unchanged.\n- **Slide 2:** The rectangle is gone. It was the yellow box named \"Callout box\" and was the only rectangle on the slide. The \"Keep this note.\" text box is still there.\n\nBoth edits are saved together as one run, so they can be undone in a single step if you want them back.",
+        "finalText": "I made both changes to \"Pitch ev8c2dee\" and re-read the deck to confirm them:\n\n- **Slide 1:** The title now says \"Draft title\" instead of \"Original title\". Its size, bold weight and colour are unchanged.\n- **Slide 2:** I deleted the yellow rectangle named \"Callout box\". The \"Keep this note.\" text box is still there, and nothing else on the slide changed.\n\nBoth edits are in one run, so you can undo them together from Agent activity in the editor, or ask me to revert them.",
         "turns": 9,
         "isError": false,
         "stopReason": "success"
@@ -291,80 +291,24 @@
             "tool": "agent_revert",
             "command": "agent.revert",
             "input": {
-              "deckId": "pyj9Lge9yom2",
-              "runId": "run_CDrhI87cjOucAiLC"
+              "deckId": "iKLA9DUuwUZ7",
+              "runId": "run_GrYREtMLSexT_uip"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_CDrhI87cjOucAiLC",
+              "runId": "run_GrYREtMLSexT_uip",
               "revertedChanges": 1,
               "remainingChanges": 0,
               "status": "reverted"
             },
-            "text": "{\"runId\":\"run_CDrhI87cjOucAiLC\",\"revertedChanges\":1,\"remainingChanges\":0,\"status\":\"reverted\"}"
+            "text": "{\"runId\":\"run_GrYREtMLSexT_uip\",\"revertedChanges\":1,\"remainingChanges\":0,\"status\":\"reverted\"}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "pyj9Lge9yom2",
-              "slide": {
-                "index": 0
-              }
-            },
-            "isError": false,
-            "errorCode": null,
-            "result": {
-              "id": "__uKbqaCktoK4b2MAZslb",
-              "index": 0,
-              "transition": {
-                "kind": "none",
-                "durationMs": 0
-              },
-              "background": null,
-              "objects": [
-                {
-                  "id": "BTU4vyn2kdeDZ7PsRgKPx",
-                  "type": "text",
-                  "x": 120,
-                  "y": 80,
-                  "width": 1680,
-                  "height": 120,
-                  "rotation": 0,
-                  "text": "Original title",
-                  "fontSize": 64,
-                  "fontWeight": "bold",
-                  "color": "#000000",
-                  "align": "left",
-                  "opacity": 1
-                },
-                {
-                  "id": "oxoLeT1CPJzBwFwLbgbhK",
-                  "type": "text",
-                  "x": 120,
-                  "y": 280,
-                  "width": 1680,
-                  "height": 400,
-                  "rotation": 0,
-                  "text": "Three reasons to invest.",
-                  "fontSize": 28,
-                  "fontWeight": "normal",
-                  "color": "#000000",
-                  "align": "left",
-                  "opacity": 1
-                }
-              ],
-              "animations": [],
-              "notes": ""
-            },
-            "text": "{\"id\":\"__uKbqaCktoK4b2MAZslb\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"BTU4vyn2kdeDZ7PsRgKPx\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Original title\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"oxoLeT1CPJzBwFwLbgbhK\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Three reasons to invest.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
-          },
-          {
-            "tool": "query_slide",
-            "command": "query.slide",
-            "input": {
-              "deckId": "pyj9Lge9yom2",
+              "deckId": "iKLA9DUuwUZ7",
               "slide": {
                 "index": 1
               }
@@ -372,7 +316,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "7gJuyUsB6MiUWp-x1qSRS",
+              "id": "hInrz-qqlxawMcLc7UISG",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -381,7 +325,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "vwVAyFl38Kx4wE1bMIiNZ",
+                  "id": "Qnn6zIhIBL6rCB_s8UB2j",
                   "type": "rectangle",
                   "name": "Callout box",
                   "x": 200,
@@ -393,7 +337,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "Tw85jl9Mat-8uN7CKnuDV",
+                  "id": "u5mHcvuyZuwhqV84SdT0u",
                   "type": "text",
                   "x": 900,
                   "y": 280,
@@ -411,10 +355,42 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"7gJuyUsB6MiUWp-x1qSRS\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"vwVAyFl38Kx4wE1bMIiNZ\",\"type\":\"rectangle\",\"name\":\"Callout box\",\"x\":200,\"y\":300,\"width\":600,\"height\":300,\"rotation\":0,\"fill\":\"#f2b705\",\"opacity\":1},{\"id\":\"Tw85jl9Mat-8uN7CKnuDV\",\"type\":\"text\",\"x\":900,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Keep this note.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"hInrz-qqlxawMcLc7UISG\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"Qnn6zIhIBL6rCB_s8UB2j\",\"type\":\"rectangle\",\"name\":\"Callout box\",\"x\":200,\"y\":300,\"width\":600,\"height\":300,\"rotation\":0,\"fill\":\"#f2b705\",\"opacity\":1},{\"id\":\"u5mHcvuyZuwhqV84SdT0u\",\"type\":\"text\",\"x\":900,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Keep this note.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "iKLA9DUuwUZ7"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 2,
+              "slides": [
+                {
+                  "id": "gJn3ut-TQDcbhgEX4m6Nw",
+                  "index": 0,
+                  "title": "Original title",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "hInrz-qqlxawMcLc7UISG",
+                  "index": 1,
+                  "title": "Keep this note.",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":2,\"slides\":[{\"id\":\"gJn3ut-TQDcbhgEX4m6Nw\",\"index\":0,\"title\":\"Original title\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"hInrz-qqlxawMcLc7UISG\",\"index\":1,\"title\":\"Keep this note.\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           }
         ],
-        "finalText": "I undid both changes, and checking the slides shows the deck is back to how it was before:\n\n- **Slide 1:** The title reads \"Original title\" again.\n- **Slide 2:** The yellow \"Callout box\" rectangle is back in its original position, and the \"Keep this note.\" text is unchanged.",
+        "finalText": "I undid both changes, and re-reading the deck shows it's back to how it was before:\n\n- **Slide 1:** The title says \"Original title\" again.\n- **Slide 2:** The yellow \"Callout box\" rectangle is back in its original place and size, next to the \"Keep this note.\" text.",
         "turns": 5,
         "isError": false,
         "stopReason": "success"

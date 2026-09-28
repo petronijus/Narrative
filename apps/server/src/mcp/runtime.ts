@@ -51,6 +51,12 @@ export interface McpRuntimeOptions {
    * the session sweep asks it whether a session's token is still live.
    */
   pats: Pick<PatService, 'isLive'>
+  /**
+   * Called with a revoked OAuth connection's credential key, after its MCP
+   * sessions are closed: what else it opened goes too (upload sessions,
+   * index.ts). Resolves to how many were removed.
+   */
+  onCredentialRevoked?: (credentialKey: string) => Promise<number>
   /** Server version reported in the initialize result. */
   version: string
   log: FastifyBaseLogger
@@ -131,7 +137,18 @@ export function createMcpRuntime(opts: McpRuntimeOptions): McpRuntime {
   // A revoked connection loses its open MCP sessions at once, not at their
   // next request (which would fail anyway).
   oauth.onGrantRevoked((grantId) => {
-    void sessions.closeCredential(credentialKeyForToken(`oauth:${grantId}`))
+    const key = credentialKeyForToken(`oauth:${grantId}`)
+    void sessions.closeCredential(key)
+    if (opts.onCredentialRevoked !== undefined) {
+      opts
+        .onCredentialRevoked(key)
+        .catch((err: unknown) =>
+          opts.log.error(
+            { err, grantId },
+            'MCP OAuth revocation: removing what the grant opened failed',
+          ),
+        )
+    }
   })
   // The account kill switch and PAT revocation reach the sessions through
   // auth/agentSessions.ts (the auth layer cannot import the MCP server).

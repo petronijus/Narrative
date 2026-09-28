@@ -29,6 +29,7 @@ vi.mock('../../auth/session.js', async (importOriginal) => {
 })
 
 import { createMcpWorld, type McpWorld } from '../../test-support/mcpWorld.js'
+import { eventually } from '../../test-support/agentWorld.js'
 import {
   closeAgentSessionsForCredential,
   closeAgentSessionsForUser,
@@ -688,6 +689,9 @@ describe('revocation', () => {
     expect(res.status).toBe(200)
     expect((await mcpStatus(tokens.access_token)).status).toBe(401)
     expect(w.mcp.sessions.size).toBe(0)
+    // What the grant opened besides sessions (upload sessions) is removed too.
+    await eventually(() => w.revokedCredentials.length === 1)
+    expect(w.revokedCredentials[0]).toMatch(/^token:oauth:/)
   })
 
   it('lets the user list and disconnect connections with their session (never with a token)', async () => {

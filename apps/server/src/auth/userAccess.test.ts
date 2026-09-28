@@ -47,6 +47,7 @@ describe('revokeUserAccess', () => {
   it('revokes sessions, tokens and connected apps, and reports a user nothing admits any more', async () => {
     const db = scriptedDb({
       updates: [[{ idHash: 's' }], [{ id: 't1' }, { id: 't2' }], [{ id: 'g1' }]],
+      deletes: [[{ id: 'us1' }]],
       selects: [[], []],
     })
     const report = await revokeUserAccess(
@@ -55,7 +56,7 @@ describe('revokeUserAccess', () => {
       { allowlist },
     )
     expect(report).toMatchObject({
-      revoked: { sessions: 1, personalAccessTokens: 2, mcpOAuthGrants: 1 },
+      revoked: { sessions: 1, personalAccessTokens: 2, mcpOAuthGrants: 1, uploadSessions: 1 },
       dryRun: false,
       stillAllowedBy: null,
     })
@@ -66,6 +67,7 @@ describe('revokeUserAccess', () => {
       'mcp_oauth_tokens',
       // Unexchanged OAuth authorizations expire with the grants.
       'mcp_oauth_authorizations',
+      'upload_sessions',
     ])
   })
 
@@ -80,17 +82,22 @@ describe('revokeUserAccess', () => {
   })
 
   it('only counts on a dry run', async () => {
-    // Selects: live sessions, live tokens, live OAuth grants, then the
-    // sign-in check (no invite, one deck permission).
+    // Selects: live sessions, live tokens, live OAuth grants, upload
+    // sessions, then the sign-in check (no invite, one deck permission).
     const db = scriptedDb({
-      selects: [[{ n: 3 }], [{ n: 1 }], [{ n: 2 }], [], [{ deckId: 'd' }]],
+      selects: [[{ n: 3 }], [{ n: 1 }], [{ n: 2 }], [{ n: 4 }], [], [{ deckId: 'd' }]],
     })
     const report = await revokeUserAccess(
       db.db,
       { sub: 'u1', email: 'x@example.org', emailVerified: true },
       { allowlist, dryRun: true },
     )
-    expect(report.revoked).toEqual({ sessions: 3, personalAccessTokens: 1, mcpOAuthGrants: 2 })
+    expect(report.revoked).toEqual({
+      sessions: 3,
+      personalAccessTokens: 1,
+      mcpOAuthGrants: 2,
+      uploadSessions: 4,
+    })
     expect(report.dryRun).toBe(true)
     expect(report.stillAllowedBy).toBe('permission')
     expect(db.writes).toEqual([])

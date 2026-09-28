@@ -18,7 +18,7 @@
 
 import { and, count, eq, gt, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
-import { mcpOauthGrants, personalAccessTokens, sessions } from '../db/schema.js'
+import { mcpOauthGrants, personalAccessTokens, sessions, uploadSessions } from '../db/schema.js'
 import type { AllowlistConfig } from './jwt.js'
 import { revokeAllSessionsForUser, type RevokedUserAccess } from './session.js'
 import { signInGrant, type SignInGrant } from './signInPolicy.js'
@@ -77,10 +77,15 @@ async function countLiveCredentials(db: Database, userSub: string): Promise<Revo
     .select({ n: count() })
     .from(mcpOauthGrants)
     .where(and(eq(mcpOauthGrants.userSub, userSub), isNull(mcpOauthGrants.revokedAt)))
+  const [uploadSessionRows] = await db
+    .select({ n: count() })
+    .from(uploadSessions)
+    .where(eq(uploadSessions.userSub, userSub))
   return {
     sessions: liveSessions?.n ?? 0,
     personalAccessTokens: liveTokens?.n ?? 0,
     mcpOAuthGrants: liveGrants?.n ?? 0,
+    uploadSessions: uploadSessionRows?.n ?? 0,
   }
 }
 

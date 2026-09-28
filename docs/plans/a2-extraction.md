@@ -278,3 +278,19 @@ after the mechanism has been proven on simpler surfaces.
     deck only, and recognised by tus alone.
   - The eval harness gained per-scenario workspace files and a shell, so the
     scenario runs the returned curl exactly as Claude Code would.
+- 2026-09-29: **A2.7a hardened after a security review** (released 0.10.10):
+  - **A session is bound to the declared file** — the agent passes
+    `sizeBytes` (from `wc -c`), the server stores size and kind, tus refuses
+    a different `Upload-Length`, a deferred length or another kind. This also
+    took the `$(wc …)` substitution out of the curl line: Claude Code's
+    permission rules refuse command substitution, so the restricted eval
+    shell (`curl` and `wc` only) could not run it.
+  - Sessions die with the credential that opened them (PAT or MCP grant)
+    and with the account kill switch; 10 unused per user; the owner's
+    sign-in policy is re-checked on every use; GET of an upload is 404.
+  - An agent's upload proves its type (`strictContent`), per-kind size caps
+    apply before reading.
+  - One list of credential prefixes (auth/credentialPatterns.ts) feeds the
+    Sentry scrubber, the audit log, the eval recordings and reports, and
+    the WebSocket, which now refuses every agent credential.
+  - PUBLIC_API_URL must be https except on loopback.

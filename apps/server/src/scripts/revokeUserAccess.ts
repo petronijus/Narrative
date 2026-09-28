@@ -69,7 +69,8 @@ try {
     console.log(
       `${verb} for ${who}: ${report.revoked.sessions} session(s), ` +
         `${report.revoked.personalAccessTokens} personal access token(s), ` +
-        `${report.revoked.mcpOAuthGrants} connected app(s) (MCP OAuth grants).`,
+        `${report.revoked.mcpOAuthGrants} connected app(s) (MCP OAuth grants), ` +
+        `${report.revoked.uploadSessions} upload session(s).`,
     )
     if (!dryRun) {
       console.log(

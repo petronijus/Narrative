@@ -24,6 +24,7 @@ import {
   type RouteRef,
 } from '@narrative/commands'
 import { registerHttpRoutes } from '../http/registerRoutes.js'
+import { createAllowingUploadSessionService } from '../test-support/memoryUploadSessionStore.js'
 import { registerAuthPlugin } from '../auth/fastifyAuth.js'
 import type { Database } from '../db/client.js'
 import type { AgentRuntime } from '../agent/runtime.js'
@@ -55,6 +56,7 @@ async function registeredRoutes(): Promise<RouteRef[]> {
     agent: {} as AgentRuntime,
     // The MCP routes read their runtime only when a request arrives.
     mcp: { mcp: {} as McpRuntime, allowedOrigins: [] },
+    uploadSessions: createAllowingUploadSessionService(),
   })
   // Plugins registered with app.register() add their routes when loaded.
   await app.ready()

@@ -6,6 +6,7 @@
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { maskCredentials } from '../../../apps/server/src/auth/credentialPatterns.js'
 import type { Check, Transcript, Usage } from './types.js'
 
 export type Status = 'pass' | 'fail' | 'error' | 'skipped'
@@ -127,7 +128,7 @@ export function renderFailure(o: ScenarioOutcome): string {
 export async function writeReport(dir: string, report: SuiteReport): Promise<string> {
   await mkdir(dir, { recursive: true })
   const file = path.join(dir, `${report.startedAt.replace(/[:.]/g, '-')}.json`)
-  await writeFile(file, `${JSON.stringify(report, null, 2)}\n`)
+  await writeFile(file, `${JSON.stringify(scrubSecrets(report), null, 2)}\n`)
   return file
 }
 
@@ -147,17 +148,24 @@ export interface Recording {
   transcript: Transcript
 }
 
-/** Signed URLs (S3 presigned exports, share links) must not land in the repo. */
-function scrub(value: unknown): unknown {
+/**
+ * Signed URLs (S3 presigned exports, share links) and Narrative credentials
+ * (an upload session's token, a personal access token an agent echoed) must
+ * not land in the repo (recordings) nor stay on disk (reports).
+ */
+export function scrubSecrets(value: unknown): unknown {
   if (typeof value === 'string') {
-    return value.replace(
-      /(https?:\/\/[^\s"?]+)\?[^\s"]*(X-Amz-Signature|token|sig)=[^\s"]*/gi,
-      '$1?<redacted>',
+    return maskCredentials(
+      value.replace(
+        /(https?:\/\/[^\s"?]+)\?[^\s"]*(X-Amz-Signature|token|sig)=[^\s"]*/gi,
+        '$1?<redacted>',
+      ),
+      '<redacted>',
     )
   }
-  if (Array.isArray(value)) return value.map(scrub)
+  if (Array.isArray(value)) return value.map(scrubSecrets)
   if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrub(v)]))
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubSecrets(v)]))
   }
   return value
 }
@@ -165,6 +173,6 @@ function scrub(value: unknown): unknown {
 export async function writeRecording(dir: string, recording: Recording): Promise<string> {
   await mkdir(dir, { recursive: true })
   const file = path.join(dir, `${recording.scenario}.json`)
-  await writeFile(file, `${JSON.stringify(scrub(recording), null, 2)}\n`)
+  await writeFile(file, `${JSON.stringify(scrubSecrets(recording), null, 2)}\n`)
   return file
 }

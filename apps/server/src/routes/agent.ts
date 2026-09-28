@@ -45,6 +45,7 @@
  *     them in `routes`.
  */
 
+import { credentialKeyForToken } from '../auth/agentSessions.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { CommandErrorCode, CommandInvocation, CommandTarget } from '@narrative/commands'
 import { authPreHandler, requireTokenScope } from '../auth/fastifyAuth.js'
@@ -190,6 +191,14 @@ function badRequest(reply: FastifyReply, message: string): FastifyReply {
  * its own (never shared across a user's browsers or devices). Only
  * BYPASS_AUTH's dev-user, which has no session, shares one.
  */
+/** The personal access token a command API call authenticated with, as a revocation key; else null. */
+function apiCredentialKey(req: FastifyRequest): string | null {
+  const auth = req.auth
+  return auth?.kind === 'token' && auth.tokenId !== null
+    ? credentialKeyForToken(auth.tokenId)
+    : null
+}
+
 export function apiSessionKey(req: FastifyRequest, userId: string): string {
   const auth = req.auth
   if (auth?.kind === 'token' && auth.tokenId !== null) return `api:${userId}:token:${auth.tokenId}`
@@ -222,6 +231,7 @@ export async function registerAgentRoutes(
         actor: { userId, kind: 'agent' },
         surface: 'api',
         sessionKey: apiSessionKey(req, userId),
+        ...(apiCredentialKey(req) === null ? {} : { credentialKey: apiCredentialKey(req)! }),
         target: body.target,
         ...(body.invocation === undefined ? {} : { invocation: body.invocation }),
         ...(body.batch === undefined ? {} : { batch: body.batch }),

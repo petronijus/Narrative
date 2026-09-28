@@ -45,12 +45,13 @@ const bearer = (t: string) => ({ authorization: `Bearer ${t}` })
 let store: MemoryPatStore
 let pats: PatService
 let app: FastifyInstance
+const revokeUploadSessions = vi.fn(async (_key: string) => 0)
 
 async function buildApp(opts: { rateLimit?: boolean } = {}) {
   const a = Fastify({ logger: false })
   registerAuthPlugin(a, { bypass: false, db: {} as Database, pats })
   if (opts.rateLimit) await registerRateLimit(a)
-  registerAccessTokenRoutes(a)
+  registerAccessTokenRoutes(a, { revokeUploadSessions })
   await a.ready()
   return a
 }
@@ -189,8 +190,11 @@ describe('DELETE /access-tokens/:id', () => {
         expect.any(String),
       )
       expect(closeUser).not.toHaveBeenCalled()
+      // The upload sessions the token opened go with it.
+      expect(revokeUploadSessions).toHaveBeenCalledExactlyOnceWith(`token:${minted.accessToken.id}`)
       // Nothing is closed for a token that was not revoked.
       closeCredential.mockClear()
+      revokeUploadSessions.mockClear()
       const theirs = (await create(asUser2)).json()
       await app.inject({
         method: 'DELETE',
@@ -198,6 +202,7 @@ describe('DELETE /access-tokens/:id', () => {
         headers: asUser1,
       })
       expect(closeCredential).not.toHaveBeenCalled()
+      expect(revokeUploadSessions).not.toHaveBeenCalled()
     } finally {
       unregister()
     }

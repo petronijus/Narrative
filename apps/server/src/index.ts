@@ -30,6 +30,11 @@ import path from 'path'
 import { db, pool } from './db/client.js'
 import { createHocuspocusServer } from './hocuspocus/index.js'
 import { registerHttpRoutes } from './http/registerRoutes.js'
+import {
+  createDrizzleUploadSessionStore,
+  createUploadSessionService,
+  revokeUploadSessionsForCredential,
+} from './media/uploadSessions.js'
 import { createAgentRuntime, parseUrlFetchAllowedHosts } from './agent/runtime.js'
 import { createAgentPrincipalKeys } from './agent/presence.js'
 import { agentPrincipalKeySecretFromEnv } from './agent/principalKeySecret.js'
@@ -263,6 +268,13 @@ const spaOrigin =
 // call it; configured (not listening) Hocuspocus is enough.
 // ---------------------------------------------------------------------------
 
+// One-time upload credentials for agents with a shell (media.uploadSession):
+// issued by the agent host, accepted by the tus server, the sign-in policy
+// re-applied on every use like personal access tokens.
+const uploadSessions = createUploadSessionService(createDrizzleUploadSessionStore(db), {
+  isOwnerAllowed: bypassAuth ? async () => true : createPatOwnerPolicy(db, allowlistConfig),
+})
+
 // The public addresses (mcp/config.ts): the MCP resource, and the API base
 // upload sessions point agents at.
 const mcpConfig = mcpPublicConfigFromEnv(process.env, { apiPort: API_PORT, isProd, spaOrigin })
@@ -273,6 +285,7 @@ const agent = await createAgentRuntime({
   hocuspocus,
   appOrigin: spaOrigin,
   apiBaseUrl: mcpConfig.apiBaseUrl,
+  uploadSessions,
   principalKeys,
   bypass: bypassAuth,
   // Hosts agent URL downloads may reach without the user confirming the host
@@ -296,6 +309,8 @@ const mcp = createMcpRuntime({
   isOwnerAllowed: bypassAuth ? async () => true : createPatOwnerPolicy(db, allowlistConfig),
   // The session sweep re-checks each open session's token (mcp/sessions.ts).
   pats,
+  // A revoked OAuth connection's upload sessions go with it.
+  onCredentialRevoked: (key) => revokeUploadSessionsForCredential(db, key),
   version: readServerVersion(),
   log: app.log,
 })
@@ -323,6 +338,7 @@ app.log.info(
       clientIpHeader: process.env['CLIENT_IP_HEADER'] || undefined,
       allowedOrigins: corsOriginEnv,
     },
+    uploadSessions,
   })
 }
 

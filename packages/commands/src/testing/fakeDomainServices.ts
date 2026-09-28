@@ -598,7 +598,7 @@ export function createDomainFakes(
           uploadMetadata: `deckId ${b64(args.deckId)},filename ${b64(args.filename)},content-type ${b64(mimeType)}`,
           kind,
           mimeType,
-          maxBytes: kind === 'video' ? 500_000_000 : 25_000_000,
+          sizeBytes: args.sizeBytes,
         }
       },
       async videoInfo(args) {

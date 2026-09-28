@@ -11,13 +11,14 @@
  *      sends the sentinel `token: 'cookie'` purely to make Hocuspocus run
  *      this hook; the value itself is ignored.
  *
- * Personal access tokens are NOT accepted here (ADR 0011). Agents write only
+ * Agent credentials are NOT accepted here (ADR 0011) — personal access
+ * tokens, MCP OAuth tokens and codes, upload session tokens. Agents write only
  * through the server host (`openDirectConnection`, apps/server/src/agent/),
  * which validates every command, asks for confirmation where required,
  * attributes the change to a run and records it in the audit log. A raw Yjs
  * connection authenticated by a token would bypass all four. A connection
- * that presents a PAT — as the auth-frame token or as an `Authorization:
- * Bearer nrt_…` header on the upgrade — is refused outright rather than
+ * that presents one — as the auth-frame token or as an `Authorization:
+ * Bearer nrt_…` (`nmo_…`, `nus_…`) header on the upgrade — is refused outright rather than
  * silently falling back to a cookie or a share token, so a misconfigured
  * client fails loudly instead of acting as someone it did not intend to.
  *
@@ -42,8 +43,7 @@ import {
   resolveComponentAccess,
 } from '../auth/permissions.js'
 import { lookupSession, readCookieFromHeader, SESSION_COOKIE_NAME } from '../auth/session.js'
-import { looksLikePersonalAccessToken } from '../auth/personalAccessTokens.js'
-import { readBearerPat } from '../auth/identity.js'
+import { looksLikeNarrativeCredential } from '../auth/credentialPatterns.js'
 import { clientIpFromHeaders } from '../http/clientIp.js'
 import { createFixedWindowLimiter, type FixedWindowLimiter } from '../http/fixedWindowLimiter.js'
 import { subsystemLogger } from '../observability/logger.js'
@@ -89,19 +89,22 @@ interface WsPrincipal {
   shareToken: string | null
 }
 
-/** Does this connection present a personal access token anywhere? */
-function presentsPat(data: WsAuthPayload): boolean {
-  return (
-    looksLikePersonalAccessToken(data.token) ||
-    readBearerPat(data.requestHeaders['authorization']) !== null
-  )
+/**
+ * Does this connection present an agent credential anywhere — a personal
+ * access token, an MCP OAuth token or code, an upload session token?
+ */
+function presentsAgentCredential(data: WsAuthPayload): boolean {
+  const header = data.requestHeaders['authorization']
+  const value = Array.isArray(header) ? header[0] : header
+  const bearer = value === undefined ? undefined : /^Bearer[ \t]+(\S+)/i.exec(value)?.[1]
+  return looksLikeNarrativeCredential(data.token) || looksLikeNarrativeCredential(bearer)
 }
 
 async function resolvePrincipal(data: WsAuthPayload, deps: WsAuthDeps): Promise<WsPrincipal> {
-  if (presentsPat(data)) {
+  if (presentsAgentCredential(data)) {
     log.warn(
       { doc: data.documentName },
-      'refused a WebSocket connection presenting a personal access token',
+      'refused a WebSocket connection presenting an agent credential',
     )
     throw new Error('Forbidden')
   }

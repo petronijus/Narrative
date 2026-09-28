@@ -188,7 +188,8 @@ export interface Scenario<F extends Fixture = Fixture> {
   /**
    * The agent's working directory, for scenarios about local files: files
    * put there before the first prompt (name → bytes), and whether the agent
-   * may use a shell (Bash, in that temporary directory only) — Claude Code's
+   * may run curl there (`Bash(curl:*)` — no other command; the environment
+   * is the allowlist of lib/claude.ts `agentEnvironment`) — Claude Code's
    * situation on a user's machine. Without it the agent has only the MCP
    * tools.
    */

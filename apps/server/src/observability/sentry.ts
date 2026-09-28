@@ -24,6 +24,7 @@
  * M29: add @sentry/profiling-node once the full observability stack lands.
  */
 
+import { maskCredentials } from '../auth/credentialPatterns.js'
 import type { FastifyInstance } from 'fastify'
 
 let _initialized = false
@@ -33,20 +34,18 @@ export const FILTERED = '[Filtered]'
 /** Header names whose values are credentials (compared lower-cased). */
 const SECRET_HEADERS = new Set(['authorization', 'cookie', 'set-cookie', 'proxy-authorization'])
 
-/**
- * Any Narrative credential anywhere in a string: personal access tokens
- * (auth/personalAccessTokens.ts) and the MCP OAuth access tokens, refresh
- * tokens, authorization codes and client secrets (mcp/oauth). The prefix is
- * kept so a report still shows WHICH kind of credential leaked.
- */
-const CREDENTIAL_RE = /\b(nrt|nmo|nmr|nmc|nms)_[A-Za-z0-9_-]+/g
 /** The session cookie's value anywhere in a string (auth/session.ts). */
 const SESSION_COOKIE_RE = /(narrative_session=)[^;\s"',&]+/g
 
 const MAX_DEPTH = 32
 
+/**
+ * Any Narrative credential anywhere in a string (auth/credentialPatterns.ts:
+ * access tokens, OAuth tokens / codes / secrets, upload sessions) loses its
+ * secret; the prefix stays so a report shows WHICH kind leaked.
+ */
 export function scrubString(value: string): string {
-  return value.replace(CREDENTIAL_RE, `$1_${FILTERED}`).replace(SESSION_COOKIE_RE, `$1${FILTERED}`)
+  return maskCredentials(value, FILTERED).replace(SESSION_COOKIE_RE, `$1${FILTERED}`)
 }
 
 function scrub(value: unknown, depth: number, seen: WeakSet<object>, parentKey: string): unknown {

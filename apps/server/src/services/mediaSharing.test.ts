@@ -240,7 +240,7 @@ describe('media.openUploadSession', () => {
       db: scriptedDb().db,
       log: quietLog,
       apiBaseUrl: 'https://narrative.test/api/',
-      uploadSessions: createUploadSessionService(store),
+      uploadSessions: createUploadSessionService(store, { isOwnerAllowed: async () => true }),
     })
     return { svc, store }
   }
@@ -248,7 +248,12 @@ describe('media.openUploadSession', () => {
   it('opens a session for an editor: tus URL, token, metadata naming deck, file and type', async () => {
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
     const { svc, store } = await service()
-    const out = await svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'logo.PNG' })
+    const out = await svc.openUploadSession({
+      userId: 'u1',
+      deckId: 'd1',
+      filename: 'logo.PNG',
+      sizeBytes: 32,
+    })
     expect(out).toMatchObject({
       url: 'https://narrative.test/api/api/uploads',
       kind: 'image',
@@ -263,28 +268,52 @@ describe('media.openUploadSession', () => {
     )
     expect(meta).toEqual({ deckId: 'd1', filename: 'logo.PNG', 'content-type': 'image/png' })
     expect(store.rows).toHaveLength(1)
-    expect(store.rows[0]).toMatchObject({ userSub: 'u1', deckId: 'd1', uploadId: null })
+    expect(store.rows[0]).toMatchObject({
+      userSub: 'u1',
+      deckId: 'd1',
+      uploadId: null,
+      sizeBytes: 32,
+      kind: 'image',
+    })
   })
 
   it('refuses a viewer, an unknown deck, and a file that is not media', async () => {
     const { svc, store } = await service()
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
     expect(
-      await status(svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png' })),
+      await status(
+        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 10 }),
+      ),
     ).toBe(403)
     vi.mocked(resolveDeckAccess).mockResolvedValue(null)
     expect(
-      await status(svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png' })),
+      await status(
+        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 10 }),
+      ),
     ).toBe(404)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
     expect(
-      await status(svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'notes.txt' })),
+      await status(
+        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'notes.txt', sizeBytes: 10 }),
+      ),
     ).toBe(415)
     expect(
       await status(
-        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'x', mimeType: 'text/html' }),
+        svc.openUploadSession({
+          userId: 'u1',
+          deckId: 'd1',
+          filename: 'x',
+          mimeType: 'text/html',
+          sizeBytes: 10,
+        }),
       ),
     ).toBe(415)
+    // Larger than its kind may be (the test config caps images at 64 bytes).
+    expect(
+      await status(
+        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 65 }),
+      ),
+    ).toBe(413)
     expect(store.rows).toHaveLength(0)
     // An extensionless name is fine with its type given.
     await expect(
@@ -293,6 +322,7 @@ describe('media.openUploadSession', () => {
         deckId: 'd1',
         filename: 'clip',
         mimeType: 'video/mp4',
+        sizeBytes: 10,
       }),
     ).resolves.toMatchObject({ kind: 'video' })
   })

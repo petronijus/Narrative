@@ -1,15 +1,21 @@
 /**
  * test-support/memoryUploadSessionStore.ts — an in-memory
  * `UploadSessionStore` with the Drizzle store's semantics (atomic claim of
- * an unbound, unexpired session; sweep by expiry). The Drizzle store runs
- * against Postgres in uploadSessions.integration.test.ts.
+ * an unbound, unexpired session; open-session count; sweep by expiry). The
+ * Drizzle store runs against Postgres in uploadSessions.integration.test.ts.
+ * Owners' emails come from `owners` (sub → email), like the users join.
  */
 
-import type { UploadSessionRecord, UploadSessionStore } from '../media/uploadSessions.js'
+import type {
+  UploadSessionRecord,
+  UploadSessionService,
+  UploadSessionStore,
+} from '../media/uploadSessions.js'
+import { createUploadSessionService } from '../media/uploadSessions.js'
 
-export function createMemoryUploadSessionStore(): UploadSessionStore & {
-  readonly rows: UploadSessionRecord[]
-} {
+export function createMemoryUploadSessionStore(
+  owners: Record<string, string> = {},
+): UploadSessionStore & { readonly rows: UploadSessionRecord[] } {
   const rows: UploadSessionRecord[] = []
   return {
     rows,
@@ -21,7 +27,13 @@ export function createMemoryUploadSessionStore(): UploadSessionStore & {
     },
     async findByHash(tokenHash) {
       const row = rows.find((r) => r.tokenHash === tokenHash)
-      return row === undefined ? null : { ...row }
+      if (row === undefined) return null
+      const email = owners[row.userSub] ?? null
+      return { ...row, ownerEmail: email, ownerEmailVerified: email !== null }
+    },
+    async countOpen(userSub, now) {
+      return rows.filter((r) => r.userSub === userSub && r.uploadId === null && r.expiresAt > now)
+        .length
     },
     async claim(id, uploadId, now) {
       const row = rows.find((r) => r.id === id)
@@ -33,4 +45,15 @@ export function createMemoryUploadSessionStore(): UploadSessionStore & {
       for (let i = rows.length - 1; i >= 0; i--) if (rows[i]!.expiresAt < before) rows.splice(i, 1)
     },
   }
+}
+
+/** A service over a memory store whose sign-in policy lets everyone in. */
+export function createAllowingUploadSessionService(
+  store: UploadSessionStore = createMemoryUploadSessionStore(),
+  now?: () => Date,
+): UploadSessionService {
+  return createUploadSessionService(store, {
+    isOwnerAllowed: async () => true,
+    ...(now === undefined ? {} : { now }),
+  })
 }

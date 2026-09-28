@@ -93,6 +93,41 @@ export async function claudeVersion(): Promise<string> {
   })
 }
 
+/**
+ * The environment the agent runs with: what Claude Code needs (paths,
+ * locale, its own configuration and credentials, proxies) and nothing else
+ * of the developer's shell — not other tokens, and not XDG_RUNTIME_DIR,
+ * where credential caches (op-cache) live.
+ */
+export function agentEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const keep = new Set([
+    'PATH',
+    'HOME',
+    'USER',
+    'LOGNAME',
+    'SHELL',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'TERM',
+    'TMPDIR',
+    'TZ',
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    'XDG_CACHE_HOME',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'NODE_EXTRA_CA_CERTS',
+  ])
+  const out: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue
+    if (keep.has(k) || k.startsWith('CLAUDE_') || k.startsWith('ANTHROPIC_')) out[k] = v
+  }
+  return out
+}
+
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const dir = await mkdtemp(path.join(tmpdir(), 'narrative-agent-eval-'))
   const mcpConfig = path.join(dir, 'mcp.json')
@@ -114,6 +149,16 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     await writeFile(path.join(dir, name), bytes)
   }
   const builtInTools = `ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch${opts.shell === true ? ',Bash' : ''}`
+  // A scenario with a shell may measure a file (wc) and run the
+  // upload-session line (curl), and nothing else: every other command would
+  // need a permission a headless run never grants.
+  const allowedTools = [
+    `mcp__${MCP_SERVER_NAME}__*`,
+    'ListMcpResourcesTool',
+    'ReadMcpResourceTool',
+    'ToolSearch',
+    ...(opts.shell === true ? ['Bash(curl:*)', 'Bash(wc:*)'] : []),
+  ].join(',')
   const args = [
     '-p',
     '--input-format',
@@ -135,7 +180,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     '--tools',
     builtInTools,
     '--allowedTools',
-    `mcp__${MCP_SERVER_NAME}__*,${builtInTools}`,
+    allowedTools,
     ...(opts.maxBudgetUsd !== undefined ? ['--max-budget-usd', String(opts.maxBudgetUsd)] : []),
   ]
   const started = Date.now()
@@ -146,7 +191,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     cwd: dir,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
-      ...process.env,
+      ...agentEnvironment(process.env),
       NARRATIVE_EVAL_TOKEN: opts.mcpToken,
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
     },

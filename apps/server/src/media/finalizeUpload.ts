@@ -34,7 +34,7 @@ import {
   downscaleForStorage,
   exceedsStoredImageLimits,
 } from './storedImageLimits.js'
-import { isFontUpload } from './uploadPolicy.js'
+import { classifyUpload, isFontUpload, maxUploadBytes, tooLargeMessage } from './uploadPolicy.js'
 import { MEDIA_BUCKET } from './s3Client.js'
 import { subsystemLogger } from '../observability/logger.js'
 
@@ -75,6 +75,36 @@ export interface FinalizeUploadArgs {
   /** Size of the stored object in bytes. */
   sizeBytes: number
   log?: MinimalLog
+  /**
+   * An agent's upload (a token, an upload session, media.upload): the bytes
+   * must PROVE their type — an image its signature or readable dimensions,
+   * a video its container signature — so an agent talked into it by deck
+   * content cannot park arbitrary data (a key file) in a shared deck under
+   * a media type nobody checks. A browser upload stays as lenient as ever.
+   */
+  strictContent?: boolean
+}
+
+/**
+ * Whether the first bytes are a video container Narrative's transcoder
+ * reads: ISO BMFF (MP4 / MOV / M4V / 3GP: a box type at offset 4), Matroska /
+ * WebM (EBML), AVI (RIFF … AVI), MPEG program / elementary streams, Ogg.
+ */
+export function videoContainerMatches(bytes: Buffer): boolean {
+  if (bytes.length < 12) return false
+  const box = bytes.toString('latin1', 4, 8)
+  if (['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].includes(box)) return true
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return true
+  if (bytes.toString('latin1', 0, 4) === 'RIFF' && bytes.toString('latin1', 8, 12) === 'AVI ')
+    return true
+  if (
+    bytes[0] === 0 &&
+    bytes[1] === 0 &&
+    bytes[2] === 1 &&
+    (bytes[3] === 0xba || bytes[3] === 0xb3)
+  )
+    return true
+  return bytes.toString('latin1', 0, 4) === 'OggS'
 }
 
 export type FinalizedUpload =
@@ -107,7 +137,17 @@ export type FinalizedUpload =
       height: number | null
     }
 
-async function readAll(s3: S3Client, storageKey: string, range?: string): Promise<Buffer> {
+/**
+ * Read an object (or a byte range of it) into memory, refusing past
+ * `maxBytes`: a stored object is only as small as its upload path made it,
+ * and the whole API shares one process.
+ */
+async function readAll(
+  s3: S3Client,
+  storageKey: string,
+  maxBytes: number,
+  range?: string,
+): Promise<Buffer> {
   const obj = await s3.send(
     new GetObjectCommand({
       Bucket: MEDIA_BUCKET,
@@ -117,8 +157,15 @@ async function readAll(s3: S3Client, storageKey: string, range?: string): Promis
   )
   if (!obj.Body) throw new Error(`S3 returned empty body for ${storageKey}`)
   const chunks: Buffer[] = []
+  let total = 0
   for await (const chunk of obj.Body as Readable) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer))
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer)
+    total += buf.byteLength
+    if (total > maxBytes) {
+      ;(obj.Body as Readable).destroy?.()
+      throw new UploadRejected(413, `The stored file is larger than ${maxBytes} bytes.`)
+    }
+    chunks.push(buf)
   }
   return Buffer.concat(chunks)
 }
@@ -159,6 +206,20 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
   const log = args.log ?? defaultLog
   let sizeBytes = args.sizeBytes
 
+  // The per-kind size cap, on the size the store reports — whatever the
+  // upload path checked before (a deferred length, say), nothing larger is
+  // parsed, sanitised or kept.
+  const kind = classifyUpload(mimeType, filename)
+  if (kind === null) {
+    await deleteQuietly(s3, storageKey, log)
+    throw new UploadRejected(415, `Unsupported media type: ${mimeType}.`)
+  }
+  const cap = maxUploadBytes(kind)
+  if (sizeBytes > cap) {
+    await deleteQuietly(s3, storageKey, log)
+    throw new UploadRejected(413, tooLargeMessage(kind))
+  }
+
   if (isFontUpload(mimeType, filename)) {
     // Font branch: fetch the bytes, parse OpenType metadata, insert row.
     // We READ the full file (TTF/OTF are typically <2 MB; the size cap is
@@ -166,7 +227,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     // is rejected and the object stays orphaned for the M29 GC sweep.
     let metadata
     try {
-      const buf = await readAll(s3, storageKey)
+      const buf = await readAll(s3, storageKey, cap)
       // Pass an ArrayBuffer slice so opentype gets exactly the byte range
       // it expects (Buffer's underlying ArrayBuffer may be larger).
       const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
@@ -210,6 +271,20 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
   }
 
   if (mimeType.startsWith('video/')) {
+    if (args.strictContent === true) {
+      let head: Buffer
+      try {
+        head = await readAll(s3, storageKey, 65_536, 'bytes=0-65535')
+      } catch (err) {
+        log.error({ err }, 'video content read failed')
+        await deleteQuietly(s3, storageKey, log)
+        throw new UploadRejected(400, 'Failed to read the uploaded video for validation.')
+      }
+      if (!videoContainerMatches(head)) {
+        await deleteQuietly(s3, storageKey, log)
+        throw new UploadRejected(415, `Upload rejected: the file is not a ${mimeType} video.`)
+      }
+    }
     // Video branch: create asset row with pending transcode status, enqueue job.
     try {
       await createMediaAsset(db, {
@@ -247,7 +322,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     let headBytes: Buffer
     try {
       // First ~64 KB is enough to sniff SVG/XML and any raster signature.
-      headBytes = await readAll(s3, storageKey, 'bytes=0-65535')
+      headBytes = await readAll(s3, storageKey, 65_536, 'bytes=0-65535')
     } catch (err) {
       log.error({ err }, 'image content read failed')
       await deleteQuietly(s3, storageKey, log)
@@ -262,7 +337,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
       // truncate a large legitimate SVG. Re-read in full.
       let fullBytes: Buffer
       try {
-        fullBytes = await readAll(s3, storageKey)
+        fullBytes = await readAll(s3, storageKey, cap)
       } catch (err) {
         log.error({ err }, 'SVG full read failed')
         await deleteQuietly(s3, storageKey, log)
@@ -307,7 +382,18 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
   let dims = await probeImageDimensions(s3, storageKey, log)
   if (!dims) {
     log.warn({ storageKey }, 'probe-image-size returned no result')
-    // Non-fatal: SVGs and some exotic formats may not probe; insert row without dims.
+    // Non-fatal for a browser upload: SVGs and some exotic formats may not
+    // probe; insert row without dims. An agent's raster must prove it is an
+    // image: a checked signature (above) or readable dimensions.
+    const declared = mimeType.toLowerCase()
+    const provenRaster = MAGIC_CHECKED_MIMES.has(declared)
+    if (args.strictContent === true && declared !== 'image/svg+xml' && !provenRaster) {
+      await deleteQuietly(s3, storageKey, log)
+      throw new UploadRejected(
+        415,
+        `Upload rejected: the file could not be read as a ${mimeType} image.`,
+      )
+    }
   }
 
   // A raster above imgproxy's source limit would never render (imgproxy
@@ -321,7 +407,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     canDownscaleStoredImage(mimeType)
   ) {
     try {
-      const downscaled = await downscaleForStorage(await readAll(s3, storageKey), mimeType)
+      const downscaled = await downscaleForStorage(await readAll(s3, storageKey, cap), mimeType)
       if (downscaled !== null) {
         await s3.send(
           new PutObjectCommand({

@@ -36,17 +36,21 @@ describe('revokeAllAgentCredentialsForUser', () => {
         [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
         [{ id: 'g1' }, { id: 'g2' }],
       ],
+      deletes: [[{ id: 'u1' }]],
     })
     await expect(revokeAllAgentCredentialsForUser(db.db, 'user-1')).resolves.toEqual({
       personalAccessTokens: 3,
       mcpOAuthGrants: 2,
+      uploadSessions: 1,
     })
-    // The grants' tokens are revoked with them, and unexchanged authorizations expire.
+    // The grants' tokens are revoked with them, unexchanged authorizations
+    // expire, and the user's upload sessions are deleted.
     expect(db.writes.map((w) => w.table)).toEqual([
       'personal_access_tokens',
       'mcp_oauth_grants',
       'mcp_oauth_tokens',
       'mcp_oauth_authorizations',
+      'upload_sessions',
     ])
     expect(db.writes[3]!.values).toEqual({
       expiresAt: expect.any(Date),
@@ -61,11 +65,13 @@ describe('revokeAllAgentCredentialsForUser', () => {
     await expect(revokeAllAgentCredentialsForUser(db.db, 'user-1')).resolves.toEqual({
       personalAccessTokens: 0,
       mcpOAuthGrants: 0,
+      uploadSessions: 0,
     })
     expect(db.writes.map((w) => w.table)).toEqual([
       'personal_access_tokens',
       'mcp_oauth_grants',
       'mcp_oauth_authorizations',
+      'upload_sessions',
     ])
     expect(registry.closeUser).toHaveBeenCalledWith('user-1', expect.any(String))
   })
@@ -76,6 +82,7 @@ describe('revokeAllAgentCredentialsForUser', () => {
     await expect(revokeAllAgentCredentialsForUser(db.db, 'user-1')).resolves.toEqual({
       personalAccessTokens: 1,
       mcpOAuthGrants: 0,
+      uploadSessions: 0,
     })
     expect(registry.closeUser).not.toHaveBeenCalled()
   })
@@ -90,6 +97,7 @@ describe('revokeAllSessionsForUser', () => {
       sessions: 2,
       personalAccessTokens: 1,
       mcpOAuthGrants: 1,
+      uploadSessions: 0,
     })
     expect(db.writes.map((w) => w.table)).toEqual([
       'sessions',
@@ -97,6 +105,7 @@ describe('revokeAllSessionsForUser', () => {
       'mcp_oauth_grants',
       'mcp_oauth_tokens',
       'mcp_oauth_authorizations',
+      'upload_sessions',
     ])
     expect(closeUserConnections).toHaveBeenCalledWith('user-1')
     expect(registry.closeUser).toHaveBeenCalledWith('user-1', expect.any(String))

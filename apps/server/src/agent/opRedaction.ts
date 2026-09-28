@@ -21,10 +21,10 @@
  *     `user:password@`: presigned links (`X-Amz-Signature=…`, the export
  *     download URL an op returns) and tokens in query parameters are live
  *     credentials, the path is what an auditor needs.
- *   - Narrative's own bearer tokens anywhere in a string — an upload session
- *     (`nus_…`, what `media.uploadSession` returns, also inside its ready
- *     curl command) or a personal access token (`nrt_…`) — keep their
- *     prefix and lose the secret.
+ *   - Every Narrative credential anywhere in a string (auth/credentialPatterns.ts:
+ *     personal access tokens, MCP OAuth tokens / codes / secrets, upload
+ *     sessions — e.g. the `nus_…` `media.uploadSession` returns, also inside
+ *     its ready curl command) keeps its prefix and loses the secret.
  *
  * Structure is kept: objects stay objects with the same keys, arrays keep
  * their length, so `ops.apply` batches still read op by op. The function is
@@ -37,6 +37,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { maskCredentials } from '../auth/credentialPatterns.js'
 
 /** Strings at least this long that are strictly base64 are treated as file bytes. */
 export const BASE64_HEURISTIC_MIN_CHARS = 1024
@@ -118,12 +119,9 @@ export function stripUrlSecrets(value: string): string {
   return url.toString()
 }
 
-/** Narrative bearer tokens (upload session, personal access) inside any string. */
-const NARRATIVE_TOKEN_RE = /\b(nus_|nrt_)[A-Za-z0-9_-]{8,}/g
-
-/** A string with every Narrative bearer token's secret replaced. */
+/** A string with every Narrative credential's secret replaced (auth/credentialPatterns.ts). */
 export function redactTokens(value: string): string {
-  return value.replace(NARRATIVE_TOKEN_RE, '$1[redacted]')
+  return maskCredentials(value, '[redacted]')
 }
 
 function redactString(value: string, key: string | null): unknown {

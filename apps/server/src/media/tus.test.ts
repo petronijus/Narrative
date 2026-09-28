@@ -61,6 +61,12 @@ vi.mock('@tus/s3-store', () => ({
 // dedicated rejection-path coverage lives in svgSanitize.test.ts.
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00])
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])
+/** An ISO BMFF header: size, then the `ftyp` box type at offset 4. */
+const MP4_BYTES = Buffer.concat([
+  Buffer.from([0x00, 0x00, 0x00, 0x18]),
+  Buffer.from('ftypmp42', 'latin1'),
+  Buffer.alloc(12),
+])
 
 // A hostile SVG returned for .svg keys so the onUploadFinish SVG path can be
 // exercised end-to-end (sanitize → PutObject). Overridable per-test.
@@ -87,6 +93,7 @@ function bytesForKey(key: string | undefined): Buffer {
   const path = decodedExt(key)
   if (/\.svg$/i.test(path)) return svgBytesForGet
   if (/\.jpe?g$/i.test(path)) return JPEG_BYTES
+  if (/\.mp4$/i.test(path)) return MP4_BYTES
   return PNG_BYTES
 }
 
@@ -158,6 +165,7 @@ import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { createMediaAsset } from './assets.js'
 import { enqueueVideoTranscode } from './enqueue.js'
 import { registerTusPlugin, tokenMayUpload } from './tus.js'
+import { createAllowingUploadSessionService } from '../test-support/memoryUploadSessionStore.js'
 
 // ---------------------------------------------------------------------------
 // Types used in hook calls
@@ -232,7 +240,7 @@ async function buildApp(bypassAuth = true): Promise<FastifyInstance> {
       }
 
   registerAuthPlugin(app, authOpts)
-  registerTusPlugin(app, { db: mockDb })
+  registerTusPlugin(app, { db: mockDb, uploadSessions: createAllowingUploadSessionService() })
 
   await app.ready()
   return app
@@ -283,7 +291,7 @@ describe('onUploadCreate hook', () => {
 
     const req = buildRequest({}) // no auth header
     const res = buildResponse()
-    const upload = { metadata: { deckId: 'deck-1', 'content-type': 'image/jpeg' } }
+    const upload = { size: 1024, metadata: { deckId: 'deck-1', 'content-type': 'image/jpeg' } }
 
     await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 401 })
   })
@@ -296,7 +304,7 @@ describe('onUploadCreate hook', () => {
       uploadMetadata: tusMetadata({ 'content-type': 'image/png' }),
     })
     const res = buildResponse()
-    const upload = { metadata: {} }
+    const upload = { size: 1024, metadata: {} }
 
     await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 400 })
   })
@@ -378,7 +386,7 @@ describe('onUploadCreate hook', () => {
       uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/jpeg' }),
     })
     const res = buildResponse()
-    const upload = { metadata: { deckId: 'deck-1' } }
+    const upload = { size: 1024, metadata: { deckId: 'deck-1' } }
 
     await expect(hook(req, res, upload)).rejects.toMatchObject({ status_code: 403 })
   })
@@ -394,7 +402,7 @@ describe('onUploadCreate hook', () => {
       uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
     })
     const res = buildResponse()
-    const upload = { metadata: { deckId: 'deck-1' } }
+    const upload = { size: 1024, metadata: { deckId: 'deck-1' } }
 
     await expect(hook(req, res, upload)).resolves.toBeDefined()
   })
@@ -410,7 +418,7 @@ describe('onUploadCreate hook', () => {
       uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/jpeg' }),
     })
     const res = buildResponse()
-    const upload = { metadata: { deckId: 'deck-1' } }
+    const upload = { size: 1024, metadata: { deckId: 'deck-1' } }
 
     await expect(hook(req, res, upload)).resolves.toBeDefined()
   })
@@ -419,6 +427,28 @@ describe('onUploadCreate hook', () => {
 // ---------------------------------------------------------------------------
 // Tests: onIncomingRequest hook (PATCH auth re-check)
 // ---------------------------------------------------------------------------
+
+describe('onUploadCreate: declared length', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+  })
+
+  it('refuses a deferred Upload-Length: every size cap is checked against it', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadCreate'] as OnUploadCreate
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+    })
+    for (const upload of [
+      { metadata: { deckId: 'deck-1' } },
+      { size: undefined, sizeIsDeferred: true, metadata: { deckId: 'deck-1' } },
+    ]) {
+      await expect(hook(req, buildResponse(), upload)).rejects.toMatchObject({ status_code: 400 })
+    }
+  })
+})
 
 describe('onIncomingRequest hook', () => {
   beforeEach(() => {
@@ -438,6 +468,32 @@ describe('onIncomingRequest hook', () => {
     const req = buildRequest({ method: 'PATCH' })
     const res = buildResponse()
     await expect(hook(req, res, 'upload-id-123')).rejects.toMatchObject({ status_code: 401 })
+  })
+
+  it('refuses GET outright: stored bytes are served through signed media URLs only', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+    await expect(
+      hook(buildRequest({ method: 'GET' }), buildResponse(), 'asset-x:deck-1:abc'),
+    ).rejects.toMatchObject({ status_code: 404 })
+  })
+
+  it("guards HEAD like PATCH: no one but the upload's creator learns its offset and metadata", async () => {
+    await buildApp(false)
+    const hook = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+    await expect(
+      hook(buildRequest({ method: 'HEAD' }), buildResponse(), 'asset-x:deck-1:abc'),
+    ).rejects.toMatchObject({ status_code: 401 })
+
+    await buildApp(true)
+    const bypassed = capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+    mockStoredUpload = {
+      id: 'asset-x:deck-1:abc',
+      metadata: { deckId: 'deck-1', 'content-type': 'image/png', creatorUserId: 'someone-else' },
+    }
+    await expect(
+      bypassed(buildRequest({ method: 'HEAD' }), buildResponse(), 'asset-x:deck-1:abc'),
+    ).rejects.toMatchObject({ status_code: 403 })
   })
 
   it('does not throw on OPTIONS (no auth check)', async () => {
@@ -534,6 +590,50 @@ describe('onUploadFinish hook', () => {
     vi.mocked(roleAtLeast).mockReturnValue(true)
   })
 
+  it('refuses a stored object larger than its kind allows before reading it', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+    const assetId = 'asset-bigfont1'
+    const deckId = 'deck-bigfont'
+    const decodedPath = `decks/${deckId}/fonts/${assetId}/original.ttf`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(decodedPath).toString('base64url')}`
+    // The store holds far more than the 8 MB font limit.
+    lastS3Send!.mockImplementationOnce(async () => ({ ContentLength: 400_000_000 }))
+    await expect(
+      hook(buildRequest({}), buildResponse(), {
+        id: uploadId,
+        size: 1024,
+        offset: 1024,
+        metadata: { deckId, creatorUserId: 'dev-user', 'content-type': 'font/ttf' },
+      }),
+    ).rejects.toMatchObject({ status_code: 413 })
+  })
+
+  it('decides what the upload is from the metadata checked at create, not the finishing request', async () => {
+    await buildApp(true)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+    const assetId = 'asset-retype01'
+    const deckId = 'deck-retype'
+    const decodedPath = `decks/${deckId}/uploads/${assetId}/original.png`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(decodedPath).toString('base64url')}`
+    // The last PATCH re-declares the checked image as a .pptx.
+    const req = buildRequest({
+      uploadMetadata: tusMetadata({
+        deckId,
+        'content-type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      }),
+    })
+    const upload = {
+      id: uploadId,
+      size: 2048,
+      offset: 2048,
+      metadata: { deckId, 'content-type': 'image/png', creatorUserId: 'dev-user' },
+    }
+    const result = await hook(req, buildResponse(), upload)
+    // Finished as the image it was created as: the asset JSON, no deck import.
+    expect(JSON.parse(result['body'] as string)).toMatchObject({ assetId, mimeType: 'image/png' })
+  })
+
   it('calls createMediaAsset with correct storageKey and assetId', async () => {
     await buildApp(true)
     const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
@@ -594,7 +694,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 4096,
       offset: 4096,
-      metadata: { deckId, creatorUserId: 'dev-user' },
+      metadata: { deckId, creatorUserId: 'dev-user', 'content-type': 'image/png' },
     }
 
     const res = buildResponse()
@@ -709,7 +809,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 5_000_000,
       offset: 5_000_000,
-      metadata: { deckId, creatorUserId: 'dev-user' },
+      metadata: { deckId, creatorUserId: 'dev-user', 'content-type': 'video/mp4' },
     }
 
     const res = buildResponse()
@@ -741,7 +841,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 200,
       offset: 200,
-      metadata: { deckId, creatorUserId: 'dev-user' },
+      metadata: { deckId, creatorUserId: 'dev-user', 'content-type': 'image/svg+xml' },
     }
 
     const result = (await hook(req, buildResponse(), upload)) as { status_code: number }
@@ -777,7 +877,7 @@ describe('onUploadFinish hook', () => {
       id: uploadId,
       size: 25,
       offset: 25,
-      metadata: { deckId, creatorUserId: 'dev-user' },
+      metadata: { deckId, creatorUserId: 'dev-user', 'content-type': 'image/svg+xml' },
     }
 
     await expect(hook(req, buildResponse(), upload)).rejects.toMatchObject({ status_code: 400 })
@@ -810,7 +910,7 @@ describe('tus upload with a personal access token', () => {
     const app = Fastify({ logger: false })
     const db = {} as unknown as Database
     registerAuthPlugin(app, { bypass: false, db, pats })
-    registerTusPlugin(app, { db })
+    registerTusPlugin(app, { db, uploadSessions: createAllowingUploadSessionService() })
     await app.ready()
     return { app, pats }
   }
@@ -836,7 +936,10 @@ describe('tus upload with a personal access token', () => {
         authHeader: `Bearer ${token}`,
         uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
       })
-      const result = await hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } })
+      const result = await hook(req, buildResponse(), {
+        size: 1024,
+        metadata: { deckId: 'deck-1' },
+      })
       expect(result).toMatchObject({
         metadata: expect.objectContaining({ creatorUserId: 'pat-user' }),
       })
@@ -862,7 +965,7 @@ describe('tus upload with a personal access token', () => {
       uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
     })
     await expect(
-      hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } }),
+      hook(req, buildResponse(), { size: 1024, metadata: { deckId: 'deck-1' } }),
     ).rejects.toMatchObject({
       status_code: 401,
     })
@@ -899,7 +1002,9 @@ describe('tus upload with a personal access token', () => {
         authHeader: `Bearer ${token}`,
         uploadMetadata: tusMetadata({ ...binding, 'content-type': PPTX }),
       })
-      await expect(hook(req, buildResponse(), { metadata: binding })).rejects.toMatchObject({
+      await expect(
+        hook(req, buildResponse(), { size: 1024, metadata: binding }),
+      ).rejects.toMatchObject({
         status_code: 403,
         body: expect.stringContaining('deck.importPptx'),
       })
@@ -921,7 +1026,7 @@ describe('tus upload with a personal access token', () => {
         uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': type }),
       })
       await expect(
-        hook(req, buildResponse(), { metadata: { deckId: 'deck-1' } }),
+        hook(req, buildResponse(), { size: 1024, metadata: { deckId: 'deck-1' } }),
       ).rejects.toMatchObject({ status_code: 415 })
     }
   })
@@ -955,7 +1060,7 @@ describe('tus upload with an upload session token', () => {
     const { createMemoryUploadSessionStore } =
       await import('../test-support/memoryUploadSessionStore.js')
     const store = createMemoryUploadSessionStore()
-    const sessions = createUploadSessionService(store)
+    const sessions = createUploadSessionService(store, { isOwnerAllowed: async () => true })
     capturedTusOptions = {}
     const app = Fastify({ logger: false })
     const db = {} as unknown as Database
@@ -976,7 +1081,12 @@ describe('tus upload with an upload session token', () => {
 
   it('creates one media upload in its deck as its user, and is spent by it', async () => {
     const { sessions, store } = await buildSessionApp()
-    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    const { token } = await sessions.issue({
+      userSub: 'agent-user',
+      deckId: 'deck-1',
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     const req = () =>
       buildRequest({
         authHeader: `Bearer ${token}`,
@@ -984,6 +1094,7 @@ describe('tus upload with an upload session token', () => {
       })
     const result = await create()(req(), buildResponse(), {
       id: 'a1:deck-1:key',
+      size: 1024,
       metadata: { deckId: 'deck-1' },
     })
     expect(result).toMatchObject({
@@ -992,14 +1103,23 @@ describe('tus upload with an upload session token', () => {
     expect(store.rows[0]!.uploadId).toBe('a1:deck-1:key')
     // A second upload with the same token is refused: the session is spent.
     await expect(
-      create()(req(), buildResponse(), { id: 'a2:deck-1:key', metadata: { deckId: 'deck-1' } }),
+      create()(req(), buildResponse(), {
+        id: 'a2:deck-1:key',
+        size: 1024,
+        metadata: { deckId: 'deck-1' },
+      }),
     ).rejects.toMatchObject({ status_code: 403 })
     expect(store.rows[0]!.uploadId).toBe('a1:deck-1:key')
   })
 
   it('refuses another deck, a .pptx and a non-media type, and stays usable after a refusal', async () => {
     const { sessions, store } = await buildSessionApp()
-    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    const { token } = await sessions.issue({
+      userSub: 'agent-user',
+      deckId: 'deck-1',
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     const attempt = (deckId: string, type: string) =>
       create()(
         buildRequest({
@@ -1007,7 +1127,7 @@ describe('tus upload with an upload session token', () => {
           uploadMetadata: tusMetadata({ deckId, 'content-type': type }),
         }),
         buildResponse(),
-        { id: `x:${deckId}:key`, metadata: { deckId } },
+        { id: `x:${deckId}:key`, size: 1024, metadata: { deckId } },
       )
     await expect(attempt('deck-2', 'image/png')).rejects.toMatchObject({ status_code: 403 })
     await expect(
@@ -1021,16 +1141,45 @@ describe('tus upload with an upload session token', () => {
     await expect(attempt('deck-1', 'image/jpeg')).resolves.toBeDefined()
   })
 
+  it('takes only a file of the declared size and kind', async () => {
+    const { sessions, store } = await buildSessionApp()
+    const { token } = await sessions.issue({
+      userSub: 'agent-user',
+      deckId: 'deck-1',
+      sizeBytes: 1024,
+      kind: 'image',
+    })
+    const attempt = (type: string, size: number) =>
+      create()(
+        buildRequest({
+          authHeader: `Bearer ${token}`,
+          uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': type }),
+        }),
+        buildResponse(),
+        { id: `x${size}:deck-1:key`, size, metadata: { deckId: 'deck-1' } },
+      )
+    await expect(attempt('image/png', 1025)).rejects.toMatchObject({ status_code: 403 })
+    await expect(attempt('image/png', 1023)).rejects.toMatchObject({ status_code: 403 })
+    await expect(attempt('video/mp4', 1024)).rejects.toMatchObject({ status_code: 403 })
+    expect(store.rows[0]!.uploadId).toBeNull()
+    await expect(attempt('image/png', 1024)).resolves.toBeDefined()
+  })
+
   it('continues only the upload it created', async () => {
     const { sessions } = await buildSessionApp()
-    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    const { token } = await sessions.issue({
+      userSub: 'agent-user',
+      deckId: 'deck-1',
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     await create()(
       buildRequest({
         authHeader: `Bearer ${token}`,
         uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
       }),
       buildResponse(),
-      { id: 'mine:deck-1:key', metadata: { deckId: 'deck-1' } },
+      { id: 'mine:deck-1:key', size: 1024, metadata: { deckId: 'deck-1' } },
     )
     const stored = (id: string) => ({
       id,
@@ -1064,10 +1213,58 @@ describe('tus upload with an upload session token', () => {
             uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
           }),
           buildResponse(),
-          { id: 'x:deck-1:key', metadata: { deckId: 'deck-1' } },
+          { id: 'x:deck-1:key', size: 1024, metadata: { deckId: 'deck-1' } },
         ),
       ).rejects.toMatchObject({ status_code: 401 })
     }
+  })
+})
+
+describe("an agent's upload must prove its content type", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+  })
+
+  async function finishWithSession(ext: string, mime: string) {
+    const { createMemoryUploadSessionStore } =
+      await import('../test-support/memoryUploadSessionStore.js')
+    const { createUploadSessionService } = await import('./uploadSessions.js')
+    const sessions = createUploadSessionService(createMemoryUploadSessionStore(), {
+      isOwnerAllowed: async () => true,
+    })
+    capturedTusOptions = {}
+    const app = Fastify({ logger: false })
+    const db = {} as unknown as Database
+    registerAuthPlugin(app, { bypass: false, db })
+    registerTusPlugin(app, { db, uploadSessions: sessions })
+    await app.ready()
+    const deckId = 'deck-agent'
+    const assetId = `asset-agent-${ext}`
+    const uploadId = `${assetId}:${deckId}:${Buffer.from(`decks/${deckId}/uploads/${assetId}/original.${ext}`).toString('base64url')}`
+    const { token } = await sessions.issue({
+      userSub: 'agent-user',
+      deckId,
+      sizeBytes: 1024,
+      kind: mime.startsWith('video/') ? 'video' : 'image',
+    })
+    const session = (await sessions.verify(token))!
+    await sessions.claim(session, uploadId)
+    const hook = capturedTusOptions['onUploadFinish'] as OnUploadFinish
+    return hook(buildRequest({ authHeader: `Bearer ${token}` }), buildResponse(), {
+      id: uploadId,
+      size: 1024,
+      offset: 1024,
+      metadata: { deckId, creatorUserId: 'agent-user', 'content-type': mime },
+    })
+  }
+
+  it('accepts a real MP4 and refuses a "video" that is not one', async () => {
+    await expect(finishWithSession('mp4', 'video/mp4')).resolves.toMatchObject({ status_code: 200 })
+    await expect(finishWithSession('webm', 'video/webm')).rejects.toMatchObject({
+      status_code: 415,
+    })
   })
 })
 

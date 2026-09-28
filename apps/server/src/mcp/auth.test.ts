@@ -86,7 +86,7 @@ describe('/mcp and the bearer negative cache', () => {
     const { verifyAccessToken, bearers } = await build()
     bearers.recordInvalid(BAD)
     const deps: McpAuthDeps = {
-      config: buildMcpPublicConfig({ apiBaseUrl: 'http://x', spaOrigin: 'http://x' }),
+      config: buildMcpPublicConfig({ apiBaseUrl: 'https://x', spaOrigin: 'https://x' }),
       oauth: { verifyAccessToken } as unknown as McpOAuthService,
       bearers,
     }

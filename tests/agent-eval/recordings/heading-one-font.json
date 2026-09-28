@@ -1,25 +1,25 @@
 {
   "scenario": "heading-one-font",
-  "tag": "evd4934d",
-  "recordedAt": "2026-09-28T20:51:45.699Z",
+  "tag": "ev8c2dee",
+  "recordedAt": "2026-09-28T21:55:24.677Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "FbkkP5jZhP55",
-    "title": "Results overview evd4934d",
-    "headings": ["AWeOlSmIdAI1tQNNAAaE8", "m_YK-6D-xmMW-WwroxdHS", "1XRQQPo1LhzoqxgPeORNg"],
-    "bodies": ["6dfjJpKdW33ZvGYYHYE8g", "M9F_royIDB9-6rD5wbr96", "gRSzpkD_TlFCVp7nzGYY1"]
+    "deckId": "hz-jxc_A70ue",
+    "title": "Results overview ev8c2dee",
+    "headings": ["oTe48RQqOfV1cZs532BiM", "cs1iE2rQl0zEOwYVuKgTz", "eIuL9TYhgLQd1yebESvrX"],
+    "bodies": ["2NMy1sK_7yarb6kFG6vVq", "CyZSXr9IBhD36c9-8yJEe", "s30dMk1Yk-76symPH48bZ"]
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Results overview evd4934d\" (deckId FbkkP5jZhP55), make every heading use the font Inter Bold. Leave the body text exactly as it is.",
+        "prompt": "On slide 1 of the Narrative deck \"Results overview ev8c2dee\" (deckId hz-jxc_A70ue), make every heading use the font Inter Bold. Leave the body text exactly as it is.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__deck_fonts_list,mcp__narrative-eval__text_format,mcp__narrative-eval__ops_apply,mcp__narrative-eval__query_deck",
+              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__query_slide,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__ops_apply,mcp__narrative-eval__text_format,mcp__narrative-eval__deck_fonts_list,mcp__narrative-eval__query_object",
               "max_results": 10
             },
             "isError": false,
@@ -43,7 +43,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "FbkkP5jZhP55",
+              "deckId": "hz-jxc_A70ue",
               "slide": {
                 "index": 0
               }
@@ -51,7 +51,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "hU0qJld2rzXmGm4bnhPJu",
+              "id": "5SeWQFFvMTeFC1c0vPTIH",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -60,7 +60,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "AWeOlSmIdAI1tQNNAAaE8",
+                  "id": "oTe48RQqOfV1cZs532BiM",
                   "type": "text",
                   "x": 100,
                   "y": 120,
@@ -76,7 +76,7 @@
                   "fontFamily": "Georgia"
                 },
                 {
-                  "id": "6dfjJpKdW33ZvGYYHYE8g",
+                  "id": "2NMy1sK_7yarb6kFG6vVq",
                   "type": "text",
                   "x": 100,
                   "y": 230,
@@ -92,7 +92,7 @@
                   "fontFamily": "Georgia"
                 },
                 {
-                  "id": "m_YK-6D-xmMW-WwroxdHS",
+                  "id": "cs1iE2rQl0zEOwYVuKgTz",
                   "type": "text",
                   "x": 700,
                   "y": 120,
@@ -121,7 +121,7 @@
                   ]
                 },
                 {
-                  "id": "M9F_royIDB9-6rD5wbr96",
+                  "id": "CyZSXr9IBhD36c9-8yJEe",
                   "type": "text",
                   "x": 700,
                   "y": 230,
@@ -137,7 +137,7 @@
                   "fontFamily": "Georgia"
                 },
                 {
-                  "id": "1XRQQPo1LhzoqxgPeORNg",
+                  "id": "eIuL9TYhgLQd1yebESvrX",
                   "type": "text",
                   "x": 1300,
                   "y": 120,
@@ -153,7 +153,7 @@
                   "fontFamily": "Verdana"
                 },
                 {
-                  "id": "gRSzpkD_TlFCVp7nzGYY1",
+                  "id": "s30dMk1Yk-76symPH48bZ",
                   "type": "text",
                   "x": 1300,
                   "y": 230,
@@ -172,13 +172,25 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"hU0qJld2rzXmGm4bnhPJu\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"AWeOlSmIdAI1tQNNAAaE8\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"6dfjJpKdW33ZvGYYHYE8g\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"m_YK-6D-xmMW-WwroxdHS\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Arial\",\"paragraphs\":[{\"runs\":[{\"text\":\"Operating \"},{\"text\":\"costs\",\"fontFamily\":\"Courier New\"}]}]},{\"id\":\"M9F_royIDB9-6rD5wbr96\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"1XRQQPo1LhzoqxgPeORNg\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Verdana\"},{\"id\":\"gRSzpkD_TlFCVp7nzGYY1\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"5SeWQFFvMTeFC1c0vPTIH\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"oTe48RQqOfV1cZs532BiM\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"2NMy1sK_7yarb6kFG6vVq\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"cs1iE2rQl0zEOwYVuKgTz\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Arial\",\"paragraphs\":[{\"runs\":[{\"text\":\"Operating \"},{\"text\":\"costs\",\"fontFamily\":\"Courier New\"}]}]},{\"id\":\"CyZSXr9IBhD36c9-8yJEe\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"eIuL9TYhgLQd1yebESvrX\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Verdana\"},{\"id\":\"s30dMk1Yk-76symPH48bZ\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__object_update,mcp__narrative-eval__folder_fonts_list",
+              "max_results": 2
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
           },
           {
             "tool": "deck_fonts_list",
             "command": "deck.fonts.list",
             "input": {
-              "deckId": "FbkkP5jZhP55"
+              "deckId": "hz-jxc_A70ue"
             },
             "isError": false,
             "errorCode": null,
@@ -188,37 +200,25 @@
             "text": "{\"fonts\":[]}"
           },
           {
-            "tool": "ToolSearch",
-            "command": null,
-            "input": {
-              "query": "select:mcp__narrative-eval__object_update",
-              "max_results": 1
-            },
-            "isError": false,
-            "errorCode": null,
-            "result": null,
-            "text": ""
-          },
-          {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "FbkkP5jZhP55",
+              "deckId": "hz-jxc_A70ue",
               "request": "Make every heading on slide 1 use Inter Bold"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_Rx1C3SF0drqxRv8e"
+              "runId": "run_8X1Ymw43sqt2yAfy"
             },
-            "text": "{\"runId\":\"run_Rx1C3SF0drqxRv8e\"}"
+            "text": "{\"runId\":\"run_8X1Ymw43sqt2yAfy\"}"
           },
           {
             "tool": "ops_apply",
             "command": "ops.apply",
             "input": {
-              "deckId": "FbkkP5jZhP55",
-              "runId": "run_Rx1C3SF0drqxRv8e",
+              "deckId": "hz-jxc_A70ue",
+              "runId": "run_8X1Ymw43sqt2yAfy",
               "ops": [
                 {
                   "command": "text_format",
@@ -227,7 +227,7 @@
                       "slide": {
                         "index": 0
                       },
-                      "object": "m_YK-6D-xmMW-WwroxdHS"
+                      "object": "cs1iE2rQl0zEOwYVuKgTz"
                     },
                     "clear": ["fontFamily", "fontWeight", "bold"]
                   }
@@ -240,21 +240,21 @@
                     },
                     "updates": [
                       {
-                        "object": "AWeOlSmIdAI1tQNNAAaE8",
+                        "object": "oTe48RQqOfV1cZs532BiM",
                         "patch": {
                           "fontFamily": "Inter",
                           "fontWeight": "bold"
                         }
                       },
                       {
-                        "object": "m_YK-6D-xmMW-WwroxdHS",
+                        "object": "cs1iE2rQl0zEOwYVuKgTz",
                         "patch": {
                           "fontFamily": "Inter",
                           "fontWeight": "bold"
                         }
                       },
                       {
-                        "object": "1XRQQPo1LhzoqxgPeORNg",
+                        "object": "eIuL9TYhgLQd1yebESvrX",
                         "patch": {
                           "fontFamily": "Inter",
                           "fontWeight": "bold"
@@ -274,20 +274,20 @@
                 },
                 {
                   "updated": [
-                    "AWeOlSmIdAI1tQNNAAaE8",
-                    "m_YK-6D-xmMW-WwroxdHS",
-                    "1XRQQPo1LhzoqxgPeORNg"
+                    "oTe48RQqOfV1cZs532BiM",
+                    "cs1iE2rQl0zEOwYVuKgTz",
+                    "eIuL9TYhgLQd1yebESvrX"
                   ]
                 }
               ]
             },
-            "text": "{\"results\":[{\"ranges\":1},{\"updated\":[\"AWeOlSmIdAI1tQNNAAaE8\",\"m_YK-6D-xmMW-WwroxdHS\",\"1XRQQPo1LhzoqxgPeORNg\"]}]}"
+            "text": "{\"results\":[{\"ranges\":1},{\"updated\":[\"oTe48RQqOfV1cZs532BiM\",\"cs1iE2rQl0zEOwYVuKgTz\",\"eIuL9TYhgLQd1yebESvrX\"]}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "FbkkP5jZhP55",
+              "deckId": "hz-jxc_A70ue",
               "slide": {
                 "index": 0
               }
@@ -295,7 +295,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "hU0qJld2rzXmGm4bnhPJu",
+              "id": "5SeWQFFvMTeFC1c0vPTIH",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -304,7 +304,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "AWeOlSmIdAI1tQNNAAaE8",
+                  "id": "oTe48RQqOfV1cZs532BiM",
                   "type": "text",
                   "x": 100,
                   "y": 120,
@@ -320,7 +320,7 @@
                   "fontFamily": "Inter"
                 },
                 {
-                  "id": "6dfjJpKdW33ZvGYYHYE8g",
+                  "id": "2NMy1sK_7yarb6kFG6vVq",
                   "type": "text",
                   "x": 100,
                   "y": 230,
@@ -336,7 +336,7 @@
                   "fontFamily": "Georgia"
                 },
                 {
-                  "id": "m_YK-6D-xmMW-WwroxdHS",
+                  "id": "cs1iE2rQl0zEOwYVuKgTz",
                   "type": "text",
                   "x": 700,
                   "y": 120,
@@ -352,7 +352,7 @@
                   "fontFamily": "Inter"
                 },
                 {
-                  "id": "M9F_royIDB9-6rD5wbr96",
+                  "id": "CyZSXr9IBhD36c9-8yJEe",
                   "type": "text",
                   "x": 700,
                   "y": 230,
@@ -368,7 +368,7 @@
                   "fontFamily": "Georgia"
                 },
                 {
-                  "id": "1XRQQPo1LhzoqxgPeORNg",
+                  "id": "eIuL9TYhgLQd1yebESvrX",
                   "type": "text",
                   "x": 1300,
                   "y": 120,
@@ -384,7 +384,7 @@
                   "fontFamily": "Inter"
                 },
                 {
-                  "id": "gRSzpkD_TlFCVp7nzGYY1",
+                  "id": "s30dMk1Yk-76symPH48bZ",
                   "type": "text",
                   "x": 1300,
                   "y": 230,
@@ -403,10 +403,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"hU0qJld2rzXmGm4bnhPJu\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"AWeOlSmIdAI1tQNNAAaE8\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"6dfjJpKdW33ZvGYYHYE8g\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"m_YK-6D-xmMW-WwroxdHS\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"M9F_royIDB9-6rD5wbr96\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"1XRQQPo1LhzoqxgPeORNg\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"gRSzpkD_TlFCVp7nzGYY1\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"5SeWQFFvMTeFC1c0vPTIH\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"oTe48RQqOfV1cZs532BiM\",\"type\":\"text\",\"x\":100,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Revenue\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"2NMy1sK_7yarb6kFG6vVq\",\"type\":\"text\",\"x\":100,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Revenue grew 12% on strong EMEA demand.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"cs1iE2rQl0zEOwYVuKgTz\",\"type\":\"text\",\"x\":700,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Operating costs\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"CyZSXr9IBhD36c9-8yJEe\",\"type\":\"text\",\"x\":700,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"Costs stayed flat year over year.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"},{\"id\":\"eIuL9TYhgLQd1yebESvrX\",\"type\":\"text\",\"x\":1300,\"y\":120,\"width\":520,\"height\":80,\"rotation\":0,\"text\":\"Outlook\",\"fontSize\":44,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Inter\"},{\"id\":\"s30dMk1Yk-76symPH48bZ\",\"type\":\"text\",\"x\":1300,\"y\":230,\"width\":520,\"height\":200,\"rotation\":0,\"text\":\"We expect growth to continue.\",\"fontSize\":22,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"fontFamily\":\"Georgia\"}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "All three headings on slide 1 now use Inter Bold. I read the slide again afterwards to confirm it.\n\n- **Revenue**: was Georgia regular, now Inter Bold.\n- **Operating costs**: was Arial, with \"costs\" set to Courier New. I removed that separate font on \"costs\" so the whole heading is now Inter Bold.\n- **Outlook**: was Verdana Bold, now Inter Bold.\n\nThe three body text boxes haven't changed. They're still Georgia, 22 pt, regular weight. Font sizes, colours and positions are the same for everything on the slide.\n\nThe deck doesn't store its own copy of Inter. I didn't check whether this deck's folder provides Inter, so if the headings don't show in Inter in the editor, the font may need to be added to the folder.\n\nAll of this was done as one change, so you can undo it in one step if needed.",
+        "finalText": "All three headings on slide 1 of \"Results overview ev8c2dee\" are now Inter Bold. I re-read the slide afterwards to confirm it.\n\n- **Revenue**: changed from Georgia Regular to Inter Bold.\n- **Operating costs**: changed from Arial to Inter Bold. The word \"costs\" had its own Courier New font, so I removed that first. Without that step it would have stayed Courier New.\n- **Outlook**: changed from Verdana Bold to Inter Bold.\n\nI didn't touch the three body text boxes, and they're still Georgia 22 Regular.\n\nInter isn't one of the deck's own fonts, and I didn't check the folder's fonts. The deck should still show Inter if Narrative provides it by default, but if the headings don't look like Inter in the editor, it needs uploading to the folder.\n\nAll of this was one change, so it can be undone in one step from the editor's Agent activity popover, or I can undo it for you.",
         "turns": 9,
         "isError": false,
         "stopReason": "success"

@@ -516,11 +516,23 @@ export const uploadSessions = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     /** The tus upload the session created; null until it creates one. */
     uploadId: text('upload_id'),
+    /**
+     * The credential that asked for the session (auth/agentSessions.ts
+     * credential keys, migration 0025): revoking it deletes the session.
+     * Null for a browser session.
+     */
+    credentialKey: text('credential_key'),
+    /** The exact size of the one file the session may upload (migration 0025). */
+    sizeBytes: integer('size_bytes'),
+    /** image | video | font: the only kind the session may upload (migration 0025). */
+    kind: text('kind'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     uniqueIndex('upload_sessions_token_hash_idx').on(t.tokenHash),
     index('upload_sessions_expires_at_idx').on(t.expiresAt),
+    index('upload_sessions_credential_key_idx').on(t.credentialKey),
+    index('upload_sessions_user_sub_idx').on(t.userSub),
   ],
 )
 

@@ -1,24 +1,24 @@
 {
   "scenario": "transition-remove-direction",
-  "tag": "evd4934d",
-  "recordedAt": "2026-09-28T20:53:08.694Z",
+  "tag": "ev8c2dee",
+  "recordedAt": "2026-09-28T21:56:29.048Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "AWc-bDwqB7zh",
-    "title": "Roadshow evd4934d"
+    "deckId": "c8cACp_DnvxU",
+    "title": "Roadshow ev8c2dee"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "Slide 2 of the Narrative deck \"Roadshow evd4934d\" (deckId AWc-bDwqB7zh) has a push transition with a direction. Remove the direction from that transition, but keep it a push transition with the same duration.",
+        "prompt": "Slide 2 of the Narrative deck \"Roadshow ev8c2dee\" (deckId c8cACp_DnvxU) has a push transition with a direction. Remove the direction from that transition, but keep it a push transition with the same duration.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__slide_setTransition,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck",
-              "max_results": 4
+              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__slide_setTransition,mcp__narrative-eval__agent_startRun",
+              "max_results": 3
             },
             "isError": false,
             "errorCode": null,
@@ -29,7 +29,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "AWc-bDwqB7zh",
+              "deckId": "c8cACp_DnvxU",
               "slide": {
                 "index": 1
               }
@@ -37,7 +37,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "qoxRJjcRt-BkeptHvbtR1",
+              "id": "Fbj4xlFCBD6B9rWyHRtd_",
               "index": 1,
               "transition": {
                 "kind": "push",
@@ -47,7 +47,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "o_egVSvQiqtsm3qoDwn-Z",
+                  "id": "I-8fIHkSRliiMgXSxopYL",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -65,28 +65,28 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"qoxRJjcRt-BkeptHvbtR1\",\"index\":1,\"transition\":{\"kind\":\"push\",\"durationMs\":500,\"direction\":\"left\"},\"background\":null,\"objects\":[{\"id\":\"o_egVSvQiqtsm3qoDwn-Z\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Stop one: Berlin\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"Fbj4xlFCBD6B9rWyHRtd_\",\"index\":1,\"transition\":{\"kind\":\"push\",\"durationMs\":500,\"direction\":\"left\"},\"background\":null,\"objects\":[{\"id\":\"I-8fIHkSRliiMgXSxopYL\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Stop one: Berlin\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "AWc-bDwqB7zh",
+              "deckId": "c8cACp_DnvxU",
               "request": "Remove the direction from slide 2's push transition"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_dQR6Yv4T7pIlQL-g"
+              "runId": "run_CZQE5ftmBCYRjqzl"
             },
-            "text": "{\"runId\":\"run_dQR6Yv4T7pIlQL-g\"}"
+            "text": "{\"runId\":\"run_CZQE5ftmBCYRjqzl\"}"
           },
           {
             "tool": "slide_setTransition",
             "command": "slide.setTransition",
             "input": {
-              "deckId": "AWc-bDwqB7zh",
-              "slide": "qoxRJjcRt-BkeptHvbtR1",
+              "deckId": "c8cACp_DnvxU",
+              "slide": "Fbj4xlFCBD6B9rWyHRtd_",
               "kind": "push",
               "durationMs": 500,
               "direction": null
@@ -100,7 +100,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "AWc-bDwqB7zh",
+              "deckId": "c8cACp_DnvxU",
               "slide": {
                 "index": 1
               }
@@ -108,7 +108,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "qoxRJjcRt-BkeptHvbtR1",
+              "id": "Fbj4xlFCBD6B9rWyHRtd_",
               "index": 1,
               "transition": {
                 "kind": "push",
@@ -117,7 +117,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "o_egVSvQiqtsm3qoDwn-Z",
+                  "id": "I-8fIHkSRliiMgXSxopYL",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -135,10 +135,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"qoxRJjcRt-BkeptHvbtR1\",\"index\":1,\"transition\":{\"kind\":\"push\",\"durationMs\":500},\"background\":null,\"objects\":[{\"id\":\"o_egVSvQiqtsm3qoDwn-Z\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Stop one: Berlin\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"Fbj4xlFCBD6B9rWyHRtd_\",\"index\":1,\"transition\":{\"kind\":\"push\",\"durationMs\":500},\"background\":null,\"objects\":[{\"id\":\"I-8fIHkSRliiMgXSxopYL\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Stop one: Berlin\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "I removed the direction from the transition on slide 2 (\"Stop one: Berlin\"). It was a push to the left and is now a push with no direction. It's still a push transition and still 500 ms long; I checked the slide afterwards to confirm.\n\nThe change is saved as a single run, so you can undo it in one step if needed.",
+        "finalText": "I removed the direction from slide 2's push transition (\"Stop one: Berlin\"). Before the change it was a push to the left over 500 ms. I read the slide again afterwards: it's still a push transition, still 500 ms, and it no longer has a direction.\n\nThe edit is logged as its own run in the Agent activity popover, so you can undo it there if needed.",
         "turns": 6,
         "isError": false,
         "stopReason": "success"

@@ -299,18 +299,57 @@ describe('media.uploadSession', () => {
     const c = ctx()
     const out = (await runCommand(registry, c, 'media.uploadSession', {
       filename: "team photo's.png",
+      sizeBytes: 48213,
     })) as { curl: string; headers: Record<string, string>; url: string; kind: string }
     expect(out.kind).toBe('image')
     expect(out.headers['Authorization']).toMatch(/^Bearer nus_/)
     expect(out.headers['Tus-Resumable']).toBe('1.0.0')
     expect(out.headers['Content-Type']).toBe('application/offset+octet-stream')
-    // The file name is quoted for the shell, apostrophe included.
-    expect(out.curl.startsWith(`FILE='./team photo'\\''s.png';`)).toBe(true)
-    expect(out.curl).toContain(`-X POST '${out.url}'`)
-    expect(out.curl).toContain(`-H "Upload-Length: $(wc -c < "$FILE" | tr -d ' ')"`)
-    expect(out.curl).toContain('--data-binary @"$FILE"')
+    // One curl command; the file name is quoted for the shell, apostrophe included.
+    const file = `'./team photo'\\''s.png'`
+    expect(out.curl.startsWith(`curl -sS --fail-with-body -X POST '${out.url}'`)).toBe(true)
+    expect(out.headers['Upload-Length']).toBe('48213')
+    expect(out.curl).toContain(`-H 'Upload-Length: 48213'`)
+    // Nothing for the shell to expand: a restricted runner refuses `$(…)`.
+    expect(out.curl).not.toMatch(/\$\(|`/)
+    expect(out.curl).toContain(`--data-binary @${file}`)
+    // The token reaches curl on stdin, not in its arguments.
+    expect(out.curl).toContain('-H @-')
+    expect(out.curl.endsWith(`<<< '${'Authorization: ' + out.headers['Authorization']}'`)).toBe(
+      true,
+    )
+    expect(out.curl.split('<<<')[0]).not.toContain('nus_')
     const [call] = callsTo(c, 'media').filter((x) => x.method === 'openUploadSession')
-    expect(call?.args).toMatchObject({ deckId: FIXTURE_DECK_ID, filename: "team photo's.png" })
+    expect(call?.args).toMatchObject({
+      deckId: FIXTURE_DECK_ID,
+      filename: "team photo's.png",
+      sizeBytes: 48213,
+    })
+  })
+
+  it('takes a plain file name only — no path, no dot file, no option-like name', async () => {
+    for (const filename of [
+      '../../.ssh/id_ed25519',
+      'a/b.png',
+      'c:\\x.png',
+      '.env',
+      '-rf.png',
+      'x\ny.png',
+    ]) {
+      const err = await failure(
+        runCommand(registry, ctx(), 'media.uploadSession', { filename, sizeBytes: 10 }),
+      )
+      expect(err.code, filename).toBe('invalid_input')
+    }
+  })
+
+  it('needs the file size, a whole number of bytes', async () => {
+    for (const sizeBytes of [undefined, 0, -1, 1.5]) {
+      const err = await failure(
+        runCommand(registry, ctx(), 'media.uploadSession', { filename: 'a.png', sizeBytes }),
+      )
+      expect(err.code, String(sizeBytes)).toBe('invalid_input')
+    }
   })
 })
 

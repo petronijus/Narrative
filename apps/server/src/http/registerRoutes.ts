@@ -12,6 +12,7 @@
  * before this runs.
  */
 
+import type { UploadSessionService } from '../media/uploadSessions.js'
 import type { FastifyInstance } from 'fastify'
 import type { Database } from '../db/client.js'
 import { registerDeckRoutes } from '../routes/decks.js'
@@ -52,6 +53,8 @@ export interface HttpRouteDeps {
    * `agent`, only its handlers read it.
    */
   mcp: McpRouteDeps
+  /** Upload session tokens the tus server accepts (`media.uploadSession`). */
+  uploadSessions: UploadSessionService
 }
 
 export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDeps): Promise<void> {
@@ -95,7 +98,7 @@ export async function registerHttpRoutes(app: FastifyInstance, deps: HttpRouteDe
   registerAccessTokenRoutes(app)
 
   // Media routes: tus upload + signed URL + delete
-  registerTusPlugin(app, { db })
+  registerTusPlugin(app, { db, uploadSessions: deps.uploadSessions })
   await registerMediaRoutes(app, { db })
 
   // Agent host (agentic A1, ADR 0011): the command API for scripts, and the

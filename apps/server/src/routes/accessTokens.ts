@@ -30,9 +30,24 @@ import { closeAgentSessionsForCredential, credentialKeyForToken } from '../auth/
 import { authPreHandler, getAuthOpts } from '../auth/fastifyAuth.js'
 import { PatError, parseCreatePatInput } from '../auth/personalAccessTokens.js'
 import { tokenCreateRouteRateLimit } from '../http/rateLimit.js'
+import { revokeUploadSessionsForCredential } from '../media/uploadSessions.js'
 
-export function registerAccessTokenRoutes(app: FastifyInstance): void {
+export interface AccessTokenRouteOpts {
+  /**
+   * Remove what a revoked token opened besides MCP sessions — its upload
+   * sessions (default: the Postgres delete). Resolves to how many.
+   */
+  revokeUploadSessions?: (credentialKey: string) => Promise<number>
+}
+
+export function registerAccessTokenRoutes(
+  app: FastifyInstance,
+  opts: AccessTokenRouteOpts = {},
+): void {
   const pats = () => getAuthOpts(app).pats
+  const revokeUploadSessions =
+    opts.revokeUploadSessions ??
+    ((key: string) => revokeUploadSessionsForCredential(getAuthOpts(app).db, key))
 
   app.get('/access-tokens', { preHandler: [authPreHandler] }, async (req) => {
     const tokens = await pats().list(req.user!.sub)
@@ -83,10 +98,14 @@ export function registerAccessTokenRoutes(app: FastifyInstance): void {
       // and tokens are never accepted on the Hocuspocus WebSocket
       // (hocuspocus/authenticate.ts). What would outlive the revocation is an
       // open MCP session with its server→client stream: end those now.
-      const closedSessions = await closeAgentSessionsForCredential(
-        credentialKeyForToken(req.params.id),
+      const key = credentialKeyForToken(req.params.id)
+      const closedSessions = await closeAgentSessionsForCredential(key)
+      // Upload sessions the token opened (media.uploadSession) go with it.
+      const uploadSessions = await revokeUploadSessions(key)
+      req.log.info(
+        { tokenId: req.params.id, closedSessions, uploadSessions },
+        'personal access token revoked',
       )
-      req.log.info({ tokenId: req.params.id, closedSessions }, 'personal access token revoked')
       return reply.status(204).send()
     },
   )

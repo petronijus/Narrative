@@ -3,7 +3,8 @@
  * PUBLIC_API_URL, and the defaults when it is unset. In production the
  * default must come from the SPA origin (the server container is never given
  * DOMAIN), so the resource is https://<domain>/api/mcp, never localhost.
- * Also MCP_OAUTH_CIMD_HOSTS and MCP_OAUTH_DCR_ENABLED.
+ * Also MCP_OAUTH_CIMD_HOSTS and MCP_OAUTH_DCR_ENABLED, and that the base is
+ * https (or http on loopback): bearer credentials travel to it.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -84,5 +85,17 @@ describe('mcpPublicConfigFromEnv', () => {
     expect(() => mcpPublicConfigFromEnv({ MCP_OAUTH_DCR_ENABLED: 'yes' }, defaults)).toThrow(
       /MCP_OAUTH_DCR_ENABLED/,
     )
+  })
+
+  it('takes PUBLIC_API_URL over https, or plain http on loopback only', () => {
+    const defaults = { apiPort: 3001, isProd: true, spaOrigin: 'https://narrative.example' }
+    for (const base of ['http://narrative.example/api', 'http://192.168.20.150:3001', 'ftp://x']) {
+      expect(() => mcpPublicConfigFromEnv({ PUBLIC_API_URL: base }, defaults), base).toThrow(
+        /PUBLIC_API_URL must be an https URL/,
+      )
+    }
+    for (const base of ['http://localhost:3001', 'http://127.0.0.1:3001', 'http://[::1]:3001']) {
+      expect(mcpPublicConfigFromEnv({ PUBLIC_API_URL: base }, defaults).apiBaseUrl, base).toBe(base)
+    }
   })
 })

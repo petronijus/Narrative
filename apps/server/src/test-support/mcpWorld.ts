@@ -38,6 +38,8 @@ import { registryWithFakes } from './fakeCommands.js'
 import { allowAllPatOwners, createMemoryPatStore, type MemoryPatStore } from './memoryPatStore.js'
 
 export interface McpWorld {
+  /** Credential keys revoked OAuth grants handed to `onCredentialRevoked` (their upload sessions go). */
+  revokedCredentials: string[]
   world: AgentWorld
   app: FastifyInstance
   mcp: McpRuntime
@@ -114,6 +116,8 @@ export async function createMcpWorld(
   }
   let offset = 0
   const now = (): Date => new Date(Date.now() + offset)
+  /** Credential keys the runtime reported revoked (onCredentialRevoked). */
+  const revokedCredentials: string[] = []
 
   const app = Fastify({ logger: false })
   await app.register(cookie, { secret: 'test-cookie-secret-test-cookie-secret' })
@@ -140,6 +144,10 @@ export async function createMcpWorld(
     oauthStore,
     isOwnerAllowed: async (owner: McpTokenOwner) => !refusedOwners.has(owner.userSub),
     pats,
+    onCredentialRevoked: async (key) => {
+      revokedCredentials.push(key)
+      return 0
+    },
     version: '0.0.0-test',
     log: app.log,
     sweep: false,
@@ -162,6 +170,7 @@ export async function createMcpWorld(
     oauthStore,
     baseUrl,
     refusedOwners,
+    revokedCredentials,
     metadataDocuments,
     metadataFetches,
     advance(ms) {

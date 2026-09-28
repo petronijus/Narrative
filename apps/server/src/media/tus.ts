@@ -76,8 +76,6 @@ import {
 } from '../auth/personalAccessTokens.js'
 import { subsystemLogger } from '../observability/logger.js'
 import {
-  createDrizzleUploadSessionStore,
-  createUploadSessionService,
   readBearerUploadSession,
   type UploadSessionService,
   type VerifiedUploadSession,
@@ -364,8 +362,11 @@ async function requireUploadCreatorAndAccess(
 
 export interface TusPluginOpts {
   db: Database
-  /** Upload session tokens (default: the Postgres-backed service). */
-  uploadSessions?: UploadSessionService
+  /**
+   * Upload session tokens (`media.uploadSession`). The same service the
+   * agent host issues them from (index.ts), with the sign-in policy.
+   */
+  uploadSessions: UploadSessionService
 }
 
 // ---------------------------------------------------------------------------
@@ -413,8 +414,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   const { db } = opts
   const s3 = buildS3Client()
   const appWithAuth = app as AppWithAuthOpts
-  const sessions =
-    opts.uploadSessions ?? createUploadSessionService(createDrizzleUploadSessionStore(db))
+  const sessions = opts.uploadSessions
 
   // Build S3Store config — bucket is passed inside s3ClientConfig per @tus/s3-store API
   const s3Config = buildS3Config()
@@ -425,6 +425,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   const tusServer = new TusServer({
     path: '/api/uploads',
     maxSize: MAX_UPLOAD_SIZE,
+    // A finished upload is an asset: terminating it through tus would delete
+    // the stored bytes under a live media_assets row. Media is removed with
+    // media.delete (the row) and the storage sweep.
+    disableTerminationForFinishedUploads: true,
 
     // -----------------------------------------------------------------------
     // Public upload URLs (Location header)
@@ -513,6 +517,16 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       }
       const { userId } = uploader
 
+      // Every size check below is against the declared length: an upload
+      // that defers it (tus creation-defer-length) could declare anything
+      // later, past every per-kind cap. The editor always knows the size.
+      if (upload.size === undefined || upload.sizeIsDeferred === true) {
+        throw {
+          status_code: 400,
+          body: 'Upload-Length is required (a deferred length is not accepted)',
+        }
+      }
+
       // 2. Parse metadata from Upload-Metadata header
       const meta = parseMetadata(req.headers['upload-metadata'])
       const deckId = meta['deckId'] ?? upload.metadata?.['deckId'] ?? null
@@ -540,11 +554,6 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         )
       }
 
-      // An upload session uploads into its own deck only.
-      if (uploader.session !== null && deckId !== uploader.session.deckId) {
-        throw { status_code: 403, body: 'Forbidden: this upload session is for another deck' }
-      }
-
       // M2: a token uploads media only; decks go through the commands.
       if (uploader.viaToken) {
         const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
@@ -553,6 +562,28 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           throw {
             status_code: 415,
             body: `Unsupported media type for a token upload: ${mime || 'none'}. Only image/*, video/* and font files are accepted.`,
+          }
+        }
+      }
+
+      // An upload session uploads one file of its declared size and kind,
+      // into its own deck.
+      if (uploader.session !== null) {
+        const session = uploader.session
+        const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
+        if (deckId !== session.deckId) {
+          throw { status_code: 403, body: 'Forbidden: this upload session is for another deck' }
+        }
+        if (upload.size !== session.sizeBytes) {
+          throw {
+            status_code: 403,
+            body: `Forbidden: this upload session is for a file of ${session.sizeBytes} bytes`,
+          }
+        }
+        if (classifyUpload(mime, filename) !== session.kind) {
+          throw {
+            status_code: 403,
+            body: `Forbidden: this upload session is for a ${session.kind}`,
           }
         }
       }
@@ -697,8 +728,14 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       uploadId: string,
     ): Promise<void> => {
       const method = req.method?.toUpperCase() ?? ''
-      // Only enforce on PATCH (data chunks) and DELETE (termination)
-      if (method !== 'PATCH' && method !== 'DELETE') return
+      // GET would serve the stored bytes of an upload (the original file,
+      // bypassing signed media URLs and any later loss of access); the
+      // editor never downloads through tus, so it is refused outright.
+      if (method === 'GET') throw { status_code: 404, body: 'Not found' }
+      // PATCH (data), DELETE (termination) and HEAD (the resume offset — it
+      // also returns the upload's metadata) are for the upload's creator
+      // while they still have access. OPTIONS / POST have their own checks.
+      if (method !== 'PATCH' && method !== 'DELETE' && method !== 'HEAD') return
 
       // TUS-1: load the upload's stored metadata (the `.info` sidecar) so we
       // can verify the requester is the original creator AND still has access
@@ -752,22 +789,27 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       await requireUploadCreatorAndAccess(req, upload, db, appWithAuth, sessions)
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
-      const userId = (await resolveUploader(req, db, appWithAuth, sessions))?.userId ?? 'unknown'
+      const finisher = await resolveUploader(req, db, appWithAuth, sessions)
+      const userId = finisher?.userId ?? 'unknown'
+      // An agent's upload (personal access token or upload session) must
+      // prove its content type (finalizeUpload.ts `strictContent`).
+      const strictContent = finisher?.viaToken === true
 
-      // Parse metadata for filename + mime
-      const meta = parseMetadata(req.headers['upload-metadata'])
-      const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
-      const mimeRaw =
-        meta['content-type'] ??
-        meta['mimeType'] ??
-        upload.metadata?.['content-type'] ??
-        'application/octet-stream'
-      const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
+      // What the upload IS — type, name, deck / folder, insert index — comes
+      // only from the metadata onUploadCreate checked and persisted, never
+      // from the finishing request's own Upload-Metadata header: a later
+      // PATCH could otherwise re-declare a checked image upload as a .pptx
+      // (running an import a token may not) or as a font / SVG (read whole
+      // into memory past the image size check).
+      const stored = upload.metadata ?? {}
+      const filename = stored['filename'] ?? undefined
+      const mimeRaw = stored['content-type'] ?? 'application/octet-stream'
+      const folderId = stored['folderId'] ?? null
       // A pptx bound to a deck carries its target index; the compound upload
       // id stores 'unknown' for the folder-scoped case, so the metadata is
       // what distinguishes them.
-      const pptxDeckId = upload.metadata?.['deckId'] ?? meta['deckId'] ?? null
-      const insertAtRaw = meta['insertAt'] ?? upload.metadata?.['insertAt'] ?? null
+      const pptxDeckId = stored['deckId'] ?? null
+      const insertAtRaw = stored['insertAt'] ?? null
 
       // Get authoritative size from S3 head
       let sizeBytes = upload.size ?? 0
@@ -918,6 +960,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           filename,
           sizeBytes,
           log,
+          strictContent,
         })
       } catch (err) {
         if (err instanceof UploadRejected) throw { status_code: err.status, body: err.message }

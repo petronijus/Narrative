@@ -161,6 +161,12 @@ export interface AgentSessionInfo {
   surface: 'mcp' | 'api'
   /** Client name the session reported (e.g. "claude-code"), when it reported one. */
   clientName?: string
+  /**
+   * The credential the session authenticated with, as the server's
+   * revocation paths name it (`token:<pat id>`, `token:oauth:<grant id>`):
+   * what it opens (an upload session) dies when that credential is revoked.
+   */
+  credential?: string
 }
 
 export interface CommandContext {

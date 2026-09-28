@@ -165,7 +165,7 @@ export class McpSessionManager {
 
   private async open(userId: string, credential: string): Promise<McpSession> {
     await this.enforceUserCap(userId)
-    const identity: SessionIdentity = { sessionId: null, userId }
+    const identity: SessionIdentity = { sessionId: null, userId, credentialKey: credential }
     // Assigned right below; the transport callbacks only run after connect.
     let session!: McpSession
     const transport = new StreamableHTTPServerTransport({

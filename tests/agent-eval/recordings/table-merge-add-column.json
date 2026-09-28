@@ -1,18 +1,18 @@
 {
   "scenario": "table-merge-add-column",
-  "tag": "evd4934d",
-  "recordedAt": "2026-09-28T20:52:38.252Z",
+  "tag": "ev8c2dee",
+  "recordedAt": "2026-09-28T21:56:02.846Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "NcFmRO5dfMdy",
-    "title": "Regional results evd4934d",
-    "tableId": "IIOZWHfTUSyEDEu9PFzcx"
+    "deckId": "SItPvLNz1rHA",
+    "title": "Regional results ev8c2dee",
+    "tableId": "Nhg7HKanNVfZknKsLLZDP"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In the table on slide 1 of the Narrative deck \"Regional results evd4934d\" (deckId NcFmRO5dfMdy): first merge the entire top row into one header cell, then add one new column at the right end of the table (the new column does not need to be part of the header).",
+        "prompt": "In the table on slide 1 of the Narrative deck \"Regional results ev8c2dee\" (deckId SItPvLNz1rHA): first merge the entire top row into one header cell, then add one new column at the right end of the table (the new column does not need to be part of the header).",
         "calls": [
           {
             "tool": "ToolSearch",
@@ -27,10 +27,24 @@
             "text": ""
           },
           {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "SItPvLNz1rHA",
+              "request": "Merge the top row of the slide 1 table into one header cell, then add a column at the right end"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_b6nu-Ue2jV02CbkD"
+            },
+            "text": "{\"runId\":\"run_b6nu-Ue2jV02CbkD\"}"
+          },
+          {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "NcFmRO5dfMdy",
+              "deckId": "SItPvLNz1rHA",
               "slide": {
                 "index": 0
               }
@@ -38,7 +52,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "cTP84sQ7u68kxNbKl_0xM",
+              "id": "DECqAq6RBi0ikgBEigtrr",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -47,7 +61,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "VmwRdAeYVjX5VgjyxWZ0a",
+                  "id": "jSAOxTdsjOUjNptV8-lVw",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -62,7 +76,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "IIOZWHfTUSyEDEu9PFzcx",
+                  "id": "Nhg7HKanNVfZknKsLLZDP",
                   "type": "table",
                   "x": 160,
                   "y": 260,
@@ -129,29 +143,17 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"cTP84sQ7u68kxNbKl_0xM\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"VmwRdAeYVjX5VgjyxWZ0a\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Regional results\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"IIOZWHfTUSyEDEu9PFzcx\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":900,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\"},{\"text\":\"Q1\"},{\"text\":\"Q2\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"}]]}],\"animations\":[],\"notes\":\"\"}"
-          },
-          {
-            "tool": "agent_startRun",
-            "command": "agent.startRun",
-            "input": {
-              "deckId": "NcFmRO5dfMdy",
-              "request": "Merge the table's top row into one header cell, then add a column at the right end"
-            },
-            "isError": false,
-            "errorCode": null,
-            "result": {
-              "runId": "run_uPT2TMmMTvD8QbBx"
-            },
-            "text": "{\"runId\":\"run_uPT2TMmMTvD8QbBx\"}"
+            "text": "{\"id\":\"DECqAq6RBi0ikgBEigtrr\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"jSAOxTdsjOUjNptV8-lVw\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Regional results\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"Nhg7HKanNVfZknKsLLZDP\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":900,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\"},{\"text\":\"Q1\"},{\"text\":\"Q2\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"}]]}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "table_merge",
             "command": "table.merge",
             "input": {
-              "deckId": "NcFmRO5dfMdy",
-              "slide": "cTP84sQ7u68kxNbKl_0xM",
-              "table": "IIOZWHfTUSyEDEu9PFzcx",
+              "deckId": "SItPvLNz1rHA",
+              "slide": {
+                "index": 0
+              },
+              "table": "Nhg7HKanNVfZknKsLLZDP",
               "range": {
                 "from": {
                   "row": 0,
@@ -179,9 +181,11 @@
             "tool": "table_col_insert",
             "command": "table.col.insert",
             "input": {
-              "deckId": "NcFmRO5dfMdy",
-              "slide": "cTP84sQ7u68kxNbKl_0xM",
-              "table": "IIOZWHfTUSyEDEu9PFzcx"
+              "deckId": "SItPvLNz1rHA",
+              "slide": {
+                "index": 0
+              },
+              "table": "Nhg7HKanNVfZknKsLLZDP"
             },
             "isError": false,
             "errorCode": null,
@@ -195,20 +199,22 @@
             "tool": "query_object",
             "command": "query.object",
             "input": {
-              "deckId": "NcFmRO5dfMdy",
-              "slide": "cTP84sQ7u68kxNbKl_0xM",
-              "object": "IIOZWHfTUSyEDEu9PFzcx"
+              "deckId": "SItPvLNz1rHA",
+              "slide": {
+                "index": 0
+              },
+              "object": "Nhg7HKanNVfZknKsLLZDP"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "slide": {
-                "id": "cTP84sQ7u68kxNbKl_0xM",
+                "id": "DECqAq6RBi0ikgBEigtrr",
                 "index": 0
               },
               "stackIndex": 1,
               "object": {
-                "id": "IIOZWHfTUSyEDEu9PFzcx",
+                "id": "Nhg7HKanNVfZknKsLLZDP",
                 "type": "table",
                 "x": 160,
                 "y": 260,
@@ -288,10 +294,10 @@
               },
               "animations": []
             },
-            "text": "{\"slide\":{\"id\":\"cTP84sQ7u68kxNbKl_0xM\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"IIOZWHfTUSyEDEu9PFzcx\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":1200,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\",\"gridSpan\":3,\"rowSpan\":1},{\"text\":\"Q1\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"Q2\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"},{\"text\":\"\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"},{\"text\":\"\"}]]},\"animations\":[]}"
+            "text": "{\"slide\":{\"id\":\"DECqAq6RBi0ikgBEigtrr\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"Nhg7HKanNVfZknKsLLZDP\",\"type\":\"table\",\"x\":160,\"y\":260,\"width\":1200,\"height\":300,\"rotation\":0,\"opacity\":1,\"colWidths\":[300,300,300,300],\"rowHeights\":[100,100,100],\"defaults\":{\"fontSize\":18,\"fontWeight\":\"normal\",\"color\":\"#111111\",\"align\":\"left\",\"vAlign\":\"middle\",\"border\":{\"color\":\"#cccccc\",\"width\":1},\"padding\":{\"top\":8,\"right\":8,\"bottom\":8,\"left\":8}},\"rows\":[[{\"text\":\"Region\",\"gridSpan\":3,\"rowSpan\":1},{\"text\":\"Q1\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"Q2\",\"mergeOriginR\":0,\"mergeOriginC\":0},{\"text\":\"\"}],[{\"text\":\"EMEA\"},{\"text\":\"12\"},{\"text\":\"14\"},{\"text\":\"\"}],[{\"text\":\"APAC\"},{\"text\":\"9\"},{\"text\":\"8\"},{\"text\":\"\"}]]},\"animations\":[]}"
           }
         ],
-        "finalText": "I've made both changes to the table on slide 1 of \"Regional results evd4934d\", and I checked the result afterwards:\n\n1. **Top row merged:** the three cells in the top row are now one header cell showing \"Region\". This hides the \"Q1\" and \"Q2\" labels. They're still stored in the table and will come back if you split the cell again.\n2. **New column added:** there's now a blank fourth column on the right, 300px wide like the others. It isn't part of the merged header, so the top row has the header cell plus one empty cell. The table grew from 900px to 1200px wide.\n\nBecause the quarter labels are hidden, the EMEA and APAC numbers no longer have column headings. If you want, I can add Q1/Q2 as a separate label row under the header, or make the header span the new column too. All of this counts as one change, so it can be undone in a single step.",
+        "finalText": "Both changes are made to the table on slide 1:\n\n1. **Merged the top row:** the three top-row cells are now one header cell that shows \"Region\". Merging hides \"Q1\" and \"Q2\", so the header no longer says which quarter each column is. Their text is still stored and comes back if you split the cell again.\n2. **Added a column on the right:** there's a new blank fourth column that isn't part of the merged header. It's 300px wide like the others, so the table grew from 900px to 1200px wide.\n\nI checked the table afterwards and both changes are in place. You can undo them together from Agent activity (run `run_b6nu-Ue2jV02CbkD`).",
         "turns": 7,
         "isError": false,
         "stopReason": "success"

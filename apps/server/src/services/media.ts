@@ -35,12 +35,16 @@ import {
 } from '../media/uploadPolicy.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import type { ServiceDeps } from './deps.js'
-import { ServiceError, forbidden, notFound, tooLarge, unsupportedType } from './errors.js'
-import { requireOwnedFolder } from './shared.js'
 import {
-  createDrizzleUploadSessionStore,
-  createUploadSessionService,
-} from '../media/uploadSessions.js'
+  ServiceError,
+  badRequest,
+  forbidden,
+  notFound,
+  tooLarge,
+  unsupportedType,
+} from './errors.js'
+import { requireOwnedFolder } from './shared.js'
+import { UploadSessionLimitError } from '../media/uploadSessions.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, withBinarySource, type BinaryFile } from './binarySource.js'
 
 // Presigned-URL TTLs (MEDIA-1). The bucket is private; clients reach video
@@ -194,6 +198,9 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         filename: file.filename,
         sizeBytes: file.sizeBytes,
         log: deps.log,
+        // Only agents upload through this service (media.upload): the bytes
+        // must prove their type (finalizeUpload.ts).
+        strictContent: true,
       })
     } catch (err) {
       if (err instanceof UploadRejected) {
@@ -337,6 +344,8 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     deckId: string
     filename: string
     mimeType?: string | undefined
+    sizeBytes: number
+    credentialKey?: string | undefined
   }): Promise<UploadSessionInfo> {
     const access = await resolveDeckAccess(db, {
       deckId: args.deckId,
@@ -359,12 +368,29 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         `Unsupported media type: ${mimeType}. An upload session takes images, videos and fonts.`,
       )
     }
-    if (deps.apiBaseUrl === undefined) {
-      throw new ServiceError('failed', 500, 'The public API address is not configured')
+    if (!Number.isInteger(args.sizeBytes) || args.sizeBytes < 1) {
+      throw badRequest('sizeBytes must be the size of the file in bytes')
     }
-    const sessions =
-      deps.uploadSessions ?? createUploadSessionService(createDrizzleUploadSessionStore(db))
-    const { token, expiresAt } = await sessions.issue({ userSub: args.userId, deckId: args.deckId })
+    if (args.sizeBytes > maxUploadBytes(kind)) throw tooLarge(tooLargeMessage(kind))
+    if (deps.apiBaseUrl === undefined || deps.uploadSessions === undefined) {
+      throw new ServiceError('failed', 500, 'Upload sessions are not configured on this server')
+    }
+    let issued
+    try {
+      issued = await deps.uploadSessions.issue({
+        userSub: args.userId,
+        deckId: args.deckId,
+        sizeBytes: args.sizeBytes,
+        kind,
+        credentialKey: args.credentialKey,
+      })
+    } catch (err) {
+      if (err instanceof UploadSessionLimitError) {
+        throw new ServiceError('conflict', 429, err.message)
+      }
+      throw err
+    }
+    const { token, expiresAt } = issued
     const b64 = (v: string): string => Buffer.from(v, 'utf8').toString('base64')
     return {
       url: `${deps.apiBaseUrl.replace(/\/+$/, '')}/api/uploads`,
@@ -377,7 +403,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
       ].join(','),
       kind,
       mimeType,
-      maxBytes: maxUploadBytes(kind),
+      sizeBytes: args.sizeBytes,
     }
   }
 

@@ -22,6 +22,7 @@
  * else to deploy, and a server restarted daily still sweeps.
  */
 
+import type { UploadSessionService } from '../media/uploadSessions.js'
 import type { Hocuspocus } from '@hocuspocus/server'
 import type { FastifyBaseLogger } from 'fastify'
 import {
@@ -146,6 +147,8 @@ export interface AgentRuntimeOptions {
   appOrigin: string
   /** Public base URL of the API, for upload sessions agents send files to. */
   apiBaseUrl?: string
+  /** The upload session service (shared with the tus server). */
+  uploadSessions?: UploadSessionService
   /**
    * Keys identifying whom an agent peer works for (agent/presence.ts), MACed
    * with AGENT_PRINCIPAL_KEY_SECRET. The same instance must go to the
@@ -238,6 +241,7 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     runs,
     appOrigin: opts.appOrigin,
     ...(opts.apiBaseUrl === undefined ? {} : { apiBaseUrl: opts.apiBaseUrl }),
+    ...(opts.uploadSessions === undefined ? {} : { uploadSessions: opts.uploadSessions }),
   })
   const confirmations = new AgentConfirmations()
   const host = new ServerHost({

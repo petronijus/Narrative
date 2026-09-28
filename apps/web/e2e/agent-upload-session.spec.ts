@@ -46,6 +46,7 @@ function runShell(line: string, cwd: string): { ok: boolean; out: string } {
 }
 
 test('an agent uploads a local picture with the session curl line, once', async ({ request }) => {
+  const png = Buffer.from(PNG_2PX, 'base64')
   const { id: deckId } = await command<{ id: string }>(request, {}, 'deck.create', {
     title: `upload session ${Date.now()}`,
   })
@@ -53,12 +54,12 @@ test('an agent uploads a local picture with the session curl line, once', async 
     request,
     { deckId },
     'media.uploadSession',
-    { filename: 'logo.png' },
+    { filename: 'logo.png', sizeBytes: png.length },
   )
   expect(session.kind).toBe('image')
 
   const dir = mkdtempSync(join(tmpdir(), 'narrative-upload-'))
-  writeFileSync(join(dir, 'logo.png'), Buffer.from(PNG_2PX, 'base64'))
+  writeFileSync(join(dir, 'logo.png'), png)
 
   const first = runShell(session.curl, dir)
   expect(first.ok, first.out).toBe(true)

@@ -286,24 +286,46 @@ Every call runs through the ServerHost (`agent/serverHost.ts`) with the session'
 
 MCP carries a file only as `{ url }` (a public address the server downloads) or
 `{ base64 }` the model writes out itself — fine for an icon, hopeless for a photo. An
-agent with a shell (Claude Code) calls **`media_uploadSession`** instead: it returns a
-one-time bearer token (`nus_…`) and a ready `curl` line that sends the file in ONE
+agent with a shell (Claude Code) measures the file (`wc -c < logo.png`) and calls
+**`media_uploadSession`** with its name and size instead: it returns a one-time bearer
+token (`nus_…`) and a ready `curl` line that sends the file in ONE
 request to the tus upload the editor uses (`POST <PUBLIC_API_URL>/api/uploads`, tus
 creation-with-upload; the answer is the asset JSON). The file gets the editor's checks
-(media/finalizeUpload.ts).
+(media/finalizeUpload.ts). The curl line holds no shell expansion (Claude Code's
+permission rules refuse `$(…)`), and it passes the token on stdin (`-H @-`), so the
+token is not in the process list while the upload runs.
 
-The token (media/uploadSessions.ts, table `upload_sessions`, migration 0024):
+The token (media/uploadSessions.ts, table `upload_sessions`, migrations 0024–0025):
 
 - is stored only as its SHA-256; the raw value appears once, in the command result;
   the audit log keeps `nus_[redacted]` (agent/opRedaction.ts, also inside the curl line);
 - authenticates tus requests only — it is not a personal access token, every other
   route ignores it;
 - uploads media (image, video, font) into its own deck, as the user who asked, who must
-  still be an editor there;
+  still be an editor there and still pass the sign-in policy;
+- uploads exactly the file it was asked for: its declared size (`Upload-Length` must
+  match, a deferred length is refused) and kind;
 - must start its upload within 15 minutes, is bound to that upload (an atomic claim —
-  a second upload with the token is refused) and may continue it for 2 hours more.
+  a second upload with the token is refused) and may continue it for 2 hours more;
+  only that upload's HEAD / PATCH work with it, never a GET;
+- dies with the credential that asked for it (revoking the access token or MCP
+  connection deletes its sessions) and with the account kill switch
+  (`revokeUserAccess`); at most 10 unused ones per user.
 
-No confirmation: the token can only put a file into the user's own deck.
+Like every agent credential it is refused on the collaboration WebSocket
+(hocuspocus/authenticate.ts), masked in Sentry, the audit log and the eval
+recordings (auth/credentialPatterns.ts), and it only travels over https:
+`PUBLIC_API_URL` must be https except on loopback, or the server does not start.
+
+No confirmation, but the upload is the agent's to run on the user's machine (Claude
+Code asks before running the curl line unless the user allowed it), and a file put into
+a SHARED deck is readable by its collaborators — so deck content could try to talk an
+agent into uploading something it should not (a key file as "an image"). Against that:
+the command description tells the model to upload only files the user named themselves;
+`filename` is a plain name, never a path; and an agent's upload must prove its type —
+an image by its signature or readable dimensions, a video by its container signature,
+a font by parsing (media/finalizeUpload.ts `strictContent`), so arbitrary bytes are
+refused.
 
 ## Confirmation
 

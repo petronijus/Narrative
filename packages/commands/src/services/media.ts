@@ -45,8 +45,8 @@ export interface UploadSessionInfo {
   uploadMetadata: string
   kind: 'image' | 'video' | 'font'
   mimeType: string
-  /** The largest file of this kind the upload accepts. */
-  maxBytes: number
+  /** The exact size the upload must have (`Upload-Length`). */
+  sizeBytes: number
 }
 
 export interface VideoInfo {
@@ -90,6 +90,10 @@ export interface MediaService {
     deckId: string
     filename: string
     mimeType?: string | undefined
+    /** The file's exact size: the session uploads that file only. */
+    sizeBytes: number
+    /** The credential asking (AgentSessionInfo.credential); revoking it ends the session. */
+    credentialKey?: string | undefined
   }): Promise<UploadSessionInfo>
   /** Transcode state and playback URLs of a video (viewer access to its deck). */
   videoInfo(args: {

@@ -10,6 +10,7 @@
  *   - every personal access token of the user;
  *   - every MCP OAuth grant of the user (claude.ai connectors and other OAuth
  *     MCP clients), and with it every access and refresh token of the grant;
+ *   - every upload session of the user (`media.uploadSession`, deleted);
  * and then ends the user's live MCP sessions in this process
  * (auth/agentSessions.ts), so an open session does not keep working until
  * its next request fails.
@@ -23,12 +24,15 @@ import type { Database } from '../db/client.js'
 import { revokeAllMcpGrantsForUser } from '../mcp/oauth/store.js'
 import { closeAgentSessionsForUser } from './agentSessions.js'
 import { revokeAllPersonalAccessTokensForUser } from './personalAccessTokens.js'
+import { revokeAllUploadSessionsForUser } from '../media/uploadSessions.js'
 
 /** How many credentials of each kind were revoked. */
 export interface RevokedAgentCredentials {
   personalAccessTokens: number
   /** MCP OAuth grants ("connected apps"); each takes its tokens with it. */
   mcpOAuthGrants: number
+  /** One-time upload sessions (deleted). */
+  uploadSessions: number
 }
 
 export async function revokeAllAgentCredentialsForUser(
@@ -38,8 +42,9 @@ export async function revokeAllAgentCredentialsForUser(
   const now = new Date()
   const personalAccessTokens = await revokeAllPersonalAccessTokensForUser(db, userSub, now)
   const mcpOAuthGrants = await revokeAllMcpGrantsForUser(db, userSub, now)
+  const uploadSessions = await revokeAllUploadSessionsForUser(db, userSub)
   // After the database revocations: a client that reconnects in between is
   // refused, because its credential is already dead.
   await closeAgentSessionsForUser(userSub)
-  return { personalAccessTokens, mcpOAuthGrants }
+  return { personalAccessTokens, mcpOAuthGrants, uploadSessions }
 }

@@ -1,25 +1,25 @@
 {
   "scenario": "line-end-move",
-  "tag": "evd4934d",
-  "recordedAt": "2026-09-28T20:57:32.761Z",
+  "tag": "ev8c2dee",
+  "recordedAt": "2026-09-28T22:00:42.135Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "DYLHrTj5FqRN",
-    "title": "Growth evd4934d",
-    "arrowId": "8dM6nD563Ik5XjZnIJMz_",
-    "titleId": "JQC9k3coxR5IaMVOvfCDQ"
+    "deckId": "BiIuk_R5-T3_",
+    "title": "Growth ev8c2dee",
+    "arrowId": "TJrHLrZvQU6O_j8sskUPr",
+    "titleId": "imaNQ1Mt_dL2r9nMRHhfV"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Growth evd4934d\" (deckId DYLHrTj5FqRN), the \"Trend arrow\" points to the right. Move its tip (the arrowhead end) to the slide point (1500, 300), leaving its start exactly where it is drawn now.",
+        "prompt": "On slide 1 of the Narrative deck \"Growth ev8c2dee\" (deckId BiIuk_R5-T3_), the \"Trend arrow\" points to the right. Move its tip (the arrowhead end) to the slide point (1500, 300), leaving its start exactly where it is drawn now.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__object_line_setEndpoints,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_object,ReadMcpResourceTool",
+              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__query_object,mcp__narrative-eval__object_line_setEndpoints,mcp__narrative-eval__agent_startRun,ReadMcpResourceTool",
               "max_results": 5
             },
             "isError": false,
@@ -31,7 +31,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "DYLHrTj5FqRN",
+              "deckId": "BiIuk_R5-T3_",
               "slide": {
                 "index": 0
               }
@@ -39,7 +39,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "T3_pfE3G5EcQyxkUMKCKX",
+              "id": "jfzNoOboGpovVbNeBIpW1",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -48,7 +48,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "JQC9k3coxR5IaMVOvfCDQ",
+                  "id": "imaNQ1Mt_dL2r9nMRHhfV",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -63,7 +63,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "8dM6nD563Ik5XjZnIJMz_",
+                  "id": "TJrHLrZvQU6O_j8sskUPr",
                   "type": "arrow",
                   "name": "Trend arrow",
                   "x": 400,
@@ -89,31 +89,76 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"T3_pfE3G5EcQyxkUMKCKX\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"JQC9k3coxR5IaMVOvfCDQ\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Where we are heading\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"8dM6nD563Ik5XjZnIJMz_\",\"type\":\"arrow\",\"name\":\"Trend arrow\",\"x\":400,\"y\":700,\"width\":500,\"height\":0,\"rotation\":-0.3490658503988659,\"opacity\":1,\"stroke\":\"#1b2a4a\",\"strokeWidth\":6,\"p1\":{\"x\":0,\"y\":0},\"p2\":{\"x\":500,\"y\":0},\"startCap\":\"none\",\"endCap\":\"arrow\"}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"jfzNoOboGpovVbNeBIpW1\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"imaNQ1Mt_dL2r9nMRHhfV\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Where we are heading\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"TJrHLrZvQU6O_j8sskUPr\",\"type\":\"arrow\",\"name\":\"Trend arrow\",\"x\":400,\"y\":700,\"width\":500,\"height\":0,\"rotation\":-0.3490658503988659,\"opacity\":1,\"stroke\":\"#1b2a4a\",\"strokeWidth\":6,\"p1\":{\"x\":0,\"y\":0},\"p2\":{\"x\":500,\"y\":0},\"startCap\":\"none\",\"endCap\":\"arrow\"}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "DYLHrTj5FqRN",
-              "request": "Move the Trend arrow tip on slide 1 to (1500, 300), keeping its start in place"
+              "deckId": "BiIuk_R5-T3_",
+              "request": "Move the Trend arrow's tip on slide 1 to (1500, 300), keeping its start"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_6d1o7n7lF2K042Q8"
+              "runId": "run_1ctnlrp-8tYbj482"
             },
-            "text": "{\"runId\":\"run_6d1o7n7lF2K042Q8\"}"
+            "text": "{\"runId\":\"run_1ctnlrp-8tYbj482\"}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "BiIuk_R5-T3_",
+              "slide": {
+                "index": 0
+              },
+              "object": "TJrHLrZvQU6O_j8sskUPr"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "jfzNoOboGpovVbNeBIpW1",
+                "index": 0
+              },
+              "stackIndex": 1,
+              "object": {
+                "id": "TJrHLrZvQU6O_j8sskUPr",
+                "type": "arrow",
+                "name": "Trend arrow",
+                "x": 400,
+                "y": 700,
+                "width": 500,
+                "height": 0,
+                "rotation": -0.3490658503988659,
+                "opacity": 1,
+                "stroke": "#1b2a4a",
+                "strokeWidth": 6,
+                "p1": {
+                  "x": 0,
+                  "y": 0
+                },
+                "p2": {
+                  "x": 500,
+                  "y": 0
+                },
+                "startCap": "none",
+                "endCap": "arrow"
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"jfzNoOboGpovVbNeBIpW1\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"TJrHLrZvQU6O_j8sskUPr\",\"type\":\"arrow\",\"name\":\"Trend arrow\",\"x\":400,\"y\":700,\"width\":500,\"height\":0,\"rotation\":-0.3490658503988659,\"opacity\":1,\"stroke\":\"#1b2a4a\",\"strokeWidth\":6,\"p1\":{\"x\":0,\"y\":0},\"p2\":{\"x\":500,\"y\":0},\"startCap\":\"none\",\"endCap\":\"arrow\"},\"animations\":[]}"
           },
           {
             "tool": "object_line_setEndpoints",
             "command": "object.line.setEndpoints",
             "input": {
-              "deckId": "DYLHrTj5FqRN",
+              "deckId": "BiIuk_R5-T3_",
               "slide": {
                 "index": 0
               },
-              "object": "8dM6nD563Ik5XjZnIJMz_",
+              "object": "TJrHLrZvQU6O_j8sskUPr",
               "p2": {
                 "x": 1500,
                 "y": 300
@@ -134,8 +179,8 @@
             "text": "{\"p1\":{\"x\":415.07684480352293,\"y\":785.5050358314172},\"p2\":{\"x\":1500,\"y\":300}}"
           }
         ],
-        "finalText": "I moved the tip of the \"Trend arrow\" on slide 1 to (1500, 300), and its start stayed where it was.\n\nThe start isn't at the arrow's stored position (400, 700). The arrow is rotated −20°, so on the slide its start is drawn at about (415.08, 785.51). I worked that point out myself before the change, and the tool reported the same start point afterwards. The arrow now runs from (415.08, 785.51) to (1500, 300), and its −20° rotation setting is unchanged.\n\nThis edit is its own run in the Agent activity popover, so it can be undone on its own.",
-        "turns": 5,
+        "finalText": "I moved the tip of the \"Trend arrow\" on slide 1 to (1500, 300).\n\nThe start hasn't moved. It's still at about (415.1, 785.5) on the slide, which is where it was drawn before. That's not the arrow's stored (400, 700), because the arrow is rotated −20° around the centre of its box. The start I worked out by hand from that rotation matches the value the tool returned. The arrow's −20° rotation is unchanged.\n\nAll of this is saved as one run in the deck's Agent activity, so you can undo it in one step if you want.",
+        "turns": 6,
         "isError": false,
         "stopReason": "success"
       }

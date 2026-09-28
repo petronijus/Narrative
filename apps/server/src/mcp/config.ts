@@ -111,6 +111,9 @@ function trimSlash(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
+const isLoopback = (hostname: string): boolean =>
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+
 /** Why an MCP_OAUTH_REDIRECT_URIS entry is unusable, or null. */
 function extraRedirectProblem(uri: string): string | null {
   let u: URL
@@ -140,6 +143,12 @@ export function buildMcpPublicConfig(opts: {
   const parsed = new URL(base)
   if (parsed.search !== '' || parsed.hash !== '')
     throw new Error(`PUBLIC_API_URL must not carry a query or fragment: ${opts.apiBaseUrl}`)
+  // Bearer credentials travel to this base (MCP, OAuth, the upload sessions'
+  // curl line): never in clear text past this machine.
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback(parsed.hostname)))
+    throw new Error(
+      `PUBLIC_API_URL must be an https URL, or an http URL on localhost / 127.0.0.1 / [::1]: ${opts.apiBaseUrl}`,
+    )
   for (const uri of opts.extraRedirectUris ?? []) {
     const problem = extraRedirectProblem(uri)
     if (problem !== null) throw new Error(`MCP_OAUTH_REDIRECT_URIS entry ${uri} ${problem}`)

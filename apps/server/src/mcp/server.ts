@@ -37,6 +37,8 @@ export interface SessionIdentity {
   /** Set once the transport has assigned the session id. */
   sessionId: string | null
   userId: string
+  /** The credential the session authenticated with (mcp/auth.ts `credentialKey`). */
+  credentialKey?: string
 }
 
 export interface SessionServerDeps {
@@ -168,6 +170,7 @@ export function createSessionServer(identity: SessionIdentity, deps: SessionServ
         surface: 'mcp',
         ...(sessionKey === undefined ? {} : { sessionKey }),
         ...(clientName === undefined ? {} : { clientName }),
+        ...(identity.credentialKey === undefined ? {} : { credentialKey: identity.credentialKey }),
         target: split.target,
         invocation: { command: entry.def.id, input },
         ...(split.runId === undefined ? {} : { runId: split.runId }),

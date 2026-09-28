@@ -176,6 +176,13 @@
       "when": 1790541000024,
       "tag": "0024_upload_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790541000025,
+      "tag": "0025_upload_session_binding",
+      "breakpoints": true
     }
   ]
 }

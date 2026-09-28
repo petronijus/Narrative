@@ -120,6 +120,23 @@ describe('personal access tokens are refused on the WebSocket', () => {
     expect(componentAccess).not.toHaveBeenCalled()
   })
 
+  it('refuses every other agent credential the same way (MCP OAuth, upload session)', async () => {
+    for (const prefix of ['nmo', 'nmr', 'nmc', 'nms', 'nus']) {
+      const credential = `${prefix}_${'k'.repeat(43)}`
+      await expect(
+        onAuthenticate()(payload({ token: credential, requestHeaders: COOKIE })),
+        prefix,
+      ).rejects.toThrow('Forbidden')
+      await expect(
+        onAuthenticate()(
+          payload({ requestHeaders: { ...COOKIE, authorization: `Bearer ${credential}` } }),
+        ),
+        prefix,
+      ).rejects.toThrow('Forbidden')
+    }
+    expect(deckAccess).not.toHaveBeenCalled()
+  })
+
   it('ignores a non-PAT bearer value (the /metrics token) and uses the cookie', async () => {
     const data = payload({ requestHeaders: { ...COOKIE, authorization: 'Bearer metrics-secret' } })
     await onAuthenticate()(data)

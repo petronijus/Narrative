@@ -180,6 +180,8 @@ export interface HostRequest {
   /** Identifies the agent session (MCP session id, or `api:<user>:<token>`). */
   sessionKey?: string
   clientName?: string
+  /** The credential the caller authenticated with (auth/agentSessions.ts credential keys). */
+  credentialKey?: string
   /** Attach the invocation to this open run instead of the session's current one. */
   runId?: string
   /** Required for `confirm: 'always'` commands; see {@link HostConfirmation}. */
@@ -588,6 +590,7 @@ export class ServerHost {
             key: req.sessionKey ?? `${req.surface}:${userId}`,
             surface: req.surface,
             ...(req.clientName === undefined ? {} : { clientName: req.clientName }),
+            ...(req.credentialKey === undefined ? {} : { credential: req.credentialKey }),
           }
         : undefined
 
