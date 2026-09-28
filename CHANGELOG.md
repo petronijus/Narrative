@@ -4,6 +4,23 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.3 — Connecting Claude Code over OAuth works (2026-09-28)
+
+### Fixed
+
+- **Approving an MCP connection answered "This request did not come from
+  Narrative."** The consent page sent `Referrer-Policy: no-referrer`, under
+  which a browser posts the page's own form with `Origin: null`, and the
+  decision endpoint refuses an opaque origin. Every Claude Code / claude.ai
+  connection over OAuth failed at the Allow button; the tests set the
+  `Origin` header themselves and never saw it. The consent page now uses
+  `same-origin` (the Referer still never leaves Narrative), and the tests pin
+  both the header and the refusal of `Origin: null`. The console's CSP
+  errors on the error page were Cloudflare's injected beacon and fonts,
+  blocked as intended.
+
+---
+
 ## 0.10.2 — The slides panel writes through commands (2026-09-28)
 
 First steps of phase A2 (`docs/plans/a2-extraction.md`): the editor stops

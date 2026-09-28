@@ -83,11 +83,21 @@ function sendOAuthError(reply: FastifyReply, e: OAuthError, basicChallenge = fal
   return reply.send({ error: e.error, error_description: e.description })
 }
 
+/**
+ * Headers of the server-rendered OAuth pages. `formTargets` are where the
+ * page's form may post; a page with a form gets `same-origin` as its
+ * referrer policy, not `no-referrer`: under `no-referrer` a browser sends
+ * `Origin: null` on the page's own form post (Fetch spec, origin
+ * serialisation for non-GET requests), and the decision endpoint rightly
+ * refuses `null` — so every consent answered "This request did not come
+ * from Narrative" (found 2026-09-28, the first real Claude Code connection).
+ * `same-origin` still keeps the Referer away from every other site.
+ */
 function htmlHeaders(reply: FastifyReply, formTargets: readonly string[]): FastifyReply {
   return noStore(reply)
     .type('text/html; charset=utf-8')
     .header('x-frame-options', 'DENY')
-    .header('referrer-policy', 'no-referrer')
+    .header('referrer-policy', formTargets.length > 0 ? 'same-origin' : 'no-referrer')
     .header(
       'content-security-policy',
       [

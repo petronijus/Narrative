@@ -450,6 +450,9 @@ describe('authorization code flow', () => {
     expect(page.headers.get('content-security-policy')).toMatch(
       /form-action .*http:\/\/127\.0\.0\.1:33418/,
     )
+    // Not `no-referrer`: under it a browser posts the page's own form with
+    // `Origin: null`, which the decision endpoint refuses (as it must).
+    expect(page.headers.get('referrer-policy')).toBe('same-origin')
   })
 
   it('shows a web callback host prominently, without the loopback warning', async () => {
@@ -534,6 +537,8 @@ describe('consent is CSRF-safe', () => {
     expect((await post({}, { ...session('user-1'), origin: 'https://evil.example' })).status).toBe(
       403,
     )
+    // An opaque origin (sandboxed or no-referrer form) is refused too.
+    expect((await post({}, { ...session('user-1'), origin: 'null' })).status).toBe(403)
     expect((await post({}, { origin: w.baseUrl })).status).toBe(401)
     expect((await post({}, { ...session('user-1'), origin: w.baseUrl })).status).toBe(303)
     expect((await post({}, { ...session('user-1'), origin: w.baseUrl })).status).toBe(400)
