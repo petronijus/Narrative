@@ -19,16 +19,18 @@
  * ----------------
  * Pointer-down on a strip starts a drag-out. While dragging we render a
  * thin follow-cursor preview line. On pointer-up:
- *   - Inside the artboard rect → addGuide() at the slide-space position.
+ *   - Inside the artboard rect → `guide.add` at the slide-space position.
  *   - Outside              → cancel.
  *
  * Existing guides are drawn by the parent (EditorLayout) inside the
  * artboard so they participate in the normal scroll/zoom transform.
+ *
+ * Every write is a `guide.*` command (useCommand), the same ones agents use.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import type { DeckGuide } from '@narrative/shared'
-import { addGuide, removeGuide, updateGuide, type DeckGuidesContext } from '@narrative/slide-model'
+import { useCommand } from '../state/useCommand.js'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -46,11 +48,14 @@ export interface RulersProps {
   zoom: number
   /**
    * Live ref to the artboard div so the drag-out gesture can convert
-   * pointer-up viewport coords into slide-space coords for `addGuide`.
+   * pointer-up viewport coords into slide-space coords for `guide.add`.
    */
   artboardRef: React.RefObject<HTMLDivElement | null>
-  /** Mutation context — addGuide writes through this. */
-  guidesCtx: DeckGuidesContext
+}
+
+/** A guide position kept on the slide (the rect edge can round a hair past it). */
+function clampToSlide(position: number, limit: number): number {
+  return Math.max(0, Math.min(limit, position))
 }
 
 const RULER_THICKNESS = 24
@@ -63,7 +68,8 @@ interface DragState {
   viewportPos: number
 }
 
-export function Rulers({ slideWidth, slideHeight, zoom, artboardRef, guidesCtx }: RulersProps) {
+export function Rulers({ slideWidth, slideHeight, zoom, artboardRef }: RulersProps) {
+  const command = useCommand()
   const [drag, setDrag] = useState<DragState | null>(null)
   const dragRef = useRef<DragState | null>(null)
   dragRef.current = drag
@@ -103,7 +109,13 @@ export function Rulers({ slideWidth, slideHeight, zoom, artboardRef, guidesCtx }
       // Convert to slide-space coords.
       const sx = ((e.clientX - rect.left) / rect.width) * slideWidth
       const sy = ((e.clientY - rect.top) / rect.height) * slideHeight
-      addGuide(guidesCtx, cur.orientation, cur.orientation === 'horizontal' ? sy : sx)
+      command.tryRun('guide.add', {
+        orientation: cur.orientation,
+        position:
+          cur.orientation === 'horizontal'
+            ? clampToSlide(sy, slideHeight)
+            : clampToSlide(sx, slideWidth),
+      })
     }
 
     window.addEventListener('pointermove', handleMove)
@@ -112,7 +124,7 @@ export function Rulers({ slideWidth, slideHeight, zoom, artboardRef, guidesCtx }
       window.removeEventListener('pointermove', handleMove)
       window.removeEventListener('pointerup', handleUp)
     }
-  }, [drag, artboardRef, guidesCtx, slideWidth, slideHeight])
+  }, [drag, artboardRef, command, slideWidth, slideHeight])
 
   // ---------------------------------------------------------------------------
   // Tick rendering
@@ -143,6 +155,7 @@ export function Rulers({ slideWidth, slideHeight, zoom, artboardRef, guidesCtx }
           spans the artboard's screen width (slideWidth * zoom). */}
       <div
         aria-hidden="true"
+        data-ruler="top"
         onPointerDown={(e) => {
           e.preventDefault()
           setDrag({ orientation: 'horizontal', viewportPos: e.clientY })
@@ -179,6 +192,7 @@ export function Rulers({ slideWidth, slideHeight, zoom, artboardRef, guidesCtx }
       {/* Left vertical ruler. */}
       <div
         aria-hidden="true"
+        data-ruler="left"
         onPointerDown={(e) => {
           e.preventDefault()
           setDrag({ orientation: 'vertical', viewportPos: e.clientX })
@@ -254,10 +268,10 @@ export interface GuideOverlayProps {
   guides: DeckGuide[]
   slideWidth: number
   slideHeight: number
-  guidesCtx: DeckGuidesContext
 }
 
-export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: GuideOverlayProps) {
+export function GuideOverlay({ guides, slideWidth, slideHeight }: GuideOverlayProps) {
+  const command = useCommand()
   const [drag, setDrag] = useState<{ id: string; pos: number } | null>(null)
   const dragRef = useRef<typeof drag>(null)
   dragRef.current = drag
@@ -305,7 +319,7 @@ export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: Gui
 
       if (!inside) {
         // Drag outside artboard → delete.
-        removeGuide(guidesCtx, cur.id)
+        command.tryRun('guide.remove', { guides: [cur.id] })
         return
       }
 
@@ -313,7 +327,13 @@ export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: Gui
         guide.orientation === 'horizontal'
           ? ((e.clientY - rect.top) / rect.height) * slideHeight
           : ((e.clientX - rect.left) / rect.width) * slideWidth
-      updateGuide(guidesCtx, cur.id, { position: slidePos })
+      command.tryRun('guide.update', {
+        guide: cur.id,
+        position: clampToSlide(
+          slidePos,
+          guide.orientation === 'horizontal' ? slideHeight : slideWidth,
+        ),
+      })
     }
 
     window.addEventListener('pointermove', handleMove)
@@ -322,7 +342,7 @@ export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: Gui
       window.removeEventListener('pointermove', handleMove)
       window.removeEventListener('pointerup', handleUp)
     }
-  }, [drag, guides, guidesCtx, slideWidth, slideHeight])
+  }, [drag, guides, command, slideWidth, slideHeight])
 
   return (
     <div
@@ -367,7 +387,7 @@ export function GuideOverlay({ guides, slideWidth, slideHeight, guidesCtx }: Gui
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem
-                onSelect={() => removeGuide(guidesCtx, g.id)}
+                onSelect={() => command.tryRun('guide.remove', { guides: [g.id] })}
                 className="text-red-500 focus:text-red-500"
               >
                 <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />

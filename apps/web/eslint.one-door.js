@@ -70,8 +70,6 @@ export const ONE_DOOR_RULES = {
  * relative to the repository root. Only ever remove entries.
  */
 export const ONE_DOOR_PENDING = [
-  // A2.3 — guides
-  { file: 'apps/web/src/ui/Rulers.tsx', step: 'A2.3' },
   // A2.4 — object creation and structure
   { file: 'apps/web/src/components/EditorLayout.tsx', step: 'A2.4' },
   { file: 'apps/web/src/components/DeckShell.tsx', step: 'A2.4' },

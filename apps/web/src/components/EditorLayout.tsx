@@ -579,7 +579,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
   // P11: rulers + deck-level guides.
   const { visible: rulersVisible } = useRulers()
-  const { guides: deckGuides, guidesCtx } = useDeckGuides()
+  const { guides: deckGuides } = useDeckGuides()
   // Mirror the live guide list into a ref so the pointermove callback's
   // computeSnap(...) call always sees the latest set without forcing a
   // dependency-array churn on the heavy drag handler.
@@ -2503,7 +2503,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       slideHeight={SLIDE_HEIGHT}
                       zoom={zoom}
                       artboardRef={canvasContainerRef}
-                      guidesCtx={guidesCtx}
                     />
                   )}
                   <div
@@ -2550,7 +2549,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                         guides={deckGuides}
                         slideWidth={SLIDE_WIDTH}
                         slideHeight={SLIDE_HEIGHT}
-                        guidesCtx={guidesCtx}
                       />
                     )}
 
