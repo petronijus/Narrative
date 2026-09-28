@@ -54,13 +54,9 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import {
   createObjectOfType,
   removeObject,
-  duplicateObjects,
-  translateObjects,
   bulkUpdateObjects,
   addObjects,
-  moveObjectsLayer,
-  groupObjects,
-  ungroupObjects,
+  yMapToPlainObject,
 } from '@narrative/slide-model'
 import type { ObjectsMutationContext } from '@narrative/slide-model'
 import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
@@ -89,6 +85,7 @@ import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
+import { useCommand } from '../state/useCommand.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
 import { PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -595,6 +592,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection, setActiveSlide } = useAwarenessUpdater()
   const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   const activeSlideIdRef = useRef(activeSlideId)
   activeSlideIdRef.current = activeSlideId
 
@@ -1259,22 +1257,28 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // clones the dragged set in place; the copies become the drag set
       // and follow the cursor while the originals stay put.
       //
-      // duplicateObjects is ONE LOCAL_ORIGIN transaction (fresh ids, the
-      // sources' relative z-order, a dragged group becomes its own new
-      // group). It used to be a loop of duplicateObject inside an outer
-      // origin-less doc.transact — the outer origin wins, so the clones
-      // never reached the undo stack and Mod+Z only slid the copies back
-      // onto the originals. Now the clone is on the stack, and the drag
-      // writes that follow (LOCAL_ORIGIN, continuous, inside the undo
-      // manager's 500 ms capture window) merge into the same step — the
-      // same mechanism that makes a plain drag one step. With a zero
-      // offset each copy starts exactly on its source, crop rect
-      // included, so the copies' own snapshot is the drag's start frame.
+      // `object.duplicate` is ONE transaction (fresh ids, the sources'
+      // relative z-order, a dragged group becomes its own new group), so
+      // the clone is one step on the undo stack, and the drag writes that
+      // follow (LOCAL_ORIGIN, continuous, inside the undo manager's 500 ms
+      // capture window) merge into the same step — the same mechanism that
+      // makes a plain drag one step. With a zero offset each copy starts
+      // exactly on its source, crop rect included, so the copies' own
+      // snapshot (read back from the document) is the drag's start frame.
       let activeDragIds = dragIds
       let activeInitialPositions = initialPositions
       let activeInitialImageRects = initialImageRects
-      if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
-        const copies = duplicateObjects(mutationCtx, dragIds, { x: 0, y: 0 })
+      const dragSlideId = activeSlideIdRef.current
+      if (e.altKey && mutationCtx !== null && dragSlideId !== null && dragIds.length > 0) {
+        const out = command.tryRun<{ objectIds: string[] }>('object.duplicate', {
+          slide: dragSlideId,
+          objects: dragIds,
+          offset: { x: 0, y: 0 },
+        })
+        const copies = (out?.objectIds ?? []).flatMap((id) => {
+          const map = mutationCtx.objects.toArray().find((m) => m.get('id') === id)
+          return map === undefined ? [] : [yMapToPlainObject(map)]
+        })
         if (copies.length > 0) {
           const newIds = copies.map((c) => c.id)
           const newPositions: typeof initialPositions = copies.map((c) => ({
@@ -1656,7 +1660,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       if (dr !== null) {
         draftRef.current = null
         setDraft(null)
-        if (mutationCtx !== null) {
+        const drawSlideId = activeSlideIdRef.current
+        if (drawSlideId !== null) {
           // Re-apply shift constraint at commit time — handles the
           // case where shift was pressed after the last pointermove.
           const { currentX: cx, currentY: cy } = e.shiftKey
@@ -1668,7 +1673,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
           const h = Math.abs(cy - dr.startY)
           // Tiny-drag fallback — treat as click-to-create with default size.
           const minSize = 6
-          let created: { id: string } | null = null
           const colorDefaults =
             dr.tool === 'line' || dr.tool === 'arrow'
               ? objectDefaults.strokeDefaults
@@ -1677,35 +1681,28 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                 : dr.tool === 'table'
                   ? {}
                   : objectDefaults.fillDefaults
-          if (w < minSize && h < minSize) {
-            created = createObjectOfType(mutationCtx, dr.tool, {
-              x: dr.startX,
-              y: dr.startY,
-              ...colorDefaults,
-            } as Parameters<typeof createObjectOfType>[2])
-          } else if (dr.tool === 'line' || dr.tool === 'arrow') {
-            created = createObjectOfType(mutationCtx, dr.tool, {
-              x,
-              y,
-              width: w,
-              height: h,
-              p1: { x: dr.startX - x, y: dr.startY - y },
-              p2: { x: cx - x, y: cy - y },
-              ...colorDefaults,
-            } as Parameters<typeof createObjectOfType>[2])
-          } else {
-            created = createObjectOfType(mutationCtx, dr.tool, {
-              x,
-              y,
-              width: w,
-              height: h,
-              ...colorDefaults,
-            } as Parameters<typeof createObjectOfType>[2])
-          }
+          const geometry =
+            w < minSize && h < minSize
+              ? { x: dr.startX, y: dr.startY }
+              : dr.tool === 'line' || dr.tool === 'arrow'
+                ? {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    p1: { x: dr.startX - x, y: dr.startY - y },
+                    p2: { x: cx - x, y: cy - y },
+                  }
+                : { x, y, width: w, height: h }
+          const out = command.tryRun<{ objectId: string }>('object.create', {
+            slide: drawSlideId,
+            object: { type: dr.tool, ...geometry, ...colorDefaults },
+          })
           // P15: select the freshly created object so the user can
           // immediately drag / resize / edit without re-clicking. Mirrors
           // Figma / Keynote behaviour after a tool-driven create.
-          if (created !== null) {
+          if (out !== null) {
+            const created = { id: out.objectId }
             selectOne(created.id)
             // QoL: text dropped from the toolbar enters edit mode immediately —
             // matches Figma/Keynote, saves the otherwise-mandatory double-click.
@@ -2093,20 +2090,25 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     },
   ])
 
-  // Arrow-key nudge (1 px, Shift 10 px). translateObjects is the one
-  // correct way to move objects: it carries a cropped image's absolute
-  // `imageRect` along with the frame (the old raw `{ x, y }` patch left
-  // the crop behind, so every nudge slid the picture inside its frame),
-  // and it adds the delta to the live position, so key-repeat faster than
-  // React re-renders cannot swallow steps. Locked objects stay put.
+  /** The selected objects a person may change: locks are an editor-only guard. */
+  const unlockedSelection = (): string[] =>
+    [...selectedIds].filter((id) => objects.find((o) => o.id === id)?.locked !== true)
+
+  // Arrow-key nudge (1 px, Shift 10 px). `object.move` is the one correct
+  // way to move objects: it carries a cropped image's absolute `imageRect`
+  // along with the frame, and it adds the delta to the live position, so
+  // key-repeat faster than React re-renders cannot swallow steps. Locked
+  // objects stay put.
   const nudgeSelection = (dx: number, dy: number): void => {
-    if (selectedIds.size === 0 || mutationCtx === null) return
-    const moves = [...selectedIds].flatMap((id) => {
-      const obj = objects.find((o) => o.id === id)
-      if (obj === undefined || obj.locked === true) return []
-      return [{ id, dx, dy }]
-    })
-    if (moves.length > 0) translateObjects(mutationCtx, moves)
+    const ids = unlockedSelection()
+    if (ids.length === 0 || activeSlideId === null) return
+    command.tryRun('object.move', { slide: activeSlideId, objects: ids, dx, dy })
+  }
+
+  /** Run a command on the selection, when there is one. */
+  const onSelection = (commandId: string, input: Record<string, unknown> = {}): unknown => {
+    if (selectedIds.size === 0 || activeSlideId === null) return null
+    return command.tryRun(commandId, { slide: activeSlideId, objects: [...selectedIds], ...input })
   }
 
   // Canvas-scoped shortcuts — only fire when the artboard area has focus.
@@ -2116,16 +2118,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       scope: 'canvas',
       description: 'Delete selected object(s)',
       handler: () => {
-        if (selectedIds.size > 0 && mutationCtx !== null) {
-          let removed = 0
-          for (const id of selectedIds) {
-            const obj = objects.find((o) => o.id === id)
-            if (obj !== undefined && obj.locked === true) continue
-            removeObject(mutationCtx, id)
-            removed += 1
-          }
-          if (removed > 0) clear()
-        }
+        const ids = unlockedSelection()
+        if (ids.length === 0 || activeSlideId === null) return
+        const out = command.tryRun('object.delete', { slide: activeSlideId, objects: ids })
+        if (out !== null) clear()
       },
     },
     {
@@ -2134,12 +2130,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Duplicate selected object(s)',
       handler: () => {
-        if (selectedIds.size > 0 && mutationCtx !== null) {
-          // One transaction, one undo step; a selected group comes out as
-          // its own new group instead of each copy handled on its own.
-          const copies = duplicateObjects(mutationCtx, [...selectedIds], { x: 20, y: 20 })
-          if (copies.length > 0) selectMany(copies.map((c) => c.id))
-        }
+        // One command, one undo step; a selected group comes out as its
+        // own new group instead of each copy handled on its own.
+        const out = onSelection('object.duplicate', { offset: { x: 20, y: 20 } }) as {
+          objectIds: string[]
+        } | null
+        if (out !== null && out.objectIds.length > 0) selectMany(out.objectIds)
       },
     },
     {
@@ -2173,8 +2169,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Group selected objects',
       handler: () => {
-        if (mutationCtx === null) return
-        if (selectedIds.size >= 2) groupObjects(mutationCtx, [...selectedIds])
+        if (selectedIds.size >= 2) onSelection('object.group')
       },
     },
     {
@@ -2183,8 +2178,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Ungroup selected objects',
       handler: () => {
-        if (mutationCtx === null) return
-        ungroupObjects(mutationCtx, [...selectedIds])
+        onSelection('object.ungroup')
       },
     },
     {
@@ -2193,8 +2187,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Bring forward',
       handler: () => {
-        if (mutationCtx === null || selectedIds.size === 0) return
-        moveObjectsLayer(mutationCtx, [...selectedIds], 'forward')
+        onSelection('object.layer', { move: 'forward' })
       },
     },
     {
@@ -2203,8 +2196,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Send backward',
       handler: () => {
-        if (mutationCtx === null || selectedIds.size === 0) return
-        moveObjectsLayer(mutationCtx, [...selectedIds], 'backward')
+        onSelection('object.layer', { move: 'backward' })
       },
     },
     {
@@ -2213,8 +2205,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Bring to front',
       handler: () => {
-        if (mutationCtx === null || selectedIds.size === 0) return
-        moveObjectsLayer(mutationCtx, [...selectedIds], 'front')
+        onSelection('object.layer', { move: 'front' })
       },
     },
     {
@@ -2223,8 +2214,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Send to back',
       handler: () => {
-        if (mutationCtx === null || selectedIds.size === 0) return
-        moveObjectsLayer(mutationCtx, [...selectedIds], 'back')
+        onSelection('object.layer', { move: 'back' })
       },
     },
     {

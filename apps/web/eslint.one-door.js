@@ -70,15 +70,20 @@ export const ONE_DOOR_RULES = {
  * relative to the repository root. Only ever remove entries.
  */
 export const ONE_DOOR_PENDING = [
-  // A2.4 — object creation and structure
-  { file: 'apps/web/src/components/EditorLayout.tsx', step: 'A2.4' },
-  { file: 'apps/web/src/components/DeckShell.tsx', step: 'A2.4' },
-  { file: 'apps/web/src/ui/EditorContextMenu.tsx', step: 'A2.4' },
-  { file: 'apps/web/src/ui/EditorVideoPreview.tsx', step: 'A2.4' },
-  { file: 'apps/web/src/ui/Toolbar.tsx', step: 'A2.4' },
-  { file: 'apps/web/src/ui/UploadDropZone.tsx', step: 'A2.4' },
-  // re-exports the applyShapeMask writer under a web path
-  { file: 'apps/web/src/state/applyShapeMask.ts', step: 'A2.4' },
+  // A2.4 moved object creation, delete, duplicate, group, layer, nudge and
+  // the context menu's table / lock / mask actions onto commands. What each
+  // file still writes directly, and the step that removes it:
+  //   drag / resize writes (A2.5), the pen (A2.6), clipboard paste (A2.7)
+  { file: 'apps/web/src/components/EditorLayout.tsx', step: 'A2.7' },
+  //   clipboard paste
+  { file: 'apps/web/src/ui/EditorContextMenu.tsx', step: 'A2.7' },
+  //   component stamping
+  { file: 'apps/web/src/ui/Toolbar.tsx', step: 'A2.12' },
+  { file: 'apps/web/src/ui/UploadDropZone.tsx', step: 'A2.12' },
+  //   text-style propagation to linked objects (moves server-side)
+  { file: 'apps/web/src/components/DeckShell.tsx', step: 'A2.12' },
+  //   re-exports the applyShapeMask writer; only the Inspector still uses it
+  { file: 'apps/web/src/state/applyShapeMask.ts', step: 'A2.5' },
   // A2.5 — transforms
   { file: 'apps/web/src/ui/TransformHandles.tsx', step: 'A2.5' },
   { file: 'apps/web/src/ui/CropOverlay.tsx', step: 'A2.5' },

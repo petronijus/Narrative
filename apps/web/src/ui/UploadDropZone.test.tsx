@@ -35,6 +35,13 @@ vi.mock('../state/DeckRoleContext.js', () => ({
   useDeckRole: () => ({ role: mockRole }),
 }))
 
+// The component reads the active slide itself (to address commands); the
+// tests mock the slide's objects, so they supply the slide id too.
+vi.mock('../state/ActiveSlideContext.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../state/ActiveSlideContext.js')>()),
+  useActiveSlide: () => ({ activeSlideId: 'slide-1', setActiveSlideId: vi.fn() }),
+}))
+
 vi.mock('../state/useSlideObjects.js', () => ({
   useSlideObjects: () => ({ objectsCtx: null, objects: [] }),
 }))

@@ -150,5 +150,18 @@ after the mechanism has been proven on simpler surfaces.
   mouse (React bubbled the portal's pointer events to the line's drag
   handler and the canvas, which captured the pointer); new e2e
   `guides.spec.ts` covers drag-out, move, drag-off and the menu.
+- 2026-09-28: **A2.4 done** — object creation (tool drag, context-menu
+  insert, toolbar table, uploaded / dropped media), delete, duplicate
+  (Mod+D, menu, Alt-drag), group / ungroup, layer order, arrow-key nudge,
+  lock toggle, mask-with-shape, the context menu's table row / column /
+  merge / split and the video mute toggle all dispatch commands.
+  `EditorVideoPreview` is off the exemption list; the other files stay on
+  it, re-tagged with the step that removes their last direct write
+  (EditorLayout: drag A2.5, pen A2.6, paste A2.7; EditorContextMenu: paste
+  A2.7; Toolbar / UploadDropZone: component stamping A2.12; DeckShell:
+  style propagation A2.12). Decision: the folder "Primary" colour a new
+  shape gets is an editor default the UI passes to `object.create`
+  explicitly, not command behaviour — an agent picks colours itself
+  (preferably folder tokens, as the basics playbook says).
   - tools/list budget 132,000 → 136,000 bytes; A2 will keep adding ~1–1.3 KB
     per new command.

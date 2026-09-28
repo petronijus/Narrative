@@ -39,25 +39,14 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
-  removeObject,
-  duplicateObjects,
-  moveObjectsLayer,
   addObjects,
-  updateObject,
-  createObjectOfType,
-  ungroupObjects,
-  insertTableRow,
-  insertTableCol,
-  deleteTableRow,
-  deleteTableCol,
-  mergeTableCells,
-  splitTableCell,
   getTableMergeInfo,
+  isMaskableShape,
   type LayerMove,
 } from '@narrative/slide-model'
+import { useCommand } from '../state/useCommand.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
 import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
-import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useTableEdit } from '../state/TableEditContext.js'
@@ -71,7 +60,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
 import { useApi } from '../api/client.js'
 import { formatKeyCombo } from '../state/useShortcuts.js'
-import type { SlideObject, SlideObjectPatch, SlideObjectType, TableObject } from '@narrative/shared'
+import type { SlideObject, SlideObjectType, TableObject } from '@narrative/shared'
 
 /**
  * Layer-order items, in menu order. `keys` is the canvas shortcut bound
@@ -158,6 +147,7 @@ type Mode = 'object' | 'canvas'
 
 export function EditorContextMenu({ canvasContainerRef, children }: EditorContextMenuProps) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  const command = useCommand()
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
   const { range: tableRange } = useTableEdit()
   const canvasInstance = useCanvasInstance()
@@ -262,15 +252,18 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   // Object-mode handlers
   // ---------------------------------------------------------------------------
 
+  /** Delete the targets a person may delete: locks are an editor-only guard. */
+  const deleteUnlocked = (targets: SlideObject[]): void => {
+    const ids = targets.filter((o) => o.locked !== true).map((o) => o.id)
+    if (ids.length === 0 || activeSlideId === null) return
+    command.tryRun('object.delete', { slide: activeSlideId, objects: ids })
+  }
+
   const handleCut = (): void => {
-    if (mutationCtx === null) return
     const targets = resolveTargets()
     if (targets.length === 0) return
     setClipboard(targets)
-    for (const obj of targets) {
-      if (obj.locked === true) continue
-      removeObject(mutationCtx, obj.id)
-    }
+    deleteUnlocked(targets)
     clear()
   }
 
@@ -281,23 +274,21 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleDuplicate = (): void => {
-    if (mutationCtx === null) return
     const targets = resolveTargets()
-    if (targets.length === 0) return
-    // One transaction, one undo step — same call as Mod+D.
-    const copies = duplicateObjects(
-      mutationCtx,
-      targets.map((o) => o.id),
-      { x: 20, y: 20 },
-    )
-    if (copies.length > 0) selectMany(copies.map((c) => c.id))
+    if (targets.length === 0 || activeSlideId === null) return
+    // One command, one undo step — same as Mod+D.
+    const out = command.tryRun<{ objectIds: string[] }>('object.duplicate', {
+      slide: activeSlideId,
+      objects: targets.map((o) => o.id),
+      offset: { x: 20, y: 20 },
+    })
+    if (out !== null && out.objectIds.length > 0) selectMany(out.objectIds)
   }
 
   const handleLayerMove = (move: LayerMove): void => {
-    if (mutationCtx === null) return
     const ids = targetIdsRef.current
-    if (ids.length === 0) return
-    moveObjectsLayer(mutationCtx, ids, move)
+    if (ids.length === 0 || activeSlideId === null) return
+    command.tryRun('object.layer', { slide: activeSlideId, objects: ids, move })
   }
 
   // ---------- Table cell ops — driven by tableCellHitRef ----------
@@ -309,48 +300,49 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
       ? null
       : { table: obj as TableObject, r: hit.r, c: hit.c }
   }
-  const handleTableInsertRowAbove = (): void => {
+  /** Run a table command on the table under the cursor. */
+  const tableCommand = (
+    commandId: string,
+    input: (t: { table: TableObject; r: number; c: number }) => Record<string, unknown>,
+  ): void => {
     const t = tableTarget()
-    if (t !== null && mutationCtx !== null) insertTableRow(mutationCtx, t.table.id, t.r)
+    if (t === null || activeSlideId === null) return
+    command.tryRun(commandId, { slide: activeSlideId, table: t.table.id, ...input(t) })
   }
-  const handleTableInsertRowBelow = (): void => {
-    const t = tableTarget()
-    if (t !== null && mutationCtx !== null) insertTableRow(mutationCtx, t.table.id, t.r + 1)
-  }
-  const handleTableInsertColBefore = (): void => {
-    const t = tableTarget()
-    if (t !== null && mutationCtx !== null) insertTableCol(mutationCtx, t.table.id, t.c)
-  }
-  const handleTableInsertColAfter = (): void => {
-    const t = tableTarget()
-    if (t !== null && mutationCtx !== null) insertTableCol(mutationCtx, t.table.id, t.c + 1)
-  }
-  const handleTableDeleteRow = (): void => {
-    const t = tableTarget()
-    if (t !== null && mutationCtx !== null) deleteTableRow(mutationCtx, t.table.id, t.r)
-  }
-  const handleTableDeleteCol = (): void => {
-    const t = tableTarget()
-    if (t !== null && mutationCtx !== null) deleteTableCol(mutationCtx, t.table.id, t.c)
-  }
+  const handleTableInsertRowAbove = (): void =>
+    tableCommand('table.row.insert', (t) => ({ index: t.r }))
+  const handleTableInsertRowBelow = (): void =>
+    tableCommand('table.row.insert', (t) => ({ index: t.r + 1 }))
+  const handleTableInsertColBefore = (): void =>
+    tableCommand('table.col.insert', (t) => ({ index: t.c }))
+  const handleTableInsertColAfter = (): void =>
+    tableCommand('table.col.insert', (t) => ({ index: t.c + 1 }))
+  const handleTableDeleteRow = (): void => tableCommand('table.row.delete', (t) => ({ index: t.r }))
+  const handleTableDeleteCol = (): void => tableCommand('table.col.delete', (t) => ({ index: t.c }))
   /** Phase 3 — Merge / split helpers driven by the table-edit range or
    *  the cell under the cursor. Read fresh on each invocation so the
    *  menu always acts on the latest state. */
   const handleTableMerge = (): void => {
-    if (mutationCtx === null) return
+    if (activeSlideId === null) return
     if (tableRange !== null && targetIdsRef.current.includes(tableRange.tableId)) {
-      mergeTableCells(mutationCtx, tableRange.tableId, {
-        r0: tableRange.r0,
-        c0: tableRange.c0,
-        r1: tableRange.r1,
-        c1: tableRange.c1,
+      command.tryRun('table.merge', {
+        slide: activeSlideId,
+        table: tableRange.tableId,
+        range: {
+          from: { row: tableRange.r0, col: tableRange.c0 },
+          to: { row: tableRange.r1, col: tableRange.c1 },
+        },
       })
     }
   }
   const handleTableSplit = (): void => {
-    if (mutationCtx === null) return
     const hit = tableCellHitRef.current
-    if (hit !== null) splitTableCell(mutationCtx, hit.tableId, hit.r, hit.c)
+    if (hit === null || activeSlideId === null) return
+    command.tryRun('table.split', {
+      slide: activeSlideId,
+      table: hit.tableId,
+      cell: { row: hit.r, col: hit.c },
+    })
   }
   const mergeInfoAtClickedCell = (): { kind: 'origin' | 'continuation' } | null => {
     if (mutationCtx === null) return null
@@ -361,20 +353,19 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleToggleLock = (): void => {
-    if (mutationCtx === null) return
-    const targets = resolveTargets()
-    const target = targets[0]
-    if (target === undefined) return
-    updateObject(mutationCtx, target.id, {
-      locked: target.locked === true ? undefined : true,
-    } as SlideObjectPatch<SlideObject>)
+    const target = resolveTargets()[0]
+    if (target === undefined || activeSlideId === null) return
+    command.tryRun('object.update', {
+      slide: activeSlideId,
+      object: target.id,
+      patch: { locked: target.locked === true ? null : true },
+    })
   }
 
   const handleUngroup = (): void => {
-    if (mutationCtx === null) return
     const ids = targetIdsRef.current
-    if (ids.length === 0) return
-    ungroupObjects(mutationCtx, ids)
+    if (ids.length === 0 || activeSlideId === null) return
+    command.tryRun('object.ungroup', { slide: activeSlideId, objects: ids })
   }
 
   const handleHyperlink = (): void => {
@@ -404,10 +395,14 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleMaskWithShape = (): void => {
-    if (mutationCtx === null) return
     const pair = resolveMaskPair()
-    if (pair === null) return
-    applyShapeMask(mutationCtx, pair.imageId, pair.shapeId)
+    if (pair === null || activeSlideId === null) return
+    const out = command.tryRun('object.mask.apply', {
+      slide: activeSlideId,
+      image: pair.imageId,
+      shape: pair.shapeId,
+    })
+    if (out === null) return
     // After the action the shape is gone — collapse selection to the
     // surviving image so the user lands on it for further crop edits.
     selectOne(pair.imageId)
@@ -493,13 +488,9 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }, [])
 
   const handleDelete = (): void => {
-    if (mutationCtx === null) return
     const targets = resolveTargets()
     if (targets.length === 0) return
-    for (const obj of targets) {
-      if (obj.locked === true) continue
-      removeObject(mutationCtx, obj.id)
-    }
+    deleteUnlocked(targets)
     clear()
   }
 
@@ -522,7 +513,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   const handleInsertShape = (type: SlideObjectType): void => {
-    if (mutationCtx === null) return
+    if (activeSlideId === null) return
     const { x, y } = cursorCoordsRef.current
     const DEFAULT_W = type === 'text' ? 200 : 160
     const DEFAULT_H = type === 'text' ? 60 : 120
@@ -532,11 +523,10 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         : type === 'text'
           ? defaults.textColorDefaults
           : defaults.fillDefaults
-    createObjectOfType(mutationCtx, type, {
-      x: x - DEFAULT_W / 2,
-      y: y - DEFAULT_H / 2,
-      ...colorDefaults,
-    } as Parameters<typeof createObjectOfType>[2])
+    command.tryRun('object.create', {
+      slide: activeSlideId,
+      object: { type, x: x - DEFAULT_W / 2, y: y - DEFAULT_H / 2, ...colorDefaults },
+    })
   }
 
   const handleSelectAll = (): void => {

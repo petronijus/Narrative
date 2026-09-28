@@ -4,6 +4,22 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.6 — Creating and arranging objects writes through commands (2026-09-28)
+
+### Internal
+
+- A2.4: creating objects (drawing with a tool, Insert from the canvas menu,
+  the table picker, uploaded and dropped images and videos), deleting,
+  duplicating (Mod+D, the menu, Alt-drag), grouping, layer order, arrow-key
+  nudges, lock, mask-with-shape, the canvas menu's table row / column /
+  merge / split actions and the video preview's mute toggle now dispatch
+  the same commands agents use (`object.*`, `table.*`). No change in
+  behaviour intended; `EditorVideoPreview` is off the one-door exemption
+  list, the rest are re-tagged with the step that removes their last
+  direct write (22 files left).
+
+---
+
 ## 0.10.5 — Guides write through commands (2026-09-28)
 
 ### Fixed

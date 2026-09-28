@@ -59,7 +59,9 @@ import {
   releaseComponentDoc,
   getComponentDoc,
 } from '../state/componentDocCache.js'
-import { addTable, stampComponent, type ObjectsMutationContext } from '@narrative/slide-model'
+import { stampComponent } from '@narrative/slide-model'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useCommand, type CommandDispatch } from '../state/useCommand.js'
 import type { AgentRunTarget, ComponentSummary } from '../api/client.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
@@ -79,7 +81,6 @@ import { listSlides } from '@narrative/slide-model'
 import { ExportPptxDialog } from './ExportPptxDialog.js'
 import type { Slide } from '@narrative/shared'
 import { useSelection } from '../state/SelectionContext.js'
-import { createObjectOfType } from '@narrative/slide-model'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -231,6 +232,8 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   // M11: Upload hook + hidden file input ref
   const { startUpload } = useMediaUpload()
   const { objectsCtx } = useSlideObjects()
+  const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   const { selectOne } = useSelection()
   const imageFileInputRef = useRef<HTMLInputElement>(null)
   const videoFileInputRef = useRef<HTMLInputElement>(null)
@@ -295,31 +298,43 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     [stampPickedComponent],
   )
 
+  // The slide the upload was started on: the object lands there even if
+  // the user moved to another slide while the file uploaded.
   function handleMediaUploadDone(entry: UploadEntry) {
     if (entry.status !== 'done') return
-    if (objectsCtx === null) return
+    if (activeSlideId === null) return
     if (entry.assetId === undefined || entry.assetId === '') return
     if (entry.mimeType.startsWith('video/')) {
       const w = entry.width ?? 640
       const h = entry.height ?? 360
-      createObjectOfType(objectsCtx, 'video', {
+      command.tryRun('object.create', {
+        slide: activeSlideId,
+        object: {
+          type: 'video',
+          assetId: entry.assetId,
+          width: w,
+          height: h,
+          x: DEFAULT_IMAGE_X - w / 2,
+          y: DEFAULT_IMAGE_Y - h / 2,
+          autoplay: false,
+          loop: false,
+          muted: true,
+        },
+      })
+      return
+    }
+    const w = entry.width ?? 400
+    const h = entry.height ?? 300
+    command.tryRun('object.create', {
+      slide: activeSlideId,
+      object: {
+        type: 'image',
         assetId: entry.assetId,
         width: w,
         height: h,
         x: DEFAULT_IMAGE_X - w / 2,
         y: DEFAULT_IMAGE_Y - h / 2,
-        autoplay: false,
-        loop: false,
-        muted: true,
-      })
-      return
-    }
-    createObjectOfType(objectsCtx, 'image', {
-      assetId: entry.assetId,
-      width: entry.width ?? 400,
-      height: entry.height ?? 300,
-      x: DEFAULT_IMAGE_X - (entry.width ?? 400) / 2,
-      y: DEFAULT_IMAGE_Y - (entry.height ?? 300) / 2,
+      },
     })
   }
 
@@ -644,9 +659,10 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               cells to size the table; clicking commits + drops the
               table on the active slide. The legacy `K` shortcut still
               activates click-to-place mode for keyboard users. */}
-          {!isViewer && objectsCtx !== null && (
+          {!isViewer && activeSlideId !== null && (
             <TableGridButton
-              objectsCtx={objectsCtx}
+              slideId={activeSlideId}
+              command={command}
               setActiveTool={setActiveTool}
               selectOne={selectOne}
               activeTool={activeTool}
@@ -953,14 +969,17 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
 // ---------------------------------------------------------------------------
 
 interface TableGridButtonProps {
-  objectsCtx: ObjectsMutationContext
+  /** The slide the table goes on. */
+  slideId: string
+  command: CommandDispatch
   setActiveTool: (tool: ActiveTool) => void
   selectOne: (id: string) => void
   activeTool: ActiveTool
 }
 
 function TableGridButton({
-  objectsCtx,
+  slideId,
+  command,
   setActiveTool,
   selectOne,
   activeTool,
@@ -974,7 +993,8 @@ function TableGridButton({
     // proportions to match the chosen grid.
     const colW = 120
     const rowH = 60
-    const id = addTable(objectsCtx, {
+    const out = command.tryRun<{ objectId: string }>('table.insert', {
+      slide: slideId,
       x: 100,
       y: 100,
       width: cols * colW,
@@ -982,7 +1002,7 @@ function TableGridButton({
       rows,
       cols,
     })
-    selectOne(id)
+    if (out !== null) selectOne(out.objectId)
     setOpen(false)
     // Stay on Select afterwards — the table is already placed, there's
     // nothing else for the user to do with the Table tool.

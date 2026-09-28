@@ -29,11 +29,11 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react'
-import type { VideoObject, SlideObjectPatch } from '@narrative/shared'
+import type { VideoObject } from '@narrative/shared'
 import { useVideoInfo } from '../state/useVideoInfo.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useCommand } from '../state/useCommand.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
-import { updateObject } from '@narrative/slide-model'
 import {
   attachLiveVideo as attachLiveVideoToRenderer,
   detachLiveVideo as detachLiveVideoFromRenderer,
@@ -57,7 +57,10 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
   // MEDIA-1: refresh via ref so the playback effect's dep array stays stable.
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
-  const { objectsCtx } = useSlideObjects()
+  // The preview shows an object of the active slide (it is the slide the
+  // editor and present mode render).
+  const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   // Editor only — counter-scales the hover bar so it stays a constant
   // size in viewport pixels regardless of artboard zoom. In present mode
   // the slide container is scaled too but we don't render the bar there.
@@ -92,13 +95,15 @@ export function EditorVideoPreview({ videoObject, mode = 'edit' }: EditorVideoPr
     const next = !muted
     el.muted = next
     setMutedState(next)
-    // Persist to the object via Y.Doc so Inspector stays in sync.
-    if (objectsCtx !== null) {
-      updateObject(objectsCtx, videoObject.id, {
-        muted: next,
-      } as SlideObjectPatch<VideoObject>)
+    // Persist on the object so the Inspector stays in sync.
+    if (activeSlideId !== null) {
+      command.tryRun('object.update', {
+        slide: activeSlideId,
+        object: videoObject.id,
+        patch: { muted: next },
+      })
     }
-  }, [muted, objectsCtx, videoObject.id])
+  }, [muted, activeSlideId, command, videoObject.id])
 
   // Clean up hover timeout on unmount.
   useEffect(() => {

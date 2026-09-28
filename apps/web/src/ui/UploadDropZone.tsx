@@ -19,7 +19,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createObjectOfType, stampComponent } from '@narrative/slide-model'
+import { stampComponent } from '@narrative/slide-model'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useCommand } from '../state/useCommand.js'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
@@ -66,6 +68,8 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const { role } = useDeckRole()
   const { startUpload } = useMediaUpload()
   const { objectsCtx } = useSlideObjects()
+  const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   const { selectOne } = useSelection()
 
   const [isDragOver, setIsDragOver] = useState(false)
@@ -118,31 +122,32 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const addMediaObject = useCallback(
     (entry: UploadEntry, x: number, y: number) => {
       if (entry.status !== 'done') return
-      if (objectsCtx === null) return
+      if (activeSlideId === null) return
       if (entry.assetId === undefined || entry.assetId === '') return
 
-      if (entry.mimeType.startsWith('video/')) {
-        createObjectOfType(objectsCtx, 'video', {
-          assetId: entry.assetId,
-          width: entry.width ?? 640,
-          height: entry.height ?? 360,
-          x,
-          y,
-          autoplay: false,
-          loop: false,
-          muted: true,
-        })
-      } else {
-        createObjectOfType(objectsCtx, 'image', {
-          assetId: entry.assetId,
-          width: entry.width ?? 400,
-          height: entry.height ?? 300,
-          x,
-          y,
-        })
-      }
+      const object = entry.mimeType.startsWith('video/')
+        ? {
+            type: 'video',
+            assetId: entry.assetId,
+            width: entry.width ?? 640,
+            height: entry.height ?? 360,
+            x,
+            y,
+            autoplay: false,
+            loop: false,
+            muted: true,
+          }
+        : {
+            type: 'image',
+            assetId: entry.assetId,
+            width: entry.width ?? 400,
+            height: entry.height ?? 300,
+            x,
+            y,
+          }
+      command.tryRun('object.create', { slide: activeSlideId, object })
     },
-    [objectsCtx],
+    [activeSlideId, command],
   )
 
   // ---------------------------------------------------------------------------
