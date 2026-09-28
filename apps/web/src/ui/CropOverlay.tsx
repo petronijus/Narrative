@@ -20,12 +20,18 @@
  *
  * Exit: Escape (handled by EditorLayout) or pointerdown outside the
  * union of frame and imageRect (handled by EditorLayout's backdrop).
+ *
+ * Writes go through commands (ADR 0010): the picture moves, scales and
+ * turns with `object.crop.set`; the frame moves and resizes with
+ * `object.update`, which carries the current `imageRect` explicitly so the
+ * picture stays put (and an implicit "fills the frame" crop becomes
+ * explicit only once the frame actually changes — entering crop mode
+ * writes nothing).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ImageObject } from '@narrative/shared'
-import type { ObjectsMutationContext } from '@narrative/slide-model'
-import { bulkUpdateObjects } from '@narrative/slide-model'
+import { useCommand } from '../state/useCommand.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 import { getDefaultImageUrlResolver } from '../renderer/imageUrl.js'
 import {
@@ -136,7 +142,8 @@ interface FrameRect {
 
 export interface CropOverlayProps {
   obj: ImageObject
-  mutationCtx: ObjectsMutationContext
+  /** The slide the image is on — every write is a command addressed to it. */
+  slideId: string
 }
 
 // ---------------------------------------------------------------------------
@@ -153,13 +160,15 @@ function defaultImageRect(obj: ImageObject): ImageRect {
 // Component
 // ---------------------------------------------------------------------------
 
-export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
+export function CropOverlay({ obj, slideId }: CropOverlayProps) {
   const { zoom } = useZoomLevel()
+  const command = useCommand()
   const [imageUrl, setImageUrl] = useState<string | null>(null)
 
   // Local "live" state — updated optimistically during drags so the
   // overlay tracks the pointer at 60Hz without waiting for the Y.Doc
-  // round-trip. Committed to the doc on every move via bulkUpdateObjects.
+  // round-trip. Committed to the doc on every move (commitPicture /
+  // commitFrame below).
   const [imageRect, setImageRect] = useState<ImageRect>(defaultImageRect(obj))
   const [imageRotation, setImageRotation] = useState<number>(obj.imageRotation ?? 0)
   const [frame, setFrame] = useState<FrameRect>({
@@ -190,26 +199,37 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
     setFrame({ x: obj.x, y: obj.y, width: obj.width, height: obj.height })
   }, [obj])
 
-  // Materialise imageRect on entry into crop mode if it's still implicit.
-  // Otherwise frame-handle resize (which only mutates x/y/width/height)
-  // would visually drag the image with it, because the renderer's
-  // effectiveImageRect falls back to the frame when imageRect is
-  // undefined. By committing imageRect = current frame on entry, frame
-  // resize cleanly trims the visible window without scaling the image.
-  useEffect(() => {
-    if (mutationCtx === null) return
-    if (obj.imageRect !== undefined) return
-    bulkUpdateObjects(mutationCtx, [
-      {
-        id: obj.id,
-        patch: {
-          imageRect: { x: obj.x, y: obj.y, width: obj.width, height: obj.height },
-        } as Partial<ImageObject>,
-      },
-    ])
-    // Run once per crop-mode entry — depends only on object id.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obj.id])
+  /** Place the whole picture (absolute slide px) inside the unchanged frame. */
+  const commitPicture = useCallback(
+    (next: ImageRect, inFrame: FrameRect) => {
+      command.tryRun('object.crop.set', {
+        slide: slideId,
+        image: obj.id,
+        crop: {
+          op: 'set',
+          picture: {
+            x: next.x - inFrame.x,
+            y: next.y - inFrame.y,
+            width: next.width,
+            height: next.height,
+          },
+        },
+      })
+    },
+    [command, slideId, obj.id],
+  )
+
+  /** Move / resize the frame; the picture stays where it is on the slide. */
+  const commitFrame = useCallback(
+    (next: FrameRect, picture: ImageRect) => {
+      command.tryRun('object.update', {
+        slide: slideId,
+        object: obj.id,
+        patch: { ...next, imageRect: picture },
+      })
+    },
+    [command, slideId, obj.id],
+  )
 
   // Resolve image URL via the same resolver the renderer uses.
   useEffect(() => {
@@ -279,11 +299,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         height: imageRect.height,
       }
       setImageRect(next)
-      bulkUpdateObjects(mutationCtx, [
-        { id: obj.id, patch: { imageRect: next } as Partial<ImageObject> },
-      ])
+      commitPicture(next, frame)
     },
-    [zoom, imageRect.width, imageRect.height, mutationCtx, obj.id],
+    [zoom, imageRect.width, imageRect.height, frame, commitPicture],
   )
 
   const onImagePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -316,11 +334,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         y: imageRect.y - (cursorSlideY - imageRect.y) * (factor - 1),
       }
       setImageRect(next)
-      bulkUpdateObjects(mutationCtx, [
-        { id: obj.id, patch: { imageRect: next } as Partial<ImageObject> },
-      ])
+      commitPicture(next, frame)
     },
-    [imageRect, zoom, mutationCtx, obj.id],
+    [imageRect, zoom, frame, commitPicture],
   )
 
   // -------------------------------------------------------------------------
@@ -374,9 +390,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         height: frame.height,
       }
       setFrame(next)
-      bulkUpdateObjects(mutationCtx, [{ id: obj.id, patch: { x: next.x, y: next.y } }])
+      commitFrame(next, imageRect)
     },
-    [zoom, frame.width, frame.height, mutationCtx, obj.id],
+    [zoom, frame.width, frame.height, imageRect, commitFrame],
   )
 
   const onFrameBodyPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -429,14 +445,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
       const dy = (e.clientY - drag.startClientY) / z
       const next = resizeRect(drag.initialFrame, drag.kind, dx, dy, e.shiftKey)
       setFrame(next)
-      bulkUpdateObjects(mutationCtx, [
-        {
-          id: obj.id,
-          patch: { x: next.x, y: next.y, width: next.width, height: next.height },
-        },
-      ])
+      commitFrame(next, imageRect)
     },
-    [zoom, mutationCtx, obj.id],
+    [zoom, imageRect, commitFrame],
   )
 
   const onHandlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -490,11 +501,9 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
       const dy = (e.clientY - drag.startClientY) / z
       const next: ImageRect = resizeRect(drag.initialImage, drag.kind, dx, dy, e.shiftKey)
       setImageRect(next)
-      bulkUpdateObjects(mutationCtx, [
-        { id: obj.id, patch: { imageRect: next } as Partial<ImageObject> },
-      ])
+      commitPicture(next, frame)
     },
-    [zoom, mutationCtx, obj.id],
+    [zoom, frame, commitPicture],
   )
 
   const onImageHandlePointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -560,11 +569,13 @@ export function CropOverlay({ obj, mutationCtx }: CropOverlayProps) {
         next = Math.round(next / step) * step
       }
       setImageRotation(next)
-      bulkUpdateObjects(mutationCtx, [
-        { id: obj.id, patch: { imageRotation: next } as Partial<ImageObject> },
-      ])
+      command.tryRun('object.crop.set', {
+        slide: slideId,
+        image: obj.id,
+        crop: { op: 'rotate', degrees: (next * 180) / Math.PI },
+      })
     },
-    [mutationCtx, obj.id],
+    [command, slideId, obj.id],
   )
 
   const onRotationPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {

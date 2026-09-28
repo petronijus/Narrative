@@ -4,6 +4,69 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.7 — Transforms are commands (2026-09-28)
+
+### Added
+
+- **Agents can resize, rotate, flip, align to the slide and crop** with five
+  new commands, carrying the rules the editor applies so a handle drag and
+  an agent's request land on the same result:
+  - `object.resize` — a new width / height with an anchor that stays put
+    (along the object's own, possibly rotated axes), or an exact box;
+    `keepAspect`; a cropped picture scales with its frame.
+  - `object.rotate` — degrees, absolute or `relative`.
+  - `object.flip` — mirrors in place: toggles `flipH` / `flipV` and negates
+    the rotation, like the editor's Flip buttons.
+  - `object.alignToSlide` — an edge or the centre of the slide, several
+    objects as one block, measured on the visible (rotated) outline.
+  - `object.crop.set` — place, pan, zoom or turn the picture inside its
+    frame, frame-relative, or reset the crop.
+- The `basics` and `edit` playbooks point agents at the transform commands.
+
+### Fixed
+
+- **Resizing a path did not change the drawing**, only its selection box:
+  paths (pen drawings, imported PowerPoint shapes) draw from their anchor
+  points, which a resize never scaled. A resize now scales the anchors and
+  their curve handles; a line or arrow scales its end points (stroke width
+  stays). This also makes the Inspector's Width / Height work on lines and
+  arrows.
+- **"Reset crop" left a turned picture turned**; it now also straightens
+  the picture, like resetting from crop mode. "Reset crop" and "Remove shape
+  mask" now go through `object.crop.set` / `object.mask.remove`.
+
+### Changed
+
+- **Inspector Width / Height on a cropped image now scale the crop with the
+  frame**, as dragging a resize handle always did (they used to trim the
+  picture instead). On a rotated object they keep its top-left corner in
+  place along the object's own axes instead of shifting it.
+- **Inspector alignment to the slide aligns what you see**: a rotated
+  object's rotated outline touches the edge (it used to be its unrotated
+  box).
+- **Entering crop mode no longer writes to the document.** An image that
+  fills its frame used to get an explicit crop on entry, which put an empty
+  step on the undo stack; the crop now becomes explicit only when the frame
+  actually moves or resizes.
+
+### Internal
+
+- A2.5: the transform handles, the crop overlay, dragging objects on the
+  canvas, and the Inspector's position, size, rotation, flip, alignment,
+  layer order, layers panel and multi-select actions (align, distribute,
+  group, ungroup, mask with shape) dispatch commands. The resize math lives
+  in `packages/commands/src/geometry.ts`, shared by the handles and
+  `object.resize`. `TransformHandles` and `CropOverlay` are off the one-door
+  exemption list and the `state/applyShapeMask.ts` re-export is gone (19
+  files left; the Inspector is re-tagged A2.11).
+- Missing hook dependencies in the canvas pointer handlers (`command`,
+  `isViewer`, the object defaults) added.
+- MCP tools/list budget 136,000 → 142,000 bytes; four new agent-eval
+  scenarios (`photo-resize-centered`, `photo-crop-zoom`,
+  `badge-rotate-align`, `shape-flip-in-place`).
+
+---
+
 ## 0.10.6 — Creating and arranging objects writes through commands (2026-09-28)
 
 ### Internal

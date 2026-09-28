@@ -11,6 +11,7 @@ import { CommandRegistry } from './registry.js'
 import { slideCommands } from './commands/slides.js'
 import { objectCommands } from './commands/objects.js'
 import { objectEditCommands } from './commands/objectEdit.js'
+import { transformCommands } from './commands/transforms.js'
 import { textCommands } from './commands/text.js'
 import { tableCommands } from './commands/tables.js'
 import { animationCommands } from './commands/animations.js'
@@ -32,6 +33,7 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(slideCommands)
   registry.registerAll(objectCommands)
   registry.registerAll(objectEditCommands)
+  registry.registerAll(transformCommands)
   registry.registerAll(textCommands)
   registry.registerAll(tableCommands)
   registry.registerAll(animationCommands)

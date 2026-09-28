@@ -165,3 +165,31 @@ after the mechanism has been proven on simpler surfaces.
   (preferably folder tokens, as the basics playbook says).
   - tools/list budget 132,000 → 136,000 bytes; A2 will keep adding ~1–1.3 KB
     per new command.
+- 2026-09-28: **A2.5 done** — `object.resize`, `object.rotate`,
+  `object.flip`, `object.alignToSlide`, `object.crop.set` (ops set / pan /
+  zoom / rotate / reset). `TransformHandles`, `CropOverlay`, the canvas drag
+  and the Inspector's geometry, layer order, layers panel and multi-select
+  actions dispatch commands; `TransformHandles` and `CropOverlay` are off
+  the exemption list, the `applyShapeMask` re-export is deleted. Decisions:
+  - **Geometry is shared, not duplicated**: `packages/commands/src/geometry.ts`
+    (`resizeFromHandle`, `placeResized`, `scaleCrop`, `visualBounds`) is what
+    the handles compute a drag with and what `object.resize` applies, so the
+    two cannot drift.
+  - **A handle drag sends the snapped box explicitly** (`object.resize` with
+    x / y / width / height) — snapping is an editor affordance, the command
+    only applies the box and scales the crop.
+  - **Continuous gestures stay absolute and idempotent**: the canvas drag
+    writes `object.update` positions from the pointer-down snapshot (the
+    crop rule moves a picture by the frame's change against the live value);
+    a multi-object handle drag sends `object.move` for the not-yet-applied
+    part of the travel. Each frame is one command, one transaction; the undo
+    manager's capture window still merges a gesture into one step.
+  - **The crop overlay writes nothing on entry.** The picture moves with
+    `object.crop.set` (frame-relative); the frame moves or resizes with
+    `object.update` carrying the current `imageRect`, which also makes an
+    implicit crop explicit at the first real change.
+  - Behaviour now matching the handles: Inspector W / H scale a crop and
+    keep a rotated object's top-left corner; align-to-slide uses the
+    rotated outline.
+  - tools/list budget 136,000 → 142,000 bytes (`object.crop.set` is 2.4 KB:
+    its union of five ops).

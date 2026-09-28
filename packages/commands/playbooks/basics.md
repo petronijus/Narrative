@@ -51,7 +51,7 @@ text.
   their open editor. If they have no editor open, ask which slide or object
   they mean.
 - Slides are **1920 × 1080 px**, origin top-left, y grows downwards.
-- Rotation is stored in **radians**. Colours are `#rrggbb` strings (or
+- Rotation is stored in **radians** (`object.rotate` takes degrees). Colours are `#rrggbb` strings (or
   `0xRRGGBB` numbers) or folder colour tokens `{ "$token": "colors.<id>" }`
   — prefer the folder's tokens so the deck stays on brand.
 
@@ -60,9 +60,12 @@ text.
 - Use one `ops.apply` for anything that takes more than one command: it is
   one change for collaborators and one step to revert, and with the default
   `atomic: true` either everything succeeds or nothing changes.
-- Move objects with `object.move` (it keeps a cropped image's crop). Set
-  properties with `object.update`; replace text with `text.set`; format
-  ranges with `text.format`.
+- Move objects with `object.move` (it keeps a cropped image's crop). Resize
+  with `object.resize`, rotate with `object.rotate`, mirror with
+  `object.flip`, and crop with `object.crop.set`: they apply the editor's
+  rules (a crop scales with its image, a flip mirrors in place) that raw
+  `object.update` fields do not. Set other properties with `object.update`;
+  replace text with `text.set`; format ranges with `text.format`.
 - Text a model reads and writes uses paragraphs separated by a blank line
   (`"\n\n"`); a single `"\n"` is a line break inside a paragraph. The rich
   form of `text.set` carries runs (bold, colour, size, font) and list

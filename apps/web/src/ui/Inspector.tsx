@@ -70,7 +70,6 @@ import {
   Type,
   type LucideIcon,
 } from 'lucide-react'
-import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { TokenColorInput } from './TokenColorInput.js'
 import { TableInspector } from './TableInspector.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
@@ -107,22 +106,15 @@ import { useNavigate } from 'react-router-dom'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
-import { applyShapeMask, isMaskableShape } from '../state/applyShapeMask.js'
+import { useCommand } from '../state/useCommand.js'
 import {
   updateObject,
-  translateObjects,
   addAnimation,
   removeAnimation,
   updateAnimation,
   updateSlideTransition,
   updateSlideBackground,
-  alignObjects,
-  distributeObjects,
-  moveObjectsLayer,
-  moveObjectToIndex,
-  groupObjects,
-  ungroupObjects,
-  removeObject,
+  isMaskableShape,
   listSlides,
 } from '@narrative/slide-model'
 import type {
@@ -202,11 +194,6 @@ function hexToNumber(hex: string): number {
 /** Radiány → stupně pro UI */
 function radToDeg(rad: number): number {
   return (rad * 180) / Math.PI
-}
-
-/** Stupně → radiány pro Y.Doc */
-function degToRad(deg: number): number {
-  return (deg * Math.PI) / 180
 }
 
 /**
@@ -874,13 +861,6 @@ export function Inspector() {
     updateObject(mutationCtx, obj.id, p)
   }
 
-  // Position edits move the crop with the frame — see PositionSection.
-  function translate(dx: number, dy: number) {
-    if (isViewer) return
-    if (obj === undefined || mutationCtx === null) return
-    translateObjects(mutationCtx, [{ id: obj.id, dx, dy }])
-  }
-
   // M29 Phase 2 — Table object has its own inspector with row/col +
   // defaults + active-cell override controls. Skips the generic shape
   // chrome below (fill/stroke/etc. live inside the table's `defaults`).
@@ -974,13 +954,7 @@ export function Inspector() {
           alignment row | X+Y row | rotation + flip row.
           Single-object alignment snaps to the slide canvas (not to the
           selection union — that's the multi-select inspector's job). */}
-      <PositionSection
-        obj={obj}
-        patch={patch}
-        translate={translate}
-        disabled={isViewer}
-        layerMutationCtx={mutationCtx}
-      />
+      <PositionSection obj={obj} patch={patch} disabled={isViewer} />
 
       {/* Transparency for object types that don't render an Appearance
           section (text / image / video / line / arrow). Same control,
@@ -1045,9 +1019,7 @@ export function Inspector() {
 
       {/* P11: Image crop — minimal viable UI (4 number fields + reset).
           Crop rect is in source-image pixel space. */}
-      {obj.type === 'image' && (
-        <ImageCropSection obj={obj} patch={patch as (p: SlideObjectPatch<ImageObject>) => void} />
-      )}
+      {obj.type === 'image' && <ImageCropSection obj={obj} disabled={isViewer} />}
 
       {/* P5c: Shadow + Blur + Link — every object type. Link was its
           own section pre-redesign; merged into Effects for compactness. */}
@@ -1069,9 +1041,7 @@ export function Inspector() {
       {/* P6: Layers panel — full ordered list of slide objects with
           drag-drop reorder. Shown at the bottom so it scrolls
           independently of the focused object's properties. */}
-      {mutationCtx !== null && (
-        <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
-      )}
+      {mutationCtx !== null && <LayersPanel activeIds={[obj.id]} readOnly={isViewer} />}
     </div>
   )
 }
@@ -1114,10 +1084,14 @@ function detectMaskCandidates(
 }
 
 function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
-  const { objects, objectsCtx: mutationCtx } = useSlideObjects()
+  const { objects } = useSlideObjects()
   const { role } = useDeckRole()
+  const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
+  const { selectOne } = useSelection()
   const isViewer = role === 'viewer'
-  if (mutationCtx === null) return null
+  if (activeSlideId === null) return null
+  const slide = activeSlideId
 
   // Derive group state of the current selection so Group / Ungroup
   // buttons reflect what the next click would actually do:
@@ -1145,16 +1119,16 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
       : 'Group (Cmd+G)'
 
   const runAlign = (axis: AlignAxis): void => {
-    if (!isViewer) alignObjects(mutationCtx, selectedIds, axis)
+    if (!isViewer) command.tryRun('object.align', { slide, objects: selectedIds, axis })
   }
   const runDistribute = (axis: DistributeAxis): void => {
-    if (!isViewer) distributeObjects(mutationCtx, selectedIds, axis)
+    if (!isViewer) command.tryRun('object.distribute', { slide, objects: selectedIds, axis })
   }
   const runGroup = (): void => {
-    if (!isViewer) groupObjects(mutationCtx, selectedIds)
+    if (!isViewer) command.tryRun('object.group', { slide, objects: selectedIds })
   }
   const runUngroup = (): void => {
-    if (!isViewer) ungroupObjects(mutationCtx, selectedIds)
+    if (!isViewer) command.tryRun('object.ungroup', { slide, objects: selectedIds })
   }
 
   // Mask-with-shape: only when exactly 1 image + 1 maskable shape with
@@ -1163,7 +1137,13 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
   const maskPair = detectMaskCandidates(selectedIds, objects)
   const runMaskWithShape = (): void => {
     if (isViewer || maskPair === null) return
-    applyShapeMask(mutationCtx, maskPair.image.id, maskPair.shape.id)
+    const out = command.tryRun('object.mask.apply', {
+      slide,
+      image: maskPair.image.id,
+      shape: maskPair.shape.id,
+    })
+    // The shape is gone — land on the surviving image, like the context menu.
+    if (out !== null) selectOne(maskPair.image.id)
   }
 
   // Promote the current multi-selection to a shared component template.
@@ -1249,7 +1229,7 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
           />
         </div>
       </Section>
-      <LayerOrderSection ids={selectedIds} mutationCtx={mutationCtx} disabled={isViewer} />
+      <LayerOrderSection ids={selectedIds} disabled={isViewer} />
       {maskPair !== null && (
         <Section title="Mask" storageKey="multi-mask">
           <button
@@ -1287,7 +1267,7 @@ function MultiSelectInspector({ selectedIds }: { selectedIds: string[] }) {
           </p>
         )}
       </Section>
-      <LayersPanel activeIds={selectedIds} mutationCtx={mutationCtx} readOnly={isViewer} />
+      <LayersPanel activeIds={selectedIds} readOnly={isViewer} />
     </div>
   )
 }
@@ -1329,17 +1309,12 @@ function MultiButton({
  * (single-object inspector) and wrapped in its own Section by the
  * multi-select inspector.
  */
-function LayerOrderControls({
-  ids,
-  mutationCtx,
-  disabled,
-}: {
-  ids: string[]
-  mutationCtx: Parameters<typeof moveObjectsLayer>[0]
-  disabled: boolean
-}) {
+function LayerOrderControls({ ids, disabled }: { ids: string[]; disabled: boolean }) {
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
   const run = (move: LayerMove): void => {
-    if (!disabled) moveObjectsLayer(mutationCtx, ids, move)
+    if (disabled || activeSlideId === null) return
+    command.tryRun('object.layer', { slide: activeSlideId, objects: ids, move })
   }
   const buttons: { move: LayerMove; title: string; Icon: LucideIcon }[] = [
     { move: 'front', title: 'Bring to front (Cmd+])', Icon: ArrowUpToLine },
@@ -1422,18 +1397,10 @@ function SegmentedToggleRow({
   )
 }
 
-function LayerOrderSection({
-  ids,
-  mutationCtx,
-  disabled,
-}: {
-  ids: string[]
-  mutationCtx: Parameters<typeof moveObjectsLayer>[0]
-  disabled: boolean
-}) {
+function LayerOrderSection({ ids, disabled }: { ids: string[]; disabled: boolean }) {
   return (
     <Section title="Layer order" storageKey="layer-order">
-      <LayerOrderControls ids={ids} mutationCtx={mutationCtx} disabled={disabled} />
+      <LayerOrderControls ids={ids} disabled={disabled} />
     </Section>
   )
 }
@@ -1451,16 +1418,10 @@ function layerLabel(obj: SlideObject): string {
   return `${obj.type}-${obj.id.slice(0, 4)}`
 }
 
-export function LayersPanel({
-  activeIds,
-  mutationCtx,
-  readOnly,
-}: {
-  activeIds: string[]
-  mutationCtx: Parameters<typeof moveObjectToIndex>[0]
-  readOnly: boolean
-}) {
+export function LayersPanel({ activeIds, readOnly }: { activeIds: string[]; readOnly: boolean }) {
   const { objects } = useSlideObjects()
+  const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   const { selectOne, selectMany, clear } = useSelection()
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(
@@ -1530,7 +1491,14 @@ export function LayersPanel({
       position === 'before'
         ? objects.length - 1 - visualTargetIdx
         : objects.length - 2 - visualTargetIdx
-    moveObjectToIndex(mutationCtx, draggingId, yIndex)
+    if (activeSlideId !== null) {
+      command.tryRun('object.layer', {
+        slide: activeSlideId,
+        objects: [draggingId],
+        move: 'toIndex',
+        toIndex: Math.max(0, yIndex),
+      })
+    }
     onDragEnd()
   }
 
@@ -1613,8 +1581,9 @@ export function LayersPanel({
                   title="Delete layer"
                   onClick={(e) => {
                     e.stopPropagation()
+                    if (activeSlideId === null) return
                     if (activeSet.has(o.id)) clear()
-                    removeObject(mutationCtx, o.id)
+                    command.tryRun('object.delete', { slide: activeSlideId, objects: [o.id] })
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   onPointerDown={(e) => e.stopPropagation()}
@@ -2030,20 +1999,9 @@ function BackgroundSection({
 
 interface PositionSectionProps {
   obj: SlideObject
+  /** Plain property writes (the aspect-lock flag). */
   patch: (p: SlideObjectPatch<SlideObject>) => void
-  /**
-   * Move the object by a delta. Position edits (X / Y fields, align to
-   * slide) must go through this — i.e. `translateObjects` — never through
-   * an `{ x, y }` patch: a cropped image's `imageRect` is in absolute
-   * slide coordinates and has to travel with the frame, or the picture
-   * slides inside its crop.
-   */
-  translate: (dx: number, dy: number) => void
   disabled: boolean
-  /** Optional layer-order mutation context — when present, a row of
-   *  Front/Forward/Backward/Back icon buttons is rendered at the top of
-   *  the Position section. */
-  layerMutationCtx?: Parameters<typeof moveObjectsLayer>[0] | null
 }
 
 /**
@@ -2059,41 +2017,49 @@ interface PositionSectionProps {
  * MultiSelectInspector and uses the selection union as the reference,
  * matching Figma / Keynote conventions.
  */
-export function PositionSection({
-  obj,
-  patch,
-  translate,
-  disabled,
-  layerMutationCtx = null,
-}: PositionSectionProps) {
+export function PositionSection({ obj, patch, disabled }: PositionSectionProps) {
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
   const rotationDeg = radToDeg(obj.rotation)
 
-  // Absolute targets are turned into deltas against the value the user
-  // is looking at; translateObjects applies them to the live position.
-  const moveXTo = (x: number): void => translate(x - obj.x, 0)
-  const moveYTo = (y: number): void => translate(0, y - obj.y)
+  // Every geometry edit is the transform command an agent would use, so
+  // the rules come with it: a cropped picture travels and scales with its
+  // frame, a resize keeps the top-left corner put along the object's own
+  // axes, a flip mirrors in place, alignment uses the visible outline.
+  const run = (id: string, input: Record<string, unknown>): void => {
+    if (disabled || activeSlideId === null) return
+    command.tryRun(id, { slide: activeSlideId, ...input })
+  }
 
-  const alignToCanvas = (axis: AlignAxis): void => {
-    if (disabled) return
-    switch (axis) {
-      case 'left':
-        moveXTo(0)
-        return
-      case 'right':
-        moveXTo(SLIDE_WIDTH - obj.width)
-        return
-      case 'center-x':
-        moveXTo(Math.round((SLIDE_WIDTH - obj.width) / 2))
-        return
-      case 'top':
-        moveYTo(0)
-        return
-      case 'bottom':
-        moveYTo(SLIDE_HEIGHT - obj.height)
-        return
-      case 'center-y':
-        moveYTo(Math.round((SLIDE_HEIGHT - obj.height) / 2))
-        return
+  // Absolute targets are turned into deltas against the value the user
+  // is looking at; object.move applies them to the live position.
+  const moveXTo = (x: number): void =>
+    run('object.move', { objects: [obj.id], dx: x - obj.x, dy: 0 })
+  const moveYTo = (y: number): void =>
+    run('object.move', { objects: [obj.id], dx: 0, dy: y - obj.y })
+
+  const ALIGN_TO_SLIDE: Record<AlignAxis, Record<string, string>> = {
+    left: { horizontal: 'left' },
+    'center-x': { horizontal: 'center' },
+    right: { horizontal: 'right' },
+    top: { vertical: 'top' },
+    'center-y': { vertical: 'middle' },
+    bottom: { vertical: 'bottom' },
+  }
+  const alignToCanvas = (axis: AlignAxis): void =>
+    run('object.alignToSlide', { objects: [obj.id], ...ALIGN_TO_SLIDE[axis] })
+
+  // Only the side the user typed is sent; the other keeps its value (a
+  // horizontal line's height is 0, which no resize may set). With the
+  // aspect lock on, the other side follows, rounded to whole pixels.
+  const resizeSide = (side: 'width' | 'height', value: number): void => {
+    if (!(value >= 1)) return
+    const other = side === 'width' ? 'height' : 'width'
+    if (obj.aspectLocked === true && obj[side] > 0 && obj[other] > 0) {
+      const follow = Math.max(1, Math.round((value * obj[other]) / obj[side]))
+      run('object.resize', { object: obj.id, [side]: value, [other]: follow })
+    } else {
+      run('object.resize', { object: obj.id, [side]: value, keepAspect: false })
     }
   }
 
@@ -2102,12 +2068,8 @@ export function PositionSection({
       {/* Layer order — Front / Forward / Backward / Back. Lives at the
           top of the Position panel so the most-used spatial controls
           (depth, alignment, X/Y, rotation) are clustered together. */}
-      {layerMutationCtx !== null && (
-        <>
-          <SubLabel>Layer order</SubLabel>
-          <LayerOrderControls ids={[obj.id]} mutationCtx={layerMutationCtx} disabled={disabled} />
-        </>
-      )}
+      <SubLabel>Layer order</SubLabel>
+      <LayerOrderControls ids={[obj.id]} disabled={disabled} />
 
       {/* Alignment */}
       <SubLabel>Alignment</SubLabel>
@@ -2226,14 +2188,7 @@ export function PositionSection({
           ariaLabel="Width"
           value={obj.width}
           disabled={disabled}
-          onChange={(v) => {
-            if (obj.aspectLocked === true && obj.width > 0) {
-              const ratio = obj.height / obj.width
-              patch({ width: v, height: Math.max(1, Math.round(v * ratio)) })
-            } else {
-              patch({ width: v })
-            }
-          }}
+          onChange={(v) => resizeSide('width', v)}
         />
         <CompactNumberField
           id={`inspector-h-${obj.id}`}
@@ -2241,14 +2196,7 @@ export function PositionSection({
           ariaLabel="Height"
           value={obj.height}
           disabled={disabled}
-          onChange={(v) => {
-            if (obj.aspectLocked === true && obj.height > 0) {
-              const ratio = obj.width / obj.height
-              patch({ height: v, width: Math.max(1, Math.round(v * ratio)) })
-            } else {
-              patch({ height: v })
-            }
-          }}
+          onChange={(v) => resizeSide('height', v)}
         />
         <IconToggleButton
           Icon={obj.aspectLocked === true ? Link2 : Link2Off}
@@ -2278,42 +2226,25 @@ export function PositionSection({
           step={0.1}
           suffix="°"
           disabled={disabled}
-          onChange={(v) => patch({ rotation: degToRad(v) })}
+          onChange={(v) => run('object.rotate', { objects: [obj.id], degrees: v })}
         />
         <IconToggleButton
           Icon={FlipHorizontal}
           label="Flip horizontal"
           pressed={obj.flipH === true}
           disabled={disabled}
-          onClick={() => {
-            // World-space mirror about the object's vertical centre
-            // axis. Identity M_x · R(θ) = R(-θ) · M_x lets us express
-            // it as: toggle the local scale.x flag AND negate the
-            // rotation. Symmetric shapes (solid rectangle / ellipse)
-            // see no change from the scale flip but DO see the
-            // rotation flip — which is the visible mirror the user
-            // expects. Asymmetric content (image / text / gradient
-            // fill) needs both pieces to mirror correctly.
-            patch({
-              flipH: obj.flipH === true ? undefined : true,
-              rotation: -obj.rotation,
-            } as SlideObjectPatch<SlideObject>)
-          }}
+          // A world-space mirror: object.flip toggles flipH and negates the
+          // rotation (M_x · R(θ) = R(-θ) · M_x), so a rotated object
+          // mirrors in place.
+          onClick={() => run('object.flip', { objects: [obj.id], axis: 'horizontal' })}
         />
         <IconToggleButton
           Icon={FlipVertical}
           label="Flip vertical"
           pressed={obj.flipV === true}
           disabled={disabled}
-          onClick={() => {
-            // Same identity for the horizontal axis: M_y · R(θ) =
-            // R(-θ) · M_y. Composing flipH then flipV therefore
-            // collapses to a 180° rotation, matching Figma.
-            patch({
-              flipV: obj.flipV === true ? undefined : true,
-              rotation: -obj.rotation,
-            } as SlideObjectPatch<SlideObject>)
-          }}
+          // flipH then flipV collapses to a 180° rotation, matching Figma.
+          onClick={() => run('object.flip', { objects: [obj.id], axis: 'vertical' })}
         />
       </div>
     </Section>
@@ -5835,13 +5766,28 @@ function LinkControls({ obj, patch }: LinkSectionProps) {
 
 interface ImageCropSectionProps {
   obj: ImageObject
-  patch: (p: SlideObjectPatch<ImageObject>) => void
+  disabled: boolean
 }
 
-function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
+function ImageCropSection({ obj, disabled }: ImageCropSectionProps) {
   const { enterCrop } = useCropMode()
-  const cropped = obj.imageRect !== undefined
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
+  // A turned picture is a crop too: reset straightens it as well.
+  const cropped = obj.imageRect !== undefined || (obj.imageRotation ?? 0) !== 0
   const masked = obj.mask !== undefined
+  const resetCrop = (): void => {
+    if (disabled || activeSlideId === null) return
+    command.tryRun('object.crop.set', {
+      slide: activeSlideId,
+      image: obj.id,
+      crop: { op: 'reset' },
+    })
+  }
+  const removeMask = (): void => {
+    if (disabled || activeSlideId === null) return
+    command.tryRun('object.mask.remove', { slide: activeSlideId, image: obj.id })
+  }
   return (
     <Section title="Crop" storageKey="imageCrop">
       <div className="flex flex-col gap-2">
@@ -5854,10 +5800,8 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
         </button>
         <button
           type="button"
-          disabled={!cropped}
-          onClick={() =>
-            patch({ imageRect: undefined } as unknown as SlideObjectPatch<ImageObject>)
-          }
+          disabled={disabled || !cropped}
+          onClick={resetCrop}
           className="rounded-md border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
           Reset crop
@@ -5865,7 +5809,8 @@ function ImageCropSection({ obj, patch }: ImageCropSectionProps) {
         {masked && (
           <button
             type="button"
-            onClick={() => patch({ mask: undefined } as unknown as SlideObjectPatch<ImageObject>)}
+            disabled={disabled}
+            onClick={removeMask}
             className="rounded-md border border-border bg-input px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Remove shape mask

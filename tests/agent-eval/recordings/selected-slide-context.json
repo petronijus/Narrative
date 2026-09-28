@@ -1,55 +1,67 @@
 {
   "scenario": "selected-slide-context",
-  "tag": "ev1416f9",
-  "recordedAt": "2026-09-27T10:41:34.979Z",
+  "tag": "ev47fba2",
+  "recordedAt": "2026-09-28T19:27:29.596Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "f3znAZCk-dZ0",
-    "title": "Pricing ev1416f9",
-    "activeSlideId": "G3-lIktVQLs6Al7o_8xFv",
-    "selectedId": "gPWp-XiXKe67oKDe_37ZV"
+    "deckId": "u2UnhDStrIBA",
+    "title": "Pricing ev47fba2",
+    "activeSlideId": "Pk62P_rMeCWWt-WaGyAyy",
+    "selectedId": "hCqX0WKxh6NRs-CCqUkfw"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "I have the Narrative deck \"Pricing ev1416f9\" (deckId f3znAZCk-dZ0) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
+        "prompt": "I have the Narrative deck \"Pricing ev47fba2\" (deckId u2UnhDStrIBA) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
         "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__editor_context,mcp__narrative-eval__query_slide,mcp__narrative-eval__query_object",
+              "max_results": 3
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
           {
             "tool": "editor_context",
             "command": "editor.context",
             "input": {
-              "deckId": "f3znAZCk-dZ0"
+              "deckId": "u2UnhDStrIBA"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "open": true,
-              "activeSlideId": "G3-lIktVQLs6Al7o_8xFv",
+              "activeSlideId": "Pk62P_rMeCWWt-WaGyAyy",
               "activeSlideIndex": 1,
-              "selectedObjectIds": ["gPWp-XiXKe67oKDe_37ZV"],
+              "selectedObjectIds": ["hCqX0WKxh6NRs-CCqUkfw"],
               "editors": [
                 {
-                  "activeSlideId": "G3-lIktVQLs6Al7o_8xFv",
+                  "activeSlideId": "Pk62P_rMeCWWt-WaGyAyy",
                   "activeSlideIndex": 1,
-                  "selectedObjectIds": ["gPWp-XiXKe67oKDe_37ZV"],
-                  "lastActiveAt": "2026-09-27T10:41:23.994Z"
+                  "selectedObjectIds": ["hCqX0WKxh6NRs-CCqUkfw"],
+                  "lastActiveAt": "2026-09-28T19:27:18.241Z"
                 }
               ]
             },
-            "text": "{\"open\":true,\"activeSlideId\":\"G3-lIktVQLs6Al7o_8xFv\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"gPWp-XiXKe67oKDe_37ZV\"],\"editors\":[{\"activeSlideId\":\"G3-lIktVQLs6Al7o_8xFv\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"gPWp-XiXKe67oKDe_37ZV\"],\"lastActiveAt\":\"2026-09-27T10:41:23.994Z\"}]}"
+            "text": "{\"open\":true,\"activeSlideId\":\"Pk62P_rMeCWWt-WaGyAyy\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"hCqX0WKxh6NRs-CCqUkfw\"],\"editors\":[{\"activeSlideId\":\"Pk62P_rMeCWWt-WaGyAyy\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"hCqX0WKxh6NRs-CCqUkfw\"],\"lastActiveAt\":\"2026-09-28T19:27:18.241Z\"}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "f3znAZCk-dZ0",
-              "slide": "G3-lIktVQLs6Al7o_8xFv"
+              "deckId": "u2UnhDStrIBA",
+              "slide": "Pk62P_rMeCWWt-WaGyAyy"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "G3-lIktVQLs6Al7o_8xFv",
+              "id": "Pk62P_rMeCWWt-WaGyAyy",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -58,7 +70,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "MCQ_1Mv2NwZ4yLMmUk_PS",
+                  "id": "E9yPIImdh6gGgU3ZjYc5j",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -73,7 +85,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "d62PQimjMpsdNOVcKoQw3",
+                  "id": "TDBOTdmUceoPd5VKtK4ex",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -88,7 +100,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "gPWp-XiXKe67oKDe_37ZV",
+                  "id": "hCqX0WKxh6NRs-CCqUkfw",
                   "type": "text",
                   "x": 1000,
                   "y": 280,
@@ -106,11 +118,11 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"G3-lIktVQLs6Al7o_8xFv\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"MCQ_1Mv2NwZ4yLMmUk_PS\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"d62PQimjMpsdNOVcKoQw3\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"gPWp-XiXKe67oKDe_37ZV\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"Pk62P_rMeCWWt-WaGyAyy\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"E9yPIImdh6gGgU3ZjYc5j\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"TDBOTdmUceoPd5VKtK4ex\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"hCqX0WKxh6NRs-CCqUkfw\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "You're on **slide 2** (index 1) of \"Pricing ev1416f9\". It has a white background, no transition, no animations and no speaker notes.\n\n**What's on the slide** (three text boxes, listed back to front):\n\n1. **Title:** \"Pricing tiers\". Bold, 64 px, black, across the top (x 120, y 80, 1680 × 120).\n2. **Left column:** \"Starter plan: 9 EUR per seat\". Regular, 28 px, black (x 120, y 280, 780 × 400).\n3. **Right column:** \"Enterprise plan: talk to sales\". Regular, 28 px, black (x 1000, y 280, 800 × 400).\n\n**Your selection:** the right-column text box, **\"Enterprise plan: talk to sales\"** (id `gPWp-XiXKe67oKDe_37ZV`).\n\nI didn't change anything.",
-        "turns": 3,
+        "finalText": "You're on **slide 2** (index 1) of \"Pricing ev47fba2\". It has three text objects, listed back to front:\n\n1. **Title:** \"Pricing tiers\". Bold, 64 pt, black, across the top at (120, 80), 1680×120.\n2. **Left text box:** \"Starter plan: 9 EUR per seat\". 28 pt regular, at (120, 280), 780×400.\n3. **Right text box:** \"Enterprise plan: talk to sales\". 28 pt regular, at (1000, 280), 800×400.\n\n**Your selection is the right text box, \"Enterprise plan: talk to sales\"** (id `hCqX0WKxh6NRs-CCqUkfw`).\n\nThe slide has the default white background, no transition, no animations and no speaker notes. I only read the deck and didn't change anything.",
+        "turns": 4,
         "isError": false,
         "stopReason": "success"
       }

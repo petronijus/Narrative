@@ -27,8 +27,13 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * capabilities — slide.copyTo, slide.notes.get / .set, deck.duplicate — at
  * 1.0–1.3 KB each; A2 adds ~25 more commands that move editor-only logic
  * onto the agent surface, so expect it to grow step by step with them.
+ * A2.5 (2026-09-28): 136,000 → 142,000 for the five transforms —
+ * object.resize 1.7 KB, .rotate 1.0, .flip 1.1, .alignToSlide 1.3 and
+ * .crop.set 2.4 (its five crop operations are a discriminated union), less
+ * ~0.4 KB object.update lost by pointing at them instead of explaining the
+ * workarounds.
  */
-export const TOOL_LIST_BUDGET_BYTES = 136_000
+export const TOOL_LIST_BUDGET_BYTES = 142_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

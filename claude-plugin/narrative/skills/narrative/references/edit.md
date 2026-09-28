@@ -22,7 +22,10 @@ The user asked: <request>
    mappings:
    - copy an object on the same slide → `object_duplicate`;
    - move → `object_move` (deltas), line up → `object_align` /
-     `object_distribute`;
+     `object_distribute`, to the slide's edge or centre →
+     `object_alignToSlide`;
+   - resize → `object_resize`, rotate → `object_rotate`, mirror →
+     `object_flip`, crop or zoom a picture → `object_crop_set`;
    - change font, size, colour of a whole box → `object_update` (clear
      conflicting run formatting with `text_format` first);
    - change some words → `text_format` with a `match` range, or `text_set`

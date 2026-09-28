@@ -54,7 +54,6 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import {
   createObjectOfType,
   removeObject,
-  bulkUpdateObjects,
   addObjects,
   yMapToPlainObject,
 } from '@narrative/slide-model'
@@ -696,14 +695,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     startY: number
     /** Počáteční pozice objektů v dragu */
     initialPositions: Array<{ id: string; x: number; y: number }>
-    /**
-     * Snapshot of the initial imageRect for any selected ImageObject
-     * that has one. Translation must move the imageRect by the same
-     * delta as the frame so the cropped image moves as a single unit.
-     * Snapshotted at pointer-down to avoid the same feedback loop the
-     * resize path hit.
-     */
-    initialImageRects: Map<string, { x: number; y: number; width: number; height: number }>
+    /** The slide the drag started on — every frame's write is addressed to it. */
+    slideId: string
   } | null>(null)
 
   /**
@@ -1241,16 +1234,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         if (obj === undefined) return []
         return [{ id, x: obj.x, y: obj.y }]
       })
-      const initialImageRects = new Map<
-        string,
-        { x: number; y: number; width: number; height: number }
-      >()
-      for (const id of dragIds) {
-        const o = objects.find((x) => x.id === id)
-        if (o !== undefined && o.type === 'image' && o.imageRect !== undefined) {
-          initialImageRects.set(id, { ...o.imageRect })
-        }
-      }
 
       // P15: Alt+drag duplicates instead of moving. Mirrors the Figma /
       // Keynote / Illustrator standard — pressing Alt at pointer-down
@@ -1267,9 +1250,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       // snapshot (read back from the document) is the drag's start frame.
       let activeDragIds = dragIds
       let activeInitialPositions = initialPositions
-      let activeInitialImageRects = initialImageRects
       const dragSlideId = activeSlideIdRef.current
-      if (e.altKey && mutationCtx !== null && dragSlideId !== null && dragIds.length > 0) {
+      if (dragSlideId === null) return
+      if (e.altKey && mutationCtx !== null && dragIds.length > 0) {
         const out = command.tryRun<{ objectIds: string[] }>('object.duplicate', {
           slide: dragSlideId,
           objects: dragIds,
@@ -1286,18 +1269,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
             x: c.x,
             y: c.y,
           }))
-          const newImageRects = new Map<
-            string,
-            { x: number; y: number; width: number; height: number }
-          >()
-          for (const c of copies) {
-            if (c.type === 'image' && c.imageRect !== undefined) {
-              newImageRects.set(c.id, { ...c.imageRect })
-            }
-          }
           activeDragIds = newIds
           activeInitialPositions = newPositions
-          activeInitialImageRects = newImageRects
           selectMany(newIds)
         }
       }
@@ -1309,7 +1282,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         startX: e.clientX,
         startY: e.clientY,
         initialPositions: activeInitialPositions,
-        initialImageRects: activeInitialImageRects,
+        slideId: dragSlideId,
       }
     },
     [
@@ -1334,6 +1307,8 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       endTableCellEdit,
       setTableCellActive,
       clearTableCellEdit,
+      command,
+      isViewer,
     ],
   )
 
@@ -1442,14 +1417,15 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         if (Math.hypot(sx, sy) <= TAP_THRESHOLD_PX) return
         const tableObj = objects.find((o) => o.id === pendingTap.tableId)
         pendingTableTapRef.current = null
-        if (tableObj === undefined || tableObj.locked === true) return
+        const tapSlideId = activeSlideIdRef.current
+        if (tableObj === undefined || tableObj.locked === true || tapSlideId === null) return
         dragRef.current = {
           active: true,
           objectIds: [pendingTap.tableId],
           startX: pendingTap.startClientX,
           startY: pendingTap.startClientY,
           initialPositions: [{ id: pendingTap.tableId, x: tableObj.x, y: tableObj.y }],
-          initialImageRects: new Map(),
+          slideId: tapSlideId,
         }
         // Fall through — drag branch below now owns the move.
       }
@@ -1478,21 +1454,27 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       }
       // Object drag
       //
-      // Deliberately NOT translateObjects (which the nudge and the
-      // Inspector's X/Y use): every pointermove writes ABSOLUTE positions
-      // derived from the frozen pointer-down snapshot (`initialPositions`
-      // + `initialImageRects`, crop carried by the same total delta). That
-      // makes each frame idempotent — snapping can pull the selection
-      // back and forth without drift — whereas translateObjects adds a
-      // delta to the live value, so a per-frame delta would have to be
-      // computed against positions this closure only sees a render late. The write stays a
-      // single bulkUpdateObjects (one LOCAL_ORIGIN transaction, one Yjs
-      // update per frame for the whole selection at 60 Hz), and the
-      // frames merge into one undo step in the undo manager's capture
-      // window, exactly as before.
+      // Deliberately NOT object.move (which the nudge and the Inspector's
+      // X/Y use): every pointermove writes ABSOLUTE positions derived from
+      // the frozen pointer-down snapshot (`initialPositions`) with
+      // `object.update`, whose crop rule carries a cropped picture along
+      // by the frame's change against the live value. That makes each
+      // frame idempotent — snapping can pull the selection back and forth
+      // without drift — whereas object.move adds a delta to the live
+      // value, so a per-frame delta would have to be computed against
+      // positions this closure only sees a render late. The write stays
+      // one command (one LOCAL_ORIGIN transaction, one Yjs update per
+      // frame for the whole selection at 60 Hz), and the frames merge
+      // into one undo step in the undo manager's capture window, exactly
+      // as before.
       const drag = dragRef.current
       if (drag === null || !drag.active) return
-      if (mutationCtx === null) return
+      const writePositions = (positions: ReadonlyArray<{ id: string; x: number; y: number }>) => {
+        command.tryRun('object.update', {
+          slide: drag.slideId,
+          updates: positions.map((p) => ({ object: p.id, patch: { x: p.x, y: p.y } })),
+        })
+      }
 
       // Pointer deltas are screen-px; divide by the current CSS zoom to
       // recover a slide-space delta so the object tracks the cursor 1:1
@@ -1548,63 +1530,16 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
           setSnapGuides(snapResult.guides)
 
-          const updates = proposed.map((p) => {
-            const ir = drag.initialImageRects.get(p.id)
-            const totalDx =
-              p.x + snapResult.dx - (drag.initialPositions.find((q) => q.id === p.id)?.x ?? p.x)
-            const totalDy =
-              p.y + snapResult.dy - (drag.initialPositions.find((q) => q.id === p.id)?.y ?? p.y)
-            return {
-              id: p.id,
-              patch: {
-                x: p.x + snapResult.dx,
-                y: p.y + snapResult.dy,
-                ...(ir !== undefined
-                  ? {
-                      imageRect: {
-                        x: ir.x + totalDx,
-                        y: ir.y + totalDy,
-                        width: ir.width,
-                        height: ir.height,
-                      },
-                    }
-                  : {}),
-              },
-            }
-          })
-          bulkUpdateObjects(mutationCtx, updates)
+          writePositions(
+            proposed.map((p) => ({ id: p.id, x: p.x + snapResult.dx, y: p.y + snapResult.dy })),
+          )
           return
         }
       }
 
-      bulkUpdateObjects(
-        mutationCtx,
-        proposed.map((p) => {
-          const init = drag.initialPositions.find((q) => q.id === p.id)
-          const ir = drag.initialImageRects.get(p.id)
-          const tdx = init !== undefined ? p.x - init.x : 0
-          const tdy = init !== undefined ? p.y - init.y : 0
-          return {
-            id: p.id,
-            patch: {
-              x: p.x,
-              y: p.y,
-              ...(ir !== undefined
-                ? {
-                    imageRect: {
-                      x: ir.x + tdx,
-                      y: ir.y + tdy,
-                      width: ir.width,
-                      height: ir.height,
-                    },
-                  }
-                : {}),
-            },
-          }
-        }),
-      )
+      writePositions(proposed)
     },
-    [mutationCtx, objects, setCursor, setTableCellRange],
+    [command, objects, setCursor, setTableCellRange],
   )
 
   const handlePointerUp = useCallback(
@@ -1766,7 +1701,20 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       dragRef.current = null
       setSnapGuides([])
     },
-    [objects, canvasInstance, selectedIds, selectMany, setTableCellActive],
+    [
+      objects,
+      canvasInstance,
+      selectedIds,
+      selectMany,
+      setTableCellActive,
+      beginEdit,
+      command,
+      objectDefaults.fillDefaults,
+      objectDefaults.strokeDefaults,
+      objectDefaults.textColorDefaults,
+      selectOne,
+      setActiveTool,
+    ],
   )
 
   // M8: Cursor leave — broadcast null (peer offline z canvasu)
@@ -2583,6 +2531,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       selectedIds.size > 0 &&
                       canvasInstance !== null &&
                       mutationCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         // M16 P8 — while inside instance edit mode, the outer
                         // transform rig is suppressed for the active instance
@@ -2626,7 +2575,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                           <TransformHandles
                             objectIds={editableIds}
                             sceneGraph={canvasInstance.sceneGraph}
-                            mutationCtx={mutationCtx}
+                            slideId={activeSlideId}
                             onSnapGuides={handleSnapGuides}
                             otherBounds={otherBounds}
                             forceAspectLock={aspectLock}
@@ -2700,11 +2649,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       })()}
                     {/* P11: Keynote-style image crop overlay. */}
                     {cropImageId !== null &&
-                      mutationCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         const obj = objects.find((o) => o.id === cropImageId)
                         if (obj === undefined || obj.type !== 'image') return null
-                        return <CropOverlay obj={obj} mutationCtx={mutationCtx} />
+                        return <CropOverlay obj={obj} slideId={activeSlideId} />
                       })()}
 
                     {/* Path point-edit overlay — anchors as draggable dots. */}

@@ -288,11 +288,6 @@ vi.mock('../state/CropModeContext', () => ({
   useCropMode: () => ({ cropMode: false, setCropMode: vi.fn() }),
 }))
 
-vi.mock('../state/applyShapeMask', () => ({
-  applyShapeMask: vi.fn(),
-  isMaskableShape: () => false,
-}))
-
 vi.mock('../state/useMediaUpload', () => ({
   useMediaUpload: () => ({ upload: vi.fn(), uploads: [] }),
 }))

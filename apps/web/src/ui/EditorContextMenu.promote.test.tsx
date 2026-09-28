@@ -99,11 +99,6 @@ vi.mock('../state/clipboard', () => ({
   readClipboardForPaste: () => null,
 }))
 
-vi.mock('../state/applyShapeMask', () => ({
-  applyShapeMask: vi.fn(),
-  isMaskableShape: () => false,
-}))
-
 const mockCreateComponent = vi.fn()
 
 vi.mock('../api/client', () => ({

@@ -23,6 +23,10 @@ import slideNotesTalkingPoints from './slideNotesTalkingPoints.js'
 import slidesCopyBlock from './slidesCopyBlock.js'
 import deckDuplicateNamed from './deckDuplicateNamed.js'
 import slidesOutlineNest from './slidesOutlineNest.js'
+import photoResizeCentered from './photoResizeCentered.js'
+import photoCropZoom from './photoCropZoom.js'
+import badgeRotateAlign from './badgeRotateAlign.js'
+import shapeFlipInPlace from './shapeFlipInPlace.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -43,6 +47,10 @@ export const SCENARIOS: readonly AnyScenario[] = [
   slidesCopyBlock,
   deckDuplicateNamed,
   slidesOutlineNest,
+  photoResizeCentered,
+  photoCropZoom,
+  badgeRotateAlign,
+  shapeFlipInPlace,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

@@ -9,37 +9,16 @@
  * - Handles mají správné aria-label atributy
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { screen, fireEvent } from '@testing-library/react'
+import { renderWithProviders as render } from '../test/renderWithProviders'
 import { TransformHandles } from './TransformHandles'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
-import type { ObjectsMutationContext } from '@narrative/slide-model'
-import * as Y from 'yjs'
-import type * as SlideModel from '@narrative/slide-model'
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
-
-// Mock bulkUpdateObjects
-const mockBulkUpdate = vi.fn()
-vi.mock('@narrative/slide-model', async (importOriginal) => {
-  const actual = await importOriginal<typeof SlideModel>()
-  return {
-    ...actual,
-    bulkUpdateObjects: (...args: unknown[]) => mockBulkUpdate(...args),
-  }
-})
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function createMutationCtx(): ObjectsMutationContext {
-  const doc = new Y.Doc()
-  return { doc, objects: doc.getArray('objects') }
-}
 
 /** Jednoduchý mock SceneGraph s getBounds + getMultiBounds */
 function createMockSceneGraph(
@@ -85,19 +64,14 @@ const OTHER_BOUNDS = [{ id: 'other', x: 0, y: 0, width: 50, height: 50 }]
 // ---------------------------------------------------------------------------
 
 describe('TransformHandles — single-select', () => {
-  beforeEach(() => {
-    mockBulkUpdate.mockClear()
-  })
-
   it('renders 8 resize handles + 1 rotation handle for single-select', () => {
     const sg = createMockSceneGraph(RECT_BOUNDS)
-    const ctx = createMutationCtx()
 
     render(
       <TransformHandles
         objectIds={['obj-1']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -109,13 +83,12 @@ describe('TransformHandles — single-select', () => {
 
   it('handles have correct aria-labels', () => {
     const sg = createMockSceneGraph(RECT_BOUNDS)
-    const ctx = createMutationCtx()
 
     render(
       <TransformHandles
         objectIds={['obj-1']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -133,13 +106,12 @@ describe('TransformHandles — single-select', () => {
 
   it('renders nothing when bounds are null', () => {
     const sg = createMockSceneGraph(null)
-    const ctx = createMutationCtx()
 
     const { container } = render(
       <TransformHandles
         objectIds={['obj-1']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -149,13 +121,12 @@ describe('TransformHandles — single-select', () => {
 
   it('pointerdown on handle calls getBounds', () => {
     const sg = createMockSceneGraph(RECT_BOUNDS)
-    const ctx = createMutationCtx()
 
     render(
       <TransformHandles
         objectIds={['obj-1']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -179,13 +150,12 @@ describe('TransformHandles — multi-select', () => {
   it('renders 8 resize handles but NO rotation handle for multi-select', () => {
     const multiBounds = makeAxisAlignedBounds(80, 80, 250, 200)
     const sg = createMockSceneGraph(RECT_BOUNDS, multiBounds)
-    const ctx = createMutationCtx()
 
     render(
       <TransformHandles
         objectIds={['obj-1', 'obj-2']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -199,13 +169,12 @@ describe('TransformHandles — multi-select', () => {
   it('uses getMultiBounds for multi-select', () => {
     const multiBounds = makeAxisAlignedBounds(80, 80, 250, 200)
     const sg = createMockSceneGraph(RECT_BOUNDS, multiBounds)
-    const ctx = createMutationCtx()
 
     render(
       <TransformHandles
         objectIds={['obj-1', 'obj-2']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -216,13 +185,12 @@ describe('TransformHandles — multi-select', () => {
 
   it('renders nothing when objectIds is empty', () => {
     const sg = createMockSceneGraph(null)
-    const ctx = createMutationCtx()
 
     const { container } = render(
       <TransformHandles
         objectIds={[]}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
       />,
     )
@@ -234,14 +202,13 @@ describe('TransformHandles — multi-select', () => {
 describe('TransformHandles — snap guides callback', () => {
   it('calls onSnapGuides with empty array on pointerup', () => {
     const sg = createMockSceneGraph(RECT_BOUNDS)
-    const ctx = createMutationCtx()
     const onSnapGuides = vi.fn()
 
     render(
       <TransformHandles
         objectIds={['obj-1']}
         sceneGraph={sg}
-        mutationCtx={ctx}
+        slideId="slide-1"
         otherBounds={OTHER_BOUNDS}
         onSnapGuides={onSnapGuides}
       />,

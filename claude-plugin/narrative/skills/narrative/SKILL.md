@@ -83,7 +83,7 @@ text.
   their open editor. If they have no editor open, ask which slide or object
   they mean.
 - Slides are **1920 × 1080 px**, origin top-left, y grows downwards.
-- Rotation is stored in **radians**. Colours are `#rrggbb` strings (or
+- Rotation is stored in **radians** (`object_rotate` takes degrees). Colours are `#rrggbb` strings (or
   `0xRRGGBB` numbers) or folder colour tokens `{ "$token": "colors.<id>" }`
   — prefer the folder's tokens so the deck stays on brand.
 
@@ -92,9 +92,12 @@ text.
 - Use one `ops_apply` for anything that takes more than one command: it is
   one change for collaborators and one step to revert, and with the default
   `atomic: true` either everything succeeds or nothing changes.
-- Move objects with `object_move` (it keeps a cropped image's crop). Set
-  properties with `object_update`; replace text with `text_set`; format
-  ranges with `text_format`.
+- Move objects with `object_move` (it keeps a cropped image's crop). Resize
+  with `object_resize`, rotate with `object_rotate`, mirror with
+  `object_flip`, and crop with `object_crop_set`: they apply the editor's
+  rules (a crop scales with its image, a flip mirrors in place) that raw
+  `object_update` fields do not. Set other properties with `object_update`;
+  replace text with `text_set`; format ranges with `text_format`.
 - Text a model reads and writes uses paragraphs separated by a blank line
   (`"\n\n"`); a single `"\n"` is a line break inside a paragraph. The rich
   form of `text_set` carries runs (bold, colour, size, font) and list

@@ -89,9 +89,8 @@ export const objectMove = defineCommand({
     'Move objects by a delta in slide pixels (the slide is 1920 x 1080, origin top-left, y down). ' +
     'This is the correct way to move anything: a cropped image keeps its crop. ' +
     'To place an object at absolute coordinates, set x/y with object.update (a crop follows there too) or compute ' +
-    'the delta from its current x/y (query.object). To line objects up use object.align; aligning to the slide ' +
-    'itself is object.alignToSlide (planned, not available yet) — today compute the target x/y from the 1920 x 1080 ' +
-    'slide and the object size and set it with object.update.',
+    'the delta from its current x/y (query.object). To line objects up use object.align; to an edge or the ' +
+    'centre of the slide, object.alignToSlide.',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -234,8 +233,7 @@ export const objectAlign = defineCommand({
   description:
     "Align two or more objects to the edges or centre of their combined bounding box (e.g. 'left' moves every " +
     "object's left edge to the leftmost edge). Rotation is ignored; cropped images keep their crop. " +
-    'Aligning one object to the slide itself is object.alignToSlide (planned, not available yet): today compute ' +
-    'x/y from the 1920 x 1080 slide (e.g. centred x = (1920 - width) / 2) and set it with object.update.',
+    'To align objects to the slide itself use object.alignToSlide.',
   input: z
     .object({
       slide: SlideRefSchema,

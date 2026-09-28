@@ -69,43 +69,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     where: 'apps/web/src/ui/LineEndpointHandles.tsx',
   },
   {
-    capability: 'object.resize',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/TransformHandles.tsx (computeResize)',
-  },
-  {
-    capability: 'object.rotate',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/TransformHandles.tsx, Inspector.tsx',
-    note: "raw `rotation` (radians) is settable with object.update today; the command adds degrees in and the editor's snapping",
-  },
-  {
-    capability: 'object.flip',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/Inspector.tsx',
-    note:
-      "raw `flipH` / `flipV` are settable with object.update today; the command adds the editor's rule of negating " +
-      '`rotation` so a rotated object mirrors in place',
-  },
-  {
-    capability: 'object.alignToSlide',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/Inspector.tsx',
-  },
-  {
-    capability: 'object.crop.set',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/CropOverlay.tsx',
-    note:
-      'raw `imageRect` (absolute slide px) is settable with object.update today; the command adds crop in ' +
-      'frame-relative terms (pan, zoom around a point, reset to fit) as the crop overlay does',
-  },
-  {
     capability: 'object.copyTo',
     phase: 'A2',
     source: 'web',

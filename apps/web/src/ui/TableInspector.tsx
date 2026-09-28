@@ -44,7 +44,6 @@ import {
   setTableCellStyle,
   setTableDefaultsPatch,
   splitTableCell,
-  translateObjects,
   updateObject,
 } from '@narrative/slide-model'
 import {
@@ -125,10 +124,6 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   const patchObject = (p: SlideObjectPatch<SlideObject>): void => {
     if (isViewer) return
     updateObject(mutationCtx, obj.id, p)
-  }
-  const translateObject = (dx: number, dy: number): void => {
-    if (isViewer) return
-    translateObjects(mutationCtx, [{ id: obj.id, dx, dy }])
   }
 
   // Re-render when the active text selection (cell editor publishes
@@ -605,13 +600,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           rotation, flip. The inner Section component owns its own
           collapse-state under storageKey="position" so the table picks
           up the user's last open/closed preference for free. */}
-      <PositionSection
-        obj={obj}
-        patch={patchObject}
-        translate={translateObject}
-        disabled={isViewer}
-        layerMutationCtx={mutationCtx}
-      />
+      <PositionSection obj={obj} patch={patchObject} disabled={isViewer} />
 
       {/* Shared with shapes — exact same Section / SubLabel / FillBody /
           TransparencySlider chrome the generic inspector renders.
@@ -856,7 +845,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* Layers panel — full slide layer list. Identical to the shape
           inspector's; renders at the bottom so it scrolls
           independently of the table-specific controls above. */}
-      <LayersPanel activeIds={[obj.id]} mutationCtx={mutationCtx} readOnly={isViewer} />
+      <LayersPanel activeIds={[obj.id]} readOnly={isViewer} />
     </div>
   )
 }

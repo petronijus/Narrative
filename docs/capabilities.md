@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **98**. Known missing: **36**. Deliberately excluded: **19**.
+Commands: **103**. Known missing: **31**. Deliberately excluded: **19**.
 
 ## agent
 
@@ -90,20 +90,25 @@ Commands: **98**. Known missing: **36**. Deliberately excluded: **19**.
 
 ## object
 
-| Command              | What it does                | Role   | Undo     | Confirm | Hints      |
-| -------------------- | --------------------------- | ------ | -------- | ------- | ---------- |
-| `object.align`       | Align objects to each other | editor | undoable | never   | idempotent |
-| `object.create`      | Create object               | editor | undoable | never   |            |
-| `object.delete`      | Delete objects              | editor | undoable | never   |            |
-| `object.distribute`  | Distribute objects evenly   | editor | undoable | never   | idempotent |
-| `object.duplicate`   | Duplicate objects           | editor | undoable | never   |            |
-| `object.group`       | Group objects               | editor | undoable | never   |            |
-| `object.layer`       | Change stacking order       | editor | undoable | never   |            |
-| `object.mask.apply`  | Mask an image with a shape  | editor | undoable | never   |            |
-| `object.mask.remove` | Remove image mask           | editor | undoable | never   |            |
-| `object.move`        | Move objects                | editor | undoable | never   |            |
-| `object.ungroup`     | Ungroup objects             | editor | undoable | never   |            |
-| `object.update`      | Update object properties    | editor | undoable | never   | idempotent |
+| Command               | What it does                | Role   | Undo     | Confirm | Hints      |
+| --------------------- | --------------------------- | ------ | -------- | ------- | ---------- |
+| `object.align`        | Align objects to each other | editor | undoable | never   | idempotent |
+| `object.alignToSlide` | Align to slide              | editor | undoable | never   | idempotent |
+| `object.create`       | Create object               | editor | undoable | never   |            |
+| `object.crop.set`     | Crop image                  | editor | undoable | never   |            |
+| `object.delete`       | Delete objects              | editor | undoable | never   |            |
+| `object.distribute`   | Distribute objects evenly   | editor | undoable | never   | idempotent |
+| `object.duplicate`    | Duplicate objects           | editor | undoable | never   |            |
+| `object.flip`         | Flip objects                | editor | undoable | never   |            |
+| `object.group`        | Group objects               | editor | undoable | never   |            |
+| `object.layer`        | Change stacking order       | editor | undoable | never   |            |
+| `object.mask.apply`   | Mask an image with a shape  | editor | undoable | never   |            |
+| `object.mask.remove`  | Remove image mask           | editor | undoable | never   |            |
+| `object.move`         | Move objects                | editor | undoable | never   |            |
+| `object.resize`       | Resize object               | editor | undoable | never   | idempotent |
+| `object.rotate`       | Rotate objects              | editor | undoable | never   |            |
+| `object.ungroup`      | Ungroup objects             | editor | undoable | never   |            |
+| `object.update`       | Update object properties    | editor | undoable | never   | idempotent |
 
 ## ops
 
@@ -192,11 +197,6 @@ Commands: **98**. Known missing: **36**. Deliberately excluded: **19**.
 | `object.path.fromShape`       | A2    | apps/web/src/components/EditorLayout.tsx (convertToPathAndPlace)                              |                                                                                                                                                                                                    |
 | `object.path.setAnchors`      | A2    | apps/web/src/ui/PathPointsOverlay.tsx                                                         | the raw path fields are settable with object.update today; the command adds the point editor's rule of re-fitting x/y/width/height to the edited anchors while keeping the rotation pivot in place |
 | `object.line.setEndpoints`    | A2    | apps/web/src/ui/LineEndpointHandles.tsx                                                       |                                                                                                                                                                                                    |
-| `object.resize`               | A2    | apps/web/src/ui/TransformHandles.tsx (computeResize)                                          |                                                                                                                                                                                                    |
-| `object.rotate`               | A2    | apps/web/src/ui/TransformHandles.tsx, Inspector.tsx                                           | raw `rotation` (radians) is settable with object.update today; the command adds degrees in and the editor's snapping                                                                               |
-| `object.flip`                 | A2    | apps/web/src/ui/Inspector.tsx                                                                 | raw `flipH` / `flipV` are settable with object.update today; the command adds the editor's rule of negating `rotation` so a rotated object mirrors in place                                        |
-| `object.alignToSlide`         | A2    | apps/web/src/ui/Inspector.tsx                                                                 |                                                                                                                                                                                                    |
-| `object.crop.set`             | A2    | apps/web/src/ui/CropOverlay.tsx                                                               | raw `imageRect` (absolute slide px) is settable with object.update today; the command adds crop in frame-relative terms (pan, zoom around a point, reset to fit) as the crop overlay does          |
 | `object.copyTo`               | A2    | apps/web/src/state/clipboard.ts                                                               | paste inserts the copied objects in one step with addObjects                                                                                                                                       |
 | `object.slideNumber.set`      | A2    | apps/web/src/ui/SlideNumberPromptDialog.tsx                                                   | raw `isSlideNumber` is settable with object.update today; the command adds the editor's follow-up choice (apply the page-number text style or promote the box to a component)                      |
 | `object.fill.gradient`        | A2    | apps/web/src/ui/Inspector.tsx (starting stops)                                                | a gradient `fillStyle` is settable raw with object.update today; the command adds the Inspector's starting stops seeded from the current fill colour                                               |

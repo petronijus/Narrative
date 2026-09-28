@@ -20,7 +20,10 @@ The user asked: {{request}}
    mappings:
    - copy an object on the same slide → `object.duplicate`;
    - move → `object.move` (deltas), line up → `object.align` /
-     `object.distribute`;
+     `object.distribute`, to the slide's edge or centre →
+     `object.alignToSlide`;
+   - resize → `object.resize`, rotate → `object.rotate`, mirror →
+     `object.flip`, crop or zoom a picture → `object.crop.set`;
    - change font, size, colour of a whole box → `object.update` (clear
      conflicting run formatting with `text.format` first);
    - change some words → `text.format` with a `match` range, or `text.set`

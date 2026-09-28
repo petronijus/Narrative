@@ -1,26 +1,38 @@
 {
   "scenario": "animation-fade-on-open",
-  "tag": "ev1416f9",
-  "recordedAt": "2026-09-27T10:39:51.412Z",
+  "tag": "ev47fba2",
+  "recordedAt": "2026-09-28T19:25:40.535Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "MO22e-qlLvFh",
-    "title": "Launch plan ev1416f9",
-    "titleId": "PV6hSUif3K56l4KVpUCLN",
-    "cardId": "AiYaZqWzmKV8w0ltsJV2t",
-    "cardStepId": "NZyyJifagOGuYtvTYPA0x"
+    "deckId": "8JlEkO5wFZQ0",
+    "title": "Launch plan ev47fba2",
+    "titleId": "v-1b1zsnbcNIM7e77M-dz",
+    "cardId": "EB5NE63VqqhVJ0H7S-i_n",
+    "cardStepId": "VRc_emGRD1ACeh5kzvmx3"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Launch plan ev1416f9\" (deckId MO22e-qlLvFh), make the title fade in automatically as soon as the slide appears — the audience should not have to click for it. Keep the card's click animation as it is.",
+        "prompt": "On slide 1 of the Narrative deck \"Launch plan ev47fba2\" (deckId 8JlEkO5wFZQ0), make the title fade in automatically as soon as the slide appears — the audience should not have to click for it. Keep the card's click animation as it is.",
         "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__animation_update,mcp__narrative-eval__animation_add,mcp__narrative-eval__animation_reorder,ReadMcpResourceTool",
+              "max_results": 10
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "MO22e-qlLvFh",
+              "deckId": "8JlEkO5wFZQ0",
               "slide": {
                 "index": 0
               }
@@ -28,7 +40,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "rCiiuz8u3F6s0yERL9cG5",
+              "id": "RZJK6j0fiFxycmYO5Ss0K",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -37,7 +49,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "PV6hSUif3K56l4KVpUCLN",
+                  "id": "v-1b1zsnbcNIM7e77M-dz",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -52,7 +64,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "AiYaZqWzmKV8w0ltsJV2t",
+                  "id": "EB5NE63VqqhVJ0H7S-i_n",
                   "type": "rectangle",
                   "name": "Card",
                   "x": 120,
@@ -67,8 +79,8 @@
               ],
               "animations": [
                 {
-                  "id": "NZyyJifagOGuYtvTYPA0x",
-                  "objectId": "AiYaZqWzmKV8w0ltsJV2t",
+                  "id": "VRc_emGRD1ACeh5kzvmx3",
+                  "objectId": "EB5NE63VqqhVJ0H7S-i_n",
                   "preset": "slideIn",
                   "trigger": "onClick",
                   "duration": 0.6,
@@ -78,59 +90,63 @@
               ],
               "notes": ""
             },
-            "text": "{\"id\":\"rCiiuz8u3F6s0yERL9cG5\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"PV6hSUif3K56l4KVpUCLN\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Launch plan\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"AiYaZqWzmKV8w0ltsJV2t\",\"type\":\"rectangle\",\"name\":\"Card\",\"x\":120,\"y\":320,\"width\":700,\"height\":400,\"rotation\":0,\"fill\":\"#2f6fed\",\"opacity\":1,\"cornerRadius\":24}],\"animations\":[{\"id\":\"NZyyJifagOGuYtvTYPA0x\",\"objectId\":\"AiYaZqWzmKV8w0ltsJV2t\",\"preset\":\"slideIn\",\"trigger\":\"onClick\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"}],\"notes\":\"\"}"
+            "text": "{\"id\":\"RZJK6j0fiFxycmYO5Ss0K\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"v-1b1zsnbcNIM7e77M-dz\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Launch plan\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"EB5NE63VqqhVJ0H7S-i_n\",\"type\":\"rectangle\",\"name\":\"Card\",\"x\":120,\"y\":320,\"width\":700,\"height\":400,\"rotation\":0,\"fill\":\"#2f6fed\",\"opacity\":1,\"cornerRadius\":24}],\"animations\":[{\"id\":\"VRc_emGRD1ACeh5kzvmx3\",\"objectId\":\"EB5NE63VqqhVJ0H7S-i_n\",\"preset\":\"slideIn\",\"trigger\":\"onClick\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"}],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "MO22e-qlLvFh",
+              "deckId": "8JlEkO5wFZQ0",
               "request": "Make the slide 1 title fade in automatically when the slide appears"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_kbWEJI22aYUS9xAt"
+              "runId": "run_K3Dueb_XMohrU-YB"
             },
-            "text": "{\"runId\":\"run_kbWEJI22aYUS9xAt\"}"
+            "text": "{\"runId\":\"run_K3Dueb_XMohrU-YB\"}"
           },
           {
             "tool": "animation_add",
             "command": "animation.add",
             "input": {
-              "deckId": "MO22e-qlLvFh",
-              "slide": "rCiiuz8u3F6s0yERL9cG5",
-              "object": "PV6hSUif3K56l4KVpUCLN",
+              "deckId": "8JlEkO5wFZQ0",
+              "slide": {
+                "index": 0
+              },
+              "object": "v-1b1zsnbcNIM7e77M-dz",
               "preset": "fadeIn",
               "trigger": "afterPrevious"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "animationId": "VgCEl99IKSioYoqmHEBd7"
+              "animationId": "7G7WB7ZgnXZ6sJ5kUHSfZ"
             },
-            "text": "{\"animationId\":\"VgCEl99IKSioYoqmHEBd7\"}"
+            "text": "{\"animationId\":\"7G7WB7ZgnXZ6sJ5kUHSfZ\"}"
           },
           {
             "tool": "animation_reorder",
             "command": "animation.reorder",
             "input": {
-              "deckId": "MO22e-qlLvFh",
-              "slide": "rCiiuz8u3F6s0yERL9cG5",
-              "order": ["VgCEl99IKSioYoqmHEBd7", "NZyyJifagOGuYtvTYPA0x"]
+              "deckId": "8JlEkO5wFZQ0",
+              "slide": {
+                "index": 0
+              },
+              "order": ["7G7WB7ZgnXZ6sJ5kUHSfZ", "VRc_emGRD1ACeh5kzvmx3"]
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "order": ["VgCEl99IKSioYoqmHEBd7", "NZyyJifagOGuYtvTYPA0x"]
+              "order": ["7G7WB7ZgnXZ6sJ5kUHSfZ", "VRc_emGRD1ACeh5kzvmx3"]
             },
-            "text": "{\"order\":[\"VgCEl99IKSioYoqmHEBd7\",\"NZyyJifagOGuYtvTYPA0x\"]}"
+            "text": "{\"order\":[\"7G7WB7ZgnXZ6sJ5kUHSfZ\",\"VRc_emGRD1ACeh5kzvmx3\"]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "MO22e-qlLvFh",
+              "deckId": "8JlEkO5wFZQ0",
               "slide": {
                 "index": 0
               }
@@ -138,7 +154,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "rCiiuz8u3F6s0yERL9cG5",
+              "id": "RZJK6j0fiFxycmYO5Ss0K",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -147,7 +163,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "PV6hSUif3K56l4KVpUCLN",
+                  "id": "v-1b1zsnbcNIM7e77M-dz",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -162,7 +178,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "AiYaZqWzmKV8w0ltsJV2t",
+                  "id": "EB5NE63VqqhVJ0H7S-i_n",
                   "type": "rectangle",
                   "name": "Card",
                   "x": 120,
@@ -177,8 +193,8 @@
               ],
               "animations": [
                 {
-                  "id": "VgCEl99IKSioYoqmHEBd7",
-                  "objectId": "PV6hSUif3K56l4KVpUCLN",
+                  "id": "7G7WB7ZgnXZ6sJ5kUHSfZ",
+                  "objectId": "v-1b1zsnbcNIM7e77M-dz",
                   "preset": "fadeIn",
                   "trigger": "afterPrevious",
                   "duration": 0.6,
@@ -186,8 +202,8 @@
                   "easing": "power2.out"
                 },
                 {
-                  "id": "NZyyJifagOGuYtvTYPA0x",
-                  "objectId": "AiYaZqWzmKV8w0ltsJV2t",
+                  "id": "VRc_emGRD1ACeh5kzvmx3",
+                  "objectId": "EB5NE63VqqhVJ0H7S-i_n",
                   "preset": "slideIn",
                   "trigger": "onClick",
                   "duration": 0.6,
@@ -197,11 +213,11 @@
               ],
               "notes": ""
             },
-            "text": "{\"id\":\"rCiiuz8u3F6s0yERL9cG5\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"PV6hSUif3K56l4KVpUCLN\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Launch plan\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"AiYaZqWzmKV8w0ltsJV2t\",\"type\":\"rectangle\",\"name\":\"Card\",\"x\":120,\"y\":320,\"width\":700,\"height\":400,\"rotation\":0,\"fill\":\"#2f6fed\",\"opacity\":1,\"cornerRadius\":24}],\"animations\":[{\"id\":\"VgCEl99IKSioYoqmHEBd7\",\"objectId\":\"PV6hSUif3K56l4KVpUCLN\",\"preset\":\"fadeIn\",\"trigger\":\"afterPrevious\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"},{\"id\":\"NZyyJifagOGuYtvTYPA0x\",\"objectId\":\"AiYaZqWzmKV8w0ltsJV2t\",\"preset\":\"slideIn\",\"trigger\":\"onClick\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"}],\"notes\":\"\"}"
+            "text": "{\"id\":\"RZJK6j0fiFxycmYO5Ss0K\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"v-1b1zsnbcNIM7e77M-dz\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Launch plan\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"EB5NE63VqqhVJ0H7S-i_n\",\"type\":\"rectangle\",\"name\":\"Card\",\"x\":120,\"y\":320,\"width\":700,\"height\":400,\"rotation\":0,\"fill\":\"#2f6fed\",\"opacity\":1,\"cornerRadius\":24}],\"animations\":[{\"id\":\"7G7WB7ZgnXZ6sJ5kUHSfZ\",\"objectId\":\"v-1b1zsnbcNIM7e77M-dz\",\"preset\":\"fadeIn\",\"trigger\":\"afterPrevious\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"},{\"id\":\"VRc_emGRD1ACeh5kzvmx3\",\"objectId\":\"EB5NE63VqqhVJ0H7S-i_n\",\"preset\":\"slideIn\",\"trigger\":\"onClick\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\"}],\"notes\":\"\"}"
           }
         ],
-        "finalText": "On slide 1, the \"Launch plan\" title now fades in by itself as soon as the slide appears. Nobody has to click for it.\n\nThe slide's animations now play in this order:\n1. **Title:** fades in over 0.6 s with no delay. It's the first step and is set to \"after previous\", so it starts when the slide appears.\n2. **Card:** slides in on a click. I didn't change it.\n\nI checked the slide afterwards and it shows this order. If you want to undo it, this change is saved as a single run (`run_kbWEJI22aYUS9xAt`) that can be reverted in one step.",
-        "turns": 6,
+        "finalText": "The \"Launch plan\" title on slide 1 now fades in on its own as soon as the slide appears, so nobody has to click. I checked the slide afterwards and the animations run in this order:\n\n1. **Title: fade in.** Starts automatically when the slide appears and takes 0.6 s.\n2. **Card: slide in.** Unchanged and still waits for a click.\n\nAll of this was done in one run, so you can undo it in one step if you want.",
+        "turns": 7,
         "isError": false,
         "stopReason": "success"
       }

@@ -26,10 +26,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
-import type { ObjectsMutationContext, BulkUpdate } from '@narrative/slide-model'
-import { bulkUpdateObjects } from '@narrative/slide-model'
-import type { SlideObject, ImageObject } from '@narrative/shared'
+import { resizeFromHandle } from '@narrative/commands'
+import type { SlideObject } from '@narrative/shared'
 import { computeSnap, type SnapGuideTarget } from '../editor/snap.js'
+import { useCommand } from '../state/useCommand.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
 
@@ -70,14 +70,11 @@ interface DragState {
     rotation: number
   }>
   /**
-   * Snapshot of the initial imageRect for any selected ImageObject
-   * that has one. Required for the cropped-image-resize math: each
-   * pointermove computes a NEW imageRect from this snapshot + the
-   * absolute scale factor (newW / initialW). Reading the live
-   * obj.imageRect would compound previously-applied scales every
-   * tick → feedback loop, image shrinks to zero.
+   * Multi-select drags move the objects with `object.move`, which is
+   * relative: the translation already applied, so each pointermove sends
+   * only the difference to the pointer's total travel.
    */
-  initialImageRects: Map<string, { x: number; y: number; width: number; height: number }>
+  applied: { dx: number; dy: number }
   /**
    * Artboard client rect snapshotted at drag start — used by the
    * rotate handle to convert screen-space mouse positions to
@@ -91,7 +88,8 @@ interface DragState {
 export interface TransformHandlesProps {
   objectIds: string[]
   sceneGraph: SceneGraph
-  mutationCtx: ObjectsMutationContext
+  /** The slide the objects are on — every write is a command addressed to it. */
+  slideId: string
   /** Callback pro předání aktivních snap guides do EditorLayout (vizualizace). */
   onSnapGuides?: (guides: SnapGuide[]) => void
   /** Bounds ostatních objektů pro snapping (all objects minus selected). */
@@ -108,12 +106,9 @@ export interface TransformHandlesProps {
    */
   extraGuides?: ReadonlyArray<SnapGuideTarget>
   /**
-   * P11 (Keynote crop): live snapshot of slide objects so resize can
-   * detect ImageObject + scale its imageRect proportionally with the
-   * frame. Without this, resizing a cropped image only moves the frame
-   * — the image content stays put → looks like the crop changes
-   * instead of the cropped output scaling. Matches Keynote: select
-   * cropped photo, drag corner → cropped output scales as one.
+   * Live snapshot of the slide's objects: the resize math starts from each
+   * object's unrotated layout box and rotation. (A cropped picture scales
+   * with its frame inside `object.resize`.)
    */
   objects?: ReadonlyArray<SlideObject>
   /** Selection-chrome accent. Forwarded to the SVG outline + handle
@@ -192,234 +187,7 @@ function computeHandlePoints(bounds: ObjectBounds, rotateOffsetMul = 1): HandleP
 // Resize math
 // ---------------------------------------------------------------------------
 
-interface ResizeResult {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-/**
- * Vypočítá nové bounds po resize handleu.
- * Opposite corner/edge zůstane fixní.
- * shiftAspect = true → aspect lock (pouze pro corner handles).
- */
-/**
- * Map each handle to its position in the object's LOCAL frame, expressed
- * as a unit sign on each axis. Handle position in local coords =
- * (sx * w/2, sy * h/2). The OPPOSITE handle (the anchor that stays put
- * during resize) is at (-sx * w/2, -sy * h/2). Edge handles have one
- * axis of 0, meaning that axis isn't moved by the drag and the anchor
- * is the midpoint of the opposite edge.
- */
-type ResizeHandle = Exclude<HandleKind, 'rotate'>
-
-const HANDLE_LOCAL_SIGN: Record<ResizeHandle, { sx: number; sy: number }> = {
-  TL: { sx: -1, sy: -1 },
-  TR: { sx: 1, sy: -1 },
-  BR: { sx: 1, sy: 1 },
-  BL: { sx: -1, sy: 1 },
-  TC: { sx: 0, sy: -1 },
-  BC: { sx: 0, sy: 1 },
-  ML: { sx: -1, sy: 0 },
-  MR: { sx: 1, sy: 0 },
-}
-
-function computeResize(
-  handle: HandleKind,
-  initial: { x: number; y: number; w: number; h: number; rotation: number },
-  dx: number,
-  dy: number,
-  shiftAspect: boolean,
-): ResizeResult {
-  // Rotate handle is dispatched elsewhere — guard so the math below
-  // never receives it.
-  if (handle === 'rotate') {
-    return { x: initial.x, y: initial.y, width: initial.w, height: initial.h }
-  }
-
-  // Fast path for axis-aligned objects — keeps the legacy behaviour
-  // bit-identical (and dodges the rotation matrix work entirely).
-  if (initial.rotation === 0) {
-    return computeResizeAligned(handle, initial, dx, dy, shiftAspect)
-  }
-
-  const sign = HANDLE_LOCAL_SIGN[handle]
-  const θ = initial.rotation
-  const cos = Math.cos(θ)
-  const sin = Math.sin(θ)
-  const cx = initial.x + initial.w / 2
-  const cy = initial.y + initial.h / 2
-
-  // Anchor = opposite handle's world position. With center-pivot
-  // rotation, anchor_local = (-sign * w/2, -sign * h/2); rotate to
-  // world and translate by center.
-  const ax_local = -sign.sx * (initial.w / 2)
-  const ay_local = -sign.sy * (initial.h / 2)
-  const anchorWorldX = cx + cos * ax_local - sin * ay_local
-  const anchorWorldY = cy + sin * ax_local + cos * ay_local
-
-  // Initial dragged-handle world position.
-  const dx_local = sign.sx * (initial.w / 2)
-  const dy_local = sign.sy * (initial.h / 2)
-  const dragInitWorldX = cx + cos * dx_local - sin * dy_local
-  const dragInitWorldY = cy + sin * dx_local + cos * dy_local
-
-  // After the user's screen-space drag, the dragged handle moved by
-  // (dx, dy) in world coords. New dragged-handle world position:
-  const dragNewWorldX = dragInitWorldX + dx
-  const dragNewWorldY = dragInitWorldY + dy
-
-  // Project (dragNew - anchor) into the OBJECT'S LOCAL frame. The
-  // x-component of that vector is the new local width along sign.sx,
-  // the y-component is the new local height along sign.sy.
-  const wx = dragNewWorldX - anchorWorldX
-  const wy = dragNewWorldY - anchorWorldY
-  // R(-θ) · (wx, wy)
-  const localX = cos * wx + sin * wy
-  const localY = -sin * wx + cos * wy
-
-  let newW = initial.w
-  let newH = initial.h
-  if (sign.sx !== 0) newW = Math.max(1, sign.sx > 0 ? localX : -localX)
-  if (sign.sy !== 0) newH = Math.max(1, sign.sy > 0 ? localY : -localY)
-
-  // Aspect lock — corner handles only (both axes active).
-  if (shiftAspect && sign.sx !== 0 && sign.sy !== 0) {
-    const ratio = initial.w / initial.h
-    // Compare scaled magnitudes so the dominant axis wins regardless
-    // of the original aspect ratio.
-    if (Math.abs(localX) * initial.h > Math.abs(localY) * initial.w) {
-      newH = newW / ratio
-    } else {
-      newW = newH * ratio
-    }
-  }
-
-  // New center = anchorWorld − R(θ) · anchorLocal_new, where
-  // anchorLocal_new uses the new w/h.
-  const ax_local_new = -sign.sx * (newW / 2)
-  const ay_local_new = -sign.sy * (newH / 2)
-  const newCenterX = anchorWorldX - (cos * ax_local_new - sin * ay_local_new)
-  const newCenterY = anchorWorldY - (sin * ax_local_new + cos * ay_local_new)
-
-  return {
-    x: newCenterX - newW / 2,
-    y: newCenterY - newH / 2,
-    width: newW,
-    height: newH,
-  }
-}
-
-/**
- * Original axis-aligned resize math. Kept as the fast path for
- * rotation=0 so existing snap / image-rect / edge-case behaviour is
- * preserved bit-for-bit.
- */
-function computeResizeAligned(
-  handle: HandleKind,
-  initial: { x: number; y: number; w: number; h: number },
-  dx: number,
-  dy: number,
-  shiftAspect: boolean,
-): ResizeResult {
-  let { x, y, w: width, h: height } = initial
-
-  switch (handle) {
-    case 'TL': {
-      width = Math.max(1, initial.w - dx)
-      height = Math.max(1, initial.h - dy)
-      if (shiftAspect) {
-        const ratio = initial.w / initial.h
-        if (Math.abs(dx) > Math.abs(dy)) {
-          height = width / ratio
-        } else {
-          width = height * ratio
-        }
-      }
-      x = initial.x + initial.w - width
-      y = initial.y + initial.h - height
-      break
-    }
-    case 'TR': {
-      width = Math.max(1, initial.w + dx)
-      height = Math.max(1, initial.h - dy)
-      if (shiftAspect) {
-        const ratio = initial.w / initial.h
-        if (Math.abs(dx) > Math.abs(dy)) {
-          height = width / ratio
-        } else {
-          width = height * ratio
-        }
-      }
-      x = initial.x
-      y = initial.y + initial.h - height
-      break
-    }
-    case 'BR': {
-      width = Math.max(1, initial.w + dx)
-      height = Math.max(1, initial.h + dy)
-      if (shiftAspect) {
-        const ratio = initial.w / initial.h
-        if (Math.abs(dx) > Math.abs(dy)) {
-          height = width / ratio
-        } else {
-          width = height * ratio
-        }
-      }
-      x = initial.x
-      y = initial.y
-      break
-    }
-    case 'BL': {
-      width = Math.max(1, initial.w - dx)
-      height = Math.max(1, initial.h + dy)
-      if (shiftAspect) {
-        const ratio = initial.w / initial.h
-        if (Math.abs(dx) > Math.abs(dy)) {
-          height = width / ratio
-        } else {
-          width = height * ratio
-        }
-      }
-      x = initial.x + initial.w - width
-      y = initial.y
-      break
-    }
-    case 'TC': {
-      height = Math.max(1, initial.h - dy)
-      x = initial.x
-      y = initial.y + initial.h - height
-      width = initial.w
-      break
-    }
-    case 'BC': {
-      height = Math.max(1, initial.h + dy)
-      x = initial.x
-      y = initial.y
-      width = initial.w
-      break
-    }
-    case 'ML': {
-      width = Math.max(1, initial.w - dx)
-      x = initial.x + initial.w - width
-      y = initial.y
-      height = initial.h
-      break
-    }
-    case 'MR': {
-      width = Math.max(1, initial.w + dx)
-      x = initial.x
-      y = initial.y
-      height = initial.h
-      break
-    }
-    default:
-      break
-  }
-
-  return { x, y, width, height }
-}
+/** The drag math lives in @narrative/commands (geometry.ts), shared with `object.resize`. */
 
 // ---------------------------------------------------------------------------
 // Outline polygon helper
@@ -437,7 +205,7 @@ function cornersToSvgPoints(corners: Array<{ x: number; y: number }>): string {
 export function TransformHandles({
   objectIds,
   sceneGraph,
-  mutationCtx,
+  slideId,
   onSnapGuides,
   otherBounds,
   extraGuides = [],
@@ -445,6 +213,7 @@ export function TransformHandles({
   objects = [],
   accent = 'default',
 }: TransformHandlesProps) {
+  const command = useCommand()
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
   const { zoom } = useZoomLevel()
@@ -512,19 +281,6 @@ export function TransformHandles({
         ]
       })
 
-      // Snapshot imageRect for any selected ImageObject — needed by the
-      // resize loop to avoid re-multiplying scale on each tick.
-      const initialImageRects = new Map<
-        string,
-        { x: number; y: number; width: number; height: number }
-      >()
-      for (const id of objectIds) {
-        const o = objects.find((x) => x.id === id)
-        if (o !== undefined && o.type === 'image' && o.imageRect !== undefined) {
-          initialImageRects.set(id, { ...o.imageRect })
-        }
-      }
-
       // Snapshot the artboard's on-screen origin so the rotate handle
       // can translate mouse events into slide-space.
       const artboardEl = (e.currentTarget as HTMLElement).closest('.artboard') as HTMLElement | null
@@ -536,7 +292,7 @@ export function TransformHandles({
         bounds: currentBounds,
         objectIds: [...objectIds],
         allInitialBounds,
-        initialImageRects,
+        applied: { dx: 0, dy: 0 },
         artboardLeft: rect?.left ?? 0,
         artboardTop: rect?.top ?? 0,
       }
@@ -577,7 +333,11 @@ export function TransformHandles({
         if (drag.objectIds.length === 1) {
           const id = drag.objectIds[0]
           if (id !== undefined) {
-            bulkUpdateObjects(mutationCtx, [{ id, patch: { rotation: newRotation } }])
+            command.tryRun('object.rotate', {
+              slide: slideId,
+              objects: [id],
+              degrees: (newRotation * 180) / Math.PI,
+            })
           }
         }
         return
@@ -593,7 +353,19 @@ export function TransformHandles({
         // it ON for the drag; with lock ON, Shift toggles it OFF.
         // Matches Figma / Sketch / Keynote.
         const lockAspect = shiftHeld !== forceAspectLock
-        const newRect = computeResize(drag.kind, initial, dx, dy, lockAspect)
+        const newRect = resizeFromHandle(
+          {
+            x: initial.x,
+            y: initial.y,
+            width: initial.w,
+            height: initial.h,
+            rotation: initial.rotation,
+          },
+          drag.kind,
+          dx,
+          dy,
+          lockAspect,
+        )
 
         // Snap
         const snapResult = computeSnap(
@@ -611,58 +383,37 @@ export function TransformHandles({
 
         const id = drag.objectIds[0]
         if (id !== undefined) {
-          // Image with imageRect → scale imageRect proportionally so
-          // the cropped output behaves as one unit (Keynote parity).
-          // Crucially, read from the SNAPSHOT taken on pointer-down,
-          // not the live object — otherwise each tick would multiply
-          // an already-scaled imageRect by the absolute scale factor,
-          // producing exponential shrink.
-          const initialIR = drag.initialImageRects.get(id)
-          let imagePatch: Partial<ImageObject> | null = null
-          if (initialIR !== undefined) {
-            const sx = initial.w === 0 ? 1 : newRect.width / initial.w
-            const sy = initial.h === 0 ? 1 : newRect.height / initial.h
-            const relX = initialIR.x - initial.x
-            const relY = initialIR.y - initial.y
-            imagePatch = {
-              imageRect: {
-                x: snappedX + relX * sx,
-                y: snappedY + relY * sy,
-                width: initialIR.width * sx,
-                height: initialIR.height * sy,
-              },
-            }
-          }
-          bulkUpdateObjects(mutationCtx, [
-            {
-              id,
-              patch: {
-                x: snappedX,
-                y: snappedY,
-                width: newRect.width,
-                height: newRect.height,
-                ...(imagePatch ?? {}),
-              },
-            },
-          ])
+          // The exact snapped box; `object.resize` scales a cropped
+          // picture with the frame (from the live frame to the new one,
+          // so the steps of a drag compose exactly).
+          command.tryRun('object.resize', {
+            slide: slideId,
+            object: id,
+            x: snappedX,
+            y: snappedY,
+            width: newRect.width,
+            height: newRect.height,
+          })
         }
       } else {
-        // Multi-select: pouze translation (M14: group resize)
-        const updates: BulkUpdate[] = drag.allInitialBounds.map((init) => ({
-          id: init.id,
-          patch: {
-            x: init.x + dx,
-            y: init.y + dy,
-          },
-        }))
-        bulkUpdateObjects(mutationCtx, updates)
+        // Multi-select: translation only. `object.move` is relative and
+        // carries each cropped picture along with its frame.
+        const step = { dx: dx - drag.applied.dx, dy: dy - drag.applied.dy }
+        if (step.dx !== 0 || step.dy !== 0) {
+          const moved = command.tryRun('object.move', {
+            slide: slideId,
+            objects: drag.objectIds,
+            ...step,
+          })
+          if (moved !== null) drag.applied = { dx, dy }
+        }
         onSnapGuides?.([])
       }
 
       // Force re-render aby handles sledovaly novou pozici
       forceUpdate((n) => n + 1)
     },
-    [mutationCtx, otherBounds, onSnapGuides, extraGuides],
+    [command, slideId, otherBounds, onSnapGuides, extraGuides, forceAspectLock],
   )
 
   const handlePointerUp = useCallback(() => {

@@ -389,19 +389,17 @@ export const objectUpdate = defineCommand({
   idempotent: true,
   title: 'Update object properties',
   description:
-    'ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate (planned, ' +
-    'not available yet) will take degrees. ' +
+    'ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes ' +
+    'degrees. ' +
     'Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/' +
     'width/height, rotation, … — validated against its type before anything is written (unknown keys fail). ' +
     '`null` removes an optional property. Use `updates` to patch several objects on one slide in one step. ' +
     "Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). " +
     'Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: ' +
-    '(1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`, ' +
-    "absolute slide px) the way the editor's resize handles do — scale imageRect in the same patch to resize the " +
-    'picture with its frame; object.resize (planned, not available yet) will do both. ' +
-    "(2) `flipH` / `flipV` only mirror the content; unlike the editor's Flip buttons they do NOT negate " +
-    '`rotation`, so a rotated object does not mirror in place — send { flipH: true, rotation: -currentRotation } ' +
-    'in one patch to flip like the editor; object.flip (planned, not available yet) will do both. ' +
+    '(1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop ' +
+    '(`imageRect`) — resize with object.resize, which does. ' +
+    "(2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip " +
+    'with object.flip. ' +
     '(3) Box-level typography (fontFamily, fontSize, fontWeight, color, …) is only the default: inline run ' +
     'formatting in the text overrides it, so a box-wide change on formatted text needs text.format with `clear` ' +
     'for those attributes first — put both in one ops.apply. ' +
@@ -599,7 +597,7 @@ export const objectMaskRemove = defineCommand({
   description:
     "Remove an image's shape mask so it shows as a rectangle again. The frame stays where the mask left it and the " +
     'picture does not move. Returns removed: false when the image had no mask. To remove a crop instead use ' +
-    'object.update with imageRect: null.',
+    'object.crop.set with op reset.',
   input: z.strictObject({ slide: SlideRefSchema, image: ObjectIdSchema }),
   output: z.object({ removed: z.boolean() }),
   implementedWith: ['updateObject'],

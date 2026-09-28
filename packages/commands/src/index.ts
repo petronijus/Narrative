@@ -54,6 +54,19 @@ export {
 } from './commands/serverShared.js'
 export { SlideRefSchema, ObjectIdSchema, ObjectIdsSchema, type SlideRef } from './refs.js'
 export {
+  ANCHORS,
+  OPPOSITE_ANCHOR,
+  frameCorners,
+  placeResized,
+  resizeFromHandle,
+  scaleCrop,
+  visualBounds,
+  type Anchor,
+  type Frame,
+  type Rect,
+  type ResizeHandle,
+} from './geometry.js'
+export {
   MAX_SLIDE_INDENT,
   levelOf,
   maxLevelBelow,
