@@ -42,33 +42,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A2: web-only logic to extract ------------------------------------------
   {
-    capability: 'object.path.create',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/components/EditorLayout.tsx (PenSession)',
-  },
-  {
-    capability: 'object.path.fromShape',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/components/EditorLayout.tsx (convertToPathAndPlace)',
-  },
-  {
-    capability: 'object.path.setAnchors',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/PathPointsOverlay.tsx',
-    note:
-      "the raw path fields are settable with object.update today; the command adds the point editor's rule of " +
-      're-fitting x/y/width/height to the edited anchors while keeping the rotation pivot in place',
-  },
-  {
-    capability: 'object.line.setEndpoints',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/LineEndpointHandles.tsx',
-  },
-  {
     capability: 'object.copyTo',
     phase: 'A2',
     source: 'web',

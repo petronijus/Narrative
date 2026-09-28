@@ -73,7 +73,7 @@ export const ONE_DOOR_PENDING = [
   // A2.4 moved object creation, delete, duplicate, group, layer, nudge and
   // the context menu's table / lock / mask actions onto commands. What each
   // file still writes directly, and the step that removes it:
-  //   the pen (A2.6), clipboard paste (A2.7)
+  //   clipboard paste (A2.7)
   { file: 'apps/web/src/components/EditorLayout.tsx', step: 'A2.7' },
   //   clipboard paste
   { file: 'apps/web/src/ui/EditorContextMenu.tsx', step: 'A2.7' },
@@ -87,9 +87,6 @@ export const ONE_DOOR_PENDING = [
   // and fill / effects (A2.8), animation steps (A2.9), slide transition and
   // background, typography and every other property patch (A2.11).
   { file: 'apps/web/src/ui/Inspector.tsx', step: 'A2.11' },
-  // A2.6 — paths and lines
-  { file: 'apps/web/src/ui/PathPointsOverlay.tsx', step: 'A2.6' },
-  { file: 'apps/web/src/ui/LineEndpointHandles.tsx', step: 'A2.6' },
   // A2.9 — animation
   { file: 'apps/web/src/ui/AnimationTimeline.tsx', step: 'A2.9' },
   { file: 'apps/web/src/ui/MoveToTargetOverlay.tsx', step: 'A2.9' },

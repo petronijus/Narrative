@@ -193,3 +193,37 @@ after the mechanism has been proven on simpler surfaces.
     rotated outline.
   - tools/list budget 136,000 → 142,000 bytes (`object.crop.set` is 2.4 KB:
     its union of five ops).
+- 2026-09-28: **A2.6 done** — `object.path.create`, `object.path.fromShape`,
+  `object.path.setAnchors`, `object.line.setEndpoints`. The pen, the point
+  editor, the line end handles and double-click shape-to-path dispatch
+  them; `PathPointsOverlay` and `LineEndpointHandles` are off the exemption
+  list. Decisions:
+  - **Points go in slide px, the object keeps its rotation and mirroring.**
+    The commands fit the box around the given points in the object's own
+    axes (`fitAnchors`, the exact inverse of how the renderer places local
+    points), so a point lands where it was given. That makes every drag
+    frame absolute and idempotent (snapshot on pointer-down + pointer
+    travel), and an agent never converts frames. Stored anchors / p1 / p2
+    stay relative to the box, as before.
+  - **Shape-to-path keeps the object** (`replaceObject` in slide-model: same
+    id, same index, one transaction) instead of delete + create on top, so
+    animations, Magic Move pairing and stacking survive; paint, shadow,
+    blur, link and group carry over; rounded corners and ellipses are traced
+    with cubic arcs.
+  - Found on the way: the line handles and the point editor ignored
+    rotation / mirroring, and the slide observer never re-emitted an object
+    replaced in place (a delete + insert of one id was always taken for a
+    reorder). Both fixed, with tests.
+  - **A path's box is what it draws** (`drawnBounds`: anchors plus each
+    cubic's turning points, following the renderer's segment rules), not
+    the bounding box of its handles as the pen and point editor used to
+    make it — alignment and the selection box follow the stroke.
+  - `setAnchors` also takes `moves` (anchors by index to slide points); the
+    point editor sends only the dragged anchor, so a 20,000-anchor PPTX
+    path (`MAX_PATH_ANCHORS`, now in `@narrative/shared`) edits cheaply.
+  - Open question for Petr: the canvas draws a triangle inscribed in its
+    box's ellipse while PowerPoint's triangle fills the box, so a PPTX
+    triangle looks smaller in Narrative. Not changed here (it would resize
+    every existing triangle); shape-to-path follows the canvas.
+  - tools/list budget 142,000 → 152,000 bytes (`object.path.create` is 4.1
+    KB: its `object` field is the path's create schema).

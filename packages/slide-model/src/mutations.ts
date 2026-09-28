@@ -154,6 +154,36 @@ export function removeObject(ctx: ObjectsMutationContext, id: string): void {
 }
 
 /**
+ * Replace an object with a new one — possibly of another type — under the
+ * same id and at the same place in the stacking order, in one transaction.
+ * Everything that addresses the object by id (animation steps, Magic Move
+ * pairing, a selection) keeps pointing at it. Used to turn a parametric
+ * shape into an editable path.
+ *
+ * Text and table objects hold CRDT children (Y.Text); they are changed with
+ * the dedicated mutations, never replaced, so this refuses them. Returns
+ * false when no object has `next.id`.
+ */
+export function replaceObject(ctx: ObjectsMutationContext, next: SlideObject): boolean {
+  if (next.type === 'text' || next.type === 'table') {
+    throw new Error(`replaceObject: ${next.type} objects cannot be replaced wholesale`)
+  }
+  let replaced = false
+  ctx.doc.transact(() => {
+    const idx = findIndexById(ctx.objects, next.id)
+    if (idx === -1) return
+    const current = ctx.objects.get(idx).get('type')
+    if (current === 'text' || current === 'table') {
+      throw new Error(`replaceObject: ${String(current)} objects cannot be replaced wholesale`)
+    }
+    ctx.objects.delete(idx, 1)
+    ctx.objects.insert(idx, [plainObjectToYMap(next)])
+    replaced = true
+  }, LOCAL_ORIGIN)
+  return replaced
+}
+
+/**
  * Aktualizuje properties objektu. Patch může obsahovat libovolnou podmnožinu
  * properties (kromě id a type — ty jsou immutable).
  *

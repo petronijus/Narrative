@@ -27,6 +27,9 @@ import photoResizeCentered from './photoResizeCentered.js'
 import photoCropZoom from './photoCropZoom.js'
 import badgeRotateAlign from './badgeRotateAlign.js'
 import shapeFlipInPlace from './shapeFlipInPlace.js'
+import penTrianglePath from './penTrianglePath.js'
+import shapeCornerToPath from './shapeCornerToPath.js'
+import lineEndMove from './lineEndMove.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -51,6 +54,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   photoCropZoom,
   badgeRotateAlign,
   shapeFlipInPlace,
+  penTrianglePath,
+  shapeCornerToPath,
+  lineEndMove,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

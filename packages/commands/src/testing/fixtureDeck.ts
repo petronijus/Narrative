@@ -8,14 +8,23 @@
  * `ga`+`gb` (group `grp1`), a three-item bullet list `t2` ("Revenue",
  * "Costs", "Margin"), an image `img2` masked to an ellipse, and animations
  * `a1` (fadeIn on `r1`) then `a2` (fadeIn on `e1`); on `s2` a locked
- * rectangle `lock1` and a 2x3 table `tbl2` whose top row is one merged cell;
- * a deck guide `gd1`.
+ * rectangle `lock1`, a 2x3 table `tbl2` whose top row is one merged cell, a
+ * line `ln1` from (100, 900) to (500, 900) and an open path `pa1` (a curved
+ * stroke through (1200, 800), (1400, 700), (1600, 800)); `s3` is empty; a
+ * deck guide `gd1`.
  *
  * Add to it when a new command needs something to act on; never rename.
  */
 
 import * as Y from 'yjs'
-import type { ImageObject, RectangleObject, TextObject, EllipseObject } from '@narrative/shared'
+import type {
+  EllipseObject,
+  ImageObject,
+  LineObject,
+  PathObject,
+  RectangleObject,
+  TextObject,
+} from '@narrative/shared'
 import {
   addAnimation,
   addGuide,
@@ -176,6 +185,40 @@ export function createFixtureDeck(): DeckMutationContext {
   const tbl2 = addTable(s2, { x: 200, y: 300, width: 900, height: 200, rows: 2, cols: 3 })
   renameById(s2.objects, tbl2, 'tbl2')
   mergeTableCells(s2, 'tbl2', { r0: 0, c0: 0, r1: 0, c1: 2 })
+
+  const line: LineObject = {
+    id: 'ln1',
+    type: 'line',
+    x: 100,
+    y: 900,
+    width: 400,
+    height: 0,
+    rotation: 0,
+    opacity: 1,
+    p1: { x: 0, y: 0 },
+    p2: { x: 400, y: 0 },
+    stroke: 0x1b2a4a,
+    strokeWidth: 4,
+  }
+  const path: PathObject = {
+    id: 'pa1',
+    type: 'path',
+    x: 1200,
+    y: 700,
+    width: 400,
+    height: 100,
+    rotation: 0,
+    opacity: 1,
+    // Handles on both ends of each segment, so both segments curve.
+    anchors: [
+      { x: 0, y: 100, cpOut: { x: 80, y: -100 } },
+      { x: 200, y: 0, cpIn: { x: -80, y: 0 }, cpOut: { x: 80, y: 0 } },
+      { x: 400, y: 100, cpIn: { x: -80, y: -100 } },
+    ],
+    stroke: 0x1b2a4a,
+    strokeWidth: 3,
+  }
+  addObjects(s2, [line, path])
 
   const guides = getDeckGuidesCtx(deck.doc)
   const guideId = addGuide(guides, 'vertical', 960)

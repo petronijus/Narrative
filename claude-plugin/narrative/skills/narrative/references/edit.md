@@ -26,6 +26,10 @@ The user asked: <request>
      `object_alignToSlide`;
    - resize → `object_resize`, rotate → `object_rotate`, mirror →
      `object_flip`, crop or zoom a picture → `object_crop_set`;
+   - draw a free-form shape → `object_path_create`; reshape a rectangle,
+     ellipse, triangle or polygon point by point →
+     `object_path_fromShape`, then `object_path_setAnchors`; move a line's
+     or arrow's end → `object_line_setEndpoints` (all in slide px);
    - change font, size, colour of a whole box → `object_update` (clear
      conflicting run formatting with `text_format` first);
    - change some words → `text_format` with a `match` range, or `text_set`

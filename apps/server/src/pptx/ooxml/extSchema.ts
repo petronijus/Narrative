@@ -13,6 +13,7 @@
  */
 
 import type { ParagraphAttrs } from '@narrative/shared'
+import { MAX_PATH_ANCHORS } from '@narrative/shared'
 
 /** Parse a value into T, or undefined when it does not have T's shape. */
 export type Schema<T = unknown> = (v: unknown) => T | undefined
@@ -121,7 +122,7 @@ export const cornerRadius = union<unknown>(
   obj({ tl: nonNeg, tr: nonNeg, br: nonNeg, bl: nonNeg }, ['tl', 'tr', 'br', 'bl']),
 )
 /** Paths and masks are bounded: a crafted file must not hand the renderer millions of anchors. */
-export const MAX_ANCHORS = 20_000
+export const MAX_ANCHORS = MAX_PATH_ANCHORS
 export const anchor = obj({ x: num, y: num, cpIn: point, cpOut: point, moveTo: bool }, ['x', 'y'])
 export const normalizedAnchor = obj({ x: num, y: num, cpIn: point, cpOut: point }, ['x', 'y'])
 export const mask = union<unknown>(

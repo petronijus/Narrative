@@ -51,21 +51,9 @@ import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
 import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import {
-  createObjectOfType,
-  removeObject,
-  addObjects,
-  yMapToPlainObject,
-} from '@narrative/slide-model'
-import type { ObjectsMutationContext } from '@narrative/slide-model'
+import { addObjects, yMapToPlainObject } from '@narrative/slide-model'
 import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
-import type {
-  SlideObject,
-  SlideObjectType,
-  PathAnchor,
-  PathObject,
-  TableObject,
-} from '@narrative/shared'
+import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
@@ -425,80 +413,6 @@ function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean
     [key],
   )
   return [value, setValue]
-}
-
-/**
- * Flatten a parametric shape (rectangle / triangle / polygon) into a
- * PathObject with one anchor per outline vertex, place it, and remove
- * the original. Returns the new path id (or null on failure).
- *
- * Used by the dbl-click → point-edit gesture: anchors of a true path
- * can be dragged independently, but the parametric shapes can't carry
- * non-uniform corner positions in their schema. Conversion is
- * destructive on shape-specific fields (cornerRadius, fillStyle, …)
- * but preserves position, size, fill and stroke.
- */
-function convertToPathAndPlace(
-  mutationCtx: ObjectsMutationContext,
-  source: SlideObject,
-): string | null {
-  const w = source.width
-  const h = source.height
-  let anchors: PathAnchor[] | null = null
-  if (source.type === 'rectangle') {
-    anchors = [
-      { x: 0, y: 0 },
-      { x: w, y: 0 },
-      { x: w, y: h },
-      { x: 0, y: h },
-    ]
-  } else if (source.type === 'triangle') {
-    anchors = [
-      { x: w / 2, y: 0 },
-      { x: w, y: h },
-      { x: 0, y: h },
-    ]
-  } else if (source.type === 'polygon') {
-    const sides = Math.max(3, Math.min(12, source.sides))
-    const cx = w / 2
-    const cy = h / 2
-    const rx = w / 2
-    const ry = h / 2
-    anchors = []
-    // Top-pointing regular n-gon — same orientation the polygonRenderer uses.
-    for (let i = 0; i < sides; i++) {
-      const t = -Math.PI / 2 + (i * 2 * Math.PI) / sides
-      anchors.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) })
-    }
-  }
-  if (anchors === null) return null
-
-  const filled =
-    'fill' in source && typeof (source as { fill: number }).fill === 'number'
-      ? (source as { fill: number }).fill
-      : undefined
-  const fillAlpha = 'fillAlpha' in source ? (source as { fillAlpha?: number }).fillAlpha : undefined
-  const stroke = (source as { stroke?: number }).stroke ?? 0x000000
-  const strokeWidth = (source as { strokeWidth?: number }).strokeWidth ?? 0
-
-  const created = createObjectOfType(mutationCtx, 'path', {
-    x: source.x,
-    y: source.y,
-    width: w,
-    height: h,
-    rotation: source.rotation,
-    anchors,
-    closed: true,
-    stroke,
-    strokeWidth,
-    ...(filled !== undefined ? { fill: filled } : {}),
-    ...(fillAlpha !== undefined ? { fillAlpha } : {}),
-    // Preserve group membership so flattening a member of a group
-    // doesn't silently drop it out of the group.
-    ...(source.groupId !== undefined && source.groupId !== '' ? { groupId: source.groupId } : {}),
-  } as Partial<SlideObject>)
-  removeObject(mutationCtx, source.id)
-  return created.id
 }
 
 export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayoutProps = {}) {
@@ -1289,7 +1203,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       activeTool,
       objects,
       mutationCtx,
-      setActiveTool,
       selectedIds,
       selectOne,
       toggle,
@@ -1803,21 +1716,32 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         enterPathPoints(hitId)
         return
       }
-      if (hit.type === 'rectangle' || hit.type === 'triangle' || hit.type === 'polygon') {
-        // Figma "Edit Object" on a parametric shape → flatten to a path
-        // with one anchor per outline corner, then enter point-edit.
-        // Loses cornerRadius / fillStyle / etc. (PathObject schema is
-        // narrower). That's the trade-off for independent corner moves.
-        if (isViewer || mutationCtx === null) return
-        const newId = convertToPathAndPlace(mutationCtx, hit)
-        if (newId !== null) {
-          selectOne(newId)
-          enterPathPoints(newId)
+      if (
+        hit.type === 'rectangle' ||
+        hit.type === 'ellipse' ||
+        hit.type === 'triangle' ||
+        hit.type === 'polygon'
+      ) {
+        // Figma "Edit Object" on a parametric shape → the same object as a
+        // path tracing its outline (rounded corners and ellipses as bezier
+        // arcs), then point-edit. It keeps its id, stacking place,
+        // animations and paint; only corner radius / side count become
+        // the path itself.
+        const slideId = activeSlideIdRef.current
+        if (isViewer || slideId === null) return
+        const out = command.tryRun<{ objectId: string }>('object.path.fromShape', {
+          slide: slideId,
+          object: hit.id,
+        })
+        if (out !== null) {
+          selectOne(out.objectId)
+          enterPathPoints(out.objectId)
         }
         return
       }
     },
     [
+      command,
       canvasInstance,
       objects,
       selectOne,
@@ -1826,7 +1750,6 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       enterCrop,
       enterPathPoints,
       isViewer,
-      mutationCtx,
       enteredGroupId,
     ],
   )
@@ -1855,43 +1778,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         // Only intercept Enter when a pen session is in progress.
         if (pen === null) return
         e.preventDefault()
-        if (pen.anchors.length >= 2 && mutationCtx !== null) {
-          let minX = Infinity
-          let minY = Infinity
-          let maxX = -Infinity
-          let maxY = -Infinity
-          for (const a of pen.anchors) {
-            minX = Math.min(minX, a.x)
-            minY = Math.min(minY, a.y)
-            maxX = Math.max(maxX, a.x)
-            maxY = Math.max(maxY, a.y)
-            if (a.cpIn !== undefined) {
-              minX = Math.min(minX, a.x + a.cpIn.x)
-              minY = Math.min(minY, a.y + a.cpIn.y)
-              maxX = Math.max(maxX, a.x + a.cpIn.x)
-              maxY = Math.max(maxY, a.y + a.cpIn.y)
-            }
-            if (a.cpOut !== undefined) {
-              minX = Math.min(minX, a.x + a.cpOut.x)
-              minY = Math.min(minY, a.y + a.cpOut.y)
-              maxX = Math.max(maxX, a.x + a.cpOut.x)
-              maxY = Math.max(maxY, a.y + a.cpOut.y)
-            }
-          }
-          const rel: PathAnchor[] = pen.anchors.map((a) => {
-            const out: PathAnchor = { x: a.x - minX, y: a.y - minY }
-            if (a.cpIn !== undefined) out.cpIn = { ...a.cpIn }
-            if (a.cpOut !== undefined) out.cpOut = { ...a.cpOut }
-            return out
-          })
-          const override: Partial<PathObject> = {
-            x: minX,
-            y: minY,
-            width: maxX - minX,
-            height: maxY - minY,
-            anchors: rel,
-          }
-          createObjectOfType(mutationCtx, 'path', override)
+        // The session's anchors are already in slide px (handles relative
+        // to their anchor): object.path.create fits the box around them.
+        const penSlideId = activeSlideIdRef.current
+        if (pen.anchors.length >= 2 && penSlideId !== null) {
+          command.tryRun('object.path.create', { slide: penSlideId, anchors: pen.anchors })
         }
         penSessionRef.current = null
         setPenSession(null)
@@ -2558,7 +2449,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                           const onlyId = editableIds[0]
                           const obj = onlyId !== undefined ? objectsById.get(onlyId) : undefined
                           if (obj !== undefined && (obj.type === 'line' || obj.type === 'arrow')) {
-                            return <LineEndpointHandles object={obj} mutationCtx={mutationCtx} />
+                            return <LineEndpointHandles object={obj} slideId={activeSlideId} />
                           }
                         }
                         // P15: aspect-ratio lock now lives on every object
@@ -2658,11 +2549,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
                     {/* Path point-edit overlay — anchors as draggable dots. */}
                     {pathPointsId !== null &&
-                      mutationCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         const obj = objects.find((o) => o.id === pathPointsId)
                         if (obj === undefined || obj.type !== 'path') return null
-                        return <PathPointsOverlay obj={obj} mutationCtx={mutationCtx} />
+                        return <PathPointsOverlay obj={obj} slideId={activeSlideId} />
                       })()}
 
                     {/* moveTo animation target overlay — silhouette + draggable

@@ -31,7 +31,7 @@ describe('query.deck', () => {
           index: 1,
           name: 'Numbers',
           transition: 'none',
-          objectCount: 2,
+          objectCount: 4,
           animationCount: 0,
         },
         {

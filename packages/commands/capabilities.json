@@ -786,6 +786,18 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "object.line.setEndpoints",
+      "domain": "object",
+      "title": "Move line ends",
+      "description": "Move the start (`p1`) and/or end (`p2`) of a line or arrow to points in slide px; an end you leave out stays where it is drawn. The box is refitted; rotation and mirroring stay. A line's stored p1 / p2 are relative to its box: for an unrotated line an end sits at (x + p.x, y + p.y). Returns both ends in slide px.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "object.mask.apply",
       "domain": "object",
       "title": "Mask an image with a shape",
@@ -816,6 +828,40 @@
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.path.create",
+      "domain": "object",
+      "title": "Draw a path",
+      "description": "Draw a free-form path (what the pen tool makes) through `anchors` given in slide px; each anchor may carry bezier handles relative to it. The box is fitted around what is drawn. `object` sets the other properties: `closed: true` joins the last point to the first and lets `fill` show; with a `rotation` (radians) the points still land where given. For a straight two-point line prefer object.create with type line / arrow.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.path.fromShape",
+      "domain": "object",
+      "title": "Convert a shape to a path",
+      "description": "Turn a rectangle (rounded corners included), ellipse, triangle or polygon into an editable path with the same outline, so its points can be moved one by one (object.path.setAnchors). It stays the same object: same id, place in the stacking order, animations, group, fill (gradients and images too), stroke, shadow, rotation and mirroring. Shape-only settings (corner radius, number of sides) become the path itself.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.path.setAnchors",
+      "domain": "object",
+      "title": "Set path points",
+      "description": "Edit a path's points in slide px: `moves` puts chosen anchors (by index in the path's `anchors`) at new points, their handles and every other anchor staying where they are drawn — the way to move one corner, rotated or mirrored path alike; or `anchors` replaces them all (handles relative to their anchor). The box is refitted while the path keeps its rotation and mirroring. Stored anchors are relative to the box: for an unrotated, unmirrored path an anchor sits at (x + anchor.x, y + anchor.y). Shapes convert with object.path.fromShape first.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -1427,31 +1473,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "object.path.create",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/components/EditorLayout.tsx (PenSession)"
-    },
-    {
-      "capability": "object.path.fromShape",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/components/EditorLayout.tsx (convertToPathAndPlace)"
-    },
-    {
-      "capability": "object.path.setAnchors",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/ui/PathPointsOverlay.tsx",
-      "note": "the raw path fields are settable with object.update today; the command adds the point editor's rule of re-fitting x/y/width/height to the edited anchors while keeping the rotation pivot in place"
-    },
-    {
-      "capability": "object.line.setEndpoints",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/ui/LineEndpointHandles.tsx"
-    },
     {
       "capability": "object.copyTo",
       "phase": "A2",

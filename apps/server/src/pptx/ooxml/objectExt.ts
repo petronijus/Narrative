@@ -83,7 +83,10 @@ export function polygonPreset(sides: number): string | undefined {
 
 /**
  * The frame a connector is drawn in: its endpoints' bounding box, with
- * flips naming the direction.
+ * flips naming the direction. The endpoints are taken as drawn: a mirrored
+ * line (object-level `flipH` / `flipV`) draws each end mirrored across its
+ * box, so PowerPoint gets the direction the audience sees — the model's own
+ * points and flags travel in the extension (see `objectExtValues`).
  */
 export function connectorFrame(o: Extract<SlideObject, { type: 'line' | 'arrow' }>): {
   x: number
@@ -93,10 +96,12 @@ export function connectorFrame(o: Extract<SlideObject, { type: 'line' | 'arrow' 
   flipH: boolean
   flipV: boolean
 } {
-  const x1 = o.x + o.p1.x
-  const y1 = o.y + o.p1.y
-  const x2 = o.x + o.p2.x
-  const y2 = o.y + o.p2.y
+  const mx = (x: number): number => (o.flipH === true ? o.width - x : x)
+  const my = (y: number): number => (o.flipV === true ? o.height - y : y)
+  const x1 = o.x + mx(o.p1.x)
+  const y1 = o.y + my(o.p1.y)
+  const x2 = o.x + mx(o.p2.x)
+  const y2 = o.y + my(o.p2.y)
   return {
     x: Math.min(x1, x2),
     y: Math.min(y1, y2),
@@ -216,7 +221,11 @@ export function objectExtValues(
       if ((o.type === 'arrow') !== (ends.start === 'arrow' || ends.end === 'arrow'))
         ext['type'] = o.type
       const f = connectorFrame(o)
+      // A mirrored line is written natively with its drawn (mirrored) ends;
+      // the model's own ends ride here so the flags it keeps stay right.
       if (
+        o.flipH === true ||
+        o.flipV === true ||
         pxToEmu(o.x) !== pxToEmu(f.x) ||
         pxToEmu(o.y) !== pxToEmu(f.y) ||
         pxToEmu(o.width) !== pxToEmu(f.width) ||

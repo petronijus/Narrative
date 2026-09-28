@@ -395,18 +395,29 @@ export function subscribeToSlideObjectsWithFlush(
     for (let i = 0; !orderChanged && i < currentOrder.length; i++) {
       if (currentOrder[i] !== lastEmittedOrder[i]) orderChanged = true
     }
-    // Drop the `netZeroIds.size > 0` guard — when netZeroIds is empty the
-    // loop is a no-op anyway, and keeping the guard meant a reorder that
-    // landed in the same batch as a genuine add/remove was silently
-    // skipped, leaving the per-id remount data incomplete. The outer
-    // `orderChanged` check at the emit site (below) already gates the
-    // callback so we never fire spuriously.
-    if (orderChanged) {
-      for (const id of netZeroIds) {
-        netRemoved.push(id)
-        const obj = batchToProcess.addedObjects.get(id)
-        if (obj !== undefined) netAdded.push(obj)
+    // A delete + insert of one id is either a reorder or a replacement in
+    // place (replaceObject, or a collaborator's replacement arriving as one
+    // update) — a new Y.Map under the same id and index, possibly of
+    // another type. Both need the object re-mounted from its new Y.Map, so
+    // every such id is re-emitted as remove + add whether or not the order
+    // changed. Gating this on `orderChanged` left an in-place replacement
+    // with nothing to emit: the snapshot above was already updated, but no
+    // subscriber heard of it and the editor kept drawing the old object.
+    // An id can also end the tick absent after being in both sets: inserted
+    // and removed again (new this tick — nothing to report), or replaced and
+    // then removed (subscribers still draw it — report the removal).
+    const present = new Set(currentOrder)
+    const wasEmitted = new Set(lastEmittedOrder)
+    for (const id of netZeroIds) {
+      const obj = currentSnapshot.get(id)
+      if (!present.has(id)) {
+        currentSnapshot.delete(id)
+        if (wasEmitted.has(id)) netRemoved.push(id)
+        continue
       }
+      if (obj === undefined) continue
+      netRemoved.push(id)
+      netAdded.push(obj)
     }
 
     if (netAdded.length > 0 || netRemoved.length > 0 || netUpdated.length > 0 || orderChanged) {

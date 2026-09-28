@@ -11,6 +11,7 @@ import {
   addObject,
   addObjects,
   removeObject,
+  replaceObject,
   updateObject,
   createObjectOfType,
   duplicateObject,
@@ -90,6 +91,59 @@ describe('addObject', () => {
     addObject(ctx, { ...sampleRect, id: 'r2' })
 
     expect(ctx.objects.length).toBe(2)
+  })
+})
+
+describe('replaceObject', () => {
+  it('swaps the object under the same id and stacking position, in one undo step', () => {
+    const ctx = makeCtx()
+    addObject(ctx, { ...sampleRect, id: 'below' })
+    addObject(ctx, sampleRect)
+    addObject(ctx, { ...sampleRect, id: 'above' })
+    const undo = new Y.UndoManager(ctx.objects, { trackedOrigins: new Set([LOCAL_ORIGIN]) })
+
+    const path = {
+      id: 'r1',
+      type: 'path' as const,
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 50,
+      rotation: 0,
+      opacity: 1,
+      anchors: [
+        { x: 0, y: 0 },
+        { x: 100, y: 50 },
+      ],
+      stroke: 0,
+      strokeWidth: 1,
+    }
+    expect(replaceObject(ctx, path)).toBe(true)
+    expect(ctx.objects.toArray().map((m) => [m.get('id'), m.get('type')])).toEqual([
+      ['below', 'rectangle'],
+      ['r1', 'path'],
+      ['above', 'rectangle'],
+    ])
+    expect(yMapToPlainObject(ctx.objects.get(1))).toEqual(path)
+
+    undo.undo()
+    expect(yMapToPlainObject(ctx.objects.get(1))).toEqual(sampleRect)
+  })
+
+  it('is a no-op for an unknown id and refuses text', () => {
+    const ctx = makeCtx()
+    addObject(ctx, sampleRect)
+    expect(replaceObject(ctx, { ...sampleRect, id: 'nope' })).toBe(false)
+    expect(ctx.objects.length).toBe(1)
+    expect(() =>
+      replaceObject(ctx, {
+        ...sampleRect,
+        type: 'text',
+        text: 'x',
+        fontSize: 12,
+        color: 0,
+      } as never),
+    ).toThrow(/cannot be replaced/)
   })
 })
 

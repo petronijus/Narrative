@@ -33,6 +33,7 @@ export {
   ungroupObjects,
   getGroupMembers,
   spliceRichText,
+  replaceObject,
 } from './mutations.js'
 export type {
   ObjectsMutationContext,

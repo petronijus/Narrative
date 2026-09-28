@@ -201,6 +201,19 @@ export async function matrixDeck(): Promise<ImportedDeck> {
       dash: true,
     },
     {
+      // A mirrored, rotated arrow: PowerPoint gets the drawn direction, the
+      // model gets its own ends and flags back.
+      id: 'arrowFlipped',
+      type: 'arrow',
+      ...frame(100, 700, 300, 120),
+      rotation: 0.4,
+      flipH: true,
+      p1: { x: 0, y: 0 },
+      p2: { x: 300, y: 120 },
+      stroke: 0x224488,
+      strokeWidth: 3,
+    },
+    {
       id: 'arrow1',
       type: 'arrow',
       ...frame(600, 500, 300, 150),

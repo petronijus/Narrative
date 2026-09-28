@@ -32,8 +32,15 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * .crop.set 2.4 (its five crop operations are a discriminated union), less
  * ~0.4 KB object.update lost by pointing at them instead of explaining the
  * workarounds.
+ * A2.6 (2026-09-28): 142,000 → 150,000 for object.path.create 4.1 KB (its
+ * `object` field carries the path's create schema: fill styles, shadow,
+ * hyperlink), .path.setAnchors 1.9, .line.setEndpoints 1.2 and
+ * .path.fromShape 1.1, then 152,000 once setAnchors took `moves` (edit
+ * anchors by index) and the anchor schema said when a segment curves. Per
+ * Petr's call the budget only rises during A2; the sizes get one
+ * comprehensive review once A2 is done.
  */
-export const TOOL_LIST_BUDGET_BYTES = 142_000
+export const TOOL_LIST_BUDGET_BYTES = 152_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

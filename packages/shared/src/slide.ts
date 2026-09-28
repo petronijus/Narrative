@@ -294,6 +294,13 @@ export interface ArrowObject extends BaseSlideObject, LineEndpoints {
 }
 
 /**
+ * Most anchors one path (or mask outline) may carry: a crafted file must not
+ * hand the renderer millions of points. PPTX import and the path commands
+ * share it.
+ */
+export const MAX_PATH_ANCHORS = 20_000
+
+/**
  * P4c: bezier path (pen tool output). Anchors live relative to
  * (x, y); each optional cpIn / cpOut is a cubic-bezier control point
  * relative to that anchor. Segments between two consecutive anchors

@@ -24,6 +24,10 @@ The user asked: {{request}}
      `object.alignToSlide`;
    - resize → `object.resize`, rotate → `object.rotate`, mirror →
      `object.flip`, crop or zoom a picture → `object.crop.set`;
+   - draw a free-form shape → `object.path.create`; reshape a rectangle,
+     ellipse, triangle or polygon point by point →
+     `object.path.fromShape`, then `object.path.setAnchors`; move a line's
+     or arrow's end → `object.line.setEndpoints` (all in slide px);
    - change font, size, colour of a whole box → `object.update` (clear
      conflicting run formatting with `text.format` first);
    - change some words → `text.format` with a `match` range, or `text.set`

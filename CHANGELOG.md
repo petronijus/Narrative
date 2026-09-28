@@ -4,6 +4,65 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.8 — Paths and lines are commands (2026-09-28)
+
+### Added
+
+- **Agents can draw and reshape paths and move line ends**, with points
+  given in slide pixels — where they are drawn — whatever the object's
+  rotation or mirroring:
+  - `object.path.create` — a free-form path through anchors (the pen tool).
+  - `object.path.fromShape` — a rectangle (rounded corners included),
+    ellipse, triangle or polygon becomes a path with the same outline, as
+    the same object.
+  - `object.path.setAnchors` — move chosen points by index (the rest stay
+    where they are drawn) or replace them all; the box is refitted.
+  - `object.line.setEndpoints` — move a line's or arrow's start and/or end.
+- **Ellipses can be edited point by point** too: double-click one, like a
+  rectangle.
+
+### Fixed
+
+- **The end handles of a rotated or mirrored line sat off the line**, and
+  dragging one moved the wrong point. They now sit on the drawn ends and a
+  drag moves that end under the cursor. The point editor's handles were off
+  the same way on a mirrored path.
+- **Double-clicking a shape to edit its points replaced it with a new object
+  on top of the slide**: it lost its place in the stacking order, its
+  animations and Magic Move pairing, its gradient or image fill, shadow,
+  blur and link, and rounded corners became square. It now stays the same
+  object with all of those, rounded corners traced as arcs.
+- **An object replaced in place did not update on screen** until a reload —
+  a collaborator's shape-to-path conversion, for example. The slide
+  observer took any delete + insert of one id for a reorder and only
+  re-drew it when the order changed. (Replaced and then deleted in the same
+  moment, it also stayed on screen as a ghost.)
+- **A path's box now fits the curve it draws**, not its bezier handles: a
+  drawn S-curve used to get a selection box several times taller than the
+  stroke, which also threw off alignment and centring. Paths get the tight
+  box whenever they are drawn or their points are edited.
+- **Converting a triangle to a path made it bigger**: the canvas draws a
+  triangle inscribed in its box's ellipse, the conversion traced the whole
+  box. It now traces the triangle you see.
+- **A mirrored line or arrow exported to PowerPoint pointing the other
+  way.** The connector now goes out in the direction it is drawn (and comes
+  back into Narrative exactly as it was).
+
+### Internal
+
+- A2.6: the pen, the point editor, the line end handles and shape-to-path
+  conversion dispatch the new commands; `PathPointsOverlay` and
+  `LineEndpointHandles` are off the one-door exemption list (17 files
+  left). Placement math (rotation + mirroring, fitting a box around slide
+  points, shape outlines) lives in `packages/commands/src/geometry.ts`;
+  `replaceObject` in slide-model swaps an object under its id and index.
+- MCP tools/list budget 142,000 → 152,000 bytes; three new agent-eval
+  scenarios (`pen-triangle-path`, `shape-corner-to-path`, `line-end-move`)
+  and a `path-editing` e2e spec; the `edit` playbook maps drawing and
+  reshaping onto the new commands.
+
+---
+
 ## 0.10.7 — Transforms are commands (2026-09-28)
 
 ### Added
