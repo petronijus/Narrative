@@ -41,10 +41,20 @@ const STYLE = `
   button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 `
 
-function page(title: string, body: string): string {
+/**
+ * A page's referrer policy — kept in its `<meta name="referrer">`, which
+ * overrides the HTTP header. `same-origin` on a page with a form: under
+ * `no-referrer` the browser posts the page's own form with `Origin: null`
+ * (Fetch spec, origin serialisation for non-GET requests), which the
+ * decision endpoint refuses — every consent failed that way until
+ * 2026-09-28. `same-origin` still keeps the Referer from every other site.
+ */
+export type PageReferrerPolicy = 'no-referrer' | 'same-origin'
+
+function page(title: string, body: string, referrer: PageReferrerPolicy = 'no-referrer'): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>${escapeHtml(title)} · Narrative</title>
+<meta name="referrer" content="${referrer}"><title>${escapeHtml(title)} · Narrative</title>
 <style>${STYLE}</style></head><body><main>${body}</main></body></html>`
 }
 
@@ -102,7 +112,8 @@ export function consentPage(input: ConsentPageInput): string {
   return page(
     'Connect to Narrative',
     `<h1>Allow ${name} to use Narrative?</h1>
-     <p><strong>${name}</strong> wants to act as <strong>${escapeHtml(input.userLabel)}</strong> in Narrative.</p>
+     <p><strong>${name}</strong> wants to act as <strong>${noEmailRewrite(escapeHtml(input.userLabel))}</strong> in
+     Narrative.</p>
      ${identity}
      <div class="dest"><span class="muted">After you approve, you are sent to</span><br>${destination}</div>
      <p>With the <code>mcp</code> permission it can:</p>
@@ -120,7 +131,19 @@ export function consentPage(input: ConsentPageInput): string {
        <button type="submit" name="decision" value="deny">Deny</button>
        <button type="submit" name="decision" value="approve" class="primary">Allow</button>
      </form>`,
+    'same-origin',
   )
+}
+
+/**
+ * Keep an e-mail address readable behind Cloudflare: its Email Obfuscation
+ * rewrites addresses in HTML into "[email protected]" plus an inline script
+ * to decode them, and this page's CSP (rightly) blocks that script, so the
+ * user saw "[email protected]" where their own address belongs.
+ * Cloudflare skips what sits between these comments.
+ */
+function noEmailRewrite(html: string): string {
+  return `<!--email_off-->${html}<!--/email_off-->`
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

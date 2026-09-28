@@ -453,6 +453,12 @@ describe('authorization code flow', () => {
     // Not `no-referrer`: under it a browser posts the page's own form with
     // `Origin: null`, which the decision endpoint refuses (as it must).
     expect(page.headers.get('referrer-policy')).toBe('same-origin')
+    // …and the meta tag, which overrides the header, says the same (0.10.3
+    // fixed only the header, and consent kept failing).
+    expect(html).toContain('<meta name="referrer" content="same-origin">')
+    expect(html).not.toContain('content="no-referrer"')
+    // The user's address stays readable behind Cloudflare's Email Obfuscation.
+    expect(html).toMatch(/<!--email_off-->[^<]*<!--\/email_off-->/)
   })
 
   it('shows a web callback host prominently, without the loopback warning', async () => {

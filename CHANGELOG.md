@@ -4,6 +4,26 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.4 — Connecting Claude Code over OAuth, really (2026-09-28)
+
+### Fixed
+
+- **Allow on the MCP consent page still failed after 0.10.3.** The page
+  also sets its referrer policy in `<meta name="referrer">`, which overrides
+  the HTTP header 0.10.3 changed, so Chrome kept posting the form with
+  `Origin: null` (Caddy's access log of the failed attempts). The meta tag
+  now says `same-origin` on the consent page (every other OAuth page keeps
+  `no-referrer`); a refused decision now logs the origin it came from.
+- **The consent page showed "[email protected]"** instead of your address:
+  Cloudflare's Email Obfuscation rewrote it and the page's CSP blocked the
+  decoding script. The address is now marked `email_off`.
+- New e2e spec `mcp-oauth-consent`: the whole authorize → consent → Allow →
+  callback flow in a real browser, with Claude Code's own client metadata.
+  It does not reproduce the production failure (headless Chrome on the dev
+  stack sent the real origin even under the old meta tag).
+
+---
+
 ## 0.10.3 — Connecting Claude Code over OAuth works (2026-09-28)
 
 ### Fixed

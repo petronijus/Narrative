@@ -86,12 +86,11 @@ function sendOAuthError(reply: FastifyReply, e: OAuthError, basicChallenge = fal
 /**
  * Headers of the server-rendered OAuth pages. `formTargets` are where the
  * page's form may post; a page with a form gets `same-origin` as its
- * referrer policy, not `no-referrer`: under `no-referrer` a browser sends
- * `Origin: null` on the page's own form post (Fetch spec, origin
- * serialisation for non-GET requests), and the decision endpoint rightly
- * refuses `null` — so every consent answered "This request did not come
- * from Narrative" (found 2026-09-28, the first real Claude Code connection).
- * `same-origin` still keeps the Referer away from every other site.
+ * referrer policy, not `no-referrer` (see pages.ts `PageReferrerPolicy`:
+ * under `no-referrer` the page's own form posts with `Origin: null`, which
+ * the decision endpoint refuses). The page's `<meta name="referrer">` says
+ * the same — it overrides this header, which is how the first fix, header
+ * only, missed.
  */
 function htmlHeaders(reply: FastifyReply, formTargets: readonly string[]): FastifyReply {
   return noStore(reply)
@@ -359,6 +358,10 @@ export async function registerMcpOAuthRoutes(
         const origin = req.headers['origin']
         // (`Origin: null` — a sandboxed or privacy-redirected form — is refused too.)
         if (typeof origin === 'string' && origin !== apiOrigin()) {
+          req.log.warn(
+            { origin, expected: apiOrigin() },
+            'MCP OAuth consent: refused a decision posted from another origin',
+          )
           return htmlHeaders(reply, [])
             .status(403)
             .send(errorPage('This request did not come from Narrative.'))
