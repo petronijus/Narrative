@@ -44,7 +44,7 @@ import {
 import { getOrProvisionDrafts } from './folders.js'
 import { readDocCopy, writeLiveDoc } from './liveDocs.js'
 import { applyTokenRebinding, planTokenRebinding, tokensSnapshot } from './tokenRebind.js'
-import { copyStoredObject, stageDeckCopy } from './deckInsert.js'
+import { copyStoredObject, stageDeckCopy, stageObjectInsert } from './deckInsert.js'
 import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
 /** Longest deck title the API accepts. */
@@ -701,5 +701,6 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     moveDeck,
     activeEditors,
     listFonts,
+    prepareObjectInsert: (args) => stageObjectInsert(deps, args),
   }
 }

@@ -7,6 +7,7 @@
 import { z } from 'zod'
 import {
   alignObjects,
+  copyObjectsTo,
   distributeObjects,
   duplicateObjects,
   groupObjects,
@@ -50,8 +51,8 @@ export const objectDuplicate = defineCommand({
     'its own new group (the original group is untouched); copying a single member of a group gives an ungrouped ' +
     "copy. A cropped image's crop moves with its copy, so the copy shows the same part of the picture. A copy of a " +
     'locked object is locked too. Animations are not ' +
-    'copied (add them with animation.add). Copying to another slide or deck is object.copyTo (planned, not ' +
-    'available yet): today, read the object with query.object and recreate it there with object.create.',
+    'copied (add them with animation.add). To another slide use object.copyTo; into another deck, read the ' +
+    'objects with query.slide / query.object and send them to object.insertFromDeck there (fromDeck = this deck).',
   input: z
     .object({
       slide: SlideRefSchema,
@@ -77,6 +78,77 @@ export const objectDuplicate = defineCommand({
     const objects = objectsOf(deck, slide)
     requireObjects(objects, input.objects, slide.id)
     const copies = duplicateObjects(objects, input.objects, input.offset ?? { x: 20, y: 20 })
+    return { objectIds: copies.map((c) => c.id) }
+  },
+})
+
+export const objectCopyTo = defineCommand({
+  ...objectEditor,
+  id: 'object.copyTo',
+  title: 'Copy objects to a slide',
+  description:
+    'Copy objects to another slide of this deck (`toSlide`; omitted = the same slide), exact and whole — rich ' +
+    "text, tables, crops, fills — on top of the target's stacking order, in one undo step. Copies get new ids; " +
+    'a group copied whole becomes its own new group, a lone member of a group comes out ungrouped; animations are ' +
+    'not copied. Placement: by default copies keep their position on another slide and move 20, 20 on the same ' +
+    'one; `offset` moves them by a delta, `at` puts the centre of their combined box on a slide point. Into ' +
+    'another deck: read them with query.slide and use object.insertFromDeck there (fromDeck = this deck).',
+  input: z
+    .object({
+      slide: SlideRefSchema,
+      objects: ObjectIdsSchema,
+      toSlide: SlideRefSchema.optional(),
+      offset: z
+        .object({ x: Finite, y: Finite })
+        .strict()
+        .optional()
+        .describe('Move the copies by this delta (slide px)'),
+      at: z
+        .object({ x: Finite, y: Finite })
+        .strict()
+        .optional()
+        .describe("Slide point the centre of the copies' combined box lands on"),
+    })
+    .strict()
+    .refine((v) => v.offset === undefined || v.at === undefined, {
+      message: 'Give `offset` or `at`, not both',
+      path: ['at'],
+    }),
+  output: z.object({ objectIds: z.array(z.string()) }),
+  implementedWith: ['copyObjectsTo'],
+  examples: [
+    {
+      title: 'Copy the rectangle and the text box to slide 2, same place',
+      input: { slide: 's1', objects: ['r1', 't1'], toSlide: 's2' },
+    },
+    {
+      title: 'Copy the cropped image to the middle of slide 3',
+      input: { slide: 's1', objects: ['img1'], toSlide: { index: 2 }, at: { x: 960, y: 540 } },
+    },
+  ],
+  handler(ctx, input) {
+    const deck = requireDeck(ctx)
+    const from = resolveSlide(deck, input.slide)
+    const fromObjects = objectsOf(deck, from)
+    const maps = requireObjects(fromObjects, input.objects, from.id)
+    const target = input.toSlide === undefined ? from : resolveSlide(deck, input.toSlide)
+    const toObjects = target.id === from.id ? fromObjects : objectsOf(deck, target)
+    let offset = input.offset ?? (target.id === from.id ? { x: 20, y: 20 } : { x: 0, y: 0 })
+    if (input.at !== undefined) {
+      const boxes = [...maps.values()].map((m) => {
+        const n = (k: string): number => {
+          const v = m.get(k)
+          return typeof v === 'number' && Number.isFinite(v) ? v : 0
+        }
+        return { x: n('x'), y: n('y'), width: n('width'), height: n('height') }
+      })
+      const left = Math.min(...boxes.map((b) => b.x))
+      const top = Math.min(...boxes.map((b) => b.y))
+      const right = Math.max(...boxes.map((b) => b.x + b.width))
+      const bottom = Math.max(...boxes.map((b) => b.y + b.height))
+      offset = { x: input.at.x - (left + right) / 2, y: input.at.y - (top + bottom) / 2 }
+    }
+    const copies = copyObjectsTo(fromObjects, toObjects, input.objects, offset)
     return { objectIds: copies.map((c) => c.id) }
   },
 })
@@ -294,6 +366,7 @@ export const objectDistribute = defineCommand({
 
 export const objectCommands = [
   objectDuplicate,
+  objectCopyTo,
   objectMove,
   objectLayer,
   objectGroup,

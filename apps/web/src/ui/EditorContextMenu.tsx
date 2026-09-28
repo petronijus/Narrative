@@ -38,15 +38,10 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import {
-  addObjects,
-  getTableMergeInfo,
-  isMaskableShape,
-  type LayerMove,
-} from '@narrative/slide-model'
+import { getTableMergeInfo, isMaskableShape, type LayerMove } from '@narrative/slide-model'
 import { useCommand } from '../state/useCommand.js'
 import { promoteSelectionToComponent } from '../state/promoteSelectionToComponent.js'
-import { setClipboard, hasClipboard, readClipboardForPaste } from '../state/clipboard.js'
+import { useObjectClipboard } from '../state/useObjectClipboard.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useTableEdit } from '../state/TableEditContext.js'
@@ -148,6 +143,7 @@ type Mode = 'object' | 'canvas'
 export function EditorContextMenu({ canvasContainerRef, children }: EditorContextMenuProps) {
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
   const command = useCommand()
+  const objectClipboard = useObjectClipboard()
   const { selectedIds, selectOne, selectMany, clear } = useSelection()
   const { range: tableRange } = useTableEdit()
   const canvasInstance = useCanvasInstance()
@@ -262,7 +258,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const handleCut = (): void => {
     const targets = resolveTargets()
     if (targets.length === 0) return
-    setClipboard(targets)
+    if (
+      !objectClipboard.copy(
+        targets.map((o) => o.id),
+        { cut: true },
+      )
+    )
+      return
     deleteUnlocked(targets)
     clear()
   }
@@ -270,7 +272,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const handleCopy = (): void => {
     const targets = resolveTargets()
     if (targets.length === 0) return
-    setClipboard(targets)
+    objectClipboard.copy(targets.map((o) => o.id))
   }
 
   const handleDuplicate = (): void => {
@@ -498,18 +500,13 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   // Canvas-mode handlers
   // ---------------------------------------------------------------------------
 
+  // The pasted block is centred on the point the menu was opened at.
   const handlePasteAtCursor = (): void => {
-    if (!hasClipboard() || mutationCtx === null) return
+    if (!objectClipboard.canPaste()) return
     const { x, y } = cursorCoordsRef.current
-    const pasted = readClipboardForPaste({ x: 0, y: 0 })
-    if (pasted === null || pasted.length === 0) return
-    const w = pasted[0]?.width ?? 160
-    const h = pasted[0]?.height ?? 120
-    const cx = x - w / 2
-    const cy = y - h / 2
-    const positioned = pasted.map((o) => ({ ...o, x: o.x + cx, y: o.y + cy }))
-    addObjects(mutationCtx, positioned)
-    selectMany(positioned.map((o) => o.id))
+    void objectClipboard.paste({ at: { x, y } }).then((ids) => {
+      if (ids !== null && ids.length > 0) selectMany(ids)
+    })
   }
 
   const handleInsertShape = (type: SlideObjectType): void => {
@@ -541,7 +538,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   // Render
   // ---------------------------------------------------------------------------
 
-  const canPaste = hasClipboard()
+  const canPaste = objectClipboard.canPaste()
   const target = resolveTargets()[0]
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
@@ -582,7 +579,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
             </ContextMenuItem>
             <ContextMenuItem onSelect={handleCopy}>Copy</ContextMenuItem>
             <ContextMenuItem
-              disabled={!canPaste || mutationCtx === null}
+              disabled={!canPaste || activeSlideId === null}
               onSelect={handlePasteAtCursor}
             >
               Paste
@@ -751,7 +748,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         {mode === 'canvas' && (
           <>
             <ContextMenuItem
-              disabled={!canPaste || mutationCtx === null}
+              disabled={!canPaste || activeSlideId === null}
               onSelect={handlePasteAtCursor}
             >
               Paste

@@ -18,7 +18,10 @@ The user asked: {{request}}
    restyle or "improve" anything the user did not mention.
 3. **Apply it** in one `ops.apply` when it takes several commands. Useful
    mappings:
-   - copy an object on the same slide → `object.duplicate`;
+   - copy an object on the same slide → `object.duplicate`; to another
+     slide → `object.copyTo`; from another deck → read it with
+     `query.slide` there and send it to `object.insertFromDeck` here (it
+     copies pictures and fonts too);
    - move → `object.move` (deltas), line up → `object.align` /
      `object.distribute`, to the slide's edge or centre →
      `object.alignToSlide`;

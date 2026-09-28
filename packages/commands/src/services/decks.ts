@@ -8,6 +8,8 @@
  */
 
 import type { DeckRole, FontFaceInfo, ListKeyset } from './common.js'
+import type { ObjectsMutationContext } from '@narrative/slide-model'
+import type { InsertPlan } from '../insert/plan.js'
 
 /** A deck row as the API returns it. Timestamps are ISO strings. */
 export interface DeckRecord {
@@ -180,4 +182,39 @@ export interface DeckService {
    * may use was deleted). The folder's own fonts are `FolderService.listFonts`.
    */
   listFonts(args: { deckId: string }): Promise<FontFaceInfo[]>
+  /**
+   * Stage objects read from another deck (planned by `planInsert`) for
+   * insertion into `targetDeckId`: the pictures, videos and fonts they use
+   * are copied into the target deck, token references rebound when the
+   * folders differ, and links to the source's slides removed. Needs editor
+   * access to the source (copying out of a deck is exporting it).
+   */
+  prepareObjectInsert(args: {
+    userId: string
+    sourceDeckId: string
+    targetDeckId: string
+    plan: InsertPlan
+  }): Promise<PreparedObjectInsert>
+}
+
+export interface ObjectInsertResult {
+  objectIds: string[]
+  /** Media rows registered for the target deck, copied from the source deck. */
+  mediaRegistered: number
+  /** Pictures that could not be copied (their source file is gone). */
+  skippedImages: number
+  /** Links to slides of the source deck (removed: they do not exist here). */
+  droppedLinks: number
+  /** Across folders: what happened to token references (deck.moveToFolder's rule). */
+  tokens?: { rebound: number; literalised: number; detached: number; unmatched: number }
+}
+
+/**
+ * Objects staged for insertion (media registered under the target deck);
+ * `apply` adds them to a slide synchronously, inside the host's one
+ * transaction. `discard` releases the staged media when `apply` will not run.
+ */
+export interface PreparedObjectInsert {
+  apply(objects: ObjectsMutationContext): ObjectInsertResult
+  discard(): Promise<void>
 }

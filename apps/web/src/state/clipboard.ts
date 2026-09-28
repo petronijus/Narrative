@@ -1,152 +1,132 @@
 /**
  * state/clipboard.ts
  *
- * P6: in-memory clipboard for Copy / Paste across slides within the
- * current deck.
+ * The canvas clipboard for objects: WHICH objects of which slide and deck
+ * were copied, plus how they read at that moment — the objects as
+ * `query.slide` returns them (formatted text, table cells, crops). Kept in
+ * memory and in localStorage, so a paste can land in another tab or deck.
  *
- * P11: Cross-deck clipboard. On setClipboard we also write a serialized
- * payload to localStorage keyed `narrative:clipboard`. On hasClipboard
- * and readClipboardForPaste we fall back to the localStorage value when
- * in-memory is empty (e.g. after a page reload or switching browser tabs).
+ * Paste does the copying through commands (ADR 0010), picking the most
+ * faithful path that still applies (see `usePasteObjects`):
  *
- * We store *plain objects* (not Y.Maps) so the clipboard is detached
- * from any particular deck context and a paste can stamp fresh Y.Maps
- * in the active slide.
+ *   - same deck, sources still there (a copy): `object.copyTo` — an exact
+ *     copy of the live objects, whatever they hold;
+ *   - same deck, sources gone (a cut, or deleted since): `object.insert`
+ *     from the snapshot — the media is this deck's already;
+ *   - another deck: the server's `object.insertFromDeck`
+ *     (`POST /decks/:id/insert-objects`), which also copies the pictures,
+ *     videos and fonts into that deck (media is deck-scoped) and rebinds
+ *     tokens across folders.
+ *
+ * Unlike the slides panel's clipboard (a reference only, slideClipboard.ts)
+ * this one keeps the content, because objects can be cut: after a cut the
+ * sources are gone and the snapshot is all a paste has.
  */
-
-import { nanoid } from 'nanoid'
-import * as Y from 'yjs'
-import type { SlideObject } from '@narrative/shared'
-import { toDelta } from '@narrative/slide-model'
-
-/**
- * Capture inline formatting on a TextObject's Y.Text body as a Quill
- * delta and return a JSON-safe plain snapshot. The delta rides along on
- * `_richTextOps` and is consumed by slide-model `addObject` on paste,
- * which replays it into a freshly-integrated Y.Text. Without this step
- * Y.Text is opaque to JSON.stringify and inline italics/underline/
- * weight/color silently disappear on paste.
- */
-function snapshotForClipboard(o: SlideObject): SlideObject {
-  if (o.type === 'text') {
-    const t = (o as { text: unknown }).text
-    if (t instanceof Y.Text) {
-      return {
-        ...(o as object),
-        text: t.toString(),
-        _richTextOps: toDelta(t),
-      } as unknown as SlideObject
-    }
-  }
-  return o
-}
 
 const LS_KEY = 'narrative:clipboard'
 
-let clipboard: SlideObject[] | null = null
-
-// ---------------------------------------------------------------------------
-// localStorage helpers — failures are silently ignored so clipboard still
-// works when storage is unavailable (private browsing, quota exhausted).
-// ---------------------------------------------------------------------------
-
-function writeLS(objects: SlideObject[]): void {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(objects))
-  } catch {
-    /* quota or unavailable */
-  }
+export interface ObjectClipboard {
+  /** The deck the objects were copied from. */
+  deckId: string
+  /** The slide they were on. */
+  slideId: string
+  /** Their ids, in stacking order (back to front). */
+  objectIds: string[]
+  /** True after a cut: the sources were deleted when they were copied. */
+  cut: boolean
+  /** The objects as query.slide read them when copied, in the same order. */
+  objects: Record<string, unknown>[]
 }
 
-function readLS(): SlideObject[] | null {
+interface Stored extends ObjectClipboard {
+  /** When it was copied (ms since epoch): the newest copy wins across tabs. */
+  copiedAt: number
+}
+
+let clipboard: Stored | null = null
+
+function isStored(value: unknown): value is Stored {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const rec = value as Record<string, unknown>
+  return (
+    typeof rec['copiedAt'] === 'number' &&
+    typeof rec['deckId'] === 'string' &&
+    rec['deckId'] !== '' &&
+    typeof rec['slideId'] === 'string' &&
+    typeof rec['cut'] === 'boolean' &&
+    Array.isArray(rec['objectIds']) &&
+    rec['objectIds'].every((id) => typeof id === 'string') &&
+    Array.isArray(rec['objects']) &&
+    rec['objects'].length > 0 &&
+    rec['objects'].every((o) => typeof o === 'object' && o !== null && !Array.isArray(o))
+  )
+}
+
+/** The last localStorage value read and what it parsed to: the menu asks on every render. */
+let lsCache: { raw: string; value: Stored | null } | null = null
+
+function readLS(): Stored | null {
   try {
     const raw = localStorage.getItem(LS_KEY)
     if (raw === null) return null
+    if (lsCache !== null && lsCache.raw === raw) return lsCache.value
     const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed) || parsed.length === 0) return null
-    // Basic structural guard: each entry must have an id and type string.
-    for (const item of parsed) {
-      if (typeof item !== 'object' || item === null) return null
-      if (typeof (item as Record<string, unknown>).id !== 'string') return null
-      if (typeof (item as Record<string, unknown>).type !== 'string') return null
-    }
-    return parsed as SlideObject[]
+    // Anything else — including the pre-0.10.9 format (an array of raw
+    // object snapshots) — is not a clipboard this editor can paste.
+    const value = isStored(parsed) ? parsed : null
+    lsCache = { raw, value }
+    return value
   } catch {
     return null
   }
 }
 
-function clearLS(): void {
+function writeLS(value: Stored | null): void {
   try {
-    localStorage.removeItem(LS_KEY)
+    if (value === null) localStorage.removeItem(LS_KEY)
+    else localStorage.setItem(LS_KEY, JSON.stringify(value))
   } catch {
-    /* ignore */
+    /* quota or unavailable: the in-memory copy still works in this tab */
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Store a snapshot of the selected objects. Caller owns serialization —
- * pass plain JSON-safe records (the SlideObject union is already flat).
- */
-export function setClipboard(objects: ReadonlyArray<SlideObject>): void {
-  if (objects.length === 0) {
-    clipboard = null
-    clearLS()
-    return
-  }
-  // Snapshot Y.Text bodies into a JSON-safe delta first, THEN JSON
-  // round-trip. JSON round-trip (rather than structuredClone) because
-  // text objects can carry transient non-serializable side data attached
-  // by upstream code (e.g. font-face load callbacks) which breaks
-  // structuredClone with DataCloneError. JSON silently drops functions/
-  // symbols, leaving exactly the persistable state.
-  clipboard = objects.map((o) => JSON.parse(JSON.stringify(snapshotForClipboard(o))) as SlideObject)
+/** Remember copied (or cut) objects; an entry without objects clears the clipboard. */
+export function setClipboard(entry: ObjectClipboard | null): void {
+  clipboard =
+    entry === null || entry.objects.length === 0
+      ? null
+      : {
+          deckId: entry.deckId,
+          slideId: entry.slideId,
+          objectIds: [...entry.objectIds],
+          cut: entry.cut,
+          objects: entry.objects.map(
+            (o) => JSON.parse(JSON.stringify(o)) as Record<string, unknown>,
+          ),
+          copiedAt: Date.now(),
+        }
   writeLS(clipboard)
 }
 
-export function hasClipboard(): boolean {
-  if (clipboard !== null && clipboard.length > 0) return true
-  // Fall back to localStorage for cross-deck / post-reload paste.
-  return readLS() !== null
+/** The newest clipboard, this tab's or another one's, without copying it. */
+function current(): Stored | null {
+  const stored = readLS()
+  if (stored !== null && (clipboard === null || stored.copiedAt >= clipboard.copiedAt)) {
+    clipboard = stored
+  }
+  return clipboard
 }
 
-/**
- * Read + re-id the clipboard. Every call produces objects with freshly
- * generated ids so repeated pastes don't collide. `offset` is applied
- * to x/y so pasted objects don't perfectly overlap the source.
- *
- * Group ids are remapped: if multiple clipboard entries share a
- * groupId, paste preserves the grouping but with a new id so the
- * pasted group is distinct from the original.
- */
-export function readClipboardForPaste(
-  offset: { x: number; y: number } = { x: 10, y: 10 },
-): SlideObject[] | null {
-  // Prefer in-memory, fall back to localStorage.
-  const source: SlideObject[] | null =
-    clipboard !== null && clipboard.length > 0 ? clipboard : readLS()
+/** What was copied last, in this tab or another one (the newer copy wins). */
+export function readClipboard(): ObjectClipboard | null {
+  const entry = current()
+  if (entry === null) return null
+  const { copiedAt: _copiedAt, ...rest } = entry
+  void _copiedAt
+  return structuredClone(rest)
+}
 
-  if (source === null) return null
-
-  const groupIdMap = new Map<string, string>()
-  return source.map((src) => {
-    const cloned = structuredClone(src) as SlideObject
-    cloned.id = nanoid()
-    cloned.x = (cloned.x ?? 0) + offset.x
-    cloned.y = (cloned.y ?? 0) + offset.y
-    if (cloned.groupId !== undefined && cloned.groupId !== '') {
-      const oldGroupId = cloned.groupId
-      let newGroupId = groupIdMap.get(oldGroupId)
-      if (newGroupId === undefined) {
-        newGroupId = nanoid()
-        groupIdMap.set(oldGroupId, newGroupId)
-      }
-      cloned.groupId = newGroupId
-    }
-    return cloned
-  })
+/** Cheap enough to ask on every render: parses localStorage only when it changed. */
+export function hasClipboard(): boolean {
+  return current() !== null
 }

@@ -42,14 +42,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A2: web-only logic to extract ------------------------------------------
   {
-    capability: 'object.copyTo',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/state/clipboard.ts',
-    writers: ['addObjects'],
-    note: 'paste inserts the copied objects in one step with addObjects',
-  },
-  {
     capability: 'object.slideNumber.set',
     phase: 'A2',
     source: 'web',

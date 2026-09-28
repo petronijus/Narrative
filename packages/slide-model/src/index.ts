@@ -23,6 +23,7 @@ export {
   updateObject,
   createObjectOfType,
   duplicateObjects,
+  copyObjectsTo,
   translateObjects,
   bulkUpdateObjects,
   moveObjectsLayer,

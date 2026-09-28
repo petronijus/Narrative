@@ -1,26 +1,26 @@
 {
   "scenario": "selected-slide-context",
-  "tag": "ev3e4609",
-  "recordedAt": "2026-09-28T20:10:47.638Z",
+  "tag": "evd4934d",
+  "recordedAt": "2026-09-28T20:54:42.923Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "tq3LnAAm9Etq",
-    "title": "Pricing ev3e4609",
-    "activeSlideId": "pM87_LGMbLwwdDS8ga9eR",
-    "selectedId": "TIiys3CMjKcZFdpwWxfqL"
+    "deckId": "xCLqVv1n6QlG",
+    "title": "Pricing evd4934d",
+    "activeSlideId": "SRBfnpfSpmOBy6B3T9mGi",
+    "selectedId": "JUF3Q2qtW22y5A1EyZ9d1"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "I have the Narrative deck \"Pricing ev3e4609\" (deckId tq3LnAAm9Etq) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
+        "prompt": "I have the Narrative deck \"Pricing evd4934d\" (deckId xCLqVv1n6QlG) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__editor_context,mcp__narrative-eval__query_slide,mcp__narrative-eval__query_object",
-              "max_results": 3
+              "query": "select:mcp__narrative-eval__editor_context,mcp__narrative-eval__query_slide",
+              "max_results": 5
             },
             "isError": false,
             "errorCode": null,
@@ -31,37 +31,37 @@
             "tool": "editor_context",
             "command": "editor.context",
             "input": {
-              "deckId": "tq3LnAAm9Etq"
+              "deckId": "xCLqVv1n6QlG"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "open": true,
-              "activeSlideId": "pM87_LGMbLwwdDS8ga9eR",
+              "activeSlideId": "SRBfnpfSpmOBy6B3T9mGi",
               "activeSlideIndex": 1,
-              "selectedObjectIds": ["TIiys3CMjKcZFdpwWxfqL"],
+              "selectedObjectIds": ["JUF3Q2qtW22y5A1EyZ9d1"],
               "editors": [
                 {
-                  "activeSlideId": "pM87_LGMbLwwdDS8ga9eR",
+                  "activeSlideId": "SRBfnpfSpmOBy6B3T9mGi",
                   "activeSlideIndex": 1,
-                  "selectedObjectIds": ["TIiys3CMjKcZFdpwWxfqL"],
-                  "lastActiveAt": "2026-09-28T20:10:34.203Z"
+                  "selectedObjectIds": ["JUF3Q2qtW22y5A1EyZ9d1"],
+                  "lastActiveAt": "2026-09-28T20:54:34.023Z"
                 }
               ]
             },
-            "text": "{\"open\":true,\"activeSlideId\":\"pM87_LGMbLwwdDS8ga9eR\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"TIiys3CMjKcZFdpwWxfqL\"],\"editors\":[{\"activeSlideId\":\"pM87_LGMbLwwdDS8ga9eR\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"TIiys3CMjKcZFdpwWxfqL\"],\"lastActiveAt\":\"2026-09-28T20:10:34.203Z\"}]}"
+            "text": "{\"open\":true,\"activeSlideId\":\"SRBfnpfSpmOBy6B3T9mGi\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"JUF3Q2qtW22y5A1EyZ9d1\"],\"editors\":[{\"activeSlideId\":\"SRBfnpfSpmOBy6B3T9mGi\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"JUF3Q2qtW22y5A1EyZ9d1\"],\"lastActiveAt\":\"2026-09-28T20:54:34.023Z\"}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "tq3LnAAm9Etq",
-              "slide": "pM87_LGMbLwwdDS8ga9eR"
+              "deckId": "xCLqVv1n6QlG",
+              "slide": "SRBfnpfSpmOBy6B3T9mGi"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "pM87_LGMbLwwdDS8ga9eR",
+              "id": "SRBfnpfSpmOBy6B3T9mGi",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -70,7 +70,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "K-LtoAsC6iVA0Um7DvwYi",
+                  "id": "fxU97LX7LZxZoJf2rP5Su",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -85,7 +85,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "QOPGqZ_lgA17421wlcY84",
+                  "id": "aHtJ3klg1h7yphYQE4KLq",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -100,7 +100,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "TIiys3CMjKcZFdpwWxfqL",
+                  "id": "JUF3Q2qtW22y5A1EyZ9d1",
                   "type": "text",
                   "x": 1000,
                   "y": 280,
@@ -118,10 +118,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"pM87_LGMbLwwdDS8ga9eR\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"K-LtoAsC6iVA0Um7DvwYi\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"QOPGqZ_lgA17421wlcY84\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"TIiys3CMjKcZFdpwWxfqL\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"SRBfnpfSpmOBy6B3T9mGi\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"fxU97LX7LZxZoJf2rP5Su\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"aHtJ3klg1h7yphYQE4KLq\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"JUF3Q2qtW22y5A1EyZ9d1\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "You're on **slide 2** (index 1) of \"Pricing ev3e4609\". It has a white background, no transition, no animations and no speaker notes. The three text objects on it, from back to front:\n\n1. **Title**: \"Pricing tiers\", 64pt bold, across the top (x 120, y 80, 1680×120).\n2. **Left text box**: \"Starter plan: 9 EUR per seat\", 28pt, left column (x 120, y 280, 780×400).\n3. **Right text box**: \"Enterprise plan: talk to sales\", 28pt, right column (x 1000, y 280, 800×400).\n\n**The object you've selected** is the right text box, \"Enterprise plan: talk to sales\" (id `TIiys3CMjKcZFdpwWxfqL`).\n\nI only read the deck and didn't change anything.",
+        "finalText": "You're on **slide 2** (index 1) of \"Pricing evd4934d\". It has three text objects:\n\n1. **Title:** \"Pricing tiers\". 64pt, bold, black, left-aligned, across the top at (120, 80), 1680×120.\n2. **Left text box:** \"Starter plan: 9 EUR per seat\". 28pt, regular, at (120, 280), 780×400.\n3. **Right text box:** \"Enterprise plan: talk to sales\". 28pt, regular, at (1000, 280), 800×400.\n\n**The object you've selected is the right text box, \"Enterprise plan: talk to sales\"** (id `JUF3Q2qtW22y5A1EyZ9d1`).\n\nThe slide uses the default white background, with no animations, no transition and no speaker notes. I only read the slide and didn't change anything.",
         "turns": 4,
         "isError": false,
         "stopReason": "success"

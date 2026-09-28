@@ -39,7 +39,9 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
 })
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
-const { stageDeckInsert } = await import('./deckInsert.js')
+const { stageDeckInsert, stageObjectInsert, insertObjectsFromDeck } =
+  await import('./deckInsert.js')
+const { planInsert } = await import('@narrative/commands')
 const accessMock = vi.mocked(resolveDeckAccess)
 
 let hp: Hocuspocus
@@ -292,5 +294,143 @@ describe('stageDeckInsert', () => {
     expect(err.status).toBe(400)
     expect(err.message).toContain('3 slides')
     expect(script.writes).toEqual([])
+  })
+})
+
+describe('stageObjectInsert / insertObjectsFromDeck', () => {
+  /** Objects as query.slide read them from the source deck's S1. */
+  const readObjects = (): Record<string, unknown>[] => [
+    {
+      id: 'img',
+      type: 'image',
+      assetId: 'a_src',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      hyperlink: { kind: 'slide', slideId: 'S2' },
+    },
+    {
+      id: 'label',
+      type: 'text',
+      x: 0,
+      y: 120,
+      width: 300,
+      height: 60,
+      rotation: 0,
+      opacity: 1,
+      fontSize: 24,
+      color: '#112233',
+      text: 'Logo',
+      paragraphs: [{ runs: [{ text: 'Logo', italic: true }] }],
+    },
+  ]
+
+  it('copies the media the objects use, re-points them and drops links into the source', async () => {
+    seedSource()
+    // The source is open in an editor, so it is read live.
+    const sourceEditor = await hp.openDirectConnection('src')
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f1' },
+        ],
+        [mediaRow],
+        [], // deck fonts of the families the text uses (none)
+      ],
+    })
+    const plan = planInsert(readObjects(), {})
+    const prepared = await stageObjectInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', plan },
+    )
+    const inserted = script.writes.filter((w) => w.kind === 'insert' && w.table === 'media_assets')
+    expect(inserted).toHaveLength(1)
+    const [row] = inserted[0]!.values as Array<{ id: string; deckId: string }>
+    expect(row).toMatchObject({ deckId: 'dst' })
+
+    const target = createSlideDoc()
+    const slideId = target.slides.get(0).get('id') as string
+    const objects = getSlideObjectsCtx(target, slideId)!
+    let result: { objectIds: string[]; droppedLinks: number; mediaRegistered: number } | undefined
+    target.doc.transact(() => {
+      result = prepared.apply(objects)
+    })
+    expect(result!.objectIds).toEqual(plan.objects.map((o) => o.id))
+    expect(result!.droppedLinks).toBe(1)
+    expect(result!.mediaRegistered).toBe(1)
+    const [img, label] = listSlides(target)[0]!.objects as [ImageObject, Record<string, unknown>]
+    expect(img.assetId).toBe(row!.id)
+    expect(img.hyperlink).toBeUndefined()
+    const text = objects.objects.get(1).get('text') as Y.Text
+    expect(text.toDelta()).toEqual([{ insert: 'Logo', attributes: { italic: true } }])
+    expect(label['color']).toBe(0x112233)
+    await sourceEditor.disconnect()
+  })
+
+  it('refuses a source the caller can only view, before copying anything', async () => {
+    accessMock.mockResolvedValue({ role: 'viewer', reason: 'direct' })
+    const script = scriptedDb()
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          sourceDeckId: 'src',
+          targetDeckId: 'dst',
+          plan: planInsert(readObjects(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(403)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('writes onto the named slide of the live target, and refuses invalid objects first', async () => {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    const targetDoc = new Y.Doc()
+    const target = hydrateSlideDoc(targetDoc)
+    addSlide(target)
+    target.slides.get(0).set('id', 'T1')
+    persistence.snapshots.set('dst', Y.encodeStateAsUpdate(targetDoc))
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f1' },
+        ],
+        [mediaRow],
+        [], // deck fonts of the families the text uses (none)
+      ],
+    })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    const out = await insertObjectsFromDeck(deps, {
+      userId: 'u1',
+      deckId: 'dst',
+      sourceDeckId: 'src',
+      slideId: 'T1',
+      objects: readObjects(),
+      offset: { x: 50, y: 0 },
+    })
+    const editor = await hp.openDirectConnection('dst')
+    const slide = listSlides(hydrateSlideDoc(editor.document!))[0]!
+    expect(slide.objects.map((o) => o.id)).toEqual(out.objectIds)
+    expect(slide.objects[0]!.x).toBe(50)
+    await editor.disconnect()
+    await sourceEditor.disconnect()
+
+    await expect(
+      insertObjectsFromDeck(deps, {
+        userId: 'u1',
+        deckId: 'dst',
+        sourceDeckId: 'src',
+        slideId: 'T1',
+        objects: [{ type: 'rectangle', width: -1 }],
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_input' })
   })
 })

@@ -37,6 +37,12 @@ export interface SlideDocContextValue {
    * (ui/peerPresence.ts).
    */
   documentName: string | null
+  /**
+   * Which document this is, for things that must tell documents apart even
+   * without a server connection (the object clipboard): the deck id, or
+   * `component:<id>` for a component master.
+   */
+  documentKey: string
 }
 
 export const SlideDocContext = createContext<SlideDocContextValue | null>(null)
@@ -129,6 +135,7 @@ export function createMockSlideDocValue(
     wsStatus: 'connected',
     awareness: mockAwareness,
     documentName: null,
+    documentKey: 'mock-deck',
     localUser: {
       id: 'test-peer-id',
       name: 'User test',

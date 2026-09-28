@@ -697,6 +697,17 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "object.copyTo",
+      "domain": "object",
+      "title": "Copy objects to a slide",
+      "description": "Copy objects to another slide of this deck (`toSlide`; omitted = the same slide), exact and whole — rich text, tables, crops, fills — on top of the target's stacking order, in one undo step. Copies get new ids; a group copied whole becomes its own new group, a lone member of a group comes out ungrouped; animations are not copied. Placement: by default copies keep their position on another slide and move 20, 20 on the same one; `offset` moves them by a delta, `at` puts the centre of their combined box on a slide point. Into another deck: read them with query.slide and use object.insertFromDeck there (fromDeck = this deck).",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "object.create",
       "domain": "object",
       "title": "Create object",
@@ -745,7 +756,7 @@
       "id": "object.duplicate",
       "domain": "object",
       "title": "Duplicate objects",
-      "description": "Copy objects on the same slide, offset by `offset` slide pixels (default 20, 20), on top of the stacking order, in one undo step. Copies get new ids and keep every property, rich text included. A duplicated group becomes its own new group (the original group is untouched); copying a single member of a group gives an ungrouped copy. A cropped image's crop moves with its copy, so the copy shows the same part of the picture. A copy of a locked object is locked too. Animations are not copied (add them with animation.add). Copying to another slide or deck is object.copyTo (planned, not available yet): today, read the object with query.object and recreate it there with object.create.",
+      "description": "Copy objects on the same slide, offset by `offset` slide pixels (default 20, 20), on top of the stacking order, in one undo step. Copies get new ids and keep every property, rich text included. A duplicated group becomes its own new group (the original group is untouched); copying a single member of a group gives an ungrouped copy. A cropped image's crop moves with its copy, so the copy shows the same part of the picture. A copy of a locked object is locked too. Animations are not copied (add them with animation.add). To another slide use object.copyTo; into another deck, read the objects with query.slide / query.object and send them to object.insertFromDeck there (fromDeck = this deck).",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -773,6 +784,34 @@
       "undo": "undoable",
       "confirm": "never",
       "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.insert",
+      "domain": "object",
+      "title": "Insert objects from JSON",
+      "description": "Put objects onto a slide from their JSON — exactly what query.slide or query.object returns, formatted text and table cells included — with new ids, on top of the stacking order, in one step: to recreate or transplant what you read. Each object is checked like object.create input. Objects read together that shared a group get a new group of their own. `offset` moves them, `at` puts the centre of their combined box on a point. Pictures and videos must be this deck's media: from ANOTHER deck use object.insertFromDeck, which copies them. To copy objects that are still in this deck use object.copyTo.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "object.insertFromDeck",
+      "domain": "object",
+      "title": "Insert objects read from another deck",
+      "description": "object.insert for objects read (query.slide / query.object) from ANOTHER deck, `fromDeck`: the pictures, videos and fonts they use are copied into this deck, colour and text-style tokens are rebound to this deck's folder when the folders differ, and links to the other deck's slides are removed. Copying out of a deck needs editor access to it (the same as exporting it), so a deck you can only view is refused.",
+      "role": "editor",
+      "effects": ["doc", "server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/insert-objects"
+        }
+      ]
     },
     {
       "id": "object.layer",
@@ -1473,14 +1512,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "object.copyTo",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/clipboard.ts",
-      "writers": ["addObjects"],
-      "note": "paste inserts the copied objects in one step with addObjects"
-    },
     {
       "capability": "object.slideNumber.set",
       "phase": "A2",

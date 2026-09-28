@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **107**. Known missing: **27**. Deliberately excluded: **19**.
+Commands: **110**. Known missing: **26**. Deliberately excluded: **19**.
 
 ## agent
 
@@ -90,29 +90,32 @@ Commands: **107**. Known missing: **27**. Deliberately excluded: **19**.
 
 ## object
 
-| Command                    | What it does                | Role   | Undo     | Confirm | Hints      |
-| -------------------------- | --------------------------- | ------ | -------- | ------- | ---------- |
-| `object.align`             | Align objects to each other | editor | undoable | never   | idempotent |
-| `object.alignToSlide`      | Align to slide              | editor | undoable | never   | idempotent |
-| `object.create`            | Create object               | editor | undoable | never   |            |
-| `object.crop.set`          | Crop image                  | editor | undoable | never   |            |
-| `object.delete`            | Delete objects              | editor | undoable | never   |            |
-| `object.distribute`        | Distribute objects evenly   | editor | undoable | never   | idempotent |
-| `object.duplicate`         | Duplicate objects           | editor | undoable | never   |            |
-| `object.flip`              | Flip objects                | editor | undoable | never   |            |
-| `object.group`             | Group objects               | editor | undoable | never   |            |
-| `object.layer`             | Change stacking order       | editor | undoable | never   |            |
-| `object.line.setEndpoints` | Move line ends              | editor | undoable | never   | idempotent |
-| `object.mask.apply`        | Mask an image with a shape  | editor | undoable | never   |            |
-| `object.mask.remove`       | Remove image mask           | editor | undoable | never   |            |
-| `object.move`              | Move objects                | editor | undoable | never   |            |
-| `object.path.create`       | Draw a path                 | editor | undoable | never   |            |
-| `object.path.fromShape`    | Convert a shape to a path   | editor | undoable | never   |            |
-| `object.path.setAnchors`   | Set path points             | editor | undoable | never   | idempotent |
-| `object.resize`            | Resize object               | editor | undoable | never   | idempotent |
-| `object.rotate`            | Rotate objects              | editor | undoable | never   |            |
-| `object.ungroup`           | Ungroup objects             | editor | undoable | never   |            |
-| `object.update`            | Update object properties    | editor | undoable | never   | idempotent |
+| Command                    | What it does                          | Role   | Undo     | Confirm | Hints      |
+| -------------------------- | ------------------------------------- | ------ | -------- | ------- | ---------- |
+| `object.align`             | Align objects to each other           | editor | undoable | never   | idempotent |
+| `object.alignToSlide`      | Align to slide                        | editor | undoable | never   | idempotent |
+| `object.copyTo`            | Copy objects to a slide               | editor | undoable | never   |            |
+| `object.create`            | Create object                         | editor | undoable | never   |            |
+| `object.crop.set`          | Crop image                            | editor | undoable | never   |            |
+| `object.delete`            | Delete objects                        | editor | undoable | never   |            |
+| `object.distribute`        | Distribute objects evenly             | editor | undoable | never   | idempotent |
+| `object.duplicate`         | Duplicate objects                     | editor | undoable | never   |            |
+| `object.flip`              | Flip objects                          | editor | undoable | never   |            |
+| `object.group`             | Group objects                         | editor | undoable | never   |            |
+| `object.insert`            | Insert objects from JSON              | editor | undoable | never   |            |
+| `object.insertFromDeck`    | Insert objects read from another deck | editor | undoable | never   |            |
+| `object.layer`             | Change stacking order                 | editor | undoable | never   |            |
+| `object.line.setEndpoints` | Move line ends                        | editor | undoable | never   | idempotent |
+| `object.mask.apply`        | Mask an image with a shape            | editor | undoable | never   |            |
+| `object.mask.remove`       | Remove image mask                     | editor | undoable | never   |            |
+| `object.move`              | Move objects                          | editor | undoable | never   |            |
+| `object.path.create`       | Draw a path                           | editor | undoable | never   |            |
+| `object.path.fromShape`    | Convert a shape to a path             | editor | undoable | never   |            |
+| `object.path.setAnchors`   | Set path points                       | editor | undoable | never   | idempotent |
+| `object.resize`            | Resize object                         | editor | undoable | never   | idempotent |
+| `object.rotate`            | Rotate objects                        | editor | undoable | never   |            |
+| `object.ungroup`           | Ungroup objects                       | editor | undoable | never   |            |
+| `object.update`            | Update object properties              | editor | undoable | never   | idempotent |
 
 ## ops
 
@@ -197,7 +200,6 @@ Commands: **107**. Known missing: **27**. Deliberately excluded: **19**.
 
 | Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                       |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `object.copyTo`               | A2    | apps/web/src/state/clipboard.ts                                                               | paste inserts the copied objects in one step with addObjects                                                                                                                               |
 | `object.slideNumber.set`      | A2    | apps/web/src/ui/SlideNumberPromptDialog.tsx                                                   | raw `isSlideNumber` is settable with object.update today; the command adds the editor's follow-up choice (apply the page-number text style or promote the box to a component)              |
 | `object.fill.gradient`        | A2    | apps/web/src/ui/Inspector.tsx (starting stops)                                                | a gradient `fillStyle` is settable raw with object.update today; the command adds the Inspector's starting stops seeded from the current fill colour                                       |
 | `object.effects.shadow`       | A2    | apps/web/src/ui/Inspector.tsx (defaults)                                                      | `shadow` is settable raw with object.update today; the command adds the Inspector's default shadow when switched on                                                                        |

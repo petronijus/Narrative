@@ -30,6 +30,9 @@ import shapeFlipInPlace from './shapeFlipInPlace.js'
 import penTrianglePath from './penTrianglePath.js'
 import shapeCornerToPath from './shapeCornerToPath.js'
 import lineEndMove from './lineEndMove.js'
+import objectsCopyToSlide from './objectsCopyToSlide.js'
+import objectsFromOtherDeck from './objectsFromOtherDeck.js'
+import objectsRecreateFromJson from './objectsRecreateFromJson.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -57,6 +60,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   penTrianglePath,
   shapeCornerToPath,
   lineEndMove,
+  objectsCopyToSlide,
+  objectsFromOtherDeck,
+  objectsRecreateFromJson,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

@@ -94,21 +94,22 @@ entries gone, `pnpm capabilities`, the auto-run table green, `agent-parity`
 invoked, release. Steps are ordered so the riskiest UI (text, tables) comes
 after the mechanism has been proven on simpler surfaces.
 
-| #     | Step                                   | Commands (new ✚ / existing)                                                                                                                                       | Web files                                                                                           |
-| ----- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| A2.1  | Guard rails                            | —                                                                                                                                                                 | `eslint.config.js`, `apps/web/eslint.one-door.js` + `src/oneDoor.test.ts`                           |
-| A2.2  | Slides, notes, slide copy, deck copy   | slide.\* existing; ✚ `slide.notes.get`, `slide.notes.set`, `slide.copyTo`, `deck.duplicate`                                                                       | `SlidesPanel`, `slideHelpers`, `slideClipboard`, `SlideItemMenu`                                    |
-| A2.3  | Guides                                 | guide.\* existing                                                                                                                                                 | `Rulers`                                                                                            |
-| A2.4  | Object creation and structure          | object.create/delete/duplicate/group/ungroup/layer/align/distribute/move/update existing, creation defaults moved into `object.create`                            | `EditorLayout`, `EditorContextMenu`, `Toolbar`, `UploadDropZone`, `EditorVideoPreview`, `DeckShell` |
-| A2.5  | Transforms                             | ✚ `object.resize`, `object.rotate`, `object.flip`, `object.alignToSlide`, `object.crop.set`                                                                       | `TransformHandles`, `CropOverlay`, Inspector geometry                                               |
-| A2.6  | Paths and lines                        | ✚ `object.path.create`, `object.path.fromShape`, `object.path.setAnchors`, `object.line.setEndpoints`                                                             | `PathPointsOverlay`, `LineEndpointHandles`, pen session in `EditorLayout`                           |
-| A2.7  | Clipboard                              | ✚ `object.copyTo` (clipboard.ts becomes a thin UI)                                                                                                                | `state/clipboard.ts`, paste paths                                                                   |
-| A2.8  | Fill, effects, slide number            | ✚ `object.fill.gradient`, `object.effects.shadow`, `object.slideNumber.set`                                                                                       | Inspector fill/effects, `SlideNumberPromptDialog`                                                   |
-| A2.9  | Animation                              | animation.\* existing; ✚ `animation.retarget`                                                                                                                     | `AnimationTimeline`, `MoveToTargetOverlay`, Inspector animation                                     |
-| A2.10 | Tables                                 | table.\* existing; ✚ `table.cell.setText`                                                                                                                         | `TableChrome`, `TableInspector`, `TableCellEditor`                                                  |
-| A2.11 | Text                                   | ✚ `text.edit`, `text.setBoxTypography`, `text.style.apply`, `text.replace`, text.set with formatting                                                              | `TextEditOverlay`, `textEditSelection`, `textListOps`, Inspector typography                         |
-| A2.12 | Tokens, components, server propagation | ✚ `token.{color,textStyle,effectStyle}.{create,update,delete}`, `token.seedDefaults`, `text.style.createFromObject`, `component.promote`; propagation server-side | `FolderDocProvider`, `FolderSettings`, `DeckShell` propagation, `writeComponentMasterTree`          |
-| A2.13 | Close                                  | parity guard enumerates shortcuts and menu action ids; exemption list empty; `FINISHED_PHASES += 'A2'`; ADR 0010 status; handoff note                             | `useShortcuts`, menus, `testApi` (dev-only test hooks go through commands too)                      |
+| #     | Step                                   | Commands (new ✚ / existing)                                                                                                                                                                                                                                                                                                      | Web files                                                                                           |
+| ----- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| A2.1  | Guard rails                            | —                                                                                                                                                                                                                                                                                                                                | `eslint.config.js`, `apps/web/eslint.one-door.js` + `src/oneDoor.test.ts`                           |
+| A2.2  | Slides, notes, slide copy, deck copy   | slide.\* existing; ✚ `slide.notes.get`, `slide.notes.set`, `slide.copyTo`, `deck.duplicate`                                                                                                                                                                                                                                      | `SlidesPanel`, `slideHelpers`, `slideClipboard`, `SlideItemMenu`                                    |
+| A2.3  | Guides                                 | guide.\* existing                                                                                                                                                                                                                                                                                                                | `Rulers`                                                                                            |
+| A2.4  | Object creation and structure          | object.create/delete/duplicate/group/ungroup/layer/align/distribute/move/update existing, creation defaults moved into `object.create`                                                                                                                                                                                           | `EditorLayout`, `EditorContextMenu`, `Toolbar`, `UploadDropZone`, `EditorVideoPreview`, `DeckShell` |
+| A2.5  | Transforms                             | ✚ `object.resize`, `object.rotate`, `object.flip`, `object.alignToSlide`, `object.crop.set`                                                                                                                                                                                                                                      | `TransformHandles`, `CropOverlay`, Inspector geometry                                               |
+| A2.6  | Paths and lines                        | ✚ `object.path.create`, `object.path.fromShape`, `object.path.setAnchors`, `object.line.setEndpoints`                                                                                                                                                                                                                            | `PathPointsOverlay`, `LineEndpointHandles`, pen session in `EditorLayout`                           |
+| A2.7  | Clipboard                              | ✚ `object.copyTo` (clipboard.ts becomes a thin UI)                                                                                                                                                                                                                                                                               | `state/clipboard.ts`, paste paths                                                                   |
+| A2.7a | Agent file upload (Petr, 2026-09-28)   | ✚ `media.uploadSession`: opens a one-time, deck-scoped, short-lived session on the existing tus upload (`/api/uploads`) and returns its URL + token, so an agent with a shell (Claude Code) streams a local file with `curl` and gets the asset id back — no base64 through the model's context, same checks as a browser upload | — (server + commands; `media.upload` keeps URL / small base64)                                      |
+| A2.8  | Fill, effects, slide number            | ✚ `object.fill.gradient`, `object.effects.shadow`, `object.slideNumber.set`                                                                                                                                                                                                                                                      | Inspector fill/effects, `SlideNumberPromptDialog`                                                   |
+| A2.9  | Animation                              | animation.\* existing; ✚ `animation.retarget`                                                                                                                                                                                                                                                                                    | `AnimationTimeline`, `MoveToTargetOverlay`, Inspector animation                                     |
+| A2.10 | Tables                                 | table.\* existing; ✚ `table.cell.setText`                                                                                                                                                                                                                                                                                        | `TableChrome`, `TableInspector`, `TableCellEditor`                                                  |
+| A2.11 | Text                                   | ✚ `text.edit`, `text.setBoxTypography`, `text.style.apply`, `text.replace`, text.set with formatting                                                                                                                                                                                                                             | `TextEditOverlay`, `textEditSelection`, `textListOps`, Inspector typography                         |
+| A2.12 | Tokens, components, server propagation | ✚ `token.{color,textStyle,effectStyle}.{create,update,delete}`, `token.seedDefaults`, `text.style.createFromObject`, `component.promote`; propagation server-side                                                                                                                                                                | `FolderDocProvider`, `FolderSettings`, `DeckShell` propagation, `writeComponentMasterTree`          |
+| A2.13 | Close                                  | parity guard enumerates shortcuts and menu action ids; exemption list empty; `FINISHED_PHASES += 'A2'`; ADR 0010 status; handoff note                                                                                                                                                                                            | `useShortcuts`, menus, `testApi` (dev-only test hooks go through commands too)                      |
 
 ## Progress
 
@@ -227,3 +228,40 @@ after the mechanism has been proven on simpler surfaces.
     every existing triangle); shape-to-path follows the canvas.
   - tools/list budget 142,000 → 152,000 bytes (`object.path.create` is 4.1
     KB: its `object` field is the path's create schema).
+- 2026-09-28: **A2.7 done** — `object.copyTo`, `object.insert`,
+  `object.insertFromDeck` (+ `POST /decks/:id/insert-objects`). Canvas copy /
+  cut / paste dispatch them; `EditorLayout` and `EditorContextMenu` are off
+  the exemption list. Decisions:
+  - **The object clipboard keeps content, not only a reference** (unlike
+    the slides panel's): objects can be cut, and after a cut the sources are
+    gone. It stores the ids AND the objects as `query.slide` read them.
+    Paste takes the most faithful path that still applies: `object.copyTo`
+    (exact, live) in the same document while the sources exist; the
+    snapshot through `object.insert` after a cut; the server's
+    `object.insertFromDeck` into another deck.
+  - **`object.insert` takes exactly the query shape** (text `paragraphs`,
+    table cells with theirs), validated per type with the strict create
+    schemas; only required properties take type defaults, so a read-then-
+    insert round trip is exact (tested on the whole fixture slide).
+  - **Cross-deck objects reuse the slide-copy staging**: the planned objects
+    are built in a scratch document and rewritten there (`rewriteForTarget`,
+    extracted from `stageCopy`: slide links, media and fonts, tokens), then
+    cloned onto the target slide in one server write. The command is
+    server-only (browser commands cannot load asynchronously); the editor
+    calls the route, so a cross-deck paste reaches it as a remote change.
+  - Parity review follow-ups fixed before release: inserted objects are
+    also checked against the storage schema (grid, merges, borders, trim,
+    asset — what the field-wise create schema cannot see) plus the 100-track
+    table cap; a cut that could not be pasted back is refused; `fromDeck`
+    equal to the target is refused; media references the source deck does
+    not own count as skipped; component masters get their own clipboard
+    identity (`documentKey`, `component:<id>`).
+  - **For A2.12:** pasting between a component master and a deck goes
+    through `object.insert` without copying pictures (master media is
+    scoped `component:<id>`); bring masters into the server-side staging
+    when components move onto the server.
+  - tools/list budget 152,000 → 157,000 bytes.
+- 2026-09-28: **A2.7a added** at Petr's request: MCP can call `media.upload`
+  only with a public URL or base64 the model writes out itself — a local
+  picture of any real size does not fit through the context. The tus upload
+  the browser uses already exists; the command opens it for an agent.

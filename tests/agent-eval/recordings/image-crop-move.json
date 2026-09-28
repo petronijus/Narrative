@@ -1,19 +1,19 @@
 {
   "scenario": "image-crop-move",
-  "tag": "ev3e4609",
-  "recordedAt": "2026-09-28T20:07:57.570Z",
+  "tag": "evd4934d",
+  "recordedAt": "2026-09-28T20:51:59.798Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "_aIQ7RzYxVRs",
-    "title": "Team intro ev3e4609",
-    "imageId": "wQEKZcIIJCDn_IuZJ7jCg",
-    "titleId": "1h-wRGs-EYu5KFIr4snxW"
+    "deckId": "ZJk4jzrTSgN4",
+    "title": "Team intro evd4934d",
+    "imageId": "YBl_M-g_SVAPvsnAA4mty",
+    "titleId": "JS_WAN4MOlj4sF4xmBBJx"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Team intro ev3e4609\" (deckId _aIQ7RzYxVRs), move the photo 200 px to the right and 100 px down.",
+        "prompt": "On slide 1 of the Narrative deck \"Team intro evd4934d\" (deckId ZJk4jzrTSgN4), move the photo 200 px to the right and 100 px down.",
         "calls": [
           {
             "tool": "ToolSearch",
@@ -43,7 +43,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "_aIQ7RzYxVRs",
+              "deckId": "ZJk4jzrTSgN4",
               "slide": {
                 "index": 0
               }
@@ -51,7 +51,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "qjtKk22HghnYCH2HbZYCl",
+              "id": "0VZRRE2EerRw4YlMUYzim",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -60,7 +60,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "1h-wRGs-EYu5KFIr4snxW",
+                  "id": "JS_WAN4MOlj4sF4xmBBJx",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -75,7 +75,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "wQEKZcIIJCDn_IuZJ7jCg",
+                  "id": "YBl_M-g_SVAPvsnAA4mty",
                   "type": "image",
                   "name": "Team photo",
                   "x": 400,
@@ -84,7 +84,7 @@
                   "height": 300,
                   "rotation": 0,
                   "opacity": 1,
-                  "assetId": "P-3qe7wuectrXMem",
+                  "assetId": "Yhh5ShEpDlg_u1td",
                   "variant": "display",
                   "fit": "cover",
                   "imageRect": {
@@ -98,33 +98,34 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"qjtKk22HghnYCH2HbZYCl\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"1h-wRGs-EYu5KFIr4snxW\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Our team\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"wQEKZcIIJCDn_IuZJ7jCg\",\"type\":\"image\",\"name\":\"Team photo\",\"x\":400,\"y\":300,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"P-3qe7wuectrXMem\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":300,\"y\":225,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"0VZRRE2EerRw4YlMUYzim\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"JS_WAN4MOlj4sF4xmBBJx\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Our team\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"YBl_M-g_SVAPvsnAA4mty\",\"type\":\"image\",\"name\":\"Team photo\",\"x\":400,\"y\":300,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"Yhh5ShEpDlg_u1td\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":300,\"y\":225,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "_aIQ7RzYxVRs",
+              "deckId": "ZJk4jzrTSgN4",
               "request": "Move the photo on slide 1 200 px right and 100 px down"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_6itXw-fjI_wUZKQc"
+              "runId": "run_gqBA7D2WgbosM7X3"
             },
-            "text": "{\"runId\":\"run_6itXw-fjI_wUZKQc\"}"
+            "text": "{\"runId\":\"run_gqBA7D2WgbosM7X3\"}"
           },
           {
             "tool": "object_move",
             "command": "object.move",
             "input": {
-              "deckId": "_aIQ7RzYxVRs",
+              "deckId": "ZJk4jzrTSgN4",
               "slide": {
                 "index": 0
               },
-              "objects": ["wQEKZcIIJCDn_IuZJ7jCg"],
+              "objects": ["YBl_M-g_SVAPvsnAA4mty"],
               "dx": 200,
-              "dy": 100
+              "dy": 100,
+              "runId": "run_gqBA7D2WgbosM7X3"
             },
             "isError": false,
             "errorCode": null,
@@ -135,7 +136,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "_aIQ7RzYxVRs",
+              "deckId": "ZJk4jzrTSgN4",
               "slide": {
                 "index": 0
               }
@@ -143,7 +144,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "qjtKk22HghnYCH2HbZYCl",
+              "id": "0VZRRE2EerRw4YlMUYzim",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -152,7 +153,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "1h-wRGs-EYu5KFIr4snxW",
+                  "id": "JS_WAN4MOlj4sF4xmBBJx",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -167,7 +168,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "wQEKZcIIJCDn_IuZJ7jCg",
+                  "id": "YBl_M-g_SVAPvsnAA4mty",
                   "type": "image",
                   "name": "Team photo",
                   "x": 600,
@@ -176,7 +177,7 @@
                   "height": 300,
                   "rotation": 0,
                   "opacity": 1,
-                  "assetId": "P-3qe7wuectrXMem",
+                  "assetId": "Yhh5ShEpDlg_u1td",
                   "variant": "display",
                   "fit": "cover",
                   "imageRect": {
@@ -190,10 +191,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"qjtKk22HghnYCH2HbZYCl\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"1h-wRGs-EYu5KFIr4snxW\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Our team\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"wQEKZcIIJCDn_IuZJ7jCg\",\"type\":\"image\",\"name\":\"Team photo\",\"x\":600,\"y\":400,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"P-3qe7wuectrXMem\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":500,\"y\":325,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"0VZRRE2EerRw4YlMUYzim\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"JS_WAN4MOlj4sF4xmBBJx\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Our team\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"YBl_M-g_SVAPvsnAA4mty\",\"type\":\"image\",\"name\":\"Team photo\",\"x\":600,\"y\":400,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"Yhh5ShEpDlg_u1td\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":500,\"y\":325,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "I moved the \"Team photo\" image on slide 1 200 px to the right and 100 px down. I re-read the slide afterwards to confirm it landed in the right place:\n\n- **Position:** it moved from (400, 300) to (600, 400). The size is still 400 × 300.\n- **Crop:** the photo is cropped, and the crop moved with it by the same amount, so the part of the photo that shows hasn't changed.\n\nThis change is its own run in the deck's Agent activity, so you can undo it in one step.",
+        "finalText": "I moved the \"Team photo\" image on slide 1 of \"Team intro evd4934d\". Its top-left corner went from (400, 300) to (600, 400), which is 200 px right and 100 px down. I read the slide back afterwards to confirm the new position.\n\nThe size stayed at 400 × 300 and the crop moved with the photo, so it shows the same part of the image as before. Nothing else on the slide changed.\n\nIf you want it back where it was, I can undo the move in one step.",
         "turns": 7,
         "isError": false,
         "stopReason": "success"

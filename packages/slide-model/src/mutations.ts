@@ -308,10 +308,30 @@ export function duplicateObjects(
   ids: ReadonlyArray<string>,
   offset: { x: number; y: number } = { x: 20, y: 20 },
 ): SlideObject[] {
+  return copyObjectsTo(ctx, ctx, ids, offset)
+}
+
+/**
+ * Copy objects from one slide to another slide of the SAME document (or to
+ * the same slide), on top of the target's stacking order, in the sources'
+ * relative order, in one transaction. Same rules as {@link duplicateObjects}:
+ * fresh ids, every property and rich text kept (tables' cell text too), a
+ * crop moved with its frame by `offset`, a group copied whole becomes its
+ * own new group and a lone member of a group comes out ungrouped.
+ * Animations are not copied. Returns the copies in their new order.
+ */
+export function copyObjectsTo(
+  from: ObjectsMutationContext,
+  to: ObjectsMutationContext,
+  ids: ReadonlyArray<string>,
+  offset: { x: number; y: number } = { x: 0, y: 0 },
+): SlideObject[] {
+  if (from.doc !== to.doc) throw new Error('copyObjectsTo: both slides must be in one document')
+  const ctx = to
   const wanted = new Set(ids)
   const sources: Y.Map<unknown>[] = []
-  for (let i = 0; i < ctx.objects.length; i++) {
-    const m = ctx.objects.get(i)
+  for (let i = 0; i < from.objects.length; i++) {
+    const m = from.objects.get(i)
     if (wanted.has(m.get('id') as string)) sources.push(m)
   }
   if (sources.length === 0) return []

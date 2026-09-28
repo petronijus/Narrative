@@ -39,8 +39,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * anchors by index) and the anchor schema said when a segment curves. Per
  * Petr's call the budget only rises during A2; the sizes get one
  * comprehensive review once A2 is done.
+ * A2.7 (2026-09-28): 152,000 → 157,000 for object.copyTo 1.7 KB,
+ * object.insert 2.3 and object.insertFromDeck 2.2 (the clipboard's three
+ * paste paths; their example objects are what makes them this size).
  */
-export const TOOL_LIST_BUDGET_BYTES = 152_000
+export const TOOL_LIST_BUDGET_BYTES = 157_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

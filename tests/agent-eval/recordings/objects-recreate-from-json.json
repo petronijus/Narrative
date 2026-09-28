@@ -1,0 +1,235 @@
+{
+  "scenario": "objects-recreate-from-json",
+  "tag": "evd4934d",
+  "recordedAt": "2026-09-28T20:58:23.352Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "nReHg8HOc0oT",
+    "title": "Results evd4934d"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "A colleague deleted a callout from the Narrative deck \"Results evd4934d\" (deckId nReHg8HOc0oT). This is how it read before (JSON from query_slide):\n\n[{\"id\":\"old-card\",\"type\":\"rectangle\",\"x\":100,\"y\":700,\"width\":600,\"height\":240,\"rotation\":0,\"opacity\":1,\"fill\":\"#1b2a4a\",\"cornerRadius\":20,\"name\":\"Callout card\"},{\"id\":\"old-label\",\"type\":\"text\",\"x\":140,\"y\":760,\"width\":520,\"height\":120,\"rotation\":0,\"opacity\":1,\"fontSize\":44,\"color\":\"#ffffff\",\"name\":\"Callout label\",\"text\":\"Growth 32%\",\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}]\n\nPut it back exactly as it was — card and label, the label's bold \"32%\" included — but centred on slide 3 (the centre of the slide).",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__ops_apply,mcp__narrative-eval__object_create,mcp__narrative-eval__object_insert",
+              "max_results": 10
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "nReHg8HOc0oT"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 3,
+              "slides": [
+                {
+                  "id": "FEoAbgRESdvpG7tw-VEmD",
+                  "index": 0,
+                  "title": "Q3 results",
+                  "transition": "none",
+                  "objectCount": 1,
+                  "animationCount": 0
+                },
+                {
+                  "id": "c9SkZzVfjwOZribHgNRqK",
+                  "index": 1,
+                  "title": "Highlights",
+                  "transition": "none",
+                  "objectCount": 1,
+                  "animationCount": 0
+                },
+                {
+                  "id": "sc9I152rVZtS36Taz0J5u",
+                  "index": 2,
+                  "title": "Next quarter",
+                  "transition": "none",
+                  "objectCount": 1,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"FEoAbgRESdvpG7tw-VEmD\",\"index\":0,\"title\":\"Q3 results\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"c9SkZzVfjwOZribHgNRqK\",\"index\":1,\"title\":\"Highlights\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"sc9I152rVZtS36Taz0J5u\",\"index\":2,\"title\":\"Next quarter\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0}],\"guides\":[]}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "nReHg8HOc0oT",
+              "request": "Restore the deleted \"Growth 32%\" callout, centred on slide 3"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_YUWN87vM1cRxZONe"
+            },
+            "text": "{\"runId\":\"run_YUWN87vM1cRxZONe\"}"
+          },
+          {
+            "tool": "object_insert",
+            "command": "object.insert",
+            "input": {
+              "deckId": "nReHg8HOc0oT",
+              "slide": {
+                "index": 2
+              },
+              "objects": [
+                {
+                  "id": "old-card",
+                  "type": "rectangle",
+                  "x": 100,
+                  "y": 700,
+                  "width": 600,
+                  "height": 240,
+                  "rotation": 0,
+                  "opacity": 1,
+                  "fill": "#1b2a4a",
+                  "cornerRadius": 20,
+                  "name": "Callout card"
+                },
+                {
+                  "id": "old-label",
+                  "type": "text",
+                  "x": 140,
+                  "y": 760,
+                  "width": 520,
+                  "height": 120,
+                  "rotation": 0,
+                  "opacity": 1,
+                  "fontSize": 44,
+                  "color": "#ffffff",
+                  "name": "Callout label",
+                  "text": "Growth 32%",
+                  "paragraphs": [
+                    {
+                      "runs": [
+                        {
+                          "text": "Growth "
+                        },
+                        {
+                          "text": "32%",
+                          "fontWeight": 700
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "at": {
+                "x": 960,
+                "y": 540
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "objectIds": ["Gud5bMNhYJZ26qD6orZdc", "hqnRZLQ1t5mddBe6N2Bqf"]
+            },
+            "text": "{\"objectIds\":[\"Gud5bMNhYJZ26qD6orZdc\",\"hqnRZLQ1t5mddBe6N2Bqf\"]}"
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "nReHg8HOc0oT",
+              "slide": {
+                "index": 2
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "sc9I152rVZtS36Taz0J5u",
+              "index": 2,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "o0Z-Rf0h2oc1AZc0aVYDM",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Next quarter",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "Gud5bMNhYJZ26qD6orZdc",
+                  "type": "rectangle",
+                  "name": "Callout card",
+                  "x": 660,
+                  "y": 420,
+                  "width": 600,
+                  "height": 240,
+                  "rotation": 0,
+                  "fill": "#1b2a4a",
+                  "opacity": 1,
+                  "cornerRadius": 20
+                },
+                {
+                  "id": "hqnRZLQ1t5mddBe6N2Bqf",
+                  "type": "text",
+                  "name": "Callout label",
+                  "x": 700,
+                  "y": 480,
+                  "width": 520,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Growth 32%",
+                  "fontSize": 44,
+                  "fontWeight": "normal",
+                  "color": "#ffffff",
+                  "align": "left",
+                  "opacity": 1,
+                  "paragraphs": [
+                    {
+                      "runs": [
+                        {
+                          "text": "Growth "
+                        },
+                        {
+                          "text": "32%",
+                          "fontWeight": 700
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"sc9I152rVZtS36Taz0J5u\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"o0Z-Rf0h2oc1AZc0aVYDM\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Next quarter\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"Gud5bMNhYJZ26qD6orZdc\",\"type\":\"rectangle\",\"name\":\"Callout card\",\"x\":660,\"y\":420,\"width\":600,\"height\":240,\"rotation\":0,\"fill\":\"#1b2a4a\",\"opacity\":1,\"cornerRadius\":20},{\"id\":\"hqnRZLQ1t5mddBe6N2Bqf\",\"type\":\"text\",\"name\":\"Callout label\",\"x\":700,\"y\":480,\"width\":520,\"height\":120,\"rotation\":0,\"text\":\"Growth 32%\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#ffffff\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}],\"animations\":[],\"notes\":\"\"}"
+          }
+        ],
+        "finalText": "I put the \"Growth 32%\" callout back on slide 3 (\"Next quarter\"), centred on the slide. I read the slide back afterwards and it matches the original:\n\n- **Callout card:** a 600 × 240 rectangle at x 660, y 420. Its centre is at 960, 540, the exact middle of the 1920 × 1080 slide. It has the same fill (`#1b2a4a`) and 20 px rounded corners.\n- **Callout label:** a 520 × 120 text box at x 700, y 480. It keeps its original 40 px / 60 px inset inside the card. It's 44 px white text reading \"Growth **32%**\", with only \"32%\" in bold (weight 700).\n\nThe only change from before is the object IDs, which are new because the originals were deleted. Both objects keep their original names, \"Callout card\" and \"Callout label\". The restore is logged as one step in the deck's Agent activity, so you can undo it in one go if you need to.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

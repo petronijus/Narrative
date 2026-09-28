@@ -32,6 +32,7 @@ import {
 } from '@narrative/slide-model'
 import type { TextObject, RectangleObject } from '@narrative/shared'
 import { CommandError } from '../errors.js'
+import { applyInsertPlan } from '../insert/plan.js'
 import type { ServerServices } from '../services.js'
 import type {
   ComponentRecord,
@@ -376,6 +377,25 @@ export function createDomainFakes(
         rDecks('listFonts', args)
         requireDeck(args.deckId)
         return []
+      },
+      async prepareObjectInsert(args) {
+        rDecks('prepareObjectInsert', { ...args, plan: { objects: args.plan.objects.length } })
+        requireDeck(args.sourceDeckId)
+        requireDeck(args.targetDeckId)
+        // The fake copies nothing: the planned objects land as they are,
+        // their pictures counted as copied media.
+        const media = args.plan.objects.filter((o) => o.type === 'image' || o.type === 'video')
+        return {
+          apply(objects) {
+            return {
+              objectIds: applyInsertPlan(objects, args.plan),
+              mediaRegistered: media.length,
+              skippedImages: 0,
+              droppedLinks: 0,
+            }
+          },
+          async discard() {},
+        }
       },
     },
 

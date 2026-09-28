@@ -70,13 +70,7 @@ export const ONE_DOOR_RULES = {
  * relative to the repository root. Only ever remove entries.
  */
 export const ONE_DOOR_PENDING = [
-  // A2.4 moved object creation, delete, duplicate, group, layer, nudge and
-  // the context menu's table / lock / mask actions onto commands. What each
-  // file still writes directly, and the step that removes it:
-  //   clipboard paste (A2.7)
-  { file: 'apps/web/src/components/EditorLayout.tsx', step: 'A2.7' },
-  //   clipboard paste
-  { file: 'apps/web/src/ui/EditorContextMenu.tsx', step: 'A2.7' },
+  // What each file still writes directly, and the step that removes it:
   //   component stamping
   { file: 'apps/web/src/ui/Toolbar.tsx', step: 'A2.12' },
   { file: 'apps/web/src/ui/UploadDropZone.tsx', step: 'A2.12' },

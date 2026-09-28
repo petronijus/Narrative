@@ -4,13 +4,18 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { ImageObject, RectangleObject } from '@narrative/shared'
+import * as Y from 'yjs'
+import type { ImageObject, RectangleObject, SlideObject } from '@narrative/shared'
 import { createSlideDoc } from './yDoc.js'
 import { getSlideObjectsCtx } from './slides.js'
 import { yMapToPlainObject } from './bindings.js'
+import { addSlide } from './slides.js'
+import { applyFormat } from './richText.js'
 import {
+  addObject,
   addObjects,
   alignObjects,
+  copyObjectsTo,
   distributeObjects,
   duplicateObject,
   duplicateObjects,
@@ -112,6 +117,62 @@ describe('duplicateObjects', () => {
     addObjects(ctx, [croppedImage('img', 100, 100)])
     const [copy] = duplicateObjects(ctx, ['img'], { x: 20, y: 30 }) as ImageObject[]
     expect(copy!.imageRect).toEqual({ x: 70, y: 110, width: 400, height: 300 })
+  })
+})
+
+describe('copyObjectsTo', () => {
+  it('copies onto another slide: fresh ids, rich text, groups and the crop come along', () => {
+    const deck = createSlideDoc()
+    const from = getSlideObjectsCtx(deck, deck.slides.get(0).get('id') as string)!
+    const second = addSlide(deck)
+    const to = getSlideObjectsCtx(deck, second.id)!
+    addObjects(from, [
+      rect('a', 0, 0, { groupId: 'g1' }),
+      rect('b', 200, 0, { groupId: 'g1' }),
+      croppedImage('img', 100, 100),
+    ])
+    addObject(from, {
+      id: 't',
+      type: 'text',
+      x: 0,
+      y: 300,
+      width: 400,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+      text: 'Hello world',
+      fontSize: 24,
+      color: 0,
+    } as never)
+    const t = from.objects.get(3).get('text') as Y.Text
+    deck.doc.transact(() => applyFormat(t, 0, 5, { italic: true }))
+
+    const copies = copyObjectsTo(from, to, ['img', 'b', 'a', 't'], { x: 10, y: 0 })
+    expect(copies.map((c) => c.type)).toEqual(['rectangle', 'rectangle', 'image', 'text'])
+    expect(from.objects.length).toBe(4)
+    expect(to.objects.length).toBe(4)
+    const [ca, cb, cimg, ct] = copies as [
+      RectangleObject,
+      RectangleObject,
+      ImageObject,
+      SlideObject,
+    ]
+    expect(ca.id).not.toBe('a')
+    expect(ca.groupId).toBeDefined()
+    expect(ca.groupId).not.toBe('g1')
+    expect(cb.groupId).toBe(ca.groupId)
+    expect(cimg.imageRect).toEqual({ x: 60, y: 80, width: 400, height: 300 })
+    const copiedText = to.objects.get(3).get('text') as Y.Text
+    expect(copiedText.toDelta()[0]).toMatchObject({ insert: 'Hello', attributes: { italic: true } })
+    expect(ct.x).toBe(10)
+  })
+
+  it('refuses slides of two different documents', () => {
+    const a = createSlideDoc()
+    const b = createSlideDoc()
+    const from = getSlideObjectsCtx(a, a.slides.get(0).get('id') as string)!
+    const to = getSlideObjectsCtx(b, b.slides.get(0).get('id') as string)!
+    expect(() => copyObjectsTo(from, to, ['x'])).toThrow(/one document/)
   })
 })
 

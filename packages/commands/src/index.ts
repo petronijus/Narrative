@@ -113,6 +113,7 @@ export {
   type AgentRunService,
 } from './services.js'
 export type * from './services/types.js'
+export { MAX_INSERT_OBJECTS, applyInsertPlan, planInsert, type InsertPlan } from './insert/plan.js'
 export { MAX_LIST_PAGE_SIZE } from './services/common.js'
 export type {
   AgentRunStatus,

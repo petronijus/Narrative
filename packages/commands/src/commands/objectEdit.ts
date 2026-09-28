@@ -29,10 +29,10 @@ import {
   objectPatchInputSchema,
   type SlideObject,
   type SlideObjectPatch,
-  type SlideObjectType,
   type TableDefaults,
 } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
+import { isObjectType } from '../objectTypes.js'
 import { CommandError, issuesFromZod } from '../errors.js'
 import {
   ObjectIdSchema,
@@ -64,24 +64,6 @@ const objectEditor = {
   hosts: ['browser', 'server'],
   acceptsComponent: true,
 } as const
-
-const OBJECT_TYPES: readonly SlideObjectType[] = [
-  'rectangle',
-  'ellipse',
-  'triangle',
-  'polygon',
-  'line',
-  'arrow',
-  'path',
-  'text',
-  'image',
-  'video',
-  'table',
-]
-
-function isObjectType(v: unknown): v is SlideObjectType {
-  return typeof v === 'string' && (OBJECT_TYPES as readonly string[]).includes(v)
-}
 
 const UNITS =
   'Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS ' +

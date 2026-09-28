@@ -20,7 +20,10 @@ The user asked: <request>
    restyle or "improve" anything the user did not mention.
 3. **Apply it** in one `ops_apply` when it takes several commands. Useful
    mappings:
-   - copy an object on the same slide → `object_duplicate`;
+   - copy an object on the same slide → `object_duplicate`; to another
+     slide → `object_copyTo`; from another deck → read it with
+     `query_slide` there and send it to `object_insertFromDeck` here (it
+     copies pictures and fonts too);
    - move → `object_move` (deltas), line up → `object_align` /
      `object_distribute`, to the slide's edge or centre →
      `object_alignToSlide`;

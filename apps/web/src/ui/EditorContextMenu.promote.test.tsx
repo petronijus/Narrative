@@ -96,7 +96,7 @@ vi.mock('../state/useDefaultObjectFill', () => ({
 vi.mock('../state/clipboard', () => ({
   setClipboard: vi.fn(),
   hasClipboard: () => false,
-  readClipboardForPaste: () => null,
+  readClipboard: () => null,
 }))
 
 const mockCreateComponent = vi.fn()

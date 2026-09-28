@@ -294,6 +294,52 @@ describe('component.stamp', () => {
   })
 })
 
+describe('object.insertFromDeck', () => {
+  it('stages the objects with their source deck, then lands them on the slide', async () => {
+    const c = ctx()
+    const objects = [
+      { id: 'x1', type: 'rectangle', x: 10, y: 20, width: 100, height: 50, fill: '#ff0000' },
+      { id: 'x2', type: 'image', assetId: 'asset-other', x: 0, y: 0, width: 40, height: 30 },
+    ]
+    const out = (await runCommand(registry, c, 'object.insertFromDeck', {
+      slide: 's3',
+      fromDeck: 'deck_other',
+      objects,
+    })) as { objectIds: string[]; mediaRegistered: number }
+    expect(out.mediaRegistered).toBe(1)
+    const s3 = getSlideObjectsCtx(c.deck!, 's3')!
+    expect(s3.objects.toArray().map((m) => m.get('id'))).toEqual(out.objectIds)
+    const [call] = callsTo(c, 'decks').filter((x) => x.method === 'prepareObjectInsert')
+    expect(call?.args).toMatchObject({ sourceDeckId: 'deck_other', targetDeckId: FIXTURE_DECK_ID })
+  })
+
+  it('refuses its own deck as the source (object.insert is the way there)', async () => {
+    const c = ctx()
+    const err = await failure(
+      runCommand(registry, c, 'object.insertFromDeck', {
+        slide: 's3',
+        fromDeck: FIXTURE_DECK_ID,
+        objects: [{ type: 'rectangle' }],
+      }),
+    )
+    expect(err.code).toBe('invalid_input')
+    expect(callsTo(c, 'decks').some((x) => x.method === 'prepareObjectInsert')).toBe(false)
+  })
+
+  it('validates the objects before staging anything', async () => {
+    const c = ctx()
+    const err = await failure(
+      runCommand(registry, c, 'object.insertFromDeck', {
+        slide: 's3',
+        fromDeck: 'deck_other',
+        objects: [{ type: 'rectangle', width: -1 }],
+      }),
+    )
+    expect(err.code).toBe('invalid_input')
+    expect(callsTo(c, 'decks').some((x) => x.method === 'prepareObjectInsert')).toBe(false)
+  })
+})
+
 describe('deck.insertFrom', () => {
   it('inserts the staged slides at the index in one write and returns their ids', async () => {
     const c = ctx()

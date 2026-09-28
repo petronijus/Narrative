@@ -1,25 +1,25 @@
 {
   "scenario": "photo-resize-centered",
-  "tag": "ev3e4609",
-  "recordedAt": "2026-09-28T20:12:01.929Z",
+  "tag": "evd4934d",
+  "recordedAt": "2026-09-28T20:56:00.771Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "qnfYYQVVy-0p",
-    "title": "Offsite ev3e4609",
-    "imageId": "4vu81jZFn9beSdAbkNdwS",
-    "titleId": "1YWLSBUKtvcmRlpP13veZ"
+    "deckId": "P_5NZrBRF5Fa",
+    "title": "Offsite evd4934d",
+    "imageId": "OrZ_rhkLbFCklTDfq5vIo",
+    "titleId": "Y05yP6fOg1QMxdc6Y3B2J"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Offsite ev3e4609\" (deckId qnfYYQVVy-0p), make the lake photo 50% bigger. Its centre must stay where it is, and it must keep showing exactly the same part of the picture.",
+        "prompt": "On slide 1 of the Narrative deck \"Offsite evd4934d\" (deckId P_5NZrBRF5Fa), make the lake photo 50% bigger. Its centre must stay where it is, and it must keep showing exactly the same part of the picture.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__query_object,mcp__narrative-eval__object_resize,mcp__narrative-eval__object_crop_set,mcp__narrative-eval__ops_apply,mcp__narrative-eval__query_deck",
+              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__object_resize,mcp__narrative-eval__object_crop_set,mcp__narrative-eval__query_object,mcp__narrative-eval__ops_apply",
               "max_results": 10
             },
             "isError": false,
@@ -43,7 +43,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "qnfYYQVVy-0p",
+              "deckId": "P_5NZrBRF5Fa",
               "slide": {
                 "index": 0
               }
@@ -51,7 +51,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "Z42s7dwqJ3zcRoNx4s6Og",
+              "id": "_LPMlk4yqxjHaM-aDlxmf",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -60,7 +60,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "1YWLSBUKtvcmRlpP13veZ",
+                  "id": "Y05yP6fOg1QMxdc6Y3B2J",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -75,7 +75,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "4vu81jZFn9beSdAbkNdwS",
+                  "id": "OrZ_rhkLbFCklTDfq5vIo",
                   "type": "image",
                   "name": "Lake photo",
                   "x": 600,
@@ -84,7 +84,7 @@
                   "height": 300,
                   "rotation": 0,
                   "opacity": 1,
-                  "assetId": "utYaUAhn-wgUVix_",
+                  "assetId": "xq4KUXy1Iim6knOf",
                   "variant": "display",
                   "fit": "cover",
                   "imageRect": {
@@ -98,31 +98,31 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"Z42s7dwqJ3zcRoNx4s6Og\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"1YWLSBUKtvcmRlpP13veZ\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Where we went\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"4vu81jZFn9beSdAbkNdwS\",\"type\":\"image\",\"name\":\"Lake photo\",\"x\":600,\"y\":300,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"utYaUAhn-wgUVix_\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":500,\"y\":225,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"_LPMlk4yqxjHaM-aDlxmf\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"Y05yP6fOg1QMxdc6Y3B2J\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Where we went\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"OrZ_rhkLbFCklTDfq5vIo\",\"type\":\"image\",\"name\":\"Lake photo\",\"x\":600,\"y\":300,\"width\":400,\"height\":300,\"rotation\":0,\"opacity\":1,\"assetId\":\"xq4KUXy1Iim6knOf\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":500,\"y\":225,\"width\":600,\"height\":450}}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "qnfYYQVVy-0p",
-              "request": "Make the lake photo on slide 1 50% bigger, keeping its centre and crop"
+              "deckId": "P_5NZrBRF5Fa",
+              "request": "Make the lake photo on slide 1 50% bigger, same centre and same crop"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_ZazDcDqe5GTi10Vl"
+              "runId": "run_99izAPCbVV8kEwdp"
             },
-            "text": "{\"runId\":\"run_ZazDcDqe5GTi10Vl\"}"
+            "text": "{\"runId\":\"run_99izAPCbVV8kEwdp\"}"
           },
           {
             "tool": "object_resize",
             "command": "object.resize",
             "input": {
-              "deckId": "qnfYYQVVy-0p",
+              "deckId": "P_5NZrBRF5Fa",
               "slide": {
                 "index": 0
               },
-              "object": "4vu81jZFn9beSdAbkNdwS",
+              "object": "OrZ_rhkLbFCklTDfq5vIo",
               "width": 600,
               "height": 450,
               "anchor": "center"
@@ -141,22 +141,22 @@
             "tool": "query_object",
             "command": "query.object",
             "input": {
-              "deckId": "qnfYYQVVy-0p",
+              "deckId": "P_5NZrBRF5Fa",
               "slide": {
                 "index": 0
               },
-              "object": "4vu81jZFn9beSdAbkNdwS"
+              "object": "OrZ_rhkLbFCklTDfq5vIo"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "slide": {
-                "id": "Z42s7dwqJ3zcRoNx4s6Og",
+                "id": "_LPMlk4yqxjHaM-aDlxmf",
                 "index": 0
               },
               "stackIndex": 1,
               "object": {
-                "id": "4vu81jZFn9beSdAbkNdwS",
+                "id": "OrZ_rhkLbFCklTDfq5vIo",
                 "type": "image",
                 "name": "Lake photo",
                 "x": 500,
@@ -165,7 +165,7 @@
                 "height": 450,
                 "rotation": 0,
                 "opacity": 1,
-                "assetId": "utYaUAhn-wgUVix_",
+                "assetId": "xq4KUXy1Iim6knOf",
                 "variant": "display",
                 "fit": "cover",
                 "imageRect": {
@@ -177,10 +177,10 @@
               },
               "animations": []
             },
-            "text": "{\"slide\":{\"id\":\"Z42s7dwqJ3zcRoNx4s6Og\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"4vu81jZFn9beSdAbkNdwS\",\"type\":\"image\",\"name\":\"Lake photo\",\"x\":500,\"y\":225,\"width\":600,\"height\":450,\"rotation\":0,\"opacity\":1,\"assetId\":\"utYaUAhn-wgUVix_\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":350,\"y\":112.5,\"width\":900,\"height\":675}},\"animations\":[]}"
+            "text": "{\"slide\":{\"id\":\"_LPMlk4yqxjHaM-aDlxmf\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"OrZ_rhkLbFCklTDfq5vIo\",\"type\":\"image\",\"name\":\"Lake photo\",\"x\":500,\"y\":225,\"width\":600,\"height\":450,\"rotation\":0,\"opacity\":1,\"assetId\":\"xq4KUXy1Iim6knOf\",\"variant\":\"display\",\"fit\":\"cover\",\"imageRect\":{\"x\":350,\"y\":112.5,\"width\":900,\"height\":675}},\"animations\":[]}"
           }
         ],
-        "finalText": "I made the lake photo on slide 1 of \"Offsite ev3e4609\" 50% bigger. It keeps the same centre and still shows exactly the same part of the picture. I checked the result by reading the slide back.\n\n| | Before | After |\n|---|---|---|\n| Frame (x, y, w × h) | 600, 300, 400 × 300 | 500, 225, 600 × 450 |\n| Centre | (800, 450) | (800, 450) |\n| Picture inside the frame (x, y, w × h) | 500, 225, 600 × 450 | 350, 112.5, 900 × 675 |\n\nThe picture inside the frame grew by the same 1.5×, so the frame still shows the middle two-thirds of the photo, both across and down. Nothing else on the slide changed.\n\nIf you want to undo this, it was done as one separate step and can be reverted on its own.",
+        "finalText": "I made the lake photo on slide 1 50% bigger, and the centre and visible part of the picture are unchanged. I read the photo back afterwards to confirm this.\n\n| | Before | After |\n|---|---|---|\n| Frame | 400 × 300 at (600, 300) | 600 × 450 at (500, 225) |\n| Centre | (800, 450) | (800, 450) |\n| Full picture behind the crop | 600 × 450 at (500, 225) | 900 × 675 at (350, 112.5) |\n\nThe full picture grew by the same 1.5× around the same centre as the photo's box. The crop still shows the middle two-thirds of the picture in both directions, from 1/6 to 5/6 of its width and height, the same as before.\n\nThis change is its own run, so you can undo it in one step if you want to.",
         "turns": 7,
         "isError": false,
         "stopReason": "success"

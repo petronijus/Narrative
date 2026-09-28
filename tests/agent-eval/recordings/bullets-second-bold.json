@@ -1,25 +1,25 @@
 {
   "scenario": "bullets-second-bold",
-  "tag": "ev3e4609",
-  "recordedAt": "2026-09-28T20:08:13.451Z",
+  "tag": "evd4934d",
+  "recordedAt": "2026-09-28T20:52:21.650Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "D1I7a-nmBOtH",
-    "title": "Why now ev3e4609",
-    "titleId": "Axly5KfbYpcJ-Ejcgaov_",
-    "bodyId": "h4qITs9ThNE0ZX2KQ3lzo"
+    "deckId": "sCA5FIqmIC_L",
+    "title": "Why now evd4934d",
+    "titleId": "2ACReCS7Y_zbYrB0C14jH",
+    "bodyId": "UPDDIghfpssoHUMZN8HgO"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Why now ev3e4609\" (deckId D1I7a-nmBOtH), replace the placeholder text \"Add your points here\" with a bulleted list of exactly three points: \"Demand is up\", \"Costs are down\", \"Competitors are slow\". Make the second bullet bold and leave the other two regular.",
+        "prompt": "On slide 1 of the Narrative deck \"Why now evd4934d\" (deckId sCA5FIqmIC_L), replace the placeholder text \"Add your points here\" with a bulleted list of exactly three points: \"Demand is up\", \"Costs are down\", \"Competitors are slow\". Make the second bullet bold and leave the other two regular.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__text_set,mcp__narrative-eval__text_list,mcp__narrative-eval__text_format,mcp__narrative-eval__ops_apply,mcp__narrative-eval__query_object",
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__text_set,mcp__narrative-eval__text_list,mcp__narrative-eval__text_format,mcp__narrative-eval__ops_apply,mcp__narrative-eval__query_object,ReadMcpResourceTool",
               "max_results": 10
             },
             "isError": false,
@@ -43,7 +43,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "D1I7a-nmBOtH",
+              "deckId": "sCA5FIqmIC_L",
               "slide": {
                 "index": 0
               }
@@ -51,7 +51,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "wtLDTu2pR27PQTm_gmQJD",
+              "id": "zGBh_uJU1Mi7KjTcrmEll",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -60,7 +60,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "Axly5KfbYpcJ-Ejcgaov_",
+                  "id": "2ACReCS7Y_zbYrB0C14jH",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -75,7 +75,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "h4qITs9ThNE0ZX2KQ3lzo",
+                  "id": "UPDDIghfpssoHUMZN8HgO",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -93,60 +93,62 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"wtLDTu2pR27PQTm_gmQJD\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"Axly5KfbYpcJ-Ejcgaov_\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Why now\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"h4qITs9ThNE0ZX2KQ3lzo\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Add your points here\",\"fontSize\":32,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"zGBh_uJU1Mi7KjTcrmEll\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"2ACReCS7Y_zbYrB0C14jH\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Why now\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"UPDDIghfpssoHUMZN8HgO\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Add your points here\",\"fontSize\":32,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "D1I7a-nmBOtH",
-              "request": "Replace placeholder on slide 1 with three bullets, second bold"
+              "deckId": "sCA5FIqmIC_L",
+              "request": "Replace slide 1 placeholder with three bullets, second one bold"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_H10VWZs9uK3bnj9i"
+              "runId": "run_9pB_jELJzocjbc95"
             },
-            "text": "{\"runId\":\"run_H10VWZs9uK3bnj9i\"}"
+            "text": "{\"runId\":\"run_9pB_jELJzocjbc95\"}"
           },
           {
             "tool": "text_set",
             "command": "text.set",
             "input": {
-              "deckId": "D1I7a-nmBOtH",
+              "deckId": "sCA5FIqmIC_L",
               "target": {
-                "slide": "wtLDTu2pR27PQTm_gmQJD",
-                "object": "h4qITs9ThNE0ZX2KQ3lzo"
+                "slide": {
+                  "index": 0
+                },
+                "object": "UPDDIghfpssoHUMZN8HgO"
               },
               "text": {
                 "paragraphs": [
                   {
-                    "list": "bullet",
-                    "level": 0,
                     "runs": [
                       {
                         "text": "Demand is up"
                       }
-                    ]
+                    ],
+                    "list": "bullet",
+                    "level": 0
                   },
                   {
-                    "list": "bullet",
-                    "level": 0,
                     "runs": [
                       {
                         "text": "Costs are down",
                         "bold": true
                       }
-                    ]
+                    ],
+                    "list": "bullet",
+                    "level": 0
                   },
                   {
-                    "list": "bullet",
-                    "level": 0,
                     "runs": [
                       {
                         "text": "Competitors are slow"
                       }
-                    ]
+                    ],
+                    "list": "bullet",
+                    "level": 0
                   }
                 ]
               }
@@ -163,20 +165,22 @@
             "tool": "query_object",
             "command": "query.object",
             "input": {
-              "deckId": "D1I7a-nmBOtH",
-              "slide": "wtLDTu2pR27PQTm_gmQJD",
-              "object": "h4qITs9ThNE0ZX2KQ3lzo"
+              "deckId": "sCA5FIqmIC_L",
+              "slide": {
+                "index": 0
+              },
+              "object": "UPDDIghfpssoHUMZN8HgO"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "slide": {
-                "id": "wtLDTu2pR27PQTm_gmQJD",
+                "id": "zGBh_uJU1Mi7KjTcrmEll",
                 "index": 0
               },
               "stackIndex": 1,
               "object": {
-                "id": "h4qITs9ThNE0ZX2KQ3lzo",
+                "id": "UPDDIghfpssoHUMZN8HgO",
                 "type": "text",
                 "x": 120,
                 "y": 280,
@@ -219,10 +223,10 @@
               },
               "animations": []
             },
-            "text": "{\"slide\":{\"id\":\"wtLDTu2pR27PQTm_gmQJD\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"h4qITs9ThNE0ZX2KQ3lzo\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Demand is up\\n\\nCosts are down\\n\\nCompetitors are slow\",\"fontSize\":32,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Demand is up\"}],\"list\":\"bullet\"},{\"runs\":[{\"text\":\"Costs are down\",\"fontWeight\":700}],\"list\":\"bullet\"},{\"runs\":[{\"text\":\"Competitors are slow\"}],\"list\":\"bullet\"}]},\"animations\":[]}"
+            "text": "{\"slide\":{\"id\":\"zGBh_uJU1Mi7KjTcrmEll\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"UPDDIghfpssoHUMZN8HgO\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"Demand is up\\n\\nCosts are down\\n\\nCompetitors are slow\",\"fontSize\":32,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Demand is up\"}],\"list\":\"bullet\"},{\"runs\":[{\"text\":\"Costs are down\",\"fontWeight\":700}],\"list\":\"bullet\"},{\"runs\":[{\"text\":\"Competitors are slow\"}],\"list\":\"bullet\"}]},\"animations\":[]}"
           }
         ],
-        "finalText": "I replaced \"Add your points here\" on slide 1 of \"Why now ev3e4609\" with a three-item bulleted list, and re-reading the slide confirms the change:\n\n- Demand is up\n- **Costs are down** (bold)\n- Competitors are slow\n\nThe first and third bullets are regular, and the text box keeps its size, position and 32 px font. The edit is saved as its own agent run, so you can undo it in one step if you want to.",
+        "finalText": "I replaced \"Add your points here\" on slide 1 of \"Why now evd4934d\" with a bulleted list of three points:\n\n- Demand is up\n- **Costs are down**\n- Competitors are slow\n\nI re-read the text box afterwards to check it. It has exactly those three bullets, only \"Costs are down\" is bold, and the other two are regular. The box's size, position and 32px font are the same as before.\n\nThe change is saved as its own run, so you can undo it in one step from the editor's Agent activity popover, or ask me to revert it.",
         "turns": 7,
         "isError": false,
         "stopReason": "success"

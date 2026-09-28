@@ -49,6 +49,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   removeAnimation: 'writer',
   removeGuide: 'writer',
   removeObject: 'writer',
+  copyObjectsTo: 'writer',
   replaceObject: 'writer',
   removeSlide: 'writer',
   reorderAnimations: 'writer',

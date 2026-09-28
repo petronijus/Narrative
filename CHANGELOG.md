@@ -4,6 +4,65 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.9 — Copy and paste objects through commands (2026-09-28)
+
+### Added
+
+- **Agents can copy objects between slides and decks**:
+  - `object.copyTo` — an exact copy of objects onto another slide of the
+    deck (formatted text, tables, crops), placed by `offset` or with their
+    combined box centred `at` a point.
+  - `object.insert` — objects from their JSON, exactly as `query.slide` /
+    `query.object` return them, validated like `object.create`: read
+    anything, recreate it elsewhere.
+  - `object.insertFromDeck` — the same for objects read from another deck:
+    the pictures, videos and fonts they use are copied into this deck,
+    tokens rebound across folders, links to the other deck's slides removed.
+
+### Fixed
+
+- **An image pasted into another deck showed a broken picture**: the paste
+  kept the source deck's asset, which the target deck cannot load (media is
+  deck-scoped). Pasting into another deck now copies the picture — and any
+  video or font the objects use — into that deck, and rebinds colour and
+  text-style tokens when the decks are in different folders.
+- **"Paste" from the canvas menu put the objects far off from where you
+  clicked** (their old position plus the click point); the pasted block is
+  now centred on the point.
+- **Pasting did not move a cropped image's crop with it**, so a pasted
+  picture showed another part of the image.
+
+### Changed
+
+- The object clipboard keeps both what was copied and how it read: a copy
+  pastes as an exact copy of the live objects while they exist (so an edit
+  made after copying is pasted too); after a cut (or once they are deleted)
+  it pastes what was copied. A paste that cannot be done now says why, over
+  the canvas.
+- Cutting objects that could not be pasted back (some imported ones hold
+  values outside today's rules, e.g. a gradient with more than 10 stops) is
+  refused with a message — copy them instead — rather than deleting them.
+- A paste into another deck is done by the server, like pasting slides
+  there: Mod+Z in the target deck does not undo it (delete the objects).
+- Known limit: pictures pasted between a component master and a deck are
+  not copied across (they stay the source's); components move onto the
+  server in A2.12.
+
+### Internal
+
+- A2.7: copy, cut and paste on the canvas dispatch `object.copyTo` /
+  `object.insert`, or call `POST /decks/:id/insert-objects` across decks;
+  `EditorLayout` and `EditorContextMenu` are off the one-door exemption list
+  (15 files left). New slide-model writer `copyObjectsTo` (duplicate is a
+  copy onto the same slide); the server's slide-copy staging
+  (`rewriteForTarget`: links, media, fonts, tokens) serves object inserts
+  too. Clipboard entries from before this version are ignored.
+- MCP tools/list budget 152,000 → 157,000 bytes; agent-eval scenarios
+  `objects-copy-to-slide` and `objects-from-other-deck`; an
+  `object-clipboard` e2e spec.
+
+---
+
 ## 0.10.8 — Paths and lines are commands (2026-09-28)
 
 ### Added

@@ -307,6 +307,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       awareness: provider.awareness!,
       localUser,
       documentName: deckId,
+      documentKey: deckId,
     })
 
     // M8: Set initial awareness state immediately (even before WS connect —
@@ -417,9 +418,10 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
       localUser,
       // Local-only: no server, so no peers (and no agent peers) to identify.
       documentName: null,
+      documentKey: deckId,
       wsStatus: 'connected',
     }
-  }, [doc, localUser])
+  }, [deckId, doc, localUser])
 
   // We deliberately do NOT call hydrateSlideDoc here. The component master
   // doc is seeded by `writeComponentMasterTree` immediately after promotion

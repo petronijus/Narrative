@@ -44,11 +44,22 @@ import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
 import { and, eq, inArray } from 'drizzle-orm'
 import { CopyObjectCommand } from '@aws-sdk/client-s3'
-import { hydrateSlideDoc, type DeckMutationContext } from '@narrative/slide-model'
 import {
+  createSlideDoc,
+  getSlideObjectsCtx,
+  hydrateSlideDoc,
+  type DeckMutationContext,
+  type ObjectsMutationContext,
+} from '@narrative/slide-model'
+import {
+  applyInsertPlan,
+  planInsert,
   levelOf,
   normalizeOutline,
   shiftBlockLevels,
+  type InsertPlan,
+  type ObjectInsertResult,
+  type PreparedObjectInsert,
   type PreparedSlideInsert,
   type SlideInsertResult,
 } from '@narrative/commands'
@@ -59,7 +70,7 @@ import { extensionFromMimeOrFilename } from '../media/uploadPolicy.js'
 import { discardDeckMedia, registerDeckMedia, type StagedDeckMedia } from '../pptx/importDeck.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
-import { readDocCopy } from './liveDocs.js'
+import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
 import {
   applyTokenRebinding,
   planTokenRebinding,
@@ -227,7 +238,7 @@ async function requireCopyAccess(
   if (!access) throw notFound(`Source deck '${sourceDeckId}' not found`)
   if (!roleAtLeast(access.role, 'editor')) {
     throw forbidden(
-      `Copying slides from deck '${sourceDeckId}' needs editor access to it (the same as exporting it); you can only view it`,
+      `Copying from deck '${sourceDeckId}' needs editor access to it (the same as exporting it); you can only view it`,
     )
   }
 }
@@ -266,32 +277,83 @@ async function stageCopy(
     freshSlideIds: boolean
   },
 ): Promise<StagedCopy> {
-  const { userId, sourceDeckId, targetDeckId } = args
-  const scratch = await readDocCopy(deps, 'deck', sourceDeckId)
-  const media: StagedCopy['media'] = { mediaAssetRows: [], videoTranscodeJobs: [] }
+  const scratch = await readDocCopy(deps, 'deck', args.sourceDeckId)
   try {
     const all = hydrateSlideDoc(scratch).slides.toArray()
     const chosen = args.choose(all)
     const newSlideIds = chosen.map((m) => (args.freshSlideIds ? nanoid() : (m.get('id') as string)))
-    const idBySource = new Map(chosen.map((m, i) => [m.get('id') as string, newSlideIds[i]!]))
-    const sourceSlideIds = new Set(all.map((m) => m.get('id') as string))
+    const rewritten = await rewriteForTarget(deps, {
+      userId: args.userId,
+      scratch,
+      records: chosen,
+      sourceDeckId: args.sourceDeckId,
+      sourceFolderId: args.sourceFolderId,
+      targetDeckId: args.targetDeckId,
+      targetFolderId: args.targetFolderId,
+      sourceSlideIds: new Set(all.map((m) => m.get('id') as string)),
+      slideIdMap: new Map(chosen.map((m, i) => [m.get('id') as string, newSlideIds[i]!])),
+    })
+    return { scratch, chosen, newSlideIds, ...rewritten }
+  } catch (err) {
+    scratch.destroy()
+    throw err
+  }
+}
 
+/** What `rewriteForTarget` did to the copied records. */
+interface Rewritten {
+  /** Media copied into the target's namespace, not yet registered. */
+  media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  skippedImages: number
+  tokens: RebindCounts | undefined
+  droppedLinks: number
+}
+
+/**
+ * Steps 3–5 of the file header, on `records` (slides, or a scratch slide of
+ * objects) in `scratch`, a detached document: point slide links at copied
+ * slides (`slideIdMap`) or remove those into the source deck, copy the media
+ * and fonts they use into the target deck's namespace, and rebind token
+ * references when the folders differ. Nothing is registered and no real
+ * document is touched; on failure the copied media is discarded (the caller
+ * destroys the scratch).
+ */
+async function rewriteForTarget(
+  deps: ServiceDeps,
+  args: {
+    userId: string
+    scratch: Y.Doc
+    records: Y.Map<unknown>[]
+    sourceDeckId: string
+    sourceFolderId: string | null
+    targetDeckId: string
+    targetFolderId: string | null
+    /** Every slide id of the source deck: a link to one that was not copied is removed. */
+    sourceSlideIds: ReadonlySet<string>
+    /** Copied slides: source id → the copy's id. */
+    slideIdMap: ReadonlyMap<string, string>
+  },
+): Promise<Rewritten> {
+  const { userId, scratch, records, sourceDeckId, targetDeckId } = args
+  const media: Rewritten['media'] = { mediaAssetRows: [], videoTranscodeJobs: [] }
+  try {
     let droppedLinks = 0
     let tokens: RebindCounts | undefined
     let skippedImages = 0
 
     scratch.transact(() => {
       // 4. Slide links: into the copies, or removed when they point at an uncopied source slide.
-      for (const slide of chosen) {
-        forEachRecord(slide, (rec, set) => {
+      for (const record of records) {
+        forEachRecord(record, (rec, set) => {
           const link = getField(rec, 'hyperlink') as
             | { kind?: unknown; slideId?: unknown }
             | undefined
           if (link === undefined || link === null || link.kind !== 'slide') return
-          const to = typeof link.slideId === 'string' ? idBySource.get(link.slideId) : undefined
+          const to =
+            typeof link.slideId === 'string' ? args.slideIdMap.get(link.slideId) : undefined
           if (to !== undefined) {
             if (to !== link.slideId) set('hyperlink', { ...link, slideId: to })
-          } else if (typeof link.slideId === 'string' && sourceSlideIds.has(link.slideId)) {
+          } else if (typeof link.slideId === 'string' && args.sourceSlideIds.has(link.slideId)) {
             set('hyperlink', undefined)
             droppedLinks++
           }
@@ -305,16 +367,16 @@ async function stageCopy(
         userId,
         sourceDeckId,
         targetDeckId,
-        assetIds: referencedAssets(chosen),
-        families: referencedFamilies(chosen),
+        assetIds: referencedAssets(records),
+        families: referencedFamilies(records),
       })
       media.mediaAssetRows = staged.rows
       media.videoTranscodeJobs = staged.videoJobs
       skippedImages = staged.failed
       if (staged.idMap.size > 0) {
         scratch.transact(() => {
-          for (const slide of chosen) {
-            forEachRecord(slide, (rec, set) => {
+          for (const record of records) {
+            forEachRecord(record, (rec, set) => {
               for (const k of fieldKeys(rec)) {
                 const v = getField(rec, k)
                 if (!ASSET_KEYS.has(k) || typeof v !== 'string') continue
@@ -340,7 +402,7 @@ async function stageCopy(
       try {
         const plan = planTokenRebinding(tokensSnapshot(srcFolder), tokensSnapshot(dstFolder))
         scratch.transact(() => {
-          tokens = applyTokenRebinding(scratch, plan, chosen)
+          tokens = applyTokenRebinding(scratch, plan, records)
         })
       } finally {
         srcFolder.destroy()
@@ -348,10 +410,169 @@ async function stageCopy(
       }
     }
 
-    return { scratch, chosen, newSlideIds, media, skippedImages, tokens, droppedLinks }
+    return { media, skippedImages, tokens, droppedLinks }
+  } catch (err) {
+    await discardDeckMedia({ db: deps.db, deckId: targetDeckId, media, log: deps.log })
+    throw err
+  }
+}
+
+/**
+ * `object.insertFromDeck`: objects read from `sourceDeckId` (already
+ * validated and planned by the command) staged for `targetDeckId`. They are
+ * built in a scratch document and rewritten there like copied slides —
+ * links into the source's slides removed, the media and fonts they use
+ * copied into the target, token references rebound across folders — and
+ * the media rows are registered; `apply` then clones them onto a slide of
+ * the target, in the host's one transaction.
+ */
+export async function stageObjectInsert(
+  deps: ServiceDeps,
+  args: { userId: string; sourceDeckId: string; targetDeckId: string; plan: InsertPlan },
+): Promise<PreparedObjectInsert> {
+  const { db, log } = deps
+  const { userId, sourceDeckId, targetDeckId, plan } = args
+  if (sourceDeckId === targetDeckId) {
+    // Links into the "source" would be links into this deck, and its media is here already.
+    throw badRequest('The objects come from this deck: paste them with object.insert')
+  }
+
+  await requireCopyAccess(deps, userId, sourceDeckId)
+  const rows = await db
+    .select({ id: decks.id, folderId: decks.folderId })
+    .from(decks)
+    .where(inArray(decks.id, [sourceDeckId, targetDeckId]))
+  const source = rows.find((r) => r.id === sourceDeckId)
+  const target = rows.find((r) => r.id === targetDeckId)
+  if (!source) throw notFound(`Source deck '${sourceDeckId}' not found`)
+  if (!target) throw notFound('Deck not found')
+
+  // The source's slide ids, read live: a link to one of them would jump
+  // nowhere in the target.
+  const sourceDoc = await readDocCopy(deps, 'deck', sourceDeckId)
+  let sourceSlideIds: Set<string>
+  try {
+    sourceSlideIds = new Set(
+      hydrateSlideDoc(sourceDoc)
+        .slides.toArray()
+        .map((m) => m.get('id') as string),
+    )
+  } finally {
+    sourceDoc.destroy()
+  }
+
+  // A scratch deck with one slide holding the planned objects.
+  const scratchDeck = createSlideDoc()
+  const scratch = scratchDeck.doc
+  let staged: Rewritten
+  let holder: ObjectsMutationContext
+  try {
+    const slideId = scratchDeck.slides.get(0).get('id') as string
+    const ctx = getSlideObjectsCtx(scratchDeck, slideId)
+    if (ctx === null) throw new Error('object insert: the scratch slide has no objects')
+    holder = ctx
+    applyInsertPlan(holder, plan)
+    staged = await rewriteForTarget(deps, {
+      userId,
+      scratch,
+      records: [scratchDeck.slides.get(0)],
+      sourceDeckId,
+      sourceFolderId: source.folderId,
+      targetDeckId,
+      targetFolderId: target.folderId,
+      sourceSlideIds,
+      slideIdMap: new Map(),
+    })
   } catch (err) {
     scratch.destroy()
-    await discardDeckMedia({ db: deps.db, deckId: targetDeckId, media, log: deps.log })
+    throw err
+  }
+
+  try {
+    await registerDeckMedia({
+      db,
+      deckId: targetDeckId,
+      ownerUserId: userId,
+      media: staged.media,
+      log,
+    })
+  } catch (err) {
+    scratch.destroy()
+    await discardDeckMedia({ db, deckId: targetDeckId, media: staged.media, log })
+    throw err
+  }
+
+  let settled = false
+  return {
+    apply(objects: ObjectsMutationContext): ObjectInsertResult {
+      if (settled) throw new Error('object insert: already applied or discarded')
+      settled = true
+      try {
+        const copies = holder.objects.toArray().map((m) => m.clone())
+        objects.objects.push(copies)
+        const result: ObjectInsertResult = {
+          objectIds: copies.map((m) => m.get('id') as string),
+          mediaRegistered: staged.media.mediaAssetRows.length,
+          skippedImages: staged.skippedImages,
+          droppedLinks: staged.droppedLinks,
+        }
+        if (staged.tokens !== undefined) result.tokens = staged.tokens
+        return result
+      } finally {
+        scratch.destroy()
+      }
+    },
+    async discard() {
+      if (settled) return
+      settled = true
+      scratch.destroy()
+      await discardDeckMedia({ db, deckId: targetDeckId, media: staged.media, log })
+    },
+  }
+}
+
+/**
+ * The editor's cross-deck object paste (`POST /decks/:id/insert-objects`):
+ * `object.insertFromDeck` run as one server write onto slide `slideId`.
+ * Invalid objects fail before anything is staged (a CommandError with the
+ * offending field); the write reaches open editors as a remote change.
+ */
+export async function insertObjectsFromDeck(
+  deps: ServiceDeps,
+  args: {
+    userId: string
+    deckId: string
+    sourceDeckId: string
+    slideId: string
+    objects: readonly Record<string, unknown>[]
+    offset?: { x: number; y: number } | undefined
+    at?: { x: number; y: number } | undefined
+  },
+): Promise<ObjectInsertResult> {
+  const plan = planInsert(args.objects, { offset: args.offset, at: args.at })
+  const prepared = await stageObjectInsert(deps, {
+    userId: args.userId,
+    sourceDeckId: args.sourceDeckId,
+    targetDeckId: args.deckId,
+    plan,
+  })
+  const touched = { value: false }
+  try {
+    return await writeLiveDoc(
+      deps,
+      'deck',
+      args.deckId,
+      (doc) => {
+        const objects = getSlideObjectsCtx(hydrateSlideDoc(doc), args.slideId)
+        if (objects === null) throw notFound(`Slide '${args.slideId}' not found`)
+        return prepared.apply(objects)
+      },
+      SERVER_EDIT_ORIGIN,
+      touched,
+    )
+  } catch (err) {
+    // Untouched: nothing references the staged media, so it goes.
+    if (!touched.value) await prepared.discard()
     throw err
   }
 }
@@ -566,6 +787,10 @@ async function copyMedia(
           .where(
             and(inArray(mediaAssets.id, [...args.assetIds]), eq(mediaAssets.deckId, sourceDeckId)),
           )
+  // A reference to media the source deck does not own (another deck's, or
+  // deleted) cannot be copied: it stays unresolved, and is counted as such.
+  const owned = new Set(referenced.map((r) => r.id))
+  failed += [...args.assetIds].filter((id) => !owned.has(id)).length
   // The source deck's own fonts that the copied text uses, unless the target
   // already has a deck font of the same face.
   const families = [...args.families]

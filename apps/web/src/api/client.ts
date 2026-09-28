@@ -62,6 +62,23 @@ export interface ApiClient {
     deckId: string,
     body: { sourceDeckId: string; slideIds: string[]; at?: number },
   ): Promise<{ slideIds: string[]; insertedAt: number }>
+  /**
+   * Paste objects read from another deck (query.slide JSON) onto slide
+   * `slideId` of `deckId` (the canvas's cross-deck paste, the server's
+   * `object.insertFromDeck`): the pictures, videos and fonts they use are
+   * copied into `deckId` and tokens rebound across folders. Rejects with an
+   * `ApiError` carrying the server's reason.
+   */
+  insertObjectsFromDeck(
+    deckId: string,
+    body: {
+      sourceDeckId: string
+      slideId: string
+      objects: Record<string, unknown>[]
+      offset?: { x: number; y: number }
+      at?: { x: number; y: number }
+    },
+  ): Promise<{ objectIds: string[] }>
   listPermissions(deckId: string): Promise<DeckPermission[]>
   /** Invite by email. If the email belongs to a known user → instant grant.
    *  Otherwise → pending invite (the invitee gets a real permission row
@@ -670,6 +687,16 @@ export function createApiClient(): ApiClient {
       })
       if (!res.ok) throw await apiError(res)
       return (await res.json()) as { slideIds: string[]; insertedAt: number }
+    },
+
+    insertObjectsFromDeck: async (deckId, body) => {
+      const res = await request(`/decks/${deckId}/insert-objects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as { objectIds: string[] }
     },
 
     uploadDeckThumbnail: (id, dataUrl) =>

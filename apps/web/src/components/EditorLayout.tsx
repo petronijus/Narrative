@@ -51,8 +51,9 @@ import { useUndoManager } from '../state/useUndoManager'
 import { useCanvasInstance } from '../renderer/CanvasInstanceContext'
 import { useAwarenessUpdater } from '../state/useAwarenessUpdater.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { addObjects, yMapToPlainObject } from '@narrative/slide-model'
-import { setClipboard, readClipboardForPaste, hasClipboard } from '../state/clipboard.js'
+import { yMapToPlainObject } from '@narrative/slide-model'
+import { useObjectClipboard } from '../state/useObjectClipboard.js'
+import { EditorNotice } from '../ui/EditorNotice.js'
 import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
@@ -506,6 +507,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { setCursor, setSelection, setActiveSlide } = useAwarenessUpdater()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
+  const objectClipboard = useObjectClipboard()
   const activeSlideIdRef = useRef(activeSlideId)
   activeSlideIdRef.current = activeSlideId
 
@@ -1983,10 +1985,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       description: 'Copy selected object(s)',
       handler: () => {
         if (selectedIds.size === 0) return
-        const toCopy = [...selectedIds]
-          .map((id) => objects.find((o) => o.id === id))
-          .filter((o): o is (typeof objects)[number] => o !== undefined)
-        setClipboard(toCopy)
+        objectClipboard.copy([...selectedIds])
       },
     },
     {
@@ -1995,11 +1994,10 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       preventDefault: true,
       description: 'Paste object(s)',
       handler: () => {
-        if (!hasClipboard() || mutationCtx === null) return
-        const pasted = readClipboardForPaste({ x: 10, y: 10 })
-        if (pasted === null || pasted.length === 0) return
-        addObjects(mutationCtx, pasted)
-        selectMany(pasted.map((o) => o.id))
+        if (!objectClipboard.canPaste()) return
+        void objectClipboard.paste({ offset: { x: 10, y: 10 } }).then((ids) => {
+          if (ids !== null && ids.length > 0) selectMany(ids)
+        })
       },
     },
     {
@@ -2180,6 +2178,9 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background">
+      {/* Transient messages (a paste that could not be done, …). Fixed,
+          so it sits outside the zoomed artboard. */}
+      <EditorNotice />
       {/* Canvas main column extends edge-to-edge underneath the
           panels (stacked first, z-0). Side panels are positioned
           absolutely on top with z-10 so their frosted-glass
