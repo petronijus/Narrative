@@ -74,6 +74,10 @@ text.
 - Inline formatting on text runs overrides the text box's own typography.
   To change a box's font or colour everywhere, clear the run attribute with
   `text.format` and set the box with `object.update`, in one `ops.apply`.
+- Pictures, videos and fonts come in with `media.upload` (a public URL, or
+  small files as base64); a local file on a machine where you have a shell
+  goes through `media.uploadSession` — run the `curl` it returns, never
+  paste a file's bytes into a call. Then show it with `object.create`.
 - `locked` is an editor-only flag. It does not restrict you.
 
 ## Components and styles

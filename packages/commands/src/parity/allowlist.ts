@@ -30,6 +30,12 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
   },
   { capability: 'Rulers on/off', reason: 'Per-browser editor preference stored in localStorage.' },
   {
+    capability: 'Snapping on/off (toolbar toggle, Mod held while dragging)',
+    reason:
+      'Per-browser editor preference for pointer drags. Agents set exact coordinates and align with ' +
+      'object.align / object.alignToSlide and the deck guides from query.deck.',
+  },
+  {
     capability: 'Active tool',
     reason: 'Transient pointer mode of one editor; agents create objects directly.',
   },

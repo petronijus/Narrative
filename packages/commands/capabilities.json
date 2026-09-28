@@ -655,6 +655,17 @@
       ]
     },
     {
+      "id": "media.uploadSession",
+      "domain": "media",
+      "title": "Upload a local file (shell)",
+      "description": "For an agent with a shell (Claude Code): upload a LOCAL image, video or font file into the deck without sending its bytes through you. Returns a one-time upload URL, token and a ready `curl` command: set FILE to the file's path and run it; its JSON answer carries the new assetId (then place it with object.create). The token uploads one file into this deck only and must be used within 15 minutes; the file gets the same checks as an editor upload (images up to 25 MB, videos 500 MB, fonts 8 MB). `filename` names the file (its extension gives the type unless `mimeType` does). Without a shell, use media.upload with a URL or base64.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "n/a",
+      "confirm": "never",
+      "hosts": ["server"]
+    },
+    {
       "id": "media.url",
       "domain": "media",
       "title": "Image URL",
@@ -1707,6 +1718,10 @@
     {
       "capability": "Rulers on/off",
       "reason": "Per-browser editor preference stored in localStorage."
+    },
+    {
+      "capability": "Snapping on/off (toolbar toggle, Mod held while dragging)",
+      "reason": "Per-browser editor preference for pointer drags. Agents set exact coordinates and align with object.align / object.alignToSlide and the deck guides from query.deck."
     },
     {
       "capability": "Active tool",

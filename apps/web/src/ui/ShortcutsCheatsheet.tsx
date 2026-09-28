@@ -29,6 +29,8 @@ import {
 interface ShortcutsCheatsheetProps {
   open: boolean
   onClose: () => void
+  /** List the canvas drag modifiers too (the editor; not present mode). */
+  dragModifiers?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,16 @@ const SCOPE_LABELS: Record<ShortcutScope, string> = {
 }
 
 const SCOPE_ORDER: ShortcutScope[] = ['global', 'canvas', 'slidePanel', 'timeline']
+
+/**
+ * Modifiers held during a canvas drag. They are read off pointer events,
+ * not registered through useShortcuts, so the registry cannot list them.
+ */
+const DRAG_MODIFIERS: ReadonlyArray<{ keys: string; description: string }> = [
+  { keys: 'Shift', description: 'Move along one axis / keep proportions while resizing' },
+  { keys: 'Alt', description: 'Duplicate the dragged objects (hold as the drag starts)' },
+  { keys: 'Mod', description: 'Toggle snapping for as long as it is held' },
+]
 
 // ---------------------------------------------------------------------------
 // Key chip
@@ -74,7 +86,11 @@ function KeyCombos({ keys }: { keys: string | string[] }) {
 // Component
 // ---------------------------------------------------------------------------
 
-export function ShortcutsCheatsheet({ open, onClose }: ShortcutsCheatsheetProps) {
+export function ShortcutsCheatsheet({
+  open,
+  onClose,
+  dragModifiers = false,
+}: ShortcutsCheatsheetProps) {
   // Snapshot the registry every time the dialog opens.
   const [entries, setEntries] = useState<CheatsheetEntry[]>([])
 
@@ -95,7 +111,22 @@ export function ShortcutsCheatsheet({ open, onClose }: ShortcutsCheatsheetProps)
     }
   }
 
-  const sections = SCOPE_ORDER.filter((scope) => byScope.has(scope))
+  // Registry scopes in their fixed order; the drag modifiers follow the
+  // canvas shortcuts they belong with.
+  const sections: Array<{
+    key: string
+    label: string
+    entries: ReadonlyArray<{ keys: string | string[]; description: string }>
+  }> = []
+  for (const scope of SCOPE_ORDER) {
+    const scopeEntries = byScope.get(scope)
+    if (scopeEntries !== undefined) {
+      sections.push({ key: scope, label: SCOPE_LABELS[scope], entries: scopeEntries })
+    }
+    if (scope === 'canvas' && dragModifiers) {
+      sections.push({ key: 'drag', label: 'While dragging', entries: DRAG_MODIFIERS })
+    }
+  }
 
   return (
     <Dialog
@@ -113,15 +144,14 @@ export function ShortcutsCheatsheet({ open, onClose }: ShortcutsCheatsheetProps)
           <p className="py-4 text-center text-sm text-muted-foreground">No shortcuts registered.</p>
         ) : (
           <div className="flex flex-col gap-6 pt-2">
-            {sections.map((scope) => {
-              const sectionEntries = byScope.get(scope)!
+            {sections.map((section) => {
               return (
-                <section key={scope}>
+                <section key={section.key}>
                   <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {SCOPE_LABELS[scope]}
+                    {section.label}
                   </h3>
                   <div className="flex flex-col gap-1">
-                    {sectionEntries.map((entry, i) => (
+                    {section.entries.map((entry, i) => (
                       <div
                         key={i}
                         className="flex items-center justify-between gap-4 rounded px-2 py-1.5 hover:bg-surface-2/60"

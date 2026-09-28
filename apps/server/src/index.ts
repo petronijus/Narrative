@@ -263,11 +263,16 @@ const spaOrigin =
 // call it; configured (not listening) Hocuspocus is enough.
 // ---------------------------------------------------------------------------
 
+// The public addresses (mcp/config.ts): the MCP resource, and the API base
+// upload sessions point agents at.
+const mcpConfig = mcpPublicConfigFromEnv(process.env, { apiPort: API_PORT, isProd, spaOrigin })
+
 const agent = await createAgentRuntime({
   db,
   log: app.log,
   hocuspocus,
   appOrigin: spaOrigin,
+  apiBaseUrl: mcpConfig.apiBaseUrl,
   principalKeys,
   bypass: bypassAuth,
   // Hosts agent URL downloads may reach without the user confirming the host
@@ -285,7 +290,7 @@ const agent = await createAgentRuntime({
 
 const mcp = createMcpRuntime({
   agent,
-  config: mcpPublicConfigFromEnv(process.env, { apiPort: API_PORT, isProd, spaOrigin }),
+  config: mcpConfig,
   oauthStore: createDrizzleOAuthStore(db),
   // The same sign-in policy personal access tokens re-check on every use.
   isOwnerAllowed: bypassAuth ? async () => true : createPatOwnerPolicy(db, allowlistConfig),

@@ -33,6 +33,7 @@ import lineEndMove from './lineEndMove.js'
 import objectsCopyToSlide from './objectsCopyToSlide.js'
 import objectsFromOtherDeck from './objectsFromOtherDeck.js'
 import objectsRecreateFromJson from './objectsRecreateFromJson.js'
+import localLogoUpload from './localLogoUpload.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -63,6 +64,7 @@ export const SCENARIOS: readonly AnyScenario[] = [
   objectsCopyToSlide,
   objectsFromOtherDeck,
   objectsRecreateFromJson,
+  localLogoUpload,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

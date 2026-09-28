@@ -583,6 +583,24 @@ export function createDomainFakes(
           height: args.source.kind === 'base64' ? 1 : 900,
         }
       },
+      async openUploadSession(args) {
+        rMedia('openUploadSession', args)
+        requireDeck(args.deckId)
+        const mimeType =
+          args.mimeType ??
+          (args.filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'image/png')
+        const kind = mimeType.startsWith('video/') ? ('video' as const) : ('image' as const)
+        const b64 = (v: string) => Buffer.from(v).toString('base64')
+        return {
+          url: 'https://narrative.example/api/api/uploads',
+          token: `nus_${'x'.repeat(43)}`,
+          expiresAt: '2026-01-01T00:15:00.000Z',
+          uploadMetadata: `deckId ${b64(args.deckId)},filename ${b64(args.filename)},content-type ${b64(mimeType)}`,
+          kind,
+          mimeType,
+          maxBytes: kind === 'video' ? 500_000_000 : 25_000_000,
+        }
+      },
       async videoInfo(args) {
         rMedia('videoInfo', args)
         if (args.assetId !== 'video_fixture') throw notFound('video', args.assetId)

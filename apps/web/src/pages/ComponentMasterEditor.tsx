@@ -38,6 +38,7 @@ import { TableEditProvider } from '../state/TableEditContext.js'
 import { CropModeProvider } from '../state/CropModeContext.js'
 import { PathPointsModeProvider } from '../state/PathPointsModeContext.js'
 import { RulersProvider } from '../state/RulersContext.js'
+import { SnappingProvider } from '../state/SnappingContext.js'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { EditorLayout } from '../components/EditorLayout.js'
@@ -108,10 +109,12 @@ export function ComponentMasterEditor() {
                         <CropModeProvider>
                           <PathPointsModeProvider>
                             <RulersProvider>
-                              <CanvasInstanceContext value={canvasInstance}>
-                                <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
-                                <ComponentThumbnailUploader componentId={componentId} />
-                              </CanvasInstanceContext>
+                              <SnappingProvider>
+                                <CanvasInstanceContext value={canvasInstance}>
+                                  <EditorLayout masterMode onCanvasReady={handleCanvasReady} />
+                                  <ComponentThumbnailUploader componentId={componentId} />
+                                </CanvasInstanceContext>
+                              </SnappingProvider>
                             </RulersProvider>
                           </PathPointsModeProvider>
                         </CropModeProvider>

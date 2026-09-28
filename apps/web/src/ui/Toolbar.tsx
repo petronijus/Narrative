@@ -21,7 +21,7 @@ import {
   type ComponentType,
   type SVGProps,
 } from 'react'
-import { useShortcuts } from '../state/useShortcuts.js'
+import { formatKeyCombo, useShortcuts } from '../state/useShortcuts.js'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   MousePointer2,
@@ -48,6 +48,7 @@ import {
   ChevronDown,
   PenTool,
   Ruler,
+  Magnet,
   Table2,
   Component as ComponentIcon,
 } from 'lucide-react'
@@ -66,6 +67,7 @@ import type { AgentRunTarget, ComponentSummary } from '../api/client.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
 import { useRulers } from '../state/RulersContext.js'
+import { useSnapping } from '../state/SnappingContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
 import { useUndoManager } from '../state/useUndoManager.js'
 import { useDeckFontsOptional } from '../state/useDeckFonts.js'
@@ -184,6 +186,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   }, [masterMode, componentId, id])
   const { undo, redo, canUndo, canRedo } = useUndoManager()
   const { visible: rulersVisible, toggle: toggleRulers } = useRulers()
+  const { enabled: snappingEnabled, toggle: toggleSnapping } = useSnapping()
   const deckFontsCtx = useDeckFontsOptional()
   const deckFontCount = deckFontsCtx?.fonts.length ?? 0
 
@@ -767,6 +770,29 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">Toggle rulers</TooltipContent>
+          </Tooltip>
+
+          {/* Snapping toggle — whether drags and resizes snap to other
+              objects, the deck's guides and the grid. Default on; holding
+              ⌘ / Ctrl during a drag inverts it for that moment. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={snappingEnabled ? 'default' : 'ghost'}
+                size="icon"
+                onClick={toggleSnapping}
+                aria-label="Toggle snapping"
+                aria-pressed={snappingEnabled}
+                className="h-7 w-7"
+                data-testid="toolbar-snapping"
+              >
+                <Magnet className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {snappingEnabled ? 'Snapping on' : 'Snapping off'} · hold {formatKeyCombo('Mod')}{' '}
+              while dragging to {snappingEnabled ? 'move freely' : 'snap'}
+            </TooltipContent>
           </Tooltip>
         </div>
 

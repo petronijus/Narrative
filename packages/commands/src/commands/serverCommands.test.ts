@@ -294,6 +294,26 @@ describe('component.stamp', () => {
   })
 })
 
+describe('media.uploadSession', () => {
+  it('hands back a one-request curl upload for the named file', async () => {
+    const c = ctx()
+    const out = (await runCommand(registry, c, 'media.uploadSession', {
+      filename: "team photo's.png",
+    })) as { curl: string; headers: Record<string, string>; url: string; kind: string }
+    expect(out.kind).toBe('image')
+    expect(out.headers['Authorization']).toMatch(/^Bearer nus_/)
+    expect(out.headers['Tus-Resumable']).toBe('1.0.0')
+    expect(out.headers['Content-Type']).toBe('application/offset+octet-stream')
+    // The file name is quoted for the shell, apostrophe included.
+    expect(out.curl.startsWith(`FILE='./team photo'\\''s.png';`)).toBe(true)
+    expect(out.curl).toContain(`-X POST '${out.url}'`)
+    expect(out.curl).toContain(`-H "Upload-Length: $(wc -c < "$FILE" | tr -d ' ')"`)
+    expect(out.curl).toContain('--data-binary @"$FILE"')
+    const [call] = callsTo(c, 'media').filter((x) => x.method === 'openUploadSession')
+    expect(call?.args).toMatchObject({ deckId: FIXTURE_DECK_ID, filename: "team photo's.png" })
+  })
+})
+
 describe('object.insertFromDeck', () => {
   it('stages the objects with their source deck, then lands them on the slide', async () => {
     const c = ctx()

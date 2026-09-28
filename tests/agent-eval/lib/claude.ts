@@ -58,6 +58,10 @@ export interface AgentRunOptions {
   betweenSteps?: (index: number) => Promise<void>
   /** Echo each tool call as it happens. */
   onToolCall?: (line: string) => void
+  /** Files put in the agent's working directory before the first prompt. */
+  files?: Record<string, Uint8Array>
+  /** Let the agent use Bash (in its temporary working directory). */
+  shell?: boolean
 }
 
 export interface AgentRunResult {
@@ -105,7 +109,11 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }),
     { mode: 0o600 },
   )
-  const builtInTools = 'ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch'
+  for (const [name, bytes] of Object.entries(opts.files ?? {})) {
+    if (name.includes('/') || name.startsWith('.')) throw new Error(`workspace file name '${name}'`)
+    await writeFile(path.join(dir, name), bytes)
+  }
+  const builtInTools = `ListMcpResourcesTool,ReadMcpResourceTool,ToolSearch${opts.shell === true ? ',Bash' : ''}`
   const args = [
     '-p',
     '--input-format',

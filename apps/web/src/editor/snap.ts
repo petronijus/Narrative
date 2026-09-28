@@ -257,3 +257,14 @@ export function computeSnap(
     guides,
   }
 }
+
+/**
+ * Whether a drag or resize frame snaps (to objects, deck guides and the
+ * grid fallback). The editor's snapping preference, inverted for as long
+ * as the platform modifier (⌘ on macOS, Ctrl elsewhere) is held — the
+ * same "hold to override" as Keynote's ⌘ and Figma's Ctrl. With snapping
+ * on, the modifier frees the drag; with it off, the modifier snaps.
+ */
+export function snapsThisFrame(snappingEnabled: boolean, modifierHeld: boolean): boolean {
+  return snappingEnabled !== modifierHeld
+}

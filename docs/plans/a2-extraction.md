@@ -265,3 +265,16 @@ after the mechanism has been proven on simpler surfaces.
   only with a public URL or base64 the model writes out itself — a local
   picture of any real size does not fit through the context. The tus upload
   the browser uses already exists; the command opens it for an agent.
+- 2026-09-28: **A2.7a done** — `media.uploadSession`. Decisions:
+  - **The existing tus upload, not a new endpoint**: tus creation-with-upload
+    takes the file in the creating POST and answers with the finish hook's
+    asset JSON, so one `curl` line is the whole upload, with the editor's
+    checks.
+  - **A dedicated one-time credential** (`nus_`, table `upload_sessions`)
+    rather than handing out a personal access token (agents may not mint
+    those) or a signed stateless token (single use needs state that
+    survives a restart): hash-only storage, 15 min to start, bound to its
+    first upload by an atomic claim, 2 h to finish it, media into its own
+    deck only, and recognised by tus alone.
+  - The eval harness gained per-scenario workspace files and a shell, so the
+    scenario runs the returned curl exactly as Claude Code would.

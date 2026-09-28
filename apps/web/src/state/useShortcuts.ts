@@ -96,6 +96,11 @@ const IS_MAC =
   (/Mac|iPhone|iPad|iPod/.test(navigator.platform) ||
     (navigator.userAgent !== undefined && /Mac/.test(navigator.userAgent)))
 
+/** Whether the platform's `Mod` key (⌘ on macOS, Ctrl elsewhere) is down. */
+export function isModHeld(e: { readonly ctrlKey: boolean; readonly metaKey: boolean }): boolean {
+  return IS_MAC ? e.metaKey : e.ctrlKey
+}
+
 // ---------------------------------------------------------------------------
 // Global registry
 // ---------------------------------------------------------------------------
@@ -193,11 +198,11 @@ function parseKeys(keys: string | string[]): ParsedKey[] {
 
 function modMatches(parsed: ParsedKey, e: KeyboardEvent): boolean {
   // `Mod` expands to metaKey on macOS, ctrlKey elsewhere.
-  const modHeld = IS_MAC ? e.metaKey : e.ctrlKey
+  const modHeld = isModHeld(e)
   if (parsed.mod && !modHeld) return false
   if (!parsed.mod && parsed.ctrl && !e.ctrlKey) return false
   // If Mod is set we already checked mod — don't double-require ctrlKey on macOS.
-  if (!parsed.mod && !parsed.ctrl && (IS_MAC ? e.metaKey : e.ctrlKey)) return false
+  if (!parsed.mod && !parsed.ctrl && modHeld) return false
 
   if (parsed.alt !== e.altKey) return false
   if (parsed.shift !== e.shiftKey) {

@@ -29,6 +29,26 @@ export interface MediaUploadResult {
     | undefined
 }
 
+/**
+ * A one-time upload session (`media.uploadSession`): how to send one file to
+ * the tus upload with a single request. The token authenticates that upload
+ * only (media/uploadSessions.ts on the server).
+ */
+export interface UploadSessionInfo {
+  /** The tus creation endpoint (absolute). */
+  url: string
+  /** The one-time bearer token (`nus_…`). */
+  token: string
+  /** Until when the upload may be started (ISO 8601). */
+  expiresAt: string
+  /** The tus `Upload-Metadata` header value (deck, filename, type). */
+  uploadMetadata: string
+  kind: 'image' | 'video' | 'font'
+  mimeType: string
+  /** The largest file of this kind the upload accepts. */
+  maxBytes: number
+}
+
 export interface VideoInfo {
   assetId: string
   transcodeStatus: 'pending' | 'processing' | 'done' | 'failed' | null
@@ -59,6 +79,18 @@ export interface MediaService {
    * font parsing, and a transcode job for videos.
    */
   upload(args: { userId: string; deckId: string; source: BinarySource }): Promise<MediaUploadResult>
+  /**
+   * Open a one-time upload session for ONE image, video or font into the
+   * deck (editor access): the caller sends the file itself to the tus upload
+   * the editor uses. For agents with a shell, whose files cannot travel
+   * through the model as base64.
+   */
+  openUploadSession(args: {
+    userId: string
+    deckId: string
+    filename: string
+    mimeType?: string | undefined
+  }): Promise<UploadSessionInfo>
   /** Transcode state and playback URLs of a video (viewer access to its deck). */
   videoInfo(args: {
     userId: string | null

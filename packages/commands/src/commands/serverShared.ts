@@ -55,12 +55,12 @@ export function targetFolderId(ctx: CommandContext): string {
 /** Longest inline base64 accepted (≈ 48 MB of file); larger files go by URL. */
 export const MAX_BASE64_CHARS = 64 * 1024 * 1024
 
-const FilenameSchema = z
+export const FilenameSchema = z
   .string()
   .min(1)
   .max(255)
   .describe('File name hint, e.g. "logo.png" (the bytes decide the type)')
-const MimeHintSchema = z
+export const MimeHintSchema = z
   .string()
   .min(1)
   .max(127)

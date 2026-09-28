@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { computeSnap } from './snap'
+import { computeSnap, snapsThisFrame } from './snap'
 import type { OtherObjectBounds } from './snap'
 
 // ---------------------------------------------------------------------------
@@ -240,5 +240,17 @@ describe('computeSnap — object snap overrides grid', () => {
     expect(result.dx).toBe(4)
     // Y: no object snap → grid
     expect(result.dy).toBe(0) // 200 is already on 10px grid
+  })
+})
+
+describe('snapsThisFrame — the held modifier inverts the preference', () => {
+  it('snapping on: snaps until the modifier is held', () => {
+    expect(snapsThisFrame(true, false)).toBe(true)
+    expect(snapsThisFrame(true, true)).toBe(false)
+  })
+
+  it('snapping off: free until the modifier is held', () => {
+    expect(snapsThisFrame(false, false)).toBe(false)
+    expect(snapsThisFrame(false, true)).toBe(true)
   })
 })

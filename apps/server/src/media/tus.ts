@@ -22,6 +22,9 @@
  * Security:
  *   - storageKey is server-constructed — never user-supplied (no path traversal).
  *   - Share token (viewer) path does NOT grant upload rights — only JWT users with editor/owner role may upload.
+ *   - An upload session token (`nus_…`, media/uploadSessions.ts — what
+ *     `media.uploadSession` hands an agent) may create ONE media upload in
+ *     its own deck, and then only continue that upload.
  *   - A personal access token (scope `api` or `mcp`) may upload media only —
  *     image/*, video/* and fonts. A .pptx by token is refused at create, and
  *     at every PATCH/finish (M2): deck import/append by an agent goes through
@@ -72,6 +75,13 @@ import {
   type PatService,
 } from '../auth/personalAccessTokens.js'
 import { subsystemLogger } from '../observability/logger.js'
+import {
+  createDrizzleUploadSessionStore,
+  createUploadSessionService,
+  readBearerUploadSession,
+  type UploadSessionService,
+  type VerifiedUploadSession,
+} from './uploadSessions.js'
 
 const log = subsystemLogger('tus')
 
@@ -202,15 +212,25 @@ const TOKEN_PPTX_REFUSED =
 
 interface Uploader {
   userId: string
-  /** Authenticated with a personal access token (not a browser session). */
+  /** Authenticated with a token (personal access or upload session), not a browser session. */
   viaToken: boolean
+  /** Authenticated with an upload session token: the session, else null. */
+  session: VerifiedUploadSession | null
 }
 
 async function resolveUploader(
   req: IncomingMessage,
   db: Database,
   app: AppWithAuthOpts,
+  sessions: UploadSessionService,
 ): Promise<Uploader | null> {
+  // An upload session token authenticates here and nowhere else; it is not
+  // a personal access token, so the shared identity resolution ignores it.
+  const sessionToken = readBearerUploadSession(req.headers['authorization'])
+  if (sessionToken !== null) {
+    const session = await sessions.verify(sessionToken)
+    return session === null ? null : { userId: session.userSub, viaToken: true, session }
+  }
   // tus hooks receive the raw IncomingMessage — the same object Fastify
   // handed to tusServer.handle(), so the identity resolved for it (by the
   // rate limiter or an earlier hook of this request) is reused. Resolution
@@ -226,7 +246,7 @@ async function resolveUploader(
   if (result.status !== 'ok') return null
   const { user, auth } = result.identity
   if (auth.kind === 'token' && !hasAnyScope(auth, UPLOAD_TOKEN_SCOPES)) return null
-  return { userId: user.sub, viaToken: auth.kind === 'token' }
+  return { userId: user.sub, viaToken: auth.kind === 'token', session: null }
 }
 
 /**
@@ -259,12 +279,17 @@ async function requireUploadCreatorAndAccess(
   upload: Upload,
   db: Database,
   app: AppWithAuthOpts,
+  sessions: UploadSessionService,
 ): Promise<void> {
-  const uploader = await resolveUploader(req, db, app)
+  const uploader = await resolveUploader(req, db, app, sessions)
   if (!uploader) {
     throw { status_code: 401, body: 'Unauthorized' }
   }
   const { userId } = uploader
+  // An upload session continues only the upload it created.
+  if (uploader.session !== null && uploader.session.uploadId !== upload.id) {
+    throw { status_code: 403, body: 'Forbidden: this upload session belongs to another upload' }
+  }
 
   // (a) creator binding — must match the user who created this upload.
   const creatorUserId = upload.metadata?.[CREATOR_META_KEY] ?? null
@@ -339,6 +364,8 @@ async function requireUploadCreatorAndAccess(
 
 export interface TusPluginOpts {
   db: Database
+  /** Upload session tokens (default: the Postgres-backed service). */
+  uploadSessions?: UploadSessionService
 }
 
 // ---------------------------------------------------------------------------
@@ -386,6 +413,8 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
   const { db } = opts
   const s3 = buildS3Client()
   const appWithAuth = app as AppWithAuthOpts
+  const sessions =
+    opts.uploadSessions ?? createUploadSessionService(createDrizzleUploadSessionStore(db))
 
   // Build S3Store config — bucket is passed inside s3ClientConfig per @tus/s3-store API
   const s3Config = buildS3Config()
@@ -478,7 +507,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       upload: Upload,
     ): Promise<{ res: ServerResponse; metadata?: Upload['metadata'] }> => {
       // 1. Auth
-      const uploader = await resolveUploader(req, db, appWithAuth)
+      const uploader = await resolveUploader(req, db, appWithAuth, sessions)
       if (!uploader) {
         throw { status_code: 401, body: 'Unauthorized' }
       }
@@ -509,6 +538,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           { headers: meta, uploadMetadata: upload.metadata },
           'onUploadCreate: no MIME in metadata',
         )
+      }
+
+      // An upload session uploads into its own deck only.
+      if (uploader.session !== null && deckId !== uploader.session.deckId) {
+        throw { status_code: 403, body: 'Forbidden: this upload session is for another deck' }
       }
 
       // M2: a token uploads media only; decks go through the commands.
@@ -642,6 +676,15 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         throw { status_code: 403, body: 'Forbidden: editor or owner role required to upload' }
       }
 
+      // 5. An upload session is spent on this upload — last, so a refused
+      // attempt leaves it usable. Atomic: a second creation loses.
+      if (uploader.session !== null && !(await sessions.claim(uploader.session, upload.id))) {
+        throw {
+          status_code: 403,
+          body: 'Forbidden: this upload session was already used or has expired',
+        }
+      }
+
       return { res, metadata: persistedMetadata }
     },
 
@@ -669,7 +712,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         // Unknown / unreadable upload id — let tus produce its own 404.
         return
       }
-      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth)
+      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth, sessions)
     },
 
     // -----------------------------------------------------------------------
@@ -706,10 +749,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // the live session user to be the upload's creator AND still hold
       // editor/folder access. (Bypass mode: creator was stored as 'dev-user'
       // and resolveUploader returns 'dev-user', so the check passes.)
-      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth)
+      await requireUploadCreatorAndAccess(req, upload, db, appWithAuth, sessions)
 
       // Auth (may be null if bypass — map to 'unknown' as safety fallback)
-      const userId = (await resolveUploader(req, db, appWithAuth))?.userId ?? 'unknown'
+      const userId = (await resolveUploader(req, db, appWithAuth, sessions))?.userId ?? 'unknown'
 
       // Parse metadata for filename + mime
       const meta = parseMetadata(req.headers['upload-metadata'])

@@ -169,6 +169,13 @@
       "when": 1790541000023,
       "tag": "0023_agent_op_fetched_hosts",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790541000024,
+      "tag": "0024_upload_sessions",
+      "breakpoints": true
     }
   ]
 }

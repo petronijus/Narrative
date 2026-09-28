@@ -6,6 +6,7 @@ import type { FastifyBaseLogger } from 'fastify'
 import type { Hocuspocus } from '@hocuspocus/server'
 import type { AgentRunService } from '@narrative/commands'
 import type { Database } from '../db/client.js'
+import type { UploadSessionService } from '../media/uploadSessions.js'
 
 export interface ServiceDeps {
   db: Database
@@ -35,4 +36,11 @@ export interface ServiceDeps {
    * agent hands to the user (`editor.present.link`). SPA_ORIGIN in index.ts.
    */
   appOrigin?: string
+  /**
+   * Public base URL of the API (PUBLIC_API_URL, mcp/config.ts): where an
+   * agent sends a file with an upload session (`media.uploadSession`).
+   */
+  apiBaseUrl?: string
+  /** Upload session tokens (default: the Postgres-backed service). */
+  uploadSessions?: UploadSessionService
 }

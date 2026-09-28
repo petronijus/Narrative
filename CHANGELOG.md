@@ -4,6 +4,53 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+### Added
+
+- **Snapping can be switched off**: a magnet toggle next to the rulers
+  button in the toolbar (on by default, remembered per browser). Holding
+  ⌘ (macOS) / Ctrl during a drag or a resize inverts it for as long as it
+  is held — with snapping on the object moves freely, with it off it snaps.
+  "Free" means no snapping at all: not to other objects, not to guides and
+  not to the 10 px grid the drag used to fall back to; a free move stays on
+  whole slide pixels. The keyboard-shortcuts cheatsheet (Mod+/) lists the
+  drag modifiers in a new "While dragging" section.
+
+### Changed
+
+- **Drag modifiers act without moving the mouse**: pressing or releasing
+  Shift or ⌘ / Ctrl mid-drag re-applies the frame at once instead of on the
+  next pointer move.
+
+---
+
+## 0.10.10 — Agents upload local files through the editor's upload (2026-09-28)
+
+### Added
+
+- **`media.uploadSession`: an agent with a shell uploads a local picture,
+  video or font** without writing its bytes through the model (which only
+  worked for tiny files as base64). It gets a one-time token and a ready
+  `curl` command that sends the file in one request to the tus upload the
+  editor uses; the answer carries the asset id. The token is stored only as
+  a hash, works for one upload into one deck for 15 minutes (2 hours to
+  finish a started one), authenticates nothing but that upload, and is
+  redacted in the agent audit log. The `basics` playbook points agents at
+  it for local files.
+
+### Internal
+
+- A2.7a: `upload_sessions` table (migration 0024), media/uploadSessions.ts,
+  tus accepts `nus_` bearers (claim-once, deck-bound, media-only);
+  `MediaService.openUploadSession`; the public API base (PUBLIC_API_URL)
+  reaches the services. The agent eval harness can give a scenario files
+  and a shell (`workspace`); new scenario `local-logo-upload`, e2e spec
+  `agent-upload-session` runs the returned curl line for real.
+- MCP tools/list budget 157,000 → 159,000 bytes.
+
+---
+
 ## 0.10.9 — Copy and paste objects through commands (2026-09-28)
 
 ### Added

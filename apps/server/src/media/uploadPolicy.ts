@@ -100,6 +100,43 @@ export function tooLargeMessage(kind: UploadKind): string {
  */
 const SAFE_EXTENSION_RE = /^[a-z0-9]{1,8}$/
 
+/** MIME types of the media extensions an upload may carry, by lower-case extension. */
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  svg: 'image/svg+xml',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  bmp: 'image/bmp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  avi: 'video/x-msvideo',
+  mkv: 'video/x-matroska',
+  mpg: 'video/mpeg',
+  mpeg: 'video/mpeg',
+  '3gp': 'video/3gpp',
+  ogv: 'video/ogg',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
+  woff: 'font/woff',
+  woff2: 'font/woff2',
+}
+
+/** The MIME type a media filename's extension names, or null for an unknown extension. */
+export function mimeFromFilename(filename: string): string | null {
+  const dot = filename.lastIndexOf('.')
+  if (dot === -1) return null
+  return MIME_BY_EXTENSION[filename.slice(dot + 1).toLowerCase()] ?? null
+}
+
 /**
  * Derives a file extension from a MIME type or filename. Always returns a
  * value matching SAFE_EXTENSION_RE: the MIME map's own values do, and a

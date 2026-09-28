@@ -14,6 +14,7 @@ import type {
   ImageVariant,
   MediaService,
   MediaUploadResult,
+  UploadSessionInfo,
   VideoInfo,
 } from '@narrative/commands'
 import { deleteMediaAsset, getFontAsset, getMediaAsset, getVideoAsset } from '../media/assets.js'
@@ -24,6 +25,7 @@ import {
   classifyUpload,
   extensionFromMimeOrFilename,
   maxUploadBytes,
+  mimeFromFilename,
   MAX_FONT_UPLOAD_SIZE,
   MAX_IMAGE_UPLOAD_SIZE,
   MAX_VIDEO_UPLOAD_SIZE,
@@ -35,6 +37,10 @@ import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import type { ServiceDeps } from './deps.js'
 import { ServiceError, forbidden, notFound, tooLarge, unsupportedType } from './errors.js'
 import { requireOwnedFolder } from './shared.js'
+import {
+  createDrizzleUploadSessionStore,
+  createUploadSessionService,
+} from '../media/uploadSessions.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, withBinarySource, type BinaryFile } from './binarySource.js'
 
 // Presigned-URL TTLs (MEDIA-1). The bucket is private; clients reach video
@@ -326,5 +332,54 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     await deleteMediaAsset(db, args.assetId)
   }
 
-  return { upload, videoInfo, url, fontUrl, delete: remove }
+  async function openUploadSession(args: {
+    userId: string
+    deckId: string
+    filename: string
+    mimeType?: string | undefined
+  }): Promise<UploadSessionInfo> {
+    const access = await resolveDeckAccess(db, {
+      deckId: args.deckId,
+      userId: args.userId,
+      shareToken: null,
+    })
+    if (!access) throw notFound('Deck not found')
+    if (!roleAtLeast(access.role, 'editor')) {
+      throw forbidden('Uploading into this deck needs editor access')
+    }
+    const mimeType = args.mimeType ?? mimeFromFilename(args.filename)
+    if (mimeType === null) {
+      throw unsupportedType(
+        `Cannot tell the type of '${args.filename}' from its extension; give mimeType (image/*, video/* or a font)`,
+      )
+    }
+    const kind = classifyUpload(mimeType, args.filename)
+    if (kind === null) {
+      throw unsupportedType(
+        `Unsupported media type: ${mimeType}. An upload session takes images, videos and fonts.`,
+      )
+    }
+    if (deps.apiBaseUrl === undefined) {
+      throw new ServiceError('failed', 500, 'The public API address is not configured')
+    }
+    const sessions =
+      deps.uploadSessions ?? createUploadSessionService(createDrizzleUploadSessionStore(db))
+    const { token, expiresAt } = await sessions.issue({ userSub: args.userId, deckId: args.deckId })
+    const b64 = (v: string): string => Buffer.from(v, 'utf8').toString('base64')
+    return {
+      url: `${deps.apiBaseUrl.replace(/\/+$/, '')}/api/uploads`,
+      token,
+      expiresAt: expiresAt.toISOString(),
+      uploadMetadata: [
+        `deckId ${b64(args.deckId)}`,
+        `filename ${b64(args.filename)}`,
+        `content-type ${b64(mimeType)}`,
+      ].join(','),
+      kind,
+      mimeType,
+      maxBytes: maxUploadBytes(kind),
+    }
+  }
+
+  return { upload, videoInfo, url, fontUrl, delete: remove, openUploadSession }
 }

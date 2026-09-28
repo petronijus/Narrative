@@ -58,7 +58,7 @@ import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@nar
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
 import type { SnapGuide } from '../editor/snap.js'
-import { computeSnap } from '../editor/snap.js'
+import { computeSnap, snapsThisFrame } from '../editor/snap.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { UploadDropZone } from '../ui/UploadDropZone.js'
 import { UploadProgressStack } from '../ui/UploadProgressCard.js'
@@ -67,11 +67,13 @@ import { ZoomControl } from '../ui/ZoomControl.js'
 import { useStageBgColor } from '../state/useStageBgColor.js'
 import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useZoomLevel, MIN_ZOOM, MAX_ZOOM } from '../state/useZoomLevel.js'
-import { useShortcuts } from '../state/useShortcuts.js'
+import { isModHeld, useShortcuts } from '../state/useShortcuts.js'
 import { ShortcutsCheatsheet } from '../ui/ShortcutsCheatsheet.js'
 import { EditorContextMenu } from '../ui/EditorContextMenu.js'
 import { Rulers, GuideOverlay } from '../ui/Rulers.js'
 import { useRulers } from '../state/RulersContext.js'
+import { useSnapping } from '../state/SnappingContext.js'
+import { useDragModifierReplay, type DragPointer } from '../state/useDragModifierReplay.js'
 import { useDeckGuides } from '../state/useDeckGuides.js'
 import { useCommand } from '../state/useCommand.js'
 import { useDefaultObjectFill } from '../state/useDefaultObjectFill.js'
@@ -490,6 +492,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   const { zoom, setZoom, zoomIn, zoomOut, resetZoom } = useZoomLevel()
   // P11: rulers + deck-level guides.
   const { visible: rulersVisible } = useRulers()
+  const { enabled: snappingEnabled } = useSnapping()
   const { guides: deckGuides } = useDeckGuides()
   // Mirror the live guide list into a ref so the pointermove callback's
   // computeSnap(...) call always sees the latest set without forcing a
@@ -1227,6 +1230,120 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     ],
   )
 
+  // ---------------------------------------------------------------------------
+  // Object drag frame
+  // ---------------------------------------------------------------------------
+  //
+  // Deliberately NOT object.move (which the nudge and the Inspector's
+  // X/Y use): every frame writes ABSOLUTE positions derived from the
+  // frozen pointer-down snapshot (`initialPositions`) with
+  // `object.update`, whose crop rule carries a cropped picture along
+  // by the frame's change against the live value. That makes each
+  // frame idempotent — snapping can pull the selection back and forth
+  // without drift, and a modifier change can replay the frame with the
+  // pointer standing still (`useDragModifierReplay`) — whereas
+  // object.move adds a delta to the live value, so a per-frame delta
+  // would have to be computed against positions this closure only sees
+  // a render late. The write stays one command (one LOCAL_ORIGIN
+  // transaction, one Yjs update per frame for the whole selection at
+  // 60 Hz), and the frames merge into one undo step in the undo
+  // manager's capture window, exactly as before.
+  const dragObjectsFrame = useCallback(
+    (pointer: DragPointer) => {
+      const drag = dragRef.current
+      if (drag === null || !drag.active) return
+      const writePositions = (positions: ReadonlyArray<{ id: string; x: number; y: number }>) => {
+        command.tryRun('object.update', {
+          slide: drag.slideId,
+          updates: positions.map((p) => ({ object: p.id, patch: { x: p.x, y: p.y } })),
+        })
+      }
+
+      // Pointer deltas are screen-px; divide by the current CSS zoom to
+      // recover a slide-space delta so the object tracks the cursor 1:1
+      // at any zoom level.
+      const z = zoomRef.current || 1
+      let dx = (pointer.clientX - drag.startX) / z
+      let dy = (pointer.clientY - drag.startY) / z
+
+      // Shift constrains the move to the dominant axis. Applies to plain
+      // drags AND alt-duplicate drags (the duplicate is created on
+      // pointerdown, this branch only moves it).
+      if (pointer.shiftKey) {
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          dy = 0
+        } else {
+          dx = 0
+        }
+      }
+
+      // Snapping off for this frame (the toolbar toggle, or ⌘ / Ctrl held
+      // against it): the selection follows the pointer freely — no
+      // object, guide or grid snap — in whole slide px, so a free drag
+      // does not scatter sub-pixel coordinates through the document.
+      if (!snapsThisFrame(snappingEnabled, isModHeld(pointer))) {
+        setSnapGuides([])
+        const stepX = Math.round(dx)
+        const stepY = Math.round(dy)
+        writePositions(
+          drag.initialPositions.map((init) => ({
+            id: init.id,
+            x: init.x + stepX,
+            y: init.y + stepY,
+          })),
+        )
+        return
+      }
+
+      // Propose new positions
+      const proposed = drag.initialPositions.map((init) => ({
+        id: init.id,
+        x: init.x + dx,
+        y: init.y + dy,
+      }))
+
+      // Snap (použijeme bounds prvního objektu pro jednoduchost u group)
+      const firstProposed = proposed[0]
+      if (firstProposed !== undefined) {
+        const firstObj = objects.find((o) => o.id === firstProposed.id)
+        if (firstObj !== undefined) {
+          const otherBounds = objects
+            .filter((o) => !drag.objectIds.includes(o.id))
+            .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
+
+          const snapResult = computeSnap(
+            {
+              x: firstProposed.x,
+              y: firstProposed.y,
+              width: firstObj.width,
+              height: firstObj.height,
+            },
+            otherBounds,
+            10,
+            6,
+            // P11: deck-level guides feed in as extra snap targets. Read
+            // from the ref so the closure always reflects the current set.
+            deckGuidesRef.current.map((g) => ({
+              orientation: g.orientation,
+              position: g.position,
+            })),
+          )
+
+          setSnapGuides(snapResult.guides)
+
+          writePositions(
+            proposed.map((p) => ({ id: p.id, x: p.x + snapResult.dx, y: p.y + snapResult.dy })),
+          )
+          return
+        }
+      }
+
+      writePositions(proposed)
+    },
+    [command, objects, snappingEnabled],
+  )
+  const dragModifierReplay = useDragModifierReplay(dragObjectsFrame)
+
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // Hand-tool pan — scroll the backdrop instead of moving objects.
@@ -1367,94 +1484,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
         }
         return
       }
-      // Object drag
-      //
-      // Deliberately NOT object.move (which the nudge and the Inspector's
-      // X/Y use): every pointermove writes ABSOLUTE positions derived from
-      // the frozen pointer-down snapshot (`initialPositions`) with
-      // `object.update`, whose crop rule carries a cropped picture along
-      // by the frame's change against the live value. That makes each
-      // frame idempotent — snapping can pull the selection back and forth
-      // without drift — whereas object.move adds a delta to the live
-      // value, so a per-frame delta would have to be computed against
-      // positions this closure only sees a render late. The write stays
-      // one command (one LOCAL_ORIGIN transaction, one Yjs update per
-      // frame for the whole selection at 60 Hz), and the frames merge
-      // into one undo step in the undo manager's capture window, exactly
-      // as before.
-      const drag = dragRef.current
-      if (drag === null || !drag.active) return
-      const writePositions = (positions: ReadonlyArray<{ id: string; x: number; y: number }>) => {
-        command.tryRun('object.update', {
-          slide: drag.slideId,
-          updates: positions.map((p) => ({ object: p.id, patch: { x: p.x, y: p.y } })),
-        })
-      }
-
-      // Pointer deltas are screen-px; divide by the current CSS zoom to
-      // recover a slide-space delta so the object tracks the cursor 1:1
-      // at any zoom level.
-      const z = zoomRef.current || 1
-      let dx = (e.clientX - drag.startX) / z
-      let dy = (e.clientY - drag.startY) / z
-
-      // Shift constrains the move to the dominant axis. Applies to plain
-      // drags AND alt-duplicate drags (the duplicate is created on
-      // pointerdown, this branch only moves it).
-      if (e.shiftKey) {
-        if (Math.abs(dx) >= Math.abs(dy)) {
-          dy = 0
-        } else {
-          dx = 0
-        }
-      }
-
-      // Propose new positions
-      const proposed = drag.initialPositions.map((init) => ({
-        id: init.id,
-        x: init.x + dx,
-        y: init.y + dy,
-      }))
-
-      // Snap (použijeme bounds prvního objektu pro jednoduchost u group)
-      const firstProposed = proposed[0]
-      if (firstProposed !== undefined) {
-        const firstObj = objects.find((o) => o.id === firstProposed.id)
-        if (firstObj !== undefined) {
-          const otherBounds = objects
-            .filter((o) => !drag.objectIds.includes(o.id))
-            .map((o) => ({ id: o.id, x: o.x, y: o.y, width: o.width, height: o.height }))
-
-          const snapResult = computeSnap(
-            {
-              x: firstProposed.x,
-              y: firstProposed.y,
-              width: firstObj.width,
-              height: firstObj.height,
-            },
-            otherBounds,
-            10,
-            6,
-            // P11: deck-level guides feed in as extra snap targets. Read
-            // from the ref so the closure always reflects the current set.
-            deckGuidesRef.current.map((g) => ({
-              orientation: g.orientation,
-              position: g.position,
-            })),
-          )
-
-          setSnapGuides(snapResult.guides)
-
-          writePositions(
-            proposed.map((p) => ({ id: p.id, x: p.x + snapResult.dx, y: p.y + snapResult.dy })),
-          )
-          return
-        }
-      }
-
-      writePositions(proposed)
+      // Object drag — see `dragObjectsFrame`.
+      if (dragRef.current?.active !== true) return
+      dragModifierReplay.track(e)
+      dragObjectsFrame(e)
     },
-    [command, objects, setCursor, setTableCellRange],
+    [objects, setCursor, setTableCellRange, dragObjectsFrame, dragModifierReplay],
   )
 
   const handlePointerUp = useCallback(
@@ -1614,6 +1649,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       }
 
       dragRef.current = null
+      dragModifierReplay.end()
       setSnapGuides([])
     },
     [
@@ -2708,7 +2744,11 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       <UploadProgressStack />
 
       {/* P9: Keyboard shortcuts cheatsheet — triggered by Mod+/ */}
-      <ShortcutsCheatsheet open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
+      <ShortcutsCheatsheet
+        open={cheatsheetOpen}
+        onClose={() => setCheatsheetOpen(false)}
+        dragModifiers
+      />
 
       {/* Agentic A1: an agent's `editor.show` parked while the user edits. */}
       <EditorShowNotice

@@ -55,6 +55,22 @@ describe('redactForAudit', () => {
     expect(out['b']).toBe('QUJD')
   })
 
+  it('removes the secret of Narrative tokens, also inside a command line', () => {
+    const token = `nus_${'Ab9_-'.repeat(8)}xyz`
+    const out = redactForAudit({
+      headers: { Authorization: `Bearer ${token}` },
+      curl: `curl -X POST 'https://x/api/api/uploads' -H 'Authorization: Bearer ${token}' --data-binary @"$FILE"`,
+      pat: 'nrt_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+    }) as Record<string, unknown>
+    expect(JSON.stringify(out)).not.toContain(token)
+    expect((out['headers'] as Record<string, string>)['Authorization']).toBe(
+      'Bearer nus_[redacted]',
+    )
+    expect(out['curl']).toContain("'Authorization: Bearer nus_[redacted]'")
+    expect(out['curl']).toContain('--data-binary @"$FILE"')
+    expect(out['pat']).toBe('nrt_[redacted]')
+  })
+
   it('never treats long prose as base64', () => {
     const prose = 'word '.repeat(400)
     expect(redactForAudit({ text: prose })).toEqual({ text: prose })

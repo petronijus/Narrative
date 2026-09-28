@@ -56,6 +56,7 @@ import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider, useDeckRole } from '../state/DeckRoleContext.js'
 import { MediaUploadProvider } from '../state/useMediaUpload.js'
 import { RulersProvider } from '../state/RulersContext.js'
+import { SnappingProvider } from '../state/SnappingContext.js'
 import {
   FolderDocProvider,
   useFolderTokens,
@@ -365,17 +366,19 @@ export function DeckShell() {
               <ActiveSlideProvider>
                 <MediaUploadProvider deckId={id}>
                   <RulersProvider>
-                    <CanvasInstanceContext value={canvasInstance}>
-                      {/* Propagates folder text-style token edits onto
-                        every linked TextObject in this deck, skipping
-                        per-object override fields. */}
-                      <TextStylePropagator />
-                      <Outlet
-                        context={
-                          { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
-                        }
-                      />
-                    </CanvasInstanceContext>
+                    <SnappingProvider>
+                      <CanvasInstanceContext value={canvasInstance}>
+                        {/* Propagates folder text-style token edits onto
+                          every linked TextObject in this deck, skipping
+                          per-object override fields. */}
+                        <TextStylePropagator />
+                        <Outlet
+                          context={
+                            { onCanvasReady: handleCanvasReady } satisfies DeckShellContextValue
+                          }
+                        />
+                      </CanvasInstanceContext>
+                    </SnappingProvider>
                   </RulersProvider>
                 </MediaUploadProvider>
               </ActiveSlideProvider>

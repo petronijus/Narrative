@@ -945,6 +945,132 @@ describe('tus upload with a personal access token', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Tests: upload session tokens (media.uploadSession, agentic A2.7a)
+// ---------------------------------------------------------------------------
+
+describe('tus upload with an upload session token', () => {
+  async function buildSessionApp() {
+    const { createUploadSessionService } = await import('./uploadSessions.js')
+    const { createMemoryUploadSessionStore } =
+      await import('../test-support/memoryUploadSessionStore.js')
+    const store = createMemoryUploadSessionStore()
+    const sessions = createUploadSessionService(store)
+    capturedTusOptions = {}
+    const app = Fastify({ logger: false })
+    const db = {} as unknown as Database
+    registerAuthPlugin(app, { bypass: false, db })
+    registerTusPlugin(app, { db, uploadSessions: sessions })
+    await app.ready()
+    return { app, sessions, store }
+  }
+
+  const create = () => capturedTusOptions['onUploadCreate'] as OnUploadCreate
+  const incoming = () => capturedTusOptions['onIncomingRequest'] as OnIncomingRequest
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+  })
+
+  it('creates one media upload in its deck as its user, and is spent by it', async () => {
+    const { sessions, store } = await buildSessionApp()
+    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    const req = () =>
+      buildRequest({
+        authHeader: `Bearer ${token}`,
+        uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+      })
+    const result = await create()(req(), buildResponse(), {
+      id: 'a1:deck-1:key',
+      metadata: { deckId: 'deck-1' },
+    })
+    expect(result).toMatchObject({
+      metadata: expect.objectContaining({ creatorUserId: 'agent-user' }),
+    })
+    expect(store.rows[0]!.uploadId).toBe('a1:deck-1:key')
+    // A second upload with the same token is refused: the session is spent.
+    await expect(
+      create()(req(), buildResponse(), { id: 'a2:deck-1:key', metadata: { deckId: 'deck-1' } }),
+    ).rejects.toMatchObject({ status_code: 403 })
+    expect(store.rows[0]!.uploadId).toBe('a1:deck-1:key')
+  })
+
+  it('refuses another deck, a .pptx and a non-media type, and stays usable after a refusal', async () => {
+    const { sessions, store } = await buildSessionApp()
+    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    const attempt = (deckId: string, type: string) =>
+      create()(
+        buildRequest({
+          authHeader: `Bearer ${token}`,
+          uploadMetadata: tusMetadata({ deckId, 'content-type': type }),
+        }),
+        buildResponse(),
+        { id: `x:${deckId}:key`, metadata: { deckId } },
+      )
+    await expect(attempt('deck-2', 'image/png')).rejects.toMatchObject({ status_code: 403 })
+    await expect(
+      attempt(
+        'deck-1',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      ),
+    ).rejects.toMatchObject({ status_code: 403 })
+    await expect(attempt('deck-1', 'text/html')).rejects.toMatchObject({ status_code: 415 })
+    expect(store.rows[0]!.uploadId).toBeNull()
+    await expect(attempt('deck-1', 'image/jpeg')).resolves.toBeDefined()
+  })
+
+  it('continues only the upload it created', async () => {
+    const { sessions } = await buildSessionApp()
+    const { token } = await sessions.issue({ userSub: 'agent-user', deckId: 'deck-1' })
+    await create()(
+      buildRequest({
+        authHeader: `Bearer ${token}`,
+        uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+      }),
+      buildResponse(),
+      { id: 'mine:deck-1:key', metadata: { deckId: 'deck-1' } },
+    )
+    const stored = (id: string) => ({
+      id,
+      metadata: { creatorUserId: 'agent-user', deckId: 'deck-1', 'content-type': 'image/png' },
+    })
+    mockStoredUpload = stored('mine:deck-1:key')
+    await expect(
+      incoming()(
+        buildRequest({ method: 'PATCH', authHeader: `Bearer ${token}` }),
+        buildResponse(),
+        'mine:deck-1:key',
+      ),
+    ).resolves.toBeUndefined()
+    mockStoredUpload = stored('other:deck-1:key')
+    await expect(
+      incoming()(
+        buildRequest({ method: 'PATCH', authHeader: `Bearer ${token}` }),
+        buildResponse(),
+        'other:deck-1:key',
+      ),
+    ).rejects.toMatchObject({ status_code: 403 })
+  })
+
+  it('refuses an unknown or malformed session token', async () => {
+    await buildSessionApp()
+    for (const bad of [`nus_${'A'.repeat(43)}`, 'nus_short']) {
+      await expect(
+        create()(
+          buildRequest({
+            authHeader: `Bearer ${bad}`,
+            uploadMetadata: tusMetadata({ deckId: 'deck-1', 'content-type': 'image/png' }),
+          }),
+          buildResponse(),
+          { id: 'x:deck-1:key', metadata: { deckId: 'deck-1' } },
+        ),
+      ).rejects.toMatchObject({ status_code: 401 })
+    }
+  })
+})
+
 describe('tokenMayUpload', () => {
   it('allows images, videos and fonts only', () => {
     expect(tokenMayUpload('image/png')).toBe(true)

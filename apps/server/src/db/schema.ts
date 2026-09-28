@@ -495,6 +495,36 @@ export const personalAccessTokens = pgTable(
 )
 
 /**
+ * A one-time credential for ONE media upload into ONE deck through the tus
+ * server (`media.uploadSession`, agentic A2.7a): an agent with a shell sends
+ * a local file with curl instead of writing its bytes out as base64. The raw
+ * token (`nus_…`) is shown once and stored only as its SHA-256; it is valid
+ * for a few minutes, for media (image, video, font) only, and is bound to the
+ * first upload it creates (`upload_id`), which it may then only continue.
+ */
+export const uploadSessions = pgTable(
+  'upload_sessions',
+  {
+    id: text('id').primaryKey(),
+    /** SHA-256 hex of the raw token. */
+    tokenHash: text('token_hash').notNull(),
+    /** Who the upload is for: the user the agent acts as. */
+    userSub: text('user_sub').notNull(),
+    deckId: text('deck_id')
+      .notNull()
+      .references(() => decks.id, { onDelete: 'cascade' }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** The tus upload the session created; null until it creates one. */
+    uploadId: text('upload_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('upload_sessions_token_hash_idx').on(t.tokenHash),
+    index('upload_sessions_expires_at_idx').on(t.expiresAt),
+  ],
+)
+
+/**
  * One agent run: one MCP session's (or API client's) work on one deck, the
  * unit of attribution and of revert. Every write of the run uses
  * `agentOrigin(id)` as its Yjs transaction origin.

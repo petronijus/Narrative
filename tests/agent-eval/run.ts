@@ -216,7 +216,9 @@ async function runScenarioOnce(
     outcome = { ...outcome, fixture }
     await scenario.prepare?.(env.world, fixture, notes)
     const steps = scenario.steps(fixture)
+    const workspace = scenario.workspace?.(fixture)
     const agent = await runAgent({
+      ...(workspace === undefined ? {} : { files: workspace.files, shell: workspace.shell }),
       mcpUrl: `${env.opts.apiUrl}/mcp`,
       mcpToken: env.mcpToken,
       model: env.opts.model,

@@ -185,6 +185,14 @@ export interface Scenario<F extends Fixture = Fixture> {
    * live-only.
    */
   replay: true | { reason: string }
+  /**
+   * The agent's working directory, for scenarios about local files: files
+   * put there before the first prompt (name → bytes), and whether the agent
+   * may use a shell (Bash, in that temporary directory only) — Claude Code's
+   * situation on a user's machine. Without it the agent has only the MCP
+   * tools.
+   */
+  workspace?(fixture: F): { files: Record<string, Uint8Array>; shell: boolean }
   setup(world: World): Promise<F>
   /** After setup, before the first prompt (e.g. open the editor). */
   prepare?(world: World, fixture: F, notes: Notes): Promise<void>

@@ -28,10 +28,13 @@ import type { SceneGraph } from '../renderer/SceneGraph.js'
 import type { ObjectBounds } from '../renderer/types.js'
 import { resizeFromHandle } from '@narrative/commands'
 import type { SlideObject } from '@narrative/shared'
-import { computeSnap, type SnapGuideTarget } from '../editor/snap.js'
+import { computeSnap, snapsThisFrame, type SnapGuideTarget } from '../editor/snap.js'
 import { useCommand } from '../state/useCommand.js'
 import type { SnapGuide } from '../editor/snap.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useSnapping } from '../state/SnappingContext.js'
+import { isModHeld } from '../state/useShortcuts.js'
+import { useDragModifierReplay, type DragPointer } from '../state/useDragModifierReplay.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -217,6 +220,7 @@ export function TransformHandles({
   const dragRef = useRef<DragState | null>(null)
   const [, forceUpdate] = useState(0)
   const { zoom } = useZoomLevel()
+  const { enabled: snappingEnabled } = useSnapping()
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   // Invert-scale for handle chrome so TL/BR dots, the selection outline
@@ -301,8 +305,12 @@ export function TransformHandles({
     [objectIds, sceneGraph, objects],
   )
 
-  const handlePointerMove = useCallback(
-    (e: PointerEvent) => {
+  // One frame of a handle drag. Absolute from the pointer-down snapshot
+  // (the multi-select move tracks what it already applied), so
+  // `useDragModifierReplay` can re-run it when Shift or ⌘ / Ctrl changes
+  // with the pointer standing still.
+  const dragFrame = useCallback(
+    (e: DragPointer) => {
       const drag = dragRef.current
       if (drag === null) return
 
@@ -367,14 +375,18 @@ export function TransformHandles({
           lockAspect,
         )
 
-        // Snap
-        const snapResult = computeSnap(
-          { x: newRect.x, y: newRect.y, width: newRect.width, height: newRect.height },
-          otherBounds,
-          10,
-          6,
-          extraGuides,
-        )
+        // Snap — unless snapping is off for this frame (the toolbar
+        // toggle, or ⌘ / Ctrl held against it): then the box follows the
+        // handle freely, with no object, guide or grid snap.
+        const snapResult = snapsThisFrame(snappingEnabled, isModHeld(e))
+          ? computeSnap(
+              { x: newRect.x, y: newRect.y, width: newRect.width, height: newRect.height },
+              otherBounds,
+              10,
+              6,
+              extraGuides,
+            )
+          : { dx: 0, dy: 0, guides: [] }
 
         const snappedX = newRect.x + snapResult.dx
         const snappedY = newRect.y + snapResult.dy
@@ -413,13 +425,24 @@ export function TransformHandles({
       // Force re-render aby handles sledovaly novou pozici
       forceUpdate((n) => n + 1)
     },
-    [command, slideId, otherBounds, onSnapGuides, extraGuides, forceAspectLock],
+    [command, slideId, otherBounds, onSnapGuides, extraGuides, forceAspectLock, snappingEnabled],
+  )
+  const dragModifierReplay = useDragModifierReplay(dragFrame)
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (dragRef.current === null) return
+      dragModifierReplay.track(e)
+      dragFrame(e)
+    },
+    [dragFrame, dragModifierReplay],
   )
 
   const handlePointerUp = useCallback(() => {
     dragRef.current = null
+    dragModifierReplay.end()
     onSnapGuides?.([])
-  }, [onSnapGuides])
+  }, [onSnapGuides, dragModifierReplay])
 
   // Global pointermove/pointerup pro drag (capture na handle elementu)
   useEffect(() => {

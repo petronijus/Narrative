@@ -15,6 +15,8 @@ import { requireServices } from '../services.js'
 import {
   DELETE,
   FileSourceSchema,
+  FilenameSchema,
+  MimeHintSchema,
   GET,
   IdSchema,
   serverCommand,
@@ -230,4 +232,82 @@ export const mediaDelete = defineCommand({
   },
 })
 
-export const mediaCommands = [mediaUpload, mediaStatus, mediaUrl, mediaFontUrl, mediaDelete]
+/** Single quotes for a POSIX shell word (the token and metadata are base64url / base64 anyway). */
+const shellQuote = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`
+
+export const mediaUploadSession = defineCommand({
+  ...media,
+  id: 'media.uploadSession',
+  title: 'Upload a local file (shell)',
+  description:
+    'For an agent with a shell (Claude Code): upload a LOCAL image, video or font file into the deck without ' +
+    'sending its bytes through you. Returns a one-time upload URL, token and a ready `curl` command: set FILE to ' +
+    "the file's path and run it; its JSON answer carries the new assetId (then place it with object.create). " +
+    'The token uploads one file into this deck only and must be used within 15 minutes; the file gets the same ' +
+    'checks as an editor upload (images up to 25 MB, videos 500 MB, fonts 8 MB). `filename` names the file (its ' +
+    'extension gives the type unless `mimeType` does). Without a shell, use media.upload with a URL or base64.',
+  input: z.strictObject({ filename: FilenameSchema, mimeType: MimeHintSchema.optional() }),
+  output: z.object({
+    url: z.string().describe('The tus upload endpoint'),
+    method: z.literal('POST'),
+    headers: z
+      .record(z.string(), z.string())
+      .describe('Request headers besides Upload-Length (the file size in bytes)'),
+    curl: z.string().describe('The whole request as a shell command; set FILE first'),
+    expiresAt: z.string().describe('Start the upload before this time (ISO 8601)'),
+    kind: z.enum(['image', 'video', 'font']),
+    maxBytes: z.number(),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  undo: 'n/a',
+  confirm: 'never',
+  // The upload itself is the tus endpoint media.upload's routes already name.
+  examples: [
+    { title: 'Upload a logo from the working directory', input: { filename: 'logo.png' } },
+    {
+      title: 'Upload a clip whose name has no usable extension',
+      input: { filename: 'intro-final', mimeType: 'video/mp4' },
+    },
+  ],
+  async handler(ctx, input) {
+    const session = await requireServices(ctx).media.openUploadSession({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+      filename: input.filename,
+      mimeType: input.mimeType,
+    })
+    const headers = {
+      Authorization: `Bearer ${session.token}`,
+      'Tus-Resumable': '1.0.0',
+      'Upload-Metadata': session.uploadMetadata,
+      'Content-Type': 'application/offset+octet-stream',
+    }
+    const curl = [
+      `FILE=${shellQuote(`./${input.filename}`)};`,
+      'curl -sS --fail-with-body -X POST',
+      shellQuote(session.url),
+      ...Object.entries(headers).map(([k, v]) => `-H ${shellQuote(`${k}: ${v}`)}`),
+      `-H "Upload-Length: $(wc -c < "$FILE" | tr -d ' ')"`,
+      '--data-binary @"$FILE"',
+    ].join(' ')
+    return {
+      url: session.url,
+      method: 'POST' as const,
+      headers,
+      curl,
+      expiresAt: session.expiresAt,
+      kind: session.kind,
+      maxBytes: session.maxBytes,
+    }
+  },
+})
+
+export const mediaCommands = [
+  mediaUpload,
+  mediaUploadSession,
+  mediaStatus,
+  mediaUrl,
+  mediaFontUrl,
+  mediaDelete,
+]

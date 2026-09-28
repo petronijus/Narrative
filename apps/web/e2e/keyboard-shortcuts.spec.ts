@@ -562,3 +562,155 @@ test.describe('Canvas object shortcuts', () => {
     expect(await objectState(page, 'alt-src')).toEqual({ x: 600, y: 300 })
   })
 })
+
+// ---------------------------------------------------------------------------
+// Snapping: toolbar toggle + ⌘ / Ctrl held during a drag
+// ---------------------------------------------------------------------------
+
+/**
+ * An anchor to snap against and a small mover below it. The mover's left
+ * edge is dragged to 4 slide px right of the anchor's left edge (x 600):
+ * inside the 6 px snap threshold, and off the 10 px grid, so a snapped
+ * drag lands on exactly 600 and a free one near 604.
+ */
+async function setUpSnapScene(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const api = window.__narrative_test_api!
+    api.addRect({ id: 'snap-anchor', x: 600, y: 200, w: 300, h: 200, fill: 0x3366ff })
+    api.addRect({ id: 'snap-mover', x: 200, y: 600, w: 200, h: 100, fill: 0xff6633 })
+  })
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            window.__narrative_test_api!.sceneGraphHasMountedNode('snap-anchor') &&
+            window.__narrative_test_api!.sceneGraphHasMountedNode('snap-mover'),
+        ),
+      { timeout: 10_000 },
+    )
+    .toBe(true)
+}
+
+/** Press the mover and carry it so its left edge would sit at x 604. */
+async function pressAndCarryMover(page: Page): Promise<void> {
+  const from = await slideToViewport(page, 300, 650)
+  const to = await slideToViewport(page, 704, 650)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 8 })
+}
+
+const FREE_X = 604
+
+test.describe('Snapping', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 })
+  })
+
+  test('holding Mod frees a drag from snapping; without it the drag snaps', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await setUpSnapScene(page)
+
+    await pressAndCarryMover(page)
+    await page.mouse.up()
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 600, y: 600 })
+
+    // Back to the start, then the same drag with Mod held throughout.
+    await page.evaluate(() =>
+      window.__narrative_test_api!.updateObject('snap-mover', { x: 200, y: 600 }),
+    )
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 200, y: 600 })
+    await page.keyboard.down('ControlOrMeta')
+    await pressAndCarryMover(page)
+    await page.mouse.up()
+    await page.keyboard.up('ControlOrMeta')
+    const free = await objectState(page, 'snap-mover')
+    expect(Math.abs(free!.x - FREE_X)).toBeLessThanOrEqual(2)
+    expect(free!.x).not.toBe(600)
+    // Whole slide px — a free drag does not leave sub-pixel coordinates.
+    expect(Number.isInteger(free!.x)).toBe(true)
+  })
+
+  test('Mod acts live: pressing and releasing it mid-drag re-applies the frame', async ({
+    page,
+  }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await setUpSnapScene(page)
+
+    await pressAndCarryMover(page)
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 600, y: 600 })
+
+    // The pointer stands still; only the modifier changes.
+    await page.keyboard.down('ControlOrMeta')
+    await expect
+      .poll(async () => Math.abs((await objectState(page, 'snap-mover'))!.x - FREE_X))
+      .toBeLessThanOrEqual(2)
+    await page.keyboard.up('ControlOrMeta')
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 600, y: 600 })
+
+    await page.mouse.up()
+  })
+
+  test('the toolbar toggle turns snapping off, and Mod then snaps', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await setUpSnapScene(page)
+
+    const toggle = page.getByTestId('toolbar-snapping')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+
+    await pressAndCarryMover(page)
+    await page.mouse.up()
+    const free = await objectState(page, 'snap-mover')
+    expect(Math.abs(free!.x - FREE_X)).toBeLessThanOrEqual(2)
+    expect(free!.x).not.toBe(600)
+
+    await page.evaluate(() =>
+      window.__narrative_test_api!.updateObject('snap-mover', { x: 200, y: 600 }),
+    )
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 200, y: 600 })
+    await page.keyboard.down('ControlOrMeta')
+    await pressAndCarryMover(page)
+    await page.mouse.up()
+    await page.keyboard.up('ControlOrMeta')
+    await expect.poll(() => objectState(page, 'snap-mover')).toEqual({ x: 600, y: 600 })
+
+    // The preference outlives a reload.
+    await page.reload()
+    await expect(page.getByTestId('toolbar-snapping')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('a resize with Mod held follows the handle without snapping', async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+    await setUpSnapScene(page)
+    await selectWhenKnown(page, ['snap-mover'])
+
+    // Bottom-right handle from the mover's right edge (400) to 904 — 4 px
+    // past the anchor's right edge (900), inside the snap threshold.
+    const handle = page.getByLabel('Resize bottom-right handle')
+    const box = (await handle.boundingBox())!
+    const to = await slideToViewport(page, 904, 700)
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 8 })
+    await page.mouse.up()
+    await page.keyboard.up('ControlOrMeta')
+
+    const o = await page.evaluate(() => window.__narrative_test_api!.getObject('snap-mover'))
+    // The box keeps its origin; only the dragged edge moved, freely.
+    expect(o!['x']).toBe(200)
+    expect(o!['y']).toBe(600)
+    expect(Math.abs((o!['x'] as number) + (o!['width'] as number) - 904)).toBeLessThanOrEqual(2)
+  })
+})

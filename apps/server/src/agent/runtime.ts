@@ -144,6 +144,8 @@ export interface AgentRuntimeOptions {
   hocuspocus: Hocuspocus
   /** Public origin of the web app, for links handed to users. */
   appOrigin: string
+  /** Public base URL of the API, for upload sessions agents send files to. */
+  apiBaseUrl?: string
   /**
    * Keys identifying whom an agent peer works for (agent/presence.ts), MACed
    * with AGENT_PRINCIPAL_KEY_SECRET. The same instance must go to the
@@ -235,6 +237,7 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     hocuspocus: () => opts.hocuspocus,
     runs,
     appOrigin: opts.appOrigin,
+    ...(opts.apiBaseUrl === undefined ? {} : { apiBaseUrl: opts.apiBaseUrl }),
   })
   const confirmations = new AgentConfirmations()
   const host = new ServerHost({

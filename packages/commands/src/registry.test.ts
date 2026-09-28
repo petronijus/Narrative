@@ -131,6 +131,7 @@ describe('commandTargetProblems', () => {
       'media.delete',
       'media.status',
       'media.upload',
+      'media.uploadSession',
       'media.url',
       'object.insertFromDeck',
       'share.invites.cancel',

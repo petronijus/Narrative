@@ -42,8 +42,9 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A2.7 (2026-09-28): 152,000 → 157,000 for object.copyTo 1.7 KB,
  * object.insert 2.3 and object.insertFromDeck 2.2 (the clipboard's three
  * paste paths; their example objects are what makes them this size).
+ * A2.7a (2026-09-28): 157,000 → 159,000 for media.uploadSession.
  */
-export const TOOL_LIST_BUDGET_BYTES = 157_000
+export const TOOL_LIST_BUDGET_BYTES = 159_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

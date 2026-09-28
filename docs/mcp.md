@@ -282,6 +282,29 @@ hand-written:
 Every call runs through the ServerHost (`agent/serverHost.ts`) with the session's user,
 `surface: 'mcp'` and the session's current run.
 
+## Local files: upload sessions
+
+MCP carries a file only as `{ url }` (a public address the server downloads) or
+`{ base64 }` the model writes out itself — fine for an icon, hopeless for a photo. An
+agent with a shell (Claude Code) calls **`media_uploadSession`** instead: it returns a
+one-time bearer token (`nus_…`) and a ready `curl` line that sends the file in ONE
+request to the tus upload the editor uses (`POST <PUBLIC_API_URL>/api/uploads`, tus
+creation-with-upload; the answer is the asset JSON). The file gets the editor's checks
+(media/finalizeUpload.ts).
+
+The token (media/uploadSessions.ts, table `upload_sessions`, migration 0024):
+
+- is stored only as its SHA-256; the raw value appears once, in the command result;
+  the audit log keeps `nus_[redacted]` (agent/opRedaction.ts, also inside the curl line);
+- authenticates tus requests only — it is not a personal access token, every other
+  route ignores it;
+- uploads media (image, video, font) into its own deck, as the user who asked, who must
+  still be an editor there;
+- must start its upload within 15 minutes, is bound to that upload (an atomic claim —
+  a second upload with the token is refused) and may continue it for 2 hours more.
+
+No confirmation: the token can only put a file into the user's own deck.
+
 ## Confirmation
 
 Two kinds of call never run without the user:
