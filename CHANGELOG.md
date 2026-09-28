@@ -4,6 +4,27 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.5 — Guides write through commands (2026-09-28)
+
+### Fixed
+
+- **"Delete guide" in a guide's right-click menu did nothing when clicked**
+  (the keyboard worked). The menu renders in a portal, but React bubbled its
+  pointer events up to the guide line — which started a drag — and on to
+  the canvas, which captured the pointer so the item never got its click.
+  The menu now keeps its pointer events to itself.
+
+### Internal
+
+- A2.3: the rulers and guide lines write only through `guide.add`,
+  `guide.update` and `guide.remove` (the commands agents use); dragged
+  positions are clamped to the slide; `useDeckGuides` is read-only. Off the
+  one-door exemption list (23 files left).
+- New e2e `guides.spec.ts`: drag a guide out of each ruler, move it, drag it
+  off the slide, delete one from its menu — read back from the document.
+
+---
+
 ## 0.10.4 — Connecting Claude Code over OAuth, really (2026-09-28)
 
 ### Fixed

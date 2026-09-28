@@ -144,5 +144,11 @@ after the mechanism has been proven on simpler surfaces.
     `slides-outline-nest` (recorded, replay free) and `deck-duplicate-named`
     (live only). The replay guard now fails when a replayable scenario has
     no recording.
+- 2026-09-28: **A2.3 done** — `Rulers` / `GuideOverlay` write through
+  `guide.add` / `.update` / `.remove`; `useDeckGuides` is read-only. Found on
+  the way: "Delete guide" in a guide's context menu did nothing with the
+  mouse (React bubbled the portal's pointer events to the line's drag
+  handler and the canvas, which captured the pointer); new e2e
+  `guides.spec.ts` covers drag-out, move, drag-off and the menu.
   - tools/list budget 132,000 → 136,000 bytes; A2 will keep adding ~1–1.3 KB
     per new command.

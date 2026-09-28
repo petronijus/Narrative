@@ -385,7 +385,14 @@ export function GuideOverlay({ guides, slideWidth, slideHeight }: GuideOverlayPr
                 }}
               />
             </ContextMenuTrigger>
-            <ContextMenuContent>
+            {/* The menu renders in a portal, but React still bubbles its
+                pointer events up this component tree — to the line's drag
+                handler and on to the canvas, which captures the pointer and
+                keeps the item from ever seeing its click. They stop here. */}
+            <ContextMenuContent
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+            >
               <ContextMenuItem
                 onSelect={() => command.tryRun('guide.remove', { guides: [g.id] })}
                 className="text-red-500 focus:text-red-500"
