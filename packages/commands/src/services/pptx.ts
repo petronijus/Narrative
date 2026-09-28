@@ -28,6 +28,11 @@ export type SlideInsertSource =
       deckId: string
       /** 0-based, inclusive range of source slides; `from` defaults to 0, `to` to the last slide. */
       range?: { from?: number | undefined; to?: number | undefined } | undefined
+      /**
+       * Exactly these source slides (ids), taken in their order in the source
+       * deck — instead of `range`. Every id must exist there.
+       */
+      slideIds?: readonly string[] | undefined
     }
 
 export interface SlideInsertResult {

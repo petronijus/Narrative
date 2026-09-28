@@ -61,8 +61,10 @@ describe('agent eval: graders reject the untouched fixture', () => {
 })
 
 describe('agent eval: recorded transcripts replay and pass', () => {
-  it('has recordings for the smoke subset', () => {
-    expect(recordings.length).toBeGreaterThan(0)
+  it('has a recording for every replayable scenario', () => {
+    const recorded = new Set(recordings.map((r) => r.scenario))
+    const missing = replayable.map((s) => s.id).filter((id) => !recorded.has(id))
+    expect(missing, 'record them with pnpm agent:eval --filter <id> --record').toEqual([])
   })
 
   it.each(recordings.map((r) => [r.scenario, r] as const))('%s', async (id, recording) => {

@@ -144,6 +144,39 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   )
 
   // ---------------------------------------------------------------------------
+  // POST /decks/:id/duplicate — copy the deck whole into a new deck of the caller
+  //
+  // Optional body: { title?, folderId? }. Needs editor access to the source
+  // (copying out of a deck is exporting it); the copy lands in folderId (owned),
+  // else the source's folder when the caller owns it, else Drafts. 201 with the
+  // new deck.
+  // ---------------------------------------------------------------------------
+  app.post<{ Params: { id: string }; Body: { title?: unknown; folderId?: unknown } | undefined }>(
+    '/decks/:id/duplicate',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (request, reply) => {
+      const { title, folderId } = request.body ?? {}
+      if (title !== undefined && typeof title !== 'string') {
+        return reply.status(400).send({ error: 'title must be a string' })
+      }
+      if (folderId !== undefined && (typeof folderId !== 'string' || folderId === '')) {
+        return reply.status(400).send({ error: 'folderId must be a folder id' })
+      }
+      try {
+        const copy = await createDecksService(routeDeps(app, db, request.log)).duplicate({
+          userId: request.user!.sub,
+          deckId: request.params.id,
+          title,
+          folderId,
+        })
+        return reply.status(201).send(copy)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
+
+  // ---------------------------------------------------------------------------
   // PATCH /decks/:id — rename deck (owner or editor)
   // ---------------------------------------------------------------------------
   app.patch<{ Params: { id: string }; Body: { title?: string } }>(

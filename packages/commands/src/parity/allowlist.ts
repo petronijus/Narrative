@@ -151,4 +151,12 @@ export const AGENT_ALLOWLIST: readonly AllowlistEntry[] = [
       'capability and deliberately kept away from user credentials.',
     routes: [{ method: 'GET', path: '/metrics' }],
   },
+  {
+    capability: 'Speaker-notes live editing (Tiptap + y-prosemirror binding)',
+    reason:
+      "Not a separate capability: a CRDT editor binding that writes the slide's notes Y.XmlFragment keystroke by " +
+      'keystroke, which no command could replay usefully. Agents read and replace the same fragment with ' +
+      'slide.notes.get / slide.notes.set; the binding is the one editor write the one-door lint cannot see, so it ' +
+      'is recorded here.',
+  },
 ]

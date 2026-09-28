@@ -37,6 +37,14 @@ import type { ServiceDeps } from './deps.js'
 
 export type DocKind = 'deck' | 'folder' | 'component'
 
+/**
+ * Origin of a document write a PERSON asked a server route for (pasting
+ * slides from another deck, …) — as opposed to an agent run's
+ * `agentOrigin(runId)`. It names the write in metrics and logs; editors
+ * receive it as a remote change like any collaborator's edit.
+ */
+export const SERVER_EDIT_ORIGIN = Symbol('server-edit')
+
 /** The sync-server document name of a deck, folder or component master. */
 export function documentName(kind: DocKind, id: string): string {
   if (kind === 'folder') return `folder:${id}`

@@ -34,7 +34,6 @@ import {
   removeSlide,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
-  getSlideNotes,
   addObject,
   addAnimation,
   setSlideName,
@@ -88,7 +87,7 @@ import type {
 import { subsystemLogger } from '../observability/logger.js'
 import type { LineBoxExt, TableExt } from './ooxml/extSchema.js'
 import { objectExtFields } from './ooxml/objectExt.js'
-import { writeNotesIntoFragment, type NotesDoc } from './ooxml/notes.js'
+import { setSlideNotes, type NotesDoc } from '@narrative/slide-model'
 
 const log = subsystemLogger('pptx-import')
 
@@ -1316,9 +1315,7 @@ function seedSlideNotes(
   slideId: string,
   notes: NotesDoc,
 ): void {
-  const fragment = getSlideNotes(ctx, slideId)
-  if (fragment === null) return
-  ctx.doc.transact(() => writeNotesIntoFragment(fragment, notes))
+  setSlideNotes(ctx, slideId, notes)
 }
 
 // ---------------------------------------------------------------------------

@@ -19,11 +19,16 @@
  *
  * Auth: same as POST /decks — caller must own the destination folder.
  *
+ *   POST /decks/:id/insert-slides
+ *     JSON `{ sourceDeckId, slideIds, at? }`: copy chosen slides of another
+ *     deck into this one (the editor's cross-deck slide paste).
+ *
  * Shared implementation: the handlers call services/pptx.ts — the same code the
  * `deck.importPptx / deck.insertFrom` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
+import { z } from 'zod'
 import type { Database } from '../db/client.js'
 import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { createPptxService } from '../services/pptx.js'
@@ -156,7 +161,49 @@ export async function registerPptxImportRoutes(app: FastifyInstance, db: Databas
       }
     },
   )
+
+  // ─── Insert slides from another deck ─────────────────────────────────────
+  // The editor's cross-deck slide paste: body `{ sourceDeckId, slideIds, at? }`.
+  // Copying needs editor access to the SOURCE deck too (the export rule),
+  // media referenced by the slides is copied into this deck and token
+  // references are rebound across folders — `deck.insertFrom`'s deck source,
+  // the same service code (services/deckInsert.ts).
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/decks/:id/insert-slides',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (request, reply) => {
+      const parsed = InsertSlidesBody.safeParse(request.body)
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: parsed.error.issues
+            .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
+            .join('; '),
+        })
+      }
+      try {
+        const result = await createPptxService(
+          routeDeps(app, db, request.log),
+        ).insertSlidesFromDeck({
+          userId: request.user!.sub,
+          deckId: request.params.id,
+          sourceDeckId: parsed.data.sourceDeckId,
+          slideIds: parsed.data.slideIds,
+          at: parsed.data.at,
+        })
+        return reply.status(200).send(result)
+      } catch (err) {
+        return sendServiceError(reply, err)
+      }
+    },
+  )
 }
+
+const Id = z.string().min(1).max(128)
+const InsertSlidesBody = z.strictObject({
+  sourceDeckId: Id,
+  slideIds: z.array(Id).min(1).max(500),
+  at: z.number().int().min(0).optional(),
+})
 
 /**
  * Read the `at` query parameter. Absent → undefined (append at the end);

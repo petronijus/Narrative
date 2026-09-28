@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import * as Y from 'yjs'
 import { getParagraphs, PARAGRAPH_SEP } from '@narrative/slide-model'
-import { notesFromFragment } from './ooxml/notes.js'
+import { notesFromFragment } from '@narrative/slide-model'
 import { buildDeckUpdate, buildDeckAppendUpdate } from './writer.js'
 import type { ParsedPptx, ParsedSlide, ParsedShape } from './parser.js'
 

@@ -114,18 +114,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     note: 'paste inserts the copied objects in one step with addObjects',
   },
   {
-    capability: 'slide.copyTo',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/state/slideClipboard.ts, apps/web/src/ui/slideHelpers.ts',
-  },
-  {
-    capability: 'slide.notes.set',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/SlideNotesPanel.tsx',
-  },
-  {
     capability: 'object.slideNumber.set',
     phase: 'A2',
     source: 'web',
@@ -250,7 +238,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     writers: ['insertObjectsWithRichText'],
     note: 'the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)',
   },
-  { capability: 'deck.duplicate', phase: 'A2', source: 'new' },
   { capability: 'text.replace', phase: 'A2', source: 'new' },
   { capability: 'animation.retarget', phase: 'A2', source: 'new' },
 

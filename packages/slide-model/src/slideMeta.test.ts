@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { createSlideDoc } from './yDoc.js'
-import { getSlideNotes, listSlides, updateSlideTransition } from './slides.js'
+import { getSlideNotesFragment, listSlides, updateSlideTransition } from './slides.js'
 import { clearSlideTransitionDirection, getSlideNotesText } from './slideMeta.js'
 import { createUndoManager } from './undo.js'
 
@@ -42,7 +42,7 @@ describe('clearSlideTransitionDirection', () => {
 describe('getSlideNotesText', () => {
   it('reads paragraphs, headings, lists and hard breaks as plain text', () => {
     const ctx = deck()
-    const notes = getSlideNotes(ctx, listSlides(ctx)[0]!.id)!
+    const notes = getSlideNotesFragment(ctx, listSlides(ctx)[0]!.id)!
     ctx.doc.transact(() => {
       const withBreak = new Y.XmlElement('paragraph')
       const a = new Y.XmlText()

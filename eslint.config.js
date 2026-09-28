@@ -4,6 +4,12 @@ import tseslint from '@typescript-eslint/eslint-plugin'
 import tsparser from '@typescript-eslint/parser'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
+import {
+  ONE_DOOR_FILES,
+  ONE_DOOR_IGNORES,
+  ONE_DOOR_PENDING,
+  ONE_DOOR_RULES,
+} from './apps/web/eslint.one-door.js'
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -65,6 +71,14 @@ export default [
       'react-hooks/globals': 'off',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
+  },
+  // One door (ADR 0010): the editor writes the document only through
+  // commands. Rule and the shrinking list of not-yet-migrated files:
+  // apps/web/eslint.one-door.js.
+  {
+    files: ONE_DOOR_FILES,
+    ignores: [...ONE_DOOR_IGNORES, ...ONE_DOOR_PENDING.map((p) => p.file)],
+    rules: ONE_DOOR_RULES,
   },
   // Server runtime code must log through pino (structured, leveled, parseable
   // by the prod log pipeline), NOT bare `console.*`. The exceptions below are

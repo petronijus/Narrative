@@ -81,11 +81,19 @@ export {
   listSlides,
   getSlideObjectsCtx,
   getSlideAnimationsCtx,
-  getSlideNotes,
+  getSlideNotesFragment,
 } from './slides.js'
 
 // Slide-level primitives for the command layer (agentic layer A0)
 export { clearSlideTransitionDirection, getSlideNotesText } from './slideMeta.js'
+export {
+  NOTES_LINK_DEFAULTS,
+  getSlideNotesDoc,
+  isNotesText,
+  notesFromFragment,
+  setSlideNotes,
+} from './notes.js'
+export type { NotesDoc, NotesElement, NotesMarks, NotesNode, NotesText } from './notes.js'
 
 // P11: deck-level rulers + guides
 export {

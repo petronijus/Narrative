@@ -118,6 +118,7 @@ describe('commandTargetProblems', () => {
     expect(refusing).toEqual([
       'component.stamp',
       'deck.delete',
+      'deck.duplicate',
       'deck.exportPptx',
       'deck.fonts.list',
       'deck.get',

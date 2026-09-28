@@ -224,6 +224,23 @@
       ]
     },
     {
+      "id": "deck.duplicate",
+      "domain": "deck",
+      "title": "Duplicate deck",
+      "description": "Copy this deck whole into a NEW deck the user owns: every slide (objects, rich text, tables, animations, speaker notes, outline), the deck guides and the media the slides show. Lands in `folderId` (one of the user's folders), else this deck's folder when the user owns it, else Drafts; in another folder, token references are rebound as deck.moveToFolder does. Sharing is not copied. Needs editor access to this deck. Returns the new deck — target its `id` to edit the copy. To copy only some slides into an existing deck use deck.insertFrom. Undo: deck.delete on the copy.",
+      "role": "editor",
+      "effects": ["server"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["server"],
+      "routes": [
+        {
+          "method": "POST",
+          "path": "/decks/:id/duplicate"
+        }
+      ]
+    },
+    {
       "id": "deck.exportPptx",
       "domain": "deck",
       "title": "Export PowerPoint",
@@ -298,7 +315,7 @@
       "id": "deck.insertFrom",
       "domain": "deck",
       "title": "Insert slides from a file or deck",
-      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; their media is copied into this deck. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle them next if they should match this deck. For a new deck from a file use deck.importPptx.",
+      "description": "Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit (optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor access as exporting that deck, so a deck you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; their media is copied into this deck. From a deck in another folder, token references are rebound to this folder the way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle them next if they should match this deck. For a new deck from a file use deck.importPptx.",
       "role": "editor",
       "effects": ["doc", "server"],
       "undo": "undoable",
@@ -309,6 +326,10 @@
         {
           "method": "POST",
           "path": "/decks/:id/append-pptx"
+        },
+        {
+          "method": "POST",
+          "path": "/decks/:id/insert-slides"
         }
       ]
     },
@@ -825,7 +846,7 @@
       "id": "query.slide",
       "domain": "query",
       "title": "Read slide",
-      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
+      "description": "Everything on one slide: every object with all its properties in stacking order (first = backmost), the animation steps in play order, the transition, the background (null = default white) and the speaker notes as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs and list attributes when formatted; colours as \"#rrggbb\" or { $token }. For one object use query.object. It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit the master with the same object and text commands.",
       "role": "viewer",
       "effects": [],
       "undo": "n/a",
@@ -1008,10 +1029,21 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "slide.copyTo",
+      "domain": "slide",
+      "title": "Copy slides",
+      "description": "Copy one or more slides of this deck, as a block in their deck order, so the copies start at `index` (0-based position in the deck as it is now; omitted = at the end). Each copy is whole — objects with their rich text, tables, animations, transition, background, speaker notes, name — and keeps its object ids (Magic Move pairs them with the originals). The copies keep their relative outline levels, shifted so the first fits under the slide it lands below. To copy one slide right after itself use slide.duplicate; to bring slides from ANOTHER deck use deck.insertFrom.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "slide.delete",
       "domain": "slide",
       "title": "Delete slides",
-      "description": "Delete one or more slides with everything on them. A deck always keeps at least one slide: deleting the last remaining slide replaces it with an empty one. To hide a slide from the presentation without deleting it use slide.skip.",
+      "description": "Delete one or more slides with everything on them. A deck always keeps at least one slide: deleting the last remaining slide replaces it with an empty one. Outline children of a deleted slide stay and move up a level where they would otherwise be two levels below the slide above them. `landOn` is the slide an editor shows next: the nearest remaining slide above the first deleted one, else the first remaining slide. To hide a slide from the presentation without deleting it use slide.skip.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1033,7 +1065,7 @@
       "id": "slide.indent",
       "domain": "slide",
       "title": "Set slide outline level",
-      "description": "Set a slide's outline indent level (0 = top level, max 6). A slide can be at most one level deeper than the slide above it, and the first slide is always level 0 — the same rules as dragging in the slides panel. Indented slides become children of the nearest shallower slide above them (sections); the outline does not affect present mode.",
+      "description": "Set a slide's outline indent level (0 = top level, max 6). A slide can be at most one level deeper than the slide above it, and the first slide is always level 0 — the same rules as dragging in the slides panel. Indented slides become children of the nearest shallower slide above them (sections); the outline does not affect present mode. Slides below it that would then be two levels deeper than the slide above them are raised with it.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1045,11 +1077,35 @@
       "id": "slide.move",
       "domain": "slide",
       "title": "Move slides",
-      "description": "Move one or more slides, as a block keeping their current relative order, so the block starts at `toIndex` (0-based, counted in the deck BEFORE the move; clamped to the deck length). Outline children are NOT moved implicitly — list them too if they should follow their parent.",
+      "description": "Move one or more slides, as a block keeping their current relative order, so the block starts at `toIndex` (0-based, counted in the deck BEFORE the move; clamped to the deck length). Outline children are NOT moved implicitly — list them too if they should follow their parent. `level` sets the outline level of the first moved slide; the others shift by the same amount, so the block's own structure stays. Afterwards no slide is more than one level deeper than the slide above it (deeper ones are raised), the rule the slides panel drags by.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
       "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.notes.get",
+      "domain": "slide",
+      "title": "Read speaker notes",
+      "description": "A slide's speaker notes as Markdown with their formatting, in the syntax slide.notes.set takes; empty notes read as \"\". query.slide gives them as plain text — read them here before editing them with slide.notes.set so the formatting survives.",
+      "role": "viewer",
+      "effects": [],
+      "undo": "n/a",
+      "confirm": "never",
+      "readOnly": true,
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "slide.notes.set",
+      "domain": "slide",
+      "title": "Set speaker notes",
+      "description": "Replace a slide's speaker notes (what the presenter view shows) with Markdown: # headings, - and 1. lists (nested by indenting), > quotes, ``` code blocks, ---, **bold**, *italic*, ~~strike~~, `code`, <u>underline</u>, [links](https://…). A newline inside a paragraph is a line break; a blank line starts a new paragraph. \"\" clears the notes. The whole notes are replaced — read them first with slide.notes.get to change only part.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
       "hosts": ["browser", "server"]
     },
     {
@@ -1381,18 +1437,6 @@
       "note": "paste inserts the copied objects in one step with addObjects"
     },
     {
-      "capability": "slide.copyTo",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/state/slideClipboard.ts, apps/web/src/ui/slideHelpers.ts"
-    },
-    {
-      "capability": "slide.notes.set",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/ui/SlideNotesPanel.tsx"
-    },
-    {
       "capability": "object.slideNumber.set",
       "phase": "A2",
       "source": "web",
@@ -1510,11 +1554,6 @@
       ],
       "writers": ["insertObjectsWithRichText"],
       "note": "the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)"
-    },
-    {
-      "capability": "deck.duplicate",
-      "phase": "A2",
-      "source": "new"
     },
     {
       "capability": "text.replace",
@@ -1778,6 +1817,10 @@
           "path": "/metrics"
         }
       ]
+    },
+    {
+      "capability": "Speaker-notes live editing (Tiptap + y-prosemirror binding)",
+      "reason": "Not a separate capability: a CRDT editor binding that writes the slide's notes Y.XmlFragment keystroke by keystroke, which no command could replay usefully. Agents read and replace the same fragment with slide.notes.get / slide.notes.set; the binding is the one editor write the one-door lint cannot see, so it is recorded here."
     }
   ]
 }

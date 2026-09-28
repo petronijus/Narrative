@@ -27,7 +27,6 @@ import * as Y from 'yjs'
 import { and, eq, or, type SQL } from 'drizzle-orm'
 import { GetObjectCommand } from '@aws-sdk/client-s3'
 import {
-  getSlideNotes,
   hydrateSlideDoc,
   isTokenRef,
   listSlides,
@@ -38,7 +37,7 @@ import type { Slide, SlideObject } from '@narrative/shared'
 import { decks, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { writeDeck, type AssetLoader } from './ooxml/writeDeck.js'
-import { notesFromFragment, type NotesDoc } from './ooxml/notes.js'
+import { getSlideNotesDoc, type NotesDoc } from '@narrative/slide-model'
 import type { ServiceDeps } from '../services/deps.js'
 import { readDocCopy } from '../services/liveDocs.js'
 import { tokensSnapshot } from '../services/tokenRebind.js'
@@ -85,9 +84,7 @@ export async function exportDeckToPptx(
     // Speaker notes, as the notes editor holds them; no entry → no notes page.
     const notesBySlideId = new Map<string, NotesDoc>()
     for (const slide of slides) {
-      const fragment = getSlideNotes(handles, slide.id)
-      if (fragment === null) continue
-      const notes = notesFromFragment(fragment)
+      const notes = getSlideNotesDoc(handles, slide.id) ?? []
       if (notes.length > 0) notesBySlideId.set(slide.id, notes)
     }
 

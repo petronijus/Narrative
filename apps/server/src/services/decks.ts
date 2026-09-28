@@ -19,6 +19,7 @@ import type {
   DeckRole,
   DeckService,
   DeckWithRole,
+  DuplicatedDeck,
   MoveDecksResult,
   TokenRebindReport,
 } from '@narrative/commands'
@@ -43,6 +44,8 @@ import {
 import { getOrProvisionDrafts } from './folders.js'
 import { readDocCopy, writeLiveDoc } from './liveDocs.js'
 import { applyTokenRebinding, planTokenRebinding, tokensSnapshot } from './tokenRebind.js'
+import { copyStoredObject, stageDeckCopy } from './deckInsert.js'
+import { discardDeckMedia, registerDeckMedia } from '../pptx/importDeck.js'
 
 /** Longest deck title the API accepts. */
 export const MAX_DECK_TITLE = 200
@@ -345,6 +348,121 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     return { ...deckRecord(deck), firstSlideId }
   }
 
+  async function duplicate(args: {
+    userId: string
+    deckId: string
+    title?: string | undefined
+    folderId?: string | undefined
+  }): Promise<DuplicatedDeck> {
+    const [source] = await db
+      .select({
+        id: decks.id,
+        title: decks.title,
+        folderId: decks.folderId,
+        thumbnailKey: decks.thumbnailKey,
+      })
+      .from(decks)
+      .where(eq(decks.id, args.deckId))
+      .limit(1)
+    if (!source) throw notFound('Deck not found')
+
+    // Where the copy goes: the named folder (owned), else the source's folder
+    // when the user owns it, else their Drafts.
+    let targetFolderId: string
+    if (args.folderId !== undefined) {
+      targetFolderId = (await requireOwnedFolder(db, args.folderId, args.userId)).id
+    } else {
+      const [own] =
+        source.folderId === null
+          ? []
+          : await db
+              .select({ id: folders.id })
+              .from(folders)
+              .where(and(eq(folders.id, source.folderId), eq(folders.ownerUserId, args.userId)))
+              .limit(1)
+      targetFolderId = own?.id ?? (await getOrProvisionDrafts(db, args.userId))
+    }
+    const title =
+      args.title !== undefined
+        ? validDeckTitle(args.title)
+        : `${source.title} (copy)`.slice(0, MAX_DECK_TITLE)
+
+    const id = nanoid(12)
+    // Access to the source, the document, its media and tokens — all staged
+    // before any row exists.
+    const staged = await stageDeckCopy(deps, {
+      userId: args.userId,
+      sourceDeckId: source.id,
+      sourceFolderId: source.folderId,
+      targetDeckId: id,
+      targetFolderId,
+    })
+
+    // The preview comes along, so the copy does not sit in the deck list as
+    // "No preview" until someone opens it. Best effort: without it the first
+    // editor to open the copy renders one, as for any new deck.
+    let thumbnailKey: string | null = null
+    if (source.thumbnailKey !== null) {
+      const ext = source.thumbnailKey.split('.').pop() === 'png' ? 'png' : 'jpg'
+      const key = `decks/${id}/thumb.${ext}`
+      try {
+        await copyStoredObject(source.thumbnailKey, key)
+        thumbnailKey = key
+      } catch (err) {
+        deps.log.warn({ err, deckId: source.id }, 'deck duplicate: copying the thumbnail failed')
+      }
+    }
+
+    const now = new Date()
+    let inserted: typeof decks.$inferSelect | undefined
+    try {
+      // Deck row, owner permission, first document state and media rows in
+      // ONE transaction (the media rows reference the deck).
+      inserted = await registerDeckMedia({
+        db,
+        deckId: id,
+        ownerUserId: args.userId,
+        media: staged.media,
+        log: deps.log,
+        alongside: async (tx) => {
+          const [row] = await tx
+            .insert(decks)
+            .values({
+              id,
+              title,
+              ownerUserId: args.userId,
+              folderId: targetFolderId,
+              thumbnailKey,
+              thumbnailUpdatedAt: thumbnailKey === null ? null : now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning()
+          await tx.insert(deckPermissions).values({
+            deckId: id,
+            userId: args.userId,
+            role: 'owner',
+            grantedAt: now,
+            grantedBy: args.userId,
+          })
+          await tx.insert(deckUpdates).values({ deckId: id, update: staged.state, createdAt: now })
+          return row
+        },
+      })
+    } catch (err) {
+      await discardDeckMedia({ db, deckId: id, media: staged.media, log: deps.log })
+      throw err
+    }
+    if (!inserted) throw failed('Failed to create the copy')
+    return {
+      ...deckRecord(inserted),
+      slideCount: staged.slideCount,
+      mediaCopied: staged.media.mediaAssetRows.length,
+      skippedImages: staged.skippedImages,
+      ...(staged.tokens !== undefined ? { tokens: staged.tokens } : {}),
+    }
+  }
+
   async function rename(args: { deckId: string; title: string }): Promise<DeckRecord> {
     const title = validDeckTitle(args.title)
     const [updated] = await db
@@ -576,6 +694,7 @@ export function createDecksService(deps: ServiceDeps): DeckService {
     listPage,
     get,
     create,
+    duplicate,
     rename,
     delete: remove,
     moveDecks,

@@ -15,7 +15,7 @@
  * we hit in EditorContextMenu).
  */
 
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -53,9 +53,14 @@ export function SlidesPanelContextMenu({
   canPaste,
   children,
 }: SlidesPanelContextMenuProps) {
+  // State, not refs: a right-click on another row while the menu is still
+  // open must re-render the items for the new row — a ref would leave them
+  // bound to the row the menu was first opened on.
   const [mode, setMode] = useState<Mode>('empty')
-  const targetIdRef = useRef<string | null>(null)
-  const targetSkippedRef = useRef<boolean>(false)
+  const [target, setTarget] = useState<{ id: string | null; skipped: boolean }>({
+    id: null,
+    skipped: false,
+  })
 
   if (readOnly) return <>{children}</>
 
@@ -65,19 +70,17 @@ export function SlidesPanelContextMenu({
     if (slideEl !== null) {
       const id = slideEl.getAttribute('data-slide-id')
       if (id !== null && id !== '') {
-        targetIdRef.current = id
-        targetSkippedRef.current = isSkipped(id)
+        setTarget({ id, skipped: isSkipped(id) })
         setMode('row')
         return
       }
     }
-    targetIdRef.current = null
-    targetSkippedRef.current = false
+    setTarget({ id: null, skipped: false })
     setMode('empty')
   }
 
-  const targetId = targetIdRef.current
-  const targetSkipped = targetSkippedRef.current
+  const targetId = target.id
+  const targetSkipped = target.skipped
 
   return (
     <ContextMenu>

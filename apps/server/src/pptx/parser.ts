@@ -66,7 +66,8 @@ import {
 import { imageCrop, slideExtFields } from './ooxml/extSchema.js'
 import { readTransition } from './ooxml/transition.js'
 import { readTiming } from './ooxml/timing.js'
-import { readNotes, type NotesDoc } from './ooxml/notes.js'
+import type { NotesDoc } from '@narrative/slide-model'
+import { readNotes } from './ooxml/notes.js'
 import { ALIGN, ANCHOR, AUTONUM, BORDER_DASH } from './ooxml/vocabulary.js'
 import { defaultBulletGlyph } from '@narrative/slide-model'
 import {

@@ -16,7 +16,6 @@ import {
   addSlide,
   createSlideDoc,
   getSlideAnimationsCtx,
-  getSlideNotes,
   getSlideObjectsCtx,
   listSlides,
   PARAGRAPH_SEP,
@@ -29,7 +28,7 @@ import {
 } from '@narrative/slide-model'
 import type { SlideObject } from '@narrative/shared'
 import { notesOf, type ImportedDeck, type InMemoryAsset } from './roundtrip.js'
-import { writeNotesIntoFragment, type NotesDoc } from './ooxml/notes.js'
+import { setSlideNotes, type NotesDoc } from '@narrative/slide-model'
 
 type Ctx = ReturnType<typeof createSlideDoc>
 
@@ -750,8 +749,7 @@ export async function matrixDeck(): Promise<ImportedDeck> {
 
   // ─── Speaker notes: every node and mark the notes editor has ──────────
   const notesFor = (slideId: string, doc: NotesDoc): void => {
-    const fragment = getSlideNotes(ctx, slideId)
-    if (fragment !== null) ctx.doc.transact(() => writeNotesIntoFragment(fragment, doc))
+    setSlideNotes(ctx, slideId, doc)
   }
   notesFor(s1, [
     { type: 'heading', attrs: { level: 1 }, content: [{ text: 'Opening' }] },

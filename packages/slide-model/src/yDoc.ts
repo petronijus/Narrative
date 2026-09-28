@@ -36,7 +36,11 @@ export interface SlideDocHandles {
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a new slide Y.Map with empty objects/animations arrays and default transition.
+ * Creates a new slide Y.Map: empty objects/animations arrays, the default
+ * transition and an empty speaker-notes fragment. The one factory for every
+ * new slide — a deck's first slide (createSlideDoc / hydrateSlideDoc) and
+ * addSlide alike; there used to be a second copy in slides.ts, and this one
+ * left the first slide of every new deck without a notes fragment.
  * Must be called inside a doc.transact() to ensure proper Yjs integration.
  */
 function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
@@ -44,6 +48,9 @@ function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
   const objects = new Y.Array<Y.Map<unknown>>()
   const animations = new Y.Array<Y.Map<unknown>>()
   const transition = new Y.Map<unknown>()
+  // M19: speaker notes as Y.XmlFragment so Tiptap / ProseMirror can bind
+  // through y-prosemirror for rich-text collab.
+  const notes = new Y.XmlFragment()
 
   transition.set('kind', DEFAULT_TRANSITION.kind)
   transition.set('durationMs', DEFAULT_TRANSITION.durationMs)
@@ -52,6 +59,7 @@ function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
   slideMap.set('objects', objects)
   slideMap.set('animations', animations)
   slideMap.set('transition', transition)
+  slideMap.set('notes', notes)
 
   // Suppress unused doc ref — kept for future use when doc context is needed
   void doc

@@ -33,6 +33,17 @@ export interface CreatedDeck extends DeckRecord {
   firstSlideId: string
 }
 
+/** A deck made by copying another one whole (`DeckService.duplicate`). */
+export interface DuplicatedDeck extends DeckRecord {
+  slideCount: number
+  /** Media assets (images, videos, deck fonts) copied into the new deck. */
+  mediaCopied: number
+  /** Assets that could not be copied; their objects show a missing image. */
+  skippedImages: number
+  /** Token references rebound, when the copy landed in another folder. */
+  tokens?: { rebound: number; literalised: number; detached: number; unmatched: number }
+}
+
 /**
  * A deck in a paged list: only what finding a deck needs (the agent's
  * `deck.list`; the full record is `get`).
@@ -125,6 +136,21 @@ export interface DeckService {
     title?: string | undefined
     folderId?: string | undefined
   }): Promise<CreatedDeck>
+  /**
+   * Copy a deck whole into a NEW deck the user owns: every slide with its
+   * objects, animations, notes and outline, the deck guides, and the media
+   * the slides show (copied, since media is deck-scoped). Needs editor access
+   * to the source (copying is exporting). Lands in `folderId` (which the user
+   * must own), else the source's folder when the user owns it, else Drafts;
+   * across folders token references are rebound like `moveDecks` does.
+   * Sharing is not copied: the copy is the user's alone.
+   */
+  duplicate(args: {
+    userId: string
+    deckId: string
+    title?: string | undefined
+    folderId?: string | undefined
+  }): Promise<DuplicatedDeck>
   rename(args: { deckId: string; title: string }): Promise<DeckRecord>
   /** Delete the deck, its document, permissions, share links and media (rows and storage). */
   delete(args: { deckId: string }): Promise<void>

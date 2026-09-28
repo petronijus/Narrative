@@ -230,6 +230,37 @@ export interface BatchResult {
 }
 
 /**
+ * Run several document commands — dispatched by `fn` through the `run` it
+ * is given — inside ONE transaction on the live document with
+ * `ctx.origin`: one update on the wire and one step of the editor's undo.
+ *
+ * For the editor's gestures that are several commands (duplicate a
+ * selection, move and re-indent a dragged block). Unlike an atomic batch it
+ * does not fork the document (a fork copies the whole deck, too slow for a
+ * gesture), so it is NOT all-or-nothing: every command still validates
+ * before its own first write, but a command that fails after earlier ones
+ * succeeded leaves those applied — exactly as separate dispatches would,
+ * only grouped. The failure propagates out of `runGroup`. Agents batch with
+ * `ops.apply`, which is atomic.
+ */
+export function runGroup<T>(
+  registry: CommandRegistry,
+  ctx: CommandContext,
+  fn: (run: <R = unknown>(command: string, input: unknown) => R) => T,
+): T {
+  const live = ctx.deck
+  if (live === undefined)
+    throw new CommandError('no_target', 'a group needs a target deck document')
+  const run = <R = unknown>(command: string, input: unknown): R =>
+    runCommandSync(registry, ctx, command, input) as R
+  let out: { value: T } | undefined
+  live.doc.transact(() => {
+    out = { value: fn(run) }
+  }, ctx.origin)
+  return out!.value
+}
+
+/**
  * Run several document commands as ONE change.
  *
  * `atomic: true` (default): every input is validated first; the ops then

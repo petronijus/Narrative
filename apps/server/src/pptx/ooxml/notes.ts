@@ -21,98 +21,27 @@
  * document from the native body: formatted paragraphs and nested lists.
  */
 
-import * as Y from 'yjs'
 import { sanitizeHref } from '@narrative/shared'
+import {
+  NOTES_LINK_DEFAULTS,
+  isNotesText,
+  type NotesDoc,
+  type NotesElement,
+  type NotesMarks,
+  type NotesNode,
+  type NotesText,
+} from '@narrative/slide-model'
 import { el, tag, type XmlChild, type XmlElement } from './xml.js'
 import { type XmlNode, findAll, findFirst, getAttrs, getChildren, getTag } from './read.js'
 import { AUTONUM } from './vocabulary.js'
 import { int, oneOf, str, type Schema } from './extSchema.js'
 
 // ---------------------------------------------------------------------------
-// The document
+// The document — NotesDoc and its fragment encoding live in slide-model
+// (notes.ts), shared with the notes commands.
 // ---------------------------------------------------------------------------
 
-export type NotesMarks = Record<string, Record<string, unknown>>
-
-export interface NotesText {
-  text: string
-  marks?: NotesMarks
-}
-
-export interface NotesElement {
-  type: string
-  attrs?: Record<string, unknown>
-  content?: NotesNode[]
-}
-
-export type NotesNode = NotesText | NotesElement
-
-/** A notes document: its top-level blocks. */
-export type NotesDoc = NotesNode[]
-
-const isText = (n: NotesNode): n is NotesText => 'text' in n
-
-/** A notes fragment as JSON (y-prosemirror's encoding, see the header). */
-export function notesFromFragment(fragment: Y.XmlFragment): NotesDoc {
-  const nodes = (items: Array<Y.XmlElement | Y.XmlText | Y.XmlHook>): NotesNode[] => {
-    const out: NotesNode[] = []
-    for (const item of items) {
-      if (item instanceof Y.XmlText) {
-        for (const op of item.toDelta() as Array<{ insert: unknown; attributes?: NotesMarks }>) {
-          if (typeof op.insert !== 'string') continue
-          out.push(
-            op.attributes !== undefined
-              ? { text: op.insert, marks: op.attributes }
-              : { text: op.insert },
-          )
-        }
-      } else if (item instanceof Y.XmlElement) {
-        const node: NotesElement = { type: item.nodeName }
-        const attrs = item.getAttributes() as Record<string, unknown>
-        if (Object.keys(attrs).length > 0) node.attrs = attrs
-        const content = nodes(item.toArray() as Array<Y.XmlElement | Y.XmlText>)
-        if (content.length > 0) node.content = content
-        out.push(node)
-      }
-    }
-    return out
-  }
-  return nodes(fragment.toArray() as Array<Y.XmlElement | Y.XmlText>)
-}
-
-/**
- * Fill an empty notes fragment with a document, as y-prosemirror would
- * (consecutive text nodes share one `Y.XmlText`).
- */
-export function writeNotesIntoFragment(fragment: Y.XmlFragment, doc: NotesDoc): void {
-  const build = (content: readonly NotesNode[]): Array<Y.XmlElement | Y.XmlText> => {
-    const out: Array<Y.XmlElement | Y.XmlText> = []
-    let delta: Array<{ insert: string; attributes?: NotesMarks }> = []
-    const flush = (): void => {
-      if (delta.length === 0) return
-      const t = new Y.XmlText()
-      t.applyDelta(delta)
-      out.push(t)
-      delta = []
-    }
-    for (const n of content) {
-      if (isText(n)) {
-        delta.push(
-          n.marks !== undefined ? { insert: n.text, attributes: n.marks } : { insert: n.text },
-        )
-        continue
-      }
-      flush()
-      const e = new Y.XmlElement(n.type)
-      for (const [k, v] of Object.entries(n.attrs ?? {})) e.setAttribute(k, v as string)
-      e.insert(0, build(n.content ?? []))
-      out.push(e)
-    }
-    flush()
-    return out
-  }
-  fragment.insert(0, build(doc))
-}
+const isText = isNotesText
 
 // ---------------------------------------------------------------------------
 // The document, validated (it comes from a file)
@@ -417,8 +346,6 @@ export function writeNotesExt(doc: NotesDoc, text: string): XmlElement {
 /** Where a notes run's `<a:hlinkClick r:id>` leads, when it is a URL. */
 export type NotesLinkResolver = (rId: string) => string | undefined
 
-const LINK_DEFAULTS = { target: '_blank', rel: 'noopener noreferrer nofollow', class: null }
-
 function readMarks(rPr: XmlNode | undefined, links: NotesLinkResolver): NotesMarks | undefined {
   if (rPr === undefined) return undefined
   const a = getAttrs(rPr)
@@ -434,7 +361,7 @@ function readMarks(rPr: XmlNode | undefined, links: NotesLinkResolver): NotesMar
   const rId = hlink !== undefined ? getAttrs(hlink)['@r:id'] : undefined
   const href = typeof rId === 'string' ? links(rId) : undefined
   const safe = href !== undefined ? sanitizeHref(href) : null
-  if (safe !== null) marks['link'] = { href: safe, ...LINK_DEFAULTS }
+  if (safe !== null) marks['link'] = { href: safe, ...NOTES_LINK_DEFAULTS }
   return Object.keys(marks).length > 0 ? marks : undefined
 }
 

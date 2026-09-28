@@ -314,7 +314,45 @@ describe('deck.insertFrom', () => {
     expect(callsTo(c, 'pptx')[0]?.args).toEqual({
       userId: 'u1',
       deckId: FIXTURE_DECK_ID,
-      source: { kind: 'deck', deckId: 'deck_other', range: { from: 1, to: undefined } },
+      source: {
+        kind: 'deck',
+        deckId: 'deck_other',
+        range: { from: 1, to: undefined },
+        slideIds: undefined,
+      },
+    })
+  })
+
+  it('passes chosen source slides, and refuses them mixed with a range', async () => {
+    const c = ctx()
+    const out = (await runCommand(registry, c, 'deck.insertFrom', {
+      source: { deckId: 'deck_other', slides: ['s3', 's1'] },
+      at: 0,
+    })) as { slideIds: string[] }
+    expect(out.slideIds).toHaveLength(2)
+    expect(callsTo(c, 'pptx')[0]?.args).toMatchObject({
+      source: { kind: 'deck', deckId: 'deck_other', slideIds: ['s3', 's1'] },
+    })
+    await expect(
+      runCommand(registry, ctx(), 'deck.insertFrom', {
+        source: { deckId: 'deck_other', slides: ['s1'], from: 0 },
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_input' })
+  })
+})
+
+describe('deck.duplicate', () => {
+  it('copies the target deck for the caller, with the title and folder it was given', async () => {
+    const c = ctx()
+    const out = (await runCommand(registry, c, 'deck.duplicate', {
+      title: '  Pitch v2 ',
+    })) as { id: string; title: string; slideCount: number }
+    expect(out).toMatchObject({ title: 'Pitch v2', slideCount: 3 })
+    expect(callsTo(c, 'decks').at(-1)?.args).toEqual({
+      userId: 'u1',
+      deckId: FIXTURE_DECK_ID,
+      title: 'Pitch v2',
+      folderId: undefined,
     })
   })
 })

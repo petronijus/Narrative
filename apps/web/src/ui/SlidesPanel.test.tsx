@@ -1,263 +1,195 @@
 /**
  * SlidesPanel.test.tsx
  *
- * Tests for the M9 slide sidebar component.
+ * The slide sidebar against a real deck document: every gesture dispatches
+ * a command (ADR 0010), so the tests assert on what the DOCUMENT looks like
+ * afterwards — not on which function was called.
  *
- * - Renders N slide items matching useSlides snapshot
- * - Active slide has visual highlight (ring-2 ring-blue-500)
- * - Click item → setActiveSlideId called with correct id
- * - + button → addSlide called
- * - Delete from menu → removeSlide called
- * - Keyboard: ArrowDown/Up navigates between slides, Enter activates
- * - Drag-to-reorder: mock pointer sequence → moveSlide called with correct target index
+ * - Renders one row per slide, 1-based numbers, the count, the empty state
+ * - Click activates; + adds and activates a slide
+ * - Delete lands on the nearest remaining slide above
+ * - Duplicate puts the copy right after the original, as one undo step
+ * - Copy + paste within the deck copies whole slides (slide.copyTo)
+ * - Keyboard navigation clamps at the ends
+ * - Dragging moves the slide (slide.move)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { beforeAll, describe, it, expect, vi } from 'vitest'
 import { screen, fireEvent, act } from '@testing-library/react'
-import { renderWithProviders as render } from '../test/renderWithProviders'
+import { Route, Routes } from 'react-router-dom'
+import * as Y from 'yjs'
+import {
+  addSlide,
+  createUndoManager,
+  hydrateSlideDoc,
+  listSlides,
+  setSlideName,
+  type DeckMutationContext,
+} from '@narrative/slide-model'
+import { renderWithProviders } from '../test/renderWithProviders'
 import { SlidesPanel } from './SlidesPanel'
-import { SlideDocContext, createMockSlideDocValue } from '../state/slideDocContext'
+import { createMockSlideDocValue } from '../state/slideDocContext'
 import { ActiveSlideContext } from '../state/ActiveSlideContext'
 import type { ActiveSlideContextValue } from '../state/ActiveSlideContext'
-import { SelectionProvider } from '../state/SelectionContext'
-import type { Slide } from '@narrative/shared'
-import * as Y from 'yjs'
-import type { SlideMutationContext } from '@narrative/slide-model'
-import type * as SlideModel from '@narrative/slide-model'
+import { readSlideClipboard, setSlideClipboard } from '../state/slideClipboard'
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
 
-// Controlled slide list for each test
-const mockSlidesData: Slide[] = []
-vi.mock('../state/useSlides', () => ({
-  useSlides: () => mockSlidesData,
-}))
-
-// Mock useSlideThumbnails — returns empty map by default (thumbnails are renderer concern)
+// Thumbnails are a renderer concern.
 vi.mock('../state/useSlideThumbnails', () => ({
   useSlideThumbnails: () => new Map<string, string>(),
 }))
 
-// M10: Mock useDeckRole — default to owner so edit controls are shown
+// Owner, so the edit controls are shown.
 vi.mock('../state/DeckRoleContext', () => ({
   useDeckRole: () => ({ role: 'owner', isLoading: false }),
 }))
-
-// Mock slide mutations
-const mockAddSlide = vi.fn()
-const mockDuplicateSlide = vi.fn()
-const mockRemoveSlide = vi.fn()
-const mockMoveSlide = vi.fn()
-vi.mock('@narrative/slide-model', async (importOriginal) => {
-  const actual = await importOriginal<typeof SlideModel>()
-  return {
-    ...actual,
-    addSlide: (...args: Parameters<typeof actual.addSlide>) => {
-      mockAddSlide(...args)
-      // Return a fake new slide so SlidesPanel can call setActiveSlideId
-      return {
-        id: 'new-slide',
-        objects: [],
-        animations: [],
-        transition: { kind: 'none', durationMs: 0 },
-      }
-    },
-    removeSlide: (...args: Parameters<typeof actual.removeSlide>) => {
-      mockRemoveSlide(...args)
-    },
-    moveSlide: (...args: Parameters<typeof actual.moveSlide>) => {
-      mockMoveSlide(...args)
-    },
-    duplicateSlide: (...args: Parameters<typeof actual.duplicateSlide>) => {
-      mockDuplicateSlide(...args)
-      return {
-        id: 'dup-slide',
-        objects: [],
-        animations: [],
-        transition: { kind: 'none', durationMs: 0 },
-      }
-    },
-  }
-})
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeSlide(id: string): Slide {
-  return {
-    id,
-    objects: [],
-    animations: [],
-    transition: { kind: 'none', durationMs: 0 },
-  }
+const DECK_ID = 'deck-1'
+
+/** A deck document holding slides with the given ids (none = an empty deck). */
+function deckWith(ids: string[]): DeckMutationContext {
+  const doc = new Y.Doc()
+  const deck: DeckMutationContext = { doc, slides: doc.getArray<Y.Map<unknown>>('slides') }
+  if (ids.length === 0) return deck
+  hydrateSlideDoc(doc)
+  for (let i = 1; i < ids.length; i++) addSlide(deck)
+  ids.forEach((id, i) => deck.slides.get(i).set('id', id))
+  return deck
 }
 
-function createDeckCtx(): SlideMutationContext {
-  const doc = new Y.Doc()
-  const slides = doc.getArray<Y.Map<unknown>>('slides')
-  return { doc, slides }
-}
+const order = (deck: DeckMutationContext) => listSlides(deck).map((s) => s.id)
 
 function renderPanel(
-  activeSlide: ActiveSlideContextValue = { activeSlideId: null, setActiveSlideId: vi.fn() },
-) {
-  const deckCtx = createDeckCtx()
-  const ctxValue = createMockSlideDocValue({ deckCtx })
-
-  return render(
-    <SlideDocContext value={ctxValue}>
-      <ActiveSlideContext value={activeSlide}>
-        <SelectionProvider>
-          <SlidesPanel />
-        </SelectionProvider>
-      </ActiveSlideContext>
-    </SlideDocContext>,
+  deck: DeckMutationContext,
+  activeSlideId: string | null = null,
+): { setActiveSlideId: ReturnType<typeof vi.fn> } {
+  const setActiveSlideId = vi.fn()
+  const active: ActiveSlideContextValue = { activeSlideId, setActiveSlideId }
+  renderWithProviders(
+    <Routes>
+      <Route
+        path="/deck/:id"
+        element={
+          <ActiveSlideContext value={active}>
+            <SlidesPanel />
+          </ActiveSlideContext>
+        }
+      />
+    </Routes>,
+    {
+      routerEntries: [`/deck/${DECK_ID}`],
+      slideDocValue: createMockSlideDocValue({ deckCtx: deck }),
+    },
   )
+  return { setActiveSlideId }
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
-beforeEach(() => {
-  mockSlidesData.length = 0
-  mockAddSlide.mockClear()
-  mockRemoveSlide.mockClear()
-  mockMoveSlide.mockClear()
-  mockDuplicateSlide.mockClear()
-})
+function openSlideMenu(index: number): void {
+  const menuButtons = screen.getAllByRole('button', { name: 'Slide options' })
+  fireEvent.click(menuButtons[index] as HTMLElement)
+}
 
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
 describe('SlidesPanel — rendering', () => {
-  it('shows "No slides" empty state when slides list is empty', () => {
-    renderPanel()
+  it('shows the empty state for a deck without slides', () => {
+    renderPanel(deckWith([]))
     expect(screen.getByText('No slides')).toBeInTheDocument()
   })
 
-  it('renders N slide items matching the slides array', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'), makeSlide('s3'))
-    renderPanel()
-    // Each slide item has data-slide-id attribute
-    const items = document.querySelectorAll('[data-slide-id]')
-    expect(items).toHaveLength(3)
-  })
-
-  it('shows slide count in header', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    renderPanel()
-    expect(screen.getByText('(2)')).toBeInTheDocument()
-  })
-
-  it('renders 1-based numbering labels', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    renderPanel()
+  it('renders one row per slide, numbered from 1, with the count in the header', () => {
+    renderPanel(deckWith(['s1', 's2', 's3']))
+    expect(document.querySelectorAll('[data-slide-id]')).toHaveLength(3)
+    expect(screen.getByText('(3)')).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
-    expect(screen.getByText('2')).toBeInTheDocument()
-  })
-
-  it('inactive slide does not have blue ring', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: vi.fn(),
-    }
-    renderPanel(activeSlide)
-    // s2 should NOT have ring-blue-500
-    const inactiveCard = document.querySelector('[data-slide-id="s2"] .ring-blue-500')
-    expect(inactiveCard).toBeNull()
+    expect(screen.getByText('3')).toBeInTheDocument()
   })
 })
 
 // ---------------------------------------------------------------------------
-// Interaction
+// Gestures → document
 // ---------------------------------------------------------------------------
 
 describe('SlidesPanel — click to activate', () => {
-  it('clicking a slide thumbnail calls setActiveSlideId with correct id', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    // Click the thumbnail area of s2 (the div with aria-hidden inside data-slide-id=s2)
-    const s2Item = document.querySelector('[data-slide-id="s2"]') as HTMLElement
-    const thumbnailCard = s2Item?.querySelector('[aria-hidden="true"]') as HTMLElement
-    fireEvent.click(thumbnailCard)
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
+  it('activates the clicked slide', () => {
+    const { setActiveSlideId } = renderPanel(deckWith(['s1', 's2']), 's1')
+    const s2 = document.querySelector('[data-slide-id="s2"]') as HTMLElement
+    fireEvent.click(s2.querySelector('[aria-hidden="true"]') as HTMLElement)
+    expect(setActiveSlideId).toHaveBeenCalledWith('s2')
   })
 })
 
 describe('SlidesPanel — add slide', () => {
-  it('clicking + button calls addSlide', () => {
-    mockSlidesData.push(makeSlide('s1'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    const addBtn = screen.getByRole('button', { name: 'Add slide' })
-    fireEvent.click(addBtn)
-
-    expect(mockAddSlide).toHaveBeenCalledOnce()
+  it('adds a slide to the deck and activates it', () => {
+    const deck = deckWith(['s1'])
+    const { setActiveSlideId } = renderPanel(deck, 's1')
+    fireEvent.click(screen.getByRole('button', { name: 'Add slide' }))
+    const ids = order(deck)
+    expect(ids).toHaveLength(2)
+    expect(setActiveSlideId).toHaveBeenCalledWith(ids[1])
   })
 })
 
 describe('SlidesPanel — delete slide', () => {
-  it('delete from menu calls removeSlide with correct id', async () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's2',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    // Open the menu for s2
-    const menuButtons = screen.getAllByRole('button', { name: 'Slide options' })
-    // Second button = s2's menu
-    const s2MenuBtn = menuButtons[1] as HTMLElement
-    fireEvent.click(s2MenuBtn)
-
-    // Click Delete
-    const deleteBtn = screen.getByRole('menuitem', { name: 'Delete' })
-    fireEvent.click(deleteBtn)
-
-    expect(mockRemoveSlide).toHaveBeenCalledOnce()
-    expect(mockRemoveSlide).toHaveBeenCalledWith(expect.anything(), 's2')
+  it('deletes the slide and lands on the nearest one above it', () => {
+    const deck = deckWith(['s1', 's2', 's3'])
+    const { setActiveSlideId } = renderPanel(deck, 's2')
+    openSlideMenu(1)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+    expect(order(deck)).toEqual(['s1', 's3'])
+    expect(setActiveSlideId).toHaveBeenCalledWith('s1')
   })
 })
 
 describe('SlidesPanel — duplicate slide', () => {
-  it('duplicate from menu calls duplicateSlide with correct id', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
+  it('puts the copy right after the original, as one undo step', () => {
+    const deck = deckWith(['s1', 's2'])
+    const undo = createUndoManager(deck)
+    const { setActiveSlideId } = renderPanel(deck, 's1')
+    openSlideMenu(0)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }))
+    const ids = order(deck)
+    expect(ids).toHaveLength(3)
+    expect([ids[0], ids[2]]).toEqual(['s1', 's2'])
+    expect(setActiveSlideId).toHaveBeenCalledWith(ids[1])
+    expect(undo.undoStack).toHaveLength(1)
+  })
+})
 
-    // Open menu for s1
-    const menuButtons = screen.getAllByRole('button', { name: 'Slide options' })
-    fireEvent.click(menuButtons[0] as HTMLElement)
+describe('SlidesPanel — copy and paste within the deck', () => {
+  it('pastes whole copies after the slide the paste was aimed at', () => {
+    const deck = deckWith(['s1', 's2', 's3'])
+    setSlideName(deck, 's1', 'Opening')
+    renderPanel(deck, 's1')
+    fireEvent.contextMenu(document.querySelector('[data-slide-id="s1"]') as HTMLElement)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy slide' }))
+    expect(readSlideClipboard()).toEqual({ deckId: DECK_ID, slideIds: ['s1'] })
 
-    const dupBtn = screen.getByRole('menuitem', { name: 'Duplicate' })
-    fireEvent.click(dupBtn)
+    fireEvent.contextMenu(document.querySelector('[data-slide-id="s2"]') as HTMLElement)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Paste slide' }))
+    const slides = listSlides(deck)
+    expect(slides.map((s) => s.id).slice(0, 2)).toEqual(['s1', 's2'])
+    expect(slides[2]!.name).toBe('Opening')
+    expect(slides[3]!.id).toBe('s3')
+  })
 
-    expect(mockDuplicateSlide).toHaveBeenCalledOnce()
-    expect(mockDuplicateSlide).toHaveBeenCalledWith(expect.anything(), 's1')
+  it('reports copied slides that were deleted since, and changes nothing', () => {
+    const deck = deckWith(['s1', 's2'])
+    setSlideClipboard(DECK_ID, ['gone'])
+    renderPanel(deck, 's1')
+    fireEvent.contextMenu(document.querySelector('[data-slide-id="s2"]') as HTMLElement)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Paste slide' }))
+    expect(order(deck)).toEqual(['s1', 's2'])
+    expect(screen.getByText(/deleted since they were copied/)).toBeInTheDocument()
   })
 })
 
@@ -266,72 +198,16 @@ describe('SlidesPanel — duplicate slide', () => {
 // ---------------------------------------------------------------------------
 
 describe('SlidesPanel — keyboard navigation', () => {
-  it.skip('ArrowDown moves to next slide', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'), makeSlide('s3'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    const list = screen.getByRole('listbox')
-    fireEvent.keyDown(list, { key: 'ArrowDown' })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s2')
+  it('ArrowDown on the last slide stays there', () => {
+    const { setActiveSlideId } = renderPanel(deckWith(['s1', 's2']), 's2')
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' })
+    for (const [id] of setActiveSlideId.mock.calls) expect(id).toBe('s2')
   })
 
-  it.skip('ArrowUp moves to previous slide', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'), makeSlide('s3'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's2',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    const list = screen.getByRole('listbox')
-    fireEvent.keyDown(list, { key: 'ArrowUp' })
-
-    expect(mockSetActiveSlideId).toHaveBeenCalledWith('s1')
-  })
-
-  it('ArrowDown at last slide is no-op', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's2',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    const list = screen.getByRole('listbox')
-    fireEvent.keyDown(list, { key: 'ArrowDown' })
-
-    // Should clamp to last — setActiveSlideId called with 's2' (same) or not called at all
-    // Since it's the same ID it may or may not call — assert correct clamping behavior
-    const calls = mockSetActiveSlideId.mock.calls
-    if (calls.length > 0) {
-      expect(calls[0]?.[0]).toBe('s2')
-    }
-  })
-
-  it('ArrowUp at first slide is no-op', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'))
-    const mockSetActiveSlideId = vi.fn()
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: mockSetActiveSlideId,
-    }
-    renderPanel(activeSlide)
-
-    const list = screen.getByRole('listbox')
-    fireEvent.keyDown(list, { key: 'ArrowUp' })
-
-    const calls = mockSetActiveSlideId.mock.calls
-    if (calls.length > 0) {
-      expect(calls[0]?.[0]).toBe('s1')
-    }
+  it('ArrowUp on the first slide stays there', () => {
+    const { setActiveSlideId } = renderPanel(deckWith(['s1', 's2']), 's1')
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowUp' })
+    for (const [id] of setActiveSlideId.mock.calls) expect(id).toBe('s1')
   })
 })
 
@@ -340,38 +216,40 @@ describe('SlidesPanel — keyboard navigation', () => {
 // ---------------------------------------------------------------------------
 
 describe('SlidesPanel — drag to reorder', () => {
-  it('drag sequence calls moveSlide with target index', () => {
-    mockSlidesData.push(makeSlide('s1'), makeSlide('s2'), makeSlide('s3'))
-    const activeSlide: ActiveSlideContextValue = {
-      activeSlideId: 's1',
-      setActiveSlideId: vi.fn(),
+  // jsdom implements neither PointerEvent (fireEvent would then send a bare
+  // Event without coordinates) nor pointer capture, which the panel takes
+  // on pointerdown.
+  beforeAll(() => {
+    if (typeof window.PointerEvent === 'undefined') {
+      class PointerEventPolyfill extends MouseEvent {
+        readonly pointerId: number
+        constructor(type: string, init: PointerEventInit = {}) {
+          super(type, init)
+          this.pointerId = init.pointerId ?? 0
+        }
+      }
+      window.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent
     }
-    renderPanel(activeSlide)
+    HTMLElement.prototype.setPointerCapture ??= () => {}
+  })
 
-    // Get the thumbnail card for s1 (first item's aria-hidden div)
-    const s1Item = document.querySelector('[data-slide-id="s1"]') as HTMLElement
-    const thumbnailCard = s1Item?.querySelector('[aria-hidden="true"]') as HTMLElement
-
-    // Simulate drag: pointerdown on s1 thumbnail, pointermove down (simulate ~1 item height),
-    // pointerup
+  it('moves the dragged slide two rows down', () => {
+    const deck = deckWith(['s1', 's2', 's3'])
+    renderPanel(deck, 's1')
+    const card = document
+      .querySelector('[data-slide-id="s1"]')
+      ?.querySelector('[aria-hidden="true"]') as HTMLElement
+    // jsdom has no layout, so the panel falls back to its 90 px row height:
+    // 200 px down is two rows — the gap below s2.
     act(() => {
-      fireEvent.pointerDown(thumbnailCard, { button: 0, clientY: 0, pointerId: 1 })
+      fireEvent.pointerDown(card, { button: 0, clientX: 0, clientY: 0, pointerId: 1 })
     })
-
-    // Move down by ~100px (approximate item height of 90px — moves to index 1)
     act(() => {
-      fireEvent.pointerMove(thumbnailCard, { clientY: 100, pointerId: 1 })
+      fireEvent.pointerMove(card, { clientX: 0, clientY: 200, pointerId: 1 })
     })
-
     act(() => {
-      fireEvent.pointerUp(thumbnailCard, { clientY: 100, pointerId: 1 })
+      fireEvent.pointerUp(card, { clientX: 0, clientY: 200, pointerId: 1 })
     })
-
-    // moveSlide should have been called (if insertAt !== fromIndex)
-    // The exact target index depends on item height heuristic — just check it was called
-    if (mockMoveSlide.mock.calls.length > 0) {
-      expect(mockMoveSlide).toHaveBeenCalledWith(expect.anything(), 's1', expect.any(Number))
-    }
-    // If not called, the drag was within same position — that is also valid behavior
+    expect(order(deck)).toEqual(['s2', 's1', 's3'])
   })
 })

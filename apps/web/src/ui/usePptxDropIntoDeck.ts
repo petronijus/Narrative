@@ -29,12 +29,19 @@ import { nanoid } from 'nanoid'
 import { importPptxViaTus } from '../state/importPptxViaTus.js'
 import { dragHasFiles, isLegacyPptFile, isPptxFile, pptxRejectionReason } from '../lib/pptxFiles.js'
 
-/** One dropped file's trip from the disk into the deck. */
+/**
+ * One batch of slides on its way into the deck from the server: a dropped
+ * `.pptx` (uploaded, then imported) or slides pasted from another deck
+ * (copied server-side, with their media).
+ */
 export interface PptxImportJob {
   id: string
+  kind: 'pptx' | 'paste'
+  /** What the row shows: the file name, or what is being pasted. */
   filename: string
   /** Index its first slide is headed for, in the deck as it stands now. */
   insertAt: number
+  /** `importing`: the server is building the slides (after the upload, for a file). */
   status: 'uploading' | 'importing' | 'error'
   /** 0..1 while uploading; meaningless once the server takes over. */
   progress: number
@@ -71,6 +78,19 @@ export interface UsePptxDropIntoDeck {
   jobs: PptxImportJob[]
   /** Clear a finished-in-error job the user has read. */
   dismiss: (id: string) => void
+  /**
+   * Queue slides that the server inserts at `at` — the same queue, rows and
+   * index bookkeeping as a dropped file. `run` gets the index the batch
+   * should take by the time its turn comes (earlier batches may have moved
+   * it) and resolves with where the slides landed and how many there are.
+   */
+  enqueueInsert: (args: {
+    label: string
+    at: number
+    run: (at: number) => Promise<{ insertedAt: number; count: number }>
+  }) => void
+  /** Show a refusal in the gap at `at` without running anything. */
+  reportError: (args: { label: string; at: number; error: string }) => void
 }
 
 export function usePptxDropIntoDeck({
@@ -82,6 +102,15 @@ export function usePptxDropIntoDeck({
 }: UsePptxDropIntoDeckOptions): UsePptxDropIntoDeck {
   const [indicatorAt, setIndicatorAt] = useState<number | null>(null)
   const [jobs, setJobs] = useState<PptxImportJob[]>([])
+  /**
+   * The jobs as last rendered, read when a queued job's turn comes: its
+   * `insertAt` has been moved by every batch that landed before it, and the
+   * job object captured when it was queued still holds the original.
+   */
+  const jobsRef = useRef<PptxImportJob[]>(jobs)
+  useEffect(() => {
+    jobsRef.current = jobs
+  }, [jobs])
   /**
    * dragenter/dragleave fire for every element the pointer crosses, so a
    * plain boolean flickers off the moment the cursor moves between two
@@ -128,12 +157,46 @@ export function usePptxDropIntoDeck({
   )
 
   const runJob = useCallback(
-    async (job: PptxImportJob, file: File, targetDeckId: string): Promise<void> => {
+    async (
+      job: PptxImportJob,
+      run: (at: number) => Promise<{ insertedAt: number; count: number }>,
+    ): Promise<void> => {
+      const at = jobsRef.current.find((j) => j.id === job.id)?.insertAt ?? job.insertAt
       try {
+        const result = await run(at)
+        // Everything still queued was positioned against a deck that did not
+        // yet contain these slides, so anything at or after this insertion
+        // point moves down by however many arrived.
+        setJobs((prev) =>
+          prev
+            .filter((j) => j.id !== job.id)
+            .map((j) =>
+              j.insertAt >= result.insertedAt ? { ...j, insertAt: j.insertAt + result.count } : j,
+            ),
+        )
+        onImportedRef.current?.(result.insertedAt, result.count)
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : job.kind === 'paste'
+              ? 'Paste failed'
+              : 'Import failed'
+        setJobs((prev) =>
+          prev.map((j) => (j.id === job.id ? { ...j, status: 'error', error: message } : j)),
+        )
+      }
+    },
+    [],
+  )
+
+  const uploadFile = useCallback(
+    (job: PptxImportJob, file: File, targetDeckId: string) =>
+      async (at: number): Promise<{ insertedAt: number; count: number }> => {
         const result = await importPptxViaTus({
           file,
           deckId: targetDeckId,
-          insertAt: job.insertAt,
+          insertAt: at,
           onProgress: (p) => {
             setJobs((prev) =>
               prev.map((j) =>
@@ -144,26 +207,8 @@ export function usePptxDropIntoDeck({
             )
           },
         })
-        // Everything still queued was positioned against a deck that did not
-        // yet contain these slides, so anything at or after this insertion
-        // point moves down by however many arrived.
-        setJobs((prev) =>
-          prev
-            .filter((j) => j.id !== job.id)
-            .map((j) =>
-              j.insertAt >= result.insertedAt
-                ? { ...j, insertAt: j.insertAt + result.appendedSlides }
-                : j,
-            ),
-        )
-        onImportedRef.current?.(result.insertedAt, result.appendedSlides)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Import failed'
-        setJobs((prev) =>
-          prev.map((j) => (j.id === job.id ? { ...j, status: 'error', error: message } : j)),
-        )
-      }
-    },
+        return { insertedAt: result.insertedAt, count: result.appendedSlides }
+      },
     [],
   )
 
@@ -175,22 +220,65 @@ export function usePptxDropIntoDeck({
         const job: PptxImportJob = reason
           ? {
               id: nanoid(8),
+              kind: 'pptx',
               filename: file.name,
               insertAt: at,
               status: 'error',
               progress: 0,
               error: reason,
             }
-          : { id: nanoid(8), filename: file.name, insertAt: at, status: 'uploading', progress: 0 }
+          : {
+              id: nanoid(8),
+              kind: 'pptx',
+              filename: file.name,
+              insertAt: at,
+              status: 'uploading',
+              progress: 0,
+            }
         setJobs((prev) => [...prev, job])
         if (reason !== null) continue
         // Chain, don't race: the queue is what keeps two files dropped
         // together in the order they were dropped.
-        queueRef.current = queueRef.current.then(() => runJob(job, file, deckId))
+        queueRef.current = queueRef.current.then(() => runJob(job, uploadFile(job, file, deckId)))
       }
     },
-    [deckId, runJob],
+    [deckId, runJob, uploadFile],
   )
+
+  const enqueueInsert = useCallback(
+    (args: {
+      label: string
+      at: number
+      run: (at: number) => Promise<{ insertedAt: number; count: number }>
+    }): void => {
+      const job: PptxImportJob = {
+        id: nanoid(8),
+        kind: 'paste',
+        filename: args.label,
+        insertAt: args.at,
+        status: 'importing',
+        progress: 1,
+      }
+      setJobs((prev) => [...prev, job])
+      queueRef.current = queueRef.current.then(() => runJob(job, args.run))
+    },
+    [runJob],
+  )
+
+  const reportError = useCallback((args: { label: string; at: number; error: string }): void => {
+    setJobs((prev) => [
+      ...prev,
+      {
+        id: nanoid(8),
+        kind: 'paste',
+        filename: args.label,
+        insertAt: args.at,
+        status: 'error',
+        progress: 0,
+        error: args.error,
+      },
+    ])
+  }, [])
 
   const dropHandlers = {
     onDragEnter: (e: React.DragEvent) => {
@@ -236,5 +324,5 @@ export function usePptxDropIntoDeck({
     setJobs((prev) => prev.filter((j) => j.id !== id))
   }, [])
 
-  return { dropHandlers, indicatorAt, jobs, dismiss }
+  return { dropHandlers, indicatorAt, jobs, dismiss, enqueueInsert, reportError }
 }

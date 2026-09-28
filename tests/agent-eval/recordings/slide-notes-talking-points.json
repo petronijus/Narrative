@@ -1,0 +1,139 @@
+{
+  "scenario": "slide-notes-talking-points",
+  "tag": "ev99c440",
+  "recordedAt": "2026-09-28T15:48:43.208Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "XCjNSeijiZ23",
+    "title": "Board update ev99c440",
+    "slideIds": ["xlTPNODXL9CcrBXq4DQT8", "wYWIRzXhD6ISvKsAO6ux6", "U2SbUbF-6xd88xo1PwcwR"]
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the Narrative deck \"Board update ev99c440\" (deckId XCjNSeijiZ23), add speaker notes to slide 2 (Revenue): a bulleted list with three points — \"Growth came from EMEA\", \"APAC was flat\", \"Pricing change lands in Q4\" — with \"EMEA\" in bold.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__slide_notes_set,mcp__narrative-eval__slide_notes_get,mcp__narrative-eval__query_deck,mcp__narrative-eval__agent_startRun,ReadMcpResourceTool",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_deck",
+            "command": "query.deck",
+            "input": {
+              "deckId": "XCjNSeijiZ23"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slideCount": 3,
+              "slides": [
+                {
+                  "id": "xlTPNODXL9CcrBXq4DQT8",
+                  "index": 0,
+                  "title": "Board update",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "wYWIRzXhD6ISvKsAO6ux6",
+                  "index": 1,
+                  "title": "Revenue",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                },
+                {
+                  "id": "U2SbUbF-6xd88xo1PwcwR",
+                  "index": 2,
+                  "title": "Next steps",
+                  "transition": "none",
+                  "objectCount": 2,
+                  "animationCount": 0
+                }
+              ],
+              "guides": []
+            },
+            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"xlTPNODXL9CcrBXq4DQT8\",\"index\":0,\"title\":\"Board update\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"wYWIRzXhD6ISvKsAO6ux6\",\"index\":1,\"title\":\"Revenue\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"U2SbUbF-6xd88xo1PwcwR\",\"index\":2,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+          },
+          {
+            "tool": "slide_notes_get",
+            "command": "slide.notes.get",
+            "input": {
+              "deckId": "XCjNSeijiZ23",
+              "slide": {
+                "id": "wYWIRzXhD6ISvKsAO6ux6"
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "markdown": ""
+            },
+            "text": "{\"markdown\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "XCjNSeijiZ23",
+              "request": "Add speaker notes to the Revenue slide"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_KTK6c6OhUnjoOkRj"
+            },
+            "text": "{\"runId\":\"run_KTK6c6OhUnjoOkRj\"}"
+          },
+          {
+            "tool": "slide_notes_set",
+            "command": "slide.notes.set",
+            "input": {
+              "deckId": "XCjNSeijiZ23",
+              "slide": {
+                "id": "wYWIRzXhD6ISvKsAO6ux6"
+              },
+              "markdown": "- Growth came from **EMEA**\n- APAC was flat\n- Pricing change lands in Q4",
+              "runId": "run_KTK6c6OhUnjoOkRj"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {},
+            "text": "{}"
+          },
+          {
+            "tool": "slide_notes_get",
+            "command": "slide.notes.get",
+            "input": {
+              "deckId": "XCjNSeijiZ23",
+              "slide": {
+                "id": "wYWIRzXhD6ISvKsAO6ux6"
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "markdown": "- Growth came from **EMEA**\n- APAC was flat\n- Pricing change lands in Q4"
+            },
+            "text": "{\"markdown\":\"- Growth came from **EMEA**\\n- APAC was flat\\n- Pricing change lands in Q4\"}"
+          }
+        ],
+        "finalText": "I added speaker notes to slide 2 (Revenue) in \"Board update ev99c440\". I read them back afterwards and they saved correctly:\n\n- Growth came from **EMEA**\n- APAC was flat\n- Pricing change lands in Q4\n\nThe slide had no notes before, so nothing was overwritten. The change is saved under its own run in the editor's Agent activity, so you can undo it in one step if needed.",
+        "turns": 7,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

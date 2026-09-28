@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, Copy, MoreVertical, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useApi } from '../api/client.js'
 import { UserMenu } from '../ui/UserMenu.js'
 import { Button } from '@/components/ui/button'
@@ -213,6 +213,27 @@ function FolderDecksInner() {
     [api, fetchData],
   )
 
+  const handleDuplicateDeck = useCallback(
+    async (id: string) => {
+      try {
+        const copy = await api.duplicateDeck(id)
+        // The copy lands in this folder (the caller owns it): right after
+        // its original, where the eye already is.
+        if (copy.folderId === folderId) {
+          setDecks((prev) => {
+            const at = prev.findIndex((d) => d.id === id)
+            const next = [...prev]
+            next.splice(at === -1 ? 0 : at + 1, 0, copy)
+            return next
+          })
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to duplicate deck')
+      }
+    },
+    [api, folderId],
+  )
+
   const handleMoveConfirm = useCallback(
     async (destFolderId: string) => {
       if (moveDeckId === null || folderId === undefined) return
@@ -342,6 +363,7 @@ function FolderDecksInner() {
                 onOpen={() => void navigate(`/deck/${deck.id}`)}
                 onDelete={() => void handleDeleteDeck(deck.id)}
                 onRename={(title) => void handleRenameDeck(deck.id, title)}
+                onDuplicate={() => void handleDuplicateDeck(deck.id)}
                 onMoveRequest={() => setMoveDeckId(deck.id)}
               />
             ))}
@@ -378,6 +400,7 @@ interface DeckCardProps {
   onOpen: () => void
   onDelete: () => void
   onRename: (title: string) => void
+  onDuplicate: () => void
   onMoveRequest: () => void
 }
 
@@ -392,6 +415,7 @@ function DeckCard({
   onOpen,
   onDelete,
   onRename,
+  onDuplicate,
   onMoveRequest,
 }: DeckCardProps) {
   const [editing, setEditing] = useState(false)
@@ -537,6 +561,17 @@ function DeckCard({
                   >
                     <Pencil className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     Rename
+                  </button>
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onDuplicate()
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                    Duplicate
                   </button>
                   <button
                     role="menuitem"

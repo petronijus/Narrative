@@ -31,24 +31,14 @@ import {
 } from 'react'
 import { useSlides } from '../state/useSlides.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
-import { useSlideDoc } from '../state/useSlideDoc.js'
 import { useSelection } from '../state/SelectionContext.js'
 import { useSlideThumbnails } from '../state/useSlideThumbnails.js'
 import { setDeckThumbnail } from '../state/deckThumbnailCache.js'
-import { useApi } from '../api/client.js'
+import { ApiError, useApi } from '../api/client.js'
 import { useParams } from 'react-router-dom'
 import { useShortcuts } from '../state/useShortcuts.js'
-import {
-  addSlide,
-  duplicateSlide,
-  removeSlide,
-  moveSlidesBlock,
-  setSlideName,
-  setSlideSkipped,
-  setSlideIndent,
-  setSlideCollapsed,
-} from '@narrative/slide-model'
-import { pasteSlides } from './slideHelpers.js'
+import { MAX_SLIDE_INDENT, maxLevelBelow } from '@narrative/commands'
+import { useCommand } from '../state/useCommand.js'
 import { SlidesPanelContextMenu } from './SlidesPanelContextMenu.js'
 import {
   setSlideClipboard,
@@ -75,7 +65,6 @@ function placeholderColour(index: number): string {
 
 const INDENT_STEP_PX = 24
 const INDENT_VISUAL_PX = 16
-const MAX_INDENT = 6
 
 // PERF-1: stable no-op so the memoised SlideItem's `onPointerDown` prop keeps
 // the same identity across renders in read-only (viewer) mode. An inline
@@ -111,6 +100,18 @@ function subtreeIds(slides: Slide[], fromIndex: number): string[] {
     out.push(s.id)
   }
   return out
+}
+
+/** What to tell the user when the server refuses a cross-deck paste. */
+function pasteFailureMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) {
+      return 'You can only view the deck these slides come from, so they cannot be copied out of it.'
+    }
+    if (err.status === 404) return 'The copied slides, or the deck they come from, no longer exist.'
+    return err.message
+  }
+  return 'The slides could not be pasted. Check your connection and try again.'
 }
 
 /**
@@ -499,7 +500,7 @@ interface SlidesPanelProps {
 export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement {
   const slides = useSlides()
   const { activeSlideId, setActiveSlideId } = useActiveSlide()
-  const { deckCtx } = useSlideDoc()
+  const command = useCommand()
   const { clear: clearSelection } = useSelection()
   const listRef = useRef<HTMLUListElement>(null)
   const headerId = useId()
@@ -672,11 +673,11 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   )
 
   const handleAdd = useCallback(() => {
-    const newSlide = addSlide(deckCtx)
-    setActiveSlideId(newSlide.id)
-    setSelectedIds(new Set([newSlide.id]))
+    const { slideId } = command.run<{ slideId: string }>('slide.add', {})
+    setActiveSlideId(slideId)
+    setSelectedIds(new Set([slideId]))
     clearSelection()
-  }, [deckCtx, setActiveSlideId, clearSelection])
+  }, [command, setActiveSlideId, clearSelection])
 
   /**
    * The slides an action aimed at `slideId` should apply to: the whole
@@ -698,48 +699,29 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
   const handleDuplicate = useCallback(
     (slideId: string) => {
       const targets = actionTargets(slideId)
-      // Each copy lands right after its original. Right to left, so a copy
-      // never pushes a later original out from under its own copy.
-      let lastNewId: string | null = null
-      for (const id of [...targets].reverse()) {
-        const newSlide = duplicateSlide(deckCtx, id)
-        if (newSlide !== null) lastNewId = newSlide.id
-      }
-      if (lastNewId !== null) {
+      // Each copy lands right after its original, all as one undo step.
+      const copies = command.group((run) =>
+        targets.map((id) => run<{ slideId: string }>('slide.duplicate', { slide: id }).slideId),
+      )
+      const lastNewId = copies?.at(-1)
+      if (lastNewId !== undefined) {
         setActiveSlideId(lastNewId)
         clearSelection()
       }
     },
-    [deckCtx, actionTargets, setActiveSlideId, clearSelection],
+    [command, actionTargets, setActiveSlideId, clearSelection],
   )
 
   const handleDelete = useCallback(
     (slideId: string) => {
       const targets = actionTargets(slideId)
-      const doomed = new Set(targets)
-
-      // Land on the nearest survivor above the block, or the first one below
-      // it when the block starts at the top. `removeSlide` keeps the deck
-      // from ever reaching zero slides, so deleting every slide leaves one
-      // fresh empty one behind rather than nothing.
-      let nextActiveId: string | null = activeSlideId
-      if (activeSlideId === null || doomed.has(activeSlideId)) {
-        const firstIdx = slides.findIndex((s) => doomed.has(s.id))
-        let survivor: Slide | undefined
-        for (let i = firstIdx - 1; i >= 0; i--) {
-          const s = slides[i]
-          if (s !== undefined && !doomed.has(s.id)) {
-            survivor = s
-            break
-          }
-        }
-        survivor ??= slides.find((s) => !doomed.has(s.id))
-        nextActiveId = survivor?.id ?? null
-      }
-
-      for (const id of targets) {
-        removeSlide(deckCtx, id)
-      }
+      // slide.delete names where to land: the nearest survivor above the
+      // block, or the first one below it when the block starts at the top
+      // (deleting every slide leaves one fresh empty slide behind).
+      const out = command.tryRun<{ landOn: string }>('slide.delete', { slides: targets })
+      if (out === null) return
+      const nextActiveId =
+        activeSlideId === null || targets.includes(activeSlideId) ? out.landOn : activeSlideId
 
       // Keep the panel's invariant: when the selection is not empty it holds
       // the active slide. Leaving the deleted ids in it would ring rows that
@@ -754,7 +736,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       }
       clearSelection()
     },
-    [deckCtx, slides, activeSlideId, actionTargets, setActiveSlideId, clearSelection],
+    [command, activeSlideId, actionTargets, setActiveSlideId, clearSelection],
   )
 
   /** Panel-level rename request — set by the context menu's Rename
@@ -762,6 +744,41 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
    *  clears it via onConsumeEditRequest. */
   const [editRequestId, setEditRequestId] = useState<string | null>(null)
   const consumeEditRequest = useCallback(() => setEditRequestId(null), [])
+
+  // ---------------------------------------------------------------------------
+  // Slides arriving from the server — a .pptx dropped from the desktop, or
+  // slides pasted from another deck — land at the gap they were aimed at
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The imported slides arrive over Yjs, so the panel learns about them the
+   * same way it learns about a peer's edit: the array grows. All the import
+   * itself can tell us is the index they landed at, which is what selects
+   * them — but only once the array has actually caught up, hence the ref and
+   * the effect rather than a `setActiveSlideId` in the completion callback.
+   */
+  const pendingImportFocusRef = useRef<number | null>(null)
+  const handleImported = useCallback((insertedAt: number) => {
+    pendingImportFocusRef.current = insertedAt
+  }, [])
+
+  const pptxDrop = usePptxDropIntoDeck({
+    deckId,
+    listRef,
+    slideCount: slides.length,
+    disabled: isViewer,
+    onImported: handleImported,
+  })
+
+  useEffect(() => {
+    const target = pendingImportFocusRef.current
+    if (target === null) return
+    const slide = slides[target]
+    if (slide === undefined) return
+    pendingImportFocusRef.current = null
+    setActiveSlideId(slide.id)
+    setSelectedIds(new Set([slide.id]))
+  }, [slides, setActiveSlideId])
 
   // P11: cross-deck slide clipboard. canPaste is reactive — bumps a tick
   // whenever copy or paste runs so the menu's disabled state updates
@@ -772,36 +789,67 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const handleCopy = useCallback(
     (slideId: string) => {
-      const ids = new Set(actionTargets(slideId))
-      const ordered = slides.filter((s) => ids.has(s.id))
-      if (ordered.length === 0) return
-      setSlideClipboard(ordered)
+      if (deckId === undefined || deckId === '') return
+      // actionTargets answers in deck order already.
+      setSlideClipboard(deckId, actionTargets(slideId))
       setClipboardTick((t) => t + 1)
     },
-    [slides, actionTargets],
+    [deckId, actionTargets],
   )
 
+  const { enqueueInsert, reportError } = pptxDrop
   const handlePaste = useCallback(
     (afterSlideId: string | null) => {
-      const payload = readSlideClipboard()
-      if (payload === null || payload.length === 0) return
+      const clip = readSlideClipboard()
+      if (clip === null || deckId === undefined || deckId === '') return
       // afterSlideId === null → paste at end (used by panel-empty-area menu).
-      const insertAt =
-        afterSlideId === null
-          ? slides.length
-          : (() => {
-              const idx = slides.findIndex((s) => s.id === afterSlideId)
-              return idx === -1 ? slides.length : idx + 1
-            })()
-      const newIds = pasteSlides(deckCtx, payload, insertAt)
-      const firstNew = newIds[0]
-      if (firstNew !== undefined) {
-        setActiveSlideId(firstNew)
-        setSelectedIds(new Set(newIds))
+      const afterIdx = afterSlideId === null ? -1 : slides.findIndex((s) => s.id === afterSlideId)
+      const insertAt = afterIdx === -1 ? slides.length : afterIdx + 1
+      const count = clip.slideIds.length
+      const label = count === 1 ? '1 slide' : `${count} slides`
+
+      if (clip.deckId === deckId) {
+        const present = new Set(slides.map((s) => s.id))
+        const still = clip.slideIds.filter((id) => present.has(id))
+        if (still.length === 0) {
+          reportError({
+            label,
+            at: insertAt,
+            error: 'The copied slides have been deleted since they were copied.',
+          })
+          return
+        }
+        const out = command.tryRun<{ slideIds: string[] }>('slide.copyTo', {
+          slides: still,
+          index: insertAt,
+        })
+        const first = out?.slideIds[0]
+        if (out !== null && first !== undefined) {
+          setActiveSlideId(first)
+          setSelectedIds(new Set(out.slideIds))
+        }
+        return
       }
-      setClipboardTick((t) => t + 1)
+
+      // From another deck: the server copies the slides and their media.
+      enqueueInsert({
+        label: `${label} from another deck`,
+        at: insertAt,
+        run: async (at) => {
+          try {
+            const out = await apiRef.current.insertSlidesFromDeck(deckId, {
+              sourceDeckId: clip.deckId,
+              slideIds: clip.slideIds,
+              at,
+            })
+            return { insertedAt: out.insertedAt, count: out.slideIds.length }
+          } catch (err) {
+            throw new Error(pasteFailureMessage(err))
+          }
+        },
+      })
     },
-    [deckCtx, slides, setActiveSlideId],
+    [deckId, slides, command, enqueueInsert, reportError, setActiveSlideId],
   )
 
   const handleTransition = useCallback(
@@ -813,27 +861,27 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
   const handleRename = useCallback(
     (slideId: string, name: string) => {
-      setSlideName(deckCtx, slideId, name)
+      command.tryRun('slide.rename', { slide: slideId, name })
     },
-    [deckCtx],
+    [command],
   )
 
   const handleToggleSkip = useCallback(
     (slideId: string) => {
       const s = slides.find((x) => x.id === slideId)
       if (s === undefined) return
-      setSlideSkipped(deckCtx, slideId, s.skipped !== true)
+      command.tryRun('slide.skip', { slide: slideId, skipped: s.skipped !== true })
     },
-    [deckCtx, slides],
+    [command, slides],
   )
 
   const handleToggleCollapsed = useCallback(
     (slideId: string) => {
       const s = slides.find((x) => x.id === slideId)
       if (s === undefined) return
-      setSlideCollapsed(deckCtx, slideId, s.collapsed !== true)
+      command.tryRun('slide.collapse', { slide: slideId, collapsed: s.collapsed !== true })
     },
-    [deckCtx, slides],
+    [command, slides],
   )
 
   // ---------------------------------------------------------------------------
@@ -895,12 +943,20 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
    */
   const clampIndent = useCallback(
     (proposed: number, insertAt: number, movingIds: string[]): number => {
+      // The slide the block will sit under once it is lifted out: the last
+      // slide before `insertAt` (a position in the deck BEFORE the move)
+      // that is not itself being moved. slide.move applies the same rule.
       const movingSet = new Set(movingIds)
-      const filtered = slides.filter((s) => !movingSet.has(s.id))
-      const clampedInsertAt = Math.max(0, Math.min(insertAt, filtered.length))
-      const prev = clampedInsertAt > 0 ? filtered[clampedInsertAt - 1] : undefined
-      const maxAllowed = prev === undefined ? 0 : slideIndent(prev) + 1
-      return Math.max(0, Math.min(MAX_INDENT, Math.min(proposed, maxAllowed)))
+      let prev: Slide | undefined
+      for (let i = Math.min(insertAt, slides.length) - 1; i >= 0; i--) {
+        const s = slides[i]
+        if (s !== undefined && !movingSet.has(s.id)) {
+          prev = s
+          break
+        }
+      }
+      const maxAllowed = maxLevelBelow(prev === undefined ? undefined : slideIndent(prev))
+      return Math.max(0, Math.min(MAX_SLIDE_INDENT, proposed, maxAllowed))
     },
     [slides],
   )
@@ -1029,24 +1085,17 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
 
       const movedPosition = ds.insertAt !== ds.fromIndex
       const movedIndent = ds.indent !== ds.fromIndent
+      if (!movedPosition && !movedIndent) return
 
-      if (movedPosition) {
-        moveSlidesBlock(deckCtx, ds.slideIds, ds.insertAt)
-      }
-      if (movedIndent) {
-        // Shift the whole subtree by the same delta so relative indents stay.
-        const delta = ds.indent - ds.fromIndent
-        for (const id of ds.slideIds) {
-          const s = slides.find((x) => x.id === id)
-          if (s === undefined) continue
-          const nextIndent = Math.max(0, Math.min(MAX_INDENT, slideIndent(s) + delta))
-          if (nextIndent !== slideIndent(s)) {
-            setSlideIndent(deckCtx, id, nextIndent)
-          }
-        }
-      }
+      // One command: the block moves and, with `level`, its subtree shifts
+      // by the same amount (slide.move keeps the outline well formed).
+      command.tryRun('slide.move', {
+        slides: ds.slideIds,
+        toIndex: ds.insertAt,
+        ...(movedIndent ? { level: ds.indent } : {}),
+      })
     },
-    [deckCtx, slides],
+    [command],
   )
 
   // ---------------------------------------------------------------------------
@@ -1148,40 +1197,6 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [activeSlideId])
-
-  // ---------------------------------------------------------------------------
-  // .pptx dropped from the desktop → import into THIS deck, at the drop gap
-  // ---------------------------------------------------------------------------
-
-  /**
-   * The imported slides arrive over Yjs, so the panel learns about them the
-   * same way it learns about a peer's edit: the array grows. All the import
-   * itself can tell us is the index they landed at, which is what selects
-   * them — but only once the array has actually caught up, hence the ref and
-   * the effect rather than a `setActiveSlideId` in the completion callback.
-   */
-  const pendingImportFocusRef = useRef<number | null>(null)
-  const handleImported = useCallback((insertedAt: number) => {
-    pendingImportFocusRef.current = insertedAt
-  }, [])
-
-  const pptxDrop = usePptxDropIntoDeck({
-    deckId,
-    listRef,
-    slideCount: slides.length,
-    disabled: isViewer,
-    onImported: handleImported,
-  })
-
-  useEffect(() => {
-    const target = pendingImportFocusRef.current
-    if (target === null) return
-    const slide = slides[target]
-    if (slide === undefined) return
-    pendingImportFocusRef.current = null
-    setActiveSlideId(slide.id)
-    setSelectedIds(new Set([slide.id]))
-  }, [slides, setActiveSlideId])
 
   // ---------------------------------------------------------------------------
   // Render

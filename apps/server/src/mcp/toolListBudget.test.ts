@@ -21,8 +21,14 @@ import { describe, expect, it } from 'vitest'
 import { createDefaultRegistry } from '@narrative/commands'
 import { ToolCatalog, type ConfirmationMode } from './tools.js'
 
-/** Bytes of `JSON.stringify({ tools })` for the largest variant (clients that confirm by link). */
-export const TOOL_LIST_BUDGET_BYTES = 132_000
+/**
+ * Bytes of `JSON.stringify({ tools })`, for every confirmation variant (url
+ * mode is the largest). Raised from 132,000 in A2.2 (2026-09-28) for four new
+ * capabilities — slide.copyTo, slide.notes.get / .set, deck.duplicate — at
+ * 1.0–1.3 KB each; A2 adds ~25 more commands that move editor-only logic
+ * onto the agent surface, so expect it to grow step by step with them.
+ */
+export const TOOL_LIST_BUDGET_BYTES = 136_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

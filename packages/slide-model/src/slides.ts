@@ -22,6 +22,7 @@ import type {
 import type { SlideObject } from '@narrative/shared'
 import type { AnimationStep } from '@narrative/shared'
 import { LOCAL_ORIGIN } from './mutations.js'
+import { createSlideYMap } from './yDoc.js'
 import type { ObjectsMutationContext } from './mutations.js'
 import type { AnimationsMutationContext } from './animationMutations.js'
 import { yMapToPlainObject } from './bindings.js'
@@ -167,29 +168,6 @@ function readGradientStops(m: Y.Map<unknown>): GradientStop[] {
     })
   }
   return out
-}
-
-function createSlideYMap(doc: Y.Doc, id: string): Y.Map<unknown> {
-  const slideMap = new Y.Map<unknown>()
-  const objects = new Y.Array<Y.Map<unknown>>()
-  const animations = new Y.Array<Y.Map<unknown>>()
-  const transition = new Y.Map<unknown>()
-  // M19: speaker notes as Y.XmlFragment so Tiptap / ProseMirror can bind
-  // through y-prosemirror for rich-text collab. Plain-text access still
-  // works via getSlideNotesText() which serialises the fragment.
-  const notes = new Y.XmlFragment()
-
-  transition.set('kind', DEFAULT_TRANSITION.kind)
-  transition.set('durationMs', DEFAULT_TRANSITION.durationMs)
-
-  slideMap.set('id', id)
-  slideMap.set('objects', objects)
-  slideMap.set('animations', animations)
-  slideMap.set('transition', transition)
-  slideMap.set('notes', notes)
-
-  void doc // reserved for future doc-level metadata
-  return slideMap
 }
 
 // ---------------------------------------------------------------------------
@@ -619,21 +597,18 @@ export function getSlideAnimationsCtx(
 }
 
 /**
- * Returns the Y.XmlFragment holding speaker notes for a given slide.
- * Lazily created on first access if the slide pre-dates M19 phase 2 (any
- * slide whose `notes` field is missing or is the older Y.Text type gets a
- * fresh Y.XmlFragment installed). Returns null only if the slide itself
- * does not exist.
+ * The Y.XmlFragment holding a slide's speaker notes — what the notes editor
+ * binds to — or null when the slide does not exist or has no fragment (a
+ * slide from before M19 phase 2). Never writes: a slide without notes gets
+ * its fragment from `setSlideNotes` (the `slide.notes.set` command), not
+ * from being looked at.
  */
-export function getSlideNotes(ctx: SlideMutationContext, slideId: string): Y.XmlFragment | null {
+export function getSlideNotesFragment(
+  ctx: SlideMutationContext,
+  slideId: string,
+): Y.XmlFragment | null {
   const idx = findSlideIndex(ctx.slides, slideId)
   if (idx === -1) return null
-  const slideMap = ctx.slides.get(idx)
-  const existing = slideMap.get('notes')
-  if (existing instanceof Y.XmlFragment) return existing
-  const notes = new Y.XmlFragment()
-  ctx.doc.transact(() => {
-    slideMap.set('notes', notes)
-  }, LOCAL_ORIGIN)
-  return notes
+  const notes = ctx.slides.get(idx).get('notes')
+  return notes instanceof Y.XmlFragment ? notes : null
 }

@@ -312,6 +312,16 @@ export function createDomainFakes(
         decks.set(id, { ...deck, viewerRole: 'owner' })
         return { ...deck, firstSlideId: fresh('slide') }
       },
+      async duplicate(args) {
+        rDecks('duplicate', args)
+        const source = requireDeck(args.deckId)
+        const folderId = args.folderId ?? source.folderId ?? 'folder_drafts'
+        requireFolder(folderId)
+        const id = fresh('deck')
+        const deck = deckRecord(id, args.title ?? `${source.title} (copy)`, folderId)
+        decks.set(id, { ...deck, viewerRole: 'owner' })
+        return { ...deck, slideCount: 3, mediaCopied: 1, skippedImages: 0 }
+      },
       async rename(args) {
         rDecks('rename', args)
         const deck = { ...requireDeck(args.deckId), title: args.title }
@@ -663,15 +673,25 @@ export function createDomainFakes(
         if (args.source.kind === 'deck') {
           requireDeck(args.source.deckId)
           const available = 3
-          const from = args.source.range?.from ?? 0
-          const to = args.source.range?.to ?? available - 1
-          if (from > to || to >= available) {
-            throw new CommandError(
-              'invalid_input',
-              `range ${from}..${to} is outside the source deck`,
-            )
+          const chosen = args.source.slideIds
+          if (chosen !== undefined) {
+            // The fake source deck holds slides s1..s3, like the fixture deck.
+            const missing = chosen.find((id) => !['s1', 's2', 's3'].includes(id))
+            if (missing !== undefined) {
+              throw new CommandError('not_found', `slide '${missing}' is not in the source deck`)
+            }
+            count = new Set(chosen).size
+          } else {
+            const from = args.source.range?.from ?? 0
+            const to = args.source.range?.to ?? available - 1
+            if (from > to || to >= available) {
+              throw new CommandError(
+                'invalid_input',
+                `range ${from}..${to} is outside the source deck`,
+              )
+            }
+            count = to - from + 1
           }
-          count = to - from + 1
         }
         return {
           slideCount: count,

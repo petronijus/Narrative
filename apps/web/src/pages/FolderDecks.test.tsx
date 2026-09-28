@@ -31,6 +31,7 @@ const mockCreateDeck = vi.fn()
 const mockDeleteDeck = vi.fn()
 const mockRenameDeck = vi.fn()
 const mockMoveDecks = vi.fn()
+const mockDuplicateDeck = vi.fn()
 
 const stableApiClient = {
   get listFolders() {
@@ -50,6 +51,9 @@ const stableApiClient = {
   },
   get moveDecks() {
     return mockMoveDecks
+  },
+  get duplicateDeck() {
+    return mockDuplicateDeck
   },
 }
 
@@ -201,6 +205,26 @@ describe('FolderDecks', () => {
     await waitFor(() => {
       expect(mockDeleteDeck).toHaveBeenCalledWith('deck-1')
     })
+  })
+
+  it('duplicates a deck and shows the copy right after its original', async () => {
+    mockDuplicateDeck.mockResolvedValue({
+      ...MOCK_DECKS[0]!,
+      id: 'deck-1-copy',
+      title: 'Q1 Review (copy)',
+    })
+    renderFolderDecks()
+    await waitFor(() => screen.getByText('Q1 Review'))
+
+    fireEvent.click(screen.getAllByLabelText('Deck options')[0]!)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Duplicate' }))
+
+    await waitFor(() => screen.getByText('Q1 Review (copy)'))
+    expect(mockDuplicateDeck).toHaveBeenCalledWith('deck-1')
+    const titles = screen
+      .getAllByTitle('Double-click to rename')
+      .map((el) => el.textContent?.trim())
+    expect(titles).toEqual(['Q1 Review', 'Q1 Review (copy)', 'Roadmap 2026'])
   })
 
   it('calls moveDecks and removes deck from list on move confirm', async () => {

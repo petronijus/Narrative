@@ -29,8 +29,9 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         // Allow CI / local envs that can't use bundled Playwright chromium (e.g.
         // Ubuntu 26.04 pre-release) to fall back to a system-installed Chrome.
+        // A binary path is a launch option (`use.executablePath` is not one).
         ...(process.env.PLAYWRIGHT_CHROME_EXECUTABLE
-          ? { executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE }
+          ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROME_EXECUTABLE } }
           : process.env.PLAYWRIGHT_USE_SYSTEM_CHROME === '1'
             ? { channel: 'chrome' }
             : {}),

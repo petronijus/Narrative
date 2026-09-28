@@ -20,13 +20,8 @@
 
 import { createHash } from 'node:crypto'
 import * as Y from 'yjs'
-import {
-  hydrateSlideDoc,
-  listSlides,
-  getParagraphDeltas,
-  getSlideNotes,
-} from '@narrative/slide-model'
-import { notesFromFragment, type NotesDoc } from './ooxml/notes.js'
+import { hydrateSlideDoc, listSlides, getParagraphDeltas } from '@narrative/slide-model'
+import { getSlideNotesDoc, type NotesDoc } from '@narrative/slide-model'
 import type { Slide } from '@narrative/shared'
 import { parsePptx } from './parser.js'
 import { buildDeckUpdate } from './writer.js'
@@ -52,8 +47,7 @@ export function notesOf(
 ): Map<string, NotesDoc> {
   const out = new Map<string, NotesDoc>()
   for (const s of slides) {
-    const fragment = getSlideNotes(handles, s.id)
-    const doc = fragment !== null ? notesFromFragment(fragment) : []
+    const doc = getSlideNotesDoc(handles, s.id) ?? []
     if (doc.length > 0) out.set(s.id, doc)
   }
   return out

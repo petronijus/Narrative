@@ -34,6 +34,7 @@ import type {
   PptxExportResult,
   PptxService,
   PreparedSlideInsert,
+  SlideInsertResult,
   SlideInsertSource,
 } from '@narrative/commands'
 import { importDeckFromPptxBytes } from '../pptx/importDeck.js'
@@ -52,6 +53,7 @@ import type { ServiceDeps } from './deps.js'
 import { badRequest, failed, forbidden, notFound, tooLarge, type ServiceError } from './errors.js'
 import { LARGE_DOWNLOAD_TIMEOUT_MS, resolveBinarySource } from './binarySource.js'
 import { stageDeckInsert } from './deckInsert.js'
+import { SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
 
 /** Largest .pptx accepted through an upload route (the tus / route limit). */
 export const MAX_PPTX_BYTES = Number(process.env['MAX_PPTX_BYTES'] ?? MAX_PPTX_UPLOAD_SIZE)
@@ -91,6 +93,19 @@ export interface ServerPptxService extends PptxService {
     bytes: Buffer
     insertAt?: number | undefined
   }): Promise<AppendDeckResult>
+  /**
+   * POST /decks/:id/insert-slides: copy chosen slides of another deck into
+   * the live deck at `at` — `deck.insertFrom`'s deck source (access check,
+   * media copy, token rebinding, link rewriting), written in one go by a
+   * person pasting slides in the editor.
+   */
+  insertSlidesFromDeck(args: {
+    userId: string
+    deckId: string
+    sourceDeckId: string
+    slideIds: readonly string[]
+    at?: number | undefined
+  }): Promise<SlideInsertResult>
   /** GET /decks/:id/export.pptx: the package bytes. */
   exportBytes(args: {
     deckId: string
@@ -197,6 +212,7 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
       sourceDeckId: args.source.deckId,
       targetDeckId: args.deckId,
       range: args.source.range,
+      slideIds: args.source.slideIds,
     })
   }
 
@@ -220,6 +236,37 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
     })
     if (!outcome.ok) throw appendFailure(outcome.error)
     return outcome.result
+  }
+
+  async function insertSlidesFromDeck(args: {
+    userId: string
+    deckId: string
+    sourceDeckId: string
+    slideIds: readonly string[]
+    at?: number | undefined
+  }): Promise<SlideInsertResult> {
+    const prepared = await stageDeckInsert(deps, {
+      userId: args.userId,
+      sourceDeckId: args.sourceDeckId,
+      targetDeckId: args.deckId,
+      slideIds: args.slideIds,
+    })
+    const touched = { value: false }
+    try {
+      return await writeLiveDoc(
+        deps,
+        'deck',
+        args.deckId,
+        (doc) => prepared.apply({ doc, slides: doc.getArray('slides') }, args.at),
+        SERVER_EDIT_ORIGIN,
+        touched,
+      )
+    } catch (err) {
+      // Untouched: nothing references the staged media, so it goes. Touched:
+      // the rows stay (a slide may already point at them; see appendDeck.ts).
+      if (!touched.value) await prepared.discard()
+      throw err
+    }
   }
 
   async function exportBytes(args: { deckId: string }) {
@@ -306,5 +353,5 @@ export function createPptxService(deps: ServiceDeps): ServerPptxService {
     }
   }
 
-  return { importPptx, prepareInsert, exportPptx, appendPptx, exportBytes }
+  return { importPptx, prepareInsert, exportPptx, appendPptx, insertSlidesFromDeck, exportBytes }
 }

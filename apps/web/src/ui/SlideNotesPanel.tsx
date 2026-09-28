@@ -27,6 +27,8 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Collaboration from '@tiptap/extension-collaboration'
 import { useSlideNotes } from '../state/useSlideNotes.js'
+import { useCommand } from '../state/useCommand.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 
 const COLLAPSE_STORAGE_KEY = 'narrative:slideNotes:collapsed'
@@ -51,9 +53,18 @@ const TOOLBAR_BTN = [
 ].join(' ')
 
 export function SlideNotesPanel() {
-  const { fragment, text } = useSlideNotes()
+  const { fragment, hasSlide, text } = useSlideNotes()
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
+  // A slide from before the notes editor existed has no notes fragment; its
+  // first notes are an explicit write (the same command agents use), never a
+  // side effect of opening the slide.
+  const startNotes = useCallback(() => {
+    if (activeSlideId !== null)
+      command.tryRun('slide.notes.set', { slide: activeSlideId, markdown: '' })
+  }, [command, activeSlideId])
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
@@ -216,8 +227,18 @@ export function SlideNotesPanel() {
       <div className="collapsible" data-collapsed={collapsed ? 'true' : 'false'}>
         <div className="collapsible-body">
           <div className="px-3 py-2">
-            {fragment === null ? (
-              <p className="text-[11px] italic text-muted-foreground">No slide selected.</p>
+            {fragment === null && hasSlide && !isViewer ? (
+              <button
+                type="button"
+                onClick={startNotes}
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Add speaker notes
+              </button>
+            ) : fragment === null ? (
+              <p className="text-[11px] italic text-muted-foreground">
+                {hasSlide ? 'No speaker notes.' : 'No slide selected.'}
+              </p>
             ) : (
               <EditorContent editor={editor} />
             )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
-import { getSlideNotes, listSlides } from '@narrative/slide-model'
+import { getSlideNotesFragment, listSlides } from '@narrative/slide-model'
 import { harness } from '../testing/harness.js'
 
 /** A value survives JSON unchanged iff it holds nothing but JSON (no Y types, no undefined, no class instances). */
@@ -86,7 +86,7 @@ describe('query.slide', () => {
 
   it('reads the speaker notes as plain text without writing', () => {
     const h = harness()
-    const notes = getSlideNotes(h.deck, 's2')!
+    const notes = getSlideNotesFragment(h.deck, 's2')!
     h.deck.doc.transact(() => {
       const p = new Y.XmlElement('paragraph')
       const t = new Y.XmlText()

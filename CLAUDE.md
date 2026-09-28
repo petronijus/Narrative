@@ -49,7 +49,11 @@ PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
 ```
 
 `PLAYWRIGHT_NO_VIDEO=1` is required, not optional — video capture needs the
-ffmpeg build that can't be installed either. Whether the suite _passes_ with
+ffmpeg build that can't be installed either. On the Omarchy (Arch) desktop
+(2026-09-28) the slide specs pass with
+`PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome-stable PLAYWRIGHT_NO_VIDEO=1`
+(the executable variable only works since it became a launch option in A2.2;
+before, it was silently ignored). Whether the suite _passes_ with
 those set is unmeasured as of 2026-09-09; only that it starts.
 
 On macOS Playwright's bundled Chromium works without these variables

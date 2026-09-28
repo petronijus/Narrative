@@ -155,7 +155,7 @@ export const querySlide = defineCommand({
   description:
     'Everything on one slide: every object with all its properties in stacking order (first = backmost), the ' +
     'animation steps in play order, the transition, the background (null = default white) and the speaker notes ' +
-    'as plain text. Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs ' +
+    'as plain text (slide.notes.get has them as Markdown with their formatting). Text bodies come as plain `text` (blank line between paragraphs) plus `paragraphs` with runs ' +
     'and list attributes when formatted; colours as "#rrggbb" or { $token }. For one object use query.object. ' +
     'It also reads a component master: target the component (componentId) and read slide { index: 0 } — edit ' +
     'the master with the same object and text commands.',

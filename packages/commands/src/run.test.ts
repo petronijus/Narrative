@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 import { z } from 'zod'
 import { LOCAL_ORIGIN, agentOrigin, createUndoManager, listSlides } from '@narrative/slide-model'
 import { CommandRegistry, defineCommand } from './registry.js'
-import { runBatch, runCommand, runCommandSync } from './run.js'
+import { runBatch, runCommand, runCommandSync, runGroup } from './run.js'
 import { CommandError } from './errors.js'
 import { createDefaultRegistry } from './catalog.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
@@ -121,6 +121,38 @@ describe('runCommandSync — the gatekeeping every host relies on', () => {
     const ctx = ctxFor()
     const out = (await runCommand(registry, ctx, 'slide.add', {})) as { slideId: string }
     expect(slideIds(ctx)).toContain(out.slideId)
+  })
+})
+
+describe('runGroup — several editor commands as one change', () => {
+  const registry = createDefaultRegistry()
+
+  it('runs every command in one transaction: one update, one undo step', () => {
+    const ctx = ctxFor()
+    const undo = createUndoManager(ctx.deck!)
+    let updates = 0
+    ctx.deck!.doc.on('update', () => updates++)
+    const copies = runGroup(registry, ctx, (run) => [
+      run<{ slideId: string }>('slide.duplicate', { slide: 's1' }).slideId,
+      run<{ slideId: string }>('slide.duplicate', { slide: 's3' }).slideId,
+    ])
+    expect(updates).toBe(1)
+    expect(slideIds(ctx)).toEqual(['s1', copies[0], 's2', 's3', copies[1]])
+    undo.undo()
+    expect(slideIds(ctx)).toEqual(['s1', 's2', 's3'])
+  })
+
+  it('propagates a failure and keeps what ran before it (it is not atomic)', () => {
+    const ctx = ctxFor()
+    expect(
+      code(() =>
+        runGroup(registry, ctx, (run) => {
+          run('slide.rename', { slide: 's1', name: 'Kept' })
+          run('slide.rename', { slide: 'nope', name: 'x' })
+        }),
+      ),
+    ).toBe('not_found')
+    expect(listSlides(ctx.deck!)[0]!.name).toBe('Kept')
   })
 })
 

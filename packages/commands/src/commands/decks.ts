@@ -156,6 +156,54 @@ export const deckCreate = defineCommand({
   },
 })
 
+export const deckDuplicate = defineCommand({
+  ...serverCommand,
+  id: 'deck.duplicate',
+  domain: 'deck',
+  title: 'Duplicate deck',
+  description:
+    'Copy this deck whole into a NEW deck the user owns: every slide (objects, rich text, tables, animations, ' +
+    'speaker notes, outline), the deck guides and the media the slides show. Lands in `folderId` (one of the ' +
+    "user's folders), else this deck's folder when the user owns it, else Drafts; in another folder, token " +
+    'references are rebound as deck.moveToFolder does. Sharing is not copied. Needs editor access to this deck. ' +
+    'Returns the new deck — target its `id` to edit the copy. To copy only some slides into an existing deck use ' +
+    'deck.insertFrom. Undo: deck.delete on the copy.',
+  input: z.strictObject({
+    title: TitleSchema.optional().describe('Title of the copy (default: "<title> (copy)")'),
+    folderId: IdSchema.optional().describe(
+      'Folder for the copy (default: this deck’s, else Drafts)',
+    ),
+  }),
+  output: DeckOutput.extend({
+    slideCount: z.number(),
+    mediaCopied: z.number().describe('Images, videos and deck fonts copied into the new deck'),
+    skippedImages: z.number().describe('Assets that could not be copied'),
+    tokens: TokenRebindOutput.optional(),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  effects: ['server'],
+  undo: 'undoable',
+  undoneBy: 'deck.delete',
+  confirm: 'never',
+  routes: [POST('/decks/:id/duplicate')],
+  examples: [
+    { title: 'Copy the deck next to the original', input: {} },
+    {
+      title: 'Copy it into another folder under a new title',
+      input: { title: 'Pitch — Fabrikam version', folderId: 'folder_fixture' },
+    },
+  ],
+  async handler(ctx, input) {
+    return requireServices(ctx).decks.duplicate({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+      title: input.title?.trim(),
+      folderId: input.folderId,
+    })
+  },
+})
+
 export const deckRename = defineCommand({
   ...serverCommand,
   id: 'deck.rename',
@@ -332,6 +380,7 @@ export const deckCommands = [
   deckList,
   deckGet,
   deckCreate,
+  deckDuplicate,
   deckRename,
   deckDelete,
   deckMoveToFolder,

@@ -13,7 +13,7 @@ import {
   addObjects,
   addSlide,
   createSlideDoc,
-  getSlideNotes,
+  getSlideNotesFragment,
   getSlideNotesText,
   getSlideObjectsCtx,
   hydrateSlideDoc,
@@ -88,7 +88,7 @@ function seedSource(): void {
     hyperlink: { kind: 'slide', slideId: 'S3' },
   }
   addObjects(getSlideObjectsCtx(deck, 'S1')!, [image, toS3])
-  const notes = getSlideNotes(deck, 'S1')!
+  const notes = getSlideNotesFragment(deck, 'S1')!
   const paragraph = new Y.XmlElement('paragraph')
   paragraph.insert(0, [new Y.XmlText('Say hello')])
   notes.insert(0, [paragraph])
@@ -208,6 +208,68 @@ describe('stageDeckInsert', () => {
     expect(err.code).toBe('forbidden')
     expect(script.remaining().selects).toBe(0)
     expect(send).not.toHaveBeenCalled()
+  })
+
+  it('copies exactly the chosen slides, in source order, fitting their outline levels', async () => {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    await sourceEditor.transact((doc) => {
+      const slides = hydrateSlideDoc(doc).slides
+      slides.get(1).set('indent', 1)
+      slides.get(2).set('indent', 2)
+    })
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f1' },
+        ],
+      ],
+    })
+    const prepared = await stageDeckInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', slideIds: ['S3', 'S2'] },
+    )
+    expect(prepared.slideCount).toBe(2)
+    // Neither slide shows media: nothing to copy.
+    expect(send).not.toHaveBeenCalled()
+
+    const target = createSlideDoc()
+    addSlide(target)
+    let result
+    target.doc.transact(() => {
+      result = prepared.apply(target, 0)
+    })
+    const out = result as unknown as { slideIds: string[] }
+    const slides = listSlides(target)
+    expect(slides.map((s) => s.id).slice(0, 2)).toEqual(out.slideIds)
+    // S2 (level 1) then S3 (level 2), shifted so the first is a top-level
+    // slide; the target's own two slides follow.
+    expect(slides.map((s) => s.indent ?? 0)).toEqual([0, 1, 0, 0])
+    await sourceEditor.disconnect()
+  })
+
+  it('answers "not found" for a chosen slide the source deck does not have', async () => {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    const script = scriptedDb({
+      selects: [
+        [
+          { id: 'src', folderId: 'f1' },
+          { id: 'dst', folderId: 'f1' },
+        ],
+      ],
+    })
+    const err = await serviceErrorOf(
+      stageDeckInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', slideIds: ['S1', 'gone'] },
+      ),
+    )
+    expect(err.status).toBe(404)
+    expect(err.message).toContain("'gone'")
+    expect(script.writes).toEqual([])
+    await sourceEditor.disconnect()
   })
 
   it('rejects a range outside the source deck without registering media', async () => {

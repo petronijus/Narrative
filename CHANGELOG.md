@@ -4,6 +4,94 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.2 — The slides panel writes through commands (2026-09-28)
+
+First steps of phase A2 (`docs/plans/a2-extraction.md`): the editor stops
+writing the document directly and dispatches the same commands agents use.
+
+### Added
+
+- **Duplicate a deck.** The deck menu in a folder has _Duplicate_: a new deck
+  of yours with every slide, the speaker notes, the guides, the preview and
+  the media the slides show (copied, since media belongs to one deck). It
+  lands next to the original when you own the folder, else in Drafts.
+  Agents: `deck.duplicate`; API: `POST /decks/:id/duplicate`.
+- **Speaker notes for agents.** `slide.notes.get` reads a slide's notes as
+  Markdown with their formatting, `slide.notes.set` replaces them (headings,
+  nested lists, quotes, code, bold/italic/strike/underline, links; a newline
+  is a line break). The notes model moved from the PowerPoint module into
+  slide-model (`setSlideNotes`, `getSlideNotesDoc`).
+- **`slide.copyTo`**: copy slides as a block to a position in the same deck,
+  keeping object ids (Magic Move) and fitting their outline levels.
+- `deck.insertFrom` takes exactly the chosen slides of another deck
+  (`source: { deckId, slides: [...] }`) as well as a range.
+
+### Changed
+
+- **Pasting slides into another deck brings their images along.** A pasted
+  slide used to keep the source deck's asset ids; media is deck-scoped, so
+  its images and videos showed broken in the target. Paste now copies the
+  slides on the server (`POST /decks/:id/insert-slides`, the service behind
+  `deck.insertFrom`): media is copied into the target deck, token references
+  are rebound across folders, links to slides that came along follow them.
+  Copying slides out of a deck needs editor access to it, as exporting does.
+  Pasting within one deck is one undo step (`slide.copyTo`) and now keeps
+  notes, name and outline level, which the old paste dropped.
+- The slide clipboard holds which slides of which deck were copied, not a
+  copy of their content: a paste takes the slides as they are when pasted.
+  A clipboard from an earlier version is ignored.
+- **Every slides-panel gesture is a command**: add, duplicate (a multi-slide
+  duplicate is one undo step), delete (lands on the slide `slide.delete`
+  names), rename, skip, collapse, and the drag, which moves the block and
+  shifts its outline levels in one `slide.move`. Moving, deleting, copying
+  and re-indenting slides now keeps the outline well formed (no slide more
+  than one level below the slide above it), whoever does it.
+- A right-click on another slide while the slide menu is open retargets the
+  menu to that slide.
+- Two `.pptx` files dropped at the same gap land in drop order (the second
+  used to take the first's original index and land above it).
+- The MCP tool list budget is 136,000 bytes (was 132,000) for the four new
+  tools.
+
+### Internal
+
+- **One-door lint rule** (`apps/web/eslint.one-door.js`): no slide-model
+  writer import and no `.transact(` anywhere in `apps/web/src`, generated
+  from the parity table. Files not migrated yet are on a list that may only
+  shrink (24 files, each with the A2 step that migrates it; a test fails when
+  a listed file no longer needs its exemption). It already caught a web
+  module re-exporting the `applyShapeMask` writer.
+- `useCommand()` gains `tryRun` (a collaborator's race is logged, not
+  thrown) and `group` (several commands as one transaction and one undo
+  step, without the fork an atomic batch makes); `runGroup` in the runner.
+- Outline rules live in `packages/commands/src/outline.ts`; the panel's drag
+  preview uses them too (it used to index the list without the dragged
+  slides by a position counted with them).
+- `PLAYWRIGHT_CHROME_EXECUTABLE` works: the path is now a launch option
+  (`use.executablePath` was silently ignored).
+- Node ≥ 22.18 (the ESLint config imports the TypeScript parity table
+  directly, which needs Node's type stripping).
+- Viewing a slide never writes any more: `getSlideNotes` installed an empty
+  notes fragment on slides from before the notes editor when they were
+  merely looked at (viewers too). It is replaced by the read-only
+  `getSlideNotesFragment`; on such a slide the notes panel offers _Add
+  speaker notes_, which runs `slide.notes.set`. The PowerPoint import and
+  export use `setSlideNotes` / `getSlideNotesDoc`, and
+  `writeNotesIntoFragment` is internal to slide-model.
+  The first slide of a new deck now gets its notes fragment when the deck is
+  created (a second, older copy of the slide factory left it out, which the
+  lazy install had hidden), so the button shows only on slides of decks made
+  before this release.
+- The speaker-notes editor binding is on the parity allowlist (it is the one
+  editor write the lint cannot see).
+- Agent eval: four new scenarios (`slide-notes-talking-points`,
+  `slides-copy-block`, `slides-outline-nest`, `deck-duplicate-named`); the
+  whole suite passed 17/17 on 2026-09-28 (opus, $1.96), plus the fourth new
+  one recorded afterwards. The replay guard fails when a replayable scenario
+  has no recording.
+
+---
+
 ## 0.10.1 — A lighter tool list for agents (2026-09-28)
 
 ### Changed

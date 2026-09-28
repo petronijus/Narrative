@@ -8,7 +8,7 @@
  *     absent / undefined `direction` as "leave unchanged", so there was no
  *     way to remove a push direction once set. This is that way.
  *   - getSlideNotesText — a plain-text view of a slide's speaker notes for
- *     read-only callers (agent queries). Unlike `getSlideNotes` it never
+ *     read-only callers (agent queries). Unlike `getSlideNotesFragment` it never
  *     writes: a pre-M19 slide without a notes fragment reads as `''`
  *     instead of having one installed lazily.
  */

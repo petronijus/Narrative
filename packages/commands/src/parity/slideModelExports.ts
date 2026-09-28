@@ -53,6 +53,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   reorderAnimations: 'writer',
   setRangeBorderPreset: 'writer',
   setRangeCellStyle: 'writer',
+  setSlideNotes: 'writer',
   setSlideCollapsed: 'writer',
   setSlideIndent: 'writer',
   setSlideName: 'writer',
@@ -76,6 +77,10 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   updateSlideTransition: 'writer',
 
   // readers and pure helpers
+  NOTES_LINK_DEFAULTS: 'reader',
+  getSlideNotesDoc: 'reader',
+  isNotesText: 'reader',
+  notesFromFragment: 'reader',
   RICH_TEXT_OPS_KEY: 'reader',
   DEFAULT_TABLE_COLS: 'reader',
   DEFAULT_TABLE_DEFAULTS: 'reader',
@@ -94,9 +99,9 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   getParagraphDeltas: 'reader',
   getParagraphs: 'reader',
   getPlainString: 'reader',
-  // Reads, but lazily installs an empty notes fragment on pre-M19 slides.
-  getSlideNotes: 'reader',
-  // Plain-text view of the notes; never installs a fragment (unlike getSlideNotes).
+  // The notes fragment the editor binds to; null for a slide without one (never installs it).
+  getSlideNotesFragment: 'reader',
+  // Plain-text view of the notes.
   getSlideNotesText: 'reader',
   getTableCellYMap: 'reader',
   getTableMergeInfo: 'reader',

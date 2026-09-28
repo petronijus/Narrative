@@ -19,6 +19,10 @@ import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import revertLastRun from './revertLastRun.js'
 import selectedSlideContext from './selectedSlideContext.js'
 import promptInjectionShareLink from './promptInjectionShareLink.js'
+import slideNotesTalkingPoints from './slideNotesTalkingPoints.js'
+import slidesCopyBlock from './slidesCopyBlock.js'
+import deckDuplicateNamed from './deckDuplicateNamed.js'
+import slidesOutlineNest from './slidesOutlineNest.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -35,6 +39,10 @@ export const SCENARIOS: readonly AnyScenario[] = [
   revertLastRun,
   selectedSlideContext,
   promptInjectionShareLink,
+  slideNotesTalkingPoints,
+  slidesCopyBlock,
+  deckDuplicateNamed,
+  slidesOutlineNest,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

@@ -80,19 +80,34 @@ export const deckImportPptx = defineCommand({
 const InsertSourceSchema = z
   .union([
     z.strictObject({ pptx: FileSourceSchema }),
-    z.strictObject({
-      deckId: IdSchema.describe('Another deck you can edit (deck.list)'),
-      from: z.number().int().min(0).optional().describe('First source slide, 0-based (default 0)'),
-      to: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe('Last source slide, 0-based, inclusive (default: the last)'),
-    }),
+    z
+      .strictObject({
+        deckId: IdSchema.describe('Another deck you can edit (deck.list)'),
+        from: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('First source slide, 0-based (default 0)'),
+        to: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Last source slide, 0-based, inclusive (default: the last)'),
+        slides: z
+          .array(IdSchema)
+          .min(1)
+          .max(500)
+          .optional()
+          .describe('Exactly these source slide ids, in source-deck order (instead of from/to)'),
+      })
+      .refine((v) => v.slides === undefined || (v.from === undefined && v.to === undefined), {
+        message: 'Pass either slides or from/to, not both',
+      }),
   ])
   .describe(
-    '{ pptx: { url } | { base64 } } for a PowerPoint file, or { deckId, from?, to? } for a deck',
+    '{ pptx: { url } | { base64 } } for a PowerPoint file, or { deckId, from?, to? } / { deckId, slides } for a deck',
   )
 
 export const deckInsertFrom = defineCommand({
@@ -103,7 +118,8 @@ export const deckInsertFrom = defineCommand({
   description:
     'Insert slides into this deck at position `at` (0-based; omitted = at the end; past the end = at the end), ' +
     'taken from a .pptx file (URL or base64, at most 200 MB) or from another Narrative deck you can edit ' +
-    '(optionally slides `from`..`to`; copying needs the same editor access as exporting that deck, so a deck ' +
+    '(optionally slides `from`..`to`, or exactly the slide ids in `slides`; copying needs the same editor ' +
+    'access as exporting that deck, so a deck ' +
     'you can only view is refused). Slides keep their objects, animations, speaker notes, transition and background; their media ' +
     'is copied into this deck. From a deck in another folder, token references are rebound to this folder the ' +
     'way deck.moveToFolder does it. It is one change, reverted as one step. Returns the new slide ids — restyle ' +
@@ -130,7 +146,7 @@ export const deckInsertFrom = defineCommand({
   effects: ['doc', 'server'],
   undo: 'undoable',
   confirm: 'never',
-  routes: [POST('/decks/:id/append-pptx')],
+  routes: [POST('/decks/:id/append-pptx'), POST('/decks/:id/insert-slides')],
   confirmWhen: urlFetchConfirmation((input) => [
     'pptx' in input.source ? input.source.pptx : undefined,
   ]),
@@ -143,6 +159,10 @@ export const deckInsertFrom = defineCommand({
       title: 'Copy slides 2–3 of another deck to the end',
       input: { source: { deckId: 'deck_other', from: 1, to: 2 } },
     },
+    {
+      title: 'Copy two chosen slides of another deck to the front',
+      input: { source: { deckId: 'deck_other', slides: ['s1', 's3'] }, at: 0 },
+    },
   ],
   async load(ctx, input) {
     const source: SlideInsertSource =
@@ -152,6 +172,7 @@ export const deckInsertFrom = defineCommand({
             kind: 'deck',
             deckId: input.source.deckId,
             range: { from: input.source.from, to: input.source.to },
+            slideIds: input.source.slides,
           }
     return requireServices(ctx).pptx.prepareInsert({
       userId: ctx.actor.userId,

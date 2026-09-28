@@ -43,6 +43,7 @@ export {
   runBatch,
   runCommand,
   runCommandSync,
+  runGroup,
   type BatchResult,
   type PreparedInvocation,
 } from './run.js'
@@ -52,6 +53,13 @@ export {
   urlFetchConfirmation,
 } from './commands/serverShared.js'
 export { SlideRefSchema, ObjectIdSchema, ObjectIdsSchema, type SlideRef } from './refs.js'
+export {
+  MAX_SLIDE_INDENT,
+  levelOf,
+  maxLevelBelow,
+  normalizeOutline,
+  shiftBlockLevels,
+} from './outline.js'
 export { createDefaultRegistry } from './catalog.js'
 export {
   COMMAND_DOMAINS,

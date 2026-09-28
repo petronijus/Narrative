@@ -1,8 +1,8 @@
 /**
  * ui/PptxImportRow.tsx
  *
- * The placeholder a dropped `.pptx` leaves in the slides panel while it
- * uploads and imports — sitting at the exact index its slides are going to
+ * The placeholder a dropped `.pptx` — or slides pasted from another deck —
+ * leaves in the slides panel while it uploads and imports — sitting at the exact index its slides are going to
  * take, so the deck visibly makes room for them rather than rearranging
  * itself under the user when the server answers.
  *
@@ -12,7 +12,7 @@
  * stays in the gap it belongs to until dismissed.
  */
 
-import { FileUp, X } from 'lucide-react'
+import { ClipboardPaste, FileUp, X } from 'lucide-react'
 import type { PptxImportJob } from './usePptxDropIntoDeck.js'
 
 interface PptxImportRowProps {
@@ -23,6 +23,7 @@ interface PptxImportRowProps {
 export function PptxImportRow({ job, onDismiss }: PptxImportRowProps) {
   const isError = job.status === 'error'
   const percent = Math.round(job.progress * 100)
+  const Icon = job.kind === 'paste' ? ClipboardPaste : FileUp
 
   return (
     <div className="mx-2" data-testid="pptx-import-row" data-status={job.status}>
@@ -36,7 +37,7 @@ export function PptxImportRow({ job, onDismiss }: PptxImportRowProps) {
         style={{ aspectRatio: '16/9', width: '100%' }}
       >
         <div className="flex items-start gap-1.5">
-          <FileUp
+          <Icon
             className={[
               'mt-px h-3.5 w-3.5 flex-shrink-0',
               isError ? 'text-red-400' : 'text-blue-300',
@@ -50,7 +51,7 @@ export function PptxImportRow({ job, onDismiss }: PptxImportRowProps) {
             <button
               type="button"
               onClick={() => onDismiss(job.id)}
-              aria-label={`Dismiss import error for ${job.filename}`}
+              aria-label={`Dismiss ${job.kind === 'paste' ? 'paste' : 'import'} error for ${job.filename}`}
               className="-mr-0.5 flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-white/10 hover:text-foreground"
             >
               <X className="h-3 w-3" aria-hidden="true" />
@@ -63,7 +64,11 @@ export function PptxImportRow({ job, onDismiss }: PptxImportRowProps) {
         ) : (
           <>
             <p className="text-[10px] text-muted-foreground">
-              {job.status === 'uploading' ? `Uploading… ${percent}%` : 'Importing slides…'}
+              {job.status === 'uploading'
+                ? `Uploading… ${percent}%`
+                : job.kind === 'paste'
+                  ? 'Pasting slides…'
+                  : 'Importing slides…'}
             </p>
             {/* Determinate while bytes are moving; once they have all landed
                 the server is parsing and there is nothing honest left to

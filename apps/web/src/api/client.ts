@@ -39,6 +39,12 @@ export interface ApiClient {
   /** Create a deck. Omit `folderId` to land in the caller's Drafts folder. */
   createDeck(title?: string, folderId?: string): Promise<DeckSummary>
   renameDeck(id: string, title: string): Promise<DeckSummary>
+  /**
+   * Copy a deck whole into a new deck of the caller (`deck.duplicate`):
+   * slides, notes, guides and the media they show. Lands in the deck's
+   * folder when the caller owns it, else in their Drafts.
+   */
+  duplicateDeck(id: string, body?: { title?: string; folderId?: string }): Promise<DeckSummary>
   deleteDeck(id: string): Promise<void>
   /**
    * P15: upload (or replace) the home-page preview thumbnail for a deck.
@@ -46,6 +52,16 @@ export interface ApiClient {
    * Server caps the decoded payload at ~1 MB.
    */
   uploadDeckThumbnail(id: string, dataUrl: string): Promise<DeckSummary>
+  /**
+   * Copy chosen slides of another deck into `deckId` at `at` (the slides
+   * panel's cross-deck paste). The server checks editor access to the source
+   * deck, copies the media the slides show and rebinds token references
+   * across folders. Rejects with an `ApiError` carrying the server's reason.
+   */
+  insertSlidesFromDeck(
+    deckId: string,
+    body: { sourceDeckId: string; slideIds: string[]; at?: number },
+  ): Promise<{ slideIds: string[]; insertedAt: number }>
   listPermissions(deckId: string): Promise<DeckPermission[]>
   /** Invite by email. If the email belongs to a known user → instant grant.
    *  Otherwise → pending invite (the invitee gets a real permission row
@@ -562,6 +578,28 @@ export interface VideoInfoResponse {
   transcodeError: string | null
 }
 
+/** A refused request, with the status and the server's own explanation (`{ error }`). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
+async function apiError(res: Response): Promise<ApiError> {
+  let message = `HTTP ${res.status}`
+  try {
+    const body = (await res.json()) as { error?: unknown }
+    if (typeof body.error === 'string' && body.error !== '') message = body.error
+  } catch {
+    // not JSON — keep the status line
+  }
+  return new ApiError(res.status, message)
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -609,9 +647,29 @@ export function createApiClient(): ApiClient {
         body: JSON.stringify({ title }),
       }),
 
+    duplicateDeck: async (id, body = {}) => {
+      const res = await request(`/decks/${id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as DeckSummary
+    },
+
     deleteDeck: async (id) => {
       const res = await request(`/decks/${id}`, { method: 'DELETE' })
       if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`)
+    },
+
+    insertSlidesFromDeck: async (deckId, body) => {
+      const res = await request(`/decks/${deckId}/insert-slides`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as { slideIds: string[]; insertedAt: number }
     },
 
     uploadDeckThumbnail: (id, dataUrl) =>

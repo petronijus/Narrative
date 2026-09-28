@@ -45,7 +45,13 @@ import { nanoid } from 'nanoid'
 import { and, eq, inArray } from 'drizzle-orm'
 import { CopyObjectCommand } from '@aws-sdk/client-s3'
 import { hydrateSlideDoc, type DeckMutationContext } from '@narrative/slide-model'
-import type { PreparedSlideInsert, SlideInsertResult } from '@narrative/commands'
+import {
+  levelOf,
+  normalizeOutline,
+  shiftBlockLevels,
+  type PreparedSlideInsert,
+  type SlideInsertResult,
+} from '@narrative/commands'
 import { decks, mediaAssets } from '../db/schema.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
@@ -63,6 +69,34 @@ import {
 
 type MediaRow = typeof mediaAssets.$inferInsert
 const ASSET_KEYS = new Set(['assetId', 'posterAssetId'])
+
+/**
+ * The source slides to copy: exactly `slideIds` (every one must exist; taken
+ * in source-deck order), else the inclusive `range` (default: all).
+ */
+function chooseSlides(
+  all: Y.Map<unknown>[],
+  args: {
+    range?: { from?: number | undefined; to?: number | undefined } | undefined
+    slideIds?: readonly string[] | undefined
+  },
+): Y.Map<unknown>[] {
+  if (args.slideIds !== undefined) {
+    const wanted = new Set(args.slideIds)
+    const present = new Set(all.map((m) => m.get('id') as string))
+    const missing = [...wanted].find((id) => !present.has(id))
+    if (missing !== undefined) throw notFound(`Slide '${missing}' is not in the source deck`)
+    return all.filter((m) => wanted.has(m.get('id') as string))
+  }
+  const from = args.range?.from ?? 0
+  const to = args.range?.to ?? all.length - 1
+  if (from < 0 || to < from || to >= all.length) {
+    throw badRequest(
+      `range ${from}..${to} is outside the source deck (it has ${all.length} slides, indices 0..${all.length - 1})`,
+    )
+  }
+  return all.slice(from, to + 1)
+}
 
 /** Clamp an insertion index to the deck's length (omitted = append). */
 export function clampInsertIndex(at: number | undefined, length: number): number {
@@ -175,56 +209,75 @@ function referencedFamilies(slides: ReadonlyArray<Y.Map<unknown>>): Set<string> 
 // Staging
 // ---------------------------------------------------------------------------
 
-export async function stageDeckInsert(
+/**
+ * The caller may copy slides out of `sourceDeckId`: editor (or owner) of it,
+ * the rule for exporting it (see the file header). A deck they cannot read
+ * answers "not found", one they can only view "forbidden".
+ */
+async function requireCopyAccess(
   deps: ServiceDeps,
-  args: {
-    userId: string
-    sourceDeckId: string
-    targetDeckId: string
-    range?: { from?: number | undefined; to?: number | undefined } | undefined
-  },
-): Promise<PreparedSlideInsert> {
-  const { db, log } = deps
-  const { userId, sourceDeckId, targetDeckId } = args
-
-  const access = await resolveDeckAccess(db, { deckId: sourceDeckId, userId, shareToken: null })
+  userId: string,
+  sourceDeckId: string,
+): Promise<void> {
+  const access = await resolveDeckAccess(deps.db, {
+    deckId: sourceDeckId,
+    userId,
+    shareToken: null,
+  })
   if (!access) throw notFound(`Source deck '${sourceDeckId}' not found`)
   if (!roleAtLeast(access.role, 'editor')) {
     throw forbidden(
       `Copying slides from deck '${sourceDeckId}' needs editor access to it (the same as exporting it); you can only view it`,
     )
   }
-  const rows = await db
-    .select({ id: decks.id, folderId: decks.folderId })
-    .from(decks)
-    .where(inArray(decks.id, [sourceDeckId, targetDeckId]))
-  const source = rows.find((r) => r.id === sourceDeckId)
-  const target = rows.find((r) => r.id === targetDeckId)
-  if (!source) throw notFound(`Source deck '${sourceDeckId}' not found`)
-  if (!target) throw notFound('Deck not found')
+}
 
+/** Slides of the source, rewritten in a scratch copy for their new deck. */
+interface StagedCopy {
+  /** The detached source copy the slides live in; the caller destroys it. */
+  scratch: Y.Doc
+  chosen: Y.Map<unknown>[]
+  /** The id each chosen slide takes in the target, in order. */
+  newSlideIds: string[]
+  /** Media copied into the target's namespace, not yet registered. */
+  media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  skippedImages: number
+  tokens: RebindCounts | undefined
+  droppedLinks: number
+}
+
+/**
+ * Steps 2–5 of the file header for `chosen` slides of the source: read it
+ * live, point slide links at the copies (or drop them), copy the media they
+ * show into the target deck's namespace and rebind token references when
+ * the folders differ. Nothing is registered and the target is not touched;
+ * on failure the copied objects are discarded and the scratch destroyed.
+ */
+async function stageCopy(
+  deps: ServiceDeps,
+  args: {
+    userId: string
+    sourceDeckId: string
+    sourceFolderId: string | null
+    targetDeckId: string
+    targetFolderId: string | null
+    choose: (all: Y.Map<unknown>[]) => Y.Map<unknown>[]
+    /** New ids for the copies (inserting into a deck), or keep the source ids (a new deck). */
+    freshSlideIds: boolean
+  },
+): Promise<StagedCopy> {
+  const { userId, sourceDeckId, targetDeckId } = args
   const scratch = await readDocCopy(deps, 'deck', sourceDeckId)
-  let handedOver = false
+  const media: StagedCopy['media'] = { mediaAssetRows: [], videoTranscodeJobs: [] }
   try {
     const all = hydrateSlideDoc(scratch).slides.toArray()
-    const from = args.range?.from ?? 0
-    const to = args.range?.to ?? all.length - 1
-    if (from < 0 || to < from || to >= all.length) {
-      throw badRequest(
-        `range ${from}..${to} is outside the source deck (it has ${all.length} slides, indices 0..${all.length - 1})`,
-      )
-    }
-    const chosen = all.slice(from, to + 1)
-    const newSlideIds = chosen.map(() => nanoid())
+    const chosen = args.choose(all)
+    const newSlideIds = chosen.map((m) => (args.freshSlideIds ? nanoid() : (m.get('id') as string)))
     const idBySource = new Map(chosen.map((m, i) => [m.get('id') as string, newSlideIds[i]!]))
     const sourceSlideIds = new Set(all.map((m) => m.get('id') as string))
 
     let droppedLinks = 0
     let tokens: RebindCounts | undefined
-    const media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'> = {
-      mediaAssetRows: [],
-      videoTranscodeJobs: [],
-    }
     let skippedImages = 0
 
     scratch.transact(() => {
@@ -236,8 +289,9 @@ export async function stageDeckInsert(
             | undefined
           if (link === undefined || link === null || link.kind !== 'slide') return
           const to = typeof link.slideId === 'string' ? idBySource.get(link.slideId) : undefined
-          if (to !== undefined) set('hyperlink', { ...link, slideId: to })
-          else if (typeof link.slideId === 'string' && sourceSlideIds.has(link.slideId)) {
+          if (to !== undefined) {
+            if (to !== link.slideId) set('hyperlink', { ...link, slideId: to })
+          } else if (typeof link.slideId === 'string' && sourceSlideIds.has(link.slideId)) {
             set('hyperlink', undefined)
             droppedLinks++
           }
@@ -275,13 +329,13 @@ export async function stageDeckInsert(
 
     // 5. Token references across folders.
     if (
-      source.folderId !== null &&
-      target.folderId !== null &&
-      source.folderId !== target.folderId
+      args.sourceFolderId !== null &&
+      args.targetFolderId !== null &&
+      args.sourceFolderId !== args.targetFolderId
     ) {
       const [srcFolder, dstFolder] = await Promise.all([
-        readDocCopy(deps, 'folder', source.folderId),
-        readDocCopy(deps, 'folder', target.folderId),
+        readDocCopy(deps, 'folder', args.sourceFolderId),
+        readDocCopy(deps, 'folder', args.targetFolderId),
       ])
       try {
         const plan = planTokenRebinding(tokensSnapshot(srcFolder), tokensSnapshot(dstFolder))
@@ -294,56 +348,171 @@ export async function stageDeckInsert(
       }
     }
 
-    // Rows committed (and transcodes enqueued) before anything reaches the target document.
-    try {
-      await registerDeckMedia({ db, deckId: targetDeckId, ownerUserId: userId, media, log })
-    } catch (err) {
-      await discardDeckMedia({ db, deckId: targetDeckId, media, log })
-      throw err
-    }
+    return { scratch, chosen, newSlideIds, media, skippedImages, tokens, droppedLinks }
+  } catch (err) {
+    scratch.destroy()
+    await discardDeckMedia({ db: deps.db, deckId: targetDeckId, media, log: deps.log })
+    throw err
+  }
+}
 
-    let settled = false
-    handedOver = true
-    return {
-      slideCount: chosen.length,
-      apply(deck: DeckMutationContext, at?: number): SlideInsertResult {
-        if (settled) throw new Error('deck insert: already applied or discarded')
-        settled = true
-        try {
-          const insertedAt = clampInsertIndex(at, deck.slides.length)
-          const copies = chosen.map((m, i) => {
-            const copy = m.clone()
-            copy.set('id', newSlideIds[i]!)
-            return copy
-          })
-          const objectsCreated = chosen.reduce((n, m) => {
-            const objects = m.get('objects')
-            return n + (objects instanceof Y.Array ? objects.length : 0)
-          }, 0)
-          deck.slides.insert(insertedAt, copies)
-          return {
-            slideIds: newSlideIds,
-            insertedAt,
-            objectsCreated,
-            mediaRegistered: media.mediaAssetRows.length,
-            skipped: { images: skippedImages, unknownShapes: 0 },
-            ignoredElements: [],
-            ...(tokens !== undefined ? { tokens } : {}),
-            droppedLinks,
-          }
-        } finally {
-          scratch.destroy()
+export async function stageDeckInsert(
+  deps: ServiceDeps,
+  args: {
+    userId: string
+    sourceDeckId: string
+    targetDeckId: string
+    range?: { from?: number | undefined; to?: number | undefined } | undefined
+    /** Exactly these source slides, in source-deck order (instead of `range`). */
+    slideIds?: readonly string[] | undefined
+  },
+): Promise<PreparedSlideInsert> {
+  const { db, log } = deps
+  const { userId, sourceDeckId, targetDeckId } = args
+
+  await requireCopyAccess(deps, userId, sourceDeckId)
+  const rows = await db
+    .select({ id: decks.id, folderId: decks.folderId })
+    .from(decks)
+    .where(inArray(decks.id, [sourceDeckId, targetDeckId]))
+  const source = rows.find((r) => r.id === sourceDeckId)
+  const target = rows.find((r) => r.id === targetDeckId)
+  if (!source) throw notFound(`Source deck '${sourceDeckId}' not found`)
+  if (!target) throw notFound('Deck not found')
+
+  const staged = await stageCopy(deps, {
+    userId,
+    sourceDeckId,
+    sourceFolderId: source.folderId,
+    targetDeckId,
+    targetFolderId: target.folderId,
+    choose: (all) => chooseSlides(all, args),
+    freshSlideIds: true,
+  })
+  const { scratch, chosen, newSlideIds, media, skippedImages, tokens, droppedLinks } = staged
+
+  // Rows committed (and transcodes enqueued) before anything reaches the target document.
+  try {
+    await registerDeckMedia({ db, deckId: targetDeckId, ownerUserId: userId, media, log })
+  } catch (err) {
+    scratch.destroy()
+    await discardDeckMedia({ db, deckId: targetDeckId, media, log })
+    throw err
+  }
+
+  let settled = false
+  return {
+    slideCount: chosen.length,
+    apply(deck: DeckMutationContext, at?: number): SlideInsertResult {
+      if (settled) throw new Error('deck insert: already applied or discarded')
+      settled = true
+      try {
+        const insertedAt = clampInsertIndex(at, deck.slides.length)
+        const copies = chosen.map((m, i) => {
+          const copy = m.clone()
+          copy.set('id', newSlideIds[i]!)
+          return copy
+        })
+        const objectsCreated = countObjects(chosen)
+        deck.slides.insert(insertedAt, copies)
+        // The copies keep their relative outline levels, shifted so the
+        // first fits under the slide it landed below (slide.copyTo's rule).
+        const levels = copies.map((m) => levelOf(m))
+        const above = insertedAt > 0 ? levelOf(deck.slides.get(insertedAt - 1)) : undefined
+        shiftBlockLevels(levels, levels[0] ?? 0, above).forEach((level, i) => {
+          const copy = copies[i]!
+          if (level > 0) copy.set('indent', level)
+          else copy.delete('indent')
+        })
+        normalizeOutline(deck)
+        return {
+          slideIds: newSlideIds,
+          insertedAt,
+          objectsCreated,
+          mediaRegistered: media.mediaAssetRows.length,
+          skipped: { images: skippedImages, unknownShapes: 0 },
+          ignoredElements: [],
+          ...(tokens !== undefined ? { tokens } : {}),
+          droppedLinks,
         }
-      },
-      async discard(): Promise<void> {
-        if (settled) return
-        settled = true
+      } finally {
         scratch.destroy()
-        await discardDeckMedia({ db, deckId: targetDeckId, media, log })
-      },
+      }
+    },
+    async discard(): Promise<void> {
+      if (settled) return
+      settled = true
+      scratch.destroy()
+      await discardDeckMedia({ db, deckId: targetDeckId, media, log })
+    },
+  }
+}
+
+function countObjects(slides: ReadonlyArray<Y.Map<unknown>>): number {
+  return slides.reduce((n, m) => {
+    const objects = m.get('objects')
+    return n + (objects instanceof Y.Array ? objects.length : 0)
+  }, 0)
+}
+
+/** A whole deck, copied for a new deck that does not exist yet (`deck.duplicate`). */
+export interface StagedDeckCopy {
+  /** The new deck's first document state: every slide and the deck guides. */
+  state: Uint8Array
+  slideCount: number
+  objectsCreated: number
+  /** Media copied into the new deck's namespace; register once its row exists. */
+  media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  skippedImages: number
+  tokens?: RebindCounts
+}
+
+/**
+ * Copy the whole of `sourceDeckId` for a new deck `targetDeckId` in
+ * `targetFolderId`: every slide (ids kept — it is a deck of its own, and its
+ * slide links stay valid), the deck guides, the media the slides show
+ * (copied into the new deck's namespace) and, across folders, rebound token
+ * references. Returns the new document state; the caller creates the deck
+ * row with it and then registers `media` (the rows reference the deck), or
+ * discards `media` if it cannot.
+ */
+export async function stageDeckCopy(
+  deps: ServiceDeps,
+  args: {
+    userId: string
+    sourceDeckId: string
+    sourceFolderId: string | null
+    targetDeckId: string
+    targetFolderId: string
+  },
+): Promise<StagedDeckCopy> {
+  await requireCopyAccess(deps, args.userId, args.sourceDeckId)
+  const staged = await stageCopy(deps, { ...args, choose: (all) => all, freshSlideIds: false })
+  const doc = new Y.Doc()
+  try {
+    const guides = staged.scratch.getArray<Y.Map<unknown>>('guides').toArray()
+    doc.transact(() => {
+      doc.getArray<Y.Map<unknown>>('slides').insert(
+        0,
+        staged.chosen.map((m) => m.clone()),
+      )
+      if (guides.length > 0)
+        doc.getArray<Y.Map<unknown>>('guides').insert(
+          0,
+          guides.map((g) => g.clone()),
+        )
+    })
+    return {
+      state: Y.encodeStateAsUpdate(doc),
+      slideCount: staged.chosen.length,
+      objectsCreated: countObjects(staged.chosen),
+      media: staged.media,
+      skippedImages: staged.skippedImages,
+      ...(staged.tokens !== undefined ? { tokens: staged.tokens } : {}),
     }
   } finally {
-    if (!handedOver) scratch.destroy()
+    doc.destroy()
+    staged.scratch.destroy()
   }
 }
 
@@ -353,6 +522,13 @@ export async function stageDeckInsert(
 
 function copySource(key: string): string {
   return `${MEDIA_BUCKET}/${key.split('/').map(encodeURIComponent).join('/')}`
+}
+
+/** Copy one stored object of the media bucket to another key (server side, no download). */
+export async function copyStoredObject(fromKey: string, toKey: string): Promise<void> {
+  await buildS3Client().send(
+    new CopyObjectCommand({ Bucket: MEDIA_BUCKET, Key: toKey, CopySource: copySource(fromKey) }),
+  )
 }
 
 function basename(key: string): string {
@@ -419,12 +595,7 @@ async function copyMedia(
         ).map((r) => r.ps),
   )
 
-  const s3 = buildS3Client()
-  const copy = async (from: string, to: string): Promise<void> => {
-    await s3.send(
-      new CopyObjectCommand({ Bucket: MEDIA_BUCKET, Key: to, CopySource: copySource(from) }),
-    )
-  }
+  const copy = copyStoredObject
 
   for (const row of [
     ...referenced,

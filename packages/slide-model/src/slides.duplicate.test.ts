@@ -22,7 +22,7 @@ import {
   addSlide,
   duplicateSlide,
   getSlideAnimationsCtx,
-  getSlideNotes,
+  getSlideNotesFragment,
   getSlideObjectsCtx,
   listSlides,
   setSlideName,
@@ -109,7 +109,7 @@ function richDeck() {
   setSlideName(ctx, source.id, 'Agenda')
   setSlideSkipped(ctx, source.id, true)
 
-  const notes = getSlideNotes(ctx, source.id)!
+  const notes = getSlideNotesFragment(ctx, source.id)!
   const para = new Y.XmlElement('paragraph')
   const words = new Y.XmlText()
   para.insert(0, [words])
@@ -156,8 +156,8 @@ describe('duplicateSlide', () => {
     textOf(copy.id).insert(textOf(copy.id).length, ' — copy')
     expect(textOf(source).toString()).toBe('Hello duplicate')
     expect(textOf(copy.id).toString()).toBe('Hello duplicate — copy')
-    getSlideNotes(ctx, source)!.delete(0, 1)
-    expect(getSlideNotes(ctx, copy.id)!.length).toBe(1)
+    getSlideNotesFragment(ctx, source)!.delete(0, 1)
+    expect(getSlideNotesFragment(ctx, copy.id)!.length).toBe(1)
   })
 
   it('is one change: one transaction, one undo step', () => {
