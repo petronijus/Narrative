@@ -8,7 +8,7 @@
  */
 
 import type { z } from 'zod'
-import type { DeckMutationContext } from '@narrative/slide-model'
+import type { DeckMutationContext, FolderTokensSnapshot } from '@narrative/slide-model'
 import type { ServerServices } from './services.js'
 
 /** Deck roles, ordered: a higher role may do everything a lower one may. */
@@ -195,6 +195,18 @@ export interface CommandContext {
   origin: unknown
   /** The deck document the command targets. Required by `doc` effects. */
   deck?: DeckMutationContext
+  /**
+   * The design tokens (colours, text styles, effect styles) of the folder
+   * the target deck or component master belongs to, read-only — for
+   * commands that resolve a token or apply a text style
+   * (`readsFolderTokens`). `null`: the target has no folder, or its folder
+   * has no tokens yet. Absent: the host did not provide them; a command
+   * that needs them then fails with `conflict` rather than guess. The
+   * browser host passes the editor's live snapshot (FolderDocProvider), the
+   * server host reads the folder document for the commands that declare
+   * the flag (agent/folderTokens.ts).
+   */
+  folderTokens?: FolderTokensSnapshot | null
 }
 
 /**
@@ -259,6 +271,13 @@ export interface CommandDef<
    * commands (document queries); only commands with other effects set it.
    */
   readsDocument?: boolean
+  /**
+   * The handler reads the target folder's design tokens (`ctx.folderTokens`):
+   * it resolves a colour token or applies a text style. The server host
+   * loads them only for such commands (and for an `ops.apply` batch that
+   * contains one — see `commandReadsFolderTokens`).
+   */
+  readsFolderTokens?: true
   /**
    * The command changes nothing anywhere: no document, no database row, no
    * file, no message to anyone — it only reads and returns (lists, gets,

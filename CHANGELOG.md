@@ -4,6 +4,53 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.11 — Gradients, shadows and page numbers through commands (2026-09-29)
+
+### Added
+
+- **Agents can give shapes a gradient, objects a shadow, and turn a text
+  box into the page number** — with the editor's rules:
+  - `object.fill.gradient` — linear or radial; without explicit stops a new
+    gradient starts from the shape's own colour and a darker tint of it,
+    and an existing one keeps its colours when only the kind, angle or
+    centre changes;
+  - `object.effects.shadow` — switches on the editor's default shadow, or
+    merges the given fields into the current one; `null` removes it;
+  - `object.slideNumber.set` — the live slide number, optionally with the
+    folder's "Footnotes and pages" text style linked and applied.
+
+### Changed
+
+- **Switching a gradient between Linear and Radial keeps its colours**
+  instead of starting over from the solid fill.
+
+### Fixed
+
+- **"Apply Footnotes and pages text style" in the page-number dialog**
+  applied only part of the style and stored its colour in a form the style
+  link did not use; it now applies the style exactly as editing the style
+  does (paragraph spacing and "none" transforms included).
+- **A gradient started from a fill linked to a folder colour began from
+  white**; it now starts from that colour.
+- **Picking two fill types in quick succession could leave the first one
+  applied** (Linear, then Solid before the editor redrew).
+
+### Internal
+
+- A2.8: commands can read the target folder's design tokens
+  (`CommandContext.folderTokens`, `readsFolderTokens`): the editor passes
+  its synced folder snapshot, the server reads the folder document for the
+  commands that need it (agent/folderTokens.ts), also inside `ops.apply`.
+- One text-style mapping (commands `text/textStyle.ts`) for style
+  propagation and the commands that link a style.
+- The Claude Code plugin's version is the Narrative release (generated with
+  the skill), so `/plugin update narrative` fetches each release's skill.
+- Eval scenarios `badge-gradient`, `card-soft-shadow`,
+  `footer-page-number`; e2e `inspector-appearance-commands`.
+- MCP tools/list budget 159,000 → 164,000 bytes.
+
+---
+
 ## 0.10.10 — Agents upload local files; snapping can be switched off (2026-09-29)
 
 ### Added

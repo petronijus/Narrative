@@ -25,6 +25,7 @@ import { LOCAL_ORIGIN } from '@narrative/slide-model'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useDeckRole } from './DeckRoleContext.js'
 import { useAuth } from './AuthContext.js'
+import { useFolderTokensForCommands } from './FolderDocProvider.js'
 
 /** One registry per page: definitions are stateless, so sharing it is safe. */
 const registry = createDefaultRegistry()
@@ -73,6 +74,7 @@ export function useCommand(): CommandDispatch {
   const { role } = useDeckRole()
   const { user } = useAuth()
   const userId = user?.sub ?? 'anonymous'
+  const folderTokens = useFolderTokensForCommands()
 
   const ctx = useMemo<CommandContext>(
     () => ({
@@ -80,8 +82,9 @@ export function useCommand(): CommandDispatch {
       host: 'browser',
       origin: LOCAL_ORIGIN,
       deck: deckCtx,
+      ...(folderTokens === undefined ? {} : { folderTokens }),
     }),
-    [userId, role, deckCtx],
+    [userId, role, deckCtx, folderTokens],
   )
 
   const run = useCallback(

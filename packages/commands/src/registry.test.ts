@@ -64,6 +64,15 @@ describe('commandMetadataProblems', () => {
     )
   })
 
+  it('allows readsFolderTokens only on a command that uses the document', () => {
+    expect(
+      commandMetadataProblems(def({ undo: 'undoable', effects: ['doc'], readsFolderTokens: true })),
+    ).toEqual([])
+    expect(commandMetadataProblems(def({ readOnly: true, readsFolderTokens: true }))).toEqual([
+      '`readsFolderTokens` is for commands that use the target document',
+    ])
+  })
+
   it("refuses idempotent on a command that is not a write (undo 'n/a')", () => {
     expect(commandMetadataProblems(def({ idempotent: true }))).toHaveLength(1)
   })

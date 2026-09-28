@@ -1,24 +1,24 @@
 {
   "scenario": "objects-recreate-from-json",
-  "tag": "ev8c2dee",
-  "recordedAt": "2026-09-28T22:01:35.760Z",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:54:14.613Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "6769OV8wFMXE",
-    "title": "Results ev8c2dee"
+    "deckId": "tZZxWjuXxNqQ",
+    "title": "Results evbd553c"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "A colleague deleted a callout from the Narrative deck \"Results ev8c2dee\" (deckId 6769OV8wFMXE). This is how it read before (JSON from query_slide):\n\n[{\"id\":\"old-card\",\"type\":\"rectangle\",\"x\":100,\"y\":700,\"width\":600,\"height\":240,\"rotation\":0,\"opacity\":1,\"fill\":\"#1b2a4a\",\"cornerRadius\":20,\"name\":\"Callout card\"},{\"id\":\"old-label\",\"type\":\"text\",\"x\":140,\"y\":760,\"width\":520,\"height\":120,\"rotation\":0,\"opacity\":1,\"fontSize\":44,\"color\":\"#ffffff\",\"name\":\"Callout label\",\"text\":\"Growth 32%\",\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}]\n\nPut it back exactly as it was — card and label, the label's bold \"32%\" included — but centred on slide 3 (the centre of the slide).",
+        "prompt": "A colleague deleted a callout from the Narrative deck \"Results evbd553c\" (deckId tZZxWjuXxNqQ). This is how it read before (JSON from query_slide):\n\n[{\"id\":\"old-card\",\"type\":\"rectangle\",\"x\":100,\"y\":700,\"width\":600,\"height\":240,\"rotation\":0,\"opacity\":1,\"fill\":\"#1b2a4a\",\"cornerRadius\":20,\"name\":\"Callout card\"},{\"id\":\"old-label\",\"type\":\"text\",\"x\":140,\"y\":760,\"width\":520,\"height\":120,\"rotation\":0,\"opacity\":1,\"fontSize\":44,\"color\":\"#ffffff\",\"name\":\"Callout label\",\"text\":\"Growth 32%\",\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}]\n\nPut it back exactly as it was — card and label, the label's bold \"32%\" included — but centred on slide 3 (the centre of the slide).",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__ops_apply,mcp__narrative-eval__object_create,ReadMcpResourceTool",
-              "max_results": 6
+              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__query_deck,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__ops_apply,mcp__narrative-eval__object_create,mcp__narrative-eval__ReadMcpResourceTool",
+              "max_results": 10
             },
             "isError": false,
             "errorCode": null,
@@ -41,7 +41,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "6769OV8wFMXE"
+              "deckId": "tZZxWjuXxNqQ"
             },
             "isError": false,
             "errorCode": null,
@@ -49,7 +49,7 @@
               "slideCount": 3,
               "slides": [
                 {
-                  "id": "315MBAB5HaaVktJBURlfy",
+                  "id": "MZTBA9TtAjq-HL2KwHsAm",
                   "index": 0,
                   "title": "Q3 results",
                   "transition": "none",
@@ -57,7 +57,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "c6-5PmWTTpiXKRKhcOEtA",
+                  "id": "NpHvpqUCHQN8e9Y1npH7V",
                   "index": 1,
                   "title": "Highlights",
                   "transition": "none",
@@ -65,7 +65,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "KV36Yu2e7zBWkSUwU6WeE",
+                  "id": "sO14-YbGTTm87HNT1hmb9",
                   "index": 2,
                   "title": "Next quarter",
                   "transition": "none",
@@ -75,13 +75,13 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"315MBAB5HaaVktJBURlfy\",\"index\":0,\"title\":\"Q3 results\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"c6-5PmWTTpiXKRKhcOEtA\",\"index\":1,\"title\":\"Highlights\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"KV36Yu2e7zBWkSUwU6WeE\",\"index\":2,\"title\":\"Next quarter\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"MZTBA9TtAjq-HL2KwHsAm\",\"index\":0,\"title\":\"Q3 results\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"NpHvpqUCHQN8e9Y1npH7V\",\"index\":1,\"title\":\"Highlights\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0},{\"id\":\"sO14-YbGTTm87HNT1hmb9\",\"index\":2,\"title\":\"Next quarter\",\"transition\":\"none\",\"objectCount\":1,\"animationCount\":0}],\"guides\":[]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "6769OV8wFMXE",
+              "deckId": "tZZxWjuXxNqQ",
               "slide": {
                 "index": 2
               }
@@ -89,7 +89,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "KV36Yu2e7zBWkSUwU6WeE",
+              "id": "sO14-YbGTTm87HNT1hmb9",
               "index": 2,
               "transition": {
                 "kind": "none",
@@ -98,7 +98,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "c9tIAk3C7rCjv9oOqn7zO",
+                  "id": "hPtwM5lMbTrXg-BT6Bg_B",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -116,28 +116,27 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"KV36Yu2e7zBWkSUwU6WeE\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"c9tIAk3C7rCjv9oOqn7zO\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Next quarter\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"sO14-YbGTTm87HNT1hmb9\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"hPtwM5lMbTrXg-BT6Bg_B\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Next quarter\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "6769OV8wFMXE",
+              "deckId": "tZZxWjuXxNqQ",
               "request": "Restore the deleted \"Growth 32%\" callout, centred on slide 3"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_qtRM0Q1A1V6w_iLM"
+              "runId": "run__0_4O6IN_ybzmCVF"
             },
-            "text": "{\"runId\":\"run_qtRM0Q1A1V6w_iLM\"}"
+            "text": "{\"runId\":\"run__0_4O6IN_ybzmCVF\"}"
           },
           {
             "tool": "ops_apply",
             "command": "ops.apply",
             "input": {
-              "deckId": "6769OV8wFMXE",
-              "runId": "run_qtRM0Q1A1V6w_iLM",
+              "deckId": "tZZxWjuXxNqQ",
               "ops": [
                 {
                   "command": "object_create",
@@ -201,20 +200,20 @@
             "result": {
               "results": [
                 {
-                  "objectId": "XNFeSXLzWujmYMytcfkUf"
+                  "objectId": "YhwftWjGVNDOCvu7OVupK"
                 },
                 {
-                  "objectId": "mhtn77pKk4F5d6-yrJ4jj"
+                  "objectId": "t77Mr7pq4sKt8J7STCM_U"
                 }
               ]
             },
-            "text": "{\"results\":[{\"objectId\":\"XNFeSXLzWujmYMytcfkUf\"},{\"objectId\":\"mhtn77pKk4F5d6-yrJ4jj\"}]}"
+            "text": "{\"results\":[{\"objectId\":\"YhwftWjGVNDOCvu7OVupK\"},{\"objectId\":\"t77Mr7pq4sKt8J7STCM_U\"}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "6769OV8wFMXE",
+              "deckId": "tZZxWjuXxNqQ",
               "slide": {
                 "index": 2
               }
@@ -222,7 +221,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "KV36Yu2e7zBWkSUwU6WeE",
+              "id": "sO14-YbGTTm87HNT1hmb9",
               "index": 2,
               "transition": {
                 "kind": "none",
@@ -231,7 +230,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "c9tIAk3C7rCjv9oOqn7zO",
+                  "id": "hPtwM5lMbTrXg-BT6Bg_B",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -246,7 +245,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "XNFeSXLzWujmYMytcfkUf",
+                  "id": "YhwftWjGVNDOCvu7OVupK",
                   "type": "rectangle",
                   "name": "Callout card",
                   "x": 660,
@@ -259,7 +258,7 @@
                   "cornerRadius": 20
                 },
                 {
-                  "id": "mhtn77pKk4F5d6-yrJ4jj",
+                  "id": "t77Mr7pq4sKt8J7STCM_U",
                   "type": "text",
                   "name": "Callout label",
                   "x": 700,
@@ -291,10 +290,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"KV36Yu2e7zBWkSUwU6WeE\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"c9tIAk3C7rCjv9oOqn7zO\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Next quarter\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"XNFeSXLzWujmYMytcfkUf\",\"type\":\"rectangle\",\"name\":\"Callout card\",\"x\":660,\"y\":420,\"width\":600,\"height\":240,\"rotation\":0,\"fill\":\"#1b2a4a\",\"opacity\":1,\"cornerRadius\":20},{\"id\":\"mhtn77pKk4F5d6-yrJ4jj\",\"type\":\"text\",\"name\":\"Callout label\",\"x\":700,\"y\":480,\"width\":520,\"height\":120,\"rotation\":0,\"text\":\"Growth 32%\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#ffffff\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"sO14-YbGTTm87HNT1hmb9\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"hPtwM5lMbTrXg-BT6Bg_B\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Next quarter\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"YhwftWjGVNDOCvu7OVupK\",\"type\":\"rectangle\",\"name\":\"Callout card\",\"x\":660,\"y\":420,\"width\":600,\"height\":240,\"rotation\":0,\"fill\":\"#1b2a4a\",\"opacity\":1,\"cornerRadius\":20},{\"id\":\"t77Mr7pq4sKt8J7STCM_U\",\"type\":\"text\",\"name\":\"Callout label\",\"x\":700,\"y\":480,\"width\":520,\"height\":120,\"rotation\":0,\"text\":\"Growth 32%\",\"fontSize\":44,\"fontWeight\":\"normal\",\"color\":\"#ffffff\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Growth \"},{\"text\":\"32%\",\"fontWeight\":700}]}]}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "I put the callout back on slide 3 (\"Next quarter\") in the deck \"Results ev8c2dee\", centred on the slide. I read the slide again afterwards and everything matches the JSON you pasted:\n\n- **Callout card**: a 600 × 240 rectangle, fill `#1b2a4a`, corner radius 20. It now sits at x 660, y 420, which is the exact centre of the 1920 × 1080 slide.\n- **Callout label**: a 520 × 120 text box in white at size 44, reading \"Growth **32%**\" with \"32%\" in bold (weight 700). It now sits at x 700, y 480. That's the same 40 px / 60 px inset from the card as before, and it's also exactly centred on the slide.\n\nThe new objects have new IDs (`XNFeSXLzWujmYMytcfkUf` and `mhtn77pKk4F5d6-yrJ4jj`), because the old ones can't be reused. Rotation, opacity and stacking order are the same as before: the label is on top of the card. The slide's \"Next quarter\" title was not changed.\n\nThe edit is its own agent run, so you can undo it in one step if needed.",
+        "finalText": "The callout is back on slide 3 (\"Next quarter\"), centred on the slide. I checked the slide afterwards and it matches the original.\n\n- **Callout card:** same 600×240 rectangle as before (fill `#1b2a4a`, corner radius 20). It now sits at (660, 420), so its centre is the slide centre (960, 540).\n- **Callout label:** same 520×120 text box as before (44 px, white), reading \"Growth **32%**\" with \"32%\" still bold. It's at (700, 480), keeping its original 40/60 px inset inside the card, so it's centred on the slide too.\n\nBoth objects got new ids, so the old `old-card` and `old-label` ids don't exist any more. The label's text is still left-aligned inside its box, as in the original. The box is centred, but the words sit slightly left of centre. I can set it to centre alignment if you'd like.\n\nAll of this is one run, so you can undo it in one step if needed.",
         "turns": 8,
         "isError": false,
         "stopReason": "success"

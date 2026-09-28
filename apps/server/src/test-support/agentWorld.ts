@@ -34,6 +34,7 @@ import {
 import type { Database } from '../db/client.js'
 import type { AgentAccess } from '../agent/access.js'
 import { createMemoryRunStore, type MemoryRunStore } from '../agent/runStore.js'
+import { createFolderTokensReader } from '../agent/folderTokens.js'
 import { createAgentRuntime, type AgentRuntime } from '../agent/runtime.js'
 import type { ConfirmationLookups } from '../agent/confirmationSummary.js'
 import { awarenessOwnershipExtension } from '../hocuspocus/awarenessOwnership.js'
@@ -118,6 +119,15 @@ export interface AgentWorld {
   grant(id: string, userId: string, role: Role): void
   /** Store a seeded deck so it loads with content. */
   createDeck(deckId: string, build?: (doc: Y.Doc) => void): void
+  /**
+   * Put a deck or component master (by id) in a folder whose document holds
+   * `tokens` (the folder document's `tokens` map), stored like any document.
+   */
+  setFolder(
+    targetId: string,
+    folderId: string,
+    tokens?: Record<string, Record<string, Record<string, unknown>>>,
+  ): void
   /** A WebSocket client of `userId` on a document (resolves once synced). */
   connect(documentName: string, userId: string): Promise<TestClient>
   destroy(): Promise<void>
@@ -205,8 +215,30 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     ownedFolder: async () => null,
     folderDeckCount: async () => 0,
   }
+  // The database's decks.folder_id / components.folder_id, in memory; the
+  // folder document itself is read like the production reader reads it
+  // (live when loaded, else stored — here: the persistence snapshots).
+  const folderOfTarget = new Map<string, string>()
+  const folderTokens = createFolderTokensReader({
+    async folderOf(target) {
+      if (target.folderId !== undefined) return target.folderId
+      const id = target.deckId ?? target.componentId
+      return id === undefined ? null : (folderOfTarget.get(id) ?? null)
+    },
+    async readFolder(folderId) {
+      const doc = new Y.Doc()
+      const live = hocuspocus.documents.get(`folder:${folderId}`)
+      const state =
+        live !== undefined
+          ? Y.encodeStateAsUpdate(live)
+          : persistence.snapshots.get(`folder:${folderId}`)
+      if (state !== undefined) Y.applyUpdate(doc, state)
+      return doc
+    },
+  })
   const runtime = await createAgentRuntime({
     db: {} as Database,
+    folderTokens,
     log: opts.log ?? quietLog,
     hocuspocus,
     ...(opts.registry === undefined ? {} : { registry: opts.registry }),
@@ -241,6 +273,22 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
     titles,
     grant(id, userId, role) {
       roles.set(`${id}|${userId}`, role)
+    },
+    setFolder(targetId, folderId, tokens = {}) {
+      folderOfTarget.set(targetId, folderId)
+      const doc = new Y.Doc()
+      const root = doc.getMap<unknown>('tokens')
+      for (const [category, entries] of Object.entries(tokens)) {
+        const cat = new Y.Map<unknown>()
+        root.set(category, cat)
+        for (const [id, fields] of Object.entries(entries)) {
+          const token = new Y.Map<unknown>()
+          cat.set(id, token)
+          for (const [k, v] of Object.entries(fields)) token.set(k, v)
+        }
+      }
+      persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
+      doc.destroy()
     },
     createDeck(deckId, build = seedDeck) {
       const doc = new Y.Doc()

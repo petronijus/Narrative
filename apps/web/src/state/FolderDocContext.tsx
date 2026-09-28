@@ -46,6 +46,12 @@ export interface FolderDocContextValue {
   doc: Y.Doc
   /** Live plain-JSON snapshot — re-renders on every Y.Doc mutation. */
   tokens: FolderTokensSnapshot
+  /**
+   * The folder document has synced with the server at least once. Before
+   * that `tokens` is an empty placeholder, not a folder without tokens —
+   * commands must not take it for one (state/useCommand.ts).
+   */
+  synced: boolean
 }
 
 export const FolderDocContext = createContext<FolderDocContextValue | null>(null)

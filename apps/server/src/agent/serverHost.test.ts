@@ -303,3 +303,78 @@ describe('people through command routes', () => {
     expect(out).toMatchObject({ ok: false, error: { code: 'wrong_host' } })
   })
 })
+
+describe('folder tokens', () => {
+  const tokens = {
+    colors: { ink: { name: 'Ink', value: '#222222' } },
+    textStyles: {
+      pages: {
+        name: 'Footnotes and pages',
+        family: 'Inter',
+        size: 14,
+        color: { $token: 'colors.ink' },
+      },
+    },
+  }
+
+  function objectOf(doc: Y.Doc, objectId: string): Y.Map<unknown> | undefined {
+    const objects = getSlideObjectsCtx({ doc, slides: doc.getArray('slides') }, 's1')!
+    return objects.objects.toArray().find((m) => m.get('id') === objectId)
+  }
+
+  it("give a command the target folder's tokens, also inside a batch", async () => {
+    world.setFolder('deck1', 'f1', tokens)
+    const human = await world.connect('deck1', 'ed')
+    await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'object.update',
+        input: { slide: 's1', object: 'r1', patch: { fill: { $token: 'colors.ink' } } },
+      },
+    })
+    const out = await exec({
+      actor: { userId: 'ed' },
+      batch: {
+        ops: [
+          { command: 'object.move', input: { slide: 's1', objects: ['r2'], dx: 10, dy: 0 } },
+          {
+            command: 'object.fill.gradient',
+            input: { slide: 's1', objects: ['r1'], kind: 'linear' },
+          },
+        ],
+      },
+    })
+    expect(out.ok).toBe(true)
+    // The token fill was resolved and unlinked (0x222222), then seeded from.
+    await eventually(() => objectOf(human.doc, 'r1')?.get('fill') === 0x222222)
+    expect(objectOf(human.doc, 'r1')?.get('fillStyle')).toMatchObject({ kind: 'linearGradient' })
+  })
+
+  it('report a folder without tokens as none, and a deck without a folder too', async () => {
+    const out = await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'object.fill.gradient',
+        input: { slide: 's1', objects: ['r1'], kind: 'radial' },
+      },
+    })
+    expect(out.ok).toBe(true)
+    world.setFolder('deck1', 'f-empty')
+    await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'object.update',
+        input: { slide: 's1', object: 'r2', patch: { fill: { $token: 'colors.ink' } } },
+      },
+    })
+    const refused = await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'object.fill.gradient',
+        input: { slide: 's1', objects: ['r2'], kind: 'radial' },
+      },
+    })
+    // Tokens were looked for and there are none: the colour cannot be resolved.
+    expect(refused).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+  })
+})

@@ -1,0 +1,166 @@
+{
+  "scenario": "badge-gradient",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:54:50.587Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.283 (Claude Code)",
+  "fixture": {
+    "deckId": "-Xh7Ptw3o8fA",
+    "title": "Launch badge evbd553c",
+    "badgeId": "Na6muGM3SHRmBql0f5fTU",
+    "titleId": "IbsQlQqJU0bMf4xsD_yjf"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "On slide 1 of the Narrative deck \"Launch badge evbd553c\" (deckId -Xh7Ptw3o8fA), give the blue \"Badge\" rectangle a left-to-right gradient that starts with its current blue and runs into a darker shade of that blue.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__object_fill_gradient,ReadMcpResourceTool,mcp__narrative-eval__query_object",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "-Xh7Ptw3o8fA",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "2pZ0ZljRaR5msHyssYfOG",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "IbsQlQqJU0bMf4xsD_yjf",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "New in spring",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "Na6muGM3SHRmBql0f5fTU",
+                  "type": "rectangle",
+                  "name": "Badge",
+                  "x": 760,
+                  "y": 420,
+                  "width": 400,
+                  "height": 240,
+                  "rotation": 0,
+                  "fill": "#2e86ab",
+                  "opacity": 1
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"2pZ0ZljRaR5msHyssYfOG\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"IbsQlQqJU0bMf4xsD_yjf\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"New in spring\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"Na6muGM3SHRmBql0f5fTU\",\"type\":\"rectangle\",\"name\":\"Badge\",\"x\":760,\"y\":420,\"width\":400,\"height\":240,\"rotation\":0,\"fill\":\"#2e86ab\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "-Xh7Ptw3o8fA",
+              "request": "Give the Badge rectangle on slide 1 a left-to-right blue gradient"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_Ivj9ANuYqTKn8e-K"
+            },
+            "text": "{\"runId\":\"run_Ivj9ANuYqTKn8e-K\"}"
+          },
+          {
+            "tool": "object_fill_gradient",
+            "command": "object.fill.gradient",
+            "input": {
+              "deckId": "-Xh7Ptw3o8fA",
+              "slide": "2pZ0ZljRaR5msHyssYfOG",
+              "objects": ["Na6muGM3SHRmBql0f5fTU"],
+              "kind": "linear",
+              "angle": 90
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {},
+            "text": "{}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "-Xh7Ptw3o8fA",
+              "slide": "2pZ0ZljRaR5msHyssYfOG",
+              "object": "Na6muGM3SHRmBql0f5fTU"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "2pZ0ZljRaR5msHyssYfOG",
+                "index": 0
+              },
+              "stackIndex": 1,
+              "object": {
+                "id": "Na6muGM3SHRmBql0f5fTU",
+                "type": "rectangle",
+                "name": "Badge",
+                "x": 760,
+                "y": 420,
+                "width": 400,
+                "height": 240,
+                "rotation": 0,
+                "fill": "#2e86ab",
+                "opacity": 1,
+                "fillStyle": {
+                  "kind": "linearGradient",
+                  "stops": [
+                    {
+                      "color": "#2e86ab",
+                      "offset": 0
+                    },
+                    {
+                      "color": "#194a5e",
+                      "offset": 1
+                    }
+                  ],
+                  "angleDeg": 90
+                }
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"2pZ0ZljRaR5msHyssYfOG\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"Na6muGM3SHRmBql0f5fTU\",\"type\":\"rectangle\",\"name\":\"Badge\",\"x\":760,\"y\":420,\"width\":400,\"height\":240,\"rotation\":0,\"fill\":\"#2e86ab\",\"opacity\":1,\"fillStyle\":{\"kind\":\"linearGradient\",\"stops\":[{\"color\":\"#2e86ab\",\"offset\":0},{\"color\":\"#194a5e\",\"offset\":1}],\"angleDeg\":90}},\"animations\":[]}"
+          }
+        ],
+        "finalText": "The blue \"Badge\" rectangle on slide 1 now has a left-to-right gradient. I checked the rectangle afterwards and the new fill is in place:\n\n- **Left edge:** its original blue, `#2e86ab`\n- **Right edge:** a darker shade of that blue, `#194a5e`\n\nNothing else on the slide changed. The edit is saved as a single agent run, so you can undo it in one step if you don't like how it looks.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

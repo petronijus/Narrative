@@ -66,6 +66,7 @@ vi.mock('../state/FolderDocProvider.js', () => ({
     deletedComponentIds: new Set<string>(),
   }),
   useFolderTokensOptional: () => null,
+  useFolderTokensForCommands: () => undefined,
 }))
 
 const { FolderDocGate } = await import('./DeckShell.js')

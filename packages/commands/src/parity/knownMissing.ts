@@ -42,31 +42,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A2: web-only logic to extract ------------------------------------------
   {
-    capability: 'object.slideNumber.set',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/SlideNumberPromptDialog.tsx',
-    note:
-      "raw `isSlideNumber` is settable with object.update today; the command adds the editor's follow-up choice " +
-      '(apply the page-number text style or promote the box to a component)',
-  },
-  {
-    capability: 'object.fill.gradient',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/Inspector.tsx (starting stops)',
-    note:
-      "a gradient `fillStyle` is settable raw with object.update today; the command adds the Inspector's starting " +
-      'stops seeded from the current fill colour',
-  },
-  {
-    capability: 'object.effects.shadow',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/Inspector.tsx (defaults)',
-    note: "`shadow` is settable raw with object.update today; the command adds the Inspector's default shadow when switched on",
-  },
-  {
     capability: 'text.setBoxTypography',
     phase: 'A2',
     source: 'web',

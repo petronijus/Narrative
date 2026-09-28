@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **111**. Known missing: **26**. Deliberately excluded: **20**.
+Commands: **114**. Known missing: **23**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -101,6 +101,8 @@ Commands: **111**. Known missing: **26**. Deliberately excluded: **20**.
 | `object.delete`            | Delete objects                        | editor | undoable | never   |            |
 | `object.distribute`        | Distribute objects evenly             | editor | undoable | never   | idempotent |
 | `object.duplicate`         | Duplicate objects                     | editor | undoable | never   |            |
+| `object.effects.shadow`    | Drop shadow                           | editor | undoable | never   | idempotent |
+| `object.fill.gradient`     | Gradient fill                         | editor | undoable | never   | idempotent |
 | `object.flip`              | Flip objects                          | editor | undoable | never   |            |
 | `object.group`             | Group objects                         | editor | undoable | never   |            |
 | `object.insert`            | Insert objects from JSON              | editor | undoable | never   |            |
@@ -115,6 +117,7 @@ Commands: **111**. Known missing: **26**. Deliberately excluded: **20**.
 | `object.path.setAnchors`   | Set path points                       | editor | undoable | never   | idempotent |
 | `object.resize`            | Resize object                         | editor | undoable | never   | idempotent |
 | `object.rotate`            | Rotate objects                        | editor | undoable | never   |            |
+| `object.slideNumber.set`   | Page-number field                     | editor | undoable | never   | idempotent |
 | `object.ungroup`           | Ungroup objects                       | editor | undoable | never   |            |
 | `object.update`            | Update object properties              | editor | undoable | never   | idempotent |
 
@@ -201,9 +204,6 @@ Commands: **111**. Known missing: **26**. Deliberately excluded: **20**.
 
 | Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                       |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `object.slideNumber.set`      | A2    | apps/web/src/ui/SlideNumberPromptDialog.tsx                                                   | raw `isSlideNumber` is settable with object.update today; the command adds the editor's follow-up choice (apply the page-number text style or promote the box to a component)              |
-| `object.fill.gradient`        | A2    | apps/web/src/ui/Inspector.tsx (starting stops)                                                | a gradient `fillStyle` is settable raw with object.update today; the command adds the Inspector's starting stops seeded from the current fill colour                                       |
-| `object.effects.shadow`       | A2    | apps/web/src/ui/Inspector.tsx (defaults)                                                      | `shadow` is settable raw with object.update today; the command adds the Inspector's default shadow when switched on                                                                        |
 | `text.setBoxTypography`       | A2    | apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts                          | box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has (object.update writes fontFamily raw and keeps the weight)                         |
 | `text.style.apply`            | A2    | apps/web/src/ui/Inspector.tsx (applyTextStyle)                                                |                                                                                                                                                                                            |
 | `text.style.createFromObject` | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |

@@ -1,30 +1,30 @@
 {
   "scenario": "slides-outline-nest",
-  "tag": "ev8c2dee",
-  "recordedAt": "2026-09-28T21:59:00.359Z",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:51:26.494Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "POZmBC72JA3j",
-    "title": "Review ev8c2dee",
+    "deckId": "L42DLvjswJkR",
+    "title": "Review evbd553c",
     "slideIds": [
-      "SWFT80-ZC2KiZZ7Keyxvn",
-      "CdS4v8U1A35Az5g7uxaCr",
-      "SUPqvvzh5OTRrQdzPcRuc",
-      "3BxmBda1wM83Tavt8eVhf"
+      "G7G8qau-XJwPXoRw5elO1",
+      "8AUINdCzT9HsOgXzdJDhJ",
+      "l_Q5_TH0wdec7mAg9Y1q8",
+      "IgmtLgHNkwuYgIu9oBvMp"
     ]
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In the Narrative deck \"Review ev8c2dee\" (deckId POZmBC72JA3j), move the slide \"Appendix\" to the end of the deck and make it a sub-slide (one outline level deeper) of \"Q&A\".",
+        "prompt": "In the Narrative deck \"Review evbd553c\" (deckId L42DLvjswJkR), move the slide \"Appendix\" to the end of the deck and make it a sub-slide (one outline level deeper) of \"Q&A\".",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__query_deck,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__slide_move,mcp__narrative-eval__slide_indent,mcp__narrative-eval__ReadMcpResourceTool",
-              "max_results": 5
+              "query": "select:mcp__narrative-eval__query_deck,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__slide_move,mcp__narrative-eval__slide_indent,mcp__narrative-eval__ReadMcpResourceTool,ReadMcpResourceTool",
+              "max_results": 6
             },
             "isError": false,
             "errorCode": null,
@@ -35,7 +35,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "POZmBC72JA3j"
+              "deckId": "L42DLvjswJkR"
             },
             "isError": false,
             "errorCode": null,
@@ -43,7 +43,7 @@
               "slideCount": 4,
               "slides": [
                 {
-                  "id": "SWFT80-ZC2KiZZ7Keyxvn",
+                  "id": "G7G8qau-XJwPXoRw5elO1",
                   "index": 0,
                   "title": "Intro",
                   "transition": "none",
@@ -51,7 +51,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "CdS4v8U1A35Az5g7uxaCr",
+                  "id": "8AUINdCzT9HsOgXzdJDhJ",
                   "index": 1,
                   "title": "Appendix",
                   "transition": "none",
@@ -59,7 +59,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "SUPqvvzh5OTRrQdzPcRuc",
+                  "id": "l_Q5_TH0wdec7mAg9Y1q8",
                   "index": 2,
                   "title": "Results",
                   "transition": "none",
@@ -67,7 +67,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "3BxmBda1wM83Tavt8eVhf",
+                  "id": "IgmtLgHNkwuYgIu9oBvMp",
                   "index": 3,
                   "title": "Q&A",
                   "transition": "none",
@@ -77,28 +77,28 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"SWFT80-ZC2KiZZ7Keyxvn\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"CdS4v8U1A35Az5g7uxaCr\",\"index\":1,\"title\":\"Appendix\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"SUPqvvzh5OTRrQdzPcRuc\",\"index\":2,\"title\":\"Results\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"3BxmBda1wM83Tavt8eVhf\",\"index\":3,\"title\":\"Q&A\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"G7G8qau-XJwPXoRw5elO1\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"8AUINdCzT9HsOgXzdJDhJ\",\"index\":1,\"title\":\"Appendix\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"l_Q5_TH0wdec7mAg9Y1q8\",\"index\":2,\"title\":\"Results\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"IgmtLgHNkwuYgIu9oBvMp\",\"index\":3,\"title\":\"Q&A\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "POZmBC72JA3j",
+              "deckId": "L42DLvjswJkR",
               "request": "Move \"Appendix\" to the end as a sub-slide of \"Q&A\""
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_VdZfpRovD40vj1wG"
+              "runId": "run_rf4giyqr7z9Z5bFs"
             },
-            "text": "{\"runId\":\"run_VdZfpRovD40vj1wG\"}"
+            "text": "{\"runId\":\"run_rf4giyqr7z9Z5bFs\"}"
           },
           {
             "tool": "slide_move",
             "command": "slide.move",
             "input": {
-              "deckId": "POZmBC72JA3j",
-              "slides": ["CdS4v8U1A35Az5g7uxaCr"],
+              "deckId": "L42DLvjswJkR",
+              "slides": ["8AUINdCzT9HsOgXzdJDhJ"],
               "toIndex": 4,
               "level": 1
             },
@@ -106,19 +106,19 @@
             "errorCode": null,
             "result": {
               "order": [
-                "SWFT80-ZC2KiZZ7Keyxvn",
-                "SUPqvvzh5OTRrQdzPcRuc",
-                "3BxmBda1wM83Tavt8eVhf",
-                "CdS4v8U1A35Az5g7uxaCr"
+                "G7G8qau-XJwPXoRw5elO1",
+                "l_Q5_TH0wdec7mAg9Y1q8",
+                "IgmtLgHNkwuYgIu9oBvMp",
+                "8AUINdCzT9HsOgXzdJDhJ"
               ]
             },
-            "text": "{\"order\":[\"SWFT80-ZC2KiZZ7Keyxvn\",\"SUPqvvzh5OTRrQdzPcRuc\",\"3BxmBda1wM83Tavt8eVhf\",\"CdS4v8U1A35Az5g7uxaCr\"]}"
+            "text": "{\"order\":[\"G7G8qau-XJwPXoRw5elO1\",\"l_Q5_TH0wdec7mAg9Y1q8\",\"IgmtLgHNkwuYgIu9oBvMp\",\"8AUINdCzT9HsOgXzdJDhJ\"]}"
           },
           {
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "POZmBC72JA3j"
+              "deckId": "L42DLvjswJkR"
             },
             "isError": false,
             "errorCode": null,
@@ -126,7 +126,7 @@
               "slideCount": 4,
               "slides": [
                 {
-                  "id": "SWFT80-ZC2KiZZ7Keyxvn",
+                  "id": "G7G8qau-XJwPXoRw5elO1",
                   "index": 0,
                   "title": "Intro",
                   "transition": "none",
@@ -134,7 +134,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "SUPqvvzh5OTRrQdzPcRuc",
+                  "id": "l_Q5_TH0wdec7mAg9Y1q8",
                   "index": 1,
                   "title": "Results",
                   "transition": "none",
@@ -142,7 +142,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "3BxmBda1wM83Tavt8eVhf",
+                  "id": "IgmtLgHNkwuYgIu9oBvMp",
                   "index": 2,
                   "title": "Q&A",
                   "transition": "none",
@@ -150,7 +150,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "CdS4v8U1A35Az5g7uxaCr",
+                  "id": "8AUINdCzT9HsOgXzdJDhJ",
                   "index": 3,
                   "title": "Appendix",
                   "indent": 1,
@@ -161,10 +161,10 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"SWFT80-ZC2KiZZ7Keyxvn\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"SUPqvvzh5OTRrQdzPcRuc\",\"index\":1,\"title\":\"Results\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"3BxmBda1wM83Tavt8eVhf\",\"index\":2,\"title\":\"Q&A\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"CdS4v8U1A35Az5g7uxaCr\",\"index\":3,\"title\":\"Appendix\",\"indent\":1,\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"G7G8qau-XJwPXoRw5elO1\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"l_Q5_TH0wdec7mAg9Y1q8\",\"index\":1,\"title\":\"Results\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"IgmtLgHNkwuYgIu9oBvMp\",\"index\":2,\"title\":\"Q&A\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"8AUINdCzT9HsOgXzdJDhJ\",\"index\":3,\"title\":\"Appendix\",\"indent\":1,\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           }
         ],
-        "finalText": "I moved \"Appendix\" to the end of the deck \"Review ev8c2dee\" and made it a sub-slide of \"Q&A\". I re-read the deck outline afterwards to confirm it.\n\nThe slide order is now:\n1. Intro\n2. Results\n3. Q&A\n   - Appendix (one level deeper)\n\nThe change is saved as its own agent run, so you can undo it in one step if you need to.",
+        "finalText": "\"Appendix\" is now the last slide in \"Review evbd553c\" and sits one level under \"Q&A\". I checked the deck afterwards and the order is:\n\n1. Intro\n2. Results\n3. Q&A\n   - Appendix\n\nThe change is saved as its own run in the deck's agent activity, so you can undo it in one step if needed.",
         "turns": 6,
         "isError": false,
         "stopReason": "success"

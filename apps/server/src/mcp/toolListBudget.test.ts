@@ -43,8 +43,10 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * object.insert 2.3 and object.insertFromDeck 2.2 (the clipboard's three
  * paste paths; their example objects are what makes them this size).
  * A2.7a (2026-09-28): 157,000 → 159,000 for media.uploadSession.
+ * A2.8 (2026-09-29): 159,000 → 164,000 for object.fill.gradient,
+ * object.effects.shadow and object.slideNumber.set (≈ 4.7 KB together).
  */
-export const TOOL_LIST_BUDGET_BYTES = 159_000
+export const TOOL_LIST_BUDGET_BYTES = 164_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

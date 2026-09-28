@@ -34,7 +34,16 @@ const DOCUMENT_EFFECTS = new Set(['doc', 'folderDoc', 'componentDoc'])
 export function commandMetadataProblems(
   def: Pick<
     AnyCommandDef,
-    'id' | 'domain' | 'effects' | 'undo' | 'confirm' | 'readOnly' | 'idempotent' | 'undoneBy'
+    | 'id'
+    | 'domain'
+    | 'effects'
+    | 'undo'
+    | 'confirm'
+    | 'readOnly'
+    | 'idempotent'
+    | 'undoneBy'
+    | 'readsDocument'
+    | 'readsFolderTokens'
   >,
 ): string[] {
   const problems: string[] = []
@@ -61,6 +70,12 @@ export function commandMetadataProblems(
     )
   if (!serverUndoable && def.undoneBy !== undefined)
     problems.push('`undoneBy` is only for undoable commands without a document effect')
+  // Folder tokens serve a document command (the host provides them next to
+  // `ctx.deck`); anywhere else nothing would load them.
+  const usesDocument =
+    def.effects.includes('doc') || def.effects.length === 0 || def.readsDocument === true
+  if (def.readsFolderTokens === true && !usesDocument)
+    problems.push('`readsFolderTokens` is for commands that use the target document')
   return problems
 }
 

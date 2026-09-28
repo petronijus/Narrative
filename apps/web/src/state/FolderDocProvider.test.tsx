@@ -92,7 +92,7 @@ function TestFolderDocProvider({ doc, children }: { doc: Y.Doc; children: React.
     }
   }, [doc])
 
-  const value: FolderDocContextValue = { doc, tokens }
+  const value: FolderDocContextValue = { doc, tokens, synced: true }
 
   return <FolderDocContext value={value}>{children}</FolderDocContext>
 }

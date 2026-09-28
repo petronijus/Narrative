@@ -1,24 +1,24 @@
 {
   "scenario": "deck-create-in-folder",
-  "tag": "ev8c2dee",
-  "recordedAt": "2026-09-28T21:56:47.570Z",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:49:23.536Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "folderId": "GqgZpFee0-My",
-    "folderName": "Eval Client ev8c2dee",
-    "deckTitle": "Kickoff ev8c2dee"
+    "folderId": "RpitHe-gdUCb",
+    "folderName": "Eval Client evbd553c",
+    "deckTitle": "Kickoff evbd553c"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In Narrative, create a new deck called \"Kickoff ev8c2dee\" in my folder \"Eval Client ev8c2dee\". Give it a title slide with the title \"Project Kickoff\" and the subtitle \"Discovery workshop\".",
+        "prompt": "In Narrative, create a new deck called \"Kickoff evbd553c\" in my folder \"Eval Client evbd553c\". Give it a title slide with the title \"Project Kickoff\" and the subtitle \"Discovery workshop\".",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__folder_list,mcp__narrative-eval__deck_create,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__ops_apply,mcp__narrative-eval__slide_add,mcp__narrative-eval__text_set,mcp__narrative-eval__object_create,ReadMcpResourceTool",
+              "query": "select:ReadMcpResourceTool,mcp__narrative-eval__folder_list,mcp__narrative-eval__deck_create,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__ops_apply,mcp__narrative-eval__text_set,mcp__narrative-eval__slide_add",
               "max_results": 10
             },
             "isError": false,
@@ -42,50 +42,51 @@
             "tool": "folder_list",
             "command": "folder.list",
             "input": {
-              "query": "Eval Client ev8c2dee"
+              "query": "Eval Client evbd553c",
+              "limit": 50
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "folders": [
                 {
-                  "id": "GqgZpFee0-My",
-                  "name": "Eval Client ev8c2dee",
-                  "createdAt": "2026-09-28T21:56:29.050Z",
+                  "id": "RpitHe-gdUCb",
+                  "name": "Eval Client evbd553c",
+                  "createdAt": "2026-09-28T22:49:05.937Z",
                   "deckCount": 0
                 }
               ],
               "nextCursor": null
             },
-            "text": "{\"folders\":[{\"id\":\"GqgZpFee0-My\",\"name\":\"Eval Client ev8c2dee\",\"createdAt\":\"2026-09-28T21:56:29.050Z\",\"deckCount\":0}],\"nextCursor\":null}"
+            "text": "{\"folders\":[{\"id\":\"RpitHe-gdUCb\",\"name\":\"Eval Client evbd553c\",\"createdAt\":\"2026-09-28T22:49:05.937Z\",\"deckCount\":0}],\"nextCursor\":null}"
           },
           {
             "tool": "deck_create",
             "command": "deck.create",
             "input": {
-              "folderId": "GqgZpFee0-My",
-              "title": "Kickoff ev8c2dee"
+              "folderId": "RpitHe-gdUCb",
+              "title": "Kickoff evbd553c"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "nSqEAbhePQmF",
-              "title": "Kickoff ev8c2dee",
-              "folderId": "GqgZpFee0-My",
+              "id": "27jFs8Jqc1rX",
+              "title": "Kickoff evbd553c",
+              "folderId": "RpitHe-gdUCb",
               "ownerUserId": "dev-user",
               "thumbnailUrl": null,
-              "createdAt": "2026-09-28T21:56:35.096Z",
-              "updatedAt": "2026-09-28T21:56:35.096Z",
-              "firstSlideId": "uQDALcGjuHYpkM2hbKVma"
+              "createdAt": "2026-09-28T22:49:11.851Z",
+              "updatedAt": "2026-09-28T22:49:11.851Z",
+              "firstSlideId": "K4w4cnA7AO7yJCzV8Gd0R"
             },
-            "text": "{\"id\":\"nSqEAbhePQmF\",\"title\":\"Kickoff ev8c2dee\",\"folderId\":\"GqgZpFee0-My\",\"ownerUserId\":\"dev-user\",\"thumbnailUrl\":null,\"createdAt\":\"2026-09-28T21:56:35.096Z\",\"updatedAt\":\"2026-09-28T21:56:35.096Z\",\"firstSlideId\":\"uQDALcGjuHYpkM2hbKVma\"}"
+            "text": "{\"id\":\"27jFs8Jqc1rX\",\"title\":\"Kickoff evbd553c\",\"folderId\":\"RpitHe-gdUCb\",\"ownerUserId\":\"dev-user\",\"thumbnailUrl\":null,\"createdAt\":\"2026-09-28T22:49:11.851Z\",\"updatedAt\":\"2026-09-28T22:49:11.851Z\",\"firstSlideId\":\"K4w4cnA7AO7yJCzV8Gd0R\"}"
           },
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__component_list",
-              "max_results": 1
+              "query": "select:mcp__narrative-eval__object_create,mcp__narrative-eval__component_list,mcp__narrative-eval__slide_rename",
+              "max_results": 3
             },
             "isError": false,
             "errorCode": null,
@@ -93,10 +94,24 @@
             "text": ""
           },
           {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "27jFs8Jqc1rX",
+              "request": "Add a title slide \"Project Kickoff\" with subtitle \"Discovery workshop\""
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_mns0EqMctSDO7d1Z"
+            },
+            "text": "{\"runId\":\"run_mns0EqMctSDO7d1Z\"}"
+          },
+          {
             "tool": "component_list",
             "command": "component.list",
             "input": {
-              "folderId": "GqgZpFee0-My"
+              "folderId": "RpitHe-gdUCb"
             },
             "isError": false,
             "errorCode": null,
@@ -106,30 +121,17 @@
             "text": "{\"components\":[]}"
           },
           {
-            "tool": "agent_startRun",
-            "command": "agent.startRun",
-            "input": {
-              "deckId": "nSqEAbhePQmF",
-              "request": "Add a title slide \"Project Kickoff\" with subtitle \"Discovery workshop\""
-            },
-            "isError": false,
-            "errorCode": null,
-            "result": {
-              "runId": "run__JvNJ8-UOyC_9nvV"
-            },
-            "text": "{\"runId\":\"run__JvNJ8-UOyC_9nvV\"}"
-          },
-          {
             "tool": "ops_apply",
             "command": "ops.apply",
             "input": {
-              "deckId": "nSqEAbhePQmF",
-              "runId": "run__JvNJ8-UOyC_9nvV",
+              "deckId": "27jFs8Jqc1rX",
               "ops": [
                 {
                   "command": "object_create",
                   "input": {
-                    "slide": "uQDALcGjuHYpkM2hbKVma",
+                    "slide": {
+                      "index": 0
+                    },
                     "object": {
                       "type": "text",
                       "name": "Title",
@@ -149,7 +151,9 @@
                 {
                   "command": "object_create",
                   "input": {
-                    "slide": "uQDALcGjuHYpkM2hbKVma",
+                    "slide": {
+                      "index": 0
+                    },
                     "object": {
                       "type": "text",
                       "name": "Subtitle",
@@ -168,7 +172,9 @@
                 {
                   "command": "slide_rename",
                   "input": {
-                    "slide": "uQDALcGjuHYpkM2hbKVma",
+                    "slide": {
+                      "index": 0
+                    },
                     "name": "Title"
                   }
                 }
@@ -179,21 +185,21 @@
             "result": {
               "results": [
                 {
-                  "objectId": "ScVP0yfSHSqai6rNEOSTT"
+                  "objectId": "XmKIVRlUKHi24Ue_FQVJ1"
                 },
                 {
-                  "objectId": "lmUHQv6RSlmoV1xjSCwwY"
+                  "objectId": "CbMfdARy77tPw-clA7yrf"
                 },
                 {}
               ]
             },
-            "text": "{\"results\":[{\"objectId\":\"ScVP0yfSHSqai6rNEOSTT\"},{\"objectId\":\"lmUHQv6RSlmoV1xjSCwwY\"},{}]}"
+            "text": "{\"results\":[{\"objectId\":\"XmKIVRlUKHi24Ue_FQVJ1\"},{\"objectId\":\"CbMfdARy77tPw-clA7yrf\"},{}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "nSqEAbhePQmF",
+              "deckId": "27jFs8Jqc1rX",
               "slide": {
                 "index": 0
               }
@@ -201,7 +207,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "uQDALcGjuHYpkM2hbKVma",
+              "id": "K4w4cnA7AO7yJCzV8Gd0R",
               "index": 0,
               "name": "Title",
               "transition": {
@@ -211,7 +217,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "ScVP0yfSHSqai6rNEOSTT",
+                  "id": "XmKIVRlUKHi24Ue_FQVJ1",
                   "type": "text",
                   "name": "Title",
                   "x": 160,
@@ -228,7 +234,7 @@
                   "vAlign": "middle"
                 },
                 {
-                  "id": "lmUHQv6RSlmoV1xjSCwwY",
+                  "id": "CbMfdARy77tPw-clA7yrf",
                   "type": "text",
                   "name": "Subtitle",
                   "x": 160,
@@ -248,10 +254,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"uQDALcGjuHYpkM2hbKVma\",\"index\":0,\"name\":\"Title\",\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"ScVP0yfSHSqai6rNEOSTT\",\"type\":\"text\",\"name\":\"Title\",\"x\":160,\"y\":380,\"width\":1600,\"height\":180,\"rotation\":0,\"text\":\"Project Kickoff\",\"fontSize\":120,\"fontWeight\":\"bold\",\"color\":\"#111111\",\"align\":\"center\",\"opacity\":1,\"vAlign\":\"middle\"},{\"id\":\"lmUHQv6RSlmoV1xjSCwwY\",\"type\":\"text\",\"name\":\"Subtitle\",\"x\":160,\"y\":580,\"width\":1600,\"height\":100,\"rotation\":0,\"text\":\"Discovery workshop\",\"fontSize\":56,\"fontWeight\":\"normal\",\"color\":\"#555555\",\"align\":\"center\",\"opacity\":1,\"vAlign\":\"middle\"}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"K4w4cnA7AO7yJCzV8Gd0R\",\"index\":0,\"name\":\"Title\",\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"XmKIVRlUKHi24Ue_FQVJ1\",\"type\":\"text\",\"name\":\"Title\",\"x\":160,\"y\":380,\"width\":1600,\"height\":180,\"rotation\":0,\"text\":\"Project Kickoff\",\"fontSize\":120,\"fontWeight\":\"bold\",\"color\":\"#111111\",\"align\":\"center\",\"opacity\":1,\"vAlign\":\"middle\"},{\"id\":\"CbMfdARy77tPw-clA7yrf\",\"type\":\"text\",\"name\":\"Subtitle\",\"x\":160,\"y\":580,\"width\":1600,\"height\":100,\"rotation\":0,\"text\":\"Discovery workshop\",\"fontSize\":56,\"fontWeight\":\"normal\",\"color\":\"#555555\",\"align\":\"center\",\"opacity\":1,\"vAlign\":\"middle\"}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "I created the deck **\"Kickoff ev8c2dee\"** in your folder **Eval Client ev8c2dee**. It has one slide, named \"Title\", and I checked the result after making it:\n\n- **Title:** \"Project Kickoff\", 120 px bold, dark grey, centred.\n- **Subtitle:** \"Discovery workshop\", 56 px, mid-grey, centred just below the title.\n\nThe folder is new and has no shared building blocks, so I styled the text with plain colours and sizes rather than the folder's brand styles. If the folder gets brand fonts or colours later, I can apply them here. You can also undo this whole change in one step from the editor's Agent activity panel.",
+        "finalText": "I created the deck **\"Kickoff evbd553c\"** in your folder **\"Eval Client evbd553c\"**. Its title slide is set up, and I re-read the slide afterwards to confirm the text and layout:\n\n- **Title:** \"Project Kickoff\", large bold dark text, centred\n- **Subtitle:** \"Discovery workshop\", smaller grey text, centred just below the title\n- The slide is named \"Title\" in the slides panel.\n\nThe folder has no shared components or styles yet, so I used plain text with standard colours. The white background is the default.\n\nIf you want a different look, you can undo all of this in one step from the Agent activity popover in the editor. The deck itself would stay, just empty.",
         "turns": 10,
         "isError": false,
         "stopReason": "success"

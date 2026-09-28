@@ -8,8 +8,17 @@
  * `/plugin marketplace add petronijus/Narrative`, see the root
  * `.claude-plugin/marketplace.json`). Content is run through Prettier with
  * the repo config, because the pre-commit hook formats every staged `.md`.
+ *
+ * The plugin manifest (`claude-plugin/narrative/.claude-plugin/plugin.json`)
+ * is generated too, with the Narrative release as its version: Claude Code
+ * only fetches a plugin again when its version changes, so a manifest stuck
+ * at one version kept every installed skill at whatever it was first
+ * installed with. Every release bumps the version, the freshness test
+ * (skill.test.ts) then fails until the skill is regenerated, and
+ * `/plugin update narrative` brings the new skill.
  */
 
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as prettier from 'prettier'
@@ -28,6 +37,36 @@ export const DEFAULT_SKILL_DIR = path.join(
 )
 
 export const DEFAULT_API_URL = 'https://narrative.bastla.com/api'
+
+/** The plugin's manifest, next to the default skill directory. */
+export const PLUGIN_MANIFEST = path.join(
+  repoRoot,
+  'claude-plugin',
+  'narrative',
+  '.claude-plugin',
+  'plugin.json',
+)
+
+/** The Narrative release (the root package.json, which every release bumps with the rest). */
+function narrativeVersion(): string {
+  const pkg = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+    version?: unknown
+  }
+  if (typeof pkg.version !== 'string') throw new Error('package.json has no version')
+  return pkg.version
+}
+
+function pluginManifest(): string {
+  return JSON.stringify({
+    name: 'narrative',
+    version: narrativeVersion(),
+    description:
+      "Drive Narrative, Woodgrove's collaborative presentation editor, from Claude Code: the narrative skill " +
+      'teaches Claude how to read, edit, restyle, shorten and translate decks through the Narrative MCP server.',
+    author: { name: 'Woodgrove Digital' },
+    keywords: ['narrative', 'presentations', 'decks', 'mcp', 'slides'],
+  })
+}
 
 const SKILL_DESCRIPTION =
   "Build, edit, restyle, shorten and translate presentations in Narrative, Woodgrove's collaborative deck editor, " +
@@ -125,6 +164,8 @@ function rawFiles(out: string, apiUrl: string): Map<string, string> {
   ])
   for (const p of playbooks.filter((x) => x.name !== BASICS_PLAYBOOK))
     files.set(path.join(out, 'references', `${p.name}.md`), referenceFile(p))
+  // The manifest belongs to the plugin in this repo, not to a skill written elsewhere.
+  if (path.resolve(out) === DEFAULT_SKILL_DIR) files.set(PLUGIN_MANIFEST, pluginManifest())
   return files
 }
 

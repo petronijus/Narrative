@@ -271,6 +271,7 @@ vi.mock('./TokenColorInput', async () => {
 vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
   useFolderTokensOptional: () => ({ colors: {}, textStyles: {}, effectStyles: {} }),
+  useFolderTokensForCommands: () => undefined,
   useFolderMutations: () => ({
     addToken: vi.fn(),
     updateToken: vi.fn(),

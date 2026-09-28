@@ -1,19 +1,19 @@
 {
   "scenario": "selected-slide-context",
-  "tag": "ev73069b",
-  "recordedAt": "2026-09-28T22:02:21.120Z",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:50:32.346Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "1bHoS5CQxW_t",
-    "title": "Pricing ev73069b",
-    "activeSlideId": "KWaSbDU6s8sP5pDUN7-8O",
-    "selectedId": "K3yX8D5gJWNgCNt2k3eyO"
+    "deckId": "O1hz7tYMDCnD",
+    "title": "Pricing evbd553c",
+    "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
+    "selectedId": "raNH5hs-T1cBJfWCD9Vcd"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "I have the Narrative deck \"Pricing ev73069b\" (deckId 1bHoS5CQxW_t) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
+        "prompt": "I have the Narrative deck \"Pricing evbd553c\" (deckId O1hz7tYMDCnD) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
         "calls": [
           {
             "tool": "ToolSearch",
@@ -31,37 +31,37 @@
             "tool": "editor_context",
             "command": "editor.context",
             "input": {
-              "deckId": "1bHoS5CQxW_t"
+              "deckId": "O1hz7tYMDCnD"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "open": true,
-              "activeSlideId": "KWaSbDU6s8sP5pDUN7-8O",
+              "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
               "activeSlideIndex": 1,
-              "selectedObjectIds": ["K3yX8D5gJWNgCNt2k3eyO"],
+              "selectedObjectIds": ["raNH5hs-T1cBJfWCD9Vcd"],
               "editors": [
                 {
-                  "activeSlideId": "KWaSbDU6s8sP5pDUN7-8O",
+                  "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
                   "activeSlideIndex": 1,
-                  "selectedObjectIds": ["K3yX8D5gJWNgCNt2k3eyO"],
-                  "lastActiveAt": "2026-09-28T22:02:10.998Z"
+                  "selectedObjectIds": ["raNH5hs-T1cBJfWCD9Vcd"],
+                  "lastActiveAt": "2026-09-28T22:50:22.775Z"
                 }
               ]
             },
-            "text": "{\"open\":true,\"activeSlideId\":\"KWaSbDU6s8sP5pDUN7-8O\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"K3yX8D5gJWNgCNt2k3eyO\"],\"editors\":[{\"activeSlideId\":\"KWaSbDU6s8sP5pDUN7-8O\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"K3yX8D5gJWNgCNt2k3eyO\"],\"lastActiveAt\":\"2026-09-28T22:02:10.998Z\"}]}"
+            "text": "{\"open\":true,\"activeSlideId\":\"5G0A4oxPjITOcj2NiMh4z\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"raNH5hs-T1cBJfWCD9Vcd\"],\"editors\":[{\"activeSlideId\":\"5G0A4oxPjITOcj2NiMh4z\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"raNH5hs-T1cBJfWCD9Vcd\"],\"lastActiveAt\":\"2026-09-28T22:50:22.775Z\"}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "1bHoS5CQxW_t",
-              "slide": "KWaSbDU6s8sP5pDUN7-8O"
+              "deckId": "O1hz7tYMDCnD",
+              "slide": "5G0A4oxPjITOcj2NiMh4z"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "KWaSbDU6s8sP5pDUN7-8O",
+              "id": "5G0A4oxPjITOcj2NiMh4z",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -70,7 +70,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "_asR57lev1Qgx9gXvj7fs",
+                  "id": "F2u_XO9psQ1QkfIR8o4wS",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -85,7 +85,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "FyM19RQRg2h2oPwly8Uhw",
+                  "id": "cqxpPrsMXfArcWUJ4TXf0",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -100,7 +100,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "K3yX8D5gJWNgCNt2k3eyO",
+                  "id": "raNH5hs-T1cBJfWCD9Vcd",
                   "type": "text",
                   "x": 1000,
                   "y": 280,
@@ -118,10 +118,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"KWaSbDU6s8sP5pDUN7-8O\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"_asR57lev1Qgx9gXvj7fs\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"FyM19RQRg2h2oPwly8Uhw\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"K3yX8D5gJWNgCNt2k3eyO\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"5G0A4oxPjITOcj2NiMh4z\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"F2u_XO9psQ1QkfIR8o4wS\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"cqxpPrsMXfArcWUJ4TXf0\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"raNH5hs-T1cBJfWCD9Vcd\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "You're on **slide 2** (index 1, id `KWaSbDU6s8sP5pDUN7-8O`) of \"Pricing ev73069b\". It has three text boxes:\n\n1. **Title:** \"Pricing tiers\" (64pt bold, black, across the top at x=120, y=80)\n2. **Left body text:** \"Starter plan: 9 EUR per seat\" (28pt, at x=120, y=280, 780×400)\n3. **Right body text:** \"Enterprise plan: talk to sales\" (28pt, at x=1000, y=280, 800×400)\n\nThe slide uses the default white background. It has no animations, no transition and no speaker notes.\n\n**Your selection:** the right-hand text box, **\"Enterprise plan: talk to sales\"** (id `K3yX8D5gJWNgCNt2k3eyO`).\n\nI only read the deck and didn't change anything.",
+        "finalText": "You're on **slide 2** (index 1), titled \"Pricing tiers\". It has a white background, no transition, no animations and no speaker notes. It holds three text boxes:\n\n| # | Text | Position / size | Style |\n|---|------|-----------------|-------|\n| 1 | **\"Pricing tiers\"** (title) | x 120, y 80 · 1680×120 | 64pt bold, black, left-aligned |\n| 2 | \"Starter plan: 9 EUR per seat\" | x 120, y 280 · 780×400 (left column) | 28pt regular, black |\n| 3 | \"Enterprise plan: talk to sales\" | x 1000, y 280 · 800×400 (right column) | 28pt regular, black |\n\n**Your selection:** the right-hand text box, **\"Enterprise plan: talk to sales\"** (id `raNH5hs-T1cBJfWCD9Vcd`).\n\nYour editor was last active on 2026-09-28 at 22:50 UTC. If you've switched slides or changed the selection since then, this may be out of date. I didn't change anything.",
         "turns": 4,
         "isError": false,
         "stopReason": "success"

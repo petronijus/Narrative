@@ -1,25 +1,25 @@
 {
   "scenario": "slide-duplicate-retitle",
-  "tag": "ev8c2dee",
-  "recordedAt": "2026-09-28T21:55:05.397Z",
+  "tag": "evbd553c",
+  "recordedAt": "2026-09-28T22:47:33.703Z",
   "model": "claude-opus-5-5",
   "claudeVersion": "2.1.283 (Claude Code)",
   "fixture": {
-    "deckId": "oGkmC26f8rHP",
-    "title": "Quarterly review ev8c2dee",
-    "slideIds": ["t7HWKXeHfr5oJXeHmUoP9", "5-QWsyIpP63bZGuDfDNlP", "eeZxIUylsfLO0nx4jIe6M"]
+    "deckId": "I3K3cRsou8SJ",
+    "title": "Quarterly review evbd553c",
+    "slideIds": ["_LfrsTvNCPqnopdyKDMAc", "uU3RCiEf_5pCbcCU6HhUT", "WQ3gphFPyw82UWgFgltZF"]
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In the Narrative deck \"Quarterly review ev8c2dee\" (deckId oGkmC26f8rHP), duplicate slide 2 and change the title on the copy to \"Market outlook 2027\".",
+        "prompt": "In the Narrative deck \"Quarterly review evbd553c\" (deckId I3K3cRsou8SJ), duplicate slide 2 and change the title on the copy to \"Market outlook 2027\".",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
               "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck,mcp__narrative-eval__query_slide,mcp__narrative-eval__slide_duplicate,mcp__narrative-eval__text_set,ReadMcpResourceTool",
-              "max_results": 10
+              "max_results": 6
             },
             "isError": false,
             "errorCode": null,
@@ -42,7 +42,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "oGkmC26f8rHP"
+              "deckId": "I3K3cRsou8SJ"
             },
             "isError": false,
             "errorCode": null,
@@ -50,7 +50,7 @@
               "slideCount": 3,
               "slides": [
                 {
-                  "id": "t7HWKXeHfr5oJXeHmUoP9",
+                  "id": "_LfrsTvNCPqnopdyKDMAc",
                   "index": 0,
                   "title": "Quarterly review",
                   "transition": "none",
@@ -58,7 +58,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "5-QWsyIpP63bZGuDfDNlP",
+                  "id": "uU3RCiEf_5pCbcCU6HhUT",
                   "index": 1,
                   "title": "Market overview",
                   "transition": "none",
@@ -66,7 +66,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "eeZxIUylsfLO0nx4jIe6M",
+                  "id": "WQ3gphFPyw82UWgFgltZF",
                   "index": 2,
                   "title": "Next steps",
                   "transition": "none",
@@ -76,13 +76,13 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"t7HWKXeHfr5oJXeHmUoP9\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"5-QWsyIpP63bZGuDfDNlP\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"eeZxIUylsfLO0nx4jIe6M\",\"index\":2,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":3,\"slides\":[{\"id\":\"_LfrsTvNCPqnopdyKDMAc\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"uU3RCiEf_5pCbcCU6HhUT\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"WQ3gphFPyw82UWgFgltZF\",\"index\":2,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "oGkmC26f8rHP",
+              "deckId": "I3K3cRsou8SJ",
               "slide": {
                 "index": 1
               }
@@ -90,7 +90,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "5-QWsyIpP63bZGuDfDNlP",
+              "id": "uU3RCiEf_5pCbcCU6HhUT",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -99,7 +99,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "PCTvHy0bAGXZFp79ktvIK",
+                  "id": "D05ZxTZ2jAR8VFK-uv0d5",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -114,7 +114,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "w2Q0jxPYLB4r2VWwU3zU6",
+                  "id": "6q2YfrcPMzpT9rEUKOoZJ",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -132,46 +132,46 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"5-QWsyIpP63bZGuDfDNlP\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"PCTvHy0bAGXZFp79ktvIK\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Market overview\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"w2Q0jxPYLB4r2VWwU3zU6\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"EMEA grew 12% while APAC was flat.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"uU3RCiEf_5pCbcCU6HhUT\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"D05ZxTZ2jAR8VFK-uv0d5\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Market overview\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"6q2YfrcPMzpT9rEUKOoZJ\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"EMEA grew 12% while APAC was flat.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "oGkmC26f8rHP",
+              "deckId": "I3K3cRsou8SJ",
               "request": "Duplicate slide 2 and retitle the copy \"Market outlook 2027\""
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_rvJLt9WMO9-4DYlp"
+              "runId": "run_clab68cGefIT3FKU"
             },
-            "text": "{\"runId\":\"run_rvJLt9WMO9-4DYlp\"}"
+            "text": "{\"runId\":\"run_clab68cGefIT3FKU\"}"
           },
           {
             "tool": "slide_duplicate",
             "command": "slide.duplicate",
             "input": {
-              "deckId": "oGkmC26f8rHP",
+              "deckId": "I3K3cRsou8SJ",
               "slide": {
-                "index": 1
+                "id": "uU3RCiEf_5pCbcCU6HhUT"
               }
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "slideId": "1OynfNCynjQWFXNHeDas8"
+              "slideId": "k2QKQ4SENHaYFWSB6c4A-"
             },
-            "text": "{\"slideId\":\"1OynfNCynjQWFXNHeDas8\"}"
+            "text": "{\"slideId\":\"k2QKQ4SENHaYFWSB6c4A-\"}"
           },
           {
             "tool": "text_set",
             "command": "text.set",
             "input": {
-              "deckId": "oGkmC26f8rHP",
+              "deckId": "I3K3cRsou8SJ",
               "target": {
-                "slide": "1OynfNCynjQWFXNHeDas8",
-                "object": "PCTvHy0bAGXZFp79ktvIK"
+                "slide": "k2QKQ4SENHaYFWSB6c4A-",
+                "object": "D05ZxTZ2jAR8VFK-uv0d5"
               },
               "text": "Market outlook 2027"
             },
@@ -187,7 +187,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "oGkmC26f8rHP"
+              "deckId": "I3K3cRsou8SJ"
             },
             "isError": false,
             "errorCode": null,
@@ -195,7 +195,7 @@
               "slideCount": 4,
               "slides": [
                 {
-                  "id": "t7HWKXeHfr5oJXeHmUoP9",
+                  "id": "_LfrsTvNCPqnopdyKDMAc",
                   "index": 0,
                   "title": "Quarterly review",
                   "transition": "none",
@@ -203,7 +203,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "5-QWsyIpP63bZGuDfDNlP",
+                  "id": "uU3RCiEf_5pCbcCU6HhUT",
                   "index": 1,
                   "title": "Market overview",
                   "transition": "none",
@@ -211,7 +211,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "1OynfNCynjQWFXNHeDas8",
+                  "id": "k2QKQ4SENHaYFWSB6c4A-",
                   "index": 2,
                   "title": "Market outlook 2027",
                   "transition": "none",
@@ -219,7 +219,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "eeZxIUylsfLO0nx4jIe6M",
+                  "id": "WQ3gphFPyw82UWgFgltZF",
                   "index": 3,
                   "title": "Next steps",
                   "transition": "none",
@@ -229,79 +229,11 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"t7HWKXeHfr5oJXeHmUoP9\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"5-QWsyIpP63bZGuDfDNlP\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"1OynfNCynjQWFXNHeDas8\",\"index\":2,\"title\":\"Market outlook 2027\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"eeZxIUylsfLO0nx4jIe6M\",\"index\":3,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
-          },
-          {
-            "tool": "query_slide",
-            "command": "query.slide",
-            "input": {
-              "deckId": "oGkmC26f8rHP",
-              "slide": "\"1OynfNCynjQWFXNHeDas8\""
-            },
-            "isError": true,
-            "errorCode": "not_found",
-            "result": null,
-            "text": "Error (not_found): slide '\"1OynfNCynjQWFXNHeDas8\"' does not exist"
-          },
-          {
-            "tool": "query_slide",
-            "command": "query.slide",
-            "input": {
-              "deckId": "oGkmC26f8rHP",
-              "slide": {
-                "index": 2
-              }
-            },
-            "isError": false,
-            "errorCode": null,
-            "result": {
-              "id": "1OynfNCynjQWFXNHeDas8",
-              "index": 2,
-              "transition": {
-                "kind": "none",
-                "durationMs": 0
-              },
-              "background": null,
-              "objects": [
-                {
-                  "id": "PCTvHy0bAGXZFp79ktvIK",
-                  "type": "text",
-                  "x": 120,
-                  "y": 80,
-                  "width": 1680,
-                  "height": 120,
-                  "rotation": 0,
-                  "text": "Market outlook 2027",
-                  "fontSize": 64,
-                  "fontWeight": "bold",
-                  "color": "#000000",
-                  "align": "left",
-                  "opacity": 1
-                },
-                {
-                  "id": "w2Q0jxPYLB4r2VWwU3zU6",
-                  "type": "text",
-                  "x": 120,
-                  "y": 280,
-                  "width": 1680,
-                  "height": 400,
-                  "rotation": 0,
-                  "text": "EMEA grew 12% while APAC was flat.",
-                  "fontSize": 28,
-                  "fontWeight": "normal",
-                  "color": "#000000",
-                  "align": "left",
-                  "opacity": 1
-                }
-              ],
-              "animations": [],
-              "notes": ""
-            },
-            "text": "{\"id\":\"1OynfNCynjQWFXNHeDas8\",\"index\":2,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"PCTvHy0bAGXZFp79ktvIK\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Market outlook 2027\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"w2Q0jxPYLB4r2VWwU3zU6\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"EMEA grew 12% while APAC was flat.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"_LfrsTvNCPqnopdyKDMAc\",\"index\":0,\"title\":\"Quarterly review\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"uU3RCiEf_5pCbcCU6HhUT\",\"index\":1,\"title\":\"Market overview\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"k2QKQ4SENHaYFWSB6c4A-\",\"index\":2,\"title\":\"Market outlook 2027\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"WQ3gphFPyw82UWgFgltZF\",\"index\":3,\"title\":\"Next steps\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           }
         ],
-        "finalText": "I copied slide 2 (\"Market overview\") in \"Quarterly review ev8c2dee\" and changed the copy's title to **\"Market outlook 2027\"**.\n\n- **Where it is:** the copy sits right after the original as the new slide 3, so \"Next steps\" is now slide 4.\n- **What changed:** only the title. It keeps the same position, size (64px bold) and colour. The body text is still the same as the original: \"EMEA grew 12% while APAC was flat.\" You'll probably want to update that for an outlook slide.\n- **Original:** slide 2 is unchanged.\n\nI checked the deck afterwards and it matches what's described above. To undo the whole change in one step, use the editor's Agent activity popover or ask me to revert it.",
-        "turns": 11,
+        "finalText": "I duplicated slide 2 (\"Market overview\") in \"Quarterly review evbd553c\" and changed the copy's title to **\"Market outlook 2027\"**. I re-read the deck afterwards and it now has 4 slides in this order:\n\n1. Quarterly review\n2. Market overview (the original, unchanged)\n3. **Market outlook 2027** (the new copy)\n4. Next steps\n\nThe copy keeps the original's formatting. Its body text still says \"EMEA grew 12% while APAC was flat.\", so you'll probably want to update it for the outlook. If you want to undo the whole change, I can revert it in one step.",
+        "turns": 9,
         "isError": false,
         "stopReason": "success"
       }

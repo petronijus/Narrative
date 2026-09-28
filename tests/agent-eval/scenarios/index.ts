@@ -34,6 +34,9 @@ import objectsCopyToSlide from './objectsCopyToSlide.js'
 import objectsFromOtherDeck from './objectsFromOtherDeck.js'
 import objectsRecreateFromJson from './objectsRecreateFromJson.js'
 import localLogoUpload from './localLogoUpload.js'
+import badgeGradient from './badgeGradient.js'
+import cardSoftShadow from './cardSoftShadow.js'
+import footerPageNumber from './footerPageNumber.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -65,6 +68,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   objectsFromOtherDeck,
   objectsRecreateFromJson,
   localLogoUpload,
+  badgeGradient,
+  cardSoftShadow,
+  footerPageNumber,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

@@ -99,6 +99,7 @@ vi.mock('./TokenColorInput', async () => {
 vi.mock('../state/FolderDocProvider', () => ({
   useFolderTokens: () => mockTokenSnapshot,
   useFolderTokensOptional: () => mockTokenSnapshot,
+  useFolderTokensForCommands: () => mockTokenSnapshot,
   useFolderMutations: () => ({
     addToken: vi.fn(),
     updateToken: vi.fn(),

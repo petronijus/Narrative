@@ -108,6 +108,11 @@ import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
 import { useCommand } from '../state/useCommand.js'
 import {
+  PAGE_NUMBER_TEXT_STYLE_NAME,
+  findTextStyleByName,
+  seedGradientStops,
+} from '@narrative/commands'
+import {
   updateObject,
   addAnimation,
   removeAnimation,
@@ -753,79 +758,61 @@ export function Inspector() {
   // down the whole editor. Empty snapshot is safe — every token
   // lookup falls through to literal hex.
   const folderTokens = useFolderTokensOptional() ?? emptyTokensSnapshot()
+  const command = useCommand()
   const [slideNumberPromptOpen, setSlideNumberPromptOpen] = useState(false)
-  const slideNumberPromptTargetIdRef = useRef<string | null>(null)
+  // The box the page-number dialog is about, and the slide it is on (the
+  // user may change slides while the dialog is open).
+  const slideNumberPromptTargetRef = useRef<{ slide: string; object: string } | null>(null)
   const closeSlideNumberPrompt = useCallback(() => {
     setSlideNumberPromptOpen(false)
-    slideNumberPromptTargetIdRef.current = null
+    slideNumberPromptTargetRef.current = null
   }, [])
-  const footnotesAndPagesStyleId = useMemo<string | null>(() => {
-    const match = Object.values(folderTokens.textStyles).find(
-      (s) => s.name?.toLowerCase() === 'footnotes and pages',
-    )
-    return match?.id ?? null
-  }, [folderTokens])
+  const pageNumberStyleAvailable = useMemo(
+    () => findTextStyleByName(folderTokens, PAGE_NUMBER_TEXT_STYLE_NAME) !== null,
+    [folderTokens],
+  )
+  /** object.slideNumber.set on the dialog's box, after closing the dialog; false when nothing ran. */
+  const setPromptedSlideNumber = useCallback(
+    (applyTextStyle: boolean): { slide: string; object: string } | null => {
+      const target = slideNumberPromptTargetRef.current
+      closeSlideNumberPrompt()
+      if (target === null || isViewer) return null
+      const out = command.tryRun('object.slideNumber.set', {
+        ...target,
+        on: true,
+        ...(applyTextStyle ? { applyTextStyle: true } : {}),
+      })
+      return out === null ? null : target
+    },
+    [closeSlideNumberPrompt, command, isViewer],
+  )
   const handleApplyTextStyle = useCallback(() => {
-    const targetId = slideNumberPromptTargetIdRef.current
-    closeSlideNumberPrompt()
-    if (targetId === null || mutationCtx === null) return
-    if (footnotesAndPagesStyleId === null) return
-    const style = folderTokens.textStyles[footnotesAndPagesStyleId]
-    const stylePatch: Record<string, unknown> = {
-      isSlideNumber: true,
-      textStyleId: footnotesAndPagesStyleId,
-      textStyleOverrides: [],
-    }
-    if (style !== undefined) {
-      if (typeof style.family === 'string' && style.family !== '')
-        stylePatch['fontFamily'] = style.family
-      if (typeof style.weight === 'number') stylePatch['fontWeight'] = style.weight
-      if (typeof style.size === 'number' && style.size > 0) stylePatch['fontSize'] = style.size
-      if (typeof style.lineHeight === 'number' && style.lineHeight > 0)
-        stylePatch['lineHeight'] = style.lineHeight
-      if (typeof style.letterSpacing === 'number') stylePatch['letterSpacing'] = style.letterSpacing
-      if (
-        style.textTransform === 'uppercase' ||
-        style.textTransform === 'lowercase' ||
-        style.textTransform === 'capitalize'
-      ) {
-        stylePatch['textTransform'] = style.textTransform
-      }
-      if (style.color !== undefined) stylePatch['color'] = style.color
-    }
-    updateObject(mutationCtx, targetId, stylePatch as SlideObjectPatch<TextObject>)
-  }, [closeSlideNumberPrompt, footnotesAndPagesStyleId, folderTokens, mutationCtx])
+    setPromptedSlideNumber(true)
+  }, [setPromptedSlideNumber])
   const handleCreateComponent = useCallback(() => {
-    const targetId = slideNumberPromptTargetIdRef.current
-    closeSlideNumberPrompt()
-    if (targetId === null) return
-    if (mutationCtx === null || deckCtx === null || activeSlideId === null) return
-    if (deckFolderId === null) return
-    // Flag the master text BEFORE promotion so the resulting component
-    // master inherits the page-number behaviour.
-    updateObject(mutationCtx, targetId, {
-      isSlideNumber: true,
-    } as unknown as SlideObjectPatch<TextObject>)
+    if (deckCtx === null || deckFolderId === null) {
+      closeSlideNumberPrompt()
+      return
+    }
+    // Flag the text BEFORE promotion so the resulting component master
+    // inherits the page-number behaviour.
+    const target = setPromptedSlideNumber(false)
+    if (target === null) return
     void promoteSelectionToComponent({
       api,
       folderId: deckFolderId,
       deckCtx,
-      activeSlideId,
-      targetIds: [targetId],
+      activeSlideId: target.slide,
+      targetIds: [target.object],
       name: 'Page number',
     }).catch((err: unknown) => {
       console.warn('[Inspector] slide-number → component promote failed', err)
     })
-  }, [activeSlideId, api, closeSlideNumberPrompt, deckCtx, deckFolderId, mutationCtx])
+  }, [api, closeSlideNumberPrompt, deckCtx, deckFolderId, setPromptedSlideNumber])
 
   const handleLeaveAsIs = useCallback(() => {
-    const targetId = slideNumberPromptTargetIdRef.current
-    closeSlideNumberPrompt()
-    if (targetId === null || mutationCtx === null) return
-    updateObject(mutationCtx, targetId, {
-      isSlideNumber: true,
-    } as unknown as SlideObjectPatch<TextObject>)
-  }, [closeSlideNumberPrompt, mutationCtx])
+    setPromptedSlideNumber(false)
+  }, [setPromptedSlideNumber])
 
   // useSlideObjects emits a fresh array reference on every Y.Doc edit
   // (including each Y.Text keystroke during inline edit). Memoise the
@@ -892,11 +879,14 @@ export function Inspector() {
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
+                if (isViewer || activeSlideId === null) return
                 if (obj.isSlideNumber === true) {
                   // Toggling OFF — never gated by the recommendation modal.
-                  patch({
-                    isSlideNumber: undefined,
-                  } as unknown as SlideObjectPatch<SlideObject>)
+                  command.tryRun('object.slideNumber.set', {
+                    slide: activeSlideId,
+                    object: obj.id,
+                    on: false,
+                  })
                   return
                 }
                 // Toggling ON. If this is the first page-number text in
@@ -918,11 +908,15 @@ export function Inspector() {
                   }
                 }
                 if (firstInDeck) {
-                  slideNumberPromptTargetIdRef.current = obj.id
+                  slideNumberPromptTargetRef.current = { slide: activeSlideId, object: obj.id }
                   setSlideNumberPromptOpen(true)
                   return
                 }
-                patch({ isSlideNumber: true } as unknown as SlideObjectPatch<SlideObject>)
+                command.tryRun('object.slideNumber.set', {
+                  slide: activeSlideId,
+                  object: obj.id,
+                  on: true,
+                })
               }}
               disabled={isViewer}
               aria-pressed={obj.isSlideNumber === true}
@@ -943,7 +937,7 @@ export function Inspector() {
       </IdentitySection>
       <SlideNumberPromptDialog
         open={slideNumberPromptOpen}
-        textStyleAvailable={footnotesAndPagesStyleId !== null}
+        textStyleAvailable={pageNumberStyleAvailable}
         onApplyTextStyle={handleApplyTextStyle}
         onCreateComponent={handleCreateComponent}
         onLeaveAsIs={handleLeaveAsIs}
@@ -2268,6 +2262,30 @@ interface AppearanceSectionProps {
 }
 
 function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
+  const { role } = useDeckRole()
+  // Gradients go through object.fill.gradient: it seeds a new gradient from
+  // the shape's colour, unlinks a token fill first and keeps the stops when
+  // the kind changes — what an agent asking for a gradient gets too.
+  const setGradient = (request: GradientRequest): void => {
+    if (role === 'viewer' || activeSlideId === null) return
+    command.tryRun('object.fill.gradient', {
+      slide: activeSlideId,
+      objects: [obj.id],
+      kind: request.kind === 'linearGradient' ? 'linear' : 'radial',
+      ...(request.stops === undefined
+        ? {}
+        : {
+            stops: request.stops.map((s) => ({
+              color: s.color,
+              offset: s.offset,
+              ...(s.alpha === undefined ? {} : { alpha: s.alpha }),
+            })),
+          }),
+      ...(request.angleDeg === undefined ? {} : { angle: request.angleDeg }),
+    })
+  }
   return (
     <Section title="Appearance" storageKey="appearance">
       {/* Closed-path toggle — paths only. Closed paths can be filled;
@@ -2277,7 +2295,7 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
       )}
 
       <SubLabel>Fill</SubLabel>
-      <FillBody obj={obj} patch={patch} />
+      <FillBody obj={obj} patch={patch} setGradient={setGradient} />
 
       <SubLabel>Stroke</SubLabel>
       <StrokeBody obj={obj} patch={patch} />
@@ -2519,6 +2537,16 @@ function CornerRadiusRow({
 
 type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 
+/**
+ * A gradient the fill picker asks for: a kind alone (a new gradient, or
+ * the current stops under the other kind), or the edited stops / angle.
+ */
+export interface GradientRequest {
+  kind: 'linearGradient' | 'radialGradient'
+  stops?: FillGradientStop[]
+  angleDeg?: number
+}
+
 function fillModeOf(style: FillStyle | undefined, _fillIsToken: boolean): FillMode {
   // M16 P2 follow-up: tokens are no longer a separate fill mode — the
   // fill picker always shows the folder palette in the Solid row, and
@@ -2650,6 +2678,7 @@ export function FillBody({
   patch,
   onClear,
   emptyFill,
+  setGradient,
 }: {
   obj: FilledShape
   patch: (p: SlideObjectPatch<FilledShape>) => void
@@ -2671,6 +2700,13 @@ export function FillBody({
    * for FilledShape variants whose `fill` field is required).
    */
   emptyFill?: boolean
+  /**
+   * How gradient choices are written. The object Inspector dispatches
+   * `object.fill.gradient`, which carries the rules; a host that is not an
+   * object (table defaults, until A2.10) leaves it out and gets a patch
+   * seeded by the same rule (`seedGradientStops`).
+   */
+  setGradient?: ((request: GradientRequest) => void) | undefined
 }) {
   const folderTokensSnapshot = useFolderTokens()
   const { folderId } = useDeckRole()
@@ -2695,6 +2731,12 @@ export function FillBody({
   const requestedModeRef = useRef<FillMode | null>(null)
   if (requestedModeRef.current === committedMode) requestedModeRef.current = null
   const mode = requestedModeRef.current ?? committedMode
+  // The mode as of now, not as of the render a handler was created in: a
+  // second change can arrive before React re-renders after the first, and
+  // its handler still sees the old `mode`.
+  const committedModeRef = useRef(committedMode)
+  committedModeRef.current = committedMode
+  const currentMode = (): FillMode => requestedModeRef.current ?? committedModeRef.current
   // PathObject's `fill` is optional — fall back to white so the picker
   // and gradient seed always have a starting colour.
   // When fill is a token, resolve to the current literal for seed purposes.
@@ -2730,8 +2772,12 @@ export function FillBody({
   const imageForRender = obj.fillStyle?.kind === 'image' ? obj.fillStyle : lastImageRef.current
 
   const setMode = (next: FillMode): void => {
-    if (next === mode) return
+    if (next === currentMode()) return
     requestedModeRef.current = next
+    if (setGradient !== undefined && (next === 'linearGradient' || next === 'radialGradient')) {
+      setGradient({ kind: next })
+      return
+    }
     // If the current fill is a TokenRef and we're switching away from
     // solid, unlink (write resolved hex as a literal first).
     if (fillIsToken && next !== 'solid') {
@@ -2748,19 +2794,9 @@ export function FillBody({
       } as SlideObjectPatch<FilledShape>)
       return
     }
-    // Seed a two-stop gradient from the current solid colour + a darker
-    // tint of itself (multiply RGB by 0.55) so the object reads as a
-    // gradient without slamming to pure black on the second stop.
-    const startColor = typeof rawFill === 'number' ? rawFill : 0xffffff
-    const r = (startColor >> 16) & 0xff
-    const g = (startColor >> 8) & 0xff
-    const b = startColor & 0xff
-    const tint = (c: number): number => Math.max(0, Math.min(255, Math.round(c * 0.55)))
-    const endColor = (tint(r) << 16) | (tint(g) << 8) | tint(b)
-    const stops: FillGradientStop[] = [
-      { color: startColor, offset: 0 },
-      { color: endColor, offset: 1 },
-    ]
+    // The same seed object.fill.gradient uses: the current solid colour (a
+    // token's resolved value) and a darker tint of it.
+    const stops = seedGradientStops(hexToNumber(solidHex))
     if (next === 'linearGradient') {
       patch({
         fillStyle: { kind: 'linearGradient', stops, angleDeg: 0 },
@@ -2874,7 +2910,16 @@ export function FillBody({
                 // The editor stays mounted while the panel collapses so the
                 // close animation has something to slide. Anything it emits
                 // after the mode moved on would resurrect the gradient.
-                if (mode !== 'linearGradient' && mode !== 'radialGradient') return
+                const now = currentMode()
+                if (now !== 'linearGradient' && now !== 'radialGradient') return
+                if (setGradient !== undefined && next.kind !== 'image') {
+                  setGradient({
+                    kind: next.kind,
+                    stops: next.stops,
+                    ...(next.kind === 'linearGradient' ? { angleDeg: next.angleDeg } : {}),
+                  })
+                  return
+                }
                 patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
               }}
             />
@@ -2896,7 +2941,7 @@ export function FillBody({
               fillStyle={imageForRender}
               onChange={(next) => {
                 // Same collapse guard as the gradient editor above.
-                if (mode !== 'image') return
+                if (currentMode() !== 'image') return
                 patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
               }}
             />
@@ -3488,14 +3533,6 @@ function CapPicker({
 // Effects section — drop shadow + blur (P5c)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SHADOW: ShadowStyle = {
-  color: 0x000000,
-  blur: 8,
-  offsetX: 4,
-  offsetY: 4,
-  opacity: 0.5,
-}
-
 function EffectsSection({
   obj,
   patch,
@@ -3503,6 +3540,15 @@ function EffectsSection({
   obj: SlideObject
   patch: (p: SlideObjectPatch<SlideObject>) => void
 }) {
+  const command = useCommand()
+  const { activeSlideId } = useActiveSlide()
+  const { role } = useDeckRole()
+  // The shadow is object.effects.shadow: switching it on gives the default
+  // shadow (the command's), a change merges into the current one.
+  const setShadow = (shadow: Partial<ShadowStyle> | null): void => {
+    if (role === 'viewer' || activeSlideId === null) return
+    command.tryRun('object.effects.shadow', { slide: activeSlideId, objects: [obj.id], shadow })
+  }
   const hasShadow = obj.shadow !== undefined
   const blur = obj.blur ?? 0
   const hasBlur = blur > 0
@@ -3515,17 +3561,10 @@ function EffectsSection({
       <EffectToggleRow
         label="Shadow"
         enabled={hasShadow}
-        onToggle={(on) =>
-          patch({
-            shadow: on ? DEFAULT_SHADOW : undefined,
-          } as unknown as SlideObjectPatch<SlideObject>)
-        }
+        onToggle={(on) => setShadow(on ? {} : null)}
       >
         {hasShadow && obj.shadow !== undefined && (
-          <ShadowControls
-            shadow={obj.shadow}
-            onChange={(next) => patch({ shadow: next } as SlideObjectPatch<SlideObject>)}
-          />
+          <ShadowControls shadow={obj.shadow} onChange={(next) => setShadow(next)} />
         )}
       </EffectToggleRow>
 

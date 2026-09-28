@@ -38,6 +38,7 @@ import { z } from 'zod'
 import { agentOrigin, createSlideDoc, type DeckMutationContext } from '@narrative/slide-model'
 import {
   CommandError,
+  commandReadsFolderTokens,
   commandUsesDocument,
   createDefaultRegistry,
   runCommand,
@@ -502,6 +503,12 @@ export class MemoryWorld implements World {
       origin: run?.origin ?? { kind: 'agent-eval-read' },
       ...(run !== undefined ? { run: { runId: run.id, surface: 'mcp' as const } } : {}),
       ...(deck !== undefined && (commandUsesDocument(def) || writes) ? { deck: deck.doc } : {}),
+      // The folders an eval creates were never opened in an editor, which is
+      // what seeds a folder's tokens: the live server reports none for them
+      // (agent/folderTokens.ts), and so does this world.
+      ...(deck !== undefined && commandReadsFolderTokens(this.registry, args.command, args.input)
+        ? { folderTokens: null }
+        : {}),
     }
     const stackBefore = run?.manager.undoStack.length ?? 0
     const result = await runCommand(this.registry, ctx, args.command, args.input)

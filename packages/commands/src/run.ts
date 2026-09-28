@@ -138,6 +138,29 @@ export function runCommandSync(
 }
 
 /**
+ * Whether an invocation needs `ctx.folderTokens`: the command declares
+ * `readsFolderTokens`, or it is a batch (`ops.apply`) with such a command
+ * among its ops. Unknown commands and malformed batches answer false —
+ * validation refuses them later anyway.
+ */
+export function commandReadsFolderTokens(
+  registry: CommandRegistry,
+  commandId: string,
+  rawInput: unknown,
+): boolean {
+  const def = registry.get(commandId)
+  if (def === undefined) return false
+  if (def.readsFolderTokens === true) return true
+  if (def.transaction !== 'self') return false
+  const ops = (rawInput as { ops?: unknown } | null | undefined)?.ops
+  if (!Array.isArray(ops)) return false
+  return ops.some((op) => {
+    const id = (op as { command?: unknown } | null)?.command
+    return typeof id === 'string' && registry.get(id)?.readsFolderTokens === true
+  })
+}
+
+/**
  * Whether a command's handler reads or writes the target document, so a
  * server host must provide `ctx.deck`: every `doc` command, every
  * effect-free command (document queries), and commands that declare

@@ -42,6 +42,7 @@ import { createDrizzleRunStore, type RunStore } from './runStore.js'
 import { createDbConfirmationLookups, type ConfirmationLookups } from './confirmationSummary.js'
 import { AgentConfirmations } from './confirmations.js'
 import { ServerHost } from './serverHost.js'
+import { createDbFolderTokensReader, type FolderTokensReader } from './folderTokens.js'
 
 /** Agent runs (and their ops) idle for longer than this are deleted. */
 export const AGENT_RUN_RETENTION_MS = 90 * 24 * 60 * 60 * 1000
@@ -177,6 +178,8 @@ export interface AgentRuntimeOptions {
    * (AGENT_URL_FETCH_ALLOWED_HOSTS, `parseUrlFetchAllowedHosts`). Empty by default.
    */
   urlFetchAllowedHosts?: readonly string[]
+  /** Where commands read the target folder's tokens; default: the folder document (agent/folderTokens.ts). */
+  folderTokens?: FolderTokensReader
   /** Test seam: confirmation summary lookups (default: the database). */
   confirmationLookups?: ConfirmationLookups
 }
@@ -255,6 +258,13 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
     confirmations,
     confirmationLookups: opts.confirmationLookups ?? createDbConfirmationLookups(opts.db),
     urlFetchAllowedHosts: new Set(opts.urlFetchAllowedHosts ?? []),
+    folderTokens:
+      opts.folderTokens ??
+      createDbFolderTokensReader({
+        db: opts.db,
+        log: opts.log,
+        hocuspocus: () => opts.hocuspocus,
+      }),
   })
 
   return {

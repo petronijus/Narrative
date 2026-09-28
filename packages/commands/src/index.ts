@@ -37,6 +37,7 @@ export {
   type AnyCommandDef,
 } from './registry.js'
 export {
+  commandReadsFolderTokens,
   commandUsesDocument,
   isBatchable,
   prepareInvocation,
@@ -133,3 +134,10 @@ export {
   type EditorShowArgs,
   type PresentUrlArgs,
 } from './services/editor.js'
+export { DEFAULT_SHADOW, GRADIENT_FILL_TYPES, seedGradientStops } from './commands/appearance.js'
+export {
+  PAGE_NUMBER_TEXT_STYLE_NAME,
+  findTextStyleByName,
+  textStyleField,
+  textStyleFields,
+} from './text/textStyle.js'

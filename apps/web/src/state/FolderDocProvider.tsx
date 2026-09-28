@@ -345,7 +345,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
     docRef.current = doc
 
     let tokens = emptyTokensSnapshot()
-    setValue({ doc, tokens })
+    setValue({ doc, tokens, synced: false })
 
     const provider = new HocuspocusProvider({
       url: HOCUSPOCUS_URL,
@@ -367,7 +367,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
         // them to the new name so the picker matches what's documented.
         renameLegacyFootnoteStyle(doc)
         tokens = buildSnapshot(doc)
-        setValue({ doc, tokens })
+        setValue({ doc, tokens, synced: true })
       },
     })
 
@@ -378,8 +378,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
       setValue((prev) => ({
         doc,
         tokens: buildSnapshot(doc),
-        // preserve any other fields if the shape grows
-        ...(prev !== null ? {} : {}),
+        synced: prev?.synced ?? false,
       }))
     }
 
@@ -502,7 +501,7 @@ export function FolderDocProvider({ folderId, children }: FolderDocProviderProps
   // the real provider's first sync.
   const placeholderRef = useRef<FolderDocContextValue | null>(null)
   if (placeholderRef.current === null) {
-    placeholderRef.current = { doc: new Y.Doc(), tokens: emptyTokensSnapshot() }
+    placeholderRef.current = { doc: new Y.Doc(), tokens: emptyTokensSnapshot(), synced: false }
   }
   useEffect(() => {
     return () => {
@@ -552,6 +551,24 @@ export function useFolderTokens(): FolderTokensSnapshot {
 export function useFolderTokensOptional(): FolderTokensSnapshot | null {
   const ctx = useContext(FolderDocContext)
   return ctx ? ctx.tokens : null
+}
+
+/**
+ * The folder tokens as a command sees them (`CommandContext.folderTokens`):
+ * the live snapshot once the folder document has synced (null when the
+ * folder has no tokens at all, as the server host reports it), undefined
+ * while they are not known — no provider (a shared deck whose folder the
+ * user cannot open) or not synced yet.
+ */
+export function useFolderTokensForCommands(): FolderTokensSnapshot | null | undefined {
+  const ctx = useContext(FolderDocContext)
+  if (ctx === null || !ctx.synced) return undefined
+  const { colors, textStyles, effectStyles } = ctx.tokens
+  const empty =
+    Object.keys(colors).length === 0 &&
+    Object.keys(textStyles).length === 0 &&
+    Object.keys(effectStyles).length === 0
+  return empty ? null : ctx.tokens
 }
 
 /**

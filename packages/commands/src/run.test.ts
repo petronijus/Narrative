@@ -3,7 +3,7 @@ import * as Y from 'yjs'
 import { z } from 'zod'
 import { LOCAL_ORIGIN, agentOrigin, createUndoManager, listSlides } from '@narrative/slide-model'
 import { CommandRegistry, defineCommand } from './registry.js'
-import { runBatch, runCommand, runCommandSync, runGroup } from './run.js'
+import { commandReadsFolderTokens, runBatch, runCommand, runCommandSync, runGroup } from './run.js'
 import { CommandError } from './errors.js'
 import { createDefaultRegistry } from './catalog.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
@@ -290,5 +290,26 @@ describe('runBatch — atomic batches', () => {
     }) as { results: unknown[] }
     expect(out.results).toHaveLength(1)
     expect(listSlides(ctx.deck!)).toHaveLength(4)
+  })
+})
+
+describe('commandReadsFolderTokens', () => {
+  const registry = createDefaultRegistry()
+
+  it('answers for a command, and for a batch by its ops', () => {
+    expect(commandReadsFolderTokens(registry, 'object.slideNumber.set', {})).toBe(true)
+    expect(commandReadsFolderTokens(registry, 'object.move', {})).toBe(false)
+    const batch = (command: string) => ({
+      ops: [
+        { command: 'object.move', input: {} },
+        { command, input: {} },
+      ],
+    })
+    expect(commandReadsFolderTokens(registry, 'ops.apply', batch('object.fill.gradient'))).toBe(
+      true,
+    )
+    expect(commandReadsFolderTokens(registry, 'ops.apply', batch('object.delete'))).toBe(false)
+    expect(commandReadsFolderTokens(registry, 'ops.apply', { ops: 'nonsense' })).toBe(false)
+    expect(commandReadsFolderTokens(registry, 'no.such', {})).toBe(false)
   })
 })

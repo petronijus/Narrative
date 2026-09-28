@@ -67,6 +67,7 @@ import type { Document } from '@hocuspocus/server'
 import {
   CommandError,
   ROLE_RANK,
+  commandReadsFolderTokens,
   commandUsesDocument,
   prepareInvocation,
   type AgentSessionInfo,
@@ -105,6 +106,7 @@ import {
   type ConfirmationSummary,
 } from './confirmations.js'
 import type { AgentDocuments } from './documents.js'
+import type { FolderTokensReader } from './folderTokens.js'
 import type { OpConfirmation } from './runStore.js'
 import { collectTouched, type Touched } from './touched.js'
 import {
@@ -222,6 +224,12 @@ export interface ServerHostDeps {
    * user confirming it (AGENT_URL_FETCH_ALLOWED_HOSTS; empty by default).
    */
   urlFetchAllowedHosts?: ReadonlySet<string>
+  /**
+   * The target's folder tokens, for commands that declare
+   * `readsFolderTokens` (agent/folderTokens.ts). Without it such commands
+   * see none and refuse what needs them (`conflict`).
+   */
+  folderTokens?: FolderTokensReader
 }
 
 /** Lookups that know nothing: summaries then name targets by id only. */
@@ -757,11 +765,23 @@ export class ServerHost {
       )
     }
 
+    // Read before the lease: a snapshot of the folder, not a document this
+    // command writes.
+    const folderTokens =
+      this.deps.folderTokens !== undefined &&
+      commandReadsFolderTokens(this.deps.registry, commandId, input)
+        ? await this.deps.folderTokens(target)
+        : undefined
+
     const lease = await this.deps.documents.acquire(documentName)
     try {
       const document = lease.document
       const deck: DeckMutationContext = { doc: document, slides: document.getArray('slides') }
-      const docCtx: CommandContext = { ...ctx, deck }
+      const docCtx: CommandContext = {
+        ...ctx,
+        deck,
+        ...(folderTokens === undefined ? {} : { folderTokens }),
+      }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
       if (!prepared.synchronous) return await prepared.execute()

@@ -42,15 +42,11 @@ import { useParams, Navigate, Outlet } from 'react-router-dom'
 import { SlideDocProvider } from '../state/SlideDocProvider.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { ActiveSlideProvider } from '../state/ActiveSlideContext.js'
-import {
-  listSlides,
-  getSlideObjectsCtx,
-  updateObject,
-  isTokenRef,
-  resolveTokenValue,
-} from '@narrative/slide-model'
-import type { TextObject, SlideObjectPatch, TextStyleOverrideKey } from '@narrative/shared'
-import type { TextStyleTokenSnapshot, FolderTokensSnapshot } from '@narrative/slide-model'
+import { listSlides, getSlideObjectsCtx, updateObject } from '@narrative/slide-model'
+import { TEXT_STYLE_OVERRIDE_KEYS } from '@narrative/shared'
+import type { TextObject, SlideObjectPatch } from '@narrative/shared'
+import type { TextStyleTokenSnapshot } from '@narrative/slide-model'
+import { textStyleField } from '@narrative/commands'
 import { CanvasInstanceContext } from '../renderer/CanvasInstanceContext.js'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { DeckRoleProvider, useDeckRole } from '../state/DeckRoleContext.js'
@@ -160,72 +156,15 @@ function ColourResolverInstaller() {
 // token (`textStyleId`), skipping fields the user has explicitly
 // overridden on a per-object basis (`textStyleOverrides`).
 //
-// Key shape we write per typography field:
-//   - fontFamily ← TextStyleTokenSnapshot.family
-//   - fontWeight ← TextStyleTokenSnapshot.weight
-//   - fontSize   ← TextStyleTokenSnapshot.size
-//   - lineHeight ← TextStyleTokenSnapshot.lineHeight
-//   - letterSpacing ← TextStyleTokenSnapshot.letterSpacing
-//   - color      ← TextStyleTokenSnapshot.color (hex → number, or TokenRef)
-//   - textTransform ← TextStyleTokenSnapshot.textTransform (or 'none')
+// What a style writes onto a linked box is the shared mapping
+// (@narrative/commands text/textStyle.ts), the same one the commands that
+// link a box to a style apply.
 //
 // Runs:
 //   1. On first sync (so reopening a deck reconciles every linked
 //      TextObject with the current token state).
 //   2. On every subsequent token change in the folder Y.Doc.
 // ---------------------------------------------------------------------------
-
-const PROPAGATED_KEYS: ReadonlyArray<TextStyleOverrideKey> = [
-  'fontFamily',
-  'fontWeight',
-  'fontSize',
-  'lineHeight',
-  'letterSpacing',
-  'paragraphSpaceBefore',
-  'paragraphSpaceAfter',
-  'color',
-  'textTransform',
-]
-
-function tokenFieldFor(
-  style: TextStyleTokenSnapshot,
-  key: TextStyleOverrideKey,
-  tokens: FolderTokensSnapshot,
-): unknown {
-  switch (key) {
-    case 'fontFamily':
-      return style.family
-    case 'fontWeight':
-      return style.weight
-    case 'fontSize':
-      return style.size
-    case 'lineHeight':
-      return style.lineHeight
-    case 'letterSpacing':
-      return style.letterSpacing
-    case 'paragraphSpaceBefore':
-      return style.paragraphSpaceBefore ?? 0
-    case 'paragraphSpaceAfter':
-      return style.paragraphSpaceAfter ?? 0
-    case 'color': {
-      const c = style.color
-      if (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) {
-        return parseInt(c.slice(1), 16)
-      }
-      if (c !== undefined && isTokenRef(c)) {
-        const resolved = resolveTokenValue(c, tokens)
-        if (resolved !== null && /^#[0-9a-f]{6}$/i.test(resolved)) {
-          return parseInt(resolved.slice(1), 16)
-        }
-        // Pass the TokenRef through — renderer resolves on demand.
-        return c
-      }
-      return undefined
-    }
-    case 'textTransform':
-      return style.textTransform ?? 'none'
-  }
-}
 
 function TextStylePropagator() {
   // Optional — FolderDocGate renders children with no provider when
@@ -309,9 +248,9 @@ function TextStylePropagator() {
           if (style === undefined) continue
           const overrides = new Set<string>(textObj.textStyleOverrides ?? [])
           const patch: Record<string, unknown> = {}
-          for (const key of PROPAGATED_KEYS) {
+          for (const key of TEXT_STYLE_OVERRIDE_KEYS) {
             if (overrides.has(key)) continue
-            const next = tokenFieldFor(style, key, tokens)
+            const next = textStyleField(style, key, tokens)
             if (next === undefined) continue
             // Only emit when the value actually differs — avoids
             // useless writes that would still trigger reconciler

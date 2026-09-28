@@ -174,9 +174,11 @@ ssh pve                # → root@100.64.0.100 (Proxmox host + jump host, Tailsc
   address (the committed default is a documentation placeholder), migrations
   0016–0023, and the Caddy root `/.well-known/oauth-*` routes.
 - **Version invariant** (since 0.9.0): git tag = package version = GHCR image tag =
-  what `/version.json` serves. Releasing means bump every workspace
-  `package.json`, write the CHANGELOG section, tag `vX.Y.Z`, then build-push with
-  that tag. Verify prod with `curl -s https://narrative.bastla.com/version.json`.
+  what `/version.json` serves = the Claude Code plugin's version. Releasing means
+  bump every workspace `package.json`, run `pnpm --filter @narrative/commands skill`
+  (it writes the plugin manifest's version; the skill freshness test fails until
+  you do), write the CHANGELOG section, tag `vX.Y.Z`, then build-push with that
+  tag. Verify prod with `curl -s https://narrative.bastla.com/version.json`.
 
 **Connecting to these hosts needs Petr's explicit per-host consent** (the auto-mode
 classifier blocks agent-inferred prod SSH targets).
