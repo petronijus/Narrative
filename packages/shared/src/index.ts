@@ -3,6 +3,8 @@
 // used to validate agent input (see schema/index.ts).
 
 export { SLIDE_WIDTH, SLIDE_HEIGHT, PPTX_WIDE_EMU_WIDTH, PPTX_WIDE_EMU_HEIGHT } from './canvas.js'
+export type { ShapePoint } from './shapeGeometry.js'
+export { polygonSides, triangleVertices, regularPolygonVertices } from './shapeGeometry.js'
 
 export type { TokenRef } from './slide.js'
 export { isTokenRef } from './slide.js'

@@ -95,6 +95,26 @@ visibility handler calls `renderNow()` and not `markDirty()`, and why
 `pageshow`/`persisted` (bfcache) also forces a repaint. Tests:
 `RenderScheduler.test.ts`. Keep that invariant if you touch the scheduler.
 
+## Shape outlines — one definition (2026-09-29)
+
+Triangles and regular polygons take their outline from
+`packages/shared/src/shapeGeometry.ts` (`triangleVertices`,
+`regularPolygonVertices`, `polygonSides`) — in `polygonRenderer.ts`, the
+image shape-mask (`imageRenderer.ts`), the drawing preview
+(`EditorLayout.tsx`), `shapeOutline` / `object.path.fromShape`
+(`packages/commands/src/geometry.ts`) and the PPTX writer. Never re-derive
+an outline locally: until 2026-09-29 there were five copies of the same
+construction, and correcting the triangle meant finding all five.
+
+- A **triangle fills its box** like PowerPoint's `triangle` preset (apex top
+  centre, base on the bottom edge). Was, until 2026-09-29: the 3-sided
+  polygon inscribed in the box's ellipse (base at ¾ height, 87 % of the
+  width), so an imported PowerPoint triangle looked smaller.
+- A **polygon** (3–12 sides) is the regular n-gon inscribed in the box's
+  ellipse, first vertex at the top, clockwise (unchanged).
+- `renderer-visual.spec.ts` pins the triangle's bottom corners with a
+  sampled thumbnail.
+
 ## Workflow
 
 - Before a large render-architecture change → write an ADR in `docs/adr/` and

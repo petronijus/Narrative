@@ -226,6 +226,10 @@ after the mechanism has been proven on simpler surfaces.
     box's ellipse while PowerPoint's triangle fills the box, so a PPTX
     triangle looks smaller in Narrative. Not changed here (it would resize
     every existing triangle); shape-to-path follows the canvas.
+    **Resolved 2026-09-29** (Petr: fix it): a triangle now fills its box like
+    PowerPoint's; one outline definition in `@narrative/shared`
+    (`shapeGeometry.ts`) serves the renderer, masks, preview, shape-to-path
+    and the PPTX writer.
   - tools/list budget 142,000 → 152,000 bytes (`object.path.create` is 4.1
     KB: its `object` field is the path's create schema).
 - 2026-09-28: **A2.7 done** — `object.copyTo`, `object.insert`,
@@ -350,6 +354,6 @@ Next, in order:
    exemption list, `FINISHED_PHASES += 'A2'`, ADR 0010 status, handoff note;
    then the holistic tools/list size review (budget 164,000 today).
 
-Open, outside the steps: the triangle-vs-PowerPoint question above; a
+Open, outside the steps: a
 running Claude Code session only sees new MCP tools after `/mcp` →
 Reconnect (documented in the plugin README).

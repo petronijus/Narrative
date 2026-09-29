@@ -1,10 +1,10 @@
 /**
  * renderer/objectRenderers/polygonRenderer.ts
  *
- * Shared renderer for `triangle` and `polygon`. Both are regular
- * equilateral shapes inscribed in the object's AABB. Triangle is
- * fixed to 3 sides; polygon accepts a `sides` field (clamped to
- * [3, 12]) so a 5-gon, hexagon, etc. use the same code path.
+ * Shared renderer for `triangle` and `polygon`. The outline comes from
+ * @narrative/shared's shapeGeometry: a triangle fills its box like
+ * PowerPoint's `triangle` preset; a polygon is the regular n-gon (`sides`
+ * clamped to [3, 12]) inscribed in the box's ellipse.
  *
  * Pivot is at the centre of the AABB so rotation / Magic Move
  * behaves like Rectangle / Ellipse.
@@ -12,6 +12,7 @@
 
 import { Container, Graphics } from 'pixi.js'
 import type { Container as PixiContainer } from 'pixi.js'
+import { polygonSides, regularPolygonVertices, triangleVertices } from '@narrative/shared'
 import type { TriangleObject, PolygonObject } from '@narrative/shared'
 import { fillStyleToPixi, imageFillToPixiFill, releaseProceduralFill } from '../fillStyleToPixi.js'
 import { applyFilterEffects, destroyFilterEffects } from '../filterEffects.js'
@@ -38,23 +39,20 @@ function getGraphics(n: PixiContainer): Graphics | undefined {
 
 function sidesFor(data: PolygonLike): number {
   if (data.type === 'triangle') return 3
-  return Math.max(3, Math.min(12, Math.round(data.sides ?? 5)))
+  return polygonSides(data.sides)
+}
+
+function outlineOf(data: PolygonLike): number[] {
+  const vertices =
+    data.type === 'triangle'
+      ? triangleVertices(data.width, data.height)
+      : regularPolygonVertices(sidesFor(data), data.width, data.height)
+  return vertices.flatMap((p) => [p.x, p.y])
 }
 
 function drawPolygon(g: Graphics, container: PixiContainer, data: PolygonLike): void {
   g.clear()
-  const n = sidesFor(data)
-  const cx = data.width / 2
-  const cy = data.height / 2
-  const rx = data.width / 2
-  const ry = data.height / 2
-  // Top-pointing: start at −90 degrees (= top), step 360/n around the centre.
-  const start = -Math.PI / 2
-  const points: number[] = []
-  for (let i = 0; i < n; i++) {
-    const angle = start + (i * 2 * Math.PI) / n
-    points.push(cx + rx * Math.cos(angle), cy + ry * Math.sin(angle))
-  }
+  const points = outlineOf(data)
   g.poly(points)
   if (data.fillStyle?.kind === 'image') {
     const texture = ensureImageFill(container, data.fillStyle, () => {

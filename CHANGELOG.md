@@ -4,6 +4,26 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased
+
+### Changed
+
+- **A triangle fills its box, as in PowerPoint.** Narrative drew a triangle
+  inscribed in its box's ellipse (base at three quarters of the height,
+  87 % of the width), while PowerPoint's triangle — which Narrative imports
+  and exports it as — runs from the top centre to both bottom corners, so an
+  imported triangle looked smaller than in PowerPoint. Canvas, thumbnails,
+  image masks, the drawing preview and "Edit Object" (shape to path) now
+  draw the box-filling triangle. Existing triangles keep their box and grow
+  inside it to fill it. Regular polygons are unchanged.
+
+### Internal
+
+- One outline definition for triangles and regular polygons
+  (`@narrative/shared` `shapeGeometry.ts`) replaces five copies in the
+  renderer, the image mask, the drawing preview, `shapeOutline` and the
+  PPTX writer; a sampled-thumbnail e2e pins the triangle's bottom corners.
+
 ## 0.10.11 — Gradients, shadows and page numbers through commands (2026-09-29)
 
 ### Added

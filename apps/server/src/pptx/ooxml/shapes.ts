@@ -29,7 +29,7 @@ import type {
   TriangleObject,
   VideoObject,
 } from '@narrative/shared'
-import { rotationToDegrees } from '@narrative/shared'
+import { regularPolygonVertices, rotationToDegrees } from '@narrative/shared'
 import { el, tag, type XmlChild, type XmlElement } from './xml.js'
 import { type XmlNode, findFirst, getAttrs, getChildren, getTag } from './read.js'
 import { writeFill, type FillModel, type GradientModel } from './fill.js'
@@ -230,14 +230,8 @@ export function readRoundRectRadius(prstGeom: XmlNode, width: number, height: nu
 }
 
 function regularPolygonAnchors(sides: number, w: number, h: number): PathAnchor[] {
-  // Same construction as the renderer's polygonRenderer: first vertex at the
-  // top, clockwise, inscribed in the frame.
-  const out: PathAnchor[] = []
-  for (let i = 0; i < sides; i++) {
-    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / sides
-    out.push({ x: w / 2 + (Math.cos(angle) * w) / 2, y: h / 2 + (Math.sin(angle) * h) / 2 })
-  }
-  return out
+  // The outline the canvas draws (@narrative/shared shapeGeometry).
+  return regularPolygonVertices(sides, w, h)
 }
 
 export async function writeParametricShape(

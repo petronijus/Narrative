@@ -16,7 +16,14 @@
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js'
-import type { ImageObject, ImageMask, CornerRadius, NormalizedPathAnchor } from '@narrative/shared'
+import { polygonSides, regularPolygonVertices, triangleVertices } from '@narrative/shared'
+import type {
+  ImageObject,
+  ImageMask,
+  CornerRadius,
+  NormalizedPathAnchor,
+  ShapePoint,
+} from '@narrative/shared'
 import { getDefaultImageUrlResolver } from '../imageUrl.js'
 import { getDefaultResourceManager } from '../ResourceManager.js'
 import { applyFit } from '../mediaFit.js'
@@ -197,24 +204,10 @@ function effectiveImageRect(data: ImageObject): {
 // stretched if its width/height were resized.
 // ---------------------------------------------------------------------------
 
-function tracePolygonPath(g: Graphics, sides: number, w: number, h: number): void {
-  // Same parameterisation as polygonRenderer: regular n-gon inscribed in
-  // the AABB, top-pointing for triangles. Centre at (w/2, h/2), radius
-  // computed from the half-extents per axis so the polygon snaps to the
-  // bounding box.
-  const cx = w / 2
-  const cy = h / 2
-  const rx = w / 2
-  const ry = h / 2
-  const n = Math.max(3, Math.min(12, Math.round(sides)))
-  const points: number[] = []
-  // Start at -90deg so the first vertex points up — matches polygonRenderer.
-  for (let i = 0; i < n; i++) {
-    const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n
-    points.push(cx + Math.cos(angle) * rx)
-    points.push(cy + Math.sin(angle) * ry)
-  }
-  g.poly(points)
+function tracePoints(g: Graphics, points: readonly ShapePoint[]): void {
+  // The same outlines the triangle / polygon renderers draw
+  // (@narrative/shared shapeGeometry), so a mask is the shape's silhouette.
+  g.poly(points.flatMap((p) => [p.x, p.y]))
 }
 
 function traceRoundedRect(
@@ -304,10 +297,10 @@ function traceMaskPath(g: Graphics, mask: ImageMask, w: number, h: number): void
       g.ellipse(w / 2, h / 2, w / 2, h / 2)
       return
     case 'triangle':
-      tracePolygonPath(g, 3, w, h)
+      tracePoints(g, triangleVertices(w, h))
       return
     case 'polygon':
-      tracePolygonPath(g, mask.sides, w, h)
+      tracePoints(g, regularPolygonVertices(polygonSides(mask.sides), w, h))
       return
     case 'path':
       tracePathMask(g, mask.anchors, w, h, mask.closed)

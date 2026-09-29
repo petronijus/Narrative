@@ -231,6 +231,41 @@ test.describe('Renderer — sampled thumbnail regressions', () => {
     expect(afterRecolour.b).toBeGreaterThan(180)
     expect(afterRecolour.r).toBeLessThan(120)
   })
+
+  test("triangle fills its box like PowerPoint's: base along the bottom edge", async ({ page }) => {
+    test.setTimeout(30_000)
+    const deckId = await createDeck(page)
+    await openDeckReady(page, deckId)
+
+    // Box (200,150)..(800,550), created through the command API.
+    const res = await page.request.post('http://localhost:3001/commands', {
+      headers: { Origin: 'http://localhost:5173' },
+      data: {
+        target: { deckId },
+        command: 'object.create',
+        input: {
+          slide: { index: 0 },
+          object: { type: 'triangle', x: 200, y: 150, width: 600, height: 400, fill: '#2244cc' },
+        },
+      },
+    })
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true)
+
+    const isBlue = (p: { r: number; g: number; b: number } | null): boolean =>
+      p !== null && p.b > 150 && p.r < 120
+    // Near the bottom-left corner of the box: inside a box-filling triangle,
+    // outside the old inscribed one (whose base sat at 3/4 of the height).
+    await expect
+      .poll(async () => isBlue(await sampleThumbnailPixel(page, 220, 540)), { timeout: 15_000 })
+      .toBe(true)
+    // Below the apex: inside.
+    expect(isBlue(await sampleThumbnailPixel(page, 500, 180))).toBe(true)
+    // The box's top-left corner: outside any triangle with its apex at the top centre.
+    const corner = await sampleThumbnailPixel(page, 220, 170)
+    expect(corner).not.toBeNull()
+    expect(corner!.r).toBeGreaterThan(220)
+    expect(corner!.b).toBeGreaterThan(220)
+  })
 })
 
 // ---------------------------------------------------------------------------

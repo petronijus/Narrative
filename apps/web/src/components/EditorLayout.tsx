@@ -54,6 +54,7 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { yMapToPlainObject } from '@narrative/slide-model'
 import { useObjectClipboard } from '../state/useObjectClipboard.js'
 import { EditorNotice } from '../ui/EditorNotice.js'
+import { regularPolygonVertices, triangleVertices } from '@narrative/shared'
 import type { SlideObject, SlideObjectType, PathAnchor, TableObject } from '@narrative/shared'
 import type { CanvasInstance } from '../renderer/CanvasInstanceContext.js'
 import { useDevMetrics, FpsOnlyDashboard } from '../observability/index.js'
@@ -333,14 +334,10 @@ function DraftOverlay({
   // Triangle / polygon → inline SVG so the preview matches the shape
   // we'll draw on commit, not a misleading rectangle.
   if (draft.tool === 'triangle' || draft.tool === 'polygon') {
-    const sides = draft.tool === 'triangle' ? 3 : 5
-    const points: string[] = []
-    for (let i = 0; i < sides; i++) {
-      const angle = -Math.PI / 2 + (i * 2 * Math.PI) / sides
-      const px = 0.5 + 0.5 * Math.cos(angle)
-      const py = 0.5 + 0.5 * Math.sin(angle)
-      points.push(`${px},${py}`)
-    }
+    // In a unit box, stretched to the drag by the viewBox.
+    const vertices =
+      draft.tool === 'triangle' ? triangleVertices(1, 1) : regularPolygonVertices(5, 1, 1)
+    const points = vertices.map((p) => `${p.x},${p.y}`)
     return (
       <svg
         aria-hidden="true"

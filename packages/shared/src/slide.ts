@@ -235,8 +235,9 @@ export interface EllipseObject extends BaseSlideObject, StrokeStyleFields {
 
 /**
  * P4b: triangle and regular polygon share the same AABB-based
- * schema as Rectangle/Ellipse. `sides` controls the polygon — 3 for
- * a triangle (top-pointing equilateral), 4+ for regular n-gons.
+ * schema as Rectangle/Ellipse. A triangle fills its box like PowerPoint's
+ * `triangle` preset (apex top centre, base along the bottom); a polygon is
+ * the regular n-gon inscribed in the box's ellipse. See shapeGeometry.ts.
  */
 export interface TriangleObject extends BaseSlideObject, StrokeStyleFields {
   type: 'triangle'

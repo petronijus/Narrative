@@ -254,7 +254,7 @@ export const objectPathFromShape = defineCommand({
       at.width,
       at.height,
     )
-    // Refit around what the outline draws (an inscribed triangle does not
+    // Refit around what the outline draws (an inscribed polygon does not
     // fill its box) — through the slide, so every point stays where it is.
     const { box, anchors } = fitAnchors(anchorsOnSlide(at, outline), at, true)
     const next: Record<string, unknown> = { id: input.object, type: 'path', closed: true }

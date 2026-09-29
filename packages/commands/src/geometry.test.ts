@@ -211,19 +211,12 @@ describe('shapeOutline', () => {
     expect(hexagon[0]!.y).toBeCloseTo(0, 9)
   })
 
-  it("traces a triangle as the canvas draws it: the 3-gon inscribed in the box's ellipse", () => {
-    // polygonRenderer.ts: vertex i at centre + radii · (cos, sin)(-90° + i · 120°).
-    const w = 300
-    const h = 200
-    const drawn = [0, 1, 2].map((i) => {
-      const t = -Math.PI / 2 + (i * 2 * Math.PI) / 3
-      return { x: w / 2 + (w / 2) * Math.cos(t), y: h / 2 + (h / 2) * Math.sin(t) }
-    })
-    const outline = shapeOutline({ type: 'triangle' }, w, h)
-    outline.forEach((p, i) => {
-      expect(p.x).toBeCloseTo(drawn[i]!.x, 9)
-      expect(p.y).toBeCloseTo(drawn[i]!.y, 9)
-    })
+  it("traces a triangle filling its box, like PowerPoint's triangle preset", () => {
+    expect(shapeOutline({ type: 'triangle' }, 300, 200)).toEqual([
+      { x: 150, y: 0 },
+      { x: 300, y: 200 },
+      { x: 0, y: 200 },
+    ])
   })
 
   it('puts a rounded corner on the circle it rounds with', () => {

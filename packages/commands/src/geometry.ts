@@ -11,6 +11,8 @@
  * functions below, so a drag and an agent's resize land on the same box.
  */
 
+import { polygonSides, regularPolygonVertices, triangleVertices } from '@narrative/shared'
+
 /** A point of the frame that stays put while it is resized. */
 export type Anchor =
   | 'topLeft'
@@ -455,24 +457,17 @@ export type OutlineShape =
 /**
  * The outline a parametric shape draws, as closed-path anchors in its local
  * box (w x h), traced clockwise from the top the way the shape renderers
- * trace it: rounded corners clamp to half the shorter side, triangles and
- * polygons (3–12 sides) point up inscribed in the box's ellipse, an ellipse
- * is four quarter arcs.
+ * trace it: rounded corners clamp to half the shorter side, a triangle fills
+ * its box (PowerPoint's `triangle`), polygons (3–12 sides) point up inscribed
+ * in the box's ellipse (@narrative/shared shapeGeometry), an ellipse is four
+ * quarter arcs.
  */
 export function shapeOutline(shape: OutlineShape, w: number, h: number): PathPoint[] {
   switch (shape.type) {
     case 'triangle':
-    case 'polygon': {
-      // The canvas draws a triangle as the 3-sided polygon inscribed in the
-      // box's ellipse (polygonRenderer.ts `sidesFor`), not as a box-filling
-      // triangle — so the path keeps the outline the audience sees.
-      const sides =
-        shape.type === 'triangle' ? 3 : Math.max(3, Math.min(12, Math.round(shape.sides)))
-      return Array.from({ length: sides }, (_, i) => {
-        const t = -Math.PI / 2 + (i * 2 * Math.PI) / sides
-        return { x: w / 2 + (w / 2) * Math.cos(t), y: h / 2 + (h / 2) * Math.sin(t) }
-      })
-    }
+      return triangleVertices(w, h)
+    case 'polygon':
+      return regularPolygonVertices(polygonSides(shape.sides), w, h)
     case 'ellipse': {
       const kx = (w / 2) * KAPPA
       const ky = (h / 2) * KAPPA

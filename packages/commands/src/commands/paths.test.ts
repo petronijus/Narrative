@@ -123,25 +123,26 @@ describe('object.path.fromShape', () => {
     expect(ellipse.every((a) => a.cpIn !== undefined && a.cpOut !== undefined)).toBe(true)
   })
 
-  it('keeps a triangle exactly where the canvas draws it, the box refitted to it', () => {
+  it('keeps a triangle exactly where the canvas draws it, in the same box', () => {
     const h = harness()
     const { objectId } = h.run<{ objectId: string }>('object.create', {
       slide: 's3',
       object: { type: 'triangle', x: 100, y: 100, width: 300, height: 200, rotation: 0.5 },
     })
     const before = h.plain('s3', objectId)
-    const drawn = [0, 1, 2].map((i) => {
-      const t = -Math.PI / 2 + (i * 2 * Math.PI) / 3
-      return localToSlide(placement(before), {
-        x: 150 + 150 * Math.cos(t),
-        y: 100 + 100 * Math.sin(t),
-      })
-    })
+    // The canvas triangle fills its box: apex top centre, base along the bottom.
+    const drawn = [
+      { x: 150, y: 0 },
+      { x: 300, y: 200 },
+      { x: 0, y: 200 },
+    ].map((p) => localToSlide(placement(before), p))
     h.run('object.path.fromShape', { slide: 's3', object: objectId })
     const after = h.plain('s3', objectId)
     expectPointsClose(anchorsOnSlide(placement(after), after['anchors'] as PathPoint[]), drawn)
-    // The inscribed triangle is 3/4 of the box's height.
-    expect(after['height'] as number).toBeCloseTo(150, 9)
+    // A box-filling triangle keeps its box.
+    expect(after['rotation']).toBe(0.5)
+    for (const [k, v] of Object.entries({ x: 100, y: 100, width: 300, height: 200 }))
+      expect(after[k] as number).toBeCloseTo(v, 9)
   })
 
   it('refuses objects that are not parametric shapes', () => {
