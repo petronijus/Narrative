@@ -82,10 +82,6 @@ export const ONE_DOOR_PENDING = [
   // and background, typography and every other property patch — solid
   // fill, stroke, image fill, blur, link (A2.11).
   { file: 'apps/web/src/ui/Inspector.tsx', step: 'A2.11' },
-  // A2.10 — tables
-  { file: 'apps/web/src/ui/TableChrome.tsx', step: 'A2.10' },
-  { file: 'apps/web/src/ui/TableInspector.tsx', step: 'A2.10' },
-  { file: 'apps/web/src/ui/TableCellEditor.tsx', step: 'A2.10' },
   // A2.11 — text
   { file: 'apps/web/src/ui/TextEditOverlay.tsx', step: 'A2.11' },
   { file: 'apps/web/src/ui/textEditSelection.ts', step: 'A2.11' },

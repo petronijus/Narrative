@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased
+## 0.10.12 — Animations and tables through commands (2026-09-29)
 
 ### Added
 
@@ -18,6 +18,16 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
     animations);
   - `query.slide` / `query.object` report each step's `start` on the
     timeline.
+- **Agents can size and paint tables the way the editor does:**
+  - `table.setSize` — make a table exactly N rows by M columns (rows are
+    added or removed at the bottom, columns at the right), what the
+    Inspector's Rows / Columns steppers and the table's add handles do;
+  - `table.style.table` takes `overrideCells: true` — the new table-wide
+    value also replaces the cells' own, so "make the whole table grey"
+    really greys every cell (the Inspector's table-wide fill);
+  - `object.fill.gradient` accepts tables: the whole table, or with
+    `cells` just some cells (a header row), each gradient starting from
+    the colour the cell shows.
 
 ### Fixed
 
@@ -33,6 +43,15 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 - **Dragging a video's clip on the timeline to before its anchor stored a
   negative delay**, which the object format does not allow; the clip now
   stops at its anchor.
+- **Tab into the next table cell kept showing the previous cell's text**,
+  and the first key typed there wrote that text into the new cell, over
+  what it held. Each cell now gets its own editor.
+- **Keys typed right after Tab or Cmd/Ctrl+Enter added a table row were
+  lost** (the editor closed for a frame until the new row arrived). The
+  editor now moves into the new row at once.
+- **Choosing Image as a fill stored an image fill without a picture**
+  before one was chosen — an invalid fill on a shape. The fill picker now
+  shows the image chooser and writes the fill once the upload is done.
 
 ### Changed
 
@@ -61,6 +80,19 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   to `packages/animation`. New slide-model writer `retargetAnimation`.
   Eval scenarios `agenda-step-timing` and `photo-animations-hand-over`,
   e2e `animation-commands`; tools/list budget 167,000.
+- A2.10: the table chrome (move, column / row boundary drag, add / remove
+  handles), the table Inspector (cell / range / table styling, borders,
+  merge / split, row and column counts, fills and gradients, the text
+  format toggles' whole-cell fallback) and the cell editor (Tab adding a
+  row) write only through commands; `TableChrome`, `TableInspector` and
+  `TableCellEditor` leave the one-door exemption list. Every drag frame is
+  absolute (`table.resizeColumn` / `resizeRow` with `keepTableSize`,
+  `table.setSize`), so a repeated frame changes nothing. The fill picker
+  always writes gradients through `object.fill.gradient`; its seeded-patch
+  fallback is gone. The plan's `table.cell.setText` is not a separate
+  command: `text.set` / `text.format` / `text.list` already take
+  `target.cell`. Eval scenarios `table-resize-recolour` and
+  `table-header-gradient`, e2e `table-commands`; tools/list budget 169,000.
 
 ## 0.10.11 — Gradients, shadows and page numbers through commands (2026-09-29)
 

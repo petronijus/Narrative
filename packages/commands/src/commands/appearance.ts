@@ -21,6 +21,10 @@ import {
   bulkUpdateObjects,
   isTokenRef,
   resolveTokenValue,
+  setTableCellStyle,
+  setTableDefaultsPatch,
+  type CellStylePatch,
+  type DeckMutationContext,
   type FolderTokensSnapshot,
 } from '@narrative/slide-model'
 import {
@@ -33,6 +37,7 @@ import {
   type ShadowStyle,
   type SlideObject,
   type SlideObjectPatch,
+  type TableDefaults,
 } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
 import { CommandError } from '../errors.js'
@@ -44,8 +49,16 @@ import {
   requireDeck,
   requireObjects,
   resolveSlide,
+  type SlideRef,
 } from '../refs.js'
 import type { CommandContext } from '../types.js'
+import {
+  CellRangeSchema,
+  clearCellOverrides,
+  normalizedRange,
+  resolveTable,
+  type CellRange,
+} from './tables.js'
 import {
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,
@@ -66,7 +79,7 @@ const EmptyOutput = z.object({})
 const Unit = z.number().finite().min(0).max(1)
 
 // ---------------------------------------------------------------------------
-// Shared rules (the Inspector's fill picker uses them for table defaults too)
+// Shared rules
 // ---------------------------------------------------------------------------
 
 /** Object types whose fill can be a gradient (`fillStyle`). */
@@ -134,13 +147,15 @@ export const objectFillGradient = defineCommand({
   id: 'object.fill.gradient',
   title: 'Gradient fill',
   description:
-    'Fill shapes (rectangle, ellipse, triangle, polygon, path) with a linear or radial gradient. Without ' +
+    'Fill shapes (rectangle, ellipse, triangle, polygon, path) or tables with a linear or radial gradient. Without ' +
     "`stops` a new gradient starts from the shape's own fill colour and a darker tint of it (as the editor does), " +
     'and a shape that already has a gradient keeps its stops — so switching linear ↔ radial or changing only ' +
     '`angle` / `center` keeps the colours. `angle` (linear, degrees clockwise, 0 = top to bottom, 90 = left to ' +
     'right) and `center` (radial, 0..1 of the shape) keep their current values when omitted. A fill linked to a ' +
-    'folder colour token is unlinked to its current colour. Back to a solid fill: object.update with ' +
-    '"fillStyle": null.',
+    'folder colour token is unlinked to its current colour. A table gets the gradient as the fill of every cell ' +
+    "(replacing cells' own gradients); with `cells` (one table in `objects`) only those cells get it, each " +
+    'starting from its own colour. Back to a solid fill: object.update with "fillStyle": null (for table cells, ' +
+    'table.style.* with "fillStyle": null).',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: ObjectIdsSchema,
@@ -156,11 +171,17 @@ export const objectFillGradient = defineCommand({
       .strictObject({ x: Unit, y: Unit })
       .optional()
       .describe('Radial only: the centre, 0..1 of the shape (default 0.5, 0.5)'),
+    cells: CellRangeSchema.optional().describe('Tables only: fill just these cells'),
   }),
   output: EmptyOutput,
   idempotent: true,
   readsFolderTokens: true,
-  implementedWith: ['bulkUpdateObjects'],
+  implementedWith: [
+    'bulkUpdateObjects',
+    'setTableDefaultsPatch',
+    'setTableCellStyle',
+    'getTableCellYMap',
+  ],
   examples: [
     {
       title: "A left-to-right gradient from the shape's own colour",
@@ -178,6 +199,15 @@ export const objectFillGradient = defineCommand({
         ],
       },
     },
+    {
+      title: 'A top-to-bottom gradient on the header row of a table',
+      input: {
+        slide: 's1',
+        objects: ['tbl1'],
+        kind: 'linear',
+        cells: { from: { row: 0, col: 0 }, to: { row: 0, col: 2 } },
+      },
+    },
   ],
   handler(ctx, input) {
     const deck = requireDeck(ctx)
@@ -188,35 +218,61 @@ export const objectFillGradient = defineCommand({
       throw new CommandError('invalid_input', '`center` is for a radial gradient')
     if (input.kind === 'radial' && input.angle !== undefined)
       throw new CommandError('invalid_input', '`angle` is for a linear gradient')
-    const updates = [...new Set(input.objects)].map((id) => {
+    const ids = [...new Set(input.objects)]
+    if (
+      input.cells !== undefined &&
+      (ids.length !== 1 || maps.get(ids[0]!)!.get('type') !== 'table')
+    )
+      throw new CommandError('invalid_input', '`cells` needs exactly one table in `objects`')
+    const updates: Array<ReturnType<typeof update>> = []
+    const tables: string[] = []
+    for (const id of ids) {
       const map = maps.get(id)!
       const type = map.get('type') as string
+      if (type === 'table') {
+        tables.push(id)
+        continue
+      }
       if (!(GRADIENT_FILL_TYPES as readonly string[]).includes(type))
         throw new CommandError(
           'invalid_input',
-          `object '${id}' is a ${type}; only ${GRADIENT_FILL_TYPES.join(', ')} take a gradient fill`,
+          `object '${id}' is a ${type}; only ${GRADIENT_FILL_TYPES.join(', ')} and tables take a gradient fill`,
         )
-      return update(id, gradientPatch(ctx, id, map, input))
-    })
-    bulkUpdateObjects(objects, updates)
+      const fill = { fill: map.get('fill'), fillStyle: plainFillStyle(map) }
+      updates.push(update(id, gradientPatch(ctx, `object '${id}'`, fill, input)))
+    }
+    // Every patch is computed (and may refuse) before anything is written.
+    const tableWrites = tables.map((id) => tableGradientWrites(ctx, deck, input.slide, id, input))
+    if (updates.length > 0) bulkUpdateObjects(objects, updates)
+    for (const write of tableWrites) write()
     return {}
   },
 })
 
+/** What a gradient is computed from: the fill a shape (or a table cell, defaults applied) shows now. */
+interface FillSource {
+  fill: unknown
+  fillStyle: FillStyle | undefined
+  /** Tables only: the fill's alpha, which a table also applies to a gradient. */
+  fillAlpha?: number | undefined
+}
+
+interface GradientInput {
+  kind: 'linear' | 'radial'
+  stops?: FillGradientStop[] | undefined
+  angle?: number | undefined
+  center?: { x: number; y: number } | undefined
+}
+
 function gradientPatch(
   ctx: CommandContext,
-  id: string,
-  map: Y.Map<unknown>,
-  input: {
-    kind: 'linear' | 'radial'
-    stops?: FillGradientStop[] | undefined
-    angle?: number | undefined
-    center?: { x: number; y: number } | undefined
-  },
+  what: string,
+  source: FillSource,
+  input: GradientInput,
 ): Record<string, unknown> {
-  const current = plainFillStyle(map)
+  const current = source.fillStyle
   const currentGradient = current !== undefined && current.kind !== 'image' ? current : undefined
-  const fill = map.get('fill')
+  const fill = source.fill
   const patch: Record<string, unknown> = {}
   const solid = colorInt(fill, ctx.folderTokens)
   if (isTokenRef(fill)) {
@@ -227,9 +283,12 @@ function gradientPatch(
     else if (input.stops === undefined && currentGradient === undefined)
       throw new CommandError(
         ctx.folderTokens === undefined ? 'conflict' : 'invalid_input',
-        `object '${id}' is filled with the folder colour ${fill.$token}, which cannot be resolved here; give \`stops\``,
+        `${what} is filled with the folder colour ${fill.$token}, which cannot be resolved here; give \`stops\``,
       )
   }
+  // A table paints a gradient with its fill alpha: "no colour" (alpha 0)
+  // would hide the gradient that was asked for.
+  if (source.fillAlpha === 0) patch['fillAlpha'] = 1
   // A shape without a fill colour (a path may have none) starts from white.
   const stops = input.stops ?? currentGradient?.stops ?? seedGradientStops(solid ?? 0xffffff)
   if (input.kind === 'linear') {
@@ -254,6 +313,64 @@ function gradientPatch(
     }
   }
   return patch
+}
+
+/**
+ * A table's gradient, computed and checked now, written by the returned
+ * function. Without `cells` the defaults get it and every cell loses its
+ * own gradient and fill alpha, so all of them show it (the Inspector's
+ * "paint the whole table"); with `cells` each visible cell of the range
+ * gets one computed from the fill it shows (its override, else the
+ * default).
+ */
+function tableGradientWrites(
+  ctx: CommandContext,
+  deck: DeckMutationContext,
+  slideRef: SlideRef,
+  tableId: string,
+  input: GradientInput & { cells?: CellRange | undefined },
+): () => void {
+  const t = resolveTable(deck, slideRef, tableId)
+  const d = t.table.defaults
+  if (input.cells === undefined) {
+    const patch = gradientPatch(
+      ctx,
+      `table '${tableId}'`,
+      { fill: d.fill, fillStyle: d.fillStyle, fillAlpha: d.fillAlpha },
+      input,
+    )
+    return () => {
+      // Every cell shows the gradient: its own gradient and fill alpha go;
+      // its own solid colour stays (it shows again when the table goes back
+      // to solid, as a cell's colour does after a table-wide gradient).
+      clearCellOverrides(t.objects, t.id, t, ['fillStyle', 'fillAlpha'])
+      setTableDefaultsPatch(t.objects, t.id, patch as Partial<TableDefaults>)
+    }
+  }
+  const r = normalizedRange(t, input.cells)
+  const writes: Array<{ row: number; col: number; patch: Record<string, unknown> }> = []
+  for (let row = r.r0; row <= r.r1; row++) {
+    for (let col = r.c0; col <= r.c1; col++) {
+      const cell = t.table.rows[row]?.[col]
+      // Cells hidden inside a merge are skipped; the merged cell is filled.
+      if (cell === undefined || cell.mergeOriginR !== undefined || cell.mergeOriginC !== undefined)
+        continue
+      const source: FillSource = {
+        fill: cell.fill ?? d.fill,
+        fillStyle: cell.fillStyle ?? d.fillStyle,
+        fillAlpha: cell.fillAlpha ?? d.fillAlpha,
+      }
+      writes.push({
+        row,
+        col,
+        patch: gradientPatch(ctx, `cell (${row}, ${col}) of table '${tableId}'`, source, input),
+      })
+    }
+  }
+  return () => {
+    for (const w of writes)
+      setTableCellStyle(t.objects, t.id, w.row, w.col, w.patch as CellStylePatch)
+  }
 }
 
 // ---------------------------------------------------------------------------

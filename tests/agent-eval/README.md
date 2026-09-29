@@ -10,14 +10,18 @@ service commands). No LLM judges anything. See
 > (or `ANTHROPIC_API_KEY`, if set). Claude Code runs with ToolSearch on, as in
 > a user's session, so the Narrative tools are deferred: the model sees their
 > names and loads a tool's schema when it needs it, instead of the whole
-> tool list riding on every request (≈ 167 KB on 2026-09-29, ≈ 129 KB on
+> tool list riding on every request (≈ 169 KB on 2026-09-29 after A2.10, ≈ 129 KB on
 > 2026-09-28; without ToolSearch the 129 KB list was ~100k tokens a request,
 > measured 2026-09-28 with `pnpm agent:probe:list-changed`). A full run is
-> 34 sessions (2026-09-29; 14 on 2026-09-28); the report shows the cost
-> Claude Code reports (list-price equivalent): $1.62 for the 13 scenarios of
-> a full run on 2026-09-28 (opus, Claude Code 2.1.283; was ≈ 2 USD without
-> ToolSearch). The 34-scenario suite has not been run in full or costed
-> yet. On a subscription it counts against your plan limits.
+> 36 sessions (2026-09-29 after A2.10; 34 after A2.9, 14 on 2026-09-28); the
+> report shows the cost Claude Code reports (list-price equivalent): $1.62
+> for the 13 scenarios of a full run on 2026-09-28 (opus, Claude Code
+> 2.1.283; was ≈ 2 USD without ToolSearch). Partial run, 2026-09-29 (A2.10):
+> `table-resize-recolour`, `table-header-gradient`, `table-merge-add-column`
+> and `badge-gradient`, 4/4 passed, $0.55 (as reported with the change; the
+> Claude Code version was not recorded). The 36-scenario suite has not been
+> run in full or costed yet. On a subscription it counts against your plan
+> limits.
 
 ## When to run it
 
@@ -168,10 +172,13 @@ registry, so they run unchanged in both worlds.
 | `footer-page-number`          | a footer box turned into the live slide number, keeping its look (`object.slideNumber.set`)           | yes    |
 | `agenda-step-timing`          | two agenda fades at given absolute times (0.3 s, 2 s); durations kept, no click step (`retime`)       | yes    |
 | `photo-animations-hand-over`  | a replacement picture gets the old one's steps (order, timing, params) before it is deleted           | yes    |
+| `table-resize-recolour`       | 3 x 3 table made 4 x 4, values kept; every cell grey, the red override too (`table.setSize`)          | yes    |
+| `table-header-gradient`       | each navy header cell a top-to-bottom gradient into a darker navy; other rows untouched               | yes    |
 
 The scenario list is `scenarios/index.ts`; `pnpm agent:eval --list` prints
-it with each scenario's replay status. 34 scenarios on 2026-09-29, 28 of
-them replayable (the six "no" rows above).
+it with each scenario's replay status. 36 scenarios on 2026-09-29 (after
+A2.10; 34 after A2.9), 30 of them replayable (the six "no" rows above), each
+with a recording in `recordings/`.
 
 Environment notes:
 

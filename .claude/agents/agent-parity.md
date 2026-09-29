@@ -69,16 +69,18 @@ the diff, never committing.
 Some of these land during A0–A4 and may not exist yet. A missing file is a
 finding ("guard not wired yet"), never a reason to skip the check silently.
 
-State at A2.9 (2026-09-29; A2.1–A2.8 released in 0.10.2–0.10.11, A2.9 on
-`main`) — check again, but do not assume more:
+State at A2.10 (2026-09-29; A2.1–A2.10 released in 0.10.2–0.10.12) — check again, but do not assume more:
 
-- **116 commands** (69 document, 47 server-only). `knownMissing.ts` 22
+- **117 commands** (70 document, 47 server-only; A2.10 added
+  `table.setSize`, `table.style.table` `overrideCells` and table support in
+  `object.fill.gradient`). `knownMissing.ts` 22
   entries (A2 15, A3 5, A4 2), `FINISHED_PHASES = ['A0', 'A1']`;
   `allowlist.ts` 20.
 - **The one-door lint rule is on** (`apps/web/eslint.one-door.js`, since
   A2.1): `pnpm lint` fails on any slide-model writer import (the `writer`
   entries of `parity/slideModelExports.ts`) or `.transact()` call in
-  `apps/web/src`, except in the 13 files of `ONE_DOOR_PENDING`, each tagged
+  `apps/web/src`, except in the 10 files of `ONE_DOOR_PENDING` (13 after
+  A2.9), each tagged
   with the A2 step that migrates it; `oneDoor.test.ts` fails when a listed
   file no longer needs its exemption. Every slide-model export must be
   classified in `slideModelExports.ts` (`parity.test.ts` fails on an
@@ -88,18 +90,23 @@ State at A2.9 (2026-09-29; A2.1–A2.8 released in 0.10.2–0.10.11, A2.9 on
   crop / path / line handles, the object clipboard, the upload drop zone,
   the video preview, the Inspector's geometry, layers, gradients, shadow,
   page-number field and animation section, the animation timeline and the
-  move-to handle. For those, "the UI path dispatches the command" is now a hard
+  move-to handle, the table chrome, the table Inspector and the table cell
+  editor. For those, "the UI path dispatches the command" is now a hard
   check; for a file still in `ONE_DOOR_PENDING`, report whether the command
   exists and shares the UI path's slide-model writer.
-- **Eval**: 34 scenarios in `tests/agent-eval/scenarios/`, 28 replayed free
+- **Eval**: 36 scenarios in `tests/agent-eval/scenarios/`, 30 replayed free
   in `agentEvalReplay.test.ts`.
-- **`tools/list` budget 167,000 bytes, measured 166,980 (url mode) on
-  2026-09-29 — 20 bytes of headroom.** A2 raises the budget per step (each
+- **`tools/list` budget 169,000 bytes, measured 168,876 (url mode) on
+  2026-09-29 after A2.10 — 124 bytes of headroom** (was 167,000 / 20 bytes
+  after A2.9). A2 raises the budget per step (each
   raise itemised in `toolListBudget.test.ts`'s comment) and reviews the
   sizes as a whole at A2.13; a new command will need a raise, so report its
   size.
 - **Still missing:** shortcut and menu-action enumeration in the parity
-  guard (A2.13); the commands of A2.10–A2.12 (`knownMissing.ts`).
+  guard (A2.13); the commands of A2.11–A2.12 (`knownMissing.ts`; A2.10's
+  table commands were never in it — the plan's `table.cell.setText` was not
+  added, because `text.set` / `text.format` / `text.list` take
+  `target.cell`: do not report it as missing).
 
 State at the end of A1 (2026-09-27, released in 0.10.0), kept for the record
 (superseded by the block above where they differ):
@@ -216,6 +223,14 @@ pnpm --filter server test                                    # the route guard; 
 ```
 
 Quote the failing test name and message verbatim in the ledger.
+
+`pnpm lint` failing with `ERR_UNKNOWN_FILE_EXTENSION` for
+`packages/commands/src/parity/slideModelExports.ts` before any file is
+linted is the environment, not a parity finding: the Node in use cannot
+strip types (Ubuntu 26.04's distro Node 22.22.1 on `petronijus-PC`,
+2026-09-29 — `node -p process.features.typescript` prints `false`). Re-run
+as `NODE_OPTIONS="--import=tsx" pnpm lint` and say so in the ledger
+(SETUP.md, "Common first-run failures").
 
 ## 5. Failure modes a reviewer must catch
 

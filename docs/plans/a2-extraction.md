@@ -106,7 +106,7 @@ after the mechanism has been proven on simpler surfaces.
 | A2.7a | Agent file upload (Petr, 2026-09-28)   | ✚ `media.uploadSession`: opens a one-time, deck-scoped, short-lived session on the existing tus upload (`/api/uploads`) and returns its URL + token, so an agent with a shell (Claude Code) streams a local file with `curl` and gets the asset id back — no base64 through the model's context, same checks as a browser upload | — (server + commands; `media.upload` keeps URL / small base64)                                      |
 | A2.8  | Fill, effects, slide number            | ✚ `object.fill.gradient`, `object.effects.shadow`, `object.slideNumber.set`                                                                                                                                                                                                                                                      | Inspector fill/effects, `SlideNumberPromptDialog`                                                   |
 | A2.9  | Animation                              | animation.\* existing; ✚ `animation.retarget`                                                                                                                                                                                                                                                                                    | `AnimationTimeline`, `MoveToTargetOverlay`, Inspector animation                                     |
-| A2.10 | Tables                                 | table.\* existing; ✚ `table.cell.setText`                                                                                                                                                                                                                                                                                        | `TableChrome`, `TableInspector`, `TableCellEditor`                                                  |
+| A2.10 | Tables                                 | table.\* existing; ✚ `table.setSize` (the planned `table.cell.setText` was dropped: see Progress)                                                                                                                                                                                                                                | `TableChrome`, `TableInspector`, `TableCellEditor`                                                  |
 | A2.11 | Text                                   | ✚ `text.edit`, `text.setBoxTypography`, `text.style.apply`, `text.replace`, text.set with formatting                                                                                                                                                                                                                             | `TextEditOverlay`, `textEditSelection`, `textListOps`, Inspector typography                         |
 | A2.12 | Tokens, components, server propagation | ✚ `token.{color,textStyle,effectStyle}.{create,update,delete}`, `token.seedDefaults`, `text.style.createFromObject`, `component.promote`; propagation server-side                                                                                                                                                                | `FolderDocProvider`, `FolderSettings`, `DeckShell` propagation, `writeComponentMasterTree`          |
 | A2.13 | Close                                  | parity guard enumerates shortcuts and menu action ids; exemption list empty; `FINISHED_PHASES += 'A2'`; ADR 0010 status; handoff note                                                                                                                                                                                            | `useShortcuts`, menus, `testApi` (dev-only test hooks go through commands too)                      |
@@ -326,7 +326,7 @@ after the mechanism has been proven on simpler surfaces.
   - tools/list budget 159,000 → 164,000 bytes.
 - 2026-09-29: **Triangle geometry** (Petr: fix the open question from A2.6)
   — a triangle fills its box like PowerPoint's; see the A2.6 entry.
-- 2026-09-29: **A2.9 done** — `animation.retime`, `animation.retarget`;
+- 2026-09-29: **A2.9 done** (released 0.10.12) — `animation.retime`, `animation.retarget`;
   `query.slide` / `query.object` report each step's `start`. The timeline
   (remove, trigger and easing pickers, bar drag, edge resize, video clip
   drag), the move-to handle and the Inspector's animation section dispatch
@@ -365,33 +365,83 @@ after the mechanism has been proven on simpler surfaces.
     playback honour it is a feature of its own.
   - tools/list budget 164,000 → 167,000 bytes (the new "Animation step id"
     shared field takes back a little).
+- 2026-09-29: **A2.10 done** (released 0.10.12) — `table.setSize`; `table.style.table`
+  `overrideCells`; `object.fill.gradient` on tables (whole table or
+  `cells`). The chrome (move, boundary drag, add / remove handles), the
+  table Inspector and the cell editor dispatch commands; `TableChrome`,
+  `TableInspector` and `TableCellEditor` are off the exemption list, and
+  FillBody's seeded-patch fallback is gone (every host passes
+  `setGradient`). Decisions:
+  - **No `table.cell.setText`.** `text.set` / `text.format` / `text.list`
+    already address a cell (`target.cell`, since A0); a second command for
+    the same write would only split the agent's choice. The Inspector's
+    whole-cell format fallback is `text.format` on the cell.
+  - **The row / column count loops are `table.setSize`**, absolute: the
+    steppers send the count they want, the add / remove handles the count
+    the pointer is at, so a repeated frame changes nothing (plan appendix
+    B6's `table.setSize`). A boundary drag is `table.resizeColumn` /
+    `resizeRow` with `keepTableSize` and the dragged track's size from the
+    pointer-down snapshot, clamped so both tracks keep `MIN_TRACK_PX`.
+  - **"Paint the whole table" is command behaviour** (`overrideCells`):
+    the table-wide fill used to clear the cells' overrides in the component
+    before setting the default; an agent asked to recolour a table meets the
+    same problem.
+  - **Table gradients go through `object.fill.gradient`**, not a table
+    command, so the seeding / token-unlink / keep-the-stops rules exist
+    once. Per cell they start from the colour the cell shows (its override,
+    else the default); a whole-table gradient takes the cells' own gradients
+    away like a table-wide fill. Tables paint a gradient with `fillAlpha`,
+    so a "no colour" (alpha 0) table or cell gets alpha 1 with it — shapes
+    ignore `fillAlpha` under a gradient and are unaffected.
+  - **The routing stays in the Inspector** (range, else the active cell's
+    merge origin, else the table): it follows the editor's selection, which
+    an agent names itself; a Typography change that writes cells and
+    defaults is one `group`.
+  - Found on the way (pre-existing, both fixed): Tab into the next cell
+    reused one TextEditOverlay across cells, so it showed the previous
+    cell's text and the first keystroke's diff wrote that text into the new
+    cell; and after Tab / Cmd+Enter appended a row, the editor closed for a
+    frame (the slide snapshot is rAF-batched), losing keys typed at once.
+    The overlay is now keyed by cell and the editor reads a cell the
+    snapshot lacks from the document. e2e `table-commands` pins both.
+  - Still in the Inspector for A2.11: a text-style preset on a table writes
+    its fields through `table.style.table` but the preset mapping itself is
+    the Inspector's `applyTextStyle` (`text.style.apply` should take tables
+    too).
+  - Parity review follow-ups fixed before release: the fill picker's
+    Image mode wrote a placeholder image fill without a picture
+    (`assetId: ''`), which the table style commands refuse — so Image did
+    nothing on a table (and on a shape stored an invalid fill). The picker
+    now shows the chooser as a local draft and writes the fill once the
+    upload has an asset (e2e "Image fill on a table …"). A whole-table
+    gradient now always takes the cells' own `fillStyle` and `fillAlpha`
+    and never their `fill` (it took whatever the gradient happened to
+    write, so a token default also wiped the cells' colours).
+    `overrideCells` got a schema description; the `text.style.apply`
+    known-missing entry now says it must take tables.
+  - tools/list budget 167,000 → 169,000 bytes.
 
-## Where we stand (2026-09-29, after A2.9)
+## Where we stand (2026-09-29, after A2.10)
 
-Done: A2.1–A2.9 and A2.7a. A2.1–A2.8 are released (0.10.2–0.10.11); A2.9
-and the triangle fix are committed and pushed to `main` but in no release
-yet (CHANGELOG "Unreleased") — prod runs v0.10.11 (`/version.json` →
-`v0.10.11+669d151`, checked 2026-09-29). `ONE_DOOR_PENDING` holds 13 files,
-`knownMissing` 15 A2 entries (22 in all: A3 5, A4 2). 116 commands (69
+Done and released: A2.1–A2.10 and A2.7a (0.10.2–0.10.12; A2.9, the triangle
+fix and A2.10 in 0.10.12). `ONE_DOOR_PENDING` holds 10 files,
+`knownMissing` 15 A2 entries (22 in all: A3 5, A4 2). 117 commands (70
 document, 47 server-only).
 
-**tools/list headroom is 20 bytes.** Measured 2026-09-29 on the A2.9 tree:
-166,020 (form) / 166,980 (url) / 166,884 bytes (link) for 116 tools
-against the 167,000 budget, so the next command fails
-`toolListBudget.test.ts` until the budget is raised (the per-step raise
-Petr agreed for A2) or something shrinks.
+**tools/list headroom is 124 bytes.** Measured 2026-09-29 on the A2.10
+tree: 167,916 (form) / 168,876 (url) / 168,780 bytes (link) for 117 tools
+against the 169,000 budget, so the next command needs the per-step raise
+Petr agreed for A2.
 
 Next, in order:
 
-1. **A2.10 Tables** — `TableChrome`, `TableInspector`, `TableCellEditor`;
-   new `table.cell.setText`; table defaults' gradient onto a command (drops
-   FillBody's patch fallback).
-2. **A2.11 Text** — the largest step: `text.edit` (typing as splice ops),
-   `text.setBoxTypography`, `text.style.apply` (reuse `textStyleFields`),
+1. **A2.11 Text** — the largest step: `text.edit` (typing as splice ops),
+   `text.setBoxTypography`, `text.style.apply` (reuse `textStyleFields`;
+   it takes tables too — the table Inspector's preset path),
    `text.replace`; every remaining Inspector patch (solid fill, stroke,
    image fill, blur, link, transition, background) onto `object.update` /
    `slide.*`, which takes Inspector.tsx off the exemption list.
-3. **A2.12 Tokens, components, server propagation** — `token.*` CRUD and
+2. **A2.12 Tokens, components, server propagation** — `token.*` CRUD and
    `token.seedDefaults` on the server (folders an agent creates have no
    tokens until someone opens them in a browser: no page-number style,
    `folderTokens` null), `text.style.createFromObject`, `component.promote`
@@ -399,9 +449,9 @@ Next, in order:
    `promoteSelectionToComponent`), text-style propagation server-side
    (DeckShell's TextStylePropagator), media copy when pasting between a
    master and a deck.
-4. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
+3. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
    exemption list, `FINISHED_PHASES += 'A2'`, ADR 0010 status, handoff note;
-   then the holistic tools/list size review (budget 167,000 today).
+   then the holistic tools/list size review (budget 169,000 today).
 
 Open, outside the steps:
 

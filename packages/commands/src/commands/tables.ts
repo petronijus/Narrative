@@ -15,6 +15,7 @@ import {
   addTable,
   deleteTableCol,
   deleteTableRow,
+  getTableCellYMap,
   getTableMergeInfo,
   insertTableCol,
   insertTableRow,
@@ -84,7 +85,7 @@ export const CellRangeSchema = z
   .strictObject({ from: CellAddressSchema, to: CellAddressSchema })
   .describe('Inclusive rectangle of cells between two corners')
 
-type CellRange = z.infer<typeof CellRangeSchema>
+export type CellRange = z.infer<typeof CellRangeSchema>
 
 // ---------------------------------------------------------------------------
 // Style schemas, derived from the shared table schemas (colour-input variant:
@@ -144,6 +145,11 @@ const CELL_NON_STYLE = new Set([
   'mergeOriginC',
   'border',
 ])
+
+/** The fields a cell can override (what table.style.cell / range set). */
+const CELL_STYLE_KEYS: ReadonlySet<string> = new Set(
+  Object.keys(InputTableCell.shape).filter((key) => !CELL_NON_STYLE.has(key)),
+)
 
 export const CellStyleInputSchema = partialOf(InputTableCell, CELL_NON_STYLE, true)
   .refine(nonEmpty, { message: 'Pass at least one style field' })
@@ -211,7 +217,7 @@ function requireCell(t: ResolvedTable, cell: CellAddress, what = 'cell'): void {
   }
 }
 
-function normalizedRange(
+export function normalizedRange(
   t: ResolvedTable,
   range: CellRange,
 ): { r0: number; c0: number; r1: number; c1: number } {
@@ -431,6 +437,49 @@ function trackCommands(axis: 'row' | 'col') {
   })
   return [insertCmd, deleteCmd]
 }
+
+export const tableSetSize = defineCommand({
+  ...tableEditor,
+  id: 'table.setSize',
+  idempotent: true,
+  title: 'Set table size',
+  description:
+    'Give a table exactly `rows` x `cols` cells (pass either or both): rows are added or removed at the bottom, ' +
+    'columns at the right, and the table grows or shrinks with them (each new one as big as the current average). ' +
+    'Removed cells lose their text. To add or remove at a position use table.row.* / table.col.*.',
+  input: z
+    .strictObject({
+      slide: SlideRefSchema,
+      table: TableIdSchema,
+      rows: TrackCount.optional(),
+      cols: TrackCount.optional(),
+    })
+    .refine((v) => v.rows !== undefined || v.cols !== undefined, {
+      message: 'Pass `rows`, `cols` or both',
+    }),
+  output: SizeOutput,
+  implementedWith: ['insertTableRow', 'deleteTableRow', 'insertTableCol', 'deleteTableCol'],
+  examples: [
+    {
+      title: 'Make the table 4 rows by 5 columns',
+      input: { slide: 's1', table: 'tbl1', rows: 4, cols: 5 },
+    },
+    { title: 'Keep only the first two rows', input: { slide: 's1', table: 'tbl1', rows: 2 } },
+  ],
+  handler(ctx, input) {
+    const deck = requireDeck(ctx)
+    const t = resolveTable(deck, input.slide, input.table)
+    if (input.rows !== undefined) {
+      for (let n = t.rows; n < input.rows; n++) insertTableRow(t.objects, t.id, -1)
+      for (let n = t.rows; n > input.rows; n--) deleteTableRow(t.objects, t.id, n - 1)
+    }
+    if (input.cols !== undefined) {
+      for (let n = t.cols; n < input.cols; n++) insertTableCol(t.objects, t.id, -1)
+      for (let n = t.cols; n > input.cols; n--) deleteTableCol(t.objects, t.id, n - 1)
+    }
+    return sizeOf(t.map)
+  },
+})
 
 // ---------------------------------------------------------------------------
 // Track sizes
@@ -683,6 +732,29 @@ export const tableStyleRange = defineCommand({
   },
 })
 
+/**
+ * Remove the given fields from every cell's own overrides (merged-away
+ * cells too), so the table default shows everywhere. Fields a cell cannot
+ * override (fontFamily, the default grid line, …) are ignored.
+ */
+export function clearCellOverrides(
+  objects: ObjectsMutationContext,
+  tableId: string,
+  size: { rows: number; cols: number },
+  fields: Iterable<string>,
+): void {
+  const keys = [...new Set(fields)].filter((key) => CELL_STYLE_KEYS.has(key))
+  if (keys.length === 0) return
+  const clear = Object.fromEntries(keys.map((key) => [key, undefined])) as CellStylePatch
+  for (let r = 0; r < size.rows; r++) {
+    for (let c = 0; c < size.cols; c++) {
+      const cell = getTableCellYMap(objects, tableId, r, c)
+      if (cell !== null && keys.some((key) => cell.has(key)))
+        setTableCellStyle(objects, tableId, r, c, clear)
+    }
+  }
+}
+
 export const tableStyleTable = defineCommand({
   ...tableEditor,
   id: 'table.style.table',
@@ -691,14 +763,19 @@ export const tableStyleTable = defineCommand({
   description:
     'Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, ' +
     'text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. ' +
-    'Cell overrides set with table.style.cell/range still win.',
+    'Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells ' +
+    'that have their own gradient, also pass "fillStyle": null.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,
     style: TableDefaultsPatchSchema,
+    overrideCells: z
+      .boolean()
+      .optional()
+      .describe("Also remove these fields from every cell's own overrides"),
   }),
   output: EmptyOutput,
-  implementedWith: ['setTableDefaultsPatch'],
+  implementedWith: ['setTableDefaultsPatch', 'setTableCellStyle', 'getTableCellYMap'],
   examples: [
     {
       title: 'Set the whole table in 20 px Inter, centred',
@@ -708,10 +785,16 @@ export const tableStyleTable = defineCommand({
         style: { fontFamily: 'Inter', fontSize: 20, align: 'center' },
       },
     },
+    {
+      title: 'Give every cell a light grey fill, replacing cell fills',
+      input: { slide: 's1', table: 'tbl1', style: { fill: '#f2f2f2' }, overrideCells: true },
+    },
   ],
   handler(ctx, input) {
     const deck = requireDeck(ctx)
     const t = resolveTable(deck, input.slide, input.table)
+    if (input.overrideCells === true)
+      clearCellOverrides(t.objects, t.id, t, Object.keys(input.style))
     setTableDefaultsPatch(t.objects, t.id, input.style as Partial<TableDefaults>)
     return {}
   },
@@ -865,6 +948,7 @@ export const tableCommands = [
   tableInsert,
   ...trackCommands('row'),
   ...trackCommands('col'),
+  tableSetSize,
   resizeCommand('col'),
   resizeCommand('row'),
   tableMerge,

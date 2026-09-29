@@ -21,21 +21,42 @@
  * the wrapper div *before* the contenteditable inside TextEditOverlay
  * sees the key. Plain Enter (and Shift+Enter) fall through so the
  * user can compose multi-paragraph text inside a cell — same as a
- * regular text box.
+ * regular text box. Moving past the last row appends one through
+ * `table.row.insert` (the editor writes through commands, ADR 0010); the
+ * typing itself is TextEditOverlay's binding (A2.11).
+ *
+ * Each cell gets its own TextEditOverlay (keyed by the cell): the overlay
+ * builds its DOM and takes focus when it mounts, so reusing one instance
+ * across cells showed the previous cell's text over the new cell's body —
+ * and the first keystroke's diff then wrote that text into the new cell.
  */
 
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import * as Y from 'yjs'
-import { type ObjectsMutationContext, insertTableRow } from '@narrative/slide-model'
+import { yMapToPlainObject, type ObjectsMutationContext } from '@narrative/slide-model'
 import { isTokenRef, type TableObject, type TextObject } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { TextEditOverlay } from './TextEditOverlay.js'
 import { DEFAULT_FONT_STACK } from '../renderer/objectRenderers/tableRenderer.js'
+import { useCommand } from '../state/useCommand.js'
 
 export interface TableCellEditorProps {
   table: TableObject
+  /** The slide the table is on (commands address it). */
+  slideId: string
   mutationCtx: ObjectsMutationContext
+}
+
+/**
+ * The table as the document holds it right now. The slide snapshot the
+ * editor renders from arrives a frame after a change (rAF-batched), so a
+ * row this editor has just appended is in the document but not yet in the
+ * `table` prop.
+ */
+function liveTable(ctx: ObjectsMutationContext, tableId: string): TableObject | null {
+  const map = ctx.objects.toArray().find((m) => m.get('id') === tableId)
+  return map === undefined ? null : yMapToPlainObject<TableObject>(map)
 }
 
 function hexResolve(n: number | TokenRef | undefined, fallback: number): number {
@@ -114,30 +135,37 @@ function localToWorld(table: TableObject, lx: number, ly: number): { x: number; 
   return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos }
 }
 
-export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
+export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditorProps) {
   const { active, setActive, beginEdit, endEdit } = useTableEdit()
-  const mutationCtxRef = useRef(mutationCtx)
-  mutationCtxRef.current = mutationCtx
+  const command = useCommand()
 
   // Resolve the target cell + its Y.Text body + bounding box. Returns
   // null when the editor shouldn't mount (no active cell, wrong table,
   // editing flag off, cell missing).
   const binding = useMemo(() => {
     if (active === null || !active.editing || active.tableId !== table.id) return null
-    const origin = resolveOrigin(table, active.r, active.c)
-    const cell = table.rows[origin.r]?.[origin.c]
+    // A cell the snapshot does not have yet (a row appended by Tab a
+    // moment ago) is read from the document, so the editor moves into it
+    // in this render and no keystroke falls between two editors.
+    const source =
+      table.rows[active.r]?.[active.c] !== undefined
+        ? table
+        : (liveTable(mutationCtx, table.id) ?? table)
+    const origin = resolveOrigin(source, active.r, active.c)
+    const cell = source.rows[origin.r]?.[origin.c]
     if (cell === undefined) return null
     if (!(cell.text instanceof Y.Text)) return null
-    const local = cellLocalBbox(table, origin.r, origin.c)
+    const local = cellLocalBbox(source, origin.r, origin.c)
     if (local === null) return null
-    return { r: origin.r, c: origin.c, cell, yText: cell.text, local }
-  }, [active, table])
+    return { table: source, r: origin.r, c: origin.c, cell, yText: cell.text, local }
+  }, [active, table, mutationCtx])
 
   // Synthetic TextObject driving TextEditOverlay. `obj.id` is the
   // `${tableId}#${r},${c}` form SceneGraph.setTextNodeFaded walks back
   // to the per-cell HTMLText.
   const synthetic = useMemo<TextObject | null>(() => {
     if (binding === null) return null
+    const table = binding.table
     const d = table.defaults
     const cell = binding.cell
     const padding = cell.padding ?? d.padding
@@ -173,9 +201,10 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
       fontFamily: d.fontFamily ?? DEFAULT_FONT_STACK,
     }
     return obj
-  }, [binding, table])
+  }, [binding])
 
   if (binding === null || synthetic === null) return null
+  const current = binding.table
 
   // Cell nav — intercept Tab / Shift+Tab BEFORE TextEditOverlay's
   // onKeyDown sees them. `onKeyDownCapture` fires on the wrapper
@@ -188,23 +217,26 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
     setActive({ tableId: table.id, r: nr, c: nc })
     beginEdit({ tableId: table.id, r: nr, c: nc })
   }
+  /** Append a row to move into; false when it could not be added (the table is at its row limit, or gone). */
+  const appendRow = (): boolean =>
+    command.tryRun('table.row.insert', { slide: slideId, table: table.id }) !== null
   const tabNext = (): void => {
-    const cols = table.colWidths.length
-    const rows = table.rows.length
+    const cols = current.colWidths.length
+    const rows = current.rows.length
     let nr = binding.r
     let nc = binding.c + 1
     if (nc >= cols) {
       nc = 0
       nr += 1
       if (nr >= rows) {
-        insertTableRow(mutationCtxRef.current, table.id, -1)
+        if (!appendRow()) return
         nr = rows
       }
     }
     moveTo(nr, nc)
   }
   const tabPrev = (): void => {
-    const cols = table.colWidths.length
+    const cols = current.colWidths.length
     let nr = binding.r
     let nc = binding.c - 1
     if (nc < 0) {
@@ -215,10 +247,10 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
     moveTo(nr, nc)
   }
   const enterRow = (): void => {
-    const rows = table.rows.length
+    const rows = current.rows.length
     let nr = binding.r + 1
     if (nr >= rows) {
-      insertTableRow(mutationCtxRef.current, table.id, -1)
+      if (!appendRow()) return
       nr = rows
     }
     moveTo(nr, binding.c)
@@ -248,7 +280,12 @@ export function TableCellEditor({ table, mutationCtx }: TableCellEditorProps) {
         }
       }}
     >
-      <TextEditOverlay obj={synthetic} mutationCtx={mutationCtx} onEnd={endEdit} />
+      <TextEditOverlay
+        key={synthetic.id}
+        obj={synthetic}
+        mutationCtx={mutationCtx}
+        onEnd={endEdit}
+      />
     </div>
   )
 }

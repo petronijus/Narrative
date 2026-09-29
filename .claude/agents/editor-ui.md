@@ -58,10 +58,15 @@ Diagnosed while fixing the survey's bugs; each cost a debugging round. See
   `batch` (atomic). Since A2.1 (2026-09-28) the one-door lint rule
   (`apps/web/eslint.one-door.js`) fails `pnpm lint` on a slide-model writer
   import or a `.transact()` call anywhere in `apps/web/src`, except in the
-  files listed in `ONE_DOOR_PENDING` (13 on 2026-09-29) — that list only
+  files listed in `ONE_DOOR_PENDING` (10 after A2.10 on 2026-09-29; 13
+  after A2.9) — that list only
   shrinks. A capability with no command yet gets one in
   `packages/commands`; it never gets a direct write. (Was, at A0: a
-  recommendation, with the lint rule still to come.)
+  recommendation, with the lint rule still to come.) A `pnpm lint` that
+  dies with `ERR_UNKNOWN_FILE_EXTENSION` on `slideModelExports.ts` before
+  linting anything is a Node without type stripping (Ubuntu 26.04's distro
+  Node, 2026-09-29), not a one-door hit; run
+  `NODE_OPTIONS="--import=tsx" pnpm lint` (SETUP.md).
 - **Every transaction names its origin.** Wrap a multi-write gesture in
   `doc.transact(fn, LOCAL_ORIGIN)` — an origin-less wrapper re-attributes the
   nested slide-model writes to `null` and drops them from undo. A bare
@@ -144,3 +149,43 @@ animation section dispatch commands only; details in
   writes only values above 0 (delays up to 600 s).
 - e2e: `apps/web/e2e/animation-commands.spec.ts`; trigger-picker logic:
   `ui/animationTriggers.test.ts`.
+
+## Tables: chrome, table Inspector, cell editor (A2.10, 2026-09-29)
+
+`TableChrome.tsx`, `TableInspector.tsx` and `TableCellEditor.tsx` dispatch
+commands only (off `ONE_DOOR_PENDING`); decisions in
+`docs/plans/a2-extraction.md` (A2.10).
+
+- **Every chrome frame is absolute from the pointer-down snapshot**, so a
+  frame that arrives twice changes nothing: move handle = `object.update`;
+  boundary drag = `table.resizeColumn` / `table.resizeRow` with
+  `keepTableSize`, the dragged track clamped so both keep `MIN_TRACK_PX`;
+  add / remove handles and the Rows / Columns steppers = `table.setSize`
+  with the count wanted (≤ `MAX_TABLE_TRACKS`). Both constants come from
+  `@narrative/commands` — do not redefine them in the UI. A gesture is one
+  undo step only through the UndoManager's capture window (same weakness as
+  other drags).
+- **The Inspector routes** (range, else the active cell's merge origin, else
+  the table) and the commands write: `table.style.cell` / `range` / `table`,
+  the table-wide fill with `overrideCells: true` (never clear cell overrides
+  in the component), `object.fill.gradient` for every gradient (whole table
+  or `cells`), `table.border.preset`, `table.merge` / `split`, `text.format`
+  on the cell for the format toggles' whole-cell fallback. A Typography
+  change that writes cells and defaults is one `command.group`. The text
+  style preset path is still the Inspector's `applyTextStyle` until A2.11
+  (`text.style.apply` should take tables).
+- **FillBody requires `setGradient`**; the seeded-patch fallback and the
+  `seedGradientStops` export from `@narrative/commands` are gone.
+- **One TextEditOverlay per cell** (`key={synthetic.id}`). The overlay
+  builds its DOM and takes focus on mount; a single instance reused across
+  cells showed the previous cell's text, and the first keystroke's diff
+  wrote that text into the new cell (fixed in A2.10).
+- **A cell the snapshot lacks is read from the Y doc.** Tab / Cmd+Enter
+  past the last row appends through `table.row.insert` (`tryRun`; at the
+  row limit it stays put), but the slide snapshot is rAF-batched, so for a
+  frame the new row exists only in the document. `TableCellEditor` reads it
+  from there (`liveTable`) so the editor moves in the same render;
+  otherwise it closed for a frame and keys typed at once were lost.
+- The typing itself is still TextEditOverlay's binding (A2.11).
+- e2e: `apps/web/e2e/table-commands.spec.ts` (drag, handles, stepper,
+  gradients, Typography on a column, both Tab bugs).

@@ -6,7 +6,7 @@ something's broken — file an issue, don't paper over it.
 
 ## Prerequisites
 
-- **Node.js ≥ 22.18** (`node -v`; `engines` in `package.json` since A2.1, 2026-09-28 — `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default from 22.18; was ≥ 22)
+- **Node.js ≥ 22.18 built with TypeScript support** (`node -v`; `engines` in `package.json` since A2.1, 2026-09-28 — `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default from 22.18; was ≥ 22). The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
 - **pnpm ≥ 9** — recommended via Corepack: `corepack enable && corepack prepare pnpm@latest --activate`
 - **Docker** with the Compose plugin (`docker compose version`)
 - **Linux only**: file-watcher headroom for the dev stack
@@ -184,6 +184,11 @@ Dev notes:
   # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
   ```
   Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
+- **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. The version satisfies `engines`, so nothing warns. The lint-staged pre-commit hook runs `eslint --fix` on staged `.ts` / `.tsx` files and fails the same way. Working around it by loading `tsx` as the loader:
+  ```bash
+  NODE_OPTIONS="--import=tsx" pnpm lint
+  ```
+  exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29; the repo does not set this anywhere — a Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5 — both load the config) should remove the need for it, but has not been tried on this machine.
 
 ## Dev is not production
 

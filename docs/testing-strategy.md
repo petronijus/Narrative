@@ -1,28 +1,49 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-09-29 (was 2026-09-28; before that 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09).
-> Current state, **measured** with `pnpm -r test` on 2026-09-29 (A2.9 +
-> triangle-geometry working tree on top of `669d151` / v0.10.11), all green
-> in the docs sweep's run. `pnpm typecheck` green and `pnpm lint` 0 errors
-> on the same tree (reported with the change, not re-run by the sweep):
+> Last updated 2026-09-29, after A2.10 (was 2026-09-29 after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09).
+> Current state, **measured** with `pnpm -r test` on 2026-09-29 (the A2.10
+> tree, uncommitted at the time, on top of `c305738`), all green in the docs sweep's
+> run. `pnpm lint` re-run by the sweep: 0 errors, 219 warnings (animation
+> 2, server 7, web 210) — **only with `NODE_OPTIONS="--import=tsx"`** on
+> `petronijus-PC`, whose Ubuntu 26.04 Node cannot strip types (SETUP.md,
+> "Common first-run failures"). `pnpm typecheck` reported green with the
+> change, not re-run by the sweep:
 >
 > | Package                | Files   | Passed    | Skipped |
 > | ---------------------- | ------- | --------- | ------- |
 > | `apps/server`          | 87      | 1,191     | 1       |
-> | `apps/web`             | 76      | 699       | 28      |
-> | `packages/commands`    | 27      | 919       | 0       |
+> | `apps/web`             | 76      | 696       | 28      |
+> | `packages/commands`    | 27      | 941       | 0       |
 > | `packages/slide-model` | 28      | 400       | 0       |
 > | `packages/shared`      | 10      | 199       | 0       |
 > | `packages/animation`   | 14      | 149       | 0       |
 > | `apps/video-worker`    | 1       | 12        | 1       |
-> | **Total**              | **243** | **3,569** | **30**  |
+> | **Total**              | **243** | **3,588** | **30**  |
+>
+> (3,618 with the 30 skipped; CLAUDE.md quotes the passed count. After
+> A2.9, same day: 3,569 passed — web 699, commands 919. A2.10's net +19: commands +22
+> (`table.setSize`, `overrideCells`, table gradients, two more replayed
+> eval scenarios), web −3 (`oneDoor.test.ts` checks each `ONE_DOOR_PENDING`
+> file, and three left the list); no test file added or removed.)
+>
+> Added in A2.10 (2026-09-29): `table.setSize` / `table.style.table`
+> `overrideCells` contract tests in `packages/commands`
+> `commands/tables.test.ts`, table cases for `object.fill.gradient` in
+> `commands/appearance.test.ts`; the e2e `table-commands.spec.ts` (10 tests:
+> boundary drag as one undo step, add-column handle, move handle, Rows
+> stepper, whole-table and column gradients, Typography on a column, Image
+> fill written only with a picture, Tab into the next cell, Tab past the
+> last cell with typing at once — 30/30 over 3 repeats on 2026-09-29; one
+> earlier repeat run lost a page load to a Vite HMR reload while files were
+> being edited, not a test failure); eval scenarios `table-resize-recolour` and
+> `table-header-gradient` (recorded, replayed).
 >
 > (2026-09-28, MCP tool-list compaction on top of `ee705da` / v0.10.0: 225
 > files, 3,205 passed, 32 skipped — server 80 / 1,133, web 75 / 686 + 30
 > skipped, commands 21 / 645, slide-model 27 / 392, shared 8 / 193,
 > animation 13 / 144. The web skips fell from 30 to 28 in 0.10.2 (A2.2):
 > the two `SlidesPanel.test.tsx` skips "ArrowDown moves to next slide" /
-> "ArrowUp moves to previous slide" were removed; A2.9 changed no skip.)
+> "ArrowUp moves to previous slide" were removed; A2.9 and A2.10 changed no skip.)
 >
 > Added in A2.9 + the triangle fix (2026-09-29): `packages/shared`
 > `animationTiming.test.ts` (`layoutAnimationSteps`) and
@@ -42,18 +63,22 @@
 >
 > (At A0 close, 2026-09-26: 167 files, 2,188 passed — server 36 / 497,
 > web 69 / 639, commands 13 / 328, slide-model 381, shared 187.)
-> Plus **61 e2e spec files** in `apps/web/e2e/` (counted 2026-09-29; was
-> 53 at A1 and 50 at A0 — A1 added `access-tokens`, `agent-activity`,
+> Plus **62 e2e spec files** in `apps/web/e2e/` (counted 2026-09-29 after
+> A2.10; was 53 at A1 and 50 at A0 — A1 added `access-tokens`, `agent-activity`,
 > `agent-confirm`; A2 added `agent-upload-session`, `guides`,
 > `inspector-appearance-commands`, `mcp-oauth-consent`, `object-clipboard`,
-> `path-editing`, `slide-clipboard` and, in A2.9, `animation-commands`),
+> `path-editing`, `slide-clipboard`, in A2.9 `animation-commands` and in
+> A2.10 `table-commands`),
 > **3 server integration test files** against a real Postgres
 > (`pnpm --filter @narrative/server test:integration`, not part of
-> `pnpm test`), and the **agent eval suite** (`pnpm agent:eval`, 34
-> scenarios, 28 of them replayed for free; the last full live run recorded
+> `pnpm test`), and the **agent eval suite** (`pnpm agent:eval`, 36
+> scenarios, 30 of them replayed for free; the last full live run recorded
 > here is 14/14 on 2026-09-28, when the suite had 14 scenarios — the
-> 34-scenario suite has not been run in full; A2.9's three animation
-> scenarios passed 3/3 live on 2026-09-29 — see below).
+> 36-scenario suite has not been run in full; A2.9's three animation
+> scenarios passed 3/3 live on 2026-09-29, and A2.10's four table / gradient
+> scenarios (`table-resize-recolour`, `table-header-gradient`,
+> `table-merge-add-column`, `badge-gradient`) 4/4 live on 2026-09-29 for
+> $0.55 — see below).
 >
 > (`packages/commands` was 364 before the lock policy was removed later on
 > 2026-09-26 — its locked re-run of every example went with it; was 1,542
@@ -88,9 +113,10 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >   (`hocuspocus/awareness*.test.ts`), the Hocuspocus auth-context regression
 >   over a real WebSocket (`hocuspocus/authenticate.context.test.ts`), Sentry
 >   scrubbing, and **`mcp/toolListBudget.test.ts`** — `tools/list` must stay
->   ≤ 167,000 bytes (≤ 16,000 per tool); it measured 166,020 (form mode) to
->   166,980 bytes (url mode) for 116 tools on 2026-09-29 — 20 bytes of
->   headroom (the budget is raised step by step during A2 and reviewed as a
+>   ≤ 169,000 bytes (≤ 16,000 per tool); it measured 167,916 (form mode) to
+>   168,876 bytes (url mode) for 117 tools on 2026-09-29 after A2.10 — 124
+>   bytes of headroom (was ≤ 167,000 and 166,020–166,980 bytes for 116
+>   tools after A2.9, same day; the budget is raised step by step during A2 and reviewed as a
 >   whole at A2.13; was ≤ 132,000 and 128,349–129,309 bytes on 2026-09-28,
 >   ≤ 160,000 and 148,207–151,119 on 2026-09-27, before the shared field
 >   vocabulary). Its
@@ -110,7 +136,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >   URL-taking command), the agent surface (`agentSurface.test.ts`), paging,
 >   playbooks (`playbooks/playbooks.test.ts`), and the **agent eval replay**
 >   (`agentEvalReplay.test.ts`: 11 recorded scenarios replayed in memory at A1,
->   28 on 2026-09-29; no model, no server).
+>   28 after A2.9 and 30 after A2.10 on 2026-09-29; no model, no server).
 > - **Web**: token and agent-presence state, the Agent activity model,
 >   `editor.show`, and e2e for Access tokens, Agent activity and the
 >   confirmation page.
@@ -175,7 +201,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 | Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; atomic batches; manifest current | Strong (919 + route guard)           |
 | Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                        | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                              | Strong (1,191)                       |
 | Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                     | Drizzle stores against the real local Postgres: run store, list paging, OAuth store                                                                                                        | New in A1 (3 files, opt-in)          |
-| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (34 scenarios, 28 replayed) |
+| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (36 scenarios, 30 replayed) |
 | Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                     | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                   | OK                                   |
 | Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                           | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                        | Was bloated; cleaned up              |
 | Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                   | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`              | Strong (ADR 0009)                    |

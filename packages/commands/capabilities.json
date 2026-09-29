@@ -814,7 +814,7 @@
       "id": "object.fill.gradient",
       "domain": "object",
       "title": "Gradient fill",
-      "description": "Fill shapes (rectangle, ellipse, triangle, polygon, path) with a linear or radial gradient. Without `stops` a new gradient starts from the shape's own fill colour and a darker tint of it (as the editor does), and a shape that already has a gradient keeps its stops — so switching linear ↔ radial or changing only `angle` / `center` keeps the colours. `angle` (linear, degrees clockwise, 0 = top to bottom, 90 = left to right) and `center` (radial, 0..1 of the shape) keep their current values when omitted. A fill linked to a folder colour token is unlinked to its current colour. Back to a solid fill: object.update with \"fillStyle\": null.",
+      "description": "Fill shapes (rectangle, ellipse, triangle, polygon, path) or tables with a linear or radial gradient. Without `stops` a new gradient starts from the shape's own fill colour and a darker tint of it (as the editor does), and a shape that already has a gradient keeps its stops — so switching linear ↔ radial or changing only `angle` / `center` keeps the colours. `angle` (linear, degrees clockwise, 0 = top to bottom, 90 = left to right) and `center` (radial, 0..1 of the shape) keep their current values when omitted. A fill linked to a folder colour token is unlinked to its current colour. A table gets the gradient as the fill of every cell (replacing cells' own gradients); with `cells` (one table in `objects`) only those cells get it, each starting from its own colour. Back to a solid fill: object.update with \"fillStyle\": null (for table cells, table.style.* with \"fillStyle\": null).",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1482,6 +1482,18 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "table.setSize",
+      "domain": "table",
+      "title": "Set table size",
+      "description": "Give a table exactly `rows` x `cols` cells (pass either or both): rows are added or removed at the bottom, columns at the right, and the table grows or shrinks with them (each new one as big as the current average). Removed cells lose their text. To add or remove at a position use table.row.* / table.col.*.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "table.split",
       "domain": "table",
       "title": "Split merged cell",
@@ -1520,7 +1532,7 @@
       "id": "table.style.table",
       "domain": "table",
       "title": "Style a whole table",
-      "description": "Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. Cell overrides set with table.style.cell/range still win.",
+      "description": "Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells that have their own gradient, also pass \"fillStyle\": null.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1594,7 +1606,8 @@
       "capability": "text.style.apply",
       "phase": "A2",
       "source": "web",
-      "where": "apps/web/src/ui/Inspector.tsx (applyTextStyle)"
+      "where": "apps/web/src/ui/Inspector.tsx (applyTextStyle)",
+      "note": "tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the resolved fields with textStyleId into the table's defaults (table.style.table)"
     },
     {
       "capability": "text.style.createFromObject",

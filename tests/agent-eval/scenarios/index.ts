@@ -39,6 +39,8 @@ import cardSoftShadow from './cardSoftShadow.js'
 import footerPageNumber from './footerPageNumber.js'
 import agendaStepTiming from './agendaStepTiming.js'
 import photoAnimationsHandOver from './photoAnimationsHandOver.js'
+import tableResizeRecolour from './tableResizeRecolour.js'
+import tableHeaderGradient from './tableHeaderGradient.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -75,6 +77,8 @@ export const SCENARIOS: readonly AnyScenario[] = [
   footerPageNumber,
   agendaStepTiming,
   photoAnimationsHandOver,
+  tableResizeRecolour,
+  tableHeaderGradient,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

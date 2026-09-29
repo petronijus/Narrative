@@ -83,8 +83,9 @@ at the end of agentic-layer phase A0. Was Czech.)_
    (ADR 0003, extended by ADR 0010). Slide-model mutations run inside
    `doc.transact(..., origin)`; UI and agents reach them through
    `packages/commands`. (Since A2.1, 2026-09-28, the one-door lint rule
-   bans slide-model writers and `.transact()` in `apps/web/src`; 13 files
-   are still exempt as of A2.9, 2026-09-29 — `ONE_DOOR_PENDING` in
+   bans slide-model writers and `.transact()` in `apps/web/src`; 10 files
+   are still exempt after A2.10, 2026-09-29 (13 after A2.9) —
+   `ONE_DOOR_PENDING` in
    `apps/web/eslint.one-door.js`. Was, at A0: the editor called slide-model
    directly.)
 2. **The object type registry is the plugin boundary.** Every object:

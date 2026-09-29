@@ -47,8 +47,10 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * object.effects.shadow and object.slideNumber.set (≈ 4.7 KB together).
  * A2.9 (2026-09-29): 164,000 → 167,000 for animation.retime 1.8 KB and
  * animation.retarget 1.2 KB.
+ * A2.10 (2026-09-29): 167,000 → 169,000 for table.setSize, table.style.table
+ * `overrideCells` and object.fill.gradient `cells` (≈ 1.9 KB together).
  */
-export const TOOL_LIST_BUDGET_BYTES = 167_000
+export const TOOL_LIST_BUDGET_BYTES = 169_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

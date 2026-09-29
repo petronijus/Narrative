@@ -55,6 +55,9 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     phase: 'A2',
     source: 'web',
     where: 'apps/web/src/ui/Inspector.tsx (applyTextStyle)',
+    note:
+      'tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the ' +
+      "resolved fields with textStyleId into the table's defaults (table.style.table)",
   },
   {
     capability: 'text.style.createFromObject',

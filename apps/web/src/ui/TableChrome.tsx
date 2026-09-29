@@ -27,6 +27,13 @@
  *     contenteditable overlay's focus model),
  *   - role isn't viewer.
  *
+ * Every gesture dispatches commands (ADR 0010), one per pointer move and
+ * each absolute from the pointer-down snapshot, so a frame that arrives
+ * twice changes nothing: the move handle `object.update`, a boundary
+ * `table.resizeColumn` / `table.resizeRow` with `keepTableSize`, the add /
+ * remove handles `table.setSize`. The undo manager's capture window still
+ * merges a gesture into one step.
+ *
  * Lives in slide-world coords so it tracks the table's position, but
  * every visual dimension (axis thickness, corner handle size, dividers,
  * fonts) is multiplied by `inv = 1 / zoom` so the chrome stays a constant
@@ -35,23 +42,16 @@
  */
 
 import { useMemo, useRef, useState } from 'react'
-import {
-  type ObjectsMutationContext,
-  deleteTableCol,
-  deleteTableRow,
-  insertTableCol,
-  insertTableRow,
-  setTableColWidth,
-  setTableRowHeight,
-  updateObject,
-} from '@narrative/slide-model'
+import { MAX_TABLE_TRACKS, MIN_TRACK_PX } from '@narrative/commands'
 import type { TableObject } from '@narrative/shared'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useCommand } from '../state/useCommand.js'
 
 export interface TableChromeProps {
   table: TableObject
-  mutationCtx: ObjectsMutationContext
+  /** The slide the table is on — every gesture is a command addressed to it. */
+  slideId: string
   isViewer: boolean
 }
 
@@ -110,9 +110,10 @@ function cumulativeRows(table: TableObject): number[] {
   return out
 }
 
-export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) {
+export function TableChrome({ table, slideId, isViewer }: TableChromeProps) {
   const { active, setRange } = useTableEdit()
   const { zoom } = useZoomLevel()
+  const command = useCommand()
 
   // Suppress chrome while a cell is being edited — the contenteditable
   // overlay owns focus and the chrome's hover affordances would just
@@ -143,8 +144,6 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
   // Refs that stay stable across renders for the drag handlers.
   const tableRef = useRef(table)
   tableRef.current = table
-  const ctxRef = useRef(mutationCtx)
-  ctxRef.current = mutationCtx
 
   if (!visible) return null
 
@@ -170,10 +169,11 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     const onMove = (ev: PointerEvent): void => {
       const { dx, dy } = toWorldDelta(ev.clientX - startScreenX, ev.clientY - startScreenY)
-      updateObject(ctxRef.current, tableRef.current.id, {
-        x: startX + dx,
-        y: startY + dy,
-      } as never)
+      command.tryRun('object.update', {
+        slide: slideId,
+        object: tableRef.current.id,
+        patch: { x: startX + dx, y: startY + dy },
+      })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
@@ -183,93 +183,34 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
     window.addEventListener('pointerup', onUp)
   }
 
-  /** Column boundary drag — redistributes width between col `i` and
-   *  col `i+1` so the total stays constant (Office semantics). */
-  const onColBoundaryPointerDown =
-    (i: number) =>
-    (e: React.PointerEvent): void => {
-      e.preventDefault()
-      e.stopPropagation()
-      const startScreenX = e.clientX
-      const startW = [...tableRef.current.colWidths]
-      const wA = startW[i] ?? 0
-      const wB = startW[i + 1] ?? 0
-      // The proportions vector → world-px ratio: a 1-world-px delta on
-      // the boundary equals `colSum / table.width` of "proportion units".
-      const colSum = startW.reduce((a, b) => a + b, 0) || 1
-      const ratio = colSum / (tableRef.current.width || 1)
-      ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
-      const onMove = (ev: PointerEvent): void => {
-        const { dx } = toWorldDelta(ev.clientX - startScreenX, 0)
-        const propDelta = dx * ratio
-        const min = 4 // proportion-unit minimum so a column can't collapse to zero
-        const newA = Math.max(min, wA + propDelta)
-        const newB = Math.max(min, wB - propDelta)
-        // Mutate both ends in a single transact (two ops; the CRDT batch
-        // is the user-visible undo step).
-        setTableColWidth(ctxRef.current, tableRef.current.id, i, newA)
-        setTableColWidth(ctxRef.current, tableRef.current.id, i + 1, newB)
-      }
-      const onUp = (): void => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    }
-
-  /** Row boundary drag — mirror of column boundary. */
-  const onRowBoundaryPointerDown =
-    (i: number) =>
-    (e: React.PointerEvent): void => {
-      e.preventDefault()
-      e.stopPropagation()
-      const startScreenY = e.clientY
-      const startH = [...tableRef.current.rowHeights]
-      const hA = startH[i] ?? 0
-      const hB = startH[i + 1] ?? 0
-      const rowSum = startH.reduce((a, b) => a + b, 0) || 1
-      const ratio = rowSum / (tableRef.current.height || 1)
-      ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
-      const onMove = (ev: PointerEvent): void => {
-        const { dy } = toWorldDelta(0, ev.clientY - startScreenY)
-        const propDelta = dy * ratio
-        const min = 4
-        const newA = Math.max(min, hA + propDelta)
-        const newB = Math.max(min, hB - propDelta)
-        setTableRowHeight(ctxRef.current, tableRef.current.id, i, newA)
-        setTableRowHeight(ctxRef.current, tableRef.current.id, i + 1, newB)
-      }
-      const onUp = (): void => {
-        window.removeEventListener('pointermove', onMove)
-        window.removeEventListener('pointerup', onUp)
-      }
-      window.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    }
-
-  /** Top-right ⫼ — drag horizontally to append / remove columns. */
-  const onAddColHandlePointerDown = (e: React.PointerEvent): void => {
+  /**
+   * Boundary drag between track `i` and `i + 1`: the two share their
+   * combined size and the table keeps its own (Office semantics). Each move
+   * sends track `i`'s new size in drawn px, clamped so neither track drops
+   * under MIN_TRACK_PX; `keepTableSize` takes the difference from track
+   * `i + 1`, so the frame is absolute however many arrive.
+   */
+  const startBoundaryDrag = (axis: 'col' | 'row', i: number, e: React.PointerEvent): void => {
     e.preventDefault()
     e.stopPropagation()
-    const startScreenX = e.clientX
-    const startCols = tableRef.current.colWidths.length
-    const avgColW = tableRef.current.width / Math.max(1, tableRef.current.colWidths.length)
-    let lastApplied = startCols
+    const isCol = axis === 'col'
+    const start = isCol ? e.clientX : e.clientY
+    const edges = isCol ? cumulativeCols(tableRef.current) : cumulativeRows(tableRef.current)
+    const sizeA = (edges[i + 1] ?? 0) - (edges[i] ?? 0)
+    const pair = (edges[i + 2] ?? 0) - (edges[i] ?? 0)
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     const onMove = (ev: PointerEvent): void => {
-      const { dx } = toWorldDelta(ev.clientX - startScreenX, 0)
-      // Cross half-a-column threshold to add/remove one.
-      const delta = Math.round(dx / Math.max(1, avgColW))
-      const targetCols = Math.max(1, startCols + delta)
-      while (lastApplied < targetCols) {
-        insertTableCol(ctxRef.current, tableRef.current.id, -1)
-        lastApplied += 1
-      }
-      while (lastApplied > targetCols) {
-        deleteTableCol(ctxRef.current, tableRef.current.id, lastApplied - 1)
-        lastApplied -= 1
-      }
+      const screen = (isCol ? ev.clientX : ev.clientY) - start
+      const { dx, dy } = toWorldDelta(isCol ? screen : 0, isCol ? 0 : screen)
+      const size = Math.min(pair - MIN_TRACK_PX, Math.max(MIN_TRACK_PX, sizeA + (isCol ? dx : dy)))
+      if (!(size >= MIN_TRACK_PX)) return // a pair too small to share
+      command.tryRun(isCol ? 'table.resizeColumn' : 'table.resizeRow', {
+        slide: slideId,
+        table: tableRef.current.id,
+        index: i,
+        size,
+        keepTableSize: true,
+      })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
@@ -279,27 +220,34 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
     window.addEventListener('pointerup', onUp)
   }
 
-  /** Bottom-left ☰ — drag vertically to append / remove rows. */
-  const onAddRowHandlePointerDown = (e: React.PointerEvent): void => {
+  /**
+   * Top-right ⫼ / bottom-left ☰ — drag to add or remove columns / rows at
+   * the end, one per average track size travelled (half a track rounds).
+   * Each move asks `table.setSize` for the count the pointer is at, so it
+   * is absolute; it is only sent when that count changes.
+   */
+  const startAddTrackDrag = (axis: 'col' | 'row', e: React.PointerEvent): void => {
     e.preventDefault()
     e.stopPropagation()
-    const startScreenY = e.clientY
-    const startRows = tableRef.current.rowHeights.length
-    const avgRowH = tableRef.current.height / Math.max(1, tableRef.current.rowHeights.length)
-    let lastApplied = startRows
+    const isCol = axis === 'col'
+    const start = isCol ? e.clientX : e.clientY
+    const t = tableRef.current
+    const startCount = isCol ? t.colWidths.length : t.rowHeights.length
+    const avg = (isCol ? t.width : t.height) / Math.max(1, startCount)
+    let lastApplied = startCount
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     const onMove = (ev: PointerEvent): void => {
-      const { dy } = toWorldDelta(0, ev.clientY - startScreenY)
-      const delta = Math.round(dy / Math.max(1, avgRowH))
-      const targetRows = Math.max(1, startRows + delta)
-      while (lastApplied < targetRows) {
-        insertTableRow(ctxRef.current, tableRef.current.id, -1)
-        lastApplied += 1
-      }
-      while (lastApplied > targetRows) {
-        deleteTableRow(ctxRef.current, tableRef.current.id, lastApplied - 1)
-        lastApplied -= 1
-      }
+      const screen = (isCol ? ev.clientX : ev.clientY) - start
+      const { dx, dy } = toWorldDelta(isCol ? screen : 0, isCol ? 0 : screen)
+      const delta = Math.round((isCol ? dx : dy) / Math.max(1, avg))
+      const target = Math.min(MAX_TABLE_TRACKS, Math.max(1, startCount + delta))
+      if (target === lastApplied) return
+      const out = command.tryRun('table.setSize', {
+        slide: slideId,
+        table: tableRef.current.id,
+        [isCol ? 'cols' : 'rows']: target,
+      })
+      if (out !== null) lastApplied = target
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
@@ -466,7 +414,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
         {table.colWidths.slice(0, -1).map((_, i) => (
           <div
             key={`bnd-${i}`}
-            onPointerDown={onColBoundaryPointerDown(i)}
+            onPointerDown={(e) => startBoundaryDrag('col', i, e)}
             style={{
               position: 'absolute',
               left: (colX[i + 1] ?? 0) - boundaryHit / 2,
@@ -529,7 +477,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
         {table.rowHeights.slice(0, -1).map((_, i) => (
           <div
             key={`rbnd-${i}`}
-            onPointerDown={onRowBoundaryPointerDown(i)}
+            onPointerDown={(e) => startBoundaryDrag('row', i, e)}
             style={{
               position: 'absolute',
               left: 0,
@@ -570,7 +518,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
         inv={inv}
         cursor="ew-resize"
         ariaLabel="Add or remove columns"
-        onPointerDown={onAddColHandlePointerDown}
+        onPointerDown={(e) => startAddTrackDrag('col', e)}
       >
         <span style={{ display: 'flex', gap: 2 }}>
           <span style={{ width: 2, height: 11, background: 'currentColor' }} />
@@ -585,7 +533,7 @@ export function TableChrome({ table, mutationCtx, isViewer }: TableChromeProps) 
         inv={inv}
         cursor="ns-resize"
         ariaLabel="Add or remove rows"
-        onPointerDown={onAddRowHandlePointerDown}
+        onPointerDown={(e) => startAddTrackDrag('row', e)}
       >
         <span
           style={{

@@ -54,9 +54,10 @@ them existed.)_
     (27 until A2.9 added the animation step id, 2026-09-29),
     stripped from every schema and said once in the instructions; guarded
     both ways by `mcp/vocabulary.test.ts`) under the size budget in
-    `mcp/toolListBudget.test.ts` (167,000 bytes for `tools/list`, 16,000 per
-    tool; measured 166,020–166,980 bytes for 116 tools on 2026-09-29
-    depending on the confirmation mode — 20 bytes of headroom. Was 132,000
+    `mcp/toolListBudget.test.ts` (169,000 bytes for `tools/list`, 16,000 per
+    tool; measured 167,916–168,876 bytes for 117 tools after A2.10 on
+    2026-09-29 depending on the confirmation mode — 124 bytes of headroom;
+    167,000 and 166,020–166,980 bytes for 116 tools after A2.9. Was 132,000
     and 128,349–129,309 bytes on 2026-09-28, 160,000 and 148–151 KB on
     2026-09-27. During A2 the budget rises step by step with each new
     command, itemised in the test's comment, and the sizes get one review

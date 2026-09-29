@@ -56,6 +56,14 @@ ffmpeg build that can't be installed either. On the Omarchy (Arch) desktop
 before, it was silently ignored). Whether the suite _passes_ with
 those set is unmeasured as of 2026-09-09; only that it starts.
 
+**`pnpm lint` needs help on this machine too.** The Ubuntu 26.04 build of
+Node (22.22.1) has no TypeScript support (`node -p process.features.typescript`
+→ `false`), and the ESLint config imports
+`packages/commands/src/parity/slideModelExports.ts`, so `pnpm lint` — and the
+lint-staged commit hook — stop with `ERR_UNKNOWN_FILE_EXTENSION` before linting
+anything. `NODE_OPTIONS="--import=tsx" pnpm lint` works (0 errors,
+2026-09-29); see SETUP.md.
+
 On macOS Playwright's bundled Chromium works without these variables
 (verified 2026-09-26). Every environment needs the dev stack running
 (`pnpm dev` + the docker services from SETUP.md). Known environment-dependent
@@ -89,8 +97,8 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 3,569 tests / 243 files (30 skipped) — 2026-09-29
-pnpm --filter web test:e2e                     # 61 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
+pnpm -r test                                   # 3,588 tests / 243 files (30 skipped) — 2026-09-29
+pnpm --filter web test:e2e                     # 62 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
 pnpm capabilities                              # regenerate docs/capabilities.md + packages/commands/capabilities.json
 pnpm agent:eval                                # agent eval: headless Claude Code vs the local stack (--filter/--keep/--record)
 pnpm size                                      # bundle budgets

@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **116**. Known missing: **22**. Deliberately excluded: **20**.
+Commands: **117**. Known missing: **22**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -183,6 +183,7 @@ Commands: **116**. Known missing: **22**. Deliberately excluded: **20**.
 | `table.resizeRow`      | Resize table row             | editor | undoable | never   |            |
 | `table.row.delete`     | Delete table rows            | editor | undoable | never   |            |
 | `table.row.insert`     | Insert table rows            | editor | undoable | never   |            |
+| `table.setSize`        | Set table size               | editor | undoable | never   | idempotent |
 | `table.split`          | Split merged cell            | editor | undoable | never   |            |
 | `table.style.cell`     | Style a table cell           | editor | undoable | never   | idempotent |
 | `table.style.range`    | Style a range of table cells | editor | undoable | never   | idempotent |
@@ -207,7 +208,7 @@ Commands: **116**. Known missing: **22**. Deliberately excluded: **20**.
 | Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                       |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `text.setBoxTypography`       | A2    | apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts                          | box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has (object.update writes fontFamily raw and keeps the weight)                         |
-| `text.style.apply`            | A2    | apps/web/src/ui/Inspector.tsx (applyTextStyle)                                                |                                                                                                                                                                                            |
+| `text.style.apply`            | A2    | apps/web/src/ui/Inspector.tsx (applyTextStyle)                                                | tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the resolved fields with textStyleId into the table's defaults (table.style.table)    |
 | `text.style.createFromObject` | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
 | `token.textStyle.update`      | A2    | apps/web/src/state/FolderDocProvider.tsx, apps/web/src/components/DeckShell.tsx (propagation) | propagation to linked text moves server-side                                                                                                                                               |
 | `token.textStyle.create`      | A2    | apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx    |                                                                                                                                                                                            |

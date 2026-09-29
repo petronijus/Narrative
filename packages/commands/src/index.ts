@@ -134,7 +134,8 @@ export {
   type EditorShowArgs,
   type PresentUrlArgs,
 } from './services/editor.js'
-export { DEFAULT_SHADOW, GRADIENT_FILL_TYPES, seedGradientStops } from './commands/appearance.js'
+export { DEFAULT_SHADOW, GRADIENT_FILL_TYPES } from './commands/appearance.js'
+export { MAX_TABLE_TRACKS, MIN_TRACK_PX } from './commands/tables.js'
 export {
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,

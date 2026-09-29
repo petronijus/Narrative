@@ -18,33 +18,22 @@
  *                     > defaults), same dispatch convention as
  *                     Typography.
  *
- * Writes go through `setTableCellStyle`, `setTableDefaultsPatch`, and
- * the row/col mutations exported from `@narrative/slide-model`. All
- * mutations are atomic via `ctx.doc.transact()` — no parallel React
- * state.
+ * Every write is a command (ADR 0010) — `table.style.cell / range / table`,
+ * `table.border.preset`, `table.merge / split`, `table.setSize`,
+ * `object.fill.gradient`, `object.update`, `text.format` — so an agent gets
+ * the same rules. The routing stays here because it follows the editor's
+ * selection: an explicit range wins, then the active cell (its merge
+ * origin), then the whole table. A gesture that writes more than one scope
+ * is one `group`: one transaction, one undo step. No parallel React state.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import * as Y from 'yjs'
 import {
-  type ObjectsMutationContext,
   type CellStylePatch,
+  type RichAttrs,
   type TableBorderPreset,
-  applyFormat,
-  deleteTableCol,
-  deleteTableRow,
   segmentsForPreset,
-  getTableCellYMap,
-  insertTableCol,
-  insertTableRow,
-  LOCAL_ORIGIN,
-  mergeTableCells,
-  setRangeBorderPreset,
-  setRangeCellStyle,
-  setTableCellStyle,
-  setTableDefaultsPatch,
-  splitTableCell,
-  updateObject,
 } from '@narrative/slide-model'
 import {
   getEffectiveBorderSegment,
@@ -62,10 +51,13 @@ import { useTableEdit } from '../state/TableEditContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
+import { useCommand, type GroupRun } from '../state/useCommand.js'
 import {
   AnimationsSection,
   FillBody,
   type FilledShape,
+  type GradientRequest,
+  gradientCommandInput,
   IdentitySection,
   LayersPanel,
   PositionSection,
@@ -101,13 +93,65 @@ function resolveHex(v: number | { $token: string } | undefined, fallbackHex: str
   return numberToHex(v as number)
 }
 
+/** A cell as commands address it. */
+interface Cell {
+  row: number
+  col: number
+}
+
+/** A rectangle of cells as commands address it (`CellRangeSchema`). */
+interface CellRange {
+  from: Cell
+  to: Cell
+}
+
+const cellRange = (r: { r0: number; c0: number; r1: number; c1: number }): CellRange => ({
+  from: { row: r.r0, col: r.c0 },
+  to: { row: r.r1, col: r.c1 },
+})
+
+/**
+ * A patch as the table commands read it: a field the editor deletes
+ * (`undefined`, "fall back to the default") is sent as `null`, the
+ * commands' "clear". Other values pass unchanged.
+ */
+function forCommand(patch: object): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(patch).map(([key, value]) => [key, value === undefined ? null : value]),
+  )
+}
+
+/**
+ * The visible cell at (r, c): a cell hidden inside a merge points at its
+ * merge origin, which is the one the commands style (and the one the cell
+ * editor edits).
+ */
+function mergeOrigin(table: TableObject, r: number, c: number): Cell {
+  const cell = table.rows[r]?.[c]
+  if (typeof cell?.mergeOriginR === 'number' && typeof cell.mergeOriginC === 'number') {
+    return { row: cell.mergeOriginR, col: cell.mergeOriginC }
+  }
+  return { row: r, col: c }
+}
+
+/** What the B / I / U / colour toggles apply, as `text.format` takes it. */
+function runFormatOf(attrs: RichAttrs): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (attrs.fontWeight !== undefined) out['fontWeight'] = attrs.fontWeight
+  if (attrs.italic !== undefined) out['italic'] = attrs.italic
+  if (attrs.underline !== undefined) out['underline'] = attrs.underline
+  if (attrs.color !== undefined) out['color'] = attrs.color
+  if (attrs.fontFamily !== undefined) out['fontFamily'] = attrs.fontFamily
+  if (attrs.fontSize !== undefined) out['fontSize'] = attrs.fontSize
+  return out
+}
+
 export interface TableInspectorProps {
   obj: TableObject
-  mutationCtx: ObjectsMutationContext
   isViewer: boolean
 }
 
-export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorProps) {
+export function TableInspector({ obj, isViewer }: TableInspectorProps) {
   const { active, range, activeBorderPreset, setActiveBorderPreset } = useTableEdit()
   // Sibling-object list — IdentitySection enforces per-slide name
   // uniqueness against this, so we feed the live slide snapshot.
@@ -119,13 +163,25 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   // subscriptions follow the user's focus naturally.
   const { animations } = useAnimations()
   const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
 
-  // Mirrors the `patch` closure inside the generic Inspector — feeds the
-  // shared PositionSection the same write path. Viewer mode bails out so
-  // the section's disabled inputs can't be subverted by a stale ref.
+  /**
+   * Dispatch a table command on this table. Viewer mode bails out so a
+   * disabled input cannot be subverted by a stale ref; a collaborator's
+   * change racing the gesture is logged, not thrown (`tryRun`). Inside a
+   * `group`, pass the group's `run` so the writes share one undo step.
+   */
+  const runOnTable = (id: string, input: Record<string, unknown>, run?: GroupRun): void => {
+    if (isViewer || activeSlideId === null) return
+    const full = { slide: activeSlideId, ...input }
+    if (run !== undefined) run(id, full)
+    else command.tryRun(id, full)
+  }
+
+  // Feeds the shared Identity / Position sections, like the generic
+  // Inspector's `patch`.
   const patchObject = (p: SlideObjectPatch<SlideObject>): void => {
-    if (isViewer) return
-    updateObject(mutationCtx, obj.id, p)
+    runOnTable('object.update', { object: obj.id, patch: forCommand(p) })
   }
 
   // Re-render when the active text selection (cell editor publishes
@@ -144,32 +200,52 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
   const d = obj.defaults
 
-  // --- Defaults patches ---
-  const patchDefault = (patch: Partial<TableObject['defaults']>): void => {
-    setTableDefaultsPatch(mutationCtx, obj.id, patch)
+  // The active cell as the commands address it: its merge origin.
+  const activeCell =
+    active !== null && active.tableId === obj.id ? mergeOrigin(obj, active.r, active.c) : null
+
+  // --- Defaults patches. `overrideCells` also takes the fields from every
+  //     cell's own overrides, so the table-wide value shows everywhere.
+  const patchDefault = (
+    patch: Partial<TableObject['defaults']>,
+    options: { overrideCells?: boolean; run?: GroupRun } = {},
+  ): void => {
+    if (Object.keys(patch).length === 0) return
+    runOnTable(
+      'table.style.table',
+      {
+        table: obj.id,
+        style: forCommand(patch),
+        ...(options.overrideCells === true ? { overrideCells: true } : {}),
+      },
+      options.run,
+    )
   }
 
   // --- Active cell patches (no-op when no active cell) ---
-  const patchCell = (patch: Parameters<typeof setTableCellStyle>[4]): void => {
-    if (active === null || active.tableId !== obj.id) return
-    setTableCellStyle(mutationCtx, obj.id, active.r, active.c, patch)
+  const patchCell = (patch: CellStylePatch, run?: GroupRun): void => {
+    if (activeCell === null || Object.keys(patch).length === 0) return
+    runOnTable(
+      'table.style.cell',
+      { table: obj.id, cell: activeCell, style: forCommand(patch) },
+      run,
+    )
   }
 
-  // --- Range patches (M29 Phase 3) — applied to every non-continuation
-  //     cell in the drag-selected rectangle. Falls back to per-cell when
-  //     no range is set so the same callback shape can drive both
-  //     single-cell and multi-cell controls.
-  const patchRange = (patch: CellStylePatch): void => {
+  // --- Range patches (M29 Phase 3) — every visible cell of the drag-
+  //     selected rectangle. Falls back to the active cell when no range is
+  //     set so the same callback shape drives single- and multi-cell controls.
+  const patchRange = (patch: CellStylePatch, run?: GroupRun): void => {
     if (range !== null && range.tableId === obj.id) {
-      setRangeCellStyle(
-        mutationCtx,
-        obj.id,
-        { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 },
-        patch,
+      if (Object.keys(patch).length === 0) return
+      runOnTable(
+        'table.style.range',
+        { table: obj.id, range: cellRange(range), style: forCommand(patch) },
+        run,
       )
       return
     }
-    patchCell(patch as Parameters<typeof setTableCellStyle>[4])
+    patchCell(patch, run)
   }
 
   // Top-left of the current target — used as the "read sample" for
@@ -274,9 +350,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   // One Typography gesture can write to cells AND defaults (and the shared
   // section may strip inline runs first) — keep it one undo step.
   const patchDefaultsAsTextObject = (p: SlideObjectPatch<TextObject>): void => {
-    mutationCtx.doc.transact(() => routeTypographyPatch(p), LOCAL_ORIGIN)
+    if (isViewer) return
+    command.group((run) => routeTypographyPatch(p, run))
   }
-  const routeTypographyPatch = (p: SlideObjectPatch<TextObject>): void => {
+  const routeTypographyPatch = (p: SlideObjectPatch<TextObject>, run: GroupRun): void => {
     const src = p as Record<string, unknown>
 
     // Preset application short-circuit: any write that touches the
@@ -291,7 +368,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       ]) {
         if (key in src) (out as Record<string, unknown>)[key] = src[key]
       }
-      patchDefault(out)
+      patchDefault(out, { run })
       return
     }
 
@@ -315,11 +392,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
     if (cellTouched) {
       const hasRange = range !== null && range.tableId === obj.id
-      const hasActive = active !== null && active.tableId === obj.id
       if (hasRange) {
-        patchRange(cellPart as CellStylePatch)
-      } else if (hasActive) {
-        patchCell(cellPart as Parameters<typeof setTableCellStyle>[4])
+        patchRange(cellPart as CellStylePatch, run)
+      } else if (activeCell !== null) {
+        patchCell(cellPart as CellStylePatch, run)
       } else {
         // No cell context — promote the cell-overridable keys to
         // table-wide defaults so the user can still tune the look
@@ -330,7 +406,7 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
         defaultsTouched = true
       }
     }
-    if (defaultsTouched) patchDefault(defaultsPart)
+    if (defaultsTouched) patchDefault(defaultsPart, { run })
   }
 
   // --- Keynote-style border preset + style state ------------------------
@@ -383,7 +459,15 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       return { r0: range.r0, c0: range.c0, r1: range.r1, c1: range.c1 }
     }
     if (active !== null && active.tableId === obj.id) {
-      return { r0: active.r, c0: active.c, r1: active.r, c1: active.c }
+      // A cell inside a merge stands for the whole merged cell.
+      const cell = mergeOrigin(obj, active.r, active.c)
+      const origin = obj.rows[cell.row]?.[cell.col]
+      return {
+        r0: cell.row,
+        c0: cell.col,
+        r1: cell.row + Math.max(1, origin?.rowSpan ?? 1) - 1,
+        c1: cell.col + Math.max(1, origin?.gridSpan ?? 1) - 1,
+      }
     }
     return {
       r0: 0,
@@ -397,7 +481,10 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     preset: TableBorderPreset,
     spec: { color: number; width: number; dash: 'solid' | 'dash' | 'dot' },
   ): void => {
-    setRangeBorderPreset(mutationCtx, obj.id, borderTargetRange, preset, {
+    runOnTable('table.border.preset', {
+      table: obj.id,
+      range: cellRange(borderTargetRange),
+      preset,
       color: spec.color,
       width: spec.width,
       dash: spec.dash,
@@ -513,52 +600,29 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
 
   const handleMerge = (): void => {
     if (rangeInfo === null) return
-    mergeTableCells(mutationCtx, obj.id, {
-      r0: rangeInfo.r0,
-      c0: rangeInfo.c0,
-      r1: rangeInfo.r1,
-      c1: rangeInfo.c1,
-    })
+    runOnTable('table.merge', { table: obj.id, range: cellRange(rangeInfo) })
   }
 
+  // Split the merged cell the selection starts on (the button is enabled
+  // only when there is one).
   const handleSplit = (): void => {
-    if (active === null || active.tableId !== obj.id) return
-    splitTableCell(mutationCtx, obj.id, active.r, active.c)
+    if (rangeInfo === null || !rangeInfo.originIsMerge) return
+    runOnTable('table.split', { table: obj.id, cell: { row: rangeInfo.r0, col: rangeInfo.c0 } })
   }
 
   /**
-   * Set the table to exactly `n` rows. Larger N appends blank rows at
-   * the end; smaller N deletes from the end. Bounded at ≥1 so the
-   * table never collapses to zero rows. Same logic for columns. The
-   * per-row mutations share one LOCAL_ORIGIN transaction, so "3 → 10
-   * rows" is one undo step and one Yjs update.
+   * Rows / Columns steppers: `table.setSize` adds at the bottom / right or
+   * removes from there, as one command and one undo step.
    */
   const setRowCount = (n: number): void => {
     const target = Math.max(1, Math.floor(n))
-    const cur = obj.rows.length
-    if (target === cur) return
-    mutationCtx.doc.transact(() => {
-      if (target > cur) {
-        for (let i = 0; i < target - cur; i++) insertTableRow(mutationCtx, obj.id, -1)
-      } else {
-        // Delete from the bottom up until we reach `target`. The mutation
-        // refuses to drop below 1 anyway; the explicit min above keeps
-        // the loop bound safe.
-        for (let i = cur - 1; i >= target; i--) deleteTableRow(mutationCtx, obj.id, i)
-      }
-    }, LOCAL_ORIGIN)
+    if (target === obj.rows.length) return
+    runOnTable('table.setSize', { table: obj.id, rows: target })
   }
   const setColCount = (n: number): void => {
     const target = Math.max(1, Math.floor(n))
-    const cur = obj.colWidths.length
-    if (target === cur) return
-    mutationCtx.doc.transact(() => {
-      if (target > cur) {
-        for (let i = 0; i < target - cur; i++) insertTableCol(mutationCtx, obj.id, -1)
-      } else {
-        for (let i = cur - 1; i >= target; i--) deleteTableCol(mutationCtx, obj.id, i)
-      }
-    }, LOCAL_ORIGIN)
+    if (target === obj.colWidths.length) return
+    runOnTable('table.setSize', { table: obj.id, cols: target })
   }
 
   const applyAndRefocus = (attrs: Parameters<typeof applyInlineFormatIfSelected>[1]): void => {
@@ -569,17 +633,20 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
     // effect — matches the "you can color a cell without selecting"
     // expectation users have from Excel / Numbers.
     const ok = applyInlineFormatIfSelected(editingObjectId, attrs)
-    if (!ok && active !== null && active.tableId === obj.id) {
-      const cellY = getTableCellYMap(mutationCtx, obj.id, active.r, active.c)
-      const yText = cellY?.get('text')
-      if (yText instanceof Y.Text && yText.length > 0) {
-        // Wrap in a transact with LOCAL_ORIGIN so the undo manager
-        // captures the format change. Without the origin, the Y.Text
-        // mutation runs in an implicit transact whose origin is
-        // undefined, which the UndoManager filters out.
-        mutationCtx.doc.transact(() => {
-          applyFormat(yText, 0, yText.length, attrs)
-        }, LOCAL_ORIGIN)
+    if (!ok && activeCell !== null) {
+      const body = obj.rows[activeCell.row]?.[activeCell.col]?.text
+      const set = runFormatOf(attrs)
+      if (
+        !isViewer &&
+        activeSlideId !== null &&
+        body instanceof Y.Text &&
+        body.length > 0 &&
+        Object.keys(set).length > 0
+      ) {
+        command.tryRun('text.format', {
+          target: { slide: activeSlideId, object: obj.id, cell: activeCell },
+          set,
+        })
       }
     }
     refocusActiveTextEdit(editingObjectId)
@@ -607,26 +674,27 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
       {/* Shared with shapes — exact same Section / SubLabel / FillBody /
           TransparencySlider chrome the generic inspector renders.
           Fill is context-aware: range > active cell > table-wide
-          defaults. Same dispatch chain the existing per-section Fill
-          controls already use, but funnelled through the
-          Inspector-grade Figma-style picker. Stroke / corner radius /
-          gradient / image stay out — borders live in the Keynote
-          preset grid below, and TableDefaults doesn't model the rest.
-          `fill` writes go through patchRange / patchCell /
-          patchDefault depending on what's selected; "No color" maps
-          to the same dispatch with `fill: undefined`, which the
-          mutations interpret as "delete the field" → cell falls back
-          to defaults, or the whole table goes transparent. */}
+          defaults, through the Inspector-grade Figma-style picker
+          (solid, gradient, image). Stroke / corner radius stay out —
+          borders live in the Keynote preset grid below. Solid and
+          image writes go through patchRange / patchCell / patchDefault,
+          gradients through object.fill.gradient with the same scope. */}
       <TableAppearance
         obj={obj}
         isViewer={isViewer}
-        mutationCtx={mutationCtx}
-        active={active}
+        activeCell={activeCell}
         range={range}
         patchObject={patchObject}
         patchCell={patchCell}
         patchRange={patchRange}
         patchDefault={patchDefault}
+        setGradient={(request, cells) =>
+          runOnTable('object.fill.gradient', {
+            objects: [obj.id],
+            ...gradientCommandInput(request),
+            ...(cells === undefined ? {} : { cells }),
+          })
+        }
       />
 
       {/* ────────────────────────────────────────────────────────────── */}
@@ -1052,49 +1120,47 @@ function BorderStyleControls({
 // ---------------------------------------------------------------------------
 // Appearance section — reuses the shape inspector's Section / SubLabel /
 // FillBody / TransparencySlider so the table inspector is visually
-// identical to a rectangle's. Fill writes dispatch through the existing
-// table mutation helpers based on what's selected:
-//   - range present       → patchRange (paint every non-merged cell)
-//   - active cell present → patchCell (paint just that cell)
-//   - neither             → patchDefault (table-wide default fill)
-// "No color" maps to the same dispatch with `fill: undefined`, which
-// the underlying mutations interpret as "delete the field" — cells
-// fall back to defaults, table-wide goes transparent.
+// identical to a rectangle's. Fill writes dispatch the table style
+// commands based on what's selected:
+//   - range present       → table.style.range (every visible cell)
+//   - active cell present → table.style.cell (that cell)
+//   - neither             → table.style.table with overrideCells (the
+//                           default, and the cells' own fills removed)
+// Gradients go through object.fill.gradient with the same scope. "No
+// color" is `fillAlpha: 0`, as on shapes.
 // ---------------------------------------------------------------------------
 
 interface TableAppearanceProps {
   obj: TableObject
   isViewer: boolean
-  mutationCtx: ObjectsMutationContext
-  active: { tableId: string; r: number; c: number; editing: boolean } | null
+  /** The active cell (its merge origin), or null. */
+  activeCell: Cell | null
   range: { tableId: string; r0: number; c0: number; r1: number; c1: number } | null
   patchObject: (p: SlideObjectPatch<SlideObject>) => void
   patchCell: (p: CellStylePatch) => void
   patchRange: (p: CellStylePatch) => void
-  patchDefault: (p: Partial<TableObject['defaults']>) => void
+  patchDefault: (p: Partial<TableObject['defaults']>, options?: { overrideCells?: boolean }) => void
+  /** `object.fill.gradient` on the table, or on `cells` of it. */
+  setGradient: (request: GradientRequest, cells?: CellRange) => void
 }
 
 function TableAppearance({
   obj,
   isViewer,
-  mutationCtx,
-  active,
+  activeCell,
   range,
   patchObject,
   patchCell,
   patchRange,
   patchDefault,
+  setGradient,
 }: TableAppearanceProps) {
   const d = obj.defaults
 
   // Which scope a fill write should land on. Mirrors the priority chain
   // the border-preset code already uses.
   const scope: 'range' | 'cell' | 'table' =
-    range !== null && range.tableId === obj.id
-      ? 'range'
-      : active !== null && active.tableId === obj.id
-        ? 'cell'
-        : 'table'
+    range !== null && range.tableId === obj.id ? 'range' : activeCell !== null ? 'cell' : 'table'
 
   // Resolved fill + alpha for display in the picker. Reads from the
   // most specific level that actually carries a value (cell override
@@ -1102,7 +1168,9 @@ function TableAppearance({
   // FillBody a literal fill so the in-popover saturation picker has
   // somewhere to start when the user un-clears.
   const cellAtActive =
-    scope === 'cell' && active !== null ? (obj.rows[active.r]?.[active.c] ?? null) : null
+    scope === 'cell' && activeCell !== null
+      ? (obj.rows[activeCell.row]?.[activeCell.col] ?? null)
+      : null
   const resolvedFill: number | TokenRef | undefined =
     (cellAtActive?.fill as number | TokenRef | undefined) ??
     (d.fill as number | TokenRef | undefined)
@@ -1140,11 +1208,11 @@ function TableAppearance({
   /**
    * Dispatch a fill / fillAlpha write to the right scope. Picking a
    * colour on a table-wide write must override every per-cell `fill`
-   * override (so the whole table truly recolours), so we clear cell
-   * overrides first and then update the defaults. "No color" is
-   * encoded as `fillAlpha = 0` to match the shape inspector — the
-   * literal `fill` stays as a seed so picking a fresh hue later has
-   * a starting point.
+   * override (so the whole table truly recolours): `overrideCells` takes
+   * the written fields from the cells in the same command. "No color" is
+   * encoded as `fillAlpha = 0` to match the shape inspector — the literal
+   * `fill` stays as a seed so picking a fresh hue later has a starting
+   * point.
    */
   const writeFillPatch = (patch: {
     fill?: number | TokenRef
@@ -1160,38 +1228,19 @@ function TableAppearance({
       patchCell(patch as CellStylePatch)
       return
     }
-    // Table-wide: erase per-cell overrides for the keys we're writing
-    // so the new default wins everywhere — Keynote-style "paint the
-    // whole table" semantics. Wrap in a transact so the clear + set
-    // land in a single Yjs update — with LOCAL_ORIGIN: the outermost
-    // transaction's origin wins, and the undo manager tracks only
-    // LOCAL_ORIGIN, so an origin-less wrapper took the whole fill
-    // change out of undo history.
-    const rows = obj.rows.length
-    const cols = obj.colWidths.length
-    mutationCtx.doc.transact(() => {
-      if (rows > 0 && cols > 0) {
-        const clear: CellStylePatch = {}
-        if ('fill' in patch) clear.fill = undefined
-        if ('fillAlpha' in patch) clear.fillAlpha = undefined
-        if ('fillStyle' in patch) clear.fillStyle = undefined
-        if (Object.keys(clear).length > 0) {
-          setRangeCellStyle(
-            mutationCtx,
-            obj.id,
-            { r0: 0, c0: 0, r1: rows - 1, c1: cols - 1 },
-            clear,
-          )
-        }
-      }
-      // patchDefault's type is Partial<TableDefaults> with
-      // exactOptionalPropertyTypes — bare `fill?: …` doesn't accept
-      // `undefined` in the value position. The underlying mutation
-      // deletes the field on undefined; bypass the strict optional
-      // check the same way the rest of the file's WithUndefined
-      // patches do.
-      patchDefault(patch as Partial<TableObject['defaults']>)
-    }, LOCAL_ORIGIN)
+    // patchDefault's type is Partial<TableDefaults> with
+    // exactOptionalPropertyTypes — `fillStyle: undefined` ("back to
+    // solid") is a clear the command receives as null.
+    patchDefault(patch as Partial<TableObject['defaults']>, { overrideCells: true })
+  }
+
+  /** Gradients for the same scope: the table, the selected range, or the active cell. */
+  const setScopedGradient = (request: GradientRequest): void => {
+    if (isViewer) return
+    if (scope === 'range' && range !== null) setGradient(request, cellRange(range))
+    else if (scope === 'cell' && activeCell !== null)
+      setGradient(request, { from: activeCell, to: activeCell })
+    else setGradient(request)
   }
 
   const patchShim = (p: SlideObjectPatch<FilledShape>): void => {
@@ -1203,9 +1252,8 @@ function TableAppearance({
     // (forwarded as a clear) from "key not in patch" (don't touch).
     const fillStyleInPatch = 'fillStyle' in next
     const fillStyleNext = fillStyleInPatch ? next.fillStyle : undefined
-    // Combine fill + alpha + fillStyle into a single dispatched patch so the
-    // table-wide path only emits one Yjs transaction (one clear-cells
-    // pass, one defaults set). If the user is in the empty state and
+    // Combine fill + alpha + fillStyle into a single dispatched patch so a
+    // picker change is one command and one undo step. If the user is in the empty state and
     // picks a hex, auto-restore alpha to 1 so the colour is actually
     // visible — otherwise the hue change would silently no-op.
     const combined: {
@@ -1237,7 +1285,13 @@ function TableAppearance({
   return (
     <Section title="Appearance" storageKey="appearance">
       <SubLabel>Fill</SubLabel>
-      <FillBody obj={shimmedShape} patch={patchShim} onClear={clearFill} emptyFill={emptyFill} />
+      <FillBody
+        obj={shimmedShape}
+        patch={patchShim}
+        onClear={clearFill}
+        emptyFill={emptyFill}
+        setGradient={setScopedGradient}
+      />
 
       <SubLabel>Transparency</SubLabel>
       <TransparencySlider

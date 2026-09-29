@@ -311,3 +311,101 @@ describe('table styling and borders', () => {
     ).toBe('not_found')
   })
 })
+
+describe('table.setSize', () => {
+  it('adds and removes rows at the bottom and columns at the right, keeping the other cells', () => {
+    const h = harness()
+    h.run('text.set', {
+      target: { slide: 's1', object: 'tbl1', cell: { row: 0, col: 1 } },
+      text: 'kept',
+    })
+    expect(h.run('table.setSize', { slide: 's1', table: 'tbl1', rows: 5, cols: 4 })).toEqual({
+      rows: 5,
+      cols: 4,
+    })
+    let t = table(h)
+    expect(t.rows.map((r) => r.length)).toEqual([4, 4, 4, 4, 4])
+    expect(t.height).toBeCloseTo(400)
+    expect(t.width).toBeCloseTo(800)
+    expect(sum(t.rowHeights)).toBeCloseTo(t.height)
+    // Already that size: nothing to do, nothing written.
+    expect(h.run('table.setSize', { slide: 's1', table: 'tbl1', rows: 5, cols: 4 })).toEqual({
+      rows: 5,
+      cols: 4,
+    })
+    expect(h.run('table.setSize', { slide: 's1', table: 'tbl1', rows: 1, cols: 2 })).toEqual({
+      rows: 1,
+      cols: 2,
+    })
+    t = table(h)
+    expect(t.width).toBeCloseTo(400)
+    expect(t.height).toBeCloseTo(80)
+    expect(h.text('s1', 'tbl1', { row: 0, col: 1 }).toString()).toBe('kept')
+  })
+
+  it('changes only the axis it is given and refuses sizes out of range', () => {
+    const h = harness()
+    expect(h.run('table.setSize', { slide: 's1', table: 'tbl1', cols: 1 })).toEqual({
+      rows: 3,
+      cols: 1,
+    })
+    expect(h.fail('table.setSize', { slide: 's1', table: 'tbl1' }).code).toBe('invalid_input')
+    expect(h.fail('table.setSize', { slide: 's1', table: 'tbl1', rows: 0 }).code).toBe(
+      'invalid_input',
+    )
+    expect(h.fail('table.setSize', { slide: 's1', table: 'tbl1', rows: 101 }).code).toBe(
+      'invalid_input',
+    )
+    expect(h.fail('table.setSize', { slide: 's1', table: 'r1', rows: 2 }).code).toBe('conflict')
+  })
+
+  it('shrinks a merge that the removed columns cut through', () => {
+    const h = harness()
+    h.run('table.setSize', { slide: 's2', table: 'tbl2', cols: 2 })
+    expect(merge(h, 0, 0, 's2', 'tbl2')).toEqual({ kind: 'origin', rowSpan: 1, colSpan: 2 })
+  })
+})
+
+describe('table.style.table overrideCells', () => {
+  it("leaves cells' own overrides alone unless asked to override them", () => {
+    const h = harness()
+    h.run('table.style.cell', {
+      slide: 's1',
+      table: 'tbl1',
+      cell: { row: 1, col: 1 },
+      style: { fill: '#ff0000', color: '#00ff00' },
+    })
+    h.run('table.style.table', { slide: 's1', table: 'tbl1', style: { fill: '#f2f2f2' } })
+    expect(table(h).rows[1]![1]).toMatchObject({ fill: 0xff0000, color: 0x00ff00 })
+    h.run('table.style.table', {
+      slide: 's1',
+      table: 'tbl1',
+      style: { fill: '#eeeeee', fontFamily: 'Inter' },
+      overrideCells: true,
+    })
+    const t = table(h)
+    expect(t.defaults).toMatchObject({ fill: 0xeeeeee, fontFamily: 'Inter' })
+    // Only the fields that were set are taken from the cells.
+    expect(t.rows[1]![1]!.fill).toBeUndefined()
+    expect(t.rows[1]![1]!.color).toBe(0x00ff00)
+  })
+
+  it('clears the override when the default itself is cleared', () => {
+    const h = harness()
+    h.run('table.style.range', {
+      slide: 's1',
+      table: 'tbl1',
+      range: { from: { row: 0, col: 0 }, to: { row: 0, col: 2 } },
+      style: { fillAlpha: 0.5 },
+    })
+    h.run('table.style.table', {
+      slide: 's1',
+      table: 'tbl1',
+      style: { fillAlpha: null },
+      overrideCells: true,
+    })
+    const t = table(h)
+    expect(t.defaults.fillAlpha).toBeUndefined()
+    expect(t.rows[0]!.map((c) => c.fillAlpha)).toEqual([undefined, undefined, undefined])
+  })
+})

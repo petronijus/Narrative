@@ -8,18 +8,18 @@ claude.ai — see [Agents (MCP)](#agents-mcp) and
 [the agentic-layer plan](./docs/plans/agentic-layer.md). Released since
 0.10.0 (2026-09-27; was unreleased until then, with production on 0.9.29).
 
-Current release: **0.10.11** (2026-09-29) — see [CHANGELOG.md](./CHANGELOG.md).
+Current release: **0.10.12** (2026-09-29) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
 **[Agentic layer A2 — extraction](./docs/plans/a2-extraction.md)** (in
 progress since 2026-09-28): the editor's own logic moves into commands and
 the editor dispatches them through `useCommand()`, so an agent can do what a
-person can. A2.1–A2.8 shipped step by step in 0.10.2–0.10.11 (slides panel,
+person can. A2.1–A2.10 shipped step by step in 0.10.2–0.10.12 (slides panel,
 guides, object creation, transforms, paths, clipboard, local-file upload
-sessions, gradients / shadows / page numbers); A2.9 (animation through
-`animation.*`, incl. `animation.retime` / `animation.retarget`) and the
-PowerPoint-sized triangle are on `main`, not yet released (CHANGELOG
-"Unreleased"). The plan's "Where we stand" is the next-steps list (A2.10
-tables next).
+sessions, gradients / shadows / page numbers; in 0.10.12 animation through
+`animation.*`, incl. `animation.retime` / `animation.retarget`, tables
+through `table.*`, incl. `table.setSize` and table gradients, and the
+PowerPoint-sized triangle). The plan's "Where we
+stand" is the next-steps list (A2.11 text next).
 Before that:
 **[A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
 (2026-09-27, released in 0.10.0): personal access tokens and OAuth for
@@ -39,7 +39,7 @@ Feature milestones before that:
 
 ## Requirements
 
-- Node.js >= 22.18 (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28)
+- Node.js >= 22.18 built with TypeScript support (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28). Ubuntu 26.04's own `nodejs` 22.22.1 lacks it — see [SETUP.md](./SETUP.md) "Common first-run failures" (2026-09-29)
 - pnpm >= 9
 - Docker (for local Postgres)
 
@@ -121,10 +121,10 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit tests (3,569 pass, 30 skipped, 243 files, 2026-09-29)
-pnpm --filter web test:e2e                      # 61 Playwright spec files (see caveat below)
+pnpm test                                       # unit tests (3,588 pass, 30 skipped, 243 files, 2026-09-29)
+pnpm --filter web test:e2e                      # 62 Playwright spec files (see caveat below)
 pnpm --filter @narrative/server test:integration  # Drizzle stores against the local Postgres (3 files; not in `pnpm test`)
-pnpm agent:eval                                 # 34 agent scenarios via headless Claude Code (costs usage; 1.62 USD for 13 of them on 2026-09-28)
+pnpm agent:eval                                 # 36 agent scenarios via headless Claude Code (costs usage; 1.62 USD for 13 of them on 2026-09-28)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -146,9 +146,10 @@ Coverage highlights:
   known-missing list or a reasoned exclusion; every command example run as a
   contract test; the generated capability manifest must be current)
 - MCP server over real HTTP with the SDK client, the OAuth flow and its
-  failure paths, a `tools/list` size budget (132,000 bytes), and the agent eval
-  suite's free replay subset (11 recorded scenarios, no model) inside
-  `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
+  failure paths, a `tools/list` size budget (169,000 bytes after A2.10,
+  2026-09-29; was 132,000 on 2026-09-28 and is raised per A2
+  step), and the agent eval suite's free replay subset (30 recorded
+  scenarios, no model; was 11 at A1) inside `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
 
 > ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
 > (`ERROR: Playwright does not support chromium on ubuntu26.04-x64`, same for
@@ -186,8 +187,8 @@ server that is part of the API — `https://<domain>/api/mcp` in production,
 in the user's own Claude client
 ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md)).
 
-- **Tools** are generated from the command registry (116 commands on `main`
-  as of 2026-09-29 — 114 in 0.10.11, 94 in 0.10.0; list in
+- **Tools** are generated from the command registry (117 commands on `main`
+  after A2.10, 2026-09-29 — 116 after A2.9, 114 in 0.10.11, 94 in 0.10.0; list in
   [`docs/capabilities.md`](./docs/capabilities.md)); every
   call runs on the server with the calling user's role, as one change, logged
   to a run the user can revert from the editor's Agent activity popover.

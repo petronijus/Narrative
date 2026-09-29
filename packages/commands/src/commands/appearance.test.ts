@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { harness } from '../testing/harness.js'
 import { FIXTURE_PAGE_NUMBER_STYLE_ID } from '../testing/fixtureTokens.js'
+import type { TableObject } from '@narrative/shared'
 import { seedGradientStops } from './appearance.js'
 
 describe('object.fill.gradient', () => {
@@ -239,5 +240,154 @@ describe('object.slideNumber.set', () => {
     expect(h.run('object.slideNumber.set', { slide: 's1', object: 't1', on: true })).toMatchObject({
       pageNumberStyle: null,
     })
+  })
+})
+
+describe('object.fill.gradient on tables', () => {
+  const table = (h: ReturnType<typeof harness>, slide = 's1', id = 'tbl1') =>
+    h.plain(slide, id) as unknown as TableObject
+
+  it('paints every cell: the defaults get the gradient, cells lose their own gradients', () => {
+    const h = harness()
+    h.run('table.style.cell', {
+      slide: 's1',
+      table: 'tbl1',
+      cell: { row: 1, col: 1 },
+      style: {
+        fill: '#ff0000',
+        fillAlpha: 0,
+        fillStyle: {
+          kind: 'radialGradient',
+          stops: [
+            { color: '#000000', offset: 0 },
+            { color: '#ffffff', offset: 1 },
+          ],
+        },
+      },
+    })
+    h.run('object.fill.gradient', { slide: 's1', objects: ['tbl1'], kind: 'linear', angle: 90 })
+    const t = table(h)
+    // A table without a fill starts from white.
+    expect(t.defaults.fillStyle).toEqual({
+      kind: 'linearGradient',
+      stops: seedGradientStops(0xffffff),
+      angleDeg: 90,
+    })
+    // The cell's own gradient and alpha go, so it shows the table's; its
+    // own solid colour stays for when the table goes back to solid.
+    expect(t.rows[1]![1]!.fillStyle).toBeUndefined()
+    expect(t.rows[1]![1]!.fillAlpha).toBeUndefined()
+    expect(t.rows[1]![1]!.fill).toBe(0xff0000)
+  })
+
+  it("keeps cells' own colours when a token default is unlinked for a whole-table gradient", () => {
+    const h = harness()
+    h.run('table.style.table', {
+      slide: 's1',
+      table: 'tbl1',
+      style: { fill: { $token: 'colors.brandBlue' } },
+    })
+    h.run('table.style.cell', {
+      slide: 's1',
+      table: 'tbl1',
+      cell: { row: 0, col: 0 },
+      style: { fill: '#ff0000' },
+    })
+    h.run('object.fill.gradient', { slide: 's1', objects: ['tbl1'], kind: 'linear' })
+    const t = table(h)
+    expect(t.defaults).toMatchObject({
+      fill: 0x2040c0,
+      fillStyle: { kind: 'linearGradient', stops: seedGradientStops(0x2040c0) },
+    })
+    expect(t.rows[0]![0]!.fill).toBe(0xff0000)
+  })
+
+  it('fills only the given cells, each from the colour it shows, skipping merged-away cells', () => {
+    const h = harness()
+    h.run('table.style.table', { slide: 's1', table: 'tbl1', style: { fill: '#808080' } })
+    h.run('table.style.cell', {
+      slide: 's1',
+      table: 'tbl1',
+      cell: { row: 0, col: 0 },
+      style: { fill: '#4060e0' },
+    })
+    h.run('object.fill.gradient', {
+      slide: 's1',
+      objects: ['tbl1'],
+      kind: 'radial',
+      cells: { from: { row: 0, col: 1 }, to: { row: 0, col: 0 } },
+    })
+    const t = table(h)
+    expect(t.rows[0]![0]!.fillStyle).toEqual({
+      kind: 'radialGradient',
+      stops: seedGradientStops(0x4060e0),
+    })
+    expect(t.rows[0]![1]!.fillStyle).toEqual({
+      kind: 'radialGradient',
+      stops: seedGradientStops(0x808080),
+    })
+    expect(t.rows[1]![0]!.fillStyle).toBeUndefined()
+    expect(t.defaults.fillStyle).toBeUndefined()
+
+    h.run('object.fill.gradient', {
+      slide: 's2',
+      objects: ['tbl2'],
+      kind: 'linear',
+      cells: { from: { row: 0, col: 0 }, to: { row: 0, col: 2 } },
+    })
+    const t2 = table(h, 's2', 'tbl2')
+    expect(t2.rows[0]![0]!.fillStyle?.kind).toBe('linearGradient')
+    expect(t2.rows[0]![1]!.fillStyle).toBeUndefined()
+  })
+
+  it('unlinks an inherited token fill onto the cell and makes a "no colour" fill visible', () => {
+    const h = harness()
+    h.run('table.style.table', {
+      slide: 's1',
+      table: 'tbl1',
+      style: { fill: { $token: 'colors.brandBlue' }, fillAlpha: 0 },
+    })
+    h.run('object.fill.gradient', {
+      slide: 's1',
+      objects: ['tbl1'],
+      kind: 'linear',
+      cells: { from: { row: 2, col: 2 }, to: { row: 2, col: 2 } },
+    })
+    const cell = table(h).rows[2]![2]!
+    expect(cell).toMatchObject({
+      fill: 0x2040c0,
+      fillAlpha: 1,
+      fillStyle: { kind: 'linearGradient', stops: seedGradientStops(0x2040c0), angleDeg: 0 },
+    })
+    // The defaults keep their token and "no colour".
+    expect(table(h).defaults).toMatchObject({ fill: { $token: 'colors.brandBlue' }, fillAlpha: 0 })
+  })
+
+  it('takes `cells` only with exactly one table, and refuses before writing anything', () => {
+    const h = harness()
+    const cells = { from: { row: 0, col: 0 }, to: { row: 0, col: 0 } }
+    expect(
+      h.fail('object.fill.gradient', { slide: 's1', objects: ['r1'], kind: 'linear', cells }).code,
+    ).toBe('invalid_input')
+    expect(
+      h.fail('object.fill.gradient', {
+        slide: 's1',
+        objects: ['tbl1', 'r1'],
+        kind: 'linear',
+        cells,
+      }).code,
+    ).toBe('invalid_input')
+    expect(
+      h.fail('object.fill.gradient', {
+        slide: 's1',
+        objects: ['tbl1'],
+        kind: 'linear',
+        cells: { from: { row: 0, col: 0 }, to: { row: 3, col: 0 } },
+      }).code,
+    ).toBe('not_found')
+    // A shape and a table together: both painted in one step.
+    h.run('object.fill.gradient', { slide: 's1', objects: ['r1', 'tbl1'], kind: 'linear' })
+    expect(table(h).defaults.fillStyle?.kind).toBe('linearGradient')
+    expect((h.plain('s1', 'r1')['fillStyle'] as { kind: string }).kind).toBe('linearGradient')
   })
 })

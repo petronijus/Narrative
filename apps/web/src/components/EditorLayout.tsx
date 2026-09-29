@@ -2535,10 +2535,17 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {activeTableCell !== null &&
                       activeTableCell.editing &&
                       mutationCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         const obj = objects.find((o) => o.id === activeTableCell.tableId)
                         if (obj === undefined || obj.type !== 'table') return null
-                        return <TableCellEditor table={obj} mutationCtx={mutationCtx} />
+                        return (
+                          <TableCellEditor
+                            table={obj}
+                            slideId={activeSlideId}
+                            mutationCtx={mutationCtx}
+                          />
+                        )
                       })()}
 
                     {/* M29 Phase 3: drag-selected cell range highlight. */}
@@ -2562,14 +2569,14 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {/* M29 Phase 5: Keynote-style chrome around the
                       selected table (axis bars + corner handles). */}
                     {selectedIds.size === 1 &&
-                      mutationCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         const onlyId = [...selectedIds][0]
                         if (onlyId === undefined) return null
                         const obj = objects.find((o) => o.id === onlyId)
                         if (obj === undefined || obj.type !== 'table') return null
                         return (
-                          <TableChrome table={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
+                          <TableChrome table={obj} slideId={activeSlideId} isViewer={isViewer} />
                         )
                       })()}
                     {/* P11: Keynote-style image crop overlay. */}

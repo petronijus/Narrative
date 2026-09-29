@@ -107,11 +107,7 @@ import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
 import { useCommand } from '../state/useCommand.js'
-import {
-  PAGE_NUMBER_TEXT_STYLE_NAME,
-  findTextStyleByName,
-  seedGradientStops,
-} from '@narrative/commands'
+import { PAGE_NUMBER_TEXT_STYLE_NAME, findTextStyleByName } from '@narrative/commands'
 import {
   updateObject,
   updateSlideTransition,
@@ -848,7 +844,7 @@ export function Inspector() {
   // defaults + active-cell override controls. Skips the generic shape
   // chrome below (fill/stroke/etc. live inside the table's `defaults`).
   if (obj.type === 'table' && mutationCtx !== null) {
-    return <TableInspector obj={obj} mutationCtx={mutationCtx} isViewer={isViewer} />
+    return <TableInspector obj={obj} isViewer={isViewer} />
   }
 
   return (
@@ -2270,17 +2266,7 @@ function AppearanceSection({ obj, patch }: AppearanceSectionProps) {
     command.tryRun('object.fill.gradient', {
       slide: activeSlideId,
       objects: [obj.id],
-      kind: request.kind === 'linearGradient' ? 'linear' : 'radial',
-      ...(request.stops === undefined
-        ? {}
-        : {
-            stops: request.stops.map((s) => ({
-              color: s.color,
-              offset: s.offset,
-              ...(s.alpha === undefined ? {} : { alpha: s.alpha }),
-            })),
-          }),
-      ...(request.angleDeg === undefined ? {} : { angle: request.angleDeg }),
+      ...gradientCommandInput(request),
     })
   }
   return (
@@ -2534,6 +2520,9 @@ function CornerRadiusRow({
 
 type FillMode = 'solid' | 'linearGradient' | 'radialGradient' | 'image'
 
+/** What the image editor shows before a picture is chosen. */
+const EMPTY_IMAGE_FILL: ImageFillStyle = { kind: 'image', assetId: '', fit: 'cover' }
+
 /**
  * A gradient the fill picker asks for: a kind alone (a new gradient, or
  * the current stops under the other kind), or the edited stops / angle.
@@ -2542,6 +2531,23 @@ export interface GradientRequest {
   kind: 'linearGradient' | 'radialGradient'
   stops?: FillGradientStop[]
   angleDeg?: number
+}
+
+/** The `object.fill.gradient` fields for a fill-picker request (the caller adds slide, objects, cells). */
+export function gradientCommandInput(request: GradientRequest): Record<string, unknown> {
+  return {
+    kind: request.kind === 'linearGradient' ? 'linear' : 'radial',
+    ...(request.stops === undefined
+      ? {}
+      : {
+          stops: request.stops.map((s) => ({
+            color: s.color,
+            offset: s.offset,
+            ...(s.alpha === undefined ? {} : { alpha: s.alpha }),
+          })),
+        }),
+    ...(request.angleDeg === undefined ? {} : { angle: request.angleDeg }),
+  }
 }
 
 function fillModeOf(style: FillStyle | undefined, _fillIsToken: boolean): FillMode {
@@ -2698,12 +2704,12 @@ export function FillBody({
    */
   emptyFill?: boolean
   /**
-   * How gradient choices are written. The object Inspector dispatches
-   * `object.fill.gradient`, which carries the rules; a host that is not an
-   * object (table defaults, until A2.10) leaves it out and gets a patch
-   * seeded by the same rule (`seedGradientStops`).
+   * How gradient choices are written: every host dispatches
+   * `object.fill.gradient` (the table Inspector with the cells it targets),
+   * which carries the rules — seeding from the current colour, unlinking a
+   * token, keeping the stops when the kind changes.
    */
-  setGradient?: ((request: GradientRequest) => void) | undefined
+  setGradient: (request: GradientRequest) => void
 }) {
   const folderTokensSnapshot = useFolderTokens()
   const { folderId } = useDeckRole()
@@ -2719,6 +2725,17 @@ export function FillBody({
   const fillIsToken = currentTokenRef !== null
 
   const committedMode = fillModeOf(obj.fillStyle, fillIsToken)
+  /**
+   * Image mode before a picture is chosen: shown, never stored. An image
+   * fill needs an asset (the schema refuses an empty one, so a table's
+   * style command would drop it, and a shape would hold an invalid fill),
+   * so the fill is written once the upload has one. Tied to the object it
+   * was started on, since this picker stays mounted across selections.
+   */
+  const [imageDraft, setImageDraft] = useState<{ objectId: string; style: ImageFillStyle } | null>(
+    null,
+  )
+  const draftImage = imageDraft?.objectId === obj.id ? imageDraft.style : null
   // What the user last asked for, which is ahead of `committedMode` until the
   // patch has gone through Y.Doc and come back as new props. Two changes in
   // quick succession (Linear, then Solid before the round-trip lands) would
@@ -2727,6 +2744,9 @@ export function FillBody({
   // "Solid". Cleared as soon as the document agrees.
   const requestedModeRef = useRef<FillMode | null>(null)
   if (requestedModeRef.current === committedMode) requestedModeRef.current = null
+  // An Image request lives only in its draft: selecting another object (or
+  // leaving the draft) drops it, as no write is on its way to confirm it.
+  if (requestedModeRef.current === 'image' && draftImage === null) requestedModeRef.current = null
   const mode = requestedModeRef.current ?? committedMode
   // The mode as of now, not as of the render a handler was created in: a
   // second change can arrive before React re-renders after the first, and
@@ -2766,41 +2786,38 @@ export function FillBody({
     obj.fillStyle !== undefined && obj.fillStyle.kind !== 'image'
       ? obj.fillStyle
       : lastGradientRef.current
-  const imageForRender = obj.fillStyle?.kind === 'image' ? obj.fillStyle : lastImageRef.current
+  const imageForRender =
+    obj.fillStyle?.kind === 'image' ? obj.fillStyle : (draftImage ?? lastImageRef.current)
 
   const setMode = (next: FillMode): void => {
     if (next === currentMode()) return
     requestedModeRef.current = next
-    if (setGradient !== undefined && (next === 'linearGradient' || next === 'radialGradient')) {
+    // Any change leaves a pending image draft; this also re-renders when
+    // the change itself writes nothing (back to Solid from the draft).
+    setImageDraft(next === 'image' ? { objectId: obj.id, style: EMPTY_IMAGE_FILL } : null)
+    if (next === 'linearGradient' || next === 'radialGradient') {
       setGradient({ kind: next })
       return
     }
-    // If the current fill is a TokenRef and we're switching away from
-    // solid, unlink (write resolved hex as a literal first).
-    if (fillIsToken && next !== 'solid') {
-      patch({ fill: hexToNumber(solidHex) } as unknown as SlideObjectPatch<FilledShape>)
-    }
     if (next === 'solid') {
       patch({ fillStyle: undefined } as unknown as SlideObjectPatch<FilledShape>)
+    }
+    // Image: nothing is written until a picture is chosen (`imageDraft`).
+  }
+
+  /** Store an image fill that has its asset, unlinking a token fill to its colour first. */
+  const writeImageFill = (style: ImageFillStyle): void => {
+    if (style.assetId === '') {
+      setImageDraft({ objectId: obj.id, style })
       return
     }
-    if (next === 'image') {
-      // Empty assetId ⇒ placeholder until the user picks an upload.
-      patch({
-        fillStyle: { kind: 'image', assetId: '', fit: 'cover' },
-      } as SlideObjectPatch<FilledShape>)
-      return
-    }
-    // The same seed object.fill.gradient uses: the current solid colour (a
-    // token's resolved value) and a darker tint of it.
-    const stops = seedGradientStops(hexToNumber(solidHex))
-    if (next === 'linearGradient') {
-      patch({
-        fillStyle: { kind: 'linearGradient', stops, angleDeg: 0 },
-      } as SlideObjectPatch<FilledShape>)
-    } else {
-      patch({ fillStyle: { kind: 'radialGradient', stops } } as SlideObjectPatch<FilledShape>)
-    }
+    patch({
+      ...(fillIsToken ? { fill: hexToNumber(solidHex) } : {}),
+      fillStyle: style,
+    } as unknown as SlideObjectPatch<FilledShape>)
+    // Kept until the document shows the fill (the stored one wins from
+    // then on), so the editor does not blink back to Solid for a frame.
+    setImageDraft({ objectId: obj.id, style })
   }
 
   return (
@@ -2909,15 +2926,12 @@ export function FillBody({
                 // after the mode moved on would resurrect the gradient.
                 const now = currentMode()
                 if (now !== 'linearGradient' && now !== 'radialGradient') return
-                if (setGradient !== undefined && next.kind !== 'image') {
-                  setGradient({
-                    kind: next.kind,
-                    stops: next.stops,
-                    ...(next.kind === 'linearGradient' ? { angleDeg: next.angleDeg } : {}),
-                  })
-                  return
-                }
-                patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
+                if (next.kind === 'image') return
+                setGradient({
+                  kind: next.kind,
+                  stops: next.stops,
+                  ...(next.kind === 'linearGradient' ? { angleDeg: next.angleDeg } : {}),
+                })
               }}
             />
           )}
@@ -2939,7 +2953,7 @@ export function FillBody({
               onChange={(next) => {
                 // Same collapse guard as the gradient editor above.
                 if (currentMode() !== 'image') return
-                patch({ fillStyle: next } as SlideObjectPatch<FilledShape>)
+                writeImageFill(next)
               }}
             />
           )}

@@ -92,7 +92,7 @@ The animation engine can target both Pixi objects and DOM overlay objects in the
 
 ### Server-side Yjs strategy
 
-Agents write on the server: a ServerHost runs registry commands against `hocuspocus.openDirectConnection(deckId)`, after its own access check, in one transaction per command or batch with `agentOrigin(runId)` ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md); built in A1, `apps/server/src/agent/serverHost.ts`, which also opens `component:<id>` to edit a component master). Every write, human or agent, goes through `packages/commands` ([ADR 0010](./docs/adr/0010-command-layer-is-the-only-writer.md)) — agents already do; the editor dispatches commands through `useCommand()` surface by surface as A2 migrates it (since 2026-09-28; 13 files still write directly as of A2.9, listed in `apps/web/eslint.one-door.js` `ONE_DOOR_PENDING`). (Was: "direct Y.Doc manipulation in Node for AI slide generation (M16)"; superseded 2026-09-26.)
+Agents write on the server: a ServerHost runs registry commands against `hocuspocus.openDirectConnection(deckId)`, after its own access check, in one transaction per command or batch with `agentOrigin(runId)` ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md); built in A1, `apps/server/src/agent/serverHost.ts`, which also opens `component:<id>` to edit a component master). Every write, human or agent, goes through `packages/commands` ([ADR 0010](./docs/adr/0010-command-layer-is-the-only-writer.md)) — agents already do; the editor dispatches commands through `useCommand()` surface by surface as A2 migrates it (since 2026-09-28; 10 files still write directly after A2.10 (2026-09-29; was 13 after A2.9), listed in `apps/web/eslint.one-door.js` `ONE_DOOR_PENDING`). (Was: "direct Y.Doc manipulation in Node for AI slide generation (M16)"; superseded 2026-09-26.)
 
 ---
 
@@ -114,11 +114,9 @@ If any spike fails → change the stack **now**, not in M20.
 
 M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap; the AI
 milestones are replaced by the agentic plan (below). Since 2026-09-07 work has
-been cut as point releases rather than milestones. Deployed: **v0.10.11**
-(`/version.json` → `v0.10.11+669d151`, checked 2026-09-29) — agentic A0 + A1
-and A2.1–A2.8 (was v0.10.0 with the tool-list compaction unreleased on
-2026-09-28). On `main`, not released: A2.9 (animation through commands) and
-the PowerPoint-sized triangle (CHANGELOG "Unreleased").
+been cut as point releases rather than milestones. Deployed: **v0.10.12**
+(2026-09-29) — agentic A0 + A1 and A2.1–A2.10 (was v0.10.11 with A2.9, the
+PowerPoint-sized triangle and A2.10 on `main` earlier the same day).
 
 | Release         | Date                    | Subject                                                                                                                                                                          |
 | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -138,6 +136,7 @@ the PowerPoint-sized triangle (CHANGELOG "Unreleased").
 | 0.10.5 – 0.10.9 | 2026-09-28              | **A2.3–A2.7**: guides, object creation and arrangement, transforms, paths and lines, copy / paste — each through commands                                                        |
 | 0.10.10         | 2026-09-29              | **A2.7a**: agents upload local files (upload sessions); snapping can be switched off                                                                                             |
 | 0.10.11         | 2026-09-29              | **A2.8**: gradients, shadows and the page-number field through commands                                                                                                          |
+| 0.10.12         | 2026-09-29              | **A2.9–A2.10**: animations and tables through commands; triangles fill their box as in PowerPoint; table cell editor fixes                                                       |
 
 Per-release detail lives in [CHANGELOG.md](./CHANGELOG.md).
 
@@ -148,8 +147,8 @@ and the production CSP is treated as a hard renderer constraint
 
 **Read next**:
 [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md) — the A2
-steps, their decisions, and "Where we stand" (the next-steps list; A2.10
-tables next). A1 — what it delivered, its release checklist and open
+steps, their decisions, and "Where we stand" (the next-steps list; A2.11
+text next). A1 — what it delivered, its release checklist and open
 findings — is in
 [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 A0 is in
@@ -314,8 +313,8 @@ The plan runs in phases A0–A5:
 2. **A1:** server host, identity and MCP. **Done 2026-09-27, released in
    0.10.0** — see [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 3. **A2:** extraction of web-only logic. **In progress** — A2.1–A2.8
-   released in 0.10.2–0.10.11, A2.9 on `main` (2026-09-29), A2.10–A2.13
-   open; see [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md).
+   and A2.9–A2.10 released in 0.10.2–0.10.12 (2026-09-29),
+   A2.11–A2.13 open; see [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md).
 4. **A3:** render worker (the agent can screenshot and see slides).
 5. **A4:** style packs.
 6. **A5:** deck builder and restyle.
