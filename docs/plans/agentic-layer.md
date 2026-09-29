@@ -1128,16 +1128,16 @@ say where the logic lives today:
 
 **Text (B5)**
 
-| Capability                         | Today              | Command                                                            |
-| ---------------------------------- | ------------------ | ------------------------------------------------------------------ |
-| type or replace text               | SM                 | `text.set`, `text.replace`                                         |
-| inline format on a range           | SM + WEB targeting | `text.formatRange`, `text.clearFormat` (ranges by offset or match) |
-| box typography                     | SM + WEB routing   | `text.setBoxTypography`                                            |
-| lists                              | SM + WEB rules     | `text.list.*`                                                      |
-| apply / detach / reset preset      | WEB                | `text.style.apply` / `detach` / `reset`                            |
-| update / create preset from object | WEB                | `text.style.updateFromObject` / `createFromObject`                 |
-| token propagation                  | WEB (critical)     | server-side propagation on `token.textStyle.update`                |
-| available fonts                    | WEB list           | `query.fonts`                                                      |
+| Capability                         | Today              | Command                                                                                                                                                                                                                                                  |
+| ---------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| type or replace text               | SM                 | `text.set`; `text.edit` (A2.11: splices at query offsets, and the editor's Enter / Backspace list rules — the canvas editor types through it; not in the original catalogue); `text.replace` (A2.11: deck, slide or objects, text boxes and table cells) |
+| inline format on a range           | SM + WEB targeting | `text.format` (A0: `set` and `clear` in one command, ranges by offset or match; planned as `text.formatRange` / `text.clearFormat`)                                                                                                                      |
+| box typography                     | SM + WEB routing   | `text.setBoxTypography` (A2.11: removes the inline formatting it would hide, keeps the weight on a cut the new family has, fields become overrides on a box linked to a text style); tables through `table.style.table`                                  |
+| lists                              | SM + WEB rules     | `text.list` (one command: `kind` / `toggle` / `level` / `indent` / `bulletChar` / `numberFormat` / `startAt`; planned as `text.list.*`)                                                                                                                  |
+| apply / detach / reset preset      | WEB                | `text.style.apply` (A2.11, by id or name, text boxes and tables' defaults): `style: null` detaches, `reset: true` resets (planned as `text.style.apply` / `detach` / `reset`)                                                                            |
+| update / create preset from object | WEB                | `text.style.createFromObject` / `token.textStyle.update` — A2.12, known-missing (planned as `text.style.updateFromObject` / `createFromObject`); the Inspector's Preset picker still writes through FolderDocProvider                                    |
+| token propagation                  | WEB (critical)     | server-side propagation on `token.textStyle.update` (A2.12)                                                                                                                                                                                              |
+| available fonts                    | WEB list           | `folder.fonts.list` (A1, server); since A2.11 commands that need a folder's font faces declare `readsFolderFonts` and read `ctx.folderFonts` (server: the folder's font assets) — no `query.fonts`                                                       |
 
 **Tables (B6)**
 

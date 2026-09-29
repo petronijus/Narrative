@@ -320,6 +320,28 @@ export function displayOf(raw: string): DisplayText {
   return { display, toRaw, rawLimit }
 }
 
+/**
+ * A range of the STORED body (Y.Text offsets, as the editor tracks its
+ * selection) as the display offsets commands take (`{ start, length }` of
+ * `TextRangeSchema`, where a paragraph break counts 2). Offsets past the
+ * body's last paragraph clamp to its end.
+ */
+export function displayRangeOf(
+  raw: string,
+  rawStart: number,
+  rawEnd: number,
+): { start: number; length: number } {
+  const { rawLimit } = displayOf(raw)
+  const toDisplay = (i: number): number => {
+    const at = Math.max(0, Math.min(i, rawLimit))
+    let seps = 0
+    for (let k = 0; k < at; k++) if (raw[k] === PARAGRAPH_SEP) seps++
+    return at + seps
+  }
+  const start = toDisplay(Math.min(rawStart, rawEnd))
+  return { start, length: toDisplay(Math.max(rawStart, rawEnd)) - start }
+}
+
 // ---------------------------------------------------------------------------
 // Reading a body for model output
 // ---------------------------------------------------------------------------

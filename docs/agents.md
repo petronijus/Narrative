@@ -50,15 +50,20 @@ effects, undo policy, model-facing description, examples, handler); the
 editor dispatches them through `useCommand()` (BrowserHost), agents through
 the ServerHost over MCP (ADR 0011). Headless: no React, Pixi or DOM.
 
-_State as of A2.10 (2026-09-29; A2.1–A2.10 released in 0.10.2–0.10.12): 117 commands (70
-document commands that run in the browser or on the server, 47 server-only
-ones backed by `apps/server/src/services/`). The editor dispatches commands
-through `useCommand()` surface by surface — slides panel, guides, object
-creation, transforms, paths, clipboard, fills and effects, animation,
-tables (chrome, table Inspector, cell editor) — and the "one door" lint
+_State as of A2.11 (2026-09-30; A2.1–A2.11 released in 0.10.2–0.10.13): 121 commands (74 document commands that run in the
+browser or on the server, 47 server-only ones backed by
+`apps/server/src/services/`). The editor dispatches commands through
+`useCommand()` surface by surface — slides panel, guides, object creation,
+transforms, paths, clipboard, fills and effects, animation, tables (chrome,
+table Inspector, cell editor), and since A2.11 the whole Inspector
+(Typography, lists, transition, background), the font pickers and the canvas
+text editor (typing is one `text.edit` per input) — and the "one door" lint
 rule (`apps/web/eslint.one-door.js`) bans slide-model writers and
-`.transact()` in `apps/web/src`, except for the 10 files still listed in
-`ONE_DOOR_PENDING` with the A2 step that migrates them (13 after A2.9). Progress
+`.transact()` in `apps/web/src`, except for the 6 files still listed in
+`ONE_DOOR_PENDING` with the A2 step that migrates them (10 after A2.10, 13
+after A2.9). Commands that need the folder's font faces declare
+`readsFolderFonts` and get `ctx.folderFonts` (server:
+`apps/server/src/agent/folderFonts.ts`, from the folder's font assets). Progress
 and next steps: [`plans/a2-extraction.md`](./plans/a2-extraction.md).
 (Was, at A1, 2026-09-27: 94 commands — 50 document, 44 server-only — the
 ServerHost, the MCP server and `POST /api/commands`, and no component

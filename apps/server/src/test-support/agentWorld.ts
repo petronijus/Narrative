@@ -23,7 +23,7 @@ import {
 } from '@hocuspocus/server'
 import { HocuspocusProvider } from '@hocuspocus/provider'
 import type { FastifyBaseLogger } from 'fastify'
-import type { CommandRegistry, Role } from '@narrative/commands'
+import type { CommandRegistry, CommandTarget, FontFaceWeight, Role } from '@narrative/commands'
 import type { RectangleObject } from '@narrative/shared'
 import {
   addObjects,
@@ -34,6 +34,7 @@ import {
 import type { Database } from '../db/client.js'
 import type { AgentAccess } from '../agent/access.js'
 import { createMemoryRunStore, type MemoryRunStore } from '../agent/runStore.js'
+import { createFolderFontsReader } from '../agent/folderFonts.js'
 import { createFolderTokensReader } from '../agent/folderTokens.js'
 import { createAgentRuntime, type AgentRuntime } from '../agent/runtime.js'
 import type { ConfirmationLookups } from '../agent/confirmationSummary.js'
@@ -128,6 +129,8 @@ export interface AgentWorld {
     folderId: string,
     tokens?: Record<string, Record<string, Record<string, unknown>>>,
   ): void
+  /** The font faces uploaded to `folderId` (the fake of its font assets). */
+  setFolderFonts(folderId: string, faces: ReadonlyArray<FontFaceWeight>): void
   /** A WebSocket client of `userId` on a document (resolves once synced). */
   connect(documentName: string, userId: string): Promise<TestClient>
   destroy(): Promise<void>
@@ -219,12 +222,13 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
   // folder document itself is read like the production reader reads it
   // (live when loaded, else stored — here: the persistence snapshots).
   const folderOfTarget = new Map<string, string>()
+  const folderOfFixture = async (target: CommandTarget): Promise<string | null> => {
+    if (target.folderId !== undefined) return target.folderId
+    const id = target.deckId ?? target.componentId
+    return id === undefined ? null : (folderOfTarget.get(id) ?? null)
+  }
   const folderTokens = createFolderTokensReader({
-    async folderOf(target) {
-      if (target.folderId !== undefined) return target.folderId
-      const id = target.deckId ?? target.componentId
-      return id === undefined ? null : (folderOfTarget.get(id) ?? null)
-    },
+    folderOf: folderOfFixture,
     async readFolder(folderId) {
       const doc = new Y.Doc()
       const live = hocuspocus.documents.get(`folder:${folderId}`)
@@ -236,9 +240,15 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       return doc
     },
   })
+  const fontsOfFolder = new Map<string, ReadonlyArray<FontFaceWeight>>()
+  const folderFonts = createFolderFontsReader({
+    folderOf: (target) => folderOfFixture(target),
+    listFonts: async (folderId) => fontsOfFolder.get(folderId) ?? [],
+  })
   const runtime = await createAgentRuntime({
     db: {} as Database,
     folderTokens,
+    folderFonts,
     log: opts.log ?? quietLog,
     hocuspocus,
     ...(opts.registry === undefined ? {} : { registry: opts.registry }),
@@ -289,6 +299,9 @@ export async function createAgentWorld(opts: AgentWorldOptions = {}): Promise<Ag
       }
       persistence.snapshots.set(`folder:${folderId}`, Y.encodeStateAsUpdate(doc))
       doc.destroy()
+    },
+    setFolderFonts(folderId, faces) {
+      fontsOfFolder.set(folderId, faces)
     },
     createDeck(deckId, build = seedDeck) {
       const doc = new Y.Doc()

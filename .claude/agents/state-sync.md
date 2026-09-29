@@ -39,9 +39,15 @@ at the end of agentic-layer phase A0. Was Czech.)_
   (opening `deck:<id>` and `component:<id>`), `runStore.ts` (`agent_runs` /
   `agent_ops`, 90-day retention), `opRedaction.ts`, `presence.ts` (the
   "Claude (MCP)" peer and the HMAC principal key), `confirmations.ts`,
-  `runtime.ts` (sweeps); per-run revert is `apps/server/src/services/runs.ts`
-  (a `Y.UndoManager` per run tracking only that run's origin, component
-  masters included).
+  `runtime.ts` (sweeps), and the folder context the host loads only for
+  commands that declare it, after the access check: `folderTokens.ts`
+  (`readsFolderTokens` → `ctx.folderTokens`, A2.8) and `folderFonts.ts`
+  (`readsFolderFonts` → `ctx.folderFonts`, A2.11: family and weight of the
+  folder's uploaded fonts, nothing else leaves the module). `null` = no
+  folder or none there; absent = not provided, and a command that needs it
+  refuses with `conflict` rather than guess. Per-run revert is
+  `apps/server/src/services/runs.ts` (a `Y.UndoManager` per run tracking
+  only that run's origin, component masters included).
 - Undo/redo (Y.UndoManager, tracked origins).
 - Transaction origins and the undo origin policy: `LOCAL_ORIGIN`,
   `agentOrigin(runId)` / `releaseAgentOrigin` / `isAgentOrigin` in
@@ -50,6 +56,9 @@ at the end of agentic-layer phase A0. Was Czech.)_
   run's `agentOrigin`, which must stay identity-stable per run
   (`trackedOrigins` is compared by identity). The outermost `doc.transact`
   origin wins over the `LOCAL_ORIGIN` mutations pass internally. See ADR 0011.
+  Since A2.11 (2026-09-30) canvas typing is one `text.edit` command — one
+  transaction — per input event; the editor's UndoManager still merges
+  consecutive typing into one undo step through its capture window.
 
 ## What you do not own
 
@@ -83,8 +92,9 @@ at the end of agentic-layer phase A0. Was Czech.)_
    (ADR 0003, extended by ADR 0010). Slide-model mutations run inside
    `doc.transact(..., origin)`; UI and agents reach them through
    `packages/commands`. (Since A2.1, 2026-09-28, the one-door lint rule
-   bans slide-model writers and `.transact()` in `apps/web/src`; 10 files
-   are still exempt after A2.10, 2026-09-29 (13 after A2.9) —
+   bans slide-model writers and `.transact()` in `apps/web/src`; 6 files
+   are still exempt after A2.11, 2026-09-30, all A2.12–A2.13 (10 after
+   A2.10, 13 after A2.9) —
    `ONE_DOOR_PENDING` in
    `apps/web/eslint.one-door.js`. Was, at A0: the editor called slide-model
    directly.)

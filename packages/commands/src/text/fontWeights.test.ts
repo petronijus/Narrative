@@ -1,5 +1,5 @@
 /**
- * ui/fontWeights.test.ts
+ * commands/src/text/fontWeights.test.ts
  *
  * The weight picker shows a DERIVED weight when the stored one is not a
  * cut the family has (it used to write a "fixed" weight from an effect,

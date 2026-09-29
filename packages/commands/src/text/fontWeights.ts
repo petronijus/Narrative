@@ -1,10 +1,12 @@
 /**
- * ui/fontWeights.ts
+ * commands/src/text/fontWeights.ts
  *
  * Which weights a text box's font family actually has, and which of them
- * the browser renders for a requested weight. Shared by the weight picker
- * (to DISPLAY the weight that is really on screen) and the family picker
- * (to snap the stored weight when the user switches family).
+ * the browser renders for a requested weight. Shared by the editor's weight
+ * picker (to DISPLAY the weight that is really on screen) and
+ * `text.setBoxTypography` (to snap the stored weight when the family
+ * changes), so the editor and an agent switching fonts get the same cut.
+ * Moved here from apps/web in A2.11.
  *
  * Kept pure — no React, no Yjs — so the Inspector can derive the value it
  * shows without writing to the document. An earlier version "fixed" an

@@ -67,6 +67,7 @@ import type { Document } from '@hocuspocus/server'
 import {
   CommandError,
   ROLE_RANK,
+  commandReadsFolderFonts,
   commandReadsFolderTokens,
   commandUsesDocument,
   prepareInvocation,
@@ -106,6 +107,7 @@ import {
   type ConfirmationSummary,
 } from './confirmations.js'
 import type { AgentDocuments } from './documents.js'
+import type { FolderFontsReader } from './folderFonts.js'
 import type { FolderTokensReader } from './folderTokens.js'
 import type { OpConfirmation } from './runStore.js'
 import { collectTouched, type Touched } from './touched.js'
@@ -230,6 +232,12 @@ export interface ServerHostDeps {
    * see none and refuse what needs them (`conflict`).
    */
   folderTokens?: FolderTokensReader
+  /**
+   * The target's folder font faces, for commands that declare
+   * `readsFolderFonts` (agent/folderFonts.ts). Without it such commands see
+   * none and refuse what needs them (`conflict`).
+   */
+  folderFonts?: FolderFontsReader
 }
 
 /** Lookups that know nothing: summaries then name targets by id only. */
@@ -772,6 +780,11 @@ export class ServerHost {
       commandReadsFolderTokens(this.deps.registry, commandId, input)
         ? await this.deps.folderTokens(target)
         : undefined
+    const folderFonts =
+      this.deps.folderFonts !== undefined &&
+      commandReadsFolderFonts(this.deps.registry, commandId, input)
+        ? await this.deps.folderFonts(target)
+        : undefined
 
     const lease = await this.deps.documents.acquire(documentName)
     try {
@@ -781,6 +794,7 @@ export class ServerHost {
         ...ctx,
         deck,
         ...(folderTokens === undefined ? {} : { folderTokens }),
+        ...(folderFonts === undefined ? {} : { folderFonts }),
       }
       // Validation and the async `load` phase happen here, before any transaction.
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)

@@ -162,6 +162,7 @@ export {
   applyParagraphPatch,
   toggleListKind,
   indentParagraphs,
+  splitParagraphAt,
   readParagraphAttrsForRange,
   computeMarkers,
   formatListNumber,

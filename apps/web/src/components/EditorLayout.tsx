@@ -506,6 +506,15 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
   // M8: Awareness updater — broadcast cursor + selection
   const { setCursor, setSelection, setActiveSlide } = useAwarenessUpdater()
   const { activeSlideId } = useActiveSlide()
+  // The text box being edited, as commands address its body (stable while
+  // the edit lasts, so the overlay's published selection keeps its target).
+  const editingTextTarget = useMemo(
+    () =>
+      editingTextId !== null && activeSlideId !== null
+        ? { slide: activeSlideId, object: editingTextId }
+        : null,
+    [editingTextId, activeSlideId],
+  )
   const command = useCommand()
   const objectClipboard = useObjectClipboard()
   const activeSlideIdRef = useRef(activeSlideId)
@@ -2520,11 +2529,12 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                       text and takes focus while the user edits. */}
                     {editingTextId !== null &&
                       mutationCtx !== null &&
+                      editingTextTarget !== null &&
                       (() => {
                         const obj = objects.find((o) => o.id === editingTextId)
                         if (obj === undefined || obj.type !== 'text') return null
                         return (
-                          <TextEditOverlay obj={obj} mutationCtx={mutationCtx} onEnd={endEdit} />
+                          <TextEditOverlay obj={obj} target={editingTextTarget} onEnd={endEdit} />
                         )
                       })()}
 

@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **117**. Known missing: **22**. Deliberately excluded: **20**.
+Commands: **121**. Known missing: **19**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -191,11 +191,15 @@ Commands: **117**. Known missing: **22**. Deliberately excluded: **20**.
 
 ## text
 
-| Command       | What it does        | Role   | Undo     | Confirm | Hints      |
-| ------------- | ------------------- | ------ | -------- | ------- | ---------- |
-| `text.format` | Format text range   | editor | undoable | never   | idempotent |
-| `text.list`   | Set list formatting | editor | undoable | never   |            |
-| `text.set`    | Set text            | editor | undoable | never   | idempotent |
+| Command                 | What it does          | Role   | Undo     | Confirm | Hints      |
+| ----------------------- | --------------------- | ------ | -------- | ------- | ---------- |
+| `text.edit`             | Edit text in place    | editor | undoable | never   |            |
+| `text.format`           | Format text range     | editor | undoable | never   | idempotent |
+| `text.list`             | Set list formatting   | editor | undoable | never   |            |
+| `text.replace`          | Find and replace text | editor | undoable | never   |            |
+| `text.set`              | Set text              | editor | undoable | never   | idempotent |
+| `text.setBoxTypography` | Set box typography    | editor | undoable | never   | idempotent |
+| `text.style.apply`      | Apply text style      | editor | undoable | never   | idempotent |
 
 ## token
 
@@ -207,8 +211,6 @@ Commands: **117**. Known missing: **22**. Deliberately excluded: **20**.
 
 | Capability                    | Phase | Today in                                                                                      | Note                                                                                                                                                                                       |
 | ----------------------------- | ----- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `text.setBoxTypography`       | A2    | apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts                          | box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has (object.update writes fontFamily raw and keeps the weight)                         |
-| `text.style.apply`            | A2    | apps/web/src/ui/Inspector.tsx (applyTextStyle)                                                | tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the resolved fields with textStyleId into the table's defaults (table.style.table)    |
 | `text.style.createFromObject` | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
 | `token.textStyle.update`      | A2    | apps/web/src/state/FolderDocProvider.tsx, apps/web/src/components/DeckShell.tsx (propagation) | propagation to linked text moves server-side                                                                                                                                               |
 | `token.textStyle.create`      | A2    | apps/web/src/state/FolderDocProvider.tsx (addToken), apps/web/src/pages/FolderSettings.tsx    |                                                                                                                                                                                            |
@@ -221,7 +223,6 @@ Commands: **117**. Known missing: **22**. Deliberately excluded: **20**.
 | `token.effectStyle.delete`    | A2    | apps/web/src/state/FolderDocProvider.tsx (deleteToken)                                        | the folder document and FolderDocProvider support effect styles; no editor UI deletes them yet                                                                                             |
 | `token.seedDefaults`          | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
 | `component.promote`           | A2    | apps/web/src/state/writeComponentMasterTree.ts; `POST /folders/:folderId/components`          | the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)                                                                                                |
-| `text.replace`                | A2    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.exportPdf`              | A3    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.exportPng`              | A3    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.refreshThumbnail`       | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                       |

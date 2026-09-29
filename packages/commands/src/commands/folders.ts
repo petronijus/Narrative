@@ -176,7 +176,7 @@ export const folderFontsList = defineCommand({
   title: 'Folder fonts',
   description:
     "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the " +
-    'folder can use these families as fontFamily in text (text.set, text.format, object.update). Folder owner only.',
+    'folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Folder owner only.',
   input: z.strictObject({}),
   output: z.object({ fonts: z.array(FontFaceOutput) }),
   role: 'owner',

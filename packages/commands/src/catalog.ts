@@ -17,6 +17,8 @@ import { pathCommands } from './commands/paths.js'
 import { insertCommands } from './commands/insert.js'
 import { textCommands } from './commands/text.js'
 import { tableCommands } from './commands/tables.js'
+import { typographyCommands } from './commands/typography.js'
+import { textEditCommands } from './commands/textEdit.js'
 import { animationCommands } from './commands/animations.js'
 import { guideCommands } from './commands/guides.js'
 import { queryCommands } from './commands/queries.js'
@@ -42,6 +44,8 @@ export function createDefaultRegistry(): CommandRegistry {
   registry.registerAll(insertCommands)
   registry.registerAll(textCommands)
   registry.registerAll(tableCommands)
+  registry.registerAll(typographyCommands)
+  registry.registerAll(textEditCommands)
   registry.registerAll(animationCommands)
   registry.registerAll(guideCommands)
   registry.registerAll(queryCommands)

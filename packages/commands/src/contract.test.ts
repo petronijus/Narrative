@@ -35,7 +35,7 @@ import { createDefaultRegistry } from './catalog.js'
 import { runCommand } from './run.js'
 import { CommandError } from './errors.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
-import { createFixtureFolderTokens } from './testing/fixtureTokens.js'
+import { createFixtureFolderFonts, createFixtureFolderTokens } from './testing/fixtureTokens.js'
 import {
   FIXTURE_COMPONENT_ID,
   FIXTURE_DECK_ID,
@@ -56,6 +56,7 @@ function ctxFor(
     origin: LOCAL_ORIGIN,
     deck: createFixtureDeck(),
     folderTokens: createFixtureFolderTokens(),
+    folderFonts: createFixtureFolderFonts(),
     target,
     services: createFakeServices(),
     session: { key: 'mcp:contract', surface: 'mcp', clientName: 'contract-suite' },

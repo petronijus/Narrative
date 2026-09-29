@@ -11,7 +11,7 @@ import { runCommandSync } from '../run.js'
 import { CommandError } from '../errors.js'
 import type { CommandContext } from '../types.js'
 import { createFixtureDeck } from './fixtureDeck.js'
-import { createFixtureFolderTokens } from './fixtureTokens.js'
+import { createFixtureFolderFonts, createFixtureFolderTokens } from './fixtureTokens.js'
 
 const registry = createDefaultRegistry()
 
@@ -37,6 +37,7 @@ export function harness(): Harness {
     origin: LOCAL_ORIGIN,
     deck,
     folderTokens: createFixtureFolderTokens(),
+    folderFonts: createFixtureFolderFonts(),
   }
   const map = (slideId: string, objectId: string): Y.Map<unknown> => {
     const objects = getSlideObjectsCtx(deck, slideId)

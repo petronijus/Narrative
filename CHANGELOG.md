@@ -4,6 +4,64 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## 0.10.13 — Text through commands (2026-09-30)
+
+### Added
+
+- **Agents can edit text the way the editor does:**
+  - `text.edit` — change part of a text box or table cell without resending
+    it: splices at the character offsets queries report, and the editor's
+    Enter / Backspace rules (a new list item continues the list, an empty
+    one ends it, Backspace outdents);
+  - `text.replace` — find and replace across the deck, a slide or some
+    objects, text boxes and table cells alike, keeping the formatting of
+    the replaced text; case-insensitive and whole-word matching on request;
+  - `text.setBoxTypography` — a box's font, size, weight, colour, spacing
+    and alignment with the Inspector's rules: inline formatting that would
+    hide the new value is removed, a new font family keeps the weight on a
+    cut it has, and a box linked to a text style keeps following it except
+    for what was set by hand;
+  - `text.style.apply` — link text boxes or tables to a folder text style by
+    name, reset them to it, or unlink them.
+- **A slide background can be a picture from the Inspector**: choosing
+  Image opens the same upload chooser as an image fill (before, it stored an
+  image background without a picture and offered no way to choose one).
+
+### Fixed
+
+- **Pasting text with blank lines into a text box** produced an extra empty
+  paragraph and a stray line break; a blank line now starts a new paragraph
+  (continuing a list), a single line break stays a line break.
+- **A slide transition's duration could be typed above its limit**, and
+  viewers could change the transition from the Inspector.
+
+### Changed
+
+- **A box-wide typography change made while editing text with no
+  selection** (a new size, weight, font or colour) now also removes the
+  inline formatting of that attribute, as it always did when the box was
+  selected without editing.
+
+### Internal
+
+- A2.11: the Inspector (every property it still wrote directly, the
+  Typography section, list controls, the slide's transition and
+  background), the font family / weight pickers and the canvas text editor
+  write only through commands; `Inspector`, `TextEditOverlay`,
+  `textEditSelection` and `textListOps` leave the one-door exemption list
+  (6 files left, all A2.12–A2.13). Typing is one `text.edit` per input;
+  Enter, the list Backspace and paste are `text.edit` too, Tab is
+  `text.list`. The Enter / Backspace list rules, override tracking for
+  linked text styles and the font-weight rule moved into commands
+  (`text/edit.ts`, `text/typography.ts`, `text/fontWeights.ts` — the last
+  moved from `apps/web`); new slide-model writer `splitParagraphAt`.
+  Commands read the folder's font faces (`readsFolderFonts`,
+  `ctx.folderFonts`; the server from the folder's font assets). Playbooks
+  `basics`, `edit`, `restyle-lite` and `find-replace` point at the new
+  commands. Eval scenarios `product-rename-everywhere`,
+  `subtitle-plain-restyle`, `year-fix-second-occurrence`; e2e
+  `typography-commands`, `text-edit-commands`; tools/list budget 177,000.
+
 ## 0.10.12 — Animations and tables through commands (2026-09-29)
 
 ### Added

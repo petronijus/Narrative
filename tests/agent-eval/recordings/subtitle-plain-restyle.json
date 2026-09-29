@@ -1,0 +1,182 @@
+{
+  "scenario": "subtitle-plain-restyle",
+  "tag": "eve61117",
+  "recordedAt": "2026-09-29T22:28:21.397Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.285 (Claude Code)",
+  "fixture": {
+    "deckId": "VO821ulOHP53",
+    "title": "Regional update eve61117",
+    "subtitleId": "TvOCkE6Xk8PK2gEXG0VLB"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "On slide 1 of the Narrative deck \"Regional update eve61117\" (deckId VO821ulOHP53), make the whole \"Subtitle\" text box plain: regular weight and dark grey #333333, with no bold or differently coloured words left in it. Keep its text.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_slide,mcp__narrative-eval__text_format,mcp__narrative-eval__query_object,mcp__narrative-eval__text_setBoxTypography,ReadMcpResourceTool",
+              "max_results": 6
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "VO821ulOHP53",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "5Rru548YV6spkI0geebwb",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "aBlTlWcNjRGYj2LLMrVYu",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Regional update",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "TvOCkE6Xk8PK2gEXG0VLB",
+                  "type": "text",
+                  "name": "Subtitle",
+                  "x": 120,
+                  "y": 240,
+                  "width": 1680,
+                  "height": 100,
+                  "rotation": 0,
+                  "text": "Growth in all regions",
+                  "fontSize": 36,
+                  "fontWeight": "normal",
+                  "color": "#1b2a4a",
+                  "align": "left",
+                  "opacity": 1,
+                  "paragraphs": [
+                    {
+                      "runs": [
+                        {
+                          "text": "Growth in "
+                        },
+                        {
+                          "text": "all",
+                          "fontWeight": 700,
+                          "color": "#e03c31"
+                        },
+                        {
+                          "text": " regions"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"5Rru548YV6spkI0geebwb\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"aBlTlWcNjRGYj2LLMrVYu\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Regional update\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"TvOCkE6Xk8PK2gEXG0VLB\",\"type\":\"text\",\"name\":\"Subtitle\",\"x\":120,\"y\":240,\"width\":1680,\"height\":100,\"rotation\":0,\"text\":\"Growth in all regions\",\"fontSize\":36,\"fontWeight\":\"normal\",\"color\":\"#1b2a4a\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"Growth in \"},{\"text\":\"all\",\"fontWeight\":700,\"color\":\"#e03c31\"},{\"text\":\" regions\"}]}]}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "VO821ulOHP53",
+              "request": "Make the slide 1 Subtitle box plain regular #333333"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_KZSMYyxBS4YV-6Bu"
+            },
+            "text": "{\"runId\":\"run_KZSMYyxBS4YV-6Bu\"}"
+          },
+          {
+            "tool": "text_setBoxTypography",
+            "command": "text.setBoxTypography",
+            "input": {
+              "deckId": "VO821ulOHP53",
+              "slide": {
+                "index": 0
+              },
+              "objects": ["TvOCkE6Xk8PK2gEXG0VLB"],
+              "style": {
+                "fontWeight": "normal",
+                "color": "#333333"
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {},
+            "text": "{}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "VO821ulOHP53",
+              "slide": {
+                "index": 0
+              },
+              "object": "TvOCkE6Xk8PK2gEXG0VLB"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "5Rru548YV6spkI0geebwb",
+                "index": 0
+              },
+              "stackIndex": 1,
+              "object": {
+                "id": "TvOCkE6Xk8PK2gEXG0VLB",
+                "type": "text",
+                "name": "Subtitle",
+                "x": 120,
+                "y": 240,
+                "width": 1680,
+                "height": 100,
+                "rotation": 0,
+                "text": "Growth in all regions",
+                "fontSize": 36,
+                "fontWeight": "normal",
+                "color": "#333333",
+                "align": "left",
+                "opacity": 1
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"5Rru548YV6spkI0geebwb\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"TvOCkE6Xk8PK2gEXG0VLB\",\"type\":\"text\",\"name\":\"Subtitle\",\"x\":120,\"y\":240,\"width\":1680,\"height\":100,\"rotation\":0,\"text\":\"Growth in all regions\",\"fontSize\":36,\"fontWeight\":\"normal\",\"color\":\"#333333\",\"align\":\"left\",\"opacity\":1},\"animations\":[]}"
+          }
+        ],
+        "finalText": "The \"Subtitle\" box on slide 1 is now plain: regular weight and dark grey #333333 all the way through. The text \"Growth in all regions\" is unchanged.\n\nBefore the change, the word \"all\" was bold (700) and red (#e03c31), and the rest was navy (#1b2a4a). I changed the whole box's typography, which also removed that per-word formatting. When I read the box back afterwards, it had no bold or differently coloured words left.\n\nIf you want to undo it, the change is saved as a single agent run (`run_KZSMYyxBS4YV-6Bu`).",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

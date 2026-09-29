@@ -20,7 +20,8 @@
  * keeps URLs fresh enough.
  */
 
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
+import type { FontFaceWeight } from '@narrative/commands'
 import { useApi } from '../api/client.js'
 import type { FolderFontSummary } from '../api/client.js'
 
@@ -175,4 +176,22 @@ export function useFolderFonts(): FolderFontsContextValue {
  */
 export function useFolderFontsOptional(): FolderFontsContextValue | null {
   return useContext(FolderFontsContext)
+}
+
+/**
+ * The folder's font faces as a command sees them (`CommandContext.folderFonts`):
+ * family and weight of each uploaded face (null when the folder has none, as
+ * the server host reports it), undefined while they are not known — no
+ * provider, or no list yet (first load pending or failed). A refetch keeps
+ * the list it had on screen, so it keeps serving that one: the families the
+ * pickers offer are the ones the commands know.
+ */
+export function useFolderFontsForCommands(): ReadonlyArray<FontFaceWeight> | null | undefined {
+  const ctx = useContext(FolderFontsContext)
+  const known = ctx !== null && (ctx.fonts.length > 0 || (!ctx.loading && ctx.error === null))
+  const fonts = known ? ctx.fonts : undefined
+  return useMemo(() => {
+    if (fonts === undefined) return undefined
+    return fonts.length === 0 ? null : fonts.map((f) => ({ family: f.family, weight: f.weight }))
+  }, [fonts])
 }

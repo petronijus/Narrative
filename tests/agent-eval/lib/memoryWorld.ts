@@ -38,6 +38,7 @@ import { z } from 'zod'
 import { agentOrigin, createSlideDoc, type DeckMutationContext } from '@narrative/slide-model'
 import {
   CommandError,
+  commandReadsFolderFonts,
   commandReadsFolderTokens,
   commandUsesDocument,
   createDefaultRegistry,
@@ -508,6 +509,10 @@ export class MemoryWorld implements World {
       // (agent/folderTokens.ts), and so does this world.
       ...(deck !== undefined && commandReadsFolderTokens(this.registry, args.command, args.input)
         ? { folderTokens: null }
+        : {}),
+      // Nor did anyone upload fonts to them.
+      ...(deck !== undefined && commandReadsFolderFonts(this.registry, args.command, args.input)
+        ? { folderFonts: null }
         : {}),
     }
     const stackBefore = run?.manager.undoStack.length ?? 0

@@ -138,26 +138,45 @@ export function runCommandSync(
 }
 
 /**
- * Whether an invocation needs `ctx.folderTokens`: the command declares
- * `readsFolderTokens`, or it is a batch (`ops.apply`) with such a command
- * among its ops. Unknown commands and malformed batches answer false —
- * validation refuses them later anyway.
+ * Whether an invocation needs what `flag` declares: the command sets it,
+ * or it is a batch (`ops.apply`) with such a command among its ops.
+ * Unknown commands and malformed batches answer false — validation refuses
+ * them later anyway.
  */
-export function commandReadsFolderTokens(
+function commandReadsFolder(
   registry: CommandRegistry,
   commandId: string,
   rawInput: unknown,
+  flag: 'readsFolderTokens' | 'readsFolderFonts',
 ): boolean {
   const def = registry.get(commandId)
   if (def === undefined) return false
-  if (def.readsFolderTokens === true) return true
+  if (def[flag] === true) return true
   if (def.transaction !== 'self') return false
   const ops = (rawInput as { ops?: unknown } | null | undefined)?.ops
   if (!Array.isArray(ops)) return false
   return ops.some((op) => {
     const id = (op as { command?: unknown } | null)?.command
-    return typeof id === 'string' && registry.get(id)?.readsFolderTokens === true
+    return typeof id === 'string' && registry.get(id)?.[flag] === true
   })
+}
+
+/** Whether an invocation needs `ctx.folderTokens` (`readsFolderTokens`, also inside `ops.apply`). */
+export function commandReadsFolderTokens(
+  registry: CommandRegistry,
+  commandId: string,
+  rawInput: unknown,
+): boolean {
+  return commandReadsFolder(registry, commandId, rawInput, 'readsFolderTokens')
+}
+
+/** Whether an invocation needs `ctx.folderFonts` (`readsFolderFonts`, also inside `ops.apply`). */
+export function commandReadsFolderFonts(
+  registry: CommandRegistry,
+  commandId: string,
+  rawInput: unknown,
+): boolean {
+  return commandReadsFolder(registry, commandId, rawInput, 'readsFolderFonts')
 }
 
 /**

@@ -33,10 +33,11 @@ The user asked: <request>
      ellipse, triangle or polygon point by point →
      `object_path_fromShape`, then `object_path_setAnchors`; move a line's
      or arrow's end → `object_line_setEndpoints` (all in slide px);
-   - change font, size, colour of a whole box → `object_update` (clear
-     conflicting run formatting with `text_format` first);
-   - change some words → `text_format` with a `match` range, or `text_set`
-     with the rich form to keep the rest of the formatting;
+   - change font, size, colour of a whole box → `text_setBoxTypography`;
+     give it a folder text style → `text_style_apply`;
+   - restyle some words → `text_format` with a `match` range; change some
+     words → `text_edit` at their offsets, or `text_replace` for every
+     occurrence;
    - copy a slide → `slide_duplicate`; reorder → `slide_move`;
    - put another deck's slides after slide N → `deck_insertFrom`.
 4. **Check the result** (`query_slide`, and a screenshot once `query_render`

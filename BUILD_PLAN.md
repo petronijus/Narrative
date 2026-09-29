@@ -110,13 +110,13 @@ If any spike fails → change the stack **now**, not in M20.
 
 ---
 
-## Where the project stands (2026-09-29)
+## Where the project stands (2026-09-30)
 
 M0–M13 and M28–M29 have shipped. M14–M27 are the open feature roadmap; the AI
 milestones are replaced by the agentic plan (below). Since 2026-09-07 work has
-been cut as point releases rather than milestones. Deployed: **v0.10.12**
-(2026-09-29) — agentic A0 + A1 and A2.1–A2.10 (was v0.10.11 with A2.9, the
-PowerPoint-sized triangle and A2.10 on `main` earlier the same day).
+been cut as point releases rather than milestones. Deployed: **v0.10.13**
+(2026-09-30) — agentic A0 + A1 and A2.1–A2.11 (A2.11, text through
+commands, in 0.10.13; A2.9–A2.10 in 0.10.12 the day before).
 
 | Release         | Date                    | Subject                                                                                                                                                                          |
 | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -137,6 +137,7 @@ PowerPoint-sized triangle and A2.10 on `main` earlier the same day).
 | 0.10.10         | 2026-09-29              | **A2.7a**: agents upload local files (upload sessions); snapping can be switched off                                                                                             |
 | 0.10.11         | 2026-09-29              | **A2.8**: gradients, shadows and the page-number field through commands                                                                                                          |
 | 0.10.12         | 2026-09-29              | **A2.9–A2.10**: animations and tables through commands; triangles fill their box as in PowerPoint; table cell editor fixes                                                       |
+| 0.10.13         | 2026-09-30              | **A2.11**: text through commands — `text.edit`, `text.replace`, `text.setBoxTypography`, `text.style.apply`; slide background pictures; paste fix                                |
 
 Per-release detail lives in [CHANGELOG.md](./CHANGELOG.md).
 
@@ -147,8 +148,8 @@ and the production CSP is treated as a hard renderer constraint
 
 **Read next**:
 [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md) — the A2
-steps, their decisions, and "Where we stand" (the next-steps list; A2.11
-text next). A1 — what it delivered, its release checklist and open
+steps, their decisions, and "Where we stand" (the next-steps list; A2.12
+tokens, components and server propagation next). A1 — what it delivered, its release checklist and open
 findings — is in
 [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 A0 is in
@@ -313,8 +314,8 @@ The plan runs in phases A0–A5:
 2. **A1:** server host, identity and MCP. **Done 2026-09-27, released in
    0.10.0** — see [`docs/handoff/A1-mcp-and-server-host.md`](./docs/handoff/A1-mcp-and-server-host.md).
 3. **A2:** extraction of web-only logic. **In progress** — A2.1–A2.8
-   and A2.9–A2.10 released in 0.10.2–0.10.12 (2026-09-29),
-   A2.11–A2.13 open; see [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md).
+   and A2.9–A2.11 released in 0.10.2–0.10.13 (A2.11 on 2026-09-30),
+   A2.12–A2.13 open; see [`docs/plans/a2-extraction.md`](./docs/plans/a2-extraction.md).
 4. **A3:** render worker (the agent can screenshot and see slides).
 5. **A4:** style packs.
 6. **A5:** deck builder and restyle.

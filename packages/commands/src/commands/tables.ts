@@ -58,6 +58,7 @@ import {
   type SlideRef,
 } from '../refs.js'
 import { CellAddressSchema, type CellAddress } from '../text/target.js'
+import { overridesAfter, snappedWeightForFamily } from '../text/typography.js'
 
 const tableEditor = {
   domain: 'table',
@@ -759,12 +760,14 @@ export const tableStyleTable = defineCommand({
   ...tableEditor,
   id: 'table.style.table',
   idempotent: true,
+  readsFolderFonts: true,
   title: 'Style a whole table',
   description:
     'Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, ' +
     'text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. ' +
     'Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells ' +
-    'that have their own gradient, also pass "fillStyle": null.',
+    'that have their own gradient, also pass "fillStyle": null. A new fontFamily without fontWeight keeps a ' +
+    'cut the family has; on a table linked to a text style the fields you set stop following it.',
   input: z.strictObject({
     slide: SlideRefSchema,
     table: TableIdSchema,
@@ -793,9 +796,21 @@ export const tableStyleTable = defineCommand({
   handler(ctx, input) {
     const deck = requireDeck(ctx)
     const t = resolveTable(deck, input.slide, input.table)
-    if (input.overrideCells === true)
-      clearCellOverrides(t.objects, t.id, t, Object.keys(input.style))
-    setTableDefaultsPatch(t.objects, t.id, input.style as Partial<TableDefaults>)
+    const style: Record<string, unknown> = { ...input.style }
+    if ('fontFamily' in style && !('fontWeight' in style)) {
+      const weight = snappedWeightForFamily(
+        ctx,
+        t.table.defaults.fontWeight,
+        style['fontFamily'] as string | undefined,
+      )
+      if (weight !== undefined) style['fontWeight'] = weight
+    }
+    if (t.table.defaults.textStyleId !== undefined && !('textStyleOverrides' in style)) {
+      const overrides = overridesAfter(t.table.defaults.textStyleOverrides, Object.keys(style))
+      if (overrides !== undefined) style['textStyleOverrides'] = overrides
+    }
+    if (input.overrideCells === true) clearCellOverrides(t.objects, t.id, t, Object.keys(style))
+    setTableDefaultsPatch(t.objects, t.id, style as Partial<TableDefaults>)
     return {}
   },
 })

@@ -97,8 +97,8 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 3,588 tests / 243 files (30 skipped) — 2026-09-29
-pnpm --filter web test:e2e                     # 62 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
+pnpm -r test                                   # 3,637 tests / 245 files (30 skipped) — 2026-09-30
+pnpm --filter web test:e2e                     # 64 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
 pnpm capabilities                              # regenerate docs/capabilities.md + packages/commands/capabilities.json
 pnpm agent:eval                                # agent eval: headless Claude Code vs the local stack (--filter/--keep/--record)
 pnpm size                                      # bundle budgets

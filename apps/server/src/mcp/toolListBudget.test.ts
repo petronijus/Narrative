@@ -49,8 +49,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * animation.retarget 1.2 KB.
  * A2.10 (2026-09-29): 167,000 → 169,000 for table.setSize, table.style.table
  * `overrideCells` and object.fill.gradient `cells` (≈ 1.9 KB together).
+ * A2.11 (2026-09-30): 169,000 → 177,000 for text.setBoxTypography 2.6 KB,
+ * text.edit 2.4, text.style.apply 1.3 and text.replace 1.3 (object.update
+ * lost its now-obsolete workaround notes).
  */
-export const TOOL_LIST_BUDGET_BYTES = 169_000
+export const TOOL_LIST_BUDGET_BYTES = 177_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

@@ -69,44 +69,67 @@ the diff, never committing.
 Some of these land during A0–A4 and may not exist yet. A missing file is a
 finding ("guard not wired yet"), never a reason to skip the check silently.
 
-State at A2.10 (2026-09-29; A2.1–A2.10 released in 0.10.2–0.10.12) — check again, but do not assume more:
+State at A2.11 (2026-09-30; A2.1–A2.11 released in 0.10.2–0.10.13) — check again, but do not assume more:
 
-- **117 commands** (70 document, 47 server-only; A2.10 added
-  `table.setSize`, `table.style.table` `overrideCells` and table support in
-  `object.fill.gradient`). `knownMissing.ts` 22
-  entries (A2 15, A3 5, A4 2), `FINISHED_PHASES = ['A0', 'A1']`;
-  `allowlist.ts` 20.
+- **121 commands** (74 document, 47 server-only; A2.11 added `text.edit`,
+  `text.replace`, `text.setBoxTypography`, `text.style.apply`).
+  `knownMissing.ts` 19 entries (A2 12, A3 5, A4 2; A2.11 closed
+  `text.setBoxTypography`, `text.style.apply`, `text.replace`),
+  `FINISHED_PHASES = ['A0', 'A1']`; `allowlist.ts` 20. The plan's
+  `text.style.detach` / `reset` are `text.style.apply` with `style: null` /
+  `reset: true`, and `text.formatRange` / `text.clearFormat` are
+  `text.format` — do not report them as missing.
+- **Folder context flags**: a command that reads the folder's tokens
+  declares `readsFolderTokens` (`ctx.folderTokens`, A2.8), one that needs
+  its font faces `readsFolderFonts` (`ctx.folderFonts`, A2.11; server:
+  `apps/server/src/agent/folderFonts.ts`, browser:
+  `useFolderFontsForCommands`). Same states as `folderTokens`: `null` =
+  no folder or no uploaded fonts, absent = the host did not provide them —
+  then a non-system family change without `fontWeight` is refused
+  (`conflict`), never guessed. The font-weight rules live in
+  `packages/commands/src/text/fontWeights.ts` (moved from `apps/web`).
 - **The one-door lint rule is on** (`apps/web/eslint.one-door.js`, since
   A2.1): `pnpm lint` fails on any slide-model writer import (the `writer`
   entries of `parity/slideModelExports.ts`) or `.transact()` call in
-  `apps/web/src`, except in the 10 files of `ONE_DOOR_PENDING` (13 after
-  A2.9), each tagged
-  with the A2 step that migrates it; `oneDoor.test.ts` fails when a listed
-  file no longer needs its exemption. Every slide-model export must be
-  classified in `slideModelExports.ts` (`parity.test.ts` fails on an
-  unclassified one); only `writer` entries are banned.
+  `apps/web/src`, except in the 6 files of `ONE_DOOR_PENDING` (A2.12:
+  `Toolbar`, `UploadDropZone`, `DeckShell`, `FolderDocProvider`,
+  `writeComponentMasterTree`; A2.13: `testApi`; 10 after A2.10, 13 after
+  A2.9), each tagged with the A2 step that migrates it; `oneDoor.test.ts`
+  fails when a listed file no longer needs its exemption. Every slide-model
+  export must be classified in `slideModelExports.ts` (`parity.test.ts`
+  fails on an unclassified one); only `writer` entries are banned (A2.11
+  added the writer `splitParagraphAt`).
 - **Components dispatch through `useCommand()`**: the slides panel and
   slide notes panel, rulers / guides, toolbar and context menu, transform /
   crop / path / line handles, the object clipboard, the upload drop zone,
-  the video preview, the Inspector's geometry, layers, gradients, shadow,
-  page-number field and animation section, the animation timeline and the
-  move-to handle, the table chrome, the table Inspector and the table cell
-  editor. For those, "the UI path dispatches the command" is now a hard
-  check; for a file still in `ONE_DOOR_PENDING`, report whether the command
-  exists and shares the UI path's slide-model writer.
-- **Eval**: 36 scenarios in `tests/agent-eval/scenarios/`, 30 replayed free
-  in `agentEvalReplay.test.ts`.
-- **`tools/list` budget 169,000 bytes, measured 168,876 (url mode) on
-  2026-09-29 after A2.10 — 124 bytes of headroom** (was 167,000 / 20 bytes
-  after A2.9). A2 raises the budget per step (each
-  raise itemised in `toolListBudget.test.ts`'s comment) and reviews the
-  sizes as a whole at A2.13; a new command will need a raise, so report its
-  size.
+  the video preview, the whole Inspector (since A2.11 also Typography,
+  lists, transition and background; routing in `ui/useTextFormat.ts`), the
+  font family / weight pickers, the canvas text editor (`TextEditOverlay`:
+  one `text.edit` per input; Enter, list Backspace and paste are
+  `text.edit`, Tab is `text.list`), the animation timeline and the move-to
+  handle, the table chrome, the table Inspector and the table cell editor.
+  For those, "the UI path dispatches the command" is a hard check; for a
+  file still in `ONE_DOOR_PENDING`, report whether the command exists and
+  shares the UI path's slide-model writer. Known exception inside a
+  migrated file: the Inspector's Preset picker "Update preset" / "Create
+  new text style" write the folder document through FolderDocProvider
+  (A2.12, `text.style.createFromObject` / `token.textStyle.update` on
+  `knownMissing.ts`).
+- **Eval**: 39 scenarios in `tests/agent-eval/scenarios/`, 33 replayed free
+  in `agentEvalReplay.test.ts`. `text.style.apply` has no scenario yet:
+  eval folders have no text styles until A2.12 seeds tokens on the server
+  — report it as open, not as a new gap.
+- **`tools/list` budget 177,000 bytes, measured ≈ 176,529 (url mode) on
+  2026-09-30 during A2.11 — ≈ 470 bytes of headroom** (before the step's
+  last example tweak, not re-measured; was 169,000 / 124 bytes after A2.10,
+  167,000 / 20 after A2.9). A2 raises the budget per step (each raise
+  itemised in `toolListBudget.test.ts`'s comment) and reviews the sizes as
+  a whole at A2.13; a new command will need a raise, so report its size.
 - **Still missing:** shortcut and menu-action enumeration in the parity
-  guard (A2.13); the commands of A2.11–A2.12 (`knownMissing.ts`; A2.10's
-  table commands were never in it — the plan's `table.cell.setText` was not
-  added, because `text.set` / `text.format` / `text.list` take
-  `target.cell`: do not report it as missing).
+  guard (A2.13); the commands of A2.12 (`knownMissing.ts`; A2.10's table
+  commands were never in it — the plan's `table.cell.setText` was not
+  added, because `text.set` / `text.format` / `text.list` / `text.edit`
+  take `target.cell`: do not report it as missing).
 
 State at the end of A1 (2026-09-27, released in 0.10.0), kept for the record
 (superseded by the block above where they differ):

@@ -49,7 +49,7 @@ function body(x: number, text: string) {
 export default defineScenario({
   id: 'heading-one-font',
   title: 'Make every heading on a slide Inter Bold (inline overrides included)',
-  covers: ['object.update', 'text.format'],
+  covers: ['text.setBoxTypography', 'object.update', 'text.format'],
   maxTurns: 14,
   replay: true,
   async setup(world) {

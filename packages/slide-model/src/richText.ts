@@ -402,6 +402,29 @@ export function applyParagraphPatch(
 }
 
 /**
+ * Split the paragraph containing `at` there, as Enter does: the new
+ * separator carries that paragraph's block attributes, so the paragraph
+ * after it continues the same list at the same level. Splitting at the very
+ * end also terminates the new, empty paragraph — without that separator
+ * `getParagraphs` would collapse it away and it would never render.
+ * Returns the offset right after the new separator (where the caret goes).
+ * Must run inside a Y.Doc transaction supplied by the caller.
+ */
+export function splitParagraphAt(yt: Y.Text, at: number): number {
+  const pos = Math.max(0, Math.min(at, yt.length))
+  const paras = getParagraphs(yt)
+  const para = paras.find((p) => p.start <= pos && pos <= p.end) ?? paras[paras.length - 1]!
+  const blockAttrs = blockAttrsToInsertAttrs(para.attrs)
+  const insertSep = (index: number): void => {
+    if (blockAttrs !== undefined) yt.insert(index, PARAGRAPH_SEP, blockAttrs)
+    else yt.insert(index, PARAGRAPH_SEP)
+  }
+  insertSep(pos)
+  if (pos + 1 === yt.length) insertSep(yt.length)
+  return pos + 1
+}
+
+/**
  * Toggle a list kind over a range. If every covered paragraph already has
  * `list === kind`, the list is removed (and level reset). Otherwise every
  * covered paragraph is set to that kind, preserving each one's level.

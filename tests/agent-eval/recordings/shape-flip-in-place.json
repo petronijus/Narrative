@@ -1,26 +1,26 @@
 {
   "scenario": "shape-flip-in-place",
-  "tag": "evbd553c",
-  "recordedAt": "2026-09-28T22:52:28.121Z",
+  "tag": "eve61117",
+  "recordedAt": "2026-09-29T22:24:01.692Z",
   "model": "claude-opus-5-5",
-  "claudeVersion": "2.1.283 (Claude Code)",
+  "claudeVersion": "2.1.285 (Claude Code)",
   "fixture": {
-    "deckId": "HfWHs7y1WX4S",
-    "title": "Signposts evbd553c",
-    "pointerId": "vQmzDBR7_QzLbpuVDESJ4",
-    "titleId": "x4MW-bPqPKzEVYGvUXaJN"
+    "deckId": "EHZzR85fHqJx",
+    "title": "Signposts eve61117",
+    "pointerId": "TZ8tfdujNzKywPbY6xxJR",
+    "titleId": "bbI753Arwidx1DaJcE_wE"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "On slide 1 of the Narrative deck \"Signposts evbd553c\" (deckId HfWHs7y1WX4S), flip the tilted \"Pointer\" triangle horizontally, so it becomes its own mirror image where it stands.",
+        "prompt": "On slide 1 of the Narrative deck \"Signposts eve61117\" (deckId EHZzR85fHqJx), flip the tilted \"Pointer\" triangle horizontally, so it becomes its own mirror image where it stands.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
               "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__object_flip,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_object",
-              "max_results": 5
+              "max_results": 4
             },
             "isError": false,
             "errorCode": null,
@@ -31,7 +31,7 @@
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "HfWHs7y1WX4S",
+              "deckId": "EHZzR85fHqJx",
               "slide": {
                 "index": 0
               }
@@ -39,7 +39,7 @@
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "6Zuj6eW8gJD2qDcmc9tKJ",
+              "id": "Z5KJ22eeVC93xMY5K0orV",
               "index": 0,
               "transition": {
                 "kind": "none",
@@ -48,7 +48,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "x4MW-bPqPKzEVYGvUXaJN",
+                  "id": "bbI753Arwidx1DaJcE_wE",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -63,7 +63,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "vQmzDBR7_QzLbpuVDESJ4",
+                  "id": "TZ8tfdujNzKywPbY6xxJR",
                   "type": "triangle",
                   "name": "Pointer",
                   "x": 800,
@@ -78,31 +78,31 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"6Zuj6eW8gJD2qDcmc9tKJ\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"x4MW-bPqPKzEVYGvUXaJN\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Which way?\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"vQmzDBR7_QzLbpuVDESJ4\",\"type\":\"triangle\",\"name\":\"Pointer\",\"x\":800,\"y\":400,\"width\":240,\"height\":160,\"rotation\":0.5235987755982988,\"fill\":\"#2e86ab\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"Z5KJ22eeVC93xMY5K0orV\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"bbI753Arwidx1DaJcE_wE\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Which way?\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"TZ8tfdujNzKywPbY6xxJR\",\"type\":\"triangle\",\"name\":\"Pointer\",\"x\":800,\"y\":400,\"width\":240,\"height\":160,\"rotation\":0.5235987755982988,\"fill\":\"#2e86ab\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "HfWHs7y1WX4S",
+              "deckId": "EHZzR85fHqJx",
               "request": "Flip the tilted \"Pointer\" triangle on slide 1 horizontally"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_UTT3mnbaTmMKbuBa"
+              "runId": "run_agBxtStuuYYqmtDR"
             },
-            "text": "{\"runId\":\"run_UTT3mnbaTmMKbuBa\"}"
+            "text": "{\"runId\":\"run_agBxtStuuYYqmtDR\"}"
           },
           {
             "tool": "object_flip",
             "command": "object.flip",
             "input": {
-              "deckId": "HfWHs7y1WX4S",
+              "deckId": "EHZzR85fHqJx",
               "slide": {
                 "index": 0
               },
-              "objects": ["vQmzDBR7_QzLbpuVDESJ4"],
+              "objects": ["TZ8tfdujNzKywPbY6xxJR"],
               "axis": "horizontal"
             },
             "isError": false,
@@ -114,22 +114,22 @@
             "tool": "query_object",
             "command": "query.object",
             "input": {
-              "deckId": "HfWHs7y1WX4S",
+              "deckId": "EHZzR85fHqJx",
               "slide": {
                 "index": 0
               },
-              "object": "vQmzDBR7_QzLbpuVDESJ4"
+              "object": "TZ8tfdujNzKywPbY6xxJR"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "slide": {
-                "id": "6Zuj6eW8gJD2qDcmc9tKJ",
+                "id": "Z5KJ22eeVC93xMY5K0orV",
                 "index": 0
               },
               "stackIndex": 1,
               "object": {
-                "id": "vQmzDBR7_QzLbpuVDESJ4",
+                "id": "TZ8tfdujNzKywPbY6xxJR",
                 "type": "triangle",
                 "name": "Pointer",
                 "x": 800,
@@ -143,10 +143,10 @@
               },
               "animations": []
             },
-            "text": "{\"slide\":{\"id\":\"6Zuj6eW8gJD2qDcmc9tKJ\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"vQmzDBR7_QzLbpuVDESJ4\",\"type\":\"triangle\",\"name\":\"Pointer\",\"x\":800,\"y\":400,\"width\":240,\"height\":160,\"rotation\":-0.5235987755982988,\"fill\":\"#2e86ab\",\"opacity\":1,\"flipH\":true},\"animations\":[]}"
+            "text": "{\"slide\":{\"id\":\"Z5KJ22eeVC93xMY5K0orV\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"TZ8tfdujNzKywPbY6xxJR\",\"type\":\"triangle\",\"name\":\"Pointer\",\"x\":800,\"y\":400,\"width\":240,\"height\":160,\"rotation\":-0.5235987755982988,\"fill\":\"#2e86ab\",\"opacity\":1,\"flipH\":true},\"animations\":[]}"
           }
         ],
-        "finalText": "I flipped the \"Pointer\" triangle on slide 1 horizontally, so it's now a mirror image of itself in the same place. I checked it after the change:\n\n- **Flip:** it's now set as flipped horizontally.\n- **Tilt:** it used to lean 30° one way and now leans 30° the other way. The tilt had to reverse too, or the result wouldn't be a true mirror image.\n- **Everything else:** its position (800, 400), size (240×160) and colour (#2e86ab) haven't changed.\n\nThe flip is saved as its own step in the deck's Agent activity, so you can undo it in one go if you want the original back.",
+        "finalText": "I flipped the \"Pointer\" triangle on slide 1 horizontally, and checked the result afterwards. It's now the mirror image of what it was, in the same spot:\n\n- **Flip:** it's now flipped left-to-right.\n- **Tilt:** the tilt now leans the other way, from +30° to −30°. That's part of mirroring a tilted shape, so the whole triangle is reflected, not just its outline.\n- **Position, size and colour:** unchanged at x 800, y 400, 240×160, #2e86ab.\n\nThis change is its own step in the deck's Agent activity list, so you can undo it in one go if you want.",
         "turns": 6,
         "isError": false,
         "stopReason": "success"

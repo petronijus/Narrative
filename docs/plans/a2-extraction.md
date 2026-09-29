@@ -421,37 +421,112 @@ after the mechanism has been proven on simpler surfaces.
     known-missing entry now says it must take tables.
   - tools/list budget 167,000 → 169,000 bytes.
 
-## Where we stand (2026-09-29, after A2.10)
+- 2026-09-30: **A2.11 done** (released 0.10.13) — `text.edit`, `text.replace`,
+  `text.setBoxTypography`, `text.style.apply`; the context carries the
+  folder's font faces (`readsFolderFonts`, `ctx.folderFonts`). The
+  Inspector (every remaining patch, the Typography section, lists, the
+  slide's transition and background), the family / weight pickers, the text
+  selection and list helpers and the canvas text editor dispatch commands;
+  `Inspector.tsx`, `TextEditOverlay.tsx`, `textEditSelection.ts` and
+  `textListOps.ts` are off the exemption list. Done in two parts (a: the
+  Inspector and typography, b: typing), released together. Decisions:
+  - **Typing is `text.edit`, in display offsets.** The editor diffs the DOM
+    as before and sends one splice per input event; Enter, the list
+    Backspace and paste are `text.edit` too (`key: "Enter" | "Backspace"`),
+    Tab is `text.list` `indent`. The Enter / Backspace list rules moved into
+    the command (`text/edit.ts`); splitting a paragraph is a new slide-model
+    writer, `splitParagraphAt`. Offsets are the ones queries report (a
+    paragraph break counts 2), so an agent edits what it read; the editor
+    converts its stored-text offsets (`displayRangeOf` / `rawOffsetOf` in
+    `@narrative/commands`). Each keystroke is one command and one
+    transaction; the undo manager still merges typing as before.
+  - **"\n\n" inserted is a paragraph** (continuing the list it splits), as
+    in `text.set`; a single "\n" is a line break.
+  - **Box typography is one command with the editor's rules**
+    (`text.setBoxTypography`): the inline formatting of the attributes it
+    sets is removed, a new family keeps the weight on a cut it has, and on a
+    box linked to a text style the fields become overrides. Override
+    tracking and the weight rule used to live in the Inspector
+    (TypographySection's patch wrapper, FontFamilySelect); both now also
+    apply to a table's defaults through `table.style.table`. The Inspector
+    keeps only the routing: the selected part of the text being edited gets
+    `text.format`, otherwise the box gets `text.setBoxTypography`
+    (`useTextFormat`). Change: a box-wide change made while editing with a
+    collapsed caret now also removes the inline formatting of that
+    attribute, as it always did from a selected box.
+  - **The font rules moved to `packages/commands`** (`text/fontWeights.ts`,
+    was `apps/web/src/ui/fontWeights.ts`), so the pickers and the command
+    share them. The server reads a folder's faces from its font assets
+    (`agent/folderFonts.ts`); a family that is not a system stack with the
+    faces unknown is refused (`conflict`), never guessed.
+  - **Text styles are applied by id or name** (`text.style.apply`), to text
+    boxes and to tables' defaults; an unknown name answers with the
+    folder's style names, so an agent needs no token command to find them
+    (those are A2.12). `reset` also removes inline formatting (and, in a
+    table, the cells' own text styling); `null` unlinks. The Preset
+    picker's "Update preset" and "Create new text style" still write the
+    folder document through FolderDocProvider (A2.12).
+  - **Image mode writes nothing until a picture is chosen**, for fills
+    (A2.10) and now for the slide background, which had no way to pick a
+    picture at all: it gets the fill's upload chooser.
+  - Found on the way: pasted multi-line text built paragraphs the diff read
+    back wrongly (an empty paragraph and a stray line break) — paste is now
+    one `text.edit`; the transition duration could exceed the schema limit
+    and viewers could change the transition (both guarded). Tests of UI
+    helpers that no longer write were moved onto the commands
+    (`textFormatUndo.test.ts` → `typography.test.ts`, the preset picker test
+    reads the document).
+  - Parity review follow-ups fixed before release: a range may no longer
+    start or end between the two characters of a paragraph break
+    (`text.edit` refuses it, `text.replace` does not match across half a
+    break — both could cut a break in half); the browser keeps serving the
+    folder's font list while it refetches after an upload (a family change
+    was refused as "fonts unknown" meanwhile); `text.edit`'s second example
+    and three descriptions that still sent box typography to
+    `object.update` were corrected.
+  - Open: `text.style.apply` has no eval scenario yet — eval folders have no
+    text styles until A2.12 seeds tokens on the server. The inline font
+    picker stores only a stack's primary family, while `text.format` /
+    `text.set` store the family as given (pre-existing; normalise in the
+    command).
+  - Verified: full e2e 167 passed / 15 skipped; full agent eval 39/39
+    ($4.77, the first full costed run).
+  - tools/list budget 169,000 → 177,000 bytes.
 
-Done and released: A2.1–A2.10 and A2.7a (0.10.2–0.10.12; A2.9, the triangle
-fix and A2.10 in 0.10.12). `ONE_DOOR_PENDING` holds 10 files,
-`knownMissing` 15 A2 entries (22 in all: A3 5, A4 2). 117 commands (70
-document, 47 server-only).
+## Where we stand (2026-09-30, after A2.11)
 
-**tools/list headroom is 124 bytes.** Measured 2026-09-29 on the A2.10
-tree: 167,916 (form) / 168,876 (url) / 168,780 bytes (link) for 117 tools
-against the 169,000 budget, so the next command needs the per-step raise
+Done and released: A2.1–A2.11 and A2.7a (0.10.2–0.10.13; A2.11 in 0.10.13,
+2026-09-30). `ONE_DOOR_PENDING` holds 6 files (A2.12: `Toolbar`,
+`UploadDropZone`, `DeckShell`, `FolderDocProvider`,
+`writeComponentMasterTree`; A2.13: `testApi`), `knownMissing` 12 A2 entries
+(19 in all: A3 5, A4 2). 121 commands (74 document, 47 server-only).
+
+**tools/list headroom is ≈ 470 bytes.** Measured 2026-09-30 during A2.11,
+before the last example tweak: ≈ 175,569 (form) / 176,529 (url) /
+176,433 bytes (link) for 121 tools against the 177,000 budget (was 169,000
+after A2.10). A2.11 added ≈ 7.7 KB: `text_setBoxTypography` 2,638,
+`text_edit` 2,416, `text_style_apply` 1,343, `text_replace` 1,334. Not
+re-measured after the tweak; the next command needs the per-step raise
 Petr agreed for A2.
 
 Next, in order:
 
-1. **A2.11 Text** — the largest step: `text.edit` (typing as splice ops),
-   `text.setBoxTypography`, `text.style.apply` (reuse `textStyleFields`;
-   it takes tables too — the table Inspector's preset path),
-   `text.replace`; every remaining Inspector patch (solid fill, stroke,
-   image fill, blur, link, transition, background) onto `object.update` /
-   `slide.*`, which takes Inspector.tsx off the exemption list.
-2. **A2.12 Tokens, components, server propagation** — `token.*` CRUD and
+1. **A2.12 Tokens, components, server propagation** — `token.*` CRUD and
    `token.seedDefaults` on the server (folders an agent creates have no
    tokens until someone opens them in a browser: no page-number style,
    `folderTokens` null), `text.style.createFromObject`, `component.promote`
    (the page-number dialog's component branch still calls
    `promoteSelectionToComponent`), text-style propagation server-side
    (DeckShell's TextStylePropagator), media copy when pasting between a
-   master and a deck.
-3. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
+   master and a deck. Also:
+   - the Inspector's Preset picker "Update preset" and "Create new text
+     style" still write the folder document through FolderDocProvider —
+     they move onto the token commands here;
+   - `text.style.apply` needs an eval scenario once tokens are seeded
+     server-side (eval folders have no text styles until then).
+2. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
    exemption list, `FINISHED_PHASES += 'A2'`, ADR 0010 status, handoff note;
-   then the holistic tools/list size review (budget 169,000 today).
+   then the holistic tools/list size review (budget 177,000 today).
 
 Open, outside the steps:
 

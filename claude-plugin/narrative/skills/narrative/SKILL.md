@@ -97,15 +97,19 @@ text.
   `object_flip`, and crop with `object_crop_set`: they apply the editor's
   rules (a crop scales with its image, a flip mirrors in place) that raw
   `object_update` fields do not. Set other properties with `object_update`;
-  replace text with `text_set`; format ranges with `text_format`.
+  replace text with `text_set`, change part of it with `text_edit`, find and
+  replace across the deck with `text_replace`; format ranges with
+  `text_format`.
 - Text a model reads and writes uses paragraphs separated by a blank line
   (`"\n\n"`); a single `"\n"` is a line break inside a paragraph. The rich
   form of `text_set` carries runs (bold, colour, size, font) and list
   attributes; `query_slide` returns text in the same shape, so you can read,
   edit and write it back without losing formatting.
 - Inline formatting on text runs overrides the text box's own typography.
-  To change a box's font or colour everywhere, clear the run attribute with
-  `text_format` and set the box with `object_update`, in one `ops_apply`.
+  To change a box's font, size, weight or colour everywhere use
+  `text_setBoxTypography`: it also removes the run formatting that would
+  hide the new value and keeps the weight on a cut a new family has. A
+  folder text style is applied with `text_style_apply` (by name).
 - Pictures, videos and fonts come in with `media_upload` (a public URL, or
   small files as base64); a local file on a machine where you have a shell
   goes through `media_uploadSession` — run the `curl` it returns, never

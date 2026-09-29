@@ -31,10 +31,11 @@ The user asked: {{request}}
      ellipse, triangle or polygon point by point →
      `object.path.fromShape`, then `object.path.setAnchors`; move a line's
      or arrow's end → `object.line.setEndpoints` (all in slide px);
-   - change font, size, colour of a whole box → `object.update` (clear
-     conflicting run formatting with `text.format` first);
-   - change some words → `text.format` with a `match` range, or `text.set`
-     with the rich form to keep the rest of the formatting;
+   - change font, size, colour of a whole box → `text.setBoxTypography`;
+     give it a folder text style → `text.style.apply`;
+   - restyle some words → `text.format` with a `match` range; change some
+     words → `text.edit` at their offsets, or `text.replace` for every
+     occurrence;
    - copy a slide → `slide.duplicate`; reorder → `slide.move`;
    - put another deck's slides after slide N → `deck.insertFrom`.
 4. **Check the result** (`query.slide`, and a screenshot once `query.render`

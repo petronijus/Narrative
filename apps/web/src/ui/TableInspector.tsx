@@ -52,6 +52,8 @@ import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCommand, type GroupRun } from '../state/useCommand.js'
+import { forCommand } from './commandPatch.js'
+import { runFormatOf, useTextFormat } from './useTextFormat.js'
 import {
   AnimationsSection,
   FillBody,
@@ -69,7 +71,6 @@ import {
 import { TokenColorInput } from './TokenColorInput.js'
 import { AlignButtonGroup } from './AlignButtonGroup.js'
 import {
-  applyInlineFormatIfSelected,
   getActiveTextSelection,
   readActiveSelectionAttrs,
   refocusActiveTextEdit,
@@ -111,17 +112,6 @@ const cellRange = (r: { r0: number; c0: number; r1: number; c1: number }): CellR
 })
 
 /**
- * A patch as the table commands read it: a field the editor deletes
- * (`undefined`, "fall back to the default") is sent as `null`, the
- * commands' "clear". Other values pass unchanged.
- */
-function forCommand(patch: object): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(patch).map(([key, value]) => [key, value === undefined ? null : value]),
-  )
-}
-
-/**
  * The visible cell at (r, c): a cell hidden inside a merge points at its
  * merge origin, which is the one the commands style (and the one the cell
  * editor edits).
@@ -132,18 +122,6 @@ function mergeOrigin(table: TableObject, r: number, c: number): Cell {
     return { row: cell.mergeOriginR, col: cell.mergeOriginC }
   }
   return { row: r, col: c }
-}
-
-/** What the B / I / U / colour toggles apply, as `text.format` takes it. */
-function runFormatOf(attrs: RichAttrs): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  if (attrs.fontWeight !== undefined) out['fontWeight'] = attrs.fontWeight
-  if (attrs.italic !== undefined) out['italic'] = attrs.italic
-  if (attrs.underline !== undefined) out['underline'] = attrs.underline
-  if (attrs.color !== undefined) out['color'] = attrs.color
-  if (attrs.fontFamily !== undefined) out['fontFamily'] = attrs.fontFamily
-  if (attrs.fontSize !== undefined) out['fontSize'] = attrs.fontSize
-  return out
 }
 
 export interface TableInspectorProps {
@@ -164,6 +142,7 @@ export function TableInspector({ obj, isViewer }: TableInspectorProps) {
   const { animations } = useAnimations()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
+  const textFormat = useTextFormat()
 
   /**
    * Dispatch a table command on this table. Viewer mode bails out so a
@@ -625,14 +604,14 @@ export function TableInspector({ obj, isViewer }: TableInspectorProps) {
     runOnTable('table.setSize', { table: obj.id, cols: target })
   }
 
-  const applyAndRefocus = (attrs: Parameters<typeof applyInlineFormatIfSelected>[1]): void => {
+  const applyAndRefocus = (attrs: RichAttrs): void => {
     if (editingObjectId === null) return
     // Try the inline-format path first (user has highlighted text);
     // if that returns false (collapsed caret), fall back to formatting
     // the entire cell text so the picker / toggle still has visible
     // effect — matches the "you can color a cell without selecting"
     // expectation users have from Excel / Numbers.
-    const ok = applyInlineFormatIfSelected(editingObjectId, attrs)
+    const ok = textFormat.formatSelection(editingObjectId, attrs)
     if (!ok && activeCell !== null) {
       const body = obj.rows[activeCell.row]?.[activeCell.col]?.text
       const set = runFormatOf(attrs)

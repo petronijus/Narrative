@@ -10,6 +10,7 @@
 import type { z } from 'zod'
 import type { DeckMutationContext, FolderTokensSnapshot } from '@narrative/slide-model'
 import type { ServerServices } from './services.js'
+import type { FontFaceWeight } from './text/fontWeights.js'
 
 /** Deck roles, ordered: a higher role may do everything a lower one may. */
 export type Role = 'viewer' | 'editor' | 'owner'
@@ -207,6 +208,16 @@ export interface CommandContext {
    * the flag (agent/folderTokens.ts).
    */
   folderTokens?: FolderTokensSnapshot | null
+  /**
+   * The font faces uploaded to that folder (family and weight), read-only —
+   * for commands that resolve a family's cuts (`readsFolderFonts`, e.g. the
+   * weight a text box snaps to when its family changes). Same states as
+   * `folderTokens`: `null` = no folder or no uploaded fonts, absent = the
+   * host did not provide them. The browser host passes the editor's folder
+   * font list once loaded, the server host reads the folder's font assets
+   * (agent/folderFonts.ts).
+   */
+  folderFonts?: ReadonlyArray<FontFaceWeight> | null
 }
 
 /**
@@ -278,6 +289,12 @@ export interface CommandDef<
    * contains one — see `commandReadsFolderTokens`).
    */
   readsFolderTokens?: true
+  /**
+   * The handler reads the target folder's uploaded font faces
+   * (`ctx.folderFonts`). Loaded like `readsFolderTokens` (see
+   * `commandReadsFolderFonts`).
+   */
+  readsFolderFonts?: true
   /**
    * The command changes nothing anywhere: no document, no database row, no
    * file, no message to anyone — it only reads and returns (lists, gets,

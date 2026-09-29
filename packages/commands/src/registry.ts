@@ -44,6 +44,7 @@ export function commandMetadataProblems(
     | 'undoneBy'
     | 'readsDocument'
     | 'readsFolderTokens'
+    | 'readsFolderFonts'
   >,
 ): string[] {
   const problems: string[] = []
@@ -76,6 +77,8 @@ export function commandMetadataProblems(
     def.effects.includes('doc') || def.effects.length === 0 || def.readsDocument === true
   if (def.readsFolderTokens === true && !usesDocument)
     problems.push('`readsFolderTokens` is for commands that use the target document')
+  if (def.readsFolderFonts === true && !usesDocument)
+    problems.push('`readsFolderFonts` is for commands that use the target document')
   return problems
 }
 

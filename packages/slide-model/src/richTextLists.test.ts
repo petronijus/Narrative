@@ -19,6 +19,7 @@ import {
   indentParagraphs,
   readParagraphAttrsForRange,
   toggleListKind,
+  splitParagraphAt,
 } from './richText.js'
 import type { ParagraphAttrs } from '@narrative/shared'
 
@@ -297,5 +298,27 @@ describe('blockAttrsToInsertAttrs', () => {
     const attrs = blockAttrsToInsertAttrs({ list: 'bullet', level: 1, bulletChar: '–' })
     yt.insert(yt.length, PARAGRAPH_SEP, attrs)
     expect(getParagraphs(yt)[0]!.attrs).toEqual({ list: 'bullet', level: 1, bulletChar: '–' })
+  })
+})
+
+describe('splitParagraphAt', () => {
+  it('continues the list of the paragraph it splits', () => {
+    const { doc, yt } = attach(`one${PARAGRAPH_SEP}`)
+    doc.transact(() => applyParagraphPatch(yt, 0, 0, { list: 'bullet', level: 1 }))
+    let caret = 0
+    doc.transact(() => {
+      caret = splitParagraphAt(yt, 2)
+    })
+    expect(caret).toBe(3)
+    expect(getParagraphs(yt).map((p) => [p.text, p.attrs.list, p.attrs.level])).toEqual([
+      ['on', 'bullet', 1],
+      ['e', 'bullet', 1],
+    ])
+  })
+
+  it('terminates a new empty paragraph at the very end', () => {
+    const { doc, yt } = attach('one')
+    doc.transact(() => splitParagraphAt(yt, 3))
+    expect(getParagraphs(yt).map((p) => p.text)).toEqual(['one', ''])
   })
 })

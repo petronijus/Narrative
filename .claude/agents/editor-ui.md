@@ -58,8 +58,8 @@ Diagnosed while fixing the survey's bugs; each cost a debugging round. See
   `batch` (atomic). Since A2.1 (2026-09-28) the one-door lint rule
   (`apps/web/eslint.one-door.js`) fails `pnpm lint` on a slide-model writer
   import or a `.transact()` call anywhere in `apps/web/src`, except in the
-  files listed in `ONE_DOOR_PENDING` (10 after A2.10 on 2026-09-29; 13
-  after A2.9) — that list only
+  files listed in `ONE_DOOR_PENDING` (6 after A2.11 on 2026-09-30 — all
+  A2.12–A2.13; 10 after A2.10, 13 after A2.9) — that list only
   shrinks. A capability with no command yet gets one in
   `packages/commands`; it never gets a direct write. (Was, at A0: a
   recommendation, with the lint rule still to come.) A `pnpm lint` that
@@ -172,8 +172,8 @@ commands only (off `ONE_DOOR_PENDING`); decisions in
   or `cells`), `table.border.preset`, `table.merge` / `split`, `text.format`
   on the cell for the format toggles' whole-cell fallback. A Typography
   change that writes cells and defaults is one `command.group`. The text
-  style preset path is still the Inspector's `applyTextStyle` until A2.11
-  (`text.style.apply` should take tables).
+  style preset goes through `text.style.apply`, which takes tables (since
+  A2.11; was the Inspector's `applyTextStyle`).
 - **FillBody requires `setGradient`**; the seeded-patch fallback and the
   `seedGradientStops` export from `@narrative/commands` are gone.
 - **One TextEditOverlay per cell** (`key={synthetic.id}`). The overlay
@@ -186,6 +186,54 @@ commands only (off `ONE_DOOR_PENDING`); decisions in
   frame the new row exists only in the document. `TableCellEditor` reads it
   from there (`liveTable`) so the editor moves in the same render;
   otherwise it closed for a frame and keys typed at once were lost.
-- The typing itself is still TextEditOverlay's binding (A2.11).
+- The cell editor is the same TextEditOverlay as a text box, addressed by
+  a `{ slide, object, cell: { row, col } }` target (typing through
+  `text.edit` since A2.11; was a direct binding).
 - e2e: `apps/web/e2e/table-commands.spec.ts` (drag, handles, stepper,
   gradients, Typography on a column, both Tab bugs).
+
+## Text: Inspector, font pickers, canvas text editor (A2.11, 2026-09-30)
+
+`Inspector.tsx`, `TextEditOverlay.tsx`, `textEditSelection.ts` and
+`textListOps.ts` dispatch commands only (off `ONE_DOOR_PENDING`); decisions
+in `docs/plans/a2-extraction.md` (A2.11).
+
+- **Typing is `text.edit`, one command per input event.** The overlay
+  still diffs the DOM (common prefix / suffix) and sends the splice; Enter,
+  the list Backspace and paste are `text.edit` (with a `key` of Enter or
+  Backspace, or the pasted text); Tab is `text.list` `indent`. The Enter /
+  Backspace list rules live in the command (`packages/commands/src/text/edit.ts`)
+  — do not re-implement them in the component. The overlay mutes its Y.Text
+  observer while its own command runs (otherwise it rebuilds the DOM under
+  the caret), and redraws from the document when the command wrote more
+  than the DOM shows (a pasted blank line becomes a paragraph).
+- **Offsets: commands speak display offsets** (the ones queries report; a
+  paragraph break counts 2), the editor stores raw offsets. Convert with
+  `displayRangeOf` / `rawOffsetOf` from `@narrative/commands`, never by hand.
+- **Typography routing is `ui/useTextFormat.ts`**: the selected part of the
+  text being edited gets `text.format`; otherwise (no selection, or Cmd+A on
+  the whole body) the box gets `text.setBoxTypography` (or the table style
+  commands for a table). The command removes the inline formatting that would
+  hide the new value, snaps the weight when the family changes and records
+  overrides on a box linked to a text style — the Inspector keeps none of
+  those rules. Changed behaviour: a box-wide change while editing with a
+  collapsed caret now also strips that attribute's inline formatting.
+- **Patches to commands use `ui/commandPatch.ts` `forCommand`**: the editor
+  deletes a field with `undefined`, the commands take `null` as "clear".
+- **Font rules live in `packages/commands/src/text/fontWeights.ts`** (moved
+  from `apps/web/src/ui/fontWeights.ts`); the family / weight pickers and the
+  command share them. The browser host gets the folder's faces through
+  `useFolderFontsForCommands` (`state/useFolderFonts.tsx`) for commands that
+  declare `readsFolderFonts`.
+- **Presets**: applying, resetting and unlinking go through
+  `text.style.apply`. Still direct (A2.12): the Preset picker's "Update
+  preset" and "Create new text style" write the folder document through
+  FolderDocProvider (`updateToken` / `addToken`).
+- **Slide background Image mode** opens the fill's upload chooser and writes
+  nothing until a picture is chosen (before, it stored an image background
+  with no picture). The transition duration is clamped to the schema limit
+  and viewers cannot change the transition.
+- Tests: helpers that no longer write were moved onto the commands
+  (`textFormatUndo.test.ts` → `packages/commands/src/commands/typography.test.ts`);
+  e2e `apps/web/e2e/typography-commands.spec.ts` and
+  `text-edit-commands.spec.ts`.

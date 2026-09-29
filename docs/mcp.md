@@ -259,7 +259,8 @@ hand-written:
   link for the user." otherwise), and an example call `Example: {…}` — only when the
   input has several forms, a nested object or array, or more than two own properties
   (`needsExample` in `tools.ts`; 77 of 117 tools have one after A2.10 on 2026-09-29 —
-  76 of 116 after A2.9, 55 of 94 on 2026-09-28). What a declined or
+  76 of 116 after A2.9, 55 of 94 on 2026-09-28; not recounted for the 121 tools
+  after A2.11). What a declined or
   dismissed question means, and the retry with `confirmationId`, are said once in the
   `instructions`; the `confirmationId` argument is bare `{ "type": "string" }` like the
   other transport arguments. (Until 2026-09-28 every tool had an example with a title,
@@ -270,16 +271,20 @@ hand-written:
   that loads the whole list (possibly claude.ai) pays all of it on every request. It
   was 234,633 bytes (form-eliciting clients) before the first compaction, ≈ 148 KB
   after it (2026-09-27), 128,349 (form) / 129,309 (url) / 129,213 bytes (link) after
-  the second (2026-09-28, 94 tools), and grows with every A2 command: 167,916 (form) /
-  168,876 (url) / 168,780 bytes (link) for 117 tools after A2.10 on 2026-09-29
-  (166,020 / 166,980 / 166,884 for 116 tools after A2.9, same day), with the
-  `instructions` at 4,030 bytes (of which 2,258 are the shared fields — unchanged by
-  A2.10; was 3,945 / 2,173). `mcp/toolListBudget.test.ts` fails past 169,000 bytes
-  (16,000 for one tool; 167,000 after A2.9),
+  the second (2026-09-28, 94 tools), and grows with every A2 command: ≈ 175,569 (form) /
+  176,529 (url) / 176,433 bytes (link) for 121 tools measured 2026-09-30 during A2.11,
+  before the step's last example tweak (not re-measured after it) — A2.11 added
+  ≈ 7.7 KB: `text_setBoxTypography` 2,638, `text_edit` 2,416, `text_style_apply`
+  1,343, `text_replace` 1,334; 167,916 / 168,876 / 168,780 for 117 tools after A2.10
+  on 2026-09-29 (166,020 / 166,980 / 166,884 for 116 tools after A2.9, same day), with
+  the `instructions` at 4,030 bytes after A2.10 (of which 2,258 are the shared fields;
+  was 3,945 / 2,173; not re-measured after A2.11, whose playbook edits may have moved
+  it). `mcp/toolListBudget.test.ts` fails past 177,000 bytes (16,000 for one tool;
+  169,000 after A2.10, 167,000 after A2.9),
   so it cannot grow unnoticed; the budget was 160,000 until 2026-09-28, then 132,000,
   and Petr's call for A2 is to raise it step by step (each raise is itemised in the
   test's comment) and review the sizes as a whole when A2 closes (A2.13). Headroom on
-  2026-09-29 after A2.10 is 124 bytes in url mode (20 after A2.9).
+  2026-09-30 during A2.11 is ≈ 470 bytes in url mode (124 after A2.10, 20 after A2.9).
 - **Annotations** come from the registry's explicit metadata (`readOnly` / `idempotent` on each command; the registry refuses inconsistent combinations); a hint equal to the MCP default (`readOnlyHint` / `idempotentHint` false) is left out, `destructiveHint` and `openWorldHint` (default true) are always stated: `readOnlyHint` for commands that change nothing — document queries and server reads such as `deck_list`, `share_links_list`, `media_url`; `destructiveHint` for writes with `undo: 'irreversible'` (false on other writes); `idempotentHint` on read-only tools and on set-to-value writes marked `idempotent` (renames, `text_set`, `slide_setBackground`, `object_update`, … — the contract suite runs each of their examples twice), false on every other write; `openWorldHint` for commands that can fetch a URL (file inputs).
 - **Paged lists**: `deck_list` (most recently changed first — content, title or folder) and `folder_list` (by name) return at most `limit` items (default 50, max 200) as lean records plus `nextCursor`; pass it back as `cursor` with the same filters for the next page. `query` filters by title or name (case-insensitive, literal), and `deck_list` also takes `folderId`. The web app's `GET /decks` and `GET /folders` are unchanged.
 - **Results**: `structuredContent` = the command's output, plus the same as JSON text;
@@ -453,9 +458,12 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   Postgres (`vitest.integration.config.ts`, not part of `pnpm test`).
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
-- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 169,000 bytes in every
-  confirmation mode (132,000 on 2026-09-28, raised per A2 step since; 160,000 before),
-  ≤ 16,000 per tool, `$ref`s self-contained. Measured 2026-09-29 after A2.10: 167,916
+- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 177,000 bytes in every
+  confirmation mode (since A2.11, 2026-09-30; 169,000 after A2.10, 132,000 on
+  2026-09-28, raised per A2 step since; 160,000 before), ≤ 16,000 per tool, `$ref`s
+  self-contained. Measured 2026-09-30 during A2.11, before its last example tweak:
+  ≈ 175,569 (form), 176,529 (url), 176,433 bytes (link) for 121 tools; the four new
+  text tools as above. Measured 2026-09-29 after A2.10: 167,916
   (form), 168,876 (url), 168,780 bytes (link) for 117 tools; the 15 table tools
   together are 29,181 bytes (`table_style_table` 4,279, the new `table_setSize`
   1,079), `object_fill_gradient` 2,872, `object_create` 11,727, `object_path_create`
@@ -469,10 +477,10 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   command's description, every description repeated on ≥ 3 tools at ≥ 100 bytes saved
   is in the vocabulary, the instructions carry every note, and no tool in any
   confirmation mode carries a shared description.
-- `pnpm agent:eval` — real headless Claude Code against `pnpm dev`, 34 graded scenarios
-  on 2026-09-29 (14 at A1: 14/14 on 2026-09-27, and on 2026-09-28 with ToolSearch on
-  and the compacted list; the 34-scenario suite has not been run in full); 28 of them
-  replay without a model in
+- `pnpm agent:eval` — real headless Claude Code against `pnpm dev`, 39 graded scenarios
+  on 2026-09-30 after A2.11 (36 after A2.10, 34 after A2.9; 14 at A1: 14/14 on
+  2026-09-27, and on 2026-09-28 with ToolSearch on and the compacted list; the
+  39-scenario suite has not been run in full); 33 of them replay without a model in
   `packages/commands/src/agentEvalReplay.test.ts`. See `tests/agent-eval/README.md`.
 - End to end with the real CLI against `pnpm dev` (BYPASS_AUTH off or on):
   create a PAT, `claude mcp add --transport http narrative-local http://localhost:3001/mcp

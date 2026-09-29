@@ -528,7 +528,7 @@ export const objectSlideNumberSet = defineCommand({
       if (style === null || tokens === null)
         throw new CommandError(
           'not_found',
-          `the folder has no "${PAGE_NUMBER_TEXT_STYLE_NAME}" text style; set the box's typography with object.update`,
+          `the folder has no "${PAGE_NUMBER_TEXT_STYLE_NAME}" text style; set the box's typography with text.setBoxTypography`,
         )
       Object.assign(patch, textStyleFields(style, tokens), {
         textStyleId: style.id,

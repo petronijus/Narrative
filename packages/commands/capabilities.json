@@ -501,7 +501,7 @@
       "id": "folder.fonts.list",
       "domain": "folder",
       "title": "Folder fonts",
-      "description": "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the folder can use these families as fontFamily in text (text.set, text.format, object.update). Folder owner only.",
+      "description": "The folder's uploaded fonts: family, weight, style, postscript name and a download URL. Every deck in the folder can use these families as fontFamily in text (text.set, text.format, text.setBoxTypography). Folder owner only.",
       "role": "owner",
       "effects": ["server"],
       "undo": "n/a",
@@ -1012,7 +1012,7 @@
       "id": "object.update",
       "domain": "object",
       "title": "Update object properties",
-      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box-level typography (fontFamily, fontSize, fontWeight, color, …) is only the default: inline run formatting in the text overrides it, so a box-wide change on formatted text needs text.format with `clear` for those attributes first — put both in one ops.apply. (4) `fontFamily` does not snap `fontWeight` to a cut the new family has (the editor does); set a weight the family provides in the same patch. (5) `textStyleId` only links a folder text style, it does not apply it; set the style's font fields in the same patch; text.style.apply (planned, not available yet) will do both. (6) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
+      "description": "ROTATION IS IN RADIANS here (the stored unit): 90 degrees = 1.5708, 180 = 3.1416; object.rotate takes degrees. Change properties of an object — fill, stroke, opacity, font size, corner radius, shadow, name, lock, x/y/width/height, rotation, … — validated against its type before anything is written (unknown keys fail). `null` removes an optional property. Use `updates` to patch several objects on one slide in one step. Not for tables' rows/columns/cells (table.* commands) or relative moves (object.move). Raw fields do exactly what they say and no more; where the editor does more, compose it yourself: (1) Setting x/y of a cropped image moves its crop along, but width/height do NOT scale the crop (`imageRect`) — resize with object.resize, which does. (2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip with object.flip. (3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use text.setBoxTypography, which does what the Inspector does. (4) `textStyleId` only links a folder text style without applying it — use text.style.apply. (5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. `text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted text, text.format for styling ranges). `locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); it does not restrict commands, so locked objects can be changed and `locked` set or cleared like any property. Units: the slide is 1920 x 1080 px, origin top-left, y down; x/y/width/height in slide px; rotation in RADIANS (90 degrees = 1.5708); opacity and *Alpha 0..1; colours as \"#RRGGBB\", a 0xRRGGBB integer, or a colour token { \"$token\": \"colors.<id>\" }.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1532,7 +1532,7 @@
       "id": "table.style.table",
       "domain": "table",
       "title": "Style a whole table",
-      "description": "Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells that have their own gradient, also pass \"fillStyle\": null.",
+      "description": "Change the table-wide defaults every cell inherits unless it has its own override: font family/size/weight, text colour, alignment, fill, the default grid line (`border`) and padding. `null` clears an optional default. Cell overrides set with table.style.cell/range still win — unless `overrideCells: true`. To recolour cells that have their own gradient, also pass \"fillStyle\": null. A new fontFamily without fontWeight keeps a cut the family has; on a table linked to a text style the fields you set stop following it.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1541,10 +1541,21 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "text.edit",
+      "domain": "text",
+      "title": "Edit text in place",
+      "description": "Change part of a text box or table cell body without resending it, as typing in the editor does. `edits` run in order, each against the text the previous one left. { at, delete?, insert? } removes `delete` characters at `at` and inserts `insert` there; inserted text takes the formatting of the text before it, \"\\n\\n\" in it starts a new paragraph that continues the list it splits. { at, key: \"Enter\" | \"Backspace\" } does what the key does with the caret there: Enter splits the paragraph (on an empty list item it outdents, or ends the list); Backspace at the start of an indented or list paragraph outdents it or removes the list, elsewhere deletes the character before. Returns the new length and the caret after the last edit. Whole body: text.set; find and replace: text.replace.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "text.format",
       "domain": "text",
       "title": "Format text range",
-      "description": "Apply (`set`) and/or remove (`clear`) inline formatting — bold, fontWeight, italic, underline, color, fontFamily, fontSize — on part of a text box or table cell without changing the text. Choose the range by { match: \"exact text\", occurrence?: n | \"all\" } (safest) or { start, length } in characters of the text as query.object returns it; omit `range` for the whole body. `clear` runs first, so clear: \"all\" plus set restyles from scratch. Clearing makes the text fall back to the box defaults. For the box-wide font use object.update; inline formatting wins over the box defaults, so to restyle formatted text box-wide, clear those attributes here and set the box value with object.update in one ops.apply.",
+      "description": "Apply (`set`) and/or remove (`clear`) inline formatting — bold, fontWeight, italic, underline, color, fontFamily, fontSize — on part of a text box or table cell without changing the text. Choose the range by { match: \"exact text\", occurrence?: n | \"all\" } (safest) or { start, length } in characters of the text as query.object returns it; omit `range` for the whole body. `clear` runs first, so clear: \"all\" plus set restyles from scratch. Clearing makes the text fall back to the box defaults. To restyle the whole box use text.setBoxTypography, which also removes this inline formatting.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1564,10 +1575,45 @@
       "hosts": ["browser", "server"]
     },
     {
+      "id": "text.replace",
+      "domain": "text",
+      "title": "Find and replace text",
+      "description": "Replace every occurrence of `find` with `replace` in text boxes and visible table cells (not speaker notes) — of the whole deck, of one `slide`, or of some `objects` on it. Case-sensitive unless `matchCase: false`; `wholeWord: true` skips matches inside longer words. The replacement keeps the formatting of the text it replaces; \"\\n\\n\" in it starts a new paragraph. Returns how many were replaced and where. One change: a single undo reverts it.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "hosts": ["browser", "server"]
+    },
+    {
       "id": "text.set",
       "domain": "text",
       "title": "Set text",
-      "description": "Replace the WHOLE body of a text box or of one table cell (`target.cell`). Pass a plain string — a blank line (\"\\n\\n\") starts a new paragraph, a single \"\\n\" is a line break inside the paragraph — or { paragraphs: [{ runs: [{ text, bold, italic, underline, color, fontFamily, fontSize }], list, level, bulletChar, numberFormat, startAt }] } for formatted runs and bullet / numbered lists (level 0..8). A plain string drops existing inline formatting and lists. Box-level typography (the box font, size, alignment) is unchanged — set it with object.update. To restyle part of the text without retyping it use text.format; for lists on existing text use text.list.",
+      "description": "Replace the WHOLE body of a text box or of one table cell (`target.cell`). Pass a plain string — a blank line (\"\\n\\n\") starts a new paragraph, a single \"\\n\" is a line break inside the paragraph — or { paragraphs: [{ runs: [{ text, bold, italic, underline, color, fontFamily, fontSize }], list, level, bulletChar, numberFormat, startAt }] } for formatted runs and bullet / numbered lists (level 0..8). A plain string drops existing inline formatting and lists. Box-level typography (the box font, size, alignment) is unchanged — set it with text.setBoxTypography. To restyle part of the text without retyping it use text.format; for lists on existing text use text.list.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "text.setBoxTypography",
+      "domain": "text",
+      "title": "Set box typography",
+      "description": "Set text boxes' own typography — fontFamily, fontWeight, fontSize, italic, underline, color, align, vAlign, lineHeight, letterSpacing, textTransform, paragraph spacing — as the Inspector does: inline formatting of the same attributes is removed so the new value shows in the whole box; a new fontFamily without fontWeight moves the weight to the nearest cut the family has; on a box linked to a folder text style the fields you set stop following the style. `null` clears an optional field. Part of a body: text.format. Tables: table.style.*.",
+      "role": "editor",
+      "effects": ["doc"],
+      "undo": "undoable",
+      "confirm": "never",
+      "idempotent": true,
+      "hosts": ["browser", "server"]
+    },
+    {
+      "id": "text.style.apply",
+      "domain": "text",
+      "title": "Apply text style",
+      "description": "Link text boxes or tables (their defaults) to one of the folder's text styles, by id or name: the style's font, size, weight, line height, spacing, colour and case are written and later changes of the style follow; fields set by hand before are reset to the style. `reset: true` also removes inline formatting (and, in a table, the cells' own text styling). `style: null` unlinks and keeps the current look. An unknown style name fails with the list of the folder's styles.",
       "role": "editor",
       "effects": ["doc"],
       "undo": "undoable",
@@ -1595,20 +1641,6 @@
     }
   ],
   "knownMissing": [
-    {
-      "capability": "text.setBoxTypography",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts",
-      "note": "box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has (object.update writes fontFamily raw and keeps the weight)"
-    },
-    {
-      "capability": "text.style.apply",
-      "phase": "A2",
-      "source": "web",
-      "where": "apps/web/src/ui/Inspector.tsx (applyTextStyle)",
-      "note": "tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the resolved fields with textStyleId into the table's defaults (table.style.table)"
-    },
     {
       "capability": "text.style.createFromObject",
       "phase": "A2",
@@ -1693,11 +1725,6 @@
       ],
       "writers": ["insertObjectsWithRichText"],
       "note": "the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)"
-    },
-    {
-      "capability": "text.replace",
-      "phase": "A2",
-      "source": "new"
     },
     {
       "capability": "deck.exportPdf",

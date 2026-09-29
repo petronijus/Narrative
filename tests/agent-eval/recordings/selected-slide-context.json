@@ -1,26 +1,26 @@
 {
   "scenario": "selected-slide-context",
-  "tag": "evbd553c",
-  "recordedAt": "2026-09-28T22:50:32.346Z",
+  "tag": "eve61117",
+  "recordedAt": "2026-09-29T22:21:48.027Z",
   "model": "claude-opus-5-5",
-  "claudeVersion": "2.1.283 (Claude Code)",
+  "claudeVersion": "2.1.285 (Claude Code)",
   "fixture": {
-    "deckId": "O1hz7tYMDCnD",
-    "title": "Pricing evbd553c",
-    "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
-    "selectedId": "raNH5hs-T1cBJfWCD9Vcd"
+    "deckId": "S7WkPsrvnlkM",
+    "title": "Pricing eve61117",
+    "activeSlideId": "c_ZjIjfHPp9BhC-5ERfz1",
+    "selectedId": "mHZuwTJdeGkkP67MnIC57"
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "I have the Narrative deck \"Pricing evbd553c\" (deckId O1hz7tYMDCnD) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
+        "prompt": "I have the Narrative deck \"Pricing eve61117\" (deckId S7WkPsrvnlkM) open in my editor with one object selected. What's on the slide I'm looking at, and which object have I selected? Don't change anything.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__editor_context,mcp__narrative-eval__query_slide,mcp__narrative-eval__query_object",
-              "max_results": 3
+              "query": "select:mcp__narrative-eval__editor_context,mcp__narrative-eval__query_slide",
+              "max_results": 5
             },
             "isError": false,
             "errorCode": null,
@@ -31,37 +31,39 @@
             "tool": "editor_context",
             "command": "editor.context",
             "input": {
-              "deckId": "O1hz7tYMDCnD"
+              "deckId": "S7WkPsrvnlkM"
             },
             "isError": false,
             "errorCode": null,
             "result": {
               "open": true,
-              "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
+              "activeSlideId": "c_ZjIjfHPp9BhC-5ERfz1",
               "activeSlideIndex": 1,
-              "selectedObjectIds": ["raNH5hs-T1cBJfWCD9Vcd"],
+              "selectedObjectIds": ["mHZuwTJdeGkkP67MnIC57"],
               "editors": [
                 {
-                  "activeSlideId": "5G0A4oxPjITOcj2NiMh4z",
+                  "activeSlideId": "c_ZjIjfHPp9BhC-5ERfz1",
                   "activeSlideIndex": 1,
-                  "selectedObjectIds": ["raNH5hs-T1cBJfWCD9Vcd"],
-                  "lastActiveAt": "2026-09-28T22:50:22.775Z"
+                  "selectedObjectIds": ["mHZuwTJdeGkkP67MnIC57"],
+                  "lastActiveAt": "2026-09-29T22:21:38.703Z"
                 }
               ]
             },
-            "text": "{\"open\":true,\"activeSlideId\":\"5G0A4oxPjITOcj2NiMh4z\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"raNH5hs-T1cBJfWCD9Vcd\"],\"editors\":[{\"activeSlideId\":\"5G0A4oxPjITOcj2NiMh4z\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"raNH5hs-T1cBJfWCD9Vcd\"],\"lastActiveAt\":\"2026-09-28T22:50:22.775Z\"}]}"
+            "text": "{\"open\":true,\"activeSlideId\":\"c_ZjIjfHPp9BhC-5ERfz1\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"mHZuwTJdeGkkP67MnIC57\"],\"editors\":[{\"activeSlideId\":\"c_ZjIjfHPp9BhC-5ERfz1\",\"activeSlideIndex\":1,\"selectedObjectIds\":[\"mHZuwTJdeGkkP67MnIC57\"],\"lastActiveAt\":\"2026-09-29T22:21:38.703Z\"}]}"
           },
           {
             "tool": "query_slide",
             "command": "query.slide",
             "input": {
-              "deckId": "O1hz7tYMDCnD",
-              "slide": "5G0A4oxPjITOcj2NiMh4z"
+              "deckId": "S7WkPsrvnlkM",
+              "slide": {
+                "id": "c_ZjIjfHPp9BhC-5ERfz1"
+              }
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "id": "5G0A4oxPjITOcj2NiMh4z",
+              "id": "c_ZjIjfHPp9BhC-5ERfz1",
               "index": 1,
               "transition": {
                 "kind": "none",
@@ -70,7 +72,7 @@
               "background": null,
               "objects": [
                 {
-                  "id": "F2u_XO9psQ1QkfIR8o4wS",
+                  "id": "lX1R_sUgFLYigT2fHpo60",
                   "type": "text",
                   "x": 120,
                   "y": 80,
@@ -85,7 +87,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "cqxpPrsMXfArcWUJ4TXf0",
+                  "id": "qxICOpADyfhiypy8DRbUS",
                   "type": "text",
                   "x": 120,
                   "y": 280,
@@ -100,7 +102,7 @@
                   "opacity": 1
                 },
                 {
-                  "id": "raNH5hs-T1cBJfWCD9Vcd",
+                  "id": "mHZuwTJdeGkkP67MnIC57",
                   "type": "text",
                   "x": 1000,
                   "y": 280,
@@ -118,10 +120,10 @@
               "animations": [],
               "notes": ""
             },
-            "text": "{\"id\":\"5G0A4oxPjITOcj2NiMh4z\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"F2u_XO9psQ1QkfIR8o4wS\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"cqxpPrsMXfArcWUJ4TXf0\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"raNH5hs-T1cBJfWCD9Vcd\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
+            "text": "{\"id\":\"c_ZjIjfHPp9BhC-5ERfz1\",\"index\":1,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"lX1R_sUgFLYigT2fHpo60\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Pricing tiers\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"qxICOpADyfhiypy8DRbUS\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":780,\"height\":400,\"rotation\":0,\"text\":\"Starter plan: 9 EUR per seat\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"mHZuwTJdeGkkP67MnIC57\",\"type\":\"text\",\"x\":1000,\"y\":280,\"width\":800,\"height\":400,\"rotation\":0,\"text\":\"Enterprise plan: talk to sales\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[],\"notes\":\"\"}"
           }
         ],
-        "finalText": "You're on **slide 2** (index 1), titled \"Pricing tiers\". It has a white background, no transition, no animations and no speaker notes. It holds three text boxes:\n\n| # | Text | Position / size | Style |\n|---|------|-----------------|-------|\n| 1 | **\"Pricing tiers\"** (title) | x 120, y 80 · 1680×120 | 64pt bold, black, left-aligned |\n| 2 | \"Starter plan: 9 EUR per seat\" | x 120, y 280 · 780×400 (left column) | 28pt regular, black |\n| 3 | \"Enterprise plan: talk to sales\" | x 1000, y 280 · 800×400 (right column) | 28pt regular, black |\n\n**Your selection:** the right-hand text box, **\"Enterprise plan: talk to sales\"** (id `raNH5hs-T1cBJfWCD9Vcd`).\n\nYour editor was last active on 2026-09-28 at 22:50 UTC. If you've switched slides or changed the selection since then, this may be out of date. I didn't change anything.",
+        "finalText": "You're on **slide 2** (index 1), titled \"Pricing tiers\". I only read the slide and didn't change anything.\n\n**What's on the slide** (listed back to front):\n1. **Title:** \"Pricing tiers\". Bold, 64 pt, black, runs across the top (x 120, y 80, 1680×120).\n2. **Left text box:** \"Starter plan: 9 EUR per seat\". 28 pt regular, black (x 120, y 280, 780×400).\n3. **Right text box:** \"Enterprise plan: talk to sales\". 28 pt regular, black (x 1000, y 280, 800×400).\n\nThe slide has the default white background, no animations, no transition and no speaker notes.\n\n**Your selection:** the right text box, **\"Enterprise plan: talk to sales\"** (id `mHZuwTJdeGkkP67MnIC57`).",
         "turns": 4,
         "isError": false,
         "stopReason": "success"

@@ -65,15 +65,19 @@ text.
   `object.flip`, and crop with `object.crop.set`: they apply the editor's
   rules (a crop scales with its image, a flip mirrors in place) that raw
   `object.update` fields do not. Set other properties with `object.update`;
-  replace text with `text.set`; format ranges with `text.format`.
+  replace text with `text.set`, change part of it with `text.edit`, find and
+  replace across the deck with `text.replace`; format ranges with
+  `text.format`.
 - Text a model reads and writes uses paragraphs separated by a blank line
   (`"\n\n"`); a single `"\n"` is a line break inside a paragraph. The rich
   form of `text.set` carries runs (bold, colour, size, font) and list
   attributes; `query.slide` returns text in the same shape, so you can read,
   edit and write it back without losing formatting.
 - Inline formatting on text runs overrides the text box's own typography.
-  To change a box's font or colour everywhere, clear the run attribute with
-  `text.format` and set the box with `object.update`, in one `ops.apply`.
+  To change a box's font, size, weight or colour everywhere use
+  `text.setBoxTypography`: it also removes the run formatting that would
+  hide the new value and keeps the weight on a cut a new family has. A
+  folder text style is applied with `text.style.apply` (by name).
 - Pictures, videos and fonts come in with `media.upload` (a public URL, or
   small files as base64); a local file on a machine where you have a shell
   goes through `media.uploadSession` — run the `curl` it returns, never

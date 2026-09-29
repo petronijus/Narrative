@@ -1,29 +1,29 @@
 {
   "scenario": "slides-copy-block",
-  "tag": "evbd553c",
-  "recordedAt": "2026-09-28T22:51:07.591Z",
+  "tag": "eve61117",
+  "recordedAt": "2026-09-29T22:22:24.748Z",
   "model": "claude-opus-5-5",
-  "claudeVersion": "2.1.283 (Claude Code)",
+  "claudeVersion": "2.1.285 (Claude Code)",
   "fixture": {
-    "deckId": "ieoTRcRXQSe-",
-    "title": "Pitch evbd553c",
+    "deckId": "fQI01CIMXS9h",
+    "title": "Pitch eve61117",
     "slideIds": [
-      "2HzLXTkfvx4Zun2b5O-EF",
-      "09_Jn1MEvK5mP6wxuWMhw",
-      "Ee_j9OuUM7i2bGHH71ryp",
-      "l07JlXbaE6eSz-by5CaTE"
+      "SAF5T2Sb0YA5Db_Vy_nJn",
+      "3RnM_4Wb_k1O_oGtOobe-",
+      "Nl8-kz-5Brx3Ua3FG9L36",
+      "wn5Q2yKhgr6-xdmagY0wE"
     ]
   },
   "transcript": {
     "steps": [
       {
-        "prompt": "In the Narrative deck \"Pitch evbd553c\" (deckId ieoTRcRXQSe-), copy slides 2 and 3 to the end of the deck, keeping their order.",
+        "prompt": "In the Narrative deck \"Pitch eve61117\" (deckId fQI01CIMXS9h), copy slides 2 and 3 to the end of the deck, keeping their order.",
         "calls": [
           {
             "tool": "ToolSearch",
             "command": null,
             "input": {
-              "query": "select:mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_deck,mcp__narrative-eval__slide_duplicate,mcp__narrative-eval__slide_copyTo,mcp__narrative-eval__slide_move,mcp__narrative-eval__ReadMcpResourceTool",
+              "query": "select:mcp__narrative-eval__query_deck,mcp__narrative-eval__slide_duplicate,mcp__narrative-eval__slide_copyTo,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__slide_move,mcp__narrative-eval__ops_apply,ReadMcpResourceTool",
               "max_results": 10
             },
             "isError": false,
@@ -35,7 +35,7 @@
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "ieoTRcRXQSe-"
+              "deckId": "fQI01CIMXS9h"
             },
             "isError": false,
             "errorCode": null,
@@ -43,7 +43,7 @@
               "slideCount": 4,
               "slides": [
                 {
-                  "id": "2HzLXTkfvx4Zun2b5O-EF",
+                  "id": "SAF5T2Sb0YA5Db_Vy_nJn",
                   "index": 0,
                   "title": "Intro",
                   "transition": "none",
@@ -51,7 +51,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "09_Jn1MEvK5mP6wxuWMhw",
+                  "id": "3RnM_4Wb_k1O_oGtOobe-",
                   "index": 1,
                   "title": "Problem",
                   "transition": "none",
@@ -59,7 +59,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "Ee_j9OuUM7i2bGHH71ryp",
+                  "id": "Nl8-kz-5Brx3Ua3FG9L36",
                   "index": 2,
                   "title": "Solution",
                   "transition": "none",
@@ -67,7 +67,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "l07JlXbaE6eSz-by5CaTE",
+                  "id": "wn5Q2yKhgr6-xdmagY0wE",
                   "index": 3,
                   "title": "Team",
                   "transition": "none",
@@ -77,41 +77,42 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"2HzLXTkfvx4Zun2b5O-EF\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"09_Jn1MEvK5mP6wxuWMhw\",\"index\":1,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"Ee_j9OuUM7i2bGHH71ryp\",\"index\":2,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"l07JlXbaE6eSz-by5CaTE\",\"index\":3,\"title\":\"Team\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":4,\"slides\":[{\"id\":\"SAF5T2Sb0YA5Db_Vy_nJn\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"3RnM_4Wb_k1O_oGtOobe-\",\"index\":1,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"Nl8-kz-5Brx3Ua3FG9L36\",\"index\":2,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"wn5Q2yKhgr6-xdmagY0wE\",\"index\":3,\"title\":\"Team\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           },
           {
             "tool": "agent_startRun",
             "command": "agent.startRun",
             "input": {
-              "deckId": "ieoTRcRXQSe-",
-              "request": "Copy slides 2 and 3 to the end of the deck"
+              "deckId": "fQI01CIMXS9h",
+              "request": "Copy slides 2 and 3 to the end of the deck, keeping their order"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "runId": "run_qFSiTpxMkMmv7mhw"
+              "runId": "run_AU3kfc2QMXh2SkRy"
             },
-            "text": "{\"runId\":\"run_qFSiTpxMkMmv7mhw\"}"
+            "text": "{\"runId\":\"run_AU3kfc2QMXh2SkRy\"}"
           },
           {
             "tool": "slide_copyTo",
             "command": "slide.copyTo",
             "input": {
-              "deckId": "ieoTRcRXQSe-",
-              "slides": ["09_Jn1MEvK5mP6wxuWMhw", "Ee_j9OuUM7i2bGHH71ryp"]
+              "deckId": "fQI01CIMXS9h",
+              "slides": ["3RnM_4Wb_k1O_oGtOobe-", "Nl8-kz-5Brx3Ua3FG9L36"],
+              "runId": "run_AU3kfc2QMXh2SkRy"
             },
             "isError": false,
             "errorCode": null,
             "result": {
-              "slideIds": ["WNhYauCdr_OokURuHl_KK", "L_1fb_ZD38TxF2SraEy-X"]
+              "slideIds": ["ziNGLprbuTKx0gXYB21Lz", "mdDflY2ORI9EMwfqXPcUy"]
             },
-            "text": "{\"slideIds\":[\"WNhYauCdr_OokURuHl_KK\",\"L_1fb_ZD38TxF2SraEy-X\"]}"
+            "text": "{\"slideIds\":[\"ziNGLprbuTKx0gXYB21Lz\",\"mdDflY2ORI9EMwfqXPcUy\"]}"
           },
           {
             "tool": "query_deck",
             "command": "query.deck",
             "input": {
-              "deckId": "ieoTRcRXQSe-"
+              "deckId": "fQI01CIMXS9h"
             },
             "isError": false,
             "errorCode": null,
@@ -119,7 +120,7 @@
               "slideCount": 6,
               "slides": [
                 {
-                  "id": "2HzLXTkfvx4Zun2b5O-EF",
+                  "id": "SAF5T2Sb0YA5Db_Vy_nJn",
                   "index": 0,
                   "title": "Intro",
                   "transition": "none",
@@ -127,7 +128,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "09_Jn1MEvK5mP6wxuWMhw",
+                  "id": "3RnM_4Wb_k1O_oGtOobe-",
                   "index": 1,
                   "title": "Problem",
                   "transition": "none",
@@ -135,7 +136,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "Ee_j9OuUM7i2bGHH71ryp",
+                  "id": "Nl8-kz-5Brx3Ua3FG9L36",
                   "index": 2,
                   "title": "Solution",
                   "transition": "none",
@@ -143,7 +144,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "l07JlXbaE6eSz-by5CaTE",
+                  "id": "wn5Q2yKhgr6-xdmagY0wE",
                   "index": 3,
                   "title": "Team",
                   "transition": "none",
@@ -151,7 +152,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "WNhYauCdr_OokURuHl_KK",
+                  "id": "ziNGLprbuTKx0gXYB21Lz",
                   "index": 4,
                   "title": "Problem",
                   "transition": "none",
@@ -159,7 +160,7 @@
                   "animationCount": 0
                 },
                 {
-                  "id": "L_1fb_ZD38TxF2SraEy-X",
+                  "id": "mdDflY2ORI9EMwfqXPcUy",
                   "index": 5,
                   "title": "Solution",
                   "transition": "none",
@@ -169,10 +170,10 @@
               ],
               "guides": []
             },
-            "text": "{\"slideCount\":6,\"slides\":[{\"id\":\"2HzLXTkfvx4Zun2b5O-EF\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"09_Jn1MEvK5mP6wxuWMhw\",\"index\":1,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"Ee_j9OuUM7i2bGHH71ryp\",\"index\":2,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"l07JlXbaE6eSz-by5CaTE\",\"index\":3,\"title\":\"Team\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"WNhYauCdr_OokURuHl_KK\",\"index\":4,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"L_1fb_ZD38TxF2SraEy-X\",\"index\":5,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
+            "text": "{\"slideCount\":6,\"slides\":[{\"id\":\"SAF5T2Sb0YA5Db_Vy_nJn\",\"index\":0,\"title\":\"Intro\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"3RnM_4Wb_k1O_oGtOobe-\",\"index\":1,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"Nl8-kz-5Brx3Ua3FG9L36\",\"index\":2,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"wn5Q2yKhgr6-xdmagY0wE\",\"index\":3,\"title\":\"Team\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"ziNGLprbuTKx0gXYB21Lz\",\"index\":4,\"title\":\"Problem\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0},{\"id\":\"mdDflY2ORI9EMwfqXPcUy\",\"index\":5,\"title\":\"Solution\",\"transition\":\"none\",\"objectCount\":2,\"animationCount\":0}],\"guides\":[]}"
           }
         ],
-        "finalText": "I copied slides 2 (\"Problem\") and 3 (\"Solution\") to the end of \"Pitch evbd553c\", in the same order. I checked the deck afterwards and the order is now:\n\n1. Intro\n2. Problem\n3. Solution\n4. Team\n5. Problem (copy)\n6. Solution (copy)\n\nThe copies include everything on the originals, including speaker notes. They also keep the same object IDs, so Magic Move will pair their objects with the originals. You can undo this in one step from the Agent activity panel.",
+        "finalText": "I copied slides 2 and 3 to the end of \"Pitch eve61117\", and they're in the same order as the originals. I checked the outline afterwards, and the deck now has 6 slides:\n\n1. Intro\n2. Problem\n3. Solution\n4. Team\n5. **Problem** (copy)\n6. **Solution** (copy)\n\nThe copies are complete, including speaker notes, background and transitions. The change is its own run in the Agent activity popover, so you can undo it in one step if needed.",
         "turns": 6,
         "isError": false,
         "stopReason": "success"

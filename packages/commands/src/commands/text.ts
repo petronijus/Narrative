@@ -71,7 +71,7 @@ export const textSet = defineCommand({
     '{ paragraphs: [{ runs: [{ text, bold, italic, underline, color, fontFamily, fontSize }], list, level, ' +
     'bulletChar, numberFormat, startAt }] } for formatted runs and bullet / numbered lists (level 0..8). ' +
     'A plain string drops existing inline formatting and lists. Box-level typography (the box font, size, ' +
-    'alignment) is unchanged — set it with object.update. To restyle part of the text without retyping it use ' +
+    'alignment) is unchanged — set it with text.setBoxTypography. To restyle part of the text without retyping it use ' +
     'text.format; for lists on existing text use text.list.',
   input: z.strictObject({ target: TextTargetSchema, text: TextBodyInputSchema }),
   output: z.object({
@@ -178,9 +178,8 @@ export const textFormat = defineCommand({
     'fontFamily, fontSize — on part of a text box or table cell without changing the text. Choose the range by ' +
     '{ match: "exact text", occurrence?: n | "all" } (safest) or { start, length } in characters of the text as ' +
     'query.object returns it; omit `range` for the whole body. `clear` runs first, so clear: "all" plus set restyles ' +
-    'from scratch. Clearing makes the text fall back to the box defaults. For the box-wide font use object.update; ' +
-    'inline formatting wins over the box defaults, so to restyle formatted text box-wide, clear those attributes ' +
-    'here and set the box value with object.update in one ops.apply.',
+    'from scratch. Clearing makes the text fall back to the box defaults. To restyle the whole box use ' +
+    'text.setBoxTypography, which also removes this inline formatting.',
   input: z
     .strictObject({
       target: TextTargetSchema,

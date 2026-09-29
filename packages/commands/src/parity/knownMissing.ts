@@ -42,24 +42,6 @@ const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 export const KNOWN_MISSING: readonly KnownMissing[] = [
   // --- A2: web-only logic to extract ------------------------------------------
   {
-    capability: 'text.setBoxTypography',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/FontFamilySelect.tsx, apps/web/src/ui/fontWeights.ts',
-    note:
-      "box font changes with the editor's rules: switching fontFamily snaps fontWeight to a cut the family has " +
-      '(object.update writes fontFamily raw and keeps the weight)',
-  },
-  {
-    capability: 'text.style.apply',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/ui/Inspector.tsx (applyTextStyle)',
-    note:
-      'tables too: the table Inspector reaches the same preset mapping through TypographySection and writes the ' +
-      "resolved fields with textStyleId into the table's defaults (table.style.table)",
-  },
-  {
     capability: 'text.style.createFromObject',
     phase: 'A2',
     source: 'web',
@@ -144,7 +126,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     writers: ['insertObjectsWithRichText'],
     note: 'the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)',
   },
-  { capability: 'text.replace', phase: 'A2', source: 'new' },
 
   // --- A3: render worker ------------------------------------------------------
   { capability: 'deck.exportPdf', phase: 'A3', source: 'new' },

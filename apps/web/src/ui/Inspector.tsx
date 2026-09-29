@@ -1,12 +1,15 @@
 /**
  * ui/Inspector.tsx
  *
- * Inspector panel pro editaci properties vybraného objektu.
+ * Inspector panel for the properties of the selected object.
  *
- * Čte selectedId z SelectionContext, objekt z useSlideObjects.
- * Mutace přes updateObject(ctx, id, patch).
+ * Reads the selection from SelectionContext and the object from
+ * useSlideObjects. Every write is a command (ADR 0010): plain properties
+ * go through `object.update`; typography, gradients, shadows, animations,
+ * transforms and the slide's transition / background through their own
+ * commands, which carry the editor's rules.
  *
- * Sekce:
+ * Sections:
  * - Position: X, Y
  * - Size: Width, Height
  * - Transform: Rotation (degrees), Opacity
@@ -76,16 +79,12 @@ import { AlignButtonGroup } from './AlignButtonGroup.js'
 import { FontFamilySelect } from './FontFamilySelect.js'
 import { FontWeightSelect } from './FontWeightSelect.js'
 import {
-  applyInlineFormatIfSelected,
   readActiveSelectionAttrs,
   getActiveTextSelection,
   subscribeActiveTextSelection,
   refocusActiveTextEdit,
-  isEntireContentSelected,
-  clearActiveSelectionAttrs,
-  clearAllInlineRunAttrs,
-  transactTextAction,
 } from './textEditSelection.js'
+import { useTextFormat } from './useTextFormat.js'
 import {
   currentParagraphAttrs,
   setListKind,
@@ -107,14 +106,13 @@ import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { useCropMode } from '../state/CropModeContext.js'
 import { useCommand } from '../state/useCommand.js'
-import { PAGE_NUMBER_TEXT_STYLE_NAME, findTextStyleByName } from '@narrative/commands'
 import {
-  updateObject,
-  updateSlideTransition,
-  updateSlideBackground,
-  isMaskableShape,
-  listSlides,
-} from '@narrative/slide-model'
+  BOX_TYPOGRAPHY_KEYS,
+  PAGE_NUMBER_TEXT_STYLE_NAME,
+  findTextStyleByName,
+} from '@narrative/commands'
+import { forCommand } from './commandPatch.js'
+import { isMaskableShape, listSlides } from '@narrative/slide-model'
 import type { AlignAxis, DistributeAxis, LayerMove, RichAttrs } from '@narrative/slide-model'
 import type {
   SlideObject,
@@ -132,7 +130,6 @@ import type {
   ImageFillStyle,
   ImageObject,
   TextObject,
-  TextStyleOverrideKey,
   ListNumberFormat,
   VideoObject,
   SlideObjectPatch,
@@ -148,7 +145,7 @@ import {
   DEFAULT_BACKGROUND,
   MAX_STEP_DELAY_S,
   MAX_STEP_DURATION_S,
-  isTextStyleOverrideKey,
+  MAX_TRANSITION_DURATION_MS,
 } from '@narrative/shared'
 import {
   useFolderTokens,
@@ -833,11 +830,37 @@ export function Inspector() {
     )
   }
 
+  // Plain property writes: `object.update`, where a deleted field
+  // (`undefined`) is sent as `null`, the command's "clear".
   function patch<T extends SlideObject>(p: SlideObjectPatch<T>) {
     // M10: viewer role — no mutations
     if (isViewer) return
-    if (obj === undefined || mutationCtx === null) return
-    updateObject(mutationCtx, obj.id, p)
+    if (obj === undefined || activeSlideId === null) return
+    command.tryRun('object.update', { slide: activeSlideId, object: obj.id, patch: forCommand(p) })
+  }
+
+  // A text box's Typography section: its typography fields go through
+  // `text.setBoxTypography` (inline formatting that would hide them is
+  // removed, a new family keeps a cut it has, a linked text style records
+  // them as overrides); anything else it writes (stroke, the preset link
+  // of a new style) is a plain `object.update`. One change, one undo step.
+  function patchText(p: SlideObjectPatch<TextObject>) {
+    if (isViewer) return
+    if (obj === undefined || activeSlideId === null) return
+    const slide = activeSlideId
+    const fields = forCommand(p)
+    const typography: Record<string, unknown> = {}
+    const rest: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(fields)) {
+      if ((BOX_TYPOGRAPHY_KEYS as readonly string[]).includes(key)) typography[key] = value
+      else rest[key] = value
+    }
+    const target = obj.id
+    command.group((run) => {
+      if (Object.keys(typography).length > 0)
+        run('text.setBoxTypography', { slide, objects: [target], style: typography })
+      if (Object.keys(rest).length > 0) run('object.update', { slide, object: target, patch: rest })
+    })
   }
 
   // M29 Phase 2 — Table object has its own inspector with row/col +
@@ -993,9 +1016,7 @@ export function Inspector() {
       )}
 
       {/* Text properties */}
-      {obj.type === 'text' && (
-        <TypographySection obj={obj} patch={patch as (p: SlideObjectPatch<TextObject>) => void} />
-      )}
+      {obj.type === 'text' && <TypographySection obj={obj} patch={patchText} />}
 
       {/* P8: Video properties — autoplay/loop/muted, volume, fit,
           poster frame override, aspect ratio lock, trim. */}
@@ -1605,7 +1626,8 @@ const SELECT_CLASS = [
  */
 function SlideInspector() {
   const { activeSlideId } = useActiveSlide()
-  const { deckCtx } = useSlideDoc()
+  const { role } = useDeckRole()
+  const command = useCommand()
   const slides = useSlides()
 
   const slideIndex = slides.findIndex((s) => s.id === activeSlideId)
@@ -1640,8 +1662,14 @@ function SlideInspector() {
   const { transition } = slide
 
   function patchTransition(p: Partial<SlideTransition>) {
-    if (activeSlideId === null) return
-    updateSlideTransition(deckCtx, activeSlideId, p)
+    if (activeSlideId === null || role === 'viewer') return
+    command.tryRun('slide.setTransition', {
+      slide: activeSlideId,
+      ...p,
+      ...(p.durationMs === undefined
+        ? {}
+        : { durationMs: Math.min(MAX_TRANSITION_DURATION_MS, p.durationMs) }),
+    })
   }
 
   const kindOptions: { value: SlideTransitionKind; label: string }[] = [
@@ -1817,13 +1845,36 @@ function BackgroundSection({
   background,
   selectClass: _selectClass,
 }: BackgroundSectionProps) {
-  const { deckCtx } = useSlideDoc()
+  const command = useCommand()
+  const { role } = useDeckRole()
   const current = background ?? DEFAULT_BACKGROUND
-  const kind = current.kind
+  /**
+   * Image mode before a picture is chosen: shown, never stored (a
+   * background image needs an asset). Written once the upload has one;
+   * tied to the slide it was started on.
+   */
+  const [imageDraft, setImageDraft] = useState<{ slideId: string; style: ImageFillStyle } | null>(
+    null,
+  )
+  const draftImage =
+    imageDraft?.slideId === slideId && current.kind !== 'image' ? imageDraft.style : null
+  const kind = draftImage !== null ? 'image' : current.kind
+
+  /** Replace the slide's background (`slide.setBackground`); `null` = the default. */
+  function setBackground(next: SlideBackground | null): void {
+    if (role === 'viewer') return
+    command.tryRun('slide.setBackground', { slide: slideId, background: next })
+  }
 
   function setKind(nextKind: SlideBackground['kind']): void {
     if (nextKind === kind) return
-    // Minimal-shape preset per kind. Users then edit the specifics.
+    if (nextKind === 'image') {
+      setImageDraft({ slideId, style: EMPTY_IMAGE_FILL })
+      return
+    }
+    setImageDraft(null)
+    // The editor's starting point per kind; the user then edits the
+    // specifics. (An agent states its background in full.)
     const next: SlideBackground = (() => {
       switch (nextKind) {
         case 'color':
@@ -1848,15 +1899,9 @@ function BackgroundSection({
               { offset: 1, color: 0x111111, alpha: 1 },
             ],
           }
-        case 'image':
-          return { kind: 'image', assetId: '', fit: 'cover', dim: 0 }
       }
     })()
-    updateSlideBackground(deckCtx, slideId, next)
-  }
-
-  function _setSolidColor(color: number): void {
-    updateSlideBackground(deckCtx, slideId, { kind: 'color', color, alpha: 1 })
+    setBackground(next)
   }
 
   // Keep the last-seen gradient around so the closing transition has
@@ -1870,7 +1915,13 @@ function BackgroundSection({
     current.kind === 'linearGradient' || current.kind === 'radialGradient'
       ? current
       : lastGradientRef.current
-  const isGradient = current.kind === 'linearGradient' || current.kind === 'radialGradient'
+  const isGradient =
+    draftImage === null && (current.kind === 'linearGradient' || current.kind === 'radialGradient')
+  const imageForEditor: ImageFillStyle | null =
+    draftImage ??
+    (current.kind === 'image'
+      ? { kind: 'image', assetId: current.assetId, fit: current.fit ?? 'cover' }
+      : null)
 
   return (
     <Section title="Background" storageKey="background">
@@ -1893,12 +1944,12 @@ function BackgroundSection({
           <option value="image">Image</option>
         </select>
 
-        {current.kind === 'color' && (
+        {draftImage === null && current.kind === 'color' && (
           <div className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-input field-surface px-1.5">
             <TokenColorInput
               value={numberToHex(current.color)}
               onChange={(hex) =>
-                updateSlideBackground(deckCtx, slideId, {
+                setBackground({
                   kind: 'color',
                   color: hexToNumber(hex),
                   alpha: current.alpha ?? 1,
@@ -1908,7 +1959,7 @@ function BackgroundSection({
               showHex
               alpha={current.alpha ?? 1}
               onAlphaChange={(a) =>
-                updateSlideBackground(deckCtx, slideId, {
+                setBackground({
                   kind: 'color',
                   color: current.color,
                   alpha: a,
@@ -1944,13 +1995,11 @@ function BackgroundSection({
                     ? gradientForRender.angleDeg
                     : undefined
                 }
-                onStopsChange={(stops) =>
-                  updateSlideBackground(deckCtx, slideId, { ...gradientForRender, stops })
-                }
+                onStopsChange={(stops) => setBackground({ ...gradientForRender, stops })}
                 onAngleChange={
                   gradientForRender.kind === 'linearGradient'
                     ? (angleDeg) =>
-                        updateSlideBackground(deckCtx, slideId, {
+                        setBackground({
                           ...gradientForRender,
                           angleDeg,
                         })
@@ -1961,17 +2010,36 @@ function BackgroundSection({
         </div>
       </div>
 
-      {current.kind === 'image' && (
-        <p className="text-[11px] italic text-muted-foreground/60">
-          Drag an image onto the slide, then come back to pick it as background. (Asset-picker UI
-          lands in the next polish pass.)
-        </p>
+      {/* Image: the same chooser as an image fill. Nothing is stored until
+          a picture is uploaded; the fit applies once there is one. */}
+      {kind === 'image' && imageForEditor !== null && (
+        <ImageFillEditor
+          fillStyle={imageForEditor}
+          onChange={(next) => {
+            if (next.assetId === '') {
+              setImageDraft({ slideId, style: next })
+              return
+            }
+            setBackground({
+              kind: 'image',
+              assetId: next.assetId,
+              fit: next.fit ?? 'cover',
+              dim: current.kind === 'image' ? (current.dim ?? 0) : 0,
+            })
+            // Kept until the document shows the image (the stored one wins
+            // from then on), so the picker does not blink back for a frame.
+            setImageDraft({ slideId, style: next })
+          }}
+        />
       )}
 
       {/* Reset */}
       <button
         type="button"
-        onClick={() => updateSlideBackground(deckCtx, slideId, null)}
+        onClick={() => {
+          setImageDraft(null)
+          setBackground(null)
+        }}
         className="mt-1 self-start rounded-md px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         Reset to default
@@ -3826,6 +3894,7 @@ interface FontSizeFieldProps {
  * the whole wrapper so the user can keep typing on the canvas.
  */
 function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
+  const textFormat = useTextFormat()
   const externalValue =
     selAttrs?.fontSize !== undefined && selAttrs.fontSize > 0 ? selAttrs.fontSize : obj.fontSize
   const [draft, setDraft] = useState<string>(String(externalValue))
@@ -3853,23 +3922,9 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
     const next = Math.max(1, parsed)
     lastExternalRef.current = next
     setDraft(String(next))
-    // One gesture = one undo step: the run strip and the box patch share
-    // a LOCAL_ORIGIN transaction (see transactTextAction).
-    transactTextAction(obj, () => {
-      const sel = getActiveTextSelection()
-      if (sel !== null && sel.objectId === obj.id) {
-        if (isEntireContentSelected(obj.id)) {
-          clearActiveSelectionAttrs(obj.id, ['fontSize'])
-          patch({ fontSize: next })
-          return
-        }
-        const applied = applyInlineFormatIfSelected(obj.id, { fontSize: next })
-        if (!applied) patch({ fontSize: next })
-        return
-      }
-      clearAllInlineRunAttrs(obj.text, ['fontSize'])
-      patch({ fontSize: next })
-    })
+    // The selected part of the text being edited, else the whole box (its
+    // command clears inline sizes that would hide the new one).
+    textFormat.applyTypography(obj.id, { fontSize: next }, () => patch({ fontSize: next }))
   }
 
   return (
@@ -3951,14 +4006,14 @@ function FontSizeField({ obj, patch, selAttrs }: FontSizeFieldProps) {
   )
 }
 
-export function TypographySection({
-  obj,
-  patch: rawPatch,
-  features: featuresIn,
-}: TypographySectionProps) {
+export function TypographySection({ obj, patch, features: featuresIn }: TypographySectionProps) {
   const features: Required<TypographyFeatures> = { ...FEATURES_TEXT, ...featuresIn }
   const { role } = useDeckRole()
   const isViewer = role === 'viewer'
+  const command = useCommand()
+  const textFormat = useTextFormat()
+  const { activeSlideId } = useActiveSlide()
+  const listTarget = activeSlideId === null ? null : { slide: activeSlideId, command }
   // M16 P2: folder text style tokens
   const folderTokensSnapshot = useFolderTokens()
   const { addToken, updateToken } = useFolderMutations()
@@ -4022,85 +4077,18 @@ export function TypographySection({
   const linkedTextStyle =
     textStyleId !== undefined ? (folderTokensSnapshot.textStyles[textStyleId] ?? null) : null
 
-  // Override-tracking patch wrapper. When the object is linked to a
-  // folder text style and the patch touches one of the typography
-  // fields that participates in preset binding, we record the field
-  // name in `textStyleOverrides` so a later edit to the underlying
-  // token in folder settings will skip that field. Non-typography
-  // patches (align, italic, listStyle, …) pass through unmodified.
-  // Patches that already include `textStyleOverrides` (e.g. "Reset to
-  // preset" writing []) bypass the wrapper to avoid clobbering an
-  // explicit override-state reset.
-  //
-  // We alias the inbound `patch` prop to `rawPatch` and re-bind the
-  // local name `patch` to the wrapper so every existing call site in
-  // this section automatically picks up override-tracking with no
-  // further edits.
-  const patch = (p: SlideObjectPatch<TextObject>): void => {
-    const anyP = p as unknown as Record<string, unknown>
-    if (textStyleId === undefined) {
-      rawPatch(p)
-      return
-    }
-    if ('textStyleOverrides' in anyP) {
-      rawPatch(p)
-      return
-    }
-    const touched: TextStyleOverrideKey[] = []
-    for (const k of Object.keys(anyP)) {
-      if (isTextStyleOverrideKey(k)) touched.push(k)
-    }
-    if (touched.length === 0) {
-      rawPatch(p)
-      return
-    }
-    const existing =
-      (obj as { textStyleOverrides?: TextStyleOverrideKey[] }).textStyleOverrides ?? []
-    const merged = Array.from(new Set([...existing, ...touched]))
-    rawPatch({
-      ...p,
-      textStyleOverrides: merged,
-    } as unknown as SlideObjectPatch<TextObject>)
-  }
-
-  const applyTextStyle = (styleId: string | null) => {
-    if (styleId === null) {
-      // Detach — clear textStyleId, leave inline values intact
-      patch({ textStyleId: undefined } as unknown as SlideObjectPatch<TextObject>)
-      return
-    }
-    const style = folderTokensSnapshot.textStyles[styleId]
-    if (style === undefined) return
-    // Write all style properties + store styleId for the "Linked" indicator.
-    // TextStyleTokenSnapshot uses `family`, `weight`, `size` (not fontFamily etc.)
-    const colorVal = style.color
-    const colorNum =
-      typeof colorVal === 'string' && /^#[0-9a-f]{6}$/i.test(colorVal)
-        ? hexToNumber(colorVal)
-        : isTokenRef(colorVal)
-          ? colorVal // pass the TokenRef through; renderer resolves it
-          : undefined
-    patch({
-      ...(style.family !== undefined ? { fontFamily: style.family } : {}),
-      ...(style.weight !== undefined ? { fontWeight: style.weight } : {}),
-      ...(style.size !== undefined ? { fontSize: style.size } : {}),
-      ...(style.lineHeight !== undefined ? { lineHeight: style.lineHeight } : {}),
-      ...(style.letterSpacing !== undefined ? { letterSpacing: style.letterSpacing } : {}),
-      // Paragraph spacing — write 0 explicitly when the preset has
-      // none so reapplying a preset without spacing resets a previous
-      // override (mirrors the textTransform behaviour below).
-      paragraphSpaceBefore: style.paragraphSpaceBefore ?? 0,
-      paragraphSpaceAfter: style.paragraphSpaceAfter ?? 0,
-      ...(colorNum !== undefined ? { color: colorNum } : {}),
-      // Always write textTransform — undefined explicitly clears any
-      // previous override so a preset without a transform resets the
-      // object back to "none" instead of inheriting the old value.
-      textTransform: style.textTransform ?? 'none',
-      textStyleId: style.id,
-      // Reset the override list — applying a preset is a fresh
-      // baseline, not a per-field tweak.
-      textStyleOverrides: [],
-    } as unknown as SlideObjectPatch<TextObject>)
+  // The Preset picker: link this box (or a table's defaults) to a folder
+  // text style, reset it to the style, or unlink it (`style: null`). The
+  // command writes the style's fields and starts the override list afresh;
+  // later hand edits are recorded as overrides by the typography commands.
+  const applyTextStyle = (styleId: string | null, reset = false): void => {
+    if (isViewer || activeSlideId === null) return
+    command.tryRun('text.style.apply', {
+      slide: activeSlideId,
+      objects: [obj.id],
+      style: styleId,
+      ...(reset ? { reset: true } : {}),
+    })
   }
 
   return (
@@ -4176,17 +4164,7 @@ export function TypographySection({
                             // word, a coloured span) are wiped too.
                             // The user's mental model is "back to the
                             // preset, no exceptions".
-                            transactTextAction(obj, () => {
-                              clearAllInlineRunAttrs(obj.text, [
-                                'fontFamily',
-                                'fontWeight',
-                                'fontSize',
-                                'color',
-                                'italic',
-                                'underline',
-                              ])
-                              applyTextStyle(linkedTextStyle.id)
-                            })
+                            applyTextStyle(linkedTextStyle.id, true)
                             setPresetMenuOpen(false)
                           }}
                           className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-foreground hover:bg-accent"
@@ -4287,19 +4265,9 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const next = (effectiveBold ? 400 : 700) as 400 | 700
-                transactTextAction(obj, () => {
-                  if (selAttrs !== null) {
-                    if (isEntireContentSelected(obj.id)) {
-                      clearActiveSelectionAttrs(obj.id, ['fontWeight'])
-                      patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
-                      return
-                    }
-                    applyInlineFormatIfSelected(obj.id, { fontWeight: next })
-                    return
-                  }
-                  clearAllInlineRunAttrs(obj.text, ['fontWeight'])
-                  patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>)
-                })
+                textFormat.applyTypography(obj.id, { fontWeight: next }, () =>
+                  patch({ fontWeight: next } as unknown as SlideObjectPatch<TextObject>),
+                )
               }}
               aria-pressed={effectiveBold}
               title="Bold"
@@ -4317,23 +4285,11 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const nextItalic = !effectiveItalic
-                transactTextAction(obj, () => {
-                  if (selAttrs !== null) {
-                    if (isEntireContentSelected(obj.id)) {
-                      clearActiveSelectionAttrs(obj.id, ['italic'])
-                      patch({
-                        italic: nextItalic ? true : undefined,
-                      } as unknown as SlideObjectPatch<TextObject>)
-                      return
-                    }
-                    applyInlineFormatIfSelected(obj.id, { italic: nextItalic })
-                    return
-                  }
-                  clearAllInlineRunAttrs(obj.text, ['italic'])
+                textFormat.applyTypography(obj.id, { italic: nextItalic }, () =>
                   patch({
                     italic: nextItalic ? true : undefined,
-                  } as unknown as SlideObjectPatch<TextObject>)
-                })
+                  } as unknown as SlideObjectPatch<TextObject>),
+                )
               }}
               aria-pressed={effectiveItalic}
               title="Italic"
@@ -4351,23 +4307,11 @@ export function TypographySection({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const nextUnderline = !effectiveUnderline
-                transactTextAction(obj, () => {
-                  if (selAttrs !== null) {
-                    if (isEntireContentSelected(obj.id)) {
-                      clearActiveSelectionAttrs(obj.id, ['underline'])
-                      patch({
-                        underline: nextUnderline ? true : undefined,
-                      } as unknown as SlideObjectPatch<TextObject>)
-                      return
-                    }
-                    applyInlineFormatIfSelected(obj.id, { underline: nextUnderline })
-                    return
-                  }
-                  clearAllInlineRunAttrs(obj.text, ['underline'])
+                textFormat.applyTypography(obj.id, { underline: nextUnderline }, () =>
                   patch({
                     underline: nextUnderline ? true : undefined,
-                  } as unknown as SlideObjectPatch<TextObject>)
-                })
+                  } as unknown as SlideObjectPatch<TextObject>),
+                )
               }}
               aria-pressed={effectiveUnderline}
               title="Underline"
@@ -4524,24 +4468,10 @@ export function TypographySection({
                 // popover's pointer capture and the rest of the gesture
                 // is dropped. The CE overlay's selection slot survives
                 // the popover lifetime via [data-text-edit-keep-focus],
-                // so applyInlineFormatIfSelected still hits the right
-                // range without needing focus on the editor.
+                // so the inline format still hits the right range without
+                // needing focus on the editor.
                 const next = hexToNumber(hex)
-                transactTextAction(obj, () => {
-                  const sel = getActiveTextSelection()
-                  if (sel !== null && sel.objectId === obj.id) {
-                    if (isEntireContentSelected(obj.id)) {
-                      clearActiveSelectionAttrs(obj.id, ['color'])
-                      patch({ color: next })
-                      return
-                    }
-                    const applied = applyInlineFormatIfSelected(obj.id, { color: next })
-                    if (!applied) patch({ color: next })
-                    return
-                  }
-                  clearAllInlineRunAttrs(obj.text, ['color'])
-                  patch({ color: next })
-                })
+                textFormat.applyTypography(obj.id, { color: next }, () => patch({ color: next }))
               }}
               ariaLabel="Text color"
               showHex
@@ -4571,7 +4501,8 @@ export function TypographySection({
                 value={paraAttrs.list ?? ''}
                 onChange={(e) => {
                   const v = e.target.value
-                  setListKind(obj, v === '' ? null : (v as 'bullet' | 'number'), patch)
+                  if (listTarget !== null)
+                    setListKind(obj, v === '' ? null : (v as 'bullet' | 'number'), listTarget)
                   refocusActiveTextEdit(obj.id)
                 }}
                 className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
@@ -4588,7 +4519,7 @@ export function TypographySection({
                     className="rounded-l-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground hover:bg-accent"
                     title="Outdent (Shift+Tab)"
                     onClick={() => {
-                      indentList(obj, -1, patch)
+                      if (listTarget !== null) indentList(obj, -1, listTarget)
                       refocusActiveTextEdit(obj.id)
                     }}
                   >
@@ -4599,7 +4530,7 @@ export function TypographySection({
                     className="rounded-r-md border-y border-r border-input field-surface px-1.5 py-0.5 text-xs text-foreground hover:bg-accent"
                     title="Indent (Tab)"
                     onClick={() => {
-                      indentList(obj, 1, patch)
+                      if (listTarget !== null) indentList(obj, 1, listTarget)
                       refocusActiveTextEdit(obj.id)
                     }}
                   >
@@ -4620,7 +4551,7 @@ export function TypographySection({
                       type="button"
                       title={g === null ? 'Default (per level)' : `Bullet ${g}`}
                       onClick={() => {
-                        setBulletChar(obj, g, patch)
+                        if (listTarget !== null) setBulletChar(obj, g, listTarget)
                         refocusActiveTextEdit(obj.id)
                       }}
                       className={`h-6 w-6 rounded-md border text-xs ${
@@ -4641,7 +4572,8 @@ export function TypographySection({
                 <select
                   value={paraAttrs.numberFormat ?? 'decimal'}
                   onChange={(e) => {
-                    setNumberFormat(obj, e.target.value as ListNumberFormat, patch)
+                    if (listTarget !== null)
+                      setNumberFormat(obj, e.target.value as ListNumberFormat, listTarget)
                     refocusActiveTextEdit(obj.id)
                   }}
                   className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
@@ -4660,7 +4592,8 @@ export function TypographySection({
                   value={paraAttrs.startAt ?? ''}
                   onChange={(e) => {
                     const n = e.target.value === '' ? null : parseInt(e.target.value, 10)
-                    setStartAt(obj, n !== null && Number.isFinite(n) ? n : null, patch)
+                    if (listTarget !== null)
+                      setStartAt(obj, n !== null && Number.isFinite(n) ? n : null, listTarget)
                     refocusActiveTextEdit(obj.id)
                   }}
                   className="w-14 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"

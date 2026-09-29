@@ -13,27 +13,20 @@
  * - When the stored weight is one the family does not have (a deck
  *   imported with Semibold, a family whose cuts changed, folder fonts
  *   still loading), the picker SHOWS the face the browser actually
- *   renders (CSS weight matching, see `fontWeights.ts`) — it never
+ *   renders (CSS weight matching, see `@narrative/commands` fontWeights) — it never
  *   writes to fix the value up. Viewing a box must not edit the deck:
  *   such a write would land on the viewer's undo stack and go out to
  *   every collaborator, each of whom would repeat it. The stored weight
- *   changes only when the user picks one here, or switches family in
- *   `FontFamilySelect` (which snaps it in the same patch).
+ *   changes only when the user picks one here, or switches family (the
+ *   box's command snaps it: text.setBoxTypography / table.style.table).
  */
 
 import { useMemo } from 'react'
 import type { SlideObjectPatch, TextObject } from '@narrative/shared'
 import { useFolderFontsOptional } from '../state/useFolderFonts.js'
-import {
-  applyInlineFormatIfSelected,
-  refocusActiveTextEdit,
-  getActiveTextSelection,
-  isEntireContentSelected,
-  clearActiveSelectionAttrs,
-  clearAllInlineRunAttrs,
-  transactTextAction,
-} from './textEditSelection.js'
-import { allowedWeightsFor, effectiveFontWeight, type NumericFontWeight } from './fontWeights.js'
+import { refocusActiveTextEdit } from './textEditSelection.js'
+import { useTextFormat } from './useTextFormat.js'
+import { allowedWeightsFor, effectiveFontWeight, type NumericFontWeight } from '@narrative/commands'
 
 interface FontWeightSelectProps {
   obj: TextObject
@@ -55,6 +48,7 @@ const ALL_WEIGHTS: ReadonlyArray<{ value: NumericFontWeight; label: string }> = 
 export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
   const folderFontsCtx = useFolderFontsOptional()
   const fonts = folderFontsCtx?.fonts
+  const textFormat = useTextFormat()
 
   // Available weights for the active family (null = any weight):
   // folder upload → the uploaded cuts; curated system stack → its list;
@@ -84,29 +78,12 @@ export function FontWeightSelect({ obj, patch }: FontWeightSelectProps) {
         value={String(displayed)}
         onChange={(e) => {
           const parsed = Number.parseInt(e.target.value, 10) as NumericFontWeight
-          // Per-run weight when the textarea has a non-empty selection
-          // SHORTER than the full text; whole-content selection (Cmd+A)
-          // becomes a box-wide patch so the picker stays consistent
-          // and inline overrides on individual runs are cleared. Either
-          // way the gesture is one LOCAL_ORIGIN transaction (one undo step).
-          const sel = getActiveTextSelection()
-          if (sel !== null && sel.objectId === obj.id) {
-            transactTextAction(obj, () => {
-              if (isEntireContentSelected(obj.id)) {
-                clearActiveSelectionAttrs(obj.id, ['fontWeight'])
-                patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
-                return
-              }
-              const applied = applyInlineFormatIfSelected(obj.id, { fontWeight: parsed })
-              if (!applied) patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
-            })
-            refocusActiveTextEdit(obj.id)
-            return
-          }
-          transactTextAction(obj, () => {
-            clearAllInlineRunAttrs(obj.text, ['fontWeight'])
-            patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>)
-          })
+          // The selected part of the text being edited, else the whole box
+          // (whose command also clears inline weights that would hide it).
+          textFormat.applyTypography(obj.id, { fontWeight: parsed }, () =>
+            patch({ fontWeight: parsed } as SlideObjectPatch<TextObject>),
+          )
+          refocusActiveTextEdit(obj.id)
         }}
         className={[
           'flex-1 rounded border border-input field-surface px-2 py-0.5',

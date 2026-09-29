@@ -28,7 +28,7 @@ import {
 } from '../state/FolderDocProvider.js'
 import type { TokenUsage } from '../state/FolderDocProvider.js'
 import { FolderFontsProvider, useFolderFonts } from '../state/useFolderFonts.js'
-import { SYSTEM_FONTS } from '../ui/fontWeights.js'
+import { SYSTEM_FONTS } from '@narrative/commands'
 import { FolderFontLoader } from '../state/FolderFontLoader.js'
 import type { FolderSummary } from '../api/client.js'
 import { MAX_COLORS } from '../state/defaultTokens.js'

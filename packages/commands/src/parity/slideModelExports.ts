@@ -38,6 +38,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   duplicateSlide: 'writer',
   groupObjects: 'writer',
   indentParagraphs: 'writer',
+  splitParagraphAt: 'writer',
   insertObjectsWithRichText: 'writer',
   insertTableCol: 'writer',
   insertTableRow: 'writer',

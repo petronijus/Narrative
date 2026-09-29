@@ -6,6 +6,7 @@
  */
 
 import type { FolderTokensSnapshot } from '@narrative/slide-model'
+import type { FontFaceWeight } from '../text/fontWeights.js'
 
 export const FIXTURE_COLOR_TOKEN_ID = 'brandBlue'
 export const FIXTURE_PAGE_NUMBER_STYLE_ID = 'footnotes'
@@ -37,4 +38,14 @@ export function createFixtureFolderTokens(): FolderTokensSnapshot {
     },
     effectStyles: {},
   }
+}
+
+/** The fixture folder's uploaded fonts: one family with a light and a semibold cut. */
+export const FIXTURE_FONT_FAMILY = 'Brand Sans'
+
+export function createFixtureFolderFonts(): FontFaceWeight[] {
+  return [
+    { family: FIXTURE_FONT_FAMILY, weight: 300 },
+    { family: FIXTURE_FONT_FAMILY, weight: 600 },
+  ]
 }

@@ -37,6 +37,7 @@ export {
   type AnyCommandDef,
 } from './registry.js'
 export {
+  commandReadsFolderFonts,
   commandReadsFolderTokens,
   commandUsesDocument,
   isBatchable,
@@ -136,6 +137,21 @@ export {
 } from './services/editor.js'
 export { DEFAULT_SHADOW, GRADIENT_FILL_TYPES } from './commands/appearance.js'
 export { MAX_TABLE_TRACKS, MIN_TRACK_PX } from './commands/tables.js'
+export { MAX_BODY_LENGTH, displayRangeOf } from './text/body.js'
+export { displayOffsetOf, rawOffsetOf } from './text/edit.js'
+export { BOX_TYPOGRAPHY_KEYS } from './commands/typography.js'
+export type { TextTarget } from './text/target.js'
+export {
+  STANDARD_WEIGHTS,
+  SYSTEM_FONTS,
+  allowedWeightsFor,
+  effectiveFontWeight,
+  matchFontWeight,
+  pickPrimaryFamily,
+  toNumericWeight,
+  type FontFaceWeight,
+  type NumericFontWeight,
+} from './text/fontWeights.js'
 export {
   PAGE_NUMBER_TEXT_STYLE_NAME,
   findTextStyleByName,

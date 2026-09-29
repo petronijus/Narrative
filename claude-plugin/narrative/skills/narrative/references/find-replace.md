@@ -14,17 +14,16 @@ Take these from the user's request (ask if a required one is missing):
 
 Replace "<find>" with "<replace>" (scope: <scope>).
 
-`text_replace` (planned, not available yet) will do this in one call. Until
-then:
-
-1. Read the slides in scope with `query_slide` and list every text box and
-   table cell whose text contains the phrase. Watch for case and for the
-   phrase being split across formatting runs.
-2. Replace each occurrence with `text_format`-safe edits: use `text_set`
-   with the rich form built from the object's current runs, changing only
-   the matched characters, so bold/colour/size around it survive.
-   Table cells are addressed with `target.cell`.
-3. Batch all edits into one `ops_apply` so the whole replacement is one
-   step to revert.
-4. Report how many occurrences you replaced on which slides, and any you
-   skipped on purpose (e.g. a different meaning, a brand name).
+1. Decide whether every occurrence should change. Read the slides in scope
+   with `query_slide` when the phrase could also mean something else (a
+   brand name, a quotation) or appears inside longer words.
+2. When all of them should change, call `text_replace` once — whole deck,
+   or `slide` for one slide, `objects` for particular boxes. It covers text
+   boxes and table cells and keeps the formatting of the text it replaces.
+   Use `matchCase: false` for a case-insensitive match and `wholeWord: true`
+   so "cat" does not hit "concatenate".
+3. When only some should change, change those with `text_edit` at their
+   offsets (from `query_object`; a paragraph break "\n\n" counts 2), several
+   in one `ops_apply` so the whole replacement is one step to revert.
+4. Report how many occurrences you replaced on which slides (`text_replace`
+   returns them), and any you skipped on purpose.

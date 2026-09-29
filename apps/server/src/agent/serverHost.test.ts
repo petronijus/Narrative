@@ -378,3 +378,65 @@ describe('folder tokens', () => {
     expect(refused).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
   })
 })
+
+describe('folder fonts', () => {
+  function objectOf(doc: Y.Doc, objectId: string): Y.Map<unknown> | undefined {
+    const objects = getSlideObjectsCtx({ doc, slides: doc.getArray('slides') }, 's1')!
+    return objects.objects.toArray().find((m) => m.get('id') === objectId)
+  }
+
+  async function textBox(): Promise<string> {
+    const out = await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'object.create',
+        input: {
+          slide: 's1',
+          object: { type: 'text', x: 0, y: 0, width: 400, height: 80, text: 'Hi', fontWeight: 400 },
+        },
+      },
+    })
+    expect(out.ok).toBe(true)
+    return (out as { result: { objectId: string } }).result.objectId
+  }
+
+  it("give a command the target folder's font faces, also inside a batch", async () => {
+    world.setFolder('deck1', 'f1')
+    world.setFolderFonts('f1', [
+      { family: 'Brand Sans', weight: 300 },
+      { family: 'Brand Sans', weight: 600 },
+    ])
+    const human = await world.connect('deck1', 'ed')
+    const id = await textBox()
+    const out = await exec({
+      actor: { userId: 'ed' },
+      batch: {
+        ops: [
+          {
+            command: 'text.setBoxTypography',
+            input: { slide: 's1', objects: [id], style: { fontFamily: 'Brand Sans' } },
+          },
+        ],
+      },
+    })
+    expect(out.ok).toBe(true)
+    // 400 is not a cut of Brand Sans; the browser would show 300, so that is stored.
+    await eventually(() => objectOf(human.doc, id)?.get('fontWeight') === 300)
+  })
+
+  it('report a folder without fonts as none: any weight is kept', async () => {
+    world.setFolder('deck1', 'f-plain')
+    const human = await world.connect('deck1', 'ed')
+    const id = await textBox()
+    const out = await exec({
+      actor: { userId: 'ed' },
+      invocation: {
+        command: 'text.setBoxTypography',
+        input: { slide: 's1', objects: [id], style: { fontFamily: 'Brand Sans' } },
+      },
+    })
+    expect(out.ok).toBe(true)
+    await eventually(() => objectOf(human.doc, id)?.get('fontFamily') === 'Brand Sans')
+    expect(objectOf(human.doc, id)?.get('fontWeight')).toBe(400)
+  })
+})

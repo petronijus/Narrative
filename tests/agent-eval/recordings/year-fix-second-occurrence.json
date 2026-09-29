@@ -1,0 +1,199 @@
+{
+  "scenario": "year-fix-second-occurrence",
+  "tag": "eve61117",
+  "recordedAt": "2026-09-29T22:28:33.135Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.285 (Claude Code)",
+  "fixture": {
+    "deckId": "UTVge5gVJAcS",
+    "title": "Company history eve61117",
+    "bodyId": "pLqXLqeHZbGbR9gGylvYW"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "In the body text on slide 1 of the Narrative deck \"Company history eve61117\" (deckId UTVge5gVJAcS), the SECOND \"2024\" (in \"By 2024 we had doubled revenue\") is a typo for 2025. Fix only that one number; everything else, including the bold word, must stay as it is.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__text_edit,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__query_object,mcp__narrative-eval__text_replace",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "UTVge5gVJAcS",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "cCkgibsUw8yMizUZicEuW",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "ZFmOLgeFhpI-vcgh0m0gW",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "History",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "pLqXLqeHZbGbR9gGylvYW",
+                  "type": "text",
+                  "x": 120,
+                  "y": 280,
+                  "width": 1680,
+                  "height": 400,
+                  "rotation": 0,
+                  "text": "In 2024 we opened Berlin. By 2024 we had doubled revenue. The plan for 2026 is Asia.",
+                  "fontSize": 28,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1,
+                  "paragraphs": [
+                    {
+                      "runs": [
+                        {
+                          "text": "In 2024 we opened Berlin. By 2024 we had "
+                        },
+                        {
+                          "text": "doubled",
+                          "fontWeight": 700
+                        },
+                        {
+                          "text": " revenue. The plan for 2026 is Asia."
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "animations": [],
+              "notes": ""
+            },
+            "text": "{\"id\":\"cCkgibsUw8yMizUZicEuW\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"ZFmOLgeFhpI-vcgh0m0gW\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"History\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"pLqXLqeHZbGbR9gGylvYW\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"In 2024 we opened Berlin. By 2024 we had doubled revenue. The plan for 2026 is Asia.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"In 2024 we opened Berlin. By 2024 we had \"},{\"text\":\"doubled\",\"fontWeight\":700},{\"text\":\" revenue. The plan for 2026 is Asia.\"}]}]}],\"animations\":[],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "UTVge5gVJAcS",
+              "request": "Fix second \"2024\" typo to 2025 on slide 1"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_NMvvDEsLEte7zAzQ"
+            },
+            "text": "{\"runId\":\"run_NMvvDEsLEte7zAzQ\"}"
+          },
+          {
+            "tool": "text_edit",
+            "command": "text.edit",
+            "input": {
+              "deckId": "UTVge5gVJAcS",
+              "target": {
+                "slide": "cCkgibsUw8yMizUZicEuW",
+                "object": "pLqXLqeHZbGbR9gGylvYW"
+              },
+              "edits": [
+                {
+                  "at": 32,
+                  "delete": 1,
+                  "insert": "5"
+                }
+              ]
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "length": 84,
+              "caret": 33
+            },
+            "text": "{\"length\":84,\"caret\":33}"
+          },
+          {
+            "tool": "query_object",
+            "command": "query.object",
+            "input": {
+              "deckId": "UTVge5gVJAcS",
+              "slide": "cCkgibsUw8yMizUZicEuW",
+              "object": "pLqXLqeHZbGbR9gGylvYW"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "slide": {
+                "id": "cCkgibsUw8yMizUZicEuW",
+                "index": 0
+              },
+              "stackIndex": 1,
+              "object": {
+                "id": "pLqXLqeHZbGbR9gGylvYW",
+                "type": "text",
+                "x": 120,
+                "y": 280,
+                "width": 1680,
+                "height": 400,
+                "rotation": 0,
+                "text": "In 2024 we opened Berlin. By 2025 we had doubled revenue. The plan for 2026 is Asia.",
+                "fontSize": 28,
+                "fontWeight": "normal",
+                "color": "#000000",
+                "align": "left",
+                "opacity": 1,
+                "paragraphs": [
+                  {
+                    "runs": [
+                      {
+                        "text": "In 2024 we opened Berlin. By 2025 we had "
+                      },
+                      {
+                        "text": "doubled",
+                        "fontWeight": 700
+                      },
+                      {
+                        "text": " revenue. The plan for 2026 is Asia."
+                      }
+                    ]
+                  }
+                ]
+              },
+              "animations": []
+            },
+            "text": "{\"slide\":{\"id\":\"cCkgibsUw8yMizUZicEuW\",\"index\":0},\"stackIndex\":1,\"object\":{\"id\":\"pLqXLqeHZbGbR9gGylvYW\",\"type\":\"text\",\"x\":120,\"y\":280,\"width\":1680,\"height\":400,\"rotation\":0,\"text\":\"In 2024 we opened Berlin. By 2025 we had doubled revenue. The plan for 2026 is Asia.\",\"fontSize\":28,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1,\"paragraphs\":[{\"runs\":[{\"text\":\"In 2024 we opened Berlin. By 2025 we had \"},{\"text\":\"doubled\",\"fontWeight\":700},{\"text\":\" revenue. The plan for 2026 is Asia.\"}]}]},\"animations\":[]}"
+          }
+        ],
+        "finalText": "I fixed the typo on slide 1. The body text now reads:\n\n> In 2024 we opened Berlin. By **2025** we had **doubled** revenue. The plan for 2026 is Asia.\n\nI checked it afterwards: only that one number changed. The first \"2024\" and \"2026\" are the same as before, and \"doubled\" is still bold. If you want to undo it, the change is saved as a single agent run you can revert.",
+        "turns": 6,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

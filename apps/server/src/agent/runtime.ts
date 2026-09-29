@@ -42,6 +42,7 @@ import { createDrizzleRunStore, type RunStore } from './runStore.js'
 import { createDbConfirmationLookups, type ConfirmationLookups } from './confirmationSummary.js'
 import { AgentConfirmations } from './confirmations.js'
 import { ServerHost } from './serverHost.js'
+import { createDbFolderFontsReader, type FolderFontsReader } from './folderFonts.js'
 import { createDbFolderTokensReader, type FolderTokensReader } from './folderTokens.js'
 
 /** Agent runs (and their ops) idle for longer than this are deleted. */
@@ -180,6 +181,8 @@ export interface AgentRuntimeOptions {
   urlFetchAllowedHosts?: readonly string[]
   /** Where commands read the target folder's tokens; default: the folder document (agent/folderTokens.ts). */
   folderTokens?: FolderTokensReader
+  /** Where commands read the target folder's font faces; default: its font assets (agent/folderFonts.ts). */
+  folderFonts?: FolderFontsReader
   /** Test seam: confirmation summary lookups (default: the database). */
   confirmationLookups?: ConfirmationLookups
 }
@@ -265,6 +268,7 @@ export async function createAgentRuntime(opts: AgentRuntimeOptions): Promise<Age
         log: opts.log,
         hocuspocus: () => opts.hocuspocus,
       }),
+    folderFonts: opts.folderFonts ?? createDbFolderFontsReader(opts.db),
   })
 
   return {

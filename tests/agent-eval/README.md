@@ -10,18 +10,24 @@ service commands). No LLM judges anything. See
 > (or `ANTHROPIC_API_KEY`, if set). Claude Code runs with ToolSearch on, as in
 > a user's session, so the Narrative tools are deferred: the model sees their
 > names and loads a tool's schema when it needs it, instead of the whole
-> tool list riding on every request (≈ 169 KB on 2026-09-29 after A2.10, ≈ 129 KB on
-> 2026-09-28; without ToolSearch the 129 KB list was ~100k tokens a request,
+> tool list riding on every request (≈ 177 KB on 2026-09-30 during A2.11,
+> ≈ 169 KB on 2026-09-29 after A2.10, ≈ 129 KB on 2026-09-28; without ToolSearch the 129 KB list was ~100k tokens a request,
 > measured 2026-09-28 with `pnpm agent:probe:list-changed`). A full run is
-> 36 sessions (2026-09-29 after A2.10; 34 after A2.9, 14 on 2026-09-28); the
+> 39 sessions (2026-09-30 after A2.11; 36 after A2.10, 34 after A2.9, 14 on
+> 2026-09-28); the
 > report shows the cost Claude Code reports (list-price equivalent): $1.62
 > for the 13 scenarios of a full run on 2026-09-28 (opus, Claude Code
 > 2.1.283; was ≈ 2 USD without ToolSearch). Partial run, 2026-09-29 (A2.10):
 > `table-resize-recolour`, `table-header-gradient`, `table-merge-add-column`
 > and `badge-gradient`, 4/4 passed, $0.55 (as reported with the change; the
-> Claude Code version was not recorded). The 36-scenario suite has not been
-> run in full or costed yet. On a subscription it counts against your plan
-> limits.
+> Claude Code version was not recorded). Partial run, 2026-09-30 (A2.11):
+> the three new text scenarios (`product-rename-everywhere`,
+> `subtitle-plain-restyle`, `year-fix-second-occurrence`) plus
+> `heading-one-font`, `bullets-second-bold`, `table-resize-recolour` and
+> `footer-page-number`, 7/7 passed, $0.91 (as reported with the change; the
+> Claude Code version was not recorded). **Full run, 2026-09-30 (A2.11
+> tree): 39/39 passed, $4.77, 10m12s, 238 tool calls** — the first full run
+> costed. On a subscription it counts against your plan limits.
 
 ## When to run it
 
@@ -174,11 +180,18 @@ registry, so they run unchanged in both worlds.
 | `photo-animations-hand-over`  | a replacement picture gets the old one's steps (order, timing, params) before it is deleted           | yes    |
 | `table-resize-recolour`       | 3 x 3 table made 4 x 4, values kept; every cell grey, the red override too (`table.setSize`)          | yes    |
 | `table-header-gradient`       | each navy header cell a top-to-bottom gradient into a darker navy; other rows untouched               | yes    |
+| `product-rename-everywhere`   | a product renamed in titles, bodies and table cells on every slide; bold kept, "Acme team" untouched  | yes    |
+| `subtitle-plain-restyle`      | a partly bold, partly red subtitle made one plain grey style; its text kept (`text.setBoxTypography`) | yes    |
+| `year-fix-second-occurrence`  | only the second of two identical years corrected; the bold word beside it stays bold (`text.edit`)    | yes    |
 
 The scenario list is `scenarios/index.ts`; `pnpm agent:eval --list` prints
-it with each scenario's replay status. 36 scenarios on 2026-09-29 (after
-A2.10; 34 after A2.9), 30 of them replayable (the six "no" rows above), each
-with a recording in `recordings/`.
+it with each scenario's replay status. 39 scenarios on 2026-09-30 (after
+A2.11; 36 after A2.10, 34 after A2.9), 33 of them replayable (the six "no"
+rows above), each with a recording in `recordings/`. `heading-one-font` also
+covers `text.setBoxTypography` since A2.11 (re-recorded then, together with
+`bullets-second-bold`, `footer-page-number` and `table-resize-recolour`).
+`text.style.apply` has no scenario yet: eval folders have no text styles
+until A2.12 seeds folder tokens on the server.
 
 Environment notes:
 

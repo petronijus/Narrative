@@ -8,18 +8,21 @@ claude.ai — see [Agents (MCP)](#agents-mcp) and
 [the agentic-layer plan](./docs/plans/agentic-layer.md). Released since
 0.10.0 (2026-09-27; was unreleased until then, with production on 0.9.29).
 
-Current release: **0.10.12** (2026-09-29) — see [CHANGELOG.md](./CHANGELOG.md).
+Current release: **0.10.13** (2026-09-30) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
 **[Agentic layer A2 — extraction](./docs/plans/a2-extraction.md)** (in
 progress since 2026-09-28): the editor's own logic moves into commands and
 the editor dispatches them through `useCommand()`, so an agent can do what a
-person can. A2.1–A2.10 shipped step by step in 0.10.2–0.10.12 (slides panel,
+person can. A2.1–A2.11 shipped step by step in 0.10.2–0.10.13 (slides panel,
 guides, object creation, transforms, paths, clipboard, local-file upload
 sessions, gradients / shadows / page numbers; in 0.10.12 animation through
 `animation.*`, incl. `animation.retime` / `animation.retarget`, tables
 through `table.*`, incl. `table.setSize` and table gradients, and the
-PowerPoint-sized triangle). The plan's "Where we
-stand" is the next-steps list (A2.11 text next).
+PowerPoint-sized triangle). A2.11 (text: `text.edit`, `text.replace`,
+`text.setBoxTypography`, `text.style.apply`; the Inspector and the canvas
+text editor write only through commands) followed in 0.10.13 on 2026-09-30.
+The plan's "Where we
+stand" is the next-steps list (A2.12 tokens and components next).
 Before that:
 **[A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
 (2026-09-27, released in 0.10.0): personal access tokens and OAuth for
@@ -121,10 +124,10 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit tests (3,588 pass, 30 skipped, 243 files, 2026-09-29)
-pnpm --filter web test:e2e                      # 62 Playwright spec files (see caveat below)
-pnpm --filter @narrative/server test:integration  # Drizzle stores against the local Postgres (3 files; not in `pnpm test`)
-pnpm agent:eval                                 # 36 agent scenarios via headless Claude Code (costs usage; 1.62 USD for 13 of them on 2026-09-28)
+pnpm test                                       # unit tests (3,637 pass, 30 skipped, 245 files, 2026-09-30)
+pnpm --filter web test:e2e                      # 64 Playwright spec files (see caveat below)
+pnpm --filter @narrative/server test:integration  # Drizzle stores + folder token / font reads against the local Postgres (6 files, 29 tests, 2026-09-30; not in `pnpm test`)
+pnpm agent:eval                                 # 39 agent scenarios via headless Claude Code (costs usage; 1.62 USD for 13 of them on 2026-09-28, 0.91 USD for 7 on 2026-09-30)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -146,9 +149,9 @@ Coverage highlights:
   known-missing list or a reasoned exclusion; every command example run as a
   contract test; the generated capability manifest must be current)
 - MCP server over real HTTP with the SDK client, the OAuth flow and its
-  failure paths, a `tools/list` size budget (169,000 bytes after A2.10,
-  2026-09-29; was 132,000 on 2026-09-28 and is raised per A2
-  step), and the agent eval suite's free replay subset (30 recorded
+  failure paths, a `tools/list` size budget (177,000 bytes after A2.11,
+  2026-09-30; 169,000 after A2.10, was 132,000 on 2026-09-28 and is raised
+  per A2 step), and the agent eval suite's free replay subset (33 recorded
   scenarios, no model; was 11 at A1) inside `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
 
 > ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
@@ -187,8 +190,8 @@ server that is part of the API — `https://<domain>/api/mcp` in production,
 in the user's own Claude client
 ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md)).
 
-- **Tools** are generated from the command registry (117 commands on `main`
-  after A2.10, 2026-09-29 — 116 after A2.9, 114 in 0.10.11, 94 in 0.10.0; list in
+- **Tools** are generated from the command registry (121 commands on `main`
+  after A2.11, 2026-09-30 — 117 in 0.10.12, 114 in 0.10.11, 94 in 0.10.0; list in
   [`docs/capabilities.md`](./docs/capabilities.md)); every
   call runs on the server with the calling user's role, as one change, logged
   to a run the user can revert from the editor's Agent activity popover.

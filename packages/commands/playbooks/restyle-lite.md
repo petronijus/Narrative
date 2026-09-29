@@ -28,8 +28,10 @@ playbook uses what exists today.
    - text colours and fills → colour tokens, not literal hex;
    - one font family per role, consistent across slides;
    - the accent colour sparingly, on what carries the message.
-4. Apply with `object.update` (and `text.format` `clear` for run-level
-   overrides that fight the box style), one `ops.apply` per slide.
+4. Apply a role's folder text style with `text.style.apply` (by name), or
+   set the box's font, size and colour with `text.setBoxTypography` (it
+   removes run-level overrides that fight the box style); other properties
+   with `object.update`. One `ops.apply` per slide.
 5. Do not move or resize objects in this playbook unless the user asked;
    layout changes need the layout-aware restyle that comes with style packs.
 6. Report which roles you mapped to which styles, and anything that did not

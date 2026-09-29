@@ -13,10 +13,13 @@
  * - During edit, we HIDE the Pixi text node for this object so the
  *   contenteditable IS the visible rendering — no double draw, no
  *   "transparent overlay" trick. On end-edit we restore visibility.
- * - User edits are diffed (common-prefix / common-suffix) into Y.Text
- *   insert/delete operations. New characters inherit the format
+ * - User edits are diffed (common-prefix / common-suffix) into a
+ *   `text.edit` command (ADR 0010: the editor writes only through
+ *   commands). Enter, Tab and the list Backspace are structural: `text.edit`
+ *   with `key` (the Enter / Backspace rules live in the command) and
+ *   `text.list` with `indent`. New characters inherit the format
  *   attributes of the run at the insertion point so typing inside a
- *   bolded word stays bold.
+ *   bolded word stays bold — the command's rule.
  * - Incoming Y.Text changes (peer edits, Inspector format toggles)
  *   trigger a full innerHTML rebuild; we save+restore the caret /
  *   selection by character offset so the user doesn't lose their place.
@@ -36,17 +39,14 @@ import * as Y from 'yjs'
 import { isTokenRef } from '@narrative/shared'
 import type { TokenRef } from '@narrative/shared'
 import {
-  type ObjectsMutationContext,
   buildListedHtml,
   getParagraphs,
-  blockAttrsToInsertAttrs,
-  applyParagraphPatch,
-  indentParagraphs,
-  spliceRichText,
-  LOCAL_ORIGIN,
+  getPlainString,
   PARAGRAPH_SEP,
 } from '@narrative/slide-model'
 import type { TextObject } from '@narrative/shared'
+import { MAX_BODY_LENGTH, displayRangeOf, rawOffsetOf, type TextTarget } from '@narrative/commands'
+import { useCommand } from '../state/useCommand.js'
 import { setActiveTextSelection } from './textEditSelection.js'
 import {
   getElementInnerText,
@@ -59,7 +59,8 @@ import { useTextEdit } from '../state/TextEditContext.js'
 
 export interface TextEditOverlayProps {
   obj: TextObject
-  mutationCtx: ObjectsMutationContext
+  /** The body as commands address it: the text box, or a table cell (`cell`). */
+  target: TextTarget
   onEnd: () => void
 }
 
@@ -104,8 +105,20 @@ function editableString(t: TextObject['text']): string {
   return ''
 }
 
-export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProps) {
+/** The body's stored text (a legacy plain-string body counts as its string). */
+function storedText(t: TextObject['text']): string {
+  if (t instanceof Y.Text) return getPlainString(t)
+  return typeof t === 'string' ? t : ''
+}
+
+/** Typed text as `text.edit` takes it: a paragraph separator is the display "\n\n". */
+function toDisplayText(s: string): string {
+  return s.split(PARAGRAPH_SEP).join('\n\n')
+}
+
+export function TextEditOverlay({ obj, target, onEnd }: TextEditOverlayProps) {
   const editorRef = useRef<HTMLDivElement>(null)
+  const command = useCommand()
   const canvas = useCanvasInstance()
   const { consumeSelectAllOnEnter, clearSelectAllOnEnter } = useTextEdit()
   /**
@@ -132,8 +145,6 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
   const lastRangeRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 })
   const onEndRef = useRef(onEnd)
   onEndRef.current = onEnd
-  const mutationCtxRef = useRef(mutationCtx)
-  mutationCtxRef.current = mutationCtx
 
   // Defaults applied to runs that don't override the corresponding
   // attribute. Box-wide values come from the TextObject.
@@ -319,7 +330,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       const lo = Math.min(start, end)
       const hi = Math.max(start, end)
       lastRangeRef.current = { start: lo, end: hi }
-      setActiveTextSelection({ objectId: obj.id, yText, start: lo, end: hi, refocus })
+      setActiveTextSelection({ objectId: obj.id, target, yText, start: lo, end: hi, refocus })
     }
     publish()
     document.addEventListener('selectionchange', publish)
@@ -327,64 +338,9 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
       document.removeEventListener('selectionchange', publish)
       setActiveTextSelection(null)
     }
-  }, [obj.id, obj.text])
+  }, [obj.id, obj.text, target])
 
-  // ── User input → Y.Text diff/apply ───────────────────────────────────
-  const handleInput = (): void => {
-    // The first real input means the user accepted the placeholder
-    // selection (or typed past the initial caret); the select-all-on-enter
-    // intent has been served.
-    clearSelectAllOnEnter()
-    const el = editorRef.current
-    if (el === null) return
-    const yText = obj.text instanceof Y.Text ? obj.text : null
-    if (yText === null) return
-
-    const next = getElementInnerText(el)
-    const prev = lastPlainRef.current
-    if (next === prev) return
-
-    // Common-prefix / common-suffix diff. Handles single-position
-    // typing, backspace, paste replace-selection in one go.
-    let pStart = 0
-    const minLen = Math.min(prev.length, next.length)
-    while (pStart < minLen && prev[pStart] === next[pStart]) pStart += 1
-    let pSuffix = 0
-    while (
-      pSuffix < minLen - pStart &&
-      prev[prev.length - 1 - pSuffix] === next[next.length - 1 - pSuffix]
-    ) {
-      pSuffix += 1
-    }
-    const removeLen = prev.length - pStart - pSuffix
-    const insertText = next.slice(pStart, next.length - pSuffix)
-
-    if (removeLen === 0 && insertText.length === 0) return
-
-    localEditRef.current = true
-    try {
-      // Delegate the Y.Text splice to slide-model (mutations live there).
-      //
-      // LOCAL_ORIGIN is what puts this edit on the undo stack: the UndoManager
-      // is built with `trackedOrigins: new Set([LOCAL_ORIGIN])`, so a
-      // transaction without it is invisible to undo. Typing used to pass no
-      // origin at all, which meant every keystroke was unundoable — you could
-      // undo moving a text box but not writing the sentence inside it.
-      //
-      // The observer echo is suppressed by the localEditRef flag above, not by
-      // the absence of an origin; the two are independent.
-      spliceRichText(mutationCtxRef.current.doc, yText, pStart, removeLen, insertText, LOCAL_ORIGIN)
-    } finally {
-      localEditRef.current = false
-    }
-    lastPlainRef.current = next
-  }
-
-  // ── Structural list/paragraph edits (Enter / Tab) ────────────────────
-  // These mutate Y.Text directly (insert a U+2029 separator carrying block
-  // attrs, or shift paragraph levels) then rebuild the overlay HTML and
-  // restore the caret by char index — the diff path can't express a
-  // separator with block attributes.
+  // ── User input → text.edit ───────────────────────────────────────────
 
   /** Current selection as editable-string char indices, or null. */
   const getCaretRange = (): { start: number; end: number } | null => {
@@ -415,93 +371,161 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     }
   }
 
-  const runStructural = (mutate: (yText: Y.Text) => { start: number; end: number }): void => {
+  /**
+   * Redraw the editor from the document and put the caret at `caret`
+   * (stored offsets; editable offsets are the same). Used after a change
+   * the DOM cannot show by itself — a structural edit, or typed text the
+   * command turned into more (a pasted blank line becomes a paragraph).
+   */
+  const redraw = (caret: { start: number; end: number } | null): void => {
     const el = editorRef.current
-    const yText = obj.text instanceof Y.Text ? obj.text : null
-    if (el === null || yText === null) return
+    if (el === null) return
+    el.innerHTML = buildOverlayHtml(obj)
+    lastPlainRef.current = editableString(obj.text)
+    if (caret !== null) restoreCaret(caret.start, caret.end)
+  }
+
+  /**
+   * Dispatch an edit of this body. The editor's own change must not come
+   * back through the Y.Text observer (it would rebuild the DOM under the
+   * caret), so the observer is muted while the command runs. Null when the
+   * command did not apply (a collaborator removed the body a moment ago).
+   */
+  const dispatch = <T,>(commandId: string, input: Record<string, unknown>): T | null => {
     localEditRef.current = true
-    let caret = { start: 0, end: 0 }
     try {
-      // LOCAL_ORIGIN so Enter / Tab / list restructuring lands on the undo
-      // stack alongside ordinary typing — see the splice above.
-      mutationCtxRef.current.doc.transact(() => {
-        caret = mutate(yText)
-      }, LOCAL_ORIGIN)
+      return command.tryRun<T>(commandId, input)
     } finally {
       localEditRef.current = false
     }
-    el.innerHTML = buildOverlayHtml(obj)
-    lastPlainRef.current = editableString(obj.text)
-    restoreCaret(caret.start, caret.end)
   }
 
-  /** Enter: split the paragraph (new list item continues the list), or on an
-   *  empty list item outdent / end the list. */
+  /** A `text.edit` caret (display offset) as a stored offset. */
+  const caretFromDisplay = (display: number): { start: number; end: number } => {
+    const pos = rawOffsetOf(storedText(obj.text), display)
+    return { start: pos, end: pos }
+  }
+
+  const handleInput = (): void => {
+    // The first real input means the user accepted the placeholder
+    // selection (or typed past the initial caret); the select-all-on-enter
+    // intent has been served.
+    clearSelectAllOnEnter()
+    const el = editorRef.current
+    if (el === null) return
+
+    const next = getElementInnerText(el)
+    const prev = lastPlainRef.current
+    if (next === prev) return
+
+    // Common-prefix / common-suffix diff. Handles single-position
+    // typing, backspace, paste replace-selection in one go.
+    let pStart = 0
+    const minLen = Math.min(prev.length, next.length)
+    while (pStart < minLen && prev[pStart] === next[pStart]) pStart += 1
+    let pSuffix = 0
+    while (
+      pSuffix < minLen - pStart &&
+      prev[prev.length - 1 - pSuffix] === next[next.length - 1 - pSuffix]
+    ) {
+      pSuffix += 1
+    }
+    const removeLen = prev.length - pStart - pSuffix
+    const insertText = next.slice(pStart, next.length - pSuffix)
+
+    if (removeLen === 0 && insertText.length === 0) return
+
+    // Editable offsets are stored offsets; the command takes the display
+    // offsets queries use (a paragraph break counts 2).
+    const range = displayRangeOf(storedText(obj.text), pStart, pStart + removeLen)
+    const result = dispatch<{ caret: number }>('text.edit', {
+      target,
+      edits: [{ at: range.start, delete: range.length, insert: toDisplayText(insertText) }],
+    })
+    if (result === null) {
+      redraw(getCaretRange())
+      return
+    }
+    // A legacy plain-string body is promoted to rich text by the command;
+    // the new body arrives with the next render.
+    if (!(obj.text instanceof Y.Text)) {
+      lastPlainRef.current = next
+      return
+    }
+    const model = editableString(obj.text)
+    if (model === next) lastPlainRef.current = next
+    else redraw(caretFromDisplay(result.caret))
+  }
+
+  // ── Structural edits (Enter / Tab / list Backspace) ──────────────────
+  // The DOM cannot express a paragraph separator carrying block attributes,
+  // so these are commands followed by a redraw with the caret put back.
+
+  /** Enter: split the paragraph (a new list item continues the list), or on
+   *  an empty list item outdent / end the list — the command's rule. */
   const handleEnter = (): void => {
-    const yText = obj.text instanceof Y.Text ? obj.text : null
-    if (yText === null) {
+    if (!(obj.text instanceof Y.Text)) {
       document.execCommand('insertLineBreak')
       return
     }
     const range = getCaretRange()
     if (range === null) return
     clearSelectAllOnEnter()
-    runStructural((yt) => {
-      if (range.end > range.start) yt.delete(range.start, range.end - range.start)
-      const pos = range.start
-      const paras = getParagraphs(yt)
-      const para = paras.find((p) => p.start <= pos && pos <= p.end) ?? paras[paras.length - 1]!
-      if (para.text.length === 0 && para.attrs.list !== undefined) {
-        // Empty list item: outdent one level, or convert to a plain
-        // paragraph once at level 0 (Keynote/PowerPoint behavior).
-        if ((para.attrs.level ?? 0) > 0) {
-          indentParagraphs(yt, pos, pos, -1)
-        } else {
-          applyParagraphPatch(yt, pos, pos, {
-            list: null,
-            level: null,
-            bulletChar: null,
-            numberFormat: null,
-            startAt: null,
-          })
-        }
-        return { start: pos, end: pos }
-      }
-      // Split: the inserted separator carries this paragraph's block attrs
-      // so the new paragraph continues the list at the same kind/level.
-      const blockAttrs = blockAttrsToInsertAttrs(para.attrs)
-      const insertSep = (at: number): void => {
-        if (blockAttrs !== undefined) yt.insert(at, PARAGRAPH_SEP, blockAttrs)
-        else yt.insert(at, PARAGRAPH_SEP)
-      }
-      insertSep(pos)
-      // Splitting at the very end leaves the new (empty) paragraph with no
-      // terminator, which `getParagraphs` would collapse away — so it would
-      // never render and the caret would fall back into the previous block.
-      // Append a terminator so the trailing empty paragraph actually exists.
-      if (pos + 1 === yt.length) insertSep(yt.length)
-      return { start: pos + 1, end: pos + 1 }
+    const d = displayRangeOf(storedText(obj.text), range.start, range.end)
+    const result = dispatch<{ caret: number }>('text.edit', {
+      target,
+      edits: [
+        ...(d.length > 0 ? [{ at: d.start, delete: d.length }] : []),
+        { at: d.start, key: 'Enter' },
+      ],
     })
+    redraw(result === null ? range : caretFromDisplay(result.caret))
+  }
+
+  /**
+   * Paste plain text over the selection as one `text.edit`: a blank line in
+   * it starts a new paragraph (continuing a list), a single line break stays
+   * a line break — the text.set convention. Handled here rather than by the
+   * browser, whose own insertion of multi-line text builds DOM the diff
+   * cannot read back faithfully.
+   */
+  const handlePaste = (pasted: string): void => {
+    const text = pasted.replace(/\r\n?/g, '\n').slice(0, MAX_BODY_LENGTH)
+    if (!(obj.text instanceof Y.Text)) {
+      document.execCommand('insertText', false, text)
+      return
+    }
+    const range = getCaretRange()
+    if (range === null) return
+    clearSelectAllOnEnter()
+    const d = displayRangeOf(storedText(obj.text), range.start, range.end)
+    const result = dispatch<{ caret: number }>('text.edit', {
+      target,
+      edits: [{ at: d.start, delete: d.length, insert: text }],
+    })
+    redraw(result === null ? range : caretFromDisplay(result.caret))
   }
 
   /** Tab / Shift+Tab: indent / outdent the covered paragraphs. */
   const handleIndent = (delta: number): void => {
-    const yText = obj.text instanceof Y.Text ? obj.text : null
-    if (yText === null) return
+    if (!(obj.text instanceof Y.Text)) return
     const range = getCaretRange()
     if (range === null) return
-    runStructural((yt) => {
-      indentParagraphs(yt, range.start, range.end, delta)
-      return range
+    dispatch('text.list', {
+      target,
+      range: displayRangeOf(storedText(obj.text), range.start, range.end),
+      indent: delta,
     })
+    redraw(range)
   }
 
   /**
    * Backspace at the very start of a list/indented paragraph. Native
    * contenteditable refuses to merge across the leading non-editable marker
-   * span, so we handle it structurally (Keynote/PowerPoint progression):
-   * outdent if nested, strip the list on the first item, else merge into the
-   * previous paragraph. Returns true when handled (caller preventDefaults).
+   * span, so it is the command's Backspace rule (Keynote/PowerPoint
+   * progression): outdent if nested, strip the list on the first item, else
+   * merge into the previous paragraph. Returns true when handled (caller
+   * preventDefaults).
    */
   const handleListBackspace = (): boolean => {
     const yText = obj.text instanceof Y.Text ? obj.text : null
@@ -509,36 +533,19 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
     const range = getCaretRange()
     if (range === null || range.start !== range.end) return false
     const pos = range.start
-    const paras = getParagraphs(yText)
-    const idx = paras.findIndex((p) => p.start <= pos && pos <= p.end)
-    if (idx < 0) return false
-    const para = paras[idx]!
+    const para = getParagraphs(yText).find((p) => p.start <= pos && pos <= p.end)
+    if (para === undefined) return false
     // Only intervene at the very start of a paragraph; mid-paragraph delete is
     // plain and handled by the diff path.
     if (pos !== para.start) return false
     // Plain, non-indented paragraphs merge natively — leave them alone.
     if (para.attrs.list === undefined && (para.attrs.level ?? 0) === 0) return false
-    if ((para.attrs.level ?? 0) > 0) {
-      handleIndent(-1)
-      return true
-    }
-    if (idx === 0) {
-      runStructural((yt) => {
-        applyParagraphPatch(yt, pos, pos, {
-          list: null,
-          level: null,
-          bulletChar: null,
-          numberFormat: null,
-          startAt: null,
-        })
-        return { start: pos, end: pos }
-      })
-      return true
-    }
-    runStructural((yt) => {
-      yt.delete(pos - 1, 1)
-      return { start: pos - 1, end: pos - 1 }
+    const at = displayRangeOf(storedText(yText), pos, pos).start
+    const result = dispatch<{ caret: number }>('text.edit', {
+      target,
+      edits: [{ at, key: 'Backspace' }],
     })
+    redraw(result === null ? range : caretFromDisplay(result.caret))
     return true
   }
 
@@ -657,7 +664,7 @@ export function TextEditOverlay({ obj, mutationCtx, onEnd }: TextEditOverlayProp
           e.preventDefault()
           const txt = e.clipboardData.getData('text/plain')
           if (txt === '') return
-          document.execCommand('insertText', false, txt)
+          handlePaste(txt)
         }}
         onPointerDown={(e) => {
           // User chose a caret position manually — drop the auto-select-all

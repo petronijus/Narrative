@@ -24,7 +24,8 @@ import { tokensSnapshot } from '../services/tokenRebind.js'
 /** The target's folder tokens; null when it has no folder or the folder has no tokens yet. */
 export type FolderTokensReader = (target: CommandTarget) => Promise<FolderTokensSnapshot | null>
 
-async function folderOf(db: Database, target: CommandTarget): Promise<string | null> {
+/** The folder a command target belongs to (the database's decks / components row), or null. */
+export async function folderOf(db: Database, target: CommandTarget): Promise<string | null> {
   if (target.folderId !== undefined) return target.folderId
   if (target.deckId !== undefined) {
     const [row] = await db

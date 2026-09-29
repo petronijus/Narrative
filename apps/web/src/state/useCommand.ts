@@ -26,6 +26,7 @@ import { useSlideDoc } from './useSlideDoc.js'
 import { useDeckRole } from './DeckRoleContext.js'
 import { useAuth } from './AuthContext.js'
 import { useFolderTokensForCommands } from './FolderDocProvider.js'
+import { useFolderFontsForCommands } from './useFolderFonts.js'
 
 /** One registry per page: definitions are stateless, so sharing it is safe. */
 const registry = createDefaultRegistry()
@@ -75,6 +76,7 @@ export function useCommand(): CommandDispatch {
   const { user } = useAuth()
   const userId = user?.sub ?? 'anonymous'
   const folderTokens = useFolderTokensForCommands()
+  const folderFonts = useFolderFontsForCommands()
 
   const ctx = useMemo<CommandContext>(
     () => ({
@@ -83,8 +85,9 @@ export function useCommand(): CommandDispatch {
       origin: LOCAL_ORIGIN,
       deck: deckCtx,
       ...(folderTokens === undefined ? {} : { folderTokens }),
+      ...(folderFonts === undefined ? {} : { folderFonts }),
     }),
-    [userId, role, deckCtx, folderTokens],
+    [userId, role, deckCtx, folderTokens, folderFonts],
   )
 
   const run = useCallback(

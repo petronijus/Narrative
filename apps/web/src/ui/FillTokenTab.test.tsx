@@ -156,20 +156,27 @@ function SelectionSetup({ ids }: { ids: string[] }) {
 // Render helper
 // ---------------------------------------------------------------------------
 
-function renderInspector(objects: SlideObject[]) {
+function renderInspector(
+  objects: SlideObject[],
+  real?: { deckCtx: SlideMutationContext; slideId: string },
+) {
   mockObjects = objects
   mockSlides[0]!.objects = objects
 
-  const deckCtx = createDeckCtx()
+  const deckCtx = real?.deckCtx ?? createDeckCtx()
   const ctxValue = createMockSlideDocValue({
     deckCtx,
     undoManager: slideModel.createUndoManager(deckCtx),
   })
+  const activeSlide: ActiveSlideContextValue =
+    real === undefined
+      ? createMockActiveSlide()
+      : { activeSlideId: real.slideId, setActiveSlideId: () => {} }
 
   return render(
     <MemoryRouter>
       <SlideDocContext value={ctxValue}>
-        <ActiveSlideContext value={createMockActiveSlide()}>
+        <ActiveSlideContext value={activeSlide}>
           <SelectionProvider>
             <SelectionSetup ids={objects.map((o) => o.id)} />
             <Inspector />
@@ -270,7 +277,7 @@ describe('TextSection — Style dropdown', () => {
     expect(options[1]).toBe('Heading 1')
   })
 
-  it('calls patch with style fields when a style is selected', async () => {
+  it('links the box to the selected style (text.style.apply writes its fields)', async () => {
     mockTokenSnapshot = {
       colors: {},
       textStyles: {
@@ -278,21 +285,24 @@ describe('TextSection — Style dropdown', () => {
       },
       effectStyles: {},
     }
-
-    renderInspector([mockText()])
+    // A real slide of a real document: the preset picker dispatches a
+    // command, so the test reads what it wrote back from the document.
+    const deckCtx = slideModel.createSlideDoc()
+    const slideId = deckCtx.slides.get(0).get('id') as string
+    const text = mockText()
+    slideModel.addObject(slideModel.getSlideObjectsCtx(deckCtx, slideId)!, text)
+    renderInspector([text], { deckCtx, slideId })
     await waitFor(() => screen.getByLabelText('Text style preset'))
 
     fireEvent.change(screen.getByLabelText('Text style preset'), { target: { value: 'ts1' } })
 
-    expect(slideModel.updateObject).toHaveBeenCalledWith(
-      expect.anything(),
-      'text-1',
-      expect.objectContaining({
-        fontFamily: 'Inter, sans-serif',
-        fontWeight: 700,
-        fontSize: 32,
-        textStyleId: 'ts1',
-      }),
-    )
+    const stored = slideModel.listSlides(deckCtx)[0]!.objects.find((o) => o.id === 'text-1')
+    expect(stored).toMatchObject({
+      fontFamily: 'Inter, sans-serif',
+      fontWeight: 700,
+      fontSize: 32,
+      textStyleId: 'ts1',
+      textStyleOverrides: [],
+    })
   })
 })

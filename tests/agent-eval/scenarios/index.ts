@@ -41,6 +41,9 @@ import agendaStepTiming from './agendaStepTiming.js'
 import photoAnimationsHandOver from './photoAnimationsHandOver.js'
 import tableResizeRecolour from './tableResizeRecolour.js'
 import tableHeaderGradient from './tableHeaderGradient.js'
+import productRenameEverywhere from './productRenameEverywhere.js'
+import subtitlePlainRestyle from './subtitlePlainRestyle.js'
+import yearFixSecondOccurrence from './yearFixSecondOccurrence.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -79,6 +82,9 @@ export const SCENARIOS: readonly AnyScenario[] = [
   photoAnimationsHandOver,
   tableResizeRecolour,
   tableHeaderGradient,
+  productRenameEverywhere,
+  subtitlePlainRestyle,
+  yearFixSecondOccurrence,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

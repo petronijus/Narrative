@@ -203,7 +203,18 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
     return obj
   }, [binding])
 
-  if (binding === null || synthetic === null) return null
+  // The cell body as commands address it.
+  const row = binding?.r
+  const col = binding?.c
+  const cellTarget = useMemo(
+    () =>
+      row === undefined || col === undefined
+        ? null
+        : { slide: slideId, object: table.id, cell: { row, col } },
+    [row, col, slideId, table.id],
+  )
+
+  if (binding === null || synthetic === null || cellTarget === null) return null
   const current = binding.table
 
   // Cell nav — intercept Tab / Shift+Tab BEFORE TextEditOverlay's
@@ -280,12 +291,7 @@ export function TableCellEditor({ table, slideId, mutationCtx }: TableCellEditor
         }
       }}
     >
-      <TextEditOverlay
-        key={synthetic.id}
-        obj={synthetic}
-        mutationCtx={mutationCtx}
-        onEnd={endEdit}
-      />
+      <TextEditOverlay key={synthetic.id} obj={synthetic} target={cellTarget} onEnd={endEdit} />
     </div>
   )
 }

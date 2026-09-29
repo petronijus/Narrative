@@ -382,14 +382,11 @@ export const objectUpdate = defineCommand({
     '(`imageRect`) — resize with object.resize, which does. ' +
     "(2) `flipH` / `flipV` only mirror the content without negating `rotation` as the editor's Flip does — flip " +
     'with object.flip. ' +
-    '(3) Box-level typography (fontFamily, fontSize, fontWeight, color, …) is only the default: inline run ' +
-    'formatting in the text overrides it, so a box-wide change on formatted text needs text.format with `clear` ' +
-    'for those attributes first — put both in one ops.apply. ' +
-    '(4) `fontFamily` does not snap `fontWeight` to a cut the new family has (the editor does); set a weight the ' +
-    'family provides in the same patch. ' +
-    "(5) `textStyleId` only links a folder text style, it does not apply it; set the style's font fields in the " +
-    'same patch; text.style.apply (planned, not available yet) will do both. ' +
-    "(6) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from " +
+    '(3) Box typography (fontFamily, fontSize, fontWeight, color, …) set here is only the default under inline ' +
+    'formatting, leaves fontWeight as is on a family change and does not mark a linked text style overridden — use ' +
+    'text.setBoxTypography, which does what the Inspector does. ' +
+    '(4) `textStyleId` only links a folder text style without applying it — use text.style.apply. ' +
+    "(5) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from " +
     "the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they " +
     'are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. ' +
     '`text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted ' +
