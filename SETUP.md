@@ -6,7 +6,7 @@ something's broken — file an issue, don't paper over it.
 
 ## Prerequisites
 
-- **Node.js ≥ 22** (`node -v`)
+- **Node.js ≥ 22.18** (`node -v`; `engines` in `package.json` since A2.1, 2026-09-28 — `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default from 22.18; was ≥ 22)
 - **pnpm ≥ 9** — recommended via Corepack: `corepack enable && corepack prepare pnpm@latest --activate`
 - **Docker** with the Compose plugin (`docker compose version`)
 - **Linux only**: file-watcher headroom for the dev stack

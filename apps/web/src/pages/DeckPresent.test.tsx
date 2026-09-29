@@ -68,17 +68,7 @@ vi.mock('../ui/VideoOverlay', () => ({
 }))
 
 vi.mock('../state/useAnimations', () => ({
-  useAnimations: () => ({
-    animations: [],
-    animationsCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-    mutationCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-  }),
+  useAnimations: () => ({ animations: [] }),
 }))
 
 // M9: useSlides mock — PresentLayout now reads slides for counter + navigation

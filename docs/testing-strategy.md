@@ -1,23 +1,40 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-09-28 (was 2026-09-27; before that 2026-09-26, 2026-09-09 and 2026-05-09).
-> Current state, **measured** with `pnpm -r test` on 2026-09-28 (working
-> tree of the MCP tool-list compaction on top of `ee705da` / v0.10.0) — all
-> green in the docs sweep's run; an earlier run the same day hit the server
-> flake under _Known flaky unit tests_. `pnpm typecheck` green and `pnpm lint`
-> 0 errors on the same tree (reported with the change, not re-run by the
-> sweep):
+> Last updated 2026-09-29 (was 2026-09-28; before that 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09).
+> Current state, **measured** with `pnpm -r test` on 2026-09-29 (A2.9 +
+> triangle-geometry working tree on top of `669d151` / v0.10.11), all green
+> in the docs sweep's run. `pnpm typecheck` green and `pnpm lint` 0 errors
+> on the same tree (reported with the change, not re-run by the sweep):
 >
 > | Package                | Files   | Passed    | Skipped |
 > | ---------------------- | ------- | --------- | ------- |
-> | `apps/server`          | 80      | 1,133     | 1       |
-> | `apps/web`             | 75      | 686       | 30      |
-> | `packages/commands`    | 21      | 645       | 0       |
-> | `packages/slide-model` | 27      | 392       | 0       |
-> | `packages/shared`      | 8       | 193       | 0       |
-> | `packages/animation`   | 13      | 144       | 0       |
+> | `apps/server`          | 87      | 1,191     | 1       |
+> | `apps/web`             | 76      | 699       | 28      |
+> | `packages/commands`    | 27      | 919       | 0       |
+> | `packages/slide-model` | 28      | 400       | 0       |
+> | `packages/shared`      | 10      | 199       | 0       |
+> | `packages/animation`   | 14      | 149       | 0       |
 > | `apps/video-worker`    | 1       | 12        | 1       |
-> | **Total**              | **225** | **3,205** | **32**  |
+> | **Total**              | **243** | **3,569** | **30**  |
+>
+> (2026-09-28, MCP tool-list compaction on top of `ee705da` / v0.10.0: 225
+> files, 3,205 passed, 32 skipped — server 80 / 1,133, web 75 / 686 + 30
+> skipped, commands 21 / 645, slide-model 27 / 392, shared 8 / 193,
+> animation 13 / 144. The web skips fell from 30 to 28 in 0.10.2 (A2.2):
+> the two `SlidesPanel.test.tsx` skips "ArrowDown moves to next slide" /
+> "ArrowUp moves to previous slide" were removed; A2.9 changed no skip.)
+>
+> Added in A2.9 + the triangle fix (2026-09-29): `packages/shared`
+> `animationTiming.test.ts` (`layoutAnimationSteps`) and
+> `shapeGeometry.test.ts`; `packages/animation`
+> `__tests__/timelineLayout.test.ts` (the layout pinned against the GSAP
+> compiler — moved from `apps/web/src/ui/AnimationTimeline.layout.test.ts`,
+> deleted; onClick is left out of that contract on purpose, see the test's
+> header); `apps/web/src/ui/animationTriggers.test.ts`; `animation.retime` /
+> `animation.retarget` contract tests in `packages/commands`; the e2e
+> `animation-commands.spec.ts`; a triangle case in `renderer-visual.spec.ts`
+> that pins the bottom corners; eval scenarios `agenda-step-timing` and
+> `photo-animations-hand-over`.
 >
 > (2026-09-27, A1 working tree on top of `9e0e853`: 223 files, 3,192 passed —
 > server 79 / 1,126, commands 20 / 639; `pnpm typecheck` + `pnpm lint` exit 0,
@@ -25,21 +42,27 @@
 >
 > (At A0 close, 2026-09-26: 167 files, 2,188 passed — server 36 / 497,
 > web 69 / 639, commands 13 / 328, slide-model 381, shared 187.)
-> Plus **53 e2e spec files** in `apps/web/e2e/` (was 50 at A0; A1 added
-> `access-tokens`, `agent-activity`, `agent-confirm` — the e2e suite was not
-> re-run by the docs sweep of 2026-09-27), **3 server integration test
-> files** against a real Postgres (`pnpm --filter @narrative/server
-test:integration`, not part of `pnpm test`), and the **agent eval suite**
-> (`pnpm agent:eval`, 14 scenarios, 14/14 on 2026-09-27 and again on
-> 2026-09-28 with ToolSearch on — see below).
+> Plus **61 e2e spec files** in `apps/web/e2e/` (counted 2026-09-29; was
+> 53 at A1 and 50 at A0 — A1 added `access-tokens`, `agent-activity`,
+> `agent-confirm`; A2 added `agent-upload-session`, `guides`,
+> `inspector-appearance-commands`, `mcp-oauth-consent`, `object-clipboard`,
+> `path-editing`, `slide-clipboard` and, in A2.9, `animation-commands`),
+> **3 server integration test files** against a real Postgres
+> (`pnpm --filter @narrative/server test:integration`, not part of
+> `pnpm test`), and the **agent eval suite** (`pnpm agent:eval`, 34
+> scenarios, 28 of them replayed for free; the last full live run recorded
+> here is 14/14 on 2026-09-28, when the suite had 14 scenarios — the
+> 34-scenario suite has not been run in full; A2.9's three animation
+> scenarios passed 3/3 live on 2026-09-29 — see below).
 >
 > (`packages/commands` was 364 before the lock policy was removed later on
 > 2026-09-26 — its locked re-run of every example went with it; was 1,542
 > passing / 127 files on 2026-09-09, and 1,219 across 5 packages
 > on 2026-05-09.) Plus **50 e2e spec files** in `apps/web/e2e/` (was 40 on
-> 2026-09-09). Note the skip count: **32 total, 30 of them in `apps/web`** —
-> the long-standing "23 web skips" figure is stale, and 7 skips have
-> accumulated since without being triaged into the tables below.
+> 2026-09-09). Note the skip count: **32 total, 30 of them in `apps/web`**
+> (2026-09-26; 30 and 28 since 0.10.2) — the long-standing "23 web skips"
+> figure is stale, and 7 skips accumulated without being triaged into the
+> tables below.
 > Bundle budgets enforced via `size-limit` (`pnpm size`). Property-based CRDT convergence,
 > server lifecycle/leak coverage, multi-client e2e collab, destructive-
 > flow coverage, sampled-thumbnail visual regression all active.
@@ -65,9 +88,12 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >   (`hocuspocus/awareness*.test.ts`), the Hocuspocus auth-context regression
 >   over a real WebSocket (`hocuspocus/authenticate.context.test.ts`), Sentry
 >   scrubbing, and **`mcp/toolListBudget.test.ts`** — `tools/list` must stay
->   ≤ 132,000 bytes (≤ 16,000 per tool); it measured 128,349 (form mode) to
->   129,309 bytes (url mode) on 2026-09-28 (was ≤ 160,000, measured 148,207
->   to 151,119 on 2026-09-27, before the shared field vocabulary). Its
+>   ≤ 167,000 bytes (≤ 16,000 per tool); it measured 166,020 (form mode) to
+>   166,980 bytes (url mode) for 116 tools on 2026-09-29 — 20 bytes of
+>   headroom (the budget is raised step by step during A2 and reviewed as a
+>   whole at A2.13; was ≤ 132,000 and 128,349–129,309 bytes on 2026-09-28,
+>   ≤ 160,000 and 148,207–151,119 on 2026-09-27, before the shared field
+>   vocabulary). Its
 >   companion **`mcp/vocabulary.test.ts`** (2026-09-28) keeps
 >   `mcp/vocabulary.ts` honest both ways: an entry that no longer matches any
 >   command's description fails, and so does a description repeated on ≥ 3
@@ -83,8 +109,8 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >   (`registry.test.ts`: target metadata, `undoneBy`, `confirmWhen` on every
 >   URL-taking command), the agent surface (`agentSurface.test.ts`), paging,
 >   playbooks (`playbooks/playbooks.test.ts`), and the **agent eval replay**
->   (`agentEvalReplay.test.ts`: 11 recorded scenarios replayed in memory, no
->   model, no server).
+>   (`agentEvalReplay.test.ts`: 11 recorded scenarios replayed in memory at A1,
+>   28 on 2026-09-29; no model, no server).
 > - **Web**: token and agent-presence state, the Agent activity model,
 >   `editor.show`, and e2e for Access tokens, Agent activity and the
 >   confirmation page.
@@ -143,20 +169,20 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 
 ## Test layers
 
-| Layer                      | Where                                                                                                               | Purpose                                                                                                                                                                                    | Status                                |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------- |
-| Unit (pure logic)          | `packages/{slide-model,animation,shared}`                                                                           | Yjs mutations, CRDT, GSAP DSL compiler, schema validators                                                                                                                                  | Strong (392 + 144 + 193)              |
-| Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; atomic batches; manifest current | Strong (639 + route guard)            |
-| Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                        | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                              | Strong (1,126)                        |
-| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                     | Drizzle stores against the real local Postgres: run store, list paging, OAuth store                                                                                                        | New in A1 (3 files, opt-in)           |
-| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | New in A1 (14 scenarios, 11 replayed) |
-| Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                     | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                   | OK                                    |
-| Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                           | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                        | Was bloated; cleaned up               |
-| Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                   | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`              | Strong (ADR 0009)                     |
-| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                            | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                   | Strong (53 spec files)                |
-| Visual regression          | `apps/web/e2e/visual/*.spec.ts` (TODO — convert `visual-check.spec.ts`)                                             | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                             | Missing                               |
-| Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts`                                                                  | Throughput, awareness rate, doc growth                                                                                                                                                     | Exists, no thresholds enforced        |
-| Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                       | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                 | Active (Tier B.1; tables in A0)       |
+| Layer                      | Where                                                                                                               | Purpose                                                                                                                                                                                    | Status                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| Unit (pure logic)          | `packages/{slide-model,animation,shared}`                                                                           | Yjs mutations, CRDT, GSAP DSL compiler, schema validators                                                                                                                                  | Strong (400 + 149 + 199)             |
+| Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; atomic batches; manifest current | Strong (919 + route guard)           |
+| Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                        | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                              | Strong (1,191)                       |
+| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                     | Drizzle stores against the real local Postgres: run store, list paging, OAuth store                                                                                                        | New in A1 (3 files, opt-in)          |
+| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (34 scenarios, 28 replayed) |
+| Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                     | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                   | OK                                   |
+| Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                           | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                        | Was bloated; cleaned up              |
+| Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                   | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`              | Strong (ADR 0009)                    |
+| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                            | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                   | Strong (61 spec files)               |
+| Visual regression          | `apps/web/e2e/visual/*.spec.ts` (TODO — convert `visual-check.spec.ts`)                                             | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                             | Missing                              |
+| Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts`                                                                  | Throughput, awareness rate, doc growth                                                                                                                                                     | Exists, no thresholds enforced       |
+| Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                       | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                 | Active (Tier B.1; tables in A0)      |
 
 ## What was just cleaned up
 
@@ -192,7 +218,7 @@ real focus / drag / keyboard scope).
 | File                                                     | Tests | Where the e2e lives / belongs                           |
 | -------------------------------------------------------- | ----- | ------------------------------------------------------- |
 | `apps/web/src/ui/Toolbar.test.tsx:177,185,193,246,262`   | 5     | `apps/web/e2e/keyboard-shortcuts.spec.ts` (TODO)        |
-| `apps/web/src/ui/SlidesPanel.test.tsx:286,301`           | 2     | Same — slides keyboard nav                              |
+| ~~`apps/web/src/ui/SlidesPanel.test.tsx:286,301`~~       | ~~2~~ | Removed in 0.10.2 — `keyboard-shortcuts.spec.ts`        |
 | `apps/web/src/components/PresentLayout.test.tsx:317-423` | 7     | `apps/web/e2e/present-layout.spec.ts` (extend existing) |
 | `apps/web/src/ui/UploadDropZone.test.tsx:124,160,193`    | 3     | `apps/web/e2e/image-upload.spec.ts` (extend existing)   |
 | `apps/web/src/pages/FoldersHome.test.tsx:197`            | 1     | New `e2e/folder-mgmt.spec.ts` for delete-via-kebab flow |

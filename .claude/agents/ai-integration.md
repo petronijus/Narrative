@@ -50,12 +50,17 @@ them existed.)_
     Claude Code's loopback callbacks on any port (`MCP_OAUTH_REDIRECT_URIS`
     adds more), and the consent page; Google sign-in is only the login step;
   - tool generation and compaction (`mcp/tools.ts`, `mcp/schemaCompact.ts`,
-    and `mcp/vocabulary.ts`: 27 field descriptions shared across tools,
+    and `mcp/vocabulary.ts`: 28 field descriptions shared across tools
+    (27 until A2.9 added the animation step id, 2026-09-29),
     stripped from every schema and said once in the instructions; guarded
     both ways by `mcp/vocabulary.test.ts`) under the size budget in
-    `mcp/toolListBudget.test.ts` (132,000 bytes for `tools/list`, 16,000 per
-    tool; measured 128,349–129,309 bytes on 2026-09-28 depending on the
-    confirmation mode — was 160,000 and 148–151 KB on 2026-09-27). Settled
+    `mcp/toolListBudget.test.ts` (167,000 bytes for `tools/list`, 16,000 per
+    tool; measured 166,020–166,980 bytes for 116 tools on 2026-09-29
+    depending on the confirmation mode — 20 bytes of headroom. Was 132,000
+    and 128,349–129,309 bytes on 2026-09-28, 160,000 and 148–151 KB on
+    2026-09-27. During A2 the budget rises step by step with each new
+    command, itemised in the test's comment, and the sizes get one review
+    as a whole at A2.13 — Petr's call). Settled
     2026-09-28: no dynamic toolsets behind `list_changed` (Claude Code
     already defers MCP tools behind ToolSearch, same-turn use is flaky
     without it, claude.ai reportedly caches tool lists); shrink the list
@@ -156,7 +161,8 @@ editor's UndoManager track remote origins.
   across tools belongs in `mcp/vocabulary.ts` (its test names the ones that
   qualify). The next dedupable candidate (2026-09-28): `animation.add` and
   `animation.update` share ≈ 700 characters (the presets list duplicates the
-  enum; triggers and rotation units repeated).
+  enum; triggers and rotation units repeated) — still 3,131 and 3,161 bytes
+  on 2026-09-29.
 - MCP or auth change → `security-reviewer` before the milestone closes.
 - After any feature work → `agent-parity` for coverage, `narrative-docs` for
   the doc sweep.

@@ -53,6 +53,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   replaceObject: 'writer',
   removeSlide: 'writer',
   reorderAnimations: 'writer',
+  retargetAnimation: 'writer',
   setRangeBorderPreset: 'writer',
   setRangeCellStyle: 'writer',
   setSlideNotes: 'writer',

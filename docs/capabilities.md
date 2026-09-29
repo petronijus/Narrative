@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **114**. Known missing: **23**. Deliberately excluded: **20**.
+Commands: **116**. Known missing: **22**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -16,12 +16,14 @@ Commands: **114**. Known missing: **23**. Deliberately excluded: **20**.
 
 ## animation
 
-| Command             | What it does       | Role   | Undo     | Confirm | Hints      |
-| ------------------- | ------------------ | ------ | -------- | ------- | ---------- |
-| `animation.add`     | Add animation      | editor | undoable | never   |            |
-| `animation.remove`  | Remove animations  | editor | undoable | never   |            |
-| `animation.reorder` | Reorder animations | editor | undoable | never   |            |
-| `animation.update`  | Update animation   | editor | undoable | never   | idempotent |
+| Command              | What it does        | Role   | Undo     | Confirm | Hints      |
+| -------------------- | ------------------- | ------ | -------- | ------- | ---------- |
+| `animation.add`      | Add animation       | editor | undoable | never   |            |
+| `animation.remove`   | Remove animations   | editor | undoable | never   |            |
+| `animation.reorder`  | Reorder animations  | editor | undoable | never   |            |
+| `animation.retarget` | Retarget animations | editor | undoable | never   | idempotent |
+| `animation.retime`   | Retime animations   | editor | undoable | never   | idempotent |
+| `animation.update`   | Update animation    | editor | undoable | never   | idempotent |
 
 ## component
 
@@ -219,7 +221,6 @@ Commands: **114**. Known missing: **23**. Deliberately excluded: **20**.
 | `token.seedDefaults`          | A2    | apps/web/src/state/FolderDocProvider.tsx                                                      |                                                                                                                                                                                            |
 | `component.promote`           | A2    | apps/web/src/state/writeComponentMasterTree.ts; `POST /folders/:folderId/components`          | the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)                                                                                                |
 | `text.replace`                | A2    | new                                                                                           |                                                                                                                                                                                            |
-| `animation.retarget`          | A2    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.exportPdf`              | A3    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.exportPng`              | A3    | new                                                                                           |                                                                                                                                                                                            |
 | `deck.refreshThumbnail`       | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                       |

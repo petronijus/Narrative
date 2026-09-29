@@ -10,6 +10,7 @@ import {
   addAnimation,
   removeAnimation,
   reorderAnimations,
+  retargetAnimation,
   updateAnimation,
   yMapToAnimationStep,
   type AnimationsMutationContext,
@@ -19,8 +20,11 @@ import {
   AnimationPresetSchema,
   AnimationStepSchema,
   AnimationTriggerSchema,
+  MAX_STEP_DELAY_S,
+  layoutAnimationSteps,
   type AnimationPreset,
   type AnimationStep,
+  type AnimationTrigger,
 } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
 import { CommandError, issuesFromZod } from '../errors.js'
@@ -339,4 +343,224 @@ export const animationReorder = defineCommand({
   },
 })
 
-export const animationCommands = [animationAdd, animationUpdate, animationRemove, animationReorder]
+// ---------------------------------------------------------------------------
+// animation.retime
+// ---------------------------------------------------------------------------
+
+/** Two times closer than this are the same time. */
+const TIME_EPSILON = 1e-6
+
+/** Times are stored to the microsecond: differences of floats carry noise. */
+const roundTime = (seconds: number): number => Math.round(seconds * 1e6) / 1e6
+
+interface PlacedStep {
+  step: AnimationStep
+  start: number
+  duration: number
+  /** Index in the current play order (ties keep it). */
+  index: number
+}
+
+/**
+ * The trigger and delay that put `cur` at `cur.start` after `prev` — the
+ * timeline's sequence model (layoutAnimationSteps read backwards). onClick
+ * stays onClick and cannot start before the previous step ends.
+ */
+function sequenceAfter(
+  cur: PlacedStep,
+  prev: PlacedStep | undefined,
+): { trigger: AnimationTrigger; delay: number } {
+  const onClick = cur.step.trigger === 'onClick'
+  if (prev === undefined)
+    return { trigger: onClick ? 'onClick' : 'afterPrevious', delay: Math.max(0, cur.start) }
+  const prevEnd = prev.start + prev.duration
+  if (onClick) return { trigger: 'onClick', delay: Math.max(0, cur.start - prevEnd) }
+  if (cur.start + TIME_EPSILON >= prevEnd)
+    return { trigger: 'afterPrevious', delay: Math.max(0, cur.start - prevEnd) }
+  return { trigger: 'withPrevious', delay: Math.max(0, cur.start - prev.start) }
+}
+
+/**
+ * Sorts `placed` into play order by start time (ties keep the current
+ * order) and pushes every onClick step that would start before its
+ * predecessor ends to that end — the earliest a click step can start. A
+ * pushed step can overtake the steps after it, so this re-sorts until
+ * nothing moves; starts only grow, so it settles in at most one pass per
+ * step. Every other step keeps its time, whatever it follows.
+ */
+function placeOnTimeline(placed: PlacedStep[]): void {
+  for (let pass = 0; pass <= placed.length; pass++) {
+    placed.sort((a, b) => a.start - b.start || a.index - b.index)
+    let pushed = false
+    for (let i = 1; i < placed.length; i++) {
+      const cur = placed[i]!
+      const prev = placed[i - 1]!
+      const prevEnd = prev.start + prev.duration
+      if (cur.step.trigger === 'onClick' && cur.start + TIME_EPSILON < prevEnd) {
+        cur.start = prevEnd
+        pushed = true
+      }
+    }
+    if (!pushed) return
+  }
+}
+
+const TimingOutput = z.object({
+  animation: z.string(),
+  start: z.number(),
+  duration: z.number(),
+  trigger: z.string(),
+  delay: z.number(),
+})
+
+export const animationRetime = defineCommand({
+  ...animationEditor,
+  id: 'animation.retime',
+  idempotent: true,
+  title: 'Retime animations',
+  description:
+    "Place animation steps at absolute times on the slide's timeline — `start` in seconds from the moment the " +
+    'slide appears (the `start` query.slide reports for each step), and optionally a new `duration`. Steps not ' +
+    'listed keep their start. The play order follows the times, and every step gets the trigger and delay that ' +
+    'put it there after its new predecessor: afterPrevious when it starts at or after the previous step ends, ' +
+    "withPrevious when it overlaps it. An onClick step stays onClick and starts at the previous step's end at the " +
+    'earliest (the other steps keep their times); a legacy onEnter step becomes afterPrevious or withPrevious. ' +
+    "Returns every step's resulting time " +
+    'and trigger in play order. To change a trigger, delay or duration and let the following steps move with it, ' +
+    'use animation.update instead.',
+  input: z.strictObject({
+    slide: SlideRefSchema,
+    timing: z
+      .array(
+        z
+          .strictObject({
+            animation: AnimationIdSchema,
+            start: z.number().min(0).optional().describe('Seconds from the slide start'),
+            duration: stepShape.duration.optional().describe('Seconds'),
+          })
+          .refine((t) => t.start !== undefined || t.duration !== undefined, {
+            message: 'Give start, duration or both',
+          }),
+      )
+      .min(1)
+      .max(500),
+  }),
+  output: z.object({
+    timing: z.array(TimingOutput).describe('Every step of the slide, in play order'),
+  }),
+  implementedWith: ['updateAnimation', 'reorderAnimations'],
+  examples: [
+    {
+      title: 'Start the ellipse fade at 2 s',
+      input: { slide: 's1', timing: [{ animation: 'a2', start: 2 }] },
+    },
+    {
+      title: 'Play the two fades together from 0.5 s, the second one longer',
+      input: {
+        slide: 's1',
+        timing: [
+          { animation: 'a1', start: 0.5 },
+          { animation: 'a2', start: 0.5, duration: 1.5 },
+        ],
+      },
+    },
+  ],
+  handler(ctx, input) {
+    const deck = requireDeck(ctx)
+    const slide = resolveSlide(deck, input.slide)
+    const anims = animationsOf(deck, slide)
+    const ids = input.timing.map((t) => t.animation)
+    if (new Set(ids).size !== ids.length)
+      throw new CommandError('invalid_input', 'timing lists a step more than once')
+    requireSteps(anims, ids, slide.id)
+    const wanted = new Map(input.timing.map((t) => [t.animation, t]))
+    const placed: PlacedStep[] = layoutAnimationSteps(listSteps(anims)).map(
+      ({ step, start }, index) => {
+        const w = wanted.get(step.id)
+        return { step, start: w?.start ?? start, duration: w?.duration ?? step.duration, index }
+      },
+    )
+    placeOnTimeline(placed)
+
+    const patches: Array<[string, Partial<Omit<AnimationStep, 'id' | 'objectId'>>]> = []
+    placed.forEach((cur, i) => {
+      const { trigger, delay } = sequenceAfter(cur, placed[i - 1])
+      if (delay > MAX_STEP_DELAY_S + TIME_EPSILON) {
+        throw new CommandError(
+          'invalid_input',
+          `step '${cur.step.id}' would wait ${roundTime(delay)} s after its predecessor; a step waits at most ` +
+            `${MAX_STEP_DELAY_S} s`,
+        )
+      }
+      const patch: Partial<Omit<AnimationStep, 'id' | 'objectId'>> = {}
+      if (trigger !== cur.step.trigger) patch.trigger = trigger
+      if (Math.abs(delay - cur.step.delay) > TIME_EPSILON) patch.delay = roundTime(delay)
+      if (cur.duration !== cur.step.duration) patch.duration = cur.duration
+      if (Object.keys(patch).length > 0) patches.push([cur.step.id, patch])
+    })
+    for (const [id, patch] of patches) updateAnimation(anims, id, patch)
+    const order = placed.map((p) => p.step.id)
+    if (order.some((id, i) => anims.animations.get(i).get('id') !== id))
+      reorderAnimations(anims, order)
+
+    return {
+      timing: layoutAnimationSteps(listSteps(anims)).map(({ step, start }) => ({
+        animation: step.id,
+        start: roundTime(start),
+        duration: step.duration,
+        trigger: step.trigger,
+        delay: step.delay,
+      })),
+    }
+  },
+})
+
+// ---------------------------------------------------------------------------
+// animation.retarget
+// ---------------------------------------------------------------------------
+
+export const animationRetarget = defineCommand({
+  ...animationEditor,
+  id: 'animation.retarget',
+  idempotent: true,
+  title: 'Retarget animations',
+  description:
+    'Make animation steps animate another object on the same slide. Each step keeps its id, its place in the ' +
+    'play order, its trigger, timing, preset and params — a moveTo still ends at the same slide position. Use ' +
+    'it when an object was replaced (a new picture in place of the old one) instead of removing and re-adding ' +
+    'its steps — and before deleting the old object, since object.delete removes the steps of what it deletes.',
+  input: z.strictObject({
+    slide: SlideRefSchema,
+    animations: z.array(AnimationIdSchema).min(1).max(500),
+    object: ObjectIdSchema.describe('The object the steps animate from now on (on the same slide)'),
+  }),
+  output: z.object({ retargeted: z.array(z.string()) }),
+  implementedWith: ['retargetAnimation'],
+  examples: [
+    {
+      title: "Let the ellipse do the rectangle's fade-in",
+      input: { slide: 's1', animations: ['a1'], object: 'e1' },
+    },
+  ],
+  handler(ctx, input) {
+    const deck = requireDeck(ctx)
+    const slide = resolveSlide(deck, input.slide)
+    requireObjects(objectsOf(deck, slide), [input.object], slide.id)
+    const anims = animationsOf(deck, slide)
+    const ids = [...new Set(input.animations)]
+    const steps = requireSteps(anims, ids, slide.id)
+    for (const id of ids) {
+      if (steps.get(id)!.objectId !== input.object) retargetAnimation(anims, id, input.object)
+    }
+    return { retargeted: ids }
+  },
+})
+
+export const animationCommands = [
+  animationAdd,
+  animationUpdate,
+  animationRemove,
+  animationReorder,
+  animationRetime,
+  animationRetarget,
+]

@@ -5,22 +5,30 @@ real-time multi-user editing, native tables, and PowerPoint round-trip.
 Built for small teams (up to 15 simultaneous editors) on your own
 infrastructure. Drivable by AI agents over MCP from Claude Code and
 claude.ai — see [Agents (MCP)](#agents-mcp) and
-[the agentic-layer plan](./docs/plans/agentic-layer.md). Not in a release
-yet as of 2026-09-27 (CHANGELOG "Unreleased"); production still runs 0.9.29
-without it.
+[the agentic-layer plan](./docs/plans/agentic-layer.md). Released since
+0.10.0 (2026-09-27; was unreleased until then, with production on 0.9.29).
 
-Current release: **0.9.29** (2026-09-25) — see [CHANGELOG.md](./CHANGELOG.md).
+Current release: **0.10.11** (2026-09-29) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
-**[Agentic layer A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
-(2026-09-27, unreleased): personal access tokens and OAuth for claude.ai,
-the server-side command host with per-run revert and an audit log, 44
-server-backed commands, the MCP server at `/api/mcp`, playbooks, and the
-`pnpm agent:eval` suite; it is also the current next-steps list (release
-A0 + A1, then A2: extraction).
+**[Agentic layer A2 — extraction](./docs/plans/a2-extraction.md)** (in
+progress since 2026-09-28): the editor's own logic moves into commands and
+the editor dispatches them through `useCommand()`, so an agent can do what a
+person can. A2.1–A2.8 shipped step by step in 0.10.2–0.10.11 (slides panel,
+guides, object creation, transforms, paths, clipboard, local-file upload
+sessions, gradients / shadows / page numbers); A2.9 (animation through
+`animation.*`, incl. `animation.retime` / `animation.retarget`) and the
+PowerPoint-sized triangle are on `main`, not yet released (CHANGELOG
+"Unreleased"). The plan's "Where we stand" is the next-steps list (A2.10
+tables next).
 Before that:
+**[A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
+(2026-09-27, released in 0.10.0): personal access tokens and OAuth for
+claude.ai, the server-side command host with per-run revert and an audit
+log, 44 server-backed commands, the MCP server at `/api/mcp`, playbooks, and
+the `pnpm agent:eval` suite; and
 **[A0 — foundations](./docs/handoff/A0-agentic-foundations.md)**
-(2026-09-26, commit `9e0e853`, unreleased): the command registry, runtime
-schemas, parity guards, and a round of editor undo and crop fixes.
+(2026-09-26, commit `9e0e853`, released in 0.10.0): the command registry,
+runtime schemas, parity guards, and a round of editor undo and crop fixes.
 Before that: the 0.9.x point releases (CHANGELOG), starting with
 **[0.9.0 → 0.9.3 — production hardening](./docs/handoff/0.9.x-production-hardening.md)**
 (2026-09-07 → 2026-09-09), which fixed ten production defects that were
@@ -31,7 +39,7 @@ Feature milestones before that:
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22.18 (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28)
 - pnpm >= 9
 - Docker (for local Postgres)
 
@@ -113,10 +121,10 @@ read before adding a new test or chasing a failing one. The short version:
   every UI iteration without catching real bugs. We deleted ~80 of them.
 
 ```bash
-pnpm test                                       # unit + integration (3,205 pass, 32 skipped, 225 files, 2026-09-28)
-pnpm --filter web test:e2e                      # 53 Playwright spec files (see caveat below)
+pnpm test                                       # unit tests (3,569 pass, 30 skipped, 243 files, 2026-09-29)
+pnpm --filter web test:e2e                      # 61 Playwright spec files (see caveat below)
 pnpm --filter @narrative/server test:integration  # Drizzle stores against the local Postgres (3 files; not in `pnpm test`)
-pnpm agent:eval                                 # 14 agent scenarios via headless Claude Code (costs usage, ~1.6 USD/run on 2026-09-28)
+pnpm agent:eval                                 # 34 agent scenarios via headless Claude Code (costs usage; 1.62 USD for 13 of them on 2026-09-28)
 pnpm size                                       # bundle-size budgets (per-chunk + total)
 pnpm load:all                                   # load tests with regression tracking
 pnpm lighthouse                                 # Core Web Vitals on the editor route
@@ -178,8 +186,9 @@ server that is part of the API — `https://<domain>/api/mcp` in production,
 in the user's own Claude client
 ([ADR 0011](./docs/adr/0011-agent-execution-over-mcp.md)).
 
-- **Tools** are generated from the command registry (94 commands as of
-  2026-09-27, list in [`docs/capabilities.md`](./docs/capabilities.md)); every
+- **Tools** are generated from the command registry (116 commands on `main`
+  as of 2026-09-29 — 114 in 0.10.11, 94 in 0.10.0; list in
+  [`docs/capabilities.md`](./docs/capabilities.md)); every
   call runs on the server with the calling user's role, as one change, logged
   to a run the user can revert from the editor's Agent activity popover.
 - **Claude Code**: account menu → **Access tokens** → a token with the `mcp`

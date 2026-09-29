@@ -127,6 +127,8 @@ export interface StepView {
   duration: number
   delay: number
   easing: string
+  /** Seconds from the slide start, as the editor's timeline shows it (query.slide). */
+  start: number
   [k: string]: unknown
 }
 

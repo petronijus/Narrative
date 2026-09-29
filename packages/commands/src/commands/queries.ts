@@ -16,8 +16,9 @@ import {
   listDeckGuides,
   listSlides,
   yMapToAnimationStep,
+  type AnimationsMutationContext,
 } from '@narrative/slide-model'
-import type { Slide } from '@narrative/shared'
+import { layoutAnimationSteps, type AnimationStep, type Slide } from '@narrative/shared'
 import { defineCommand } from '../registry.js'
 import {
   ObjectIdSchema,
@@ -66,8 +67,24 @@ const StepOutput = z
     delay: z.number(),
     easing: z.string(),
     params: z.record(z.string(), z.unknown()).optional(),
+    start: z
+      .number()
+      .describe(
+        "Seconds from the slide start at which the step begins, as the editor's timeline shows it",
+      ),
   })
   .describe('An animation step, in play order')
+
+/** A slide's animation steps as the model reads them, each with its timeline `start`. */
+function timedStepsForModel(anims: AnimationsMutationContext): Array<Record<string, unknown>> {
+  const steps: AnimationStep[] = []
+  for (let i = 0; i < anims.animations.length; i++)
+    steps.push(yMapToAnimationStep(anims.animations.get(i)))
+  return layoutAnimationSteps(steps).map(({ step, start }) => ({
+    ...(toJsonForModel(step) as Record<string, unknown>),
+    start: Math.round(start * 1e6) / 1e6,
+  }))
+}
 
 /**
  * A slide's likely title: the text of its largest text box (ties go to the
@@ -192,10 +209,7 @@ export const querySlide = defineCommand({
         // A malformed record (no type) is skipped, as listSlides does.
       }
     }
-    const animations: unknown[] = []
-    for (let i = 0; i < anims.animations.length; i++) {
-      animations.push(toJsonForModel(yMapToAnimationStep(anims.animations.get(i))))
-    }
+    const animations = timedStepsForModel(anims)
     return {
       id: slide.id,
       index: ref.index,
@@ -244,13 +258,9 @@ export const queryObject = defineCommand({
     for (let i = 0; i < objects.objects.length; i++) {
       if (objects.objects.get(i) === map) stackIndex = i
     }
-    const anims = animationsOf(deck, ref)
-    const animations: unknown[] = []
-    for (let i = 0; i < anims.animations.length; i++) {
-      const step = anims.animations.get(i)
-      if (step.get('objectId') === input.object)
-        animations.push(toJsonForModel(yMapToAnimationStep(step)))
-    }
+    const animations = timedStepsForModel(animationsOf(deck, ref)).filter(
+      (s) => s['objectId'] === input.object,
+    )
     return {
       slide: { id: ref.id, index: ref.index },
       stackIndex,

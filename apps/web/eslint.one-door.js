@@ -77,14 +77,11 @@ export const ONE_DOOR_PENDING = [
   //   text-style propagation to linked objects (moves server-side)
   { file: 'apps/web/src/components/DeckShell.tsx', step: 'A2.12' },
   // A2.5 moved the Inspector's geometry, layers and multi-select actions
-  // onto commands, A2.8 its gradients, shadow and page-number field. What it
-  // still writes directly: animation steps (A2.9), slide transition and
-  // background, typography and every other property patch — solid fill,
-  // stroke, image fill, blur, link (A2.11).
+  // onto commands, A2.8 its gradients, shadow and page-number field, A2.9
+  // its animation steps. What it still writes directly: slide transition
+  // and background, typography and every other property patch — solid
+  // fill, stroke, image fill, blur, link (A2.11).
   { file: 'apps/web/src/ui/Inspector.tsx', step: 'A2.11' },
-  // A2.9 — animation
-  { file: 'apps/web/src/ui/AnimationTimeline.tsx', step: 'A2.9' },
-  { file: 'apps/web/src/ui/MoveToTargetOverlay.tsx', step: 'A2.9' },
   // A2.10 — tables
   { file: 'apps/web/src/ui/TableChrome.tsx', step: 'A2.10' },
   { file: 'apps/web/src/ui/TableInspector.tsx', step: 'A2.10' },

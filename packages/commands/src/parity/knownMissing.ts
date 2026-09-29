@@ -142,7 +142,6 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
     note: 'the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)',
   },
   { capability: 'text.replace', phase: 'A2', source: 'new' },
-  { capability: 'animation.retarget', phase: 'A2', source: 'new' },
 
   // --- A3: render worker ------------------------------------------------------
   { capability: 'deck.exportPdf', phase: 'A3', source: 'new' },

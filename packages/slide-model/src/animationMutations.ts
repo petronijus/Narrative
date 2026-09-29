@@ -90,6 +90,29 @@ export function updateAnimation(
 }
 
 /**
+ * Points an animation step at another object. The step keeps its id, its
+ * place in the play order, its timing and its params; only `objectId`
+ * changes. Checking that the object exists on the slide is the caller's job
+ * (the `animation.retarget` command).
+ *
+ * If the id does not exist: no-op + warn (idempotent), like updateAnimation.
+ */
+export function retargetAnimation(
+  ctx: AnimationsMutationContext,
+  id: string,
+  objectId: string,
+): void {
+  ctx.doc.transact(() => {
+    const idx = findAnimationIndexById(ctx.animations, id)
+    if (idx === -1) {
+      console.warn(`retargetAnimation: animation with id '${id}' not found — no-op`)
+      return
+    }
+    ctx.animations.get(idx).set('objectId', objectId)
+  }, LOCAL_ORIGIN)
+}
+
+/**
  * Přeuspořádá animations do nového pořadí.
  * newOrder musí obsahovat přesně stejné IDs jako existující animations (bijekce).
  *

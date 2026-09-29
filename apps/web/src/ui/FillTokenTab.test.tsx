@@ -62,7 +62,7 @@ vi.mock('../state/useSlideObjects', async () => {
 })
 
 vi.mock('../state/useAnimations', () => ({
-  useAnimations: () => ({ animations: [], animationsCtx: null, mutationCtx: null }),
+  useAnimations: () => ({ animations: [] }),
 }))
 
 vi.mock('../state/useVideoInfo', () => ({

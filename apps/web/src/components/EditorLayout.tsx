@@ -417,7 +417,7 @@ function usePersistedBool(key: string, fallback: boolean): [boolean, (v: boolean
 
 export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayoutProps = {}) {
   const { selectedIds, selectOne, selectMany, toggle, clear, selectedAnimationId } = useSelection()
-  const { animations, animationsCtx } = useAnimations()
+  const { animations } = useAnimations()
   const { editingId: editingTextId, beginEdit, endEdit } = useTextEdit()
   const {
     active: activeTableCell,
@@ -2593,14 +2593,19 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
                     {/* moveTo animation target overlay — silhouette + draggable
                         end-point handle when a moveTo step is selected. */}
                     {selectedAnimationId !== null &&
-                      animationsCtx !== null &&
+                      activeSlideId !== null &&
                       (() => {
                         const step = animations.find((a) => a.id === selectedAnimationId)
                         if (step === undefined || step.preset !== 'moveTo') return null
                         const obj = objects.find((o) => o.id === step.objectId)
                         if (obj === undefined) return null
                         return (
-                          <MoveToTargetOverlay obj={obj} step={step} mutationCtx={animationsCtx} />
+                          <MoveToTargetOverlay
+                            obj={obj}
+                            step={step}
+                            slideId={activeSlideId}
+                            readOnly={isViewer}
+                          />
                         )
                       })()}
                   </div>

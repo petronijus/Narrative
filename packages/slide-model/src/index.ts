@@ -56,6 +56,7 @@ export {
   addAnimation,
   removeAnimation,
   updateAnimation,
+  retargetAnimation,
   reorderAnimations,
 } from './animationMutations.js'
 export type {

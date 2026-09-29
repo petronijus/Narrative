@@ -1,0 +1,221 @@
+{
+  "scenario": "agenda-step-timing",
+  "tag": "evea2ba1",
+  "recordedAt": "2026-09-29T19:36:53.919Z",
+  "model": "claude-opus-5-5",
+  "claudeVersion": "2.1.285 (Claude Code)",
+  "fixture": {
+    "deckId": "6nq7uP5JqkIL",
+    "title": "Agenda evea2ba1",
+    "p1": "fsr2qBz9AuNz8a9I8tQCn",
+    "p2": "SKe4k1qzFKZCEoQnYUMXn",
+    "p3": "Nylk4dQcl-mjXG_XxsSY_"
+  },
+  "transcript": {
+    "steps": [
+      {
+        "prompt": "On slide 1 of the Narrative deck \"Agenda evea2ba1\" (deckId 6nq7uP5JqkIL), the three agenda points fade in one after another. Change the timing: \"Point 2\" should start fading in 0.3 seconds after \"Point 1\" starts, while Point 1 is still fading, and \"Point 3\" should start exactly 2 seconds after the slide appears. Leave Point 1 as it is and keep every fade's duration.",
+        "calls": [
+          {
+            "tool": "ToolSearch",
+            "command": null,
+            "input": {
+              "query": "select:mcp__narrative-eval__query_slide,mcp__narrative-eval__animation_retime,mcp__narrative-eval__agent_startRun,mcp__narrative-eval__animation_update,ReadMcpResourceTool",
+              "max_results": 5
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": null,
+            "text": ""
+          },
+          {
+            "tool": "query_slide",
+            "command": "query.slide",
+            "input": {
+              "deckId": "6nq7uP5JqkIL",
+              "slide": {
+                "index": 0
+              }
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "id": "ajYY_k41NCSYSd61mf_2v",
+              "index": 0,
+              "transition": {
+                "kind": "none",
+                "durationMs": 0
+              },
+              "background": null,
+              "objects": [
+                {
+                  "id": "JWWFv7fAhpfyVhZe6zhlg",
+                  "type": "text",
+                  "x": 120,
+                  "y": 80,
+                  "width": 1680,
+                  "height": 120,
+                  "rotation": 0,
+                  "text": "Agenda",
+                  "fontSize": 64,
+                  "fontWeight": "bold",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "fsr2qBz9AuNz8a9I8tQCn",
+                  "type": "text",
+                  "name": "Point 1",
+                  "x": 160,
+                  "y": 300,
+                  "width": 1200,
+                  "height": 90,
+                  "rotation": 0,
+                  "text": "Point 1",
+                  "fontSize": 40,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "SKe4k1qzFKZCEoQnYUMXn",
+                  "type": "text",
+                  "name": "Point 2",
+                  "x": 160,
+                  "y": 420,
+                  "width": 1200,
+                  "height": 90,
+                  "rotation": 0,
+                  "text": "Point 2",
+                  "fontSize": 40,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                },
+                {
+                  "id": "Nylk4dQcl-mjXG_XxsSY_",
+                  "type": "text",
+                  "name": "Point 3",
+                  "x": 160,
+                  "y": 540,
+                  "width": 1200,
+                  "height": 90,
+                  "rotation": 0,
+                  "text": "Point 3",
+                  "fontSize": 40,
+                  "fontWeight": "normal",
+                  "color": "#000000",
+                  "align": "left",
+                  "opacity": 1
+                }
+              ],
+              "animations": [
+                {
+                  "id": "y3CsjoGUV5Fjd1NCEv7Df",
+                  "objectId": "fsr2qBz9AuNz8a9I8tQCn",
+                  "preset": "fadeIn",
+                  "trigger": "afterPrevious",
+                  "duration": 0.6,
+                  "delay": 0,
+                  "easing": "power2.out",
+                  "start": 0
+                },
+                {
+                  "id": "PzeVK5tvy8cwXFBexmqkQ",
+                  "objectId": "SKe4k1qzFKZCEoQnYUMXn",
+                  "preset": "fadeIn",
+                  "trigger": "afterPrevious",
+                  "duration": 0.6,
+                  "delay": 0,
+                  "easing": "power2.out",
+                  "start": 0.6
+                },
+                {
+                  "id": "RtvKSZd97bIlpE0ErKAEJ",
+                  "objectId": "Nylk4dQcl-mjXG_XxsSY_",
+                  "preset": "fadeIn",
+                  "trigger": "afterPrevious",
+                  "duration": 0.6,
+                  "delay": 0,
+                  "easing": "power2.out",
+                  "start": 1.2
+                }
+              ],
+              "notes": ""
+            },
+            "text": "{\"id\":\"ajYY_k41NCSYSd61mf_2v\",\"index\":0,\"transition\":{\"kind\":\"none\",\"durationMs\":0},\"background\":null,\"objects\":[{\"id\":\"JWWFv7fAhpfyVhZe6zhlg\",\"type\":\"text\",\"x\":120,\"y\":80,\"width\":1680,\"height\":120,\"rotation\":0,\"text\":\"Agenda\",\"fontSize\":64,\"fontWeight\":\"bold\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"fsr2qBz9AuNz8a9I8tQCn\",\"type\":\"text\",\"name\":\"Point 1\",\"x\":160,\"y\":300,\"width\":1200,\"height\":90,\"rotation\":0,\"text\":\"Point 1\",\"fontSize\":40,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"SKe4k1qzFKZCEoQnYUMXn\",\"type\":\"text\",\"name\":\"Point 2\",\"x\":160,\"y\":420,\"width\":1200,\"height\":90,\"rotation\":0,\"text\":\"Point 2\",\"fontSize\":40,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1},{\"id\":\"Nylk4dQcl-mjXG_XxsSY_\",\"type\":\"text\",\"name\":\"Point 3\",\"x\":160,\"y\":540,\"width\":1200,\"height\":90,\"rotation\":0,\"text\":\"Point 3\",\"fontSize\":40,\"fontWeight\":\"normal\",\"color\":\"#000000\",\"align\":\"left\",\"opacity\":1}],\"animations\":[{\"id\":\"y3CsjoGUV5Fjd1NCEv7Df\",\"objectId\":\"fsr2qBz9AuNz8a9I8tQCn\",\"preset\":\"fadeIn\",\"trigger\":\"afterPrevious\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\",\"start\":0},{\"id\":\"PzeVK5tvy8cwXFBexmqkQ\",\"objectId\":\"SKe4k1qzFKZCEoQnYUMXn\",\"preset\":\"fadeIn\",\"trigger\":\"afterPrevious\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\",\"start\":0.6},{\"id\":\"RtvKSZd97bIlpE0ErKAEJ\",\"objectId\":\"Nylk4dQcl-mjXG_XxsSY_\",\"preset\":\"fadeIn\",\"trigger\":\"afterPrevious\",\"duration\":0.6,\"delay\":0,\"easing\":\"power2.out\",\"start\":1.2}],\"notes\":\"\"}"
+          },
+          {
+            "tool": "agent_startRun",
+            "command": "agent.startRun",
+            "input": {
+              "deckId": "6nq7uP5JqkIL",
+              "request": "Retime agenda fades on slide 1: Point 2 at 0.3s, Point 3 at 2s"
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "runId": "run_-vVIqJrMULPtfHsk"
+            },
+            "text": "{\"runId\":\"run_-vVIqJrMULPtfHsk\"}"
+          },
+          {
+            "tool": "animation_retime",
+            "command": "animation.retime",
+            "input": {
+              "deckId": "6nq7uP5JqkIL",
+              "slide": {
+                "index": 0
+              },
+              "timing": [
+                {
+                  "animation": "PzeVK5tvy8cwXFBexmqkQ",
+                  "start": 0.3
+                },
+                {
+                  "animation": "RtvKSZd97bIlpE0ErKAEJ",
+                  "start": 2
+                }
+              ]
+            },
+            "isError": false,
+            "errorCode": null,
+            "result": {
+              "timing": [
+                {
+                  "animation": "y3CsjoGUV5Fjd1NCEv7Df",
+                  "start": 0,
+                  "duration": 0.6,
+                  "trigger": "afterPrevious",
+                  "delay": 0
+                },
+                {
+                  "animation": "PzeVK5tvy8cwXFBexmqkQ",
+                  "start": 0.3,
+                  "duration": 0.6,
+                  "trigger": "withPrevious",
+                  "delay": 0.3
+                },
+                {
+                  "animation": "RtvKSZd97bIlpE0ErKAEJ",
+                  "start": 2,
+                  "duration": 0.6,
+                  "trigger": "afterPrevious",
+                  "delay": 1.1
+                }
+              ]
+            },
+            "text": "{\"timing\":[{\"animation\":\"y3CsjoGUV5Fjd1NCEv7Df\",\"start\":0,\"duration\":0.6,\"trigger\":\"afterPrevious\",\"delay\":0},{\"animation\":\"PzeVK5tvy8cwXFBexmqkQ\",\"start\":0.3,\"duration\":0.6,\"trigger\":\"withPrevious\",\"delay\":0.3},{\"animation\":\"RtvKSZd97bIlpE0ErKAEJ\",\"start\":2,\"duration\":0.6,\"trigger\":\"afterPrevious\",\"delay\":1.1}]}"
+          }
+        ],
+        "finalText": "I've changed the timing on slide 1 of \"Agenda evea2ba1\". The deck returned these new times:\n\n| Step | Starts at | Fade length | How it's set |\n|---|---|---|---|\n| Point 1 | 0 s | 0.6 s | Unchanged: starts when the slide appears |\n| Point 2 | 0.3 s | 0.6 s | Starts with Point 1, 0.3 s delay (overlaps Point 1's fade) |\n| Point 3 | 2.0 s | 0.6 s | Starts 1.1 s after Point 2 finishes at 0.9 s |\n\nEvery fade still lasts 0.6 seconds. All of this was recorded as one change, so I can undo it in one step if you want the old timing back.",
+        "turns": 5,
+        "isError": false,
+        "stopReason": "success"
+      }
+    ]
+  }
+}

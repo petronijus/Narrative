@@ -89,8 +89,8 @@ pnpm dev                                       # web :5173 + server :3001 + vide
 pnpm dev:no-worker                             # skip video-worker for faster startup
 
 pnpm typecheck && pnpm lint                    # always before declaring done
-pnpm -r test                                   # 3,192 tests / 223 files (32 skipped) — 2026-09-27
-pnpm --filter web test:e2e                     # 53 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
+pnpm -r test                                   # 3,569 tests / 243 files (30 skipped) — 2026-09-29
+pnpm --filter web test:e2e                     # 61 Playwright spec files — needs the dev stack (+ env vars above on Ubuntu 26.04)
 pnpm capabilities                              # regenerate docs/capabilities.md + packages/commands/capabilities.json
 pnpm agent:eval                                # agent eval: headless Claude Code vs the local stack (--filter/--keep/--record)
 pnpm size                                      # bundle budgets
@@ -104,12 +104,13 @@ Filter by test name: `pnpm --filter web test:e2e -g "<grep-pattern>"`.
 
 ## Skipped tests
 
-30 web tests are `it.skip` with rationale comments in-file (plus one each in
+28 web tests are `it.skip` with rationale comments in-file (plus one each in
 server and video-worker). Don't un-skip without reading the comment — most are
 deferred until a specific UI redesign lands or have an e2e replacement noted.
 
-The count was 23 for a long time and drifted to 30 unnoticed; ~7 skips have
-never been triaged. If you add a skip, say why in the file **and** move the
+The count was 23 for a long time and drifted to 30 unnoticed; 0.10.2 removed
+two (SlidesPanel ArrowUp/Down, now e2e) and A2.9 gave the Inspector's
+"+ slideIn up" skip its rationale — ~6 skips have never been triaged. If you add a skip, say why in the file **and** move the
 number here, or the next person inherits the same blind spot.
 
 ## Git policy

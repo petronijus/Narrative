@@ -82,8 +82,11 @@ at the end of agentic-layer phase A0. Was Czech.)_
 1. **Yjs is the single source of truth, written only through commands**
    (ADR 0003, extended by ADR 0010). Slide-model mutations run inside
    `doc.transact(..., origin)`; UI and agents reach them through
-   `packages/commands`. (As of A0 the editor still calls slide-model
-   directly; A2 migrates it.)
+   `packages/commands`. (Since A2.1, 2026-09-28, the one-door lint rule
+   bans slide-model writers and `.transact()` in `apps/web/src`; 13 files
+   are still exempt as of A2.9, 2026-09-29 — `ONE_DOOR_PENDING` in
+   `apps/web/eslint.one-door.js`. Was, at A0: the editor called slide-model
+   directly.)
 2. **The object type registry is the plugin boundary.** Every object:
    `{ type, render, hitTest, defaultProps, inspector, schema }`. The schema
    defines the Yjs layout.

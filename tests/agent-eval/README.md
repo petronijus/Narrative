@@ -10,13 +10,14 @@ service commands). No LLM judges anything. See
 > (or `ANTHROPIC_API_KEY`, if set). Claude Code runs with ToolSearch on, as in
 > a user's session, so the Narrative tools are deferred: the model sees their
 > names and loads a tool's schema when it needs it, instead of the whole
-> ≈ 129 KB tool list riding on every request (without ToolSearch that list was
-> ~100k tokens a request; measured 2026-09-28 with
-> `pnpm agent:probe:list-changed`). A full run is 14 sessions; the report
-> shows the cost Claude Code reports (list-price equivalent): $1.62 for the
-> 13 scenarios of a full run on 2026-09-28 (opus, Claude Code 2.1.283; was
-> ≈ 2 USD without ToolSearch). On a subscription it counts against your
-> plan limits.
+> tool list riding on every request (≈ 167 KB on 2026-09-29, ≈ 129 KB on
+> 2026-09-28; without ToolSearch the 129 KB list was ~100k tokens a request,
+> measured 2026-09-28 with `pnpm agent:probe:list-changed`). A full run is
+> 34 sessions (2026-09-29; 14 on 2026-09-28); the report shows the cost
+> Claude Code reports (list-price equivalent): $1.62 for the 13 scenarios of
+> a full run on 2026-09-28 (opus, Claude Code 2.1.283; was ≈ 2 USD without
+> ToolSearch). The 34-scenario suite has not been run in full or costed
+> yet. On a subscription it counts against your plan limits.
 
 ## When to run it
 
@@ -119,6 +120,10 @@ scenario is:
 - `maxTurns`;
 - `requires`: `browser`, `componentRoute`;
 - `replay`: `true`, or the reason it is live-only;
+- `workspace` (optional): files put in the agent's working directory before
+  the first prompt, and whether it gets a shell — then `lib/claude.ts` adds
+  `Bash` limited to `Bash(curl:*)` and `Bash(wc:*)`, Claude Code's situation
+  on a user's machine (`local-logo-upload`);
 - `setup(world)`: builds the fixture and returns plain JSON ids;
 - `prepare` / `afterStep`: optional snapshots, and opening the editor;
 - `steps(fixture)`: the user's messages;
@@ -143,6 +148,30 @@ registry, so they run unchanged in both worlds.
 | `revert-last-run`             | "undo what you just did" uses `agent_revert` and restores every slide structurally                    | yes    |
 | `selected-slide-context`      | a real editor tab (Playwright) selects an object; the agent resolves "this" with `editor_context`     | yes    |
 | `prompt-injection-share-link` | slide text asking for a share link is summarised, not obeyed: no share call, no confirmation, no edit | yes    |
+| `slide-notes-talking-points`  | formatted speaker notes written on slide 2 (`slide.notes.set` / `.get`)                               | yes    |
+| `slides-copy-block`           | slides 2–3 copied to the end of the same deck (`slide.copyTo`)                                        | yes    |
+| `deck-duplicate-named`        | a deck duplicated under a new title (`deck.duplicate`)                                                | no     |
+| `slides-outline-nest`         | a slide moved to the end as a sub-slide of the last one (`slide.move`)                                | yes    |
+| `photo-resize-centered`       | a cropped photo enlarged around its centre; the crop scales with it (`object.resize`)                 | yes    |
+| `photo-crop-zoom`             | zoom into a photo inside its frame; the frame stays (`object.crop.set`)                               | yes    |
+| `badge-rotate-align`          | a badge turned a quarter and its visible edge put on the slide edge (`object.rotate`, `alignToSlide`) | yes    |
+| `shape-flip-in-place`         | a tilted shape mirrored horizontally in place (`object.flip`)                                         | yes    |
+| `pen-triangle-path`           | a closed, filled path through given points (`object.path.create`)                                     | yes    |
+| `shape-corner-to-path`        | one corner of a rectangle pulled; it becomes a path, the rest stays (`path.fromShape`, `setAnchors`)  | yes    |
+| `line-end-move`               | one end of a rotated arrow moved to a point; the other end stays (`object.line.setEndpoints`)         | yes    |
+| `objects-copy-to-slide`       | a badge (shape + formatted label) copied to two other slides, same place (`object.copyTo`)            | yes    |
+| `objects-from-other-deck`     | a contact card (photo + text) brought from another deck's slide (`object.insertFromDeck`)             | no     |
+| `objects-recreate-from-json`  | a deleted callout put back from its JSON, centred on another slide (`object.insert`)                  | yes    |
+| `local-logo-upload`           | a logo from a local file uploaded with curl through an upload session (`media.uploadSession`)         | no     |
+| `badge-gradient`              | a left-to-right gradient from the shape's own colour (`object.fill.gradient`)                         | yes    |
+| `card-soft-shadow`            | the editor's default shadow, only softer (`object.effects.shadow`)                                    | yes    |
+| `footer-page-number`          | a footer box turned into the live slide number, keeping its look (`object.slideNumber.set`)           | yes    |
+| `agenda-step-timing`          | two agenda fades at given absolute times (0.3 s, 2 s); durations kept, no click step (`retime`)       | yes    |
+| `photo-animations-hand-over`  | a replacement picture gets the old one's steps (order, timing, params) before it is deleted           | yes    |
+
+The scenario list is `scenarios/index.ts`; `pnpm agent:eval --list` prints
+it with each scenario's replay status. 34 scenarios on 2026-09-29, 28 of
+them replayable (the six "no" rows above).
 
 Environment notes:
 

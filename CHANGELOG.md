@@ -6,6 +6,34 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ## Unreleased
 
+### Added
+
+- **Agents can time animations the way the timeline does, and hand
+  animations to another object:**
+  - `animation.retime` — put steps at absolute times ("start at 2 s",
+    "together with the title"); the play order, triggers and delays follow
+    from the times, exactly as dragging bars on the timeline does;
+  - `animation.retarget` — make steps animate another object on the slide,
+    keeping their place, timing and settings (a replaced picture keeps its
+    animations);
+  - `query.slide` / `query.object` report each step's `start` on the
+    timeline.
+
+### Fixed
+
+- **Resizing an animation bar on the timeline stuck to where it was a
+  moment ago**: the magnet snapped the dragged edge to the start of the step
+  after it, which had just moved along with that edge. Snap targets are now
+  where the bars were when the drag began.
+- **Viewers could change animations from the Inspector** (the section had
+  no read-only mode); its controls are now disabled for viewers.
+- **An animation's duration could be set to 0 in the Inspector**, which the
+  animation format does not allow; the field now writes only durations
+  above 0 and delays up to the 600 s limit.
+- **Dragging a video's clip on the timeline to before its anchor stored a
+  negative delay**, which the object format does not allow; the clip now
+  stops at its anchor.
+
 ### Changed
 
 - **A triangle fills its box, as in PowerPoint.** Narrative drew a triangle
@@ -23,6 +51,16 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   (`@narrative/shared` `shapeGeometry.ts`) replaces five copies in the
   renderer, the image mask, the drawing preview, `shapeOutline` and the
   PPTX writer; a sampled-thumbnail e2e pins the triangle's bottom corners.
+- A2.9: the animation timeline, the move-to target handle and the
+  Inspector's animation section write only through `animation.*` commands
+  (and `object.update` for a video clip's timing); `AnimationTimeline` and
+  `MoveToTargetOverlay` leave the one-door exemption list and
+  `useAnimations` is read-only. The timeline layout moved to
+  `@narrative/shared` (`layoutAnimationSteps`), so the timeline, the
+  command and the query share it; its test against the GSAP compiler moved
+  to `packages/animation`. New slide-model writer `retargetAnimation`.
+  Eval scenarios `agenda-step-timing` and `photo-animations-hand-over`,
+  e2e `animation-commands`; tools/list budget 167,000.
 
 ## 0.10.11 — Gradients, shadows and page numbers through commands (2026-09-29)
 

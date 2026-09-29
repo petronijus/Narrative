@@ -4,8 +4,10 @@
  * Visual editor for the `moveTo` animation preset. When a moveTo step
  * is selected in the timeline / inspector, the overlay renders the
  * object's destination silhouette at (targetX, targetY) plus a
- * draggable centre handle. Dragging the handle writes new target
- * params back to the Y.Doc through `updateAnimation`.
+ * draggable centre handle. Dragging the handle sets the step's target
+ * with `animation.update` (params merge, so only targetX / targetY change).
+ * Each frame sends the absolute target from the pointer-down snapshot, so a
+ * frame is idempotent; the undo manager merges the drag into one step.
  *
  * Coordinates are slide-px — the parent artboard applies the canvas
  * zoom via `transform: scale()`, same convention as PathPointsOverlay.
@@ -13,9 +15,8 @@
 
 import { useCallback, useRef } from 'react'
 import type { SlideObject, AnimationStep } from '@narrative/shared'
-import type { AnimationsMutationContext } from '@narrative/slide-model'
-import { updateAnimation } from '@narrative/slide-model'
 import { useZoomLevel } from '../state/useZoomLevel.js'
+import { useCommand } from '../state/useCommand.js'
 
 const HANDLE_SIZE = 14
 
@@ -29,12 +30,15 @@ interface DragState {
 interface MoveToTargetOverlayProps {
   obj: SlideObject
   step: AnimationStep
-  mutationCtx: AnimationsMutationContext
+  slideId: string
+  /** Viewers see the target but get no handle. */
+  readOnly: boolean
 }
 
-export function MoveToTargetOverlay({ obj, step, mutationCtx }: MoveToTargetOverlayProps) {
+export function MoveToTargetOverlay({ obj, step, slideId, readOnly }: MoveToTargetOverlayProps) {
   const dragRef = useRef<DragState | null>(null)
   const { zoom } = useZoomLevel()
+  const command = useCommand()
 
   // moveTo preset writes proxy.x / proxy.y directly. Pixi pivots
   // every object at its centre (rectangleRenderer sets
@@ -75,15 +79,18 @@ export function MoveToTargetOverlay({ obj, step, mutationCtx }: MoveToTargetOver
       const dx = (e.clientX - drag.pointerStartX) / zoom
       const dy = (e.clientY - drag.pointerStartY) / zoom
 
-      updateAnimation(mutationCtx, step.id, {
-        params: {
-          ...(step.params ?? {}),
-          targetX: Math.round(drag.startTargetX + dx),
-          targetY: Math.round(drag.startTargetY + dy),
+      command.tryRun('animation.update', {
+        slide: slideId,
+        animation: step.id,
+        patch: {
+          params: {
+            targetX: Math.round(drag.startTargetX + dx),
+            targetY: Math.round(drag.startTargetY + dy),
+          },
         },
       })
     },
-    [mutationCtx, step.id, step.params, zoom],
+    [command, slideId, step.id, zoom],
   )
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -151,22 +158,24 @@ export function MoveToTargetOverlay({ obj, step, mutationCtx }: MoveToTargetOver
       </svg>
 
       {/* Drag handle at the target centre. */}
-      <div
-        role="button"
-        aria-label="Drag move-to target"
-        title="Drag to set move-to target"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="absolute cursor-move rounded-full border-2 border-blue-400 bg-white shadow"
-        style={{
-          left: targetCx - HANDLE_SIZE / (2 * zoom),
-          top: targetCy - HANDLE_SIZE / (2 * zoom),
-          width: HANDLE_SIZE / zoom,
-          height: HANDLE_SIZE / zoom,
-        }}
-      />
+      {!readOnly && (
+        <div
+          role="button"
+          aria-label="Drag move-to target"
+          title="Drag to set move-to target"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="absolute cursor-move rounded-full border-2 border-blue-400 bg-white shadow"
+          style={{
+            left: targetCx - HANDLE_SIZE / (2 * zoom),
+            top: targetCy - HANDLE_SIZE / (2 * zoom),
+            width: HANDLE_SIZE / zoom,
+            height: HANDLE_SIZE / zoom,
+          }}
+        />
+      )}
     </>
   )
 }

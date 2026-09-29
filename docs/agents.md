@@ -50,15 +50,22 @@ effects, undo policy, model-facing description, examples, handler); the
 editor dispatches them through `useCommand()` (BrowserHost), agents through
 the ServerHost over MCP (ADR 0011). Headless: no React, Pixi or DOM.
 
-_State as of A1 (2026-09-27, unreleased): 94 commands (50 document commands
-that run in the browser or on the server, 44 server-only ones backed by
-`apps/server/src/services/`), the ServerHost (`apps/server/src/agent/`), the
-MCP server (`apps/server/src/mcp/`) and `POST /api/commands` exist. No
-component calls `useCommand()` yet; the editor still writes through
-slide-model directly until A2 migrates it. See
-[`handoff/A1-mcp-and-server-host.md`](./handoff/A1-mcp-and-server-host.md)
-(was, at A0: 50 commands, no ServerHost, no MCP server —
-[`handoff/A0-agentic-foundations.md`](./handoff/A0-agentic-foundations.md))._
+_State as of A2.9 (2026-09-29; A2.1–A2.8 released in 0.10.2–0.10.11, A2.9
+on `main`, not released): 116 commands (69 document commands that run in
+the browser or on the server, 47 server-only ones backed by
+`apps/server/src/services/`). The editor dispatches commands through
+`useCommand()` surface by surface — slides panel, guides, object creation,
+transforms, paths, clipboard, fills and effects, animation — and the
+"one door" lint rule (`apps/web/eslint.one-door.js`) bans slide-model
+writers and `.transact()` in `apps/web/src`, except for the 13 files still
+listed in `ONE_DOOR_PENDING` with the A2 step that migrates them. Progress
+and next steps: [`plans/a2-extraction.md`](./plans/a2-extraction.md).
+(Was, at A1, 2026-09-27: 94 commands — 50 document, 44 server-only — the
+ServerHost, the MCP server and `POST /api/commands`, and no component
+calling `useCommand()` —
+[`handoff/A1-mcp-and-server-host.md`](./handoff/A1-mcp-and-server-host.md);
+at A0: 50 commands, no ServerHost, no MCP server —
+[`handoff/A0-agentic-foundations.md`](./handoff/A0-agentic-foundations.md).)_
 
 - **Owner:** `state-sync` — the registry core, the hosts (BrowserHost, and
   the ServerHost in `apps/server/src/agent/` with runs, `agentOrigin`,

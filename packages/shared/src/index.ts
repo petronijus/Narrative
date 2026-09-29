@@ -79,6 +79,8 @@ export { DEFAULT_TRANSITION, DEFAULT_BACKGROUND, computeSlideNumber } from './de
 export type { AnimationPreset, AnimationTrigger, AnimationStep } from './animation.js'
 
 export { isAnimationPreset, isAnimationTrigger } from './animation.js'
+export type { TimedAnimationStep } from './animationTiming.js'
+export { layoutAnimationSteps } from './animationTiming.js'
 
 export type {
   PeerUser,

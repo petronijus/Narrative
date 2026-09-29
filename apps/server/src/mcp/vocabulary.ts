@@ -72,6 +72,10 @@ export const SHARED_FIELDS: readonly SharedField[] = [
     note: '`componentId` values come from component_list.',
   },
   {
+    description: 'Animation step id',
+    note: '`animation` / `animations` / `order`: animation step ids, as query_slide lists them.',
+  },
+  {
     description: 'Asset id (media_upload returned it; image objects carry it as assetId)',
     note: '`assetId`: from media_upload, or an image object’s own assetId.',
   },

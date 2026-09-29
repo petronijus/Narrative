@@ -389,6 +389,9 @@ export const objectUpdate = defineCommand({
     'family provides in the same patch. ' +
     "(5) `textStyleId` only links a folder text style, it does not apply it; set the style's font fields in the " +
     'same patch; text.style.apply (planned, not available yet) will do both. ' +
+    "(6) A video's `videoTrigger` + `videoDelay` (s, >= 0) place its clip on the editor's timeline: onEnter from " +
+    "the slide start, withPrevious / afterPrevious from the start / end of the slide's LAST animation step; they " +
+    'are exported to PowerPoint, but present mode starts a video by `autoplay` / `playOnClick` only. ' +
     '`text` on a text box replaces the body with plain text (formatting is dropped; use text.set for formatted ' +
     'text, text.format for styling ranges). ' +
     '`locked` is an editor-only flag (it stops a person dragging, resizing or deleting the object on the canvas); ' +

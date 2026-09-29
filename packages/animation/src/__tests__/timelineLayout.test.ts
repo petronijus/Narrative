@@ -1,24 +1,23 @@
 /**
- * ui/AnimationTimeline.layout.test.ts
+ * animation/src/__tests__/timelineLayout.test.ts
  *
- * The timeline no longer rewrites legacy `onEnter` steps when it opens
- * (that was a write caused by viewing — and, because the rewritten delay
- * was clamped at 0, it also moved steps). It displays the stored data
- * instead, so the bars must sit exactly where playback puts them. These
- * pin `layoutSteps` against the real compiler (`compileSteps`, GSAP) for
- * the time-driven triggers, including onEnter in the middle of a sequence.
+ * `layoutAnimationSteps` (@narrative/shared) says where each step starts on
+ * a slide's timeline: the editor's timeline draws the bars there and
+ * `animation.retime` places steps by it. These pin it against the real
+ * compiler (`compileSteps`, GSAP) for the time-driven triggers, including a
+ * legacy onEnter in the middle of a sequence, so the bars sit exactly where
+ * playback puts them.
  *
  * (onClick is left out on purpose: the compiler anchors a click pause at
- * the timeline END — `tl.duration()` — while `layoutSteps` draws it at the
+ * the timeline END — `tl.duration()` — while the layout draws it at the
  * previous step's end. Those differ after an overlapping withPrevious;
  * that is a separate, known display gap, not part of this contract.)
  */
 
 import { describe, expect, it } from 'vitest'
-import { compileSteps, type AnimationStep } from '@narrative/animation'
-import type { AnimationTrigger } from '@narrative/shared'
-import { layoutSteps } from './AnimationTimeline.js'
-import { triggerOptionsFor } from './animationTriggers.js'
+import { layoutAnimationSteps, type AnimationTrigger } from '@narrative/shared'
+import { compileSteps } from '../compiler.js'
+import type { AnimationStep } from '../types.js'
 
 function step(
   id: string,
@@ -59,10 +58,10 @@ function compiledStarts(steps: AnimationStep[]): number[] {
 }
 
 function layoutStarts(steps: AnimationStep[]): number[] {
-  return layoutSteps(steps).map((l) => l.startSec)
+  return layoutAnimationSteps(steps).map((l) => l.start)
 }
 
-describe('layoutSteps mirrors compileSteps', () => {
+describe('layoutAnimationSteps mirrors compileSteps', () => {
   const cases: Array<[string, AnimationStep[]]> = [
     [
       'afterPrevious / withPrevious chain',
@@ -105,16 +104,5 @@ describe('layoutSteps mirrors compileSteps', () => {
   it('places a mid-sequence onEnter at the slide start + delay', () => {
     const steps = cases[2]![1]
     expect(layoutStarts(steps)[1]).toBeCloseTo(0.2, 6)
-  })
-})
-
-describe('triggerOptionsFor', () => {
-  it('keeps a stored legacy onEnter selectable, and offers it to nobody else', () => {
-    expect(triggerOptionsFor('onEnter')).toContain('onEnter')
-    for (const t of ['withPrevious', 'afterPrevious', 'onClick'] as const) {
-      const options = triggerOptionsFor(t)
-      expect(options).not.toContain('onEnter')
-      expect(options).toContain(t)
-    }
   })
 })

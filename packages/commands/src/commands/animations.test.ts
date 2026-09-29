@@ -192,3 +192,183 @@ describe('triggers', () => {
     }
   })
 })
+
+// The fixture's slide s1: a1 (r1, legacy onEnter, 0.6 s) then a2 (e1, afterPrevious, 0.6 s).
+type Timing = { animation: string; start: number; duration: number; trigger: string; delay: number }
+const timingOf = (h: Harness) =>
+  h
+    .run<{ animations: Array<{ id: string; start: number }> }>('query.slide', { slide: 's1' })
+    .animations.map((s) => [s.id, s.start])
+
+describe('animation.retime', () => {
+  it('places a step at an absolute time after its predecessor', () => {
+    const h = harness()
+    const out = h.run<{ timing: Timing[] }>('animation.retime', {
+      slide: 's1',
+      timing: [{ animation: 'a2', start: 2 }],
+    })
+    expect(steps(h)[1]).toMatchObject({ id: 'a2', trigger: 'afterPrevious', delay: 1.4 })
+    expect(out.timing.map((t) => [t.animation, t.start, t.trigger])).toEqual([
+      ['a1', 0, 'afterPrevious'],
+      ['a2', 2, 'afterPrevious'],
+    ])
+    expect(timingOf(h)).toEqual([
+      ['a1', 0],
+      ['a2', 2],
+    ])
+  })
+
+  it('reorders by time and overlaps with withPrevious', () => {
+    const h = harness()
+    h.run('animation.retime', {
+      slide: 's1',
+      timing: [
+        { animation: 'a2', start: 0 },
+        { animation: 'a1', start: 0.25 },
+      ],
+    })
+    expect(steps(h).map((s) => [s.id, s.trigger, s.delay])).toEqual([
+      ['a2', 'afterPrevious', 0],
+      ['a1', 'withPrevious', 0.25],
+    ])
+  })
+
+  it('keeps the start of every step it does not list, re-deriving its trigger', () => {
+    const h = harness()
+    const { animationId: a3 } = h.run<{ animationId: string }>('animation.add', {
+      slide: 's1',
+      object: 't1',
+      preset: 'fadeIn',
+    })
+    // a3 starts at 1.2 s; a longer a2 (0.6 → 2.1 s) now overlaps it.
+    h.run('animation.retime', { slide: 's1', timing: [{ animation: 'a2', duration: 1.5 }] })
+    expect(timingOf(h)).toEqual([
+      ['a1', 0],
+      ['a2', 0.6],
+      [a3, 1.2],
+    ])
+    expect(steps(h)[2]).toMatchObject({ trigger: 'withPrevious', delay: 0.6 })
+    expect(steps(h)[1]!.duration).toBe(1.5)
+  })
+
+  it('keeps onClick and starts it no earlier than the previous step ends', () => {
+    const h = harness()
+    h.run('animation.update', { slide: 's1', animation: 'a2', patch: { trigger: 'onClick' } })
+    const out = h.run<{ timing: Timing[] }>('animation.retime', {
+      slide: 's1',
+      timing: [{ animation: 'a2', start: 0.1 }],
+    })
+    expect(steps(h)[1]).toMatchObject({ trigger: 'onClick', delay: 0 })
+    expect(out.timing[1]).toMatchObject({ animation: 'a2', start: 0.6, trigger: 'onClick' })
+  })
+
+  it('times the steps after a pushed onClick step from where it really starts', () => {
+    const h = harness()
+    h.run('animation.update', { slide: 's1', animation: 'a2', patch: { trigger: 'onClick' } })
+    const { animationId: a3 } = h.run<{ animationId: string }>('animation.add', {
+      slide: 's1',
+      object: 't1',
+      preset: 'fadeIn',
+    })
+    // a2 cannot start before a1 ends (0.6 s); a3 still starts at 0.9 s.
+    h.run('animation.retime', {
+      slide: 's1',
+      timing: [
+        { animation: 'a2', start: 0.1 },
+        { animation: a3, start: 0.9 },
+      ],
+    })
+    expect(timingOf(h)).toEqual([
+      ['a1', 0],
+      ['a2', 0.6],
+      [a3, 0.9],
+    ])
+  })
+
+  it('lets a later step overtake an onClick step pushed past it', () => {
+    const h = harness()
+    h.run('animation.update', { slide: 's1', animation: 'a2', patch: { trigger: 'onClick' } })
+    const { animationId: a3 } = h.run<{ animationId: string }>('animation.add', {
+      slide: 's1',
+      object: 't1',
+      preset: 'fadeIn',
+    })
+    // a3 at 0.3 s overlaps a1; the click step a2 then waits for a3 to end.
+    h.run('animation.retime', {
+      slide: 's1',
+      timing: [
+        { animation: 'a2', start: 0.1 },
+        { animation: a3, start: 0.3 },
+      ],
+    })
+    expect(timingOf(h)).toEqual([
+      ['a1', 0],
+      [a3, 0.3],
+      ['a2', 0.9],
+    ])
+    expect(steps(h).map((s) => s.trigger)).toEqual(['afterPrevious', 'withPrevious', 'onClick'])
+  })
+
+  it('is idempotent: the same times twice leave the same timeline', () => {
+    const h = harness()
+    const input = {
+      slide: 's1',
+      timing: [
+        { animation: 'a1', start: 0.3 },
+        { animation: 'a2', start: 0.1 },
+      ],
+    }
+    h.run('animation.retime', input)
+    const once = listSlides(h.deck)[0]!.animations
+    h.run('animation.retime', input)
+    expect(listSlides(h.deck)[0]!.animations).toEqual(once)
+  })
+
+  it('refuses repeated, unknown and empty entries and waits beyond the step limit', () => {
+    const h = harness()
+    expect(
+      h.fail('animation.retime', {
+        slide: 's1',
+        timing: [
+          { animation: 'a1', start: 1 },
+          { animation: 'a1', start: 2 },
+        ],
+      }).code,
+    ).toBe('invalid_input')
+    expect(
+      h.fail('animation.retime', { slide: 's1', timing: [{ animation: 'nope', start: 1 }] }).code,
+    ).toBe('not_found')
+    expect(h.fail('animation.retime', { slide: 's1', timing: [{ animation: 'a1' }] }).code).toBe(
+      'invalid_input',
+    )
+    expect(
+      h.fail('animation.retime', { slide: 's1', timing: [{ animation: 'a2', start: 700 }] }).code,
+    ).toBe('invalid_input')
+  })
+})
+
+describe('animation.retarget', () => {
+  it('moves steps to another object and keeps their order, timing and params', () => {
+    const h = harness()
+    h.run('animation.update', {
+      slide: 's1',
+      animation: 'a2',
+      patch: { preset: 'moveTo', params: { targetX: 300, targetY: 200 } },
+    })
+    const before = steps(h)
+    expect(
+      h.run('animation.retarget', { slide: 's1', animations: ['a2', 'a1'], object: 't1' }),
+    ).toEqual({ retargeted: ['a2', 'a1'] })
+    expect(steps(h)).toEqual(before.map((s) => ({ ...s, objectId: 't1' })))
+  })
+
+  it('refuses an object on another slide and unknown steps', () => {
+    const h = harness()
+    expect(
+      h.fail('animation.retarget', { slide: 's1', animations: ['a1'], object: 'lock1' }).code,
+    ).toBe('not_found')
+    expect(
+      h.fail('animation.retarget', { slide: 's1', animations: ['nope'], object: 't1' }).code,
+    ).toBe('not_found')
+  })
+})

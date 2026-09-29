@@ -130,17 +130,7 @@ vi.mock('../animation/targetResolver', () => ({
 }))
 
 vi.mock('../state/useAnimations', () => ({
-  useAnimations: () => ({
-    animations: mockAnimationsData,
-    animationsCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-    mutationCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-  }),
+  useAnimations: () => ({ animations: mockAnimationsData }),
 }))
 
 // useSlides mock — controlled per test

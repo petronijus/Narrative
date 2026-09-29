@@ -12,6 +12,7 @@ import {
   addAnimation,
   removeAnimation,
   updateAnimation,
+  retargetAnimation,
   reorderAnimations,
   type AnimationsMutationContext,
 } from './animationMutations.js'
@@ -167,6 +168,30 @@ describe('updateAnimation', () => {
 
     const stored = yMapToAnimationStep(ctx.animations.get(0))
     expect(stored.params).toEqual({ direction: 'down', distance: 50 })
+  })
+})
+
+describe('retargetAnimation', () => {
+  it('points the step at another object and keeps everything else, in place', () => {
+    const ctx = makeCtx()
+    const first = addAnimation(ctx, baseStep)
+    const second = addAnimation(ctx, {
+      ...baseStep,
+      preset: 'moveTo',
+      params: { targetX: 100, targetY: 200 },
+    })
+    retargetAnimation(ctx, second.id, 'obj-9')
+    expect(getSnapshots(ctx)).toEqual([first, { ...second, objectId: 'obj-9' }])
+  })
+
+  it('is a no-op with a warning for an unknown id', () => {
+    const ctx = makeCtx()
+    const step = addAnimation(ctx, baseStep)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    retargetAnimation(ctx, 'missing', 'obj-9')
+    expect(warn).toHaveBeenCalledOnce()
+    warn.mockRestore()
+    expect(getSnapshots(ctx)).toEqual([step])
   })
 })
 

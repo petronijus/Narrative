@@ -218,8 +218,6 @@ describe('Inspector — no selection shows SlideInspector', () => {
 
 const mockObjects: SlideObject[] = []
 let mockUpdateObject = vi.fn()
-let mockAddAnimation = vi.fn()
-let mockRemoveAnimation = vi.fn()
 
 // Mock animations state — sdílený přes useAnimations mock
 const mockAnimations: AnimationStep[] = []
@@ -233,17 +231,7 @@ vi.mock('../state/useSlideObjects', () => ({
 }))
 
 vi.mock('../state/useAnimations', () => ({
-  useAnimations: () => ({
-    animations: mockAnimations,
-    animationsCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-    mutationCtx: {
-      doc: new Y.Doc(),
-      animations: new Y.Doc().getArray('animations'),
-    },
-  }),
+  useAnimations: () => ({ animations: mockAnimations }),
 }))
 
 vi.mock('@narrative/slide-model', async (importOriginal) => {
@@ -252,12 +240,6 @@ vi.mock('@narrative/slide-model', async (importOriginal) => {
     ...actual,
     updateObject: (...args: Parameters<typeof actual.updateObject>) => {
       mockUpdateObject(...args)
-    },
-    addAnimation: (...args: Parameters<typeof actual.addAnimation>) => {
-      mockAddAnimation(...args)
-    },
-    removeAnimation: (...args: Parameters<typeof actual.removeAnimation>) => {
-      mockRemoveAnimation(...args)
     },
   }
 })
@@ -392,11 +374,46 @@ describe('Inspector — text', () => {
 
 describe('Inspector — Animations section', () => {
   beforeEach(() => {
-    mockAddAnimation = vi.fn()
-    mockRemoveAnimation = vi.fn()
     // Reset animations mock array
     mockAnimations.length = 0
   })
+
+  /**
+   * The Inspector with `obj` selected on a real slide of a real document:
+   * the section dispatches `animation.*` commands, so the tests read what
+   * they wrote back from the document. (useAnimations is mocked, so the
+   * list the section shows comes from `mockAnimations`.)
+   */
+  function renderOnRealSlide(obj: SlideObject, steps: Array<Omit<AnimationStep, 'id'>> = []) {
+    mockObjects.length = 0
+    mockObjects.push(obj)
+    const deckCtx = slideModel.createSlideDoc()
+    const slideId = deckCtx.slides.get(0).get('id') as string
+    slideModel.addObject(slideModel.getSlideObjectsCtx(deckCtx, slideId)!, obj)
+    const animCtx = slideModel.getSlideAnimationsCtx(deckCtx, slideId)!
+    for (const step of steps) mockAnimations.push(slideModel.addAnimation(animCtx, step))
+
+    function Inner() {
+      const { setSelectedId } = useSelection()
+      useEffect(() => {
+        setSelectedId(obj.id)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return <Inspector />
+    }
+    render(
+      <MemoryRouter>
+        <SlideDocContext value={createContextValue(deckCtx)}>
+          <ActiveSlideContext value={{ activeSlideId: slideId, setActiveSlideId: () => {} }}>
+            <SelectionProvider>
+              <Inner />
+            </SelectionProvider>
+          </ActiveSlideContext>
+        </SlideDocContext>
+      </MemoryRouter>,
+    )
+    return () => slideModel.listSlides(deckCtx)[0]!.animations
+  }
 
   it('zobrazí Animations sekci pro vybraný objekt', () => {
     renderWithSelection(RECT_OBJ)
@@ -408,32 +425,32 @@ describe('Inspector — Animations section', () => {
     expect(screen.getByText('No animations')).toBeInTheDocument()
   })
 
-  it('klik na "+ fadeIn" volá addAnimation s fadeIn preset', () => {
-    renderWithSelection(RECT_OBJ)
-    const btn = screen.getByLabelText('Add fadeIn animation')
-    fireEvent.click(btn)
-    expect(mockAddAnimation).toHaveBeenCalledOnce()
-    expect(mockAddAnimation).toHaveBeenCalledWith(
-      expect.anything(),
+  it('"+ fadeIn" adds a fadeIn step for the object through animation.add', () => {
+    const stepsInDoc = renderOnRealSlide(RECT_OBJ)
+    fireEvent.click(screen.getByLabelText('Add fadeIn animation'))
+    expect(stepsInDoc()).toEqual([
       expect.objectContaining({
         objectId: RECT_OBJ.id,
         preset: 'fadeIn',
+        trigger: 'afterPrevious',
       }),
-    )
+    ])
   })
 
-  it.skip('klik na "+ slideIn up" volá addAnimation s slideIn + direction up', () => {
-    renderWithSelection(RECT_OBJ)
-    const btn = screen.getByLabelText('Add slideIn up animation')
-    fireEvent.click(btn)
-    expect(mockAddAnimation).toHaveBeenCalledWith(
-      expect.anything(),
+  // Skipped: there is no "+ slideIn up" button any more — the "More
+  // presets" select replaced the per-direction quick buttons, and it offers
+  // slideIn without a direction (the step's Direction field sets it). Kept
+  // until the add-preset menu is redesigned with direction variants again.
+  it.skip('"+ slideIn up" adds a slideIn step with direction up', () => {
+    const stepsInDoc = renderOnRealSlide(RECT_OBJ)
+    fireEvent.click(screen.getByLabelText('Add slideIn up animation'))
+    expect(stepsInDoc()).toEqual([
       expect.objectContaining({
         objectId: RECT_OBJ.id,
         preset: 'slideIn',
         params: { direction: 'up' },
       }),
-    )
+    ])
   })
 
   it.skip('zobrazí existující animace patřící objektu', () => {
@@ -472,23 +489,20 @@ describe('Inspector — Animations section', () => {
     expect(screen.getByText('No animations')).toBeInTheDocument()
   })
 
-  it('klik na delete ikonku volá removeAnimation se správným id', () => {
-    mockAnimations.push({
-      id: 'anim-delete-me',
-      objectId: RECT_OBJ.id,
-      preset: 'fadeIn',
-      trigger: 'onEnter',
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-    })
-
-    renderWithSelection(RECT_OBJ)
-    const deleteBtn = screen.getByLabelText('Remove fadeIn animation')
-    fireEvent.click(deleteBtn)
-
-    expect(mockRemoveAnimation).toHaveBeenCalledOnce()
-    expect(mockRemoveAnimation).toHaveBeenCalledWith(expect.anything(), 'anim-delete-me')
+  it('the delete icon removes that step through animation.remove', () => {
+    const stepsInDoc = renderOnRealSlide(RECT_OBJ, [
+      {
+        objectId: RECT_OBJ.id,
+        preset: 'fadeIn',
+        trigger: 'onEnter',
+        duration: 0.6,
+        delay: 0,
+        easing: 'power2.out',
+      },
+    ])
+    expect(stepsInDoc()).toHaveLength(1)
+    fireEvent.click(screen.getByLabelText('Remove fadeIn animation'))
+    expect(stepsInDoc()).toEqual([])
   })
 })
 

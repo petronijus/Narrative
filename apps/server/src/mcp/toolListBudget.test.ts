@@ -45,8 +45,10 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * A2.7a (2026-09-28): 157,000 → 159,000 for media.uploadSession.
  * A2.8 (2026-09-29): 159,000 → 164,000 for object.fill.gradient,
  * object.effects.shadow and object.slideNumber.set (≈ 4.7 KB together).
+ * A2.9 (2026-09-29): 164,000 → 167,000 for animation.retime 1.8 KB and
+ * animation.retarget 1.2 KB.
  */
-export const TOOL_LIST_BUDGET_BYTES = 164_000
+export const TOOL_LIST_BUDGET_BYTES = 167_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

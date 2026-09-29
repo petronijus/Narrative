@@ -61,6 +61,7 @@ import { AlignCenter, AlignLeft, AlignRight } from 'lucide-react'
 import { useTableEdit } from '../state/TableEditContext.js'
 import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useAnimations } from '../state/useAnimations.js'
+import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import {
   AnimationsSection,
   FillBody,
@@ -116,7 +117,8 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
   // mutation ctx). Hooks live at the inspector level — TableInspector
   // is unmounted when selection moves off the table, so the
   // subscriptions follow the user's focus naturally.
-  const { animations, animationsCtx: animMutationCtx } = useAnimations()
+  const { animations } = useAnimations()
+  const { activeSlideId } = useActiveSlide()
 
   // Mirrors the `patch` closure inside the generic Inspector — feeds the
   // shared PositionSection the same write path. Viewer mode bails out so
@@ -834,11 +836,12 @@ export function TableInspector({ obj, mutationCtx, isViewer }: TableInspectorPro
           animate as a single object (whole-table fade / slide / etc.);
           per-cell animation isn't exposed yet, but selecting the table
           and adding a preset here works identically to shapes. */}
-      {animMutationCtx !== null && (
+      {activeSlideId !== null && (
         <AnimationsSection
           objectId={obj.id}
           animations={animations}
-          mutationCtx={animMutationCtx}
+          slideId={activeSlideId}
+          readOnly={isViewer}
         />
       )}
 

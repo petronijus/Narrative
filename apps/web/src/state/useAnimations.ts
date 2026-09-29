@@ -1,33 +1,22 @@
 /**
  * state/useAnimations.ts
  *
- * Hook for subscribing to animations from the active slide in Y.Doc.
- * Full snapshot pattern — returns complete AnimationStep[] on every change.
- * Play order corresponds to Y.Array order.
+ * Read-only subscription to the active slide's animation steps, in play
+ * order (the Y.Array order). Full snapshot pattern — a new AnimationStep[]
+ * on every change. Steps change only through the `animation.*` commands
+ * (useCommand), so the hook hands out no mutation context.
  *
  * M9 update: scoped to active slide via ActiveSlideContext.
- *
- * Returns:
- * - animations: AnimationStep[] — current snapshot (in play order)
- * - animationsCtx: AnimationsMutationContext | null — for calling animation mutations
  */
 
 import { useState, useEffect } from 'react'
-import { subscribeToSlideAnimations, getSlideAnimationsCtx } from '@narrative/slide-model'
-import type { AnimationsMutationContext } from '@narrative/slide-model'
+import { subscribeToSlideAnimations } from '@narrative/slide-model'
 import type { AnimationStep } from '@narrative/shared'
 import { useSlideDoc } from './useSlideDoc.js'
 import { useActiveSlide } from './ActiveSlideContext.js'
 
 export interface UseAnimationsResult {
   animations: AnimationStep[]
-  /** AnimationsMutationContext scoped to the active slide. Null if no active slide. */
-  animationsCtx: AnimationsMutationContext | null
-  /**
-   * @deprecated Use animationsCtx. Kept for backward compat with consumers expecting mutationCtx.
-   * Removed in M10.
-   */
-  mutationCtx: AnimationsMutationContext | null
 }
 
 export function useAnimations(): UseAnimationsResult {
@@ -45,8 +34,5 @@ export function useAnimations(): UseAnimationsResult {
     return unsubscribe
   }, [deckCtx, activeSlideId])
 
-  const animationsCtx =
-    activeSlideId !== null ? getSlideAnimationsCtx(deckCtx, activeSlideId) : null
-
-  return { animations, animationsCtx, mutationCtx: animationsCtx }
+  return { animations }
 }

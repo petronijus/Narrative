@@ -37,6 +37,8 @@ import localLogoUpload from './localLogoUpload.js'
 import badgeGradient from './badgeGradient.js'
 import cardSoftShadow from './cardSoftShadow.js'
 import footerPageNumber from './footerPageNumber.js'
+import agendaStepTiming from './agendaStepTiming.js'
+import photoAnimationsHandOver from './photoAnimationsHandOver.js'
 
 export const SCENARIOS: readonly AnyScenario[] = [
   slideDuplicateRetitle,
@@ -71,6 +73,8 @@ export const SCENARIOS: readonly AnyScenario[] = [
   badgeGradient,
   cardSoftShadow,
   footerPageNumber,
+  agendaStepTiming,
+  photoAnimationsHandOver,
 ]
 
 export function scenarioById(id: string): AnyScenario | undefined {

@@ -42,15 +42,10 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react'
-import type { AnimationStep, AnimationTrigger } from '@narrative/shared'
-import {
-  removeAnimation,
-  reorderAnimations,
-  updateAnimation,
-  updateObject,
-} from '@narrative/slide-model'
-import type { ObjectsMutationContext } from '@narrative/slide-model'
-import type { SlideObjectPatch, VideoObject } from '@narrative/shared'
+import type { AnimationStep, AnimationTrigger, VideoObject } from '@narrative/shared'
+import { MAX_STEP_DELAY_S, MAX_STEP_DURATION_S, layoutAnimationSteps } from '@narrative/shared'
+import { CommandError } from '@narrative/commands'
+import { useCommand } from '../state/useCommand.js'
 import { useVideoInfo } from '../state/useVideoInfo.js'
 import { createAnimationRuntime, type AnimationRuntime } from '@narrative/animation'
 import { getDefaultRenderScheduler } from '../renderer/RenderScheduler'
@@ -72,38 +67,14 @@ interface LaidOutStep {
 }
 
 /**
- * Computes the absolute start time (in seconds) of each step on a GSAP-style
- * timeline, mirroring compileSteps' resolvePosition logic:
- *   - i === 0 or trigger === 'onEnter' → start at 0 + step.delay
- *   - withPrevious                     → start at prev.startSec + step.delay
- *   - afterPrevious or onClick         → start at prev.endSec + step.delay
- *
- * onClick steps appear visually as if afterPrevious — there's no "wait for
- * user input" bar in the current UI (it'd need a separate primitive; this
- * phase keeps the view flat).
+ * Each step's start on the timeline (seconds from the slide start) — the
+ * shared layout (`layoutAnimationSteps`, @narrative/shared), which is also
+ * what `animation.retime` places steps by and what the layout test in
+ * packages/animation pins against the compiler. onClick steps are drawn as
+ * if the click came when the previous step ended.
  */
-export function layoutSteps(steps: AnimationStep[]): LaidOutStep[] {
-  const out: LaidOutStep[] = []
-  let prevStart = 0
-  let prevEnd = 0
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i]
-    if (step === undefined) continue
-    const delay = step.delay ?? 0
-    let startSec: number
-    if (i === 0 || step.trigger === 'onEnter') {
-      startSec = delay
-    } else if (step.trigger === 'withPrevious') {
-      startSec = prevStart + delay
-    } else {
-      // afterPrevious | onClick
-      startSec = prevEnd + delay
-    }
-    out.push({ step, startSec })
-    prevStart = startSec
-    prevEnd = startSec + (step.duration ?? 0)
-  }
-  return out
+function layoutSteps(steps: AnimationStep[]): LaidOutStep[] {
+  return layoutAnimationSteps(steps).map(({ step, start }) => ({ step, startSec: start }))
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +217,7 @@ interface VideoClipBarProps {
   startSec: number
   pxPerSec: number
   laidOut: LaidOutStep[]
-  objectsCtx: ObjectsMutationContext | null
+  slideId: string | null
   isViewer: boolean
   selected: boolean
   onSelect: () => void
@@ -259,22 +230,24 @@ interface VideoClipBarProps {
 /**
  * Read-only-ish clip block for a video on the animation timeline. The
  * block's WIDTH is the clip duration (trim range or full duration);
- * dragging the BODY rewrites `videoDelay` so the start can be timed
- * after another animation. Drag math mirrors the animation-bar drag:
+ * dragging the BODY sets `videoDelay` (object.update) so the start can be
+ * timed after another animation. Drag math mirrors the animation-bar drag:
  * pointer-down captures originalDelay + originalStartSec; pointermove
- * computes a new delay relative to the trigger anchor.
+ * computes a new delay relative to the trigger anchor. The delay is never
+ * negative (the object schema): the clip cannot start before its anchor.
  */
 function VideoClipBar({
   video,
   startSec,
   pxPerSec,
   laidOut,
-  objectsCtx,
+  slideId,
   isViewer,
   selected,
   onSelect,
   onClipDuration,
 }: VideoClipBarProps) {
+  const command = useCommand()
   const { info } = useVideoInfo(video.assetId !== '' ? video.assetId : null)
   const fullDur = info?.durationSec ?? 0
   const trimStart = video.trimStart ?? 0
@@ -308,7 +281,7 @@ function VideoClipBar({
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) return
-    if (isViewer || objectsCtx === null) return
+    if (isViewer || slideId === null) return
     e.stopPropagation()
     ;(e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId)
     dragRef.current = {
@@ -319,19 +292,17 @@ function VideoClipBar({
   }
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     const drag = dragRef.current
-    if (drag === null || objectsCtx === null) return
+    if (drag === null || slideId === null) return
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
     const dxSec = (e.clientX - drag.startPointerX) / pxPerSec
-    const nextDelay = Math.max(-drag.anchorSec, drag.originalDelay + dxSec)
-    const patch: SlideObjectPatch<VideoObject> = {
-      videoDelay: nextDelay <= 0.0001 ? undefined : nextDelay,
-    } as unknown as SlideObjectPatch<VideoObject>
+    const nextDelay = Math.max(0, drag.originalDelay + dxSec)
+    const patch: Record<string, unknown> = {
+      videoDelay: nextDelay <= 0.0001 ? null : nextDelay,
+    }
     // First drag also pins the trigger so the bar's anchor stops
     // shifting when the user re-orders the underlying animations.
-    if (video.videoTrigger === undefined) {
-      ;(patch as Record<string, unknown>).videoTrigger = trigger
-    }
-    updateObject<VideoObject>(objectsCtx, video.id, patch)
+    if (video.videoTrigger === undefined) patch['videoTrigger'] = trigger
+    command.tryRun('object.update', { slide: slideId, object: video.id, patch })
   }
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (dragRef.current === null) return
@@ -389,11 +360,12 @@ function VideoClipBar({
 }
 
 export function AnimationTimeline() {
-  const { animations, animationsCtx } = useAnimations()
+  const { animations } = useAnimations()
   const { activeSlideId } = useActiveSlide()
+  const command = useCommand()
   const { role } = useDeckRole()
   const canvasInstance = useCanvasInstance()
-  const { objects: slideObjects, objectsCtx } = useSlideObjects()
+  const { objects: slideObjects } = useSlideObjects()
   const { selectOne, selectedAnimationId, setSelectedAnimationId } = useSelection()
   const isViewer = role === 'viewer'
 
@@ -499,13 +471,16 @@ export function AnimationTimeline() {
      *  re-layout so the dragged bar doesn't hop lanes while it crosses
      *  neighbours — only the neighbours move out of its way. */
     originalLane: number
-    /** Frozen absolute starts + durations of every step at drag-start.
-     *  Body drag uses these as the reference frame so each frame's write
-     *  is idempotent — without it, a non-dragged neighbour's delay would
-     *  drift because we'd be mixing stale laidOut.startSec values with
-     *  the dragged step's hypothetical newAbsStart. */
+    /** Frozen absolute start of every step at drag-start. A body drag
+     *  sends these for the bars it is not moving, so each frame's
+     *  animation.retime is idempotent — the live layout would already
+     *  carry the previous frame's write. */
     originalStarts: Record<string, number>
-    originalDurations: Record<string, number>
+    /** Magnet snap targets: every OTHER bar's start and end at drag-start
+     *  (plus 0). Frozen for the same reason — while an edge is resized,
+     *  the steps after it move with it, and snapping to their live starts
+     *  pulled the edge back to where the previous frame put it. */
+    snapCandidates: number[]
   } | null>(null)
 
   /** Lane assignment seen on the previous render, keyed by step id. Used to
@@ -790,11 +765,11 @@ export function AnimationTimeline() {
 
   const handleRemove = useCallback(
     (stepId: string) => {
-      if (animationsCtx === null) return
-      removeAnimation(animationsCtx, stepId)
+      if (activeSlideId === null) return
+      command.tryRun('animation.remove', { slide: activeSlideId, animations: [stepId] })
       setSelectedId((prev) => (prev === stepId ? null : prev))
     },
-    [animationsCtx],
+    [command, activeSlideId],
   )
 
   // P9: Delete / Backspace removes the selected step when the timeline has
@@ -853,14 +828,15 @@ export function AnimationTimeline() {
       absStart: number,
       mode: 'body' | 'resize',
     ) => {
-      if (isViewer || animationsCtx === null) return
+      if (isViewer || activeSlideId === null) return
       e.currentTarget.setPointerCapture(e.pointerId)
       e.stopPropagation()
       const originalStarts: Record<string, number> = {}
-      const originalDurations: Record<string, number> = {}
+      const snapCandidates: number[] = [0]
       for (const l of laidOut) {
         originalStarts[l.step.id] = l.startSec
-        originalDurations[l.step.id] = l.step.duration ?? 0
+        if (l.step.id === step.id) continue
+        snapCandidates.push(l.startSec, l.startSec + (l.step.duration ?? 0))
       }
       dragStateRef.current = {
         stepId: step.id,
@@ -872,7 +848,7 @@ export function AnimationTimeline() {
         converted: false,
         originalLane: lastLanesRef.current[step.id] ?? 0,
         originalStarts,
-        originalDurations,
+        snapCandidates,
       }
       // Freeze visible row order for the duration of a body drag — the
       // Y.Array may reshuffle as the dragged bar passes neighbours, but
@@ -881,13 +857,13 @@ export function AnimationTimeline() {
         frozenRowOrderRef.current = [...lastRowOrderRef.current]
       }
     },
-    [isViewer, animationsCtx, laidOut],
+    [isViewer, activeSlideId, laidOut],
   )
 
   const handleDragMove = useCallback(
     (e: React.PointerEvent<HTMLElement>) => {
       const drag = dragStateRef.current
-      if (drag === null || animationsCtx === null) return
+      if (drag === null || activeSlideId === null) return
       if (!e.currentTarget.hasPointerCapture(e.pointerId)) return
 
       const dx = e.clientX - drag.startPointerX
@@ -901,17 +877,9 @@ export function AnimationTimeline() {
       const snap = e.shiftKey ? 0 : SNAP_SEC
       const magnet = e.shiftKey ? 0 : MAGNET_THRESHOLD_SEC
 
-      // Candidate snap points — start and end of every other bar (any row),
-      // plus 0. Built from the flat `laidOut` snapshot (which lives in this
-      // handler's deps) so the candidates stay fresh as bars move around.
-      const candidates: number[] = magnet > 0 ? [0] : []
-      if (magnet > 0) {
-        for (const l of laidOut) {
-          if (l.step.id === drag.stepId) continue
-          candidates.push(l.startSec)
-          candidates.push(l.startSec + (l.step.duration ?? 0))
-        }
-      }
+      // Snap points — start and end of every other bar (any row) and 0, as
+      // they were at drag-start (see DragState.snapCandidates).
+      const candidates = magnet > 0 ? drag.snapCandidates : []
 
       if (drag.mode === 'resize') {
         let newDuration = Math.max(
@@ -925,7 +893,11 @@ export function AnimationTimeline() {
             newDuration = Math.max(MIN_DURATION_SEC, snapped - drag.originalAbsStart)
           }
         }
-        updateAnimation(animationsCtx, drag.stepId, { duration: newDuration })
+        command.tryRun('animation.update', {
+          slide: activeSlideId,
+          animation: drag.stepId,
+          patch: { duration: Math.min(newDuration, MAX_STEP_DURATION_S) },
+        })
         return
       }
 
@@ -950,74 +922,39 @@ export function AnimationTimeline() {
         }
       }
 
-      // Sequence model: the SOURCE OF TRUTH while dragging is the absolute
-      // time of every bar (dragged bar uses newAbsStart, others use their
-      // current laidOut.startSec). We sort by absolute time to derive the
-      // new Y.Array sequence, then derive each step's trigger + delay from
-      // its temporal relationship to the new previous step:
-      //   • i === 0                         → first in sequence; delay = startSec.
-      //   • cur.start ≥ prev.end            → 'afterPrevious'; delay = cur.start - prev.end.
-      //   • cur.start <  prev.end (overlap) → 'withPrevious';  delay = cur.start - prev.start.
-      //   • onClick is sticky               → keep 'onClick'; delay relative to prev.end (matches layoutSteps).
-      // This makes drag truly free: dragging past a neighbour reorders the
-      // sequence, and the displaced step's own trigger gets recomputed
-      // against ITS new previous — so dragging a bar before another flips
-      // the other one to 'afterPrevious' automatically.
-      // Use the frozen drag-start reference frame for non-dragged steps so
-      // each frame's write is idempotent. Reading laidOut.startSec here would
-      // be stale-after-write: as we mutate delays, layoutSteps shifts non-
-      // dragged starts, and the next frame's delta would compound.
-      const decorated = laidOut.map((l, i) => ({
-        id: l.step.id,
-        step: l.step,
+      // A step waits at most MAX_STEP_DELAY_S; the dragged step's delay is
+      // at most its start.
+      newAbsStart = Math.min(newAbsStart, MAX_STEP_DELAY_S)
+
+      // Premiere-like free drag: every bar is placed at an absolute time
+      // with animation.retime, which derives the play order and each
+      // step's trigger + delay from the times (dragging past a neighbour
+      // reorders, overlapping makes withPrevious, onClick stays onClick).
+      // Every OTHER bar is sent at its drag-start time, not its live one,
+      // so each frame is absolute and idempotent: reading the live layout
+      // would be stale-after-write, and dragging back restores the start.
+      const timing = laidOut.map((l) => ({
+        animation: l.step.id,
         start:
           l.step.id === drag.stepId ? newAbsStart : (drag.originalStarts[l.step.id] ?? l.startSec),
-        duration: drag.originalDurations[l.step.id] ?? l.step.duration ?? 0,
-        i,
       }))
-      // Stable sort by start time; ties keep current Y.Array order.
-      decorated.sort((a, b) => a.start - b.start || a.i - b.i)
-
-      const EPS = 1e-6
-      for (let i = 0; i < decorated.length; i++) {
-        const cur = decorated[i]
-        if (cur === undefined) continue
-        const prev = i > 0 ? decorated[i - 1] : undefined
-        const isOnClick = cur.step.trigger === 'onClick'
-        let nextTrigger: AnimationTrigger
-        let nextDelay: number
-        if (prev === undefined) {
-          // First in sequence — anchor is 0.
-          nextTrigger = isOnClick ? 'onClick' : 'afterPrevious'
-          nextDelay = Math.max(0, cur.start)
-        } else if (isOnClick) {
-          // Sticky: never auto-switch onClick to time-driven triggers.
-          nextTrigger = 'onClick'
-          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
-        } else if (cur.start + EPS >= prev.start + prev.duration) {
-          nextTrigger = 'afterPrevious'
-          nextDelay = Math.max(0, cur.start - (prev.start + prev.duration))
-        } else {
-          nextTrigger = 'withPrevious'
-          nextDelay = Math.max(0, cur.start - prev.start)
+      try {
+        command.run('animation.retime', { slide: activeSlideId, timing })
+      } catch (err) {
+        // A frame that would make some step wait longer than a step may
+        // (only on timelines longer than MAX_STEP_DELAY_S), or a step a
+        // collaborator just removed: skip the frame, the bar stays put.
+        if (
+          err instanceof CommandError &&
+          (err.code === 'invalid_input' || err.code === 'not_found' || err.code === 'conflict')
+        ) {
+          console.warn(`[timeline] retime frame not applied: ${err.message}`)
+          return
         }
-        const orig = cur.step
-        const patch: { trigger?: AnimationTrigger; delay?: number } = {}
-        if (orig.trigger !== nextTrigger) patch.trigger = nextTrigger
-        if (Math.abs((orig.delay ?? 0) - nextDelay) > EPS) patch.delay = nextDelay
-        if (patch.trigger !== undefined || patch.delay !== undefined) {
-          updateAnimation(animationsCtx, cur.id, patch)
-        }
-      }
-
-      // Sync Y.Array order to the new temporal order.
-      const newOrder = decorated.map((e) => e.id)
-      const currentOrder = animations.map((a) => a.id)
-      if (!newOrder.every((id, i) => id === currentOrder[i])) {
-        reorderAnimations(animationsCtx, newOrder)
+        throw err
       }
     },
-    [animationsCtx, animations, laidOut],
+    [command, activeSlideId, laidOut],
   )
 
   const endDrag = useCallback(
@@ -1588,7 +1525,7 @@ export function AnimationTimeline() {
                               startSec={startSec}
                               pxPerSec={pxPerSec}
                               laidOut={laidOut}
-                              objectsCtx={objectsCtx}
+                              slideId={activeSlideId}
                               isViewer={isViewer}
                               selected={selectedAnimationId === `video:${o.id}`}
                               onSelect={() => {
@@ -1668,9 +1605,11 @@ export function AnimationTimeline() {
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => {
-                                    if (animationsCtx === null) return
-                                    updateAnimation(animationsCtx, step.id, {
-                                      trigger: e.target.value as AnimationTrigger,
+                                    if (activeSlideId === null) return
+                                    command.tryRun('animation.update', {
+                                      slide: activeSlideId,
+                                      animation: step.id,
+                                      patch: { trigger: e.target.value as AnimationTrigger },
                                     })
                                   }}
                                 >
@@ -1702,9 +1641,11 @@ export function AnimationTimeline() {
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => {
-                                    if (animationsCtx === null) return
-                                    updateAnimation(animationsCtx, step.id, {
-                                      easing: e.target.value,
+                                    if (activeSlideId === null) return
+                                    command.tryRun('animation.update', {
+                                      slide: activeSlideId,
+                                      animation: step.id,
+                                      patch: { easing: e.target.value },
                                     })
                                   }}
                                 >

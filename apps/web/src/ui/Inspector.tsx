@@ -114,21 +114,12 @@ import {
 } from '@narrative/commands'
 import {
   updateObject,
-  addAnimation,
-  removeAnimation,
-  updateAnimation,
   updateSlideTransition,
   updateSlideBackground,
   isMaskableShape,
   listSlides,
 } from '@narrative/slide-model'
-import type {
-  AnimationsMutationContext,
-  AlignAxis,
-  DistributeAxis,
-  LayerMove,
-  RichAttrs,
-} from '@narrative/slide-model'
+import type { AlignAxis, DistributeAxis, LayerMove, RichAttrs } from '@narrative/slide-model'
 import type {
   SlideObject,
   RectangleObject,
@@ -157,7 +148,12 @@ import type {
   SlideBackground,
   ObjectHyperlink,
 } from '@narrative/shared'
-import { DEFAULT_BACKGROUND, isTextStyleOverrideKey } from '@narrative/shared'
+import {
+  DEFAULT_BACKGROUND,
+  MAX_STEP_DELAY_S,
+  MAX_STEP_DURATION_S,
+  isTextStyleOverrideKey,
+} from '@narrative/shared'
 import {
   useFolderTokens,
   useFolderTokensOptional,
@@ -741,7 +737,7 @@ export function Section({
 export function Inspector() {
   const { selectedIds, selectedId } = useSelection()
   const { objects, objectsCtx: mutationCtx } = useSlideObjects()
-  const { animations, animationsCtx: animMutationCtx } = useAnimations()
+  const { animations } = useAnimations()
   const { role, folderId: deckFolderId } = useDeckRole()
   const isViewer = role === 'viewer'
 
@@ -1024,11 +1020,12 @@ export function Inspector() {
           LayerOrderSection still backs the multi-select panel. */}
 
       {/* Animations */}
-      {animMutationCtx !== null && (
+      {activeSlideId !== null && (
         <AnimationsSection
           objectId={obj.id}
           animations={animations}
-          mutationCtx={animMutationCtx}
+          slideId={activeSlideId}
+          readOnly={isViewer}
         />
       )}
 
@@ -5232,7 +5229,10 @@ function VideoSection({
 interface AnimationsSectionProps {
   objectId: string
   animations: AnimationStep[]
-  mutationCtx: AnimationsMutationContext
+  /** The slide the steps live on (the active slide). */
+  slideId: string
+  /** Viewers see the steps but cannot change them. */
+  readOnly: boolean
 }
 
 /**
@@ -5243,16 +5243,6 @@ function animationLabel(step: AnimationStep): string {
   const dir = step.params?.['direction'] as string | undefined
   return dir !== undefined ? `${step.preset} (${dir})` : step.preset
 }
-
-/**
- * Trigger for a newly added animation: always afterPrevious. As the first
- * step on a slide it starts at the slide start (the compiler anchors index
- * 0 at position 0 whatever the trigger), so it plays exactly as the legacy
- * `onEnter` default did — without seeding the legacy trigger that the
- * trigger pickers no longer offer (and that the timeline used to rewrite,
- * as a write-on-view, the moment it opened).
- */
-const NEW_ANIMATION_TRIGGER: AnimationTrigger = 'afterPrevious'
 
 const ADD_BUTTON_CLASS = [
   'rounded-md border border-input px-2 py-0.5 text-xs text-foreground/90',
@@ -5271,22 +5261,33 @@ const ADD_BUTTON_CLASS = [
  */
 function AnimationItem({
   step,
+  slideId,
+  readOnly,
   onRemove,
-  mutationCtx,
   selected,
   onSelect,
 }: {
   step: AnimationStep
+  slideId: string
+  readOnly: boolean
   onRemove: (stepId: string) => void
-  mutationCtx: AnimationsMutationContext
   selected: boolean
   onSelect: () => void
 }) {
-  function patch(p: Partial<AnimationStep>): void {
-    updateAnimation(mutationCtx, step.id, p)
+  const command = useCommand()
+  type StepPatch = Partial<Pick<AnimationStep, 'trigger' | 'duration' | 'delay' | 'easing'>>
+  function patch(p: StepPatch): void {
+    if (readOnly) return
+    command.tryRun('animation.update', { slide: slideId, animation: step.id, patch: p })
   }
+  /** `animation.update` merges params, so only the changed keys go. */
   function patchParams(next: Record<string, unknown>): void {
-    updateAnimation(mutationCtx, step.id, { params: { ...(step.params ?? {}), ...next } })
+    if (readOnly) return
+    command.tryRun('animation.update', {
+      slide: slideId,
+      animation: step.id,
+      patch: { params: next },
+    })
   }
   const hasDirection = step.preset === 'slideIn' || step.preset === 'slideOut'
   const direction = (step.params?.['direction'] as string | undefined) ?? 'up'
@@ -5304,243 +5305,242 @@ function AnimationItem({
         selected ? 'ring-2 ring-primary/70 bg-primary/10' : '',
       ].join(' ')}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-foreground">{animationLabel(step)}</span>
-        <button
-          type="button"
-          onClick={() => onRemove(step.id)}
-          aria-label={`Remove ${animationLabel(step)} animation`}
-          className={[
-            'ml-2 rounded-md p-0.5 text-muted-foreground/50 transition-colors',
-            'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
-          ].join(' ')}
-        >
-          <svg
-            aria-hidden="true"
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
+      {/* `contents`: the fieldset only disables the controls for viewers,
+          it adds no box. Selecting the step (the li's click) still works. */}
+      <fieldset disabled={readOnly} className="contents">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-foreground">{animationLabel(step)}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(step.id)}
+            aria-label={`Remove ${animationLabel(step)} animation`}
+            className={[
+              'ml-2 rounded-md p-0.5 text-muted-foreground/50 transition-colors',
+              'hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
+            ].join(' ')}
           >
-            <path d="M2 2l8 8M10 2l-8 8" />
-          </svg>
-        </button>
-      </div>
-      <div className="grid grid-cols-2 gap-1">
-        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-          Trigger
-          <select
-            value={step.trigger}
-            aria-label="Trigger"
-            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
-          >
-            {triggerOptionsFor(step.trigger).map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-          Easing
-          <select
-            value={step.easing ?? 'power2.out'}
-            aria-label="Easing"
-            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            onChange={(e) => patch({ easing: e.target.value })}
-          >
-            <option value="none">none</option>
-            <option value="power1.out">power1 out</option>
-            <option value="power2.out">power2 out</option>
-            <option value="power2.inOut">power2 in/out</option>
-            <option value="power3.inOut">power3 in/out</option>
-            <option value="sine.inOut">sine in/out</option>
-            <option value="back.out">back out</option>
-            <option value="bounce.out">bounce out</option>
-            <option value="elastic.out">elastic out</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-          Duration (s)
-          <input
-            type="number"
-            min={0}
-            step={0.05}
-            value={step.duration ?? 0}
-            aria-label="Duration in seconds"
-            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            onChange={(e) => {
-              const v = parseFloat(e.target.value)
-              if (!Number.isNaN(v) && v >= 0) patch({ duration: v })
-            }}
-            onKeyDown={(e) =>
-              handleShiftArrowStep(
-                e,
-                step.duration ?? 0,
-                0.05,
-                (v) => patch({ duration: Math.max(0, v) }),
-                { min: 0 },
-              )
-            }
-          />
-        </label>
-        <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-          Delay (s)
-          <input
-            type="number"
-            min={0}
-            step={0.05}
-            value={step.delay ?? 0}
-            aria-label="Delay in seconds"
-            className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-            onChange={(e) => {
-              const v = parseFloat(e.target.value)
-              if (!Number.isNaN(v) && v >= 0) patch({ delay: v })
-            }}
-            onKeyDown={(e) =>
-              handleShiftArrowStep(
-                e,
-                step.delay ?? 0,
-                0.05,
-                (v) => patch({ delay: Math.max(0, v) }),
-                { min: 0 },
-              )
-            }
-          />
-        </label>
-      </div>
-      {isMoveTo && (
-        <div className="grid grid-cols-2 gap-1">
-          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-            Target X
-            <input
-              type="number"
-              step={1}
-              value={targetX}
-              aria-label="Target X"
-              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              onChange={(e) => {
-                const v = parseFloat(e.target.value)
-                if (Number.isFinite(v)) patchParams({ targetX: v })
-              }}
-            />
-          </label>
-          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-            Target Y
-            <input
-              type="number"
-              step={1}
-              value={targetY}
-              aria-label="Target Y"
-              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              onChange={(e) => {
-                const v = parseFloat(e.target.value)
-                if (Number.isFinite(v)) patchParams({ targetY: v })
-              }}
-            />
-          </label>
-        </div>
-      )}
-      {isRotateTo && (
-        <div className="grid grid-cols-2 gap-1">
-          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-            Angle (°)
-            <input
-              type="number"
-              step={1}
-              value={angleDeg}
-              aria-label="Target angle"
-              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              onChange={(e) => {
-                const v = parseFloat(e.target.value)
-                if (Number.isFinite(v)) patchParams({ angleDeg: v })
-              }}
-            />
-          </label>
-        </div>
-      )}
-      {hasDirection && (
-        <div className="grid grid-cols-2 gap-1">
-          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-            Direction
-            <select
-              value={direction}
-              aria-label="Direction"
-              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
-              onChange={(e) => patchParams({ direction: e.target.value })}
+            <svg
+              aria-hidden="true"
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
             >
-              <option value="up">up</option>
-              <option value="down">down</option>
-              <option value="left">left</option>
-              <option value="right">right</option>
+              <path d="M2 2l8 8M10 2l-8 8" />
+            </svg>
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-1">
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Trigger
+            <select
+              value={step.trigger}
+              aria-label="Trigger"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => patch({ trigger: e.target.value as AnimationTrigger })}
+            >
+              {triggerOptionsFor(step.trigger).map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           </label>
           <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
-            Distance (px)
+            Easing
+            <select
+              value={step.easing ?? 'power2.out'}
+              aria-label="Easing"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => patch({ easing: e.target.value })}
+            >
+              <option value="none">none</option>
+              <option value="power1.out">power1 out</option>
+              <option value="power2.out">power2 out</option>
+              <option value="power2.inOut">power2 in/out</option>
+              <option value="power3.inOut">power3 in/out</option>
+              <option value="sine.inOut">sine in/out</option>
+              <option value="back.out">back out</option>
+              <option value="bounce.out">bounce out</option>
+              <option value="elastic.out">elastic out</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Duration (s)
             <input
               type="number"
               min={0}
-              step={10}
-              value={distance}
-              aria-label="Distance in pixels"
+              step={0.05}
+              value={step.duration ?? 0}
+              aria-label="Duration in seconds"
+              className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+              onChange={(e) => {
+                // A step lasts more than 0 s (the DSL schema); an empty or zero
+                // field while typing writes nothing.
+                const v = parseFloat(e.target.value)
+                if (v > 0) patch({ duration: Math.min(v, MAX_STEP_DURATION_S) })
+              }}
+              onKeyDown={(e) =>
+                handleShiftArrowStep(e, step.duration ?? 0, 0.05, (v) => patch({ duration: v }), {
+                  min: 0.05,
+                  max: MAX_STEP_DURATION_S,
+                })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+            Delay (s)
+            <input
+              type="number"
+              min={0}
+              step={0.05}
+              value={step.delay ?? 0}
+              aria-label="Delay in seconds"
               className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
               onChange={(e) => {
                 const v = parseFloat(e.target.value)
-                if (!Number.isNaN(v) && v >= 0) patchParams({ distance: v })
+                if (v >= 0) patch({ delay: Math.min(v, MAX_STEP_DELAY_S) })
               }}
               onKeyDown={(e) =>
-                handleShiftArrowStep(
-                  e,
-                  distance,
-                  10,
-                  (v) => patchParams({ distance: Math.max(0, v) }),
-                  {
-                    min: 0,
-                  },
-                )
+                handleShiftArrowStep(e, step.delay ?? 0, 0.05, (v) => patch({ delay: v }), {
+                  min: 0,
+                  max: MAX_STEP_DELAY_S,
+                })
               }
             />
           </label>
         </div>
-      )}
+        {isMoveTo && (
+          <div className="grid grid-cols-2 gap-1">
+            <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+              Target X
+              <input
+                type="number"
+                step={1}
+                value={targetX}
+                aria-label="Target X"
+                className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value)
+                  if (Number.isFinite(v)) patchParams({ targetX: v })
+                }}
+              />
+            </label>
+            <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+              Target Y
+              <input
+                type="number"
+                step={1}
+                value={targetY}
+                aria-label="Target Y"
+                className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value)
+                  if (Number.isFinite(v)) patchParams({ targetY: v })
+                }}
+              />
+            </label>
+          </div>
+        )}
+        {isRotateTo && (
+          <div className="grid grid-cols-2 gap-1">
+            <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+              Angle (°)
+              <input
+                type="number"
+                step={1}
+                value={angleDeg}
+                aria-label="Target angle"
+                className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value)
+                  if (Number.isFinite(v)) patchParams({ angleDeg: v })
+                }}
+              />
+            </label>
+          </div>
+        )}
+        {hasDirection && (
+          <div className="grid grid-cols-2 gap-1">
+            <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+              Direction
+              <select
+                value={direction}
+                aria-label="Direction"
+                className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                onChange={(e) => patchParams({ direction: e.target.value })}
+              >
+                <option value="up">up</option>
+                <option value="down">down</option>
+                <option value="left">left</option>
+                <option value="right">right</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground/80">
+              Distance (px)
+              <input
+                type="number"
+                min={0}
+                step={10}
+                value={distance}
+                aria-label="Distance in pixels"
+                className="rounded-md border border-input field-surface px-1.5 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value)
+                  if (!Number.isNaN(v) && v >= 0) patchParams({ distance: v })
+                }}
+                onKeyDown={(e) =>
+                  handleShiftArrowStep(
+                    e,
+                    distance,
+                    10,
+                    (v) => patchParams({ distance: Math.max(0, v) }),
+                    {
+                      min: 0,
+                    },
+                  )
+                }
+              />
+            </label>
+          </div>
+        )}
+      </fieldset>
     </li>
   )
 }
 
-export function AnimationsSection({ objectId, animations, mutationCtx }: AnimationsSectionProps) {
+export function AnimationsSection({
+  objectId,
+  animations,
+  slideId,
+  readOnly,
+}: AnimationsSectionProps) {
   // Animace patřící tomuto objektu
   const objectAnimations = animations.filter((a) => a.objectId === objectId)
   const { selectedAnimationId, setSelectedAnimationId, selectOne } = useSelection()
+  const command = useCommand()
 
+  /**
+   * `animation.add` applies the editor's defaults (afterPrevious, 0.6 s,
+   * power2.out) and seeds motion presets (moveTo: slide centre, rotateTo:
+   * 180°), so a new step moves the object instead of being a no-op.
+   */
   function handleAddAnimation(preset: AnimationStep['preset'], params?: Record<string, unknown>) {
-    // Seed sensible defaults for motion presets so a freshly-added
-    // step actually moves the object instead of being a no-op.
-    let seededParams = params
-    if (preset === 'moveTo' && seededParams === undefined) {
-      // targetX / targetY = destination CENTRE in slide-coords (matches
-      // Pixi pivot convention so the on-canvas ghost lines up with
-      // where playback finishes). Default seeds the slide centre.
-      seededParams = { targetX: 960, targetY: 540 }
-    } else if (preset === 'rotateTo' && seededParams === undefined) {
-      seededParams = { angleDeg: 180 }
-    }
-    addAnimation(mutationCtx, {
-      objectId,
+    if (readOnly) return
+    command.tryRun('animation.add', {
+      slide: slideId,
+      object: objectId,
       preset,
-      trigger: NEW_ANIMATION_TRIGGER,
-      duration: 0.6,
-      delay: 0,
-      easing: 'power2.out',
-      ...(seededParams !== undefined ? { params: seededParams } : {}),
+      ...(params !== undefined ? { params } : {}),
     })
   }
 
   function handleRemove(stepId: string) {
-    removeAnimation(mutationCtx, stepId)
+    if (readOnly) return
+    command.tryRun('animation.remove', { slide: slideId, animations: [stepId] })
   }
 
   return (
@@ -5554,12 +5554,14 @@ export function AnimationsSection({ objectId, animations, mutationCtx }: Animati
           type="button"
           className={ADD_BUTTON_CLASS}
           onClick={() => handleAddAnimation('fadeIn')}
+          disabled={readOnly}
           aria-label="Add fadeIn animation"
         >
           + fadeIn
         </button>
         <select
           value=""
+          disabled={readOnly}
           aria-label="Add animation preset"
           className="flex-1 rounded-md border border-input field-surface px-2 py-0.5 text-xs text-foreground focus:border-ring focus:outline-none"
           onChange={(e) => {
@@ -5611,8 +5613,9 @@ export function AnimationsSection({ objectId, animations, mutationCtx }: Animati
             <AnimationItem
               key={step.id}
               step={step}
+              slideId={slideId}
+              readOnly={readOnly}
               onRemove={handleRemove}
-              mutationCtx={mutationCtx}
               selected={selectedAnimationId === step.id}
               onSelect={() => {
                 setSelectedAnimationId(step.id)
