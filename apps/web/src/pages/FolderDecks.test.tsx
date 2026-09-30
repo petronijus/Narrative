@@ -13,6 +13,19 @@ import type { AuthContextValue, AuthUser } from '../state/AuthContext'
 import type { DeckSummary, FolderSummary } from '../api/client'
 
 // ---------------------------------------------------------------------------
+// Mock the sync server connection: the page mounts FolderDocProvider, which
+// would otherwise open a real WebSocket in jsdom. That socket's handshake
+// finishes after the test file ends and vitest reports it as an unhandled
+// rejection (`_cookieJar` of null), failing the whole run intermittently.
+// ---------------------------------------------------------------------------
+
+vi.mock('@hocuspocus/provider', () => ({
+  HocuspocusProvider: class {
+    destroy() {}
+  },
+}))
+
+// ---------------------------------------------------------------------------
 // Mock deckThumbnailCache
 // ---------------------------------------------------------------------------
 
