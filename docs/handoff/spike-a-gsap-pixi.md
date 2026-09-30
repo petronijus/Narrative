@@ -27,11 +27,13 @@ node run-tests.mjs                # terminál 2 — spustí všechny testy, vyp�
 Výstup: JSON objekt s výsledky všech 4 testů. Exit 0 pokud všechny testy proběhly.
 
 **Manuální run v prohlížeči** (pro vizuální inspekci):
+
 ```bash
 cd D:\Narrative\spikes\spike-a-gsap-pixi
 npx vite
 # Otevřít http://localhost:5176 v Chrome/Edge, klikat tlačítka
 ```
+
 Výsledky v Results overlay (vpravo nahoře) a v DevTools Console jako `[TestX-...]`.
 
 ---
@@ -42,14 +44,14 @@ Výsledky v Results overlay (vpravo nahoře) a v DevTools Console jako `[TestX-.
 
 ### Test 1 — 50 paralelních tweenů (3s běh, ~190 frames)
 
-| Metrika | Approach (b) Direct | Approach (a) Proxy | Cíl | Status |
-|---|---|---|---|---|
-| FPS avg | **59.3** | **60.1** | ≥ 60 | ✓ (proxy lepší) |
-| FPS min | 48.9 | 59.7 | ≥ 55 | proxy ✓ / direct ~ |
-| FPS p95 (low) | 48.9 | 59.7 | ≥ 50 | proxy ✓ |
-| Frame time avg | 16.86 ms | 16.62 ms | < 16.7ms | proxy ✓ |
-| Frame time p95 | 17.90 ms | 18.10 ms | < 16.7ms | ~ |
-| Frame time p99 | **18.70 ms** | **18.40 ms** | < 20ms | ✓ |
+| Metrika        | Approach (b) Direct | Approach (a) Proxy | Cíl      | Status             |
+| -------------- | ------------------- | ------------------ | -------- | ------------------ |
+| FPS avg        | **59.3**            | **60.1**           | ≥ 60     | ✓ (proxy lepší)    |
+| FPS min        | 48.9                | 59.7               | ≥ 55     | proxy ✓ / direct ~ |
+| FPS p95 (low)  | 48.9                | 59.7               | ≥ 50     | proxy ✓            |
+| Frame time avg | 16.86 ms            | 16.62 ms           | < 16.7ms | proxy ✓            |
+| Frame time p95 | 17.90 ms            | 18.10 ms           | < 16.7ms | ~                  |
+| Frame time p99 | **18.70 ms**        | **18.40 ms**       | < 20ms   | ✓                  |
 
 **Zjištění**: Proxy pattern (a) má **nižší variance** než direct (b) — min FPS 59.7 vs 48.9. Direct approach má warm-up jitter v prvních framech (pravděpodobně GSAP property discovery / Pixi cache warm-up). Proxy cestou přes plain JS objekt je to predikovatelnější. Oba splňují p99 < 20ms budget s rezervou.
 
@@ -57,26 +59,26 @@ Výsledky v Results overlay (vpravo nahoře) a v DevTools Console jako `[TestX-.
 
 ### Test 2 — Timeline Scrub/Seek/Reverse
 
-| Metrika | Naměřeno | Cíl | Status |
-|---|---|---|---|
-| Seek latency min | 11.90 ms | — | ✓ |
-| Seek latency avg | **16.04 ms** | < 20ms | ✓ |
-| Seek latency max | 17.80 ms | < 30ms | ✓ |
-| Deterministický replay (snap1 == snap2) | **true** | YES | ✓ |
-| Nested timelines | funkční | funkční | ✓ |
+| Metrika                                 | Naměřeno     | Cíl     | Status |
+| --------------------------------------- | ------------ | ------- | ------ |
+| Seek latency min                        | 11.90 ms     | —       | ✓      |
+| Seek latency avg                        | **16.04 ms** | < 20ms  | ✓      |
+| Seek latency max                        | 17.80 ms     | < 30ms  | ✓      |
+| Deterministický replay (snap1 == snap2) | **true**     | YES     | ✓      |
+| Nested timelines                        | funkční      | funkční | ✓      |
 
 **Zjištění**: Seek latency je v rozmezí jednoho frame budgetu (~16 ms). Dva nezávislé seeky na stejný timestamp produkují identické stavy (do precision float point-u) → **deterministická replay potvrzena**. Relevantní pro testy, snapshot assertions a budoucí animation engine spolehlivost.
 
 ### Test 3 — Flip Transition (manual Pixi + DOM srovnání)
 
-| Metrika | Naměřeno | Cíl | Status |
-|---|---|---|---|
-| Pixi manual flip setup → 1st frame | 16.50 ms | < 20ms | ✓ |
-| Transition avg frame | 16.66 ms | < 16.7ms | ✓ |
-| Transition max frame | 24.50 ms | < 33ms | ✓ |
-| Smoothness (subjective) | smooth=true | smooth | ✓ |
-| DOM Flip.getState() → setup | 6.40 ms | < 10ms | ✓ |
-| DOM Flip → 1st frame | 19.20 ms | < 20ms | ✓ |
+| Metrika                            | Naměřeno    | Cíl      | Status |
+| ---------------------------------- | ----------- | -------- | ------ |
+| Pixi manual flip setup → 1st frame | 16.50 ms    | < 20ms   | ✓      |
+| Transition avg frame               | 16.66 ms    | < 16.7ms | ✓      |
+| Transition max frame               | 24.50 ms    | < 33ms   | ✓      |
+| Smoothness (subjective)            | smooth=true | smooth   | ✓      |
+| DOM Flip.getState() → setup        | 6.40 ms     | < 10ms   | ✓      |
+| DOM Flip → 1st frame               | 19.20 ms    | < 20ms   | ✓      |
 
 **Zjištění**: Manual flip pattern pro Pixi (snapshot → apply target → tween proxy from snapshot) funguje hladce. Setup latence srovnatelná s DOM Flip (16.5 vs 19.2 ms). Žádný vizuální glitch. Pattern je produkčně použitelný pro Magic Move v M13.
 
@@ -97,6 +99,7 @@ Výsledky v Results overlay (vpravo nahoře) a v DevTools Console jako `[TestX-.
 **Problem**: `Flip.getState()` pracuje s DOM elementy, ne s Pixi grafickými objekty na canvasu. Nelze použít `Flip.from(pixiObjects, ...)`.
 
 **Řešení nalezené v spiku**: Manual flip pattern:
+
 1. Snapshot "from" stav (plain JS objekt)
 2. Okamžitě aplikovat "to" stav na Pixi objekty
 3. `gsap.to(proxy, { fromValues })` s `onUpdate` kopírující na Pixi
@@ -156,6 +159,7 @@ Flip slide transition:
 ## Další krok
 
 **Vrátit se k bodům 1 a 2** (podle instrukce uživatele před měřením):
+
 1. Implikace pro BUILD_PLAN M13 (Magic Move) — nepoužívat GSAP Flip plugin na Pixi. Aktualizovat.
 2. Proxy pattern jako default v M6 DSL compiler — zapracovat do animation agent briefu.
 

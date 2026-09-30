@@ -37,37 +37,37 @@ Výstup: JSON metrik na stdout, debug log na stderr. Node.js v22, žádné brows
 
 ### Scénář 1 — Hot editing (5 klientů, 200 mutací každý)
 
-| Metrika | Naměřeno | Cíl | Status |
-|---|---|---|---|
-| Konvergence | **true** (6/6 klientů) | ✓ | **PASS** |
-| Total mutací | 1000 za 12.4s | 1000 | ✓ |
-| Ops/sec (cluster) | **81 ops/s** | ~100 | ~ (sleep granularity) |
-| Observer latency avg | **0.02 ms** | < 20ms | **PASS** |
-| Observer latency p95 | **0.04 ms** | — | výborně |
-| Observer latency max | **1.55 ms** | — | výborně |
-| Latency samples | 5000 | — | ✓ |
-| Final object count | 49 (ze 50, delete ops) | — | správně |
-| Encoded doc size | **13 117 B** (13 KB) | — | malé |
-| Network in (5 klientů) | 446 545 B, 36 KB/s | — | ✓ |
-| Network out (5 klientů) | 79 187 B, 6.4 KB/s | — | ✓ |
-| Process CPU user | 843 ms / 12.4s = **6.8%** | < 50% | **PASS** |
+| Metrika                 | Naměřeno                  | Cíl    | Status                |
+| ----------------------- | ------------------------- | ------ | --------------------- |
+| Konvergence             | **true** (6/6 klientů)    | ✓      | **PASS**              |
+| Total mutací            | 1000 za 12.4s             | 1000   | ✓                     |
+| Ops/sec (cluster)       | **81 ops/s**              | ~100   | ~ (sleep granularity) |
+| Observer latency avg    | **0.02 ms**               | < 20ms | **PASS**              |
+| Observer latency p95    | **0.04 ms**               | —      | výborně               |
+| Observer latency max    | **1.55 ms**               | —      | výborně               |
+| Latency samples         | 5000                      | —      | ✓                     |
+| Final object count      | 49 (ze 50, delete ops)    | —      | správně               |
+| Encoded doc size        | **13 117 B** (13 KB)      | —      | malé                  |
+| Network in (5 klientů)  | 446 545 B, 36 KB/s        | —      | ✓                     |
+| Network out (5 klientů) | 79 187 B, 6.4 KB/s        | —      | ✓                     |
+| Process CPU user        | 843 ms / 12.4s = **6.8%** | < 50%  | **PASS**              |
 
 **Pozorování**: Observer latency je sub-milisekundová na localhost — v praxi bude LAN latence dominovat (1–5ms), WAN 10–50ms. To je stále pod 20ms budgetem pro lokální deployment.
 
 ### Scénář 2 — Awareness flood (15 peerů × 30 Hz, 30s)
 
-| Metrika | Naměřeno | Cíl | Status |
-|---|---|---|---|
-| Awareness latency avg | **4.49 ms** | < 100ms | **PASS** |
-| Awareness latency p50 | **3.76 ms** | — | výborně |
-| Awareness latency p95 | **8.54 ms** | — | výborně |
-| Awareness latency max | **20.41 ms** | — | ✓ |
-| Latency samples | 653 | — | ✓ |
-| Total awareness sent | 9810 / expected 13500 | — | viz níže |
-| Server CPU est. | **9%** celý process | < 50% | **PASS** |
-| Network in cluster total | 13.97 MB / 465 KB/s | — | viz níže |
-| Network out cluster total | 931 KB / 31 KB/s | — | ✓ |
-| Msgs/s přijatých (server) | ~5137/s | — | benchmark |
+| Metrika                   | Naměřeno              | Cíl     | Status    |
+| ------------------------- | --------------------- | ------- | --------- |
+| Awareness latency avg     | **4.49 ms**           | < 100ms | **PASS**  |
+| Awareness latency p50     | **3.76 ms**           | —       | výborně   |
+| Awareness latency p95     | **8.54 ms**           | —       | výborně   |
+| Awareness latency max     | **20.41 ms**          | —       | ✓         |
+| Latency samples           | 653                   | —       | ✓         |
+| Total awareness sent      | 9810 / expected 13500 | —       | viz níže  |
+| Server CPU est.           | **9%** celý process   | < 50%   | **PASS**  |
+| Network in cluster total  | 13.97 MB / 465 KB/s   | —       | viz níže  |
+| Network out cluster total | 931 KB / 31 KB/s      | —       | ✓         |
+| Msgs/s přijatých (server) | ~5137/s               | —       | benchmark |
 
 **Pozorování k awareness count**: 9810 vs. expected 13500 — difference je způsobena tím, že `setInterval` na Node.js při vysoké zátěži negarantuje přesný timing. ~73% target rate je realistické pro synthetic Node client. Produkční browser klienti budou mít jiné charakteristiky. Všechny odeslané updates ale dorazily (0 dropped).
 
@@ -75,17 +75,17 @@ Výstup: JSON metrik na stdout, debug log na stderr. Node.js v22, žádné brows
 
 ### Scénář 3 — Document growth (50 slidů × 20 objektů = 1000 objektů)
 
-| Metrika | Naměřeno | Cíl | Status |
-|---|---|---|---|
-| Build time (generator) | **23–25 ms** | — | výborně |
-| Encoded state size | **233 864 B (228.4 KB)** | < 1 MB | **PASS** |
-| Avg initial sync time | **18 ms** | < 3000ms | **PASS** |
-| Min / Max sync time | 11 ms / 23 ms | — | výborně |
-| Konvergence (5 klientů) | **true** (5/5) | ✓ | **PASS** |
-| Generator bytes out | 234 012 B | ≈ doc size | ✓ |
-| Per-client sync bytes | ~233 912 B | — | ✓ |
-| Heap before/after | 22 MB → 49.5 MB | — | +27.5 MB |
-| RSS | 263.8 MB | — | Node overhead |
+| Metrika                 | Naměřeno                 | Cíl        | Status        |
+| ----------------------- | ------------------------ | ---------- | ------------- |
+| Build time (generator)  | **23–25 ms**             | —          | výborně       |
+| Encoded state size      | **233 864 B (228.4 KB)** | < 1 MB     | **PASS**      |
+| Avg initial sync time   | **18 ms**                | < 3000ms   | **PASS**      |
+| Min / Max sync time     | 11 ms / 23 ms            | —          | výborně       |
+| Konvergence (5 klientů) | **true** (5/5)           | ✓          | **PASS**      |
+| Generator bytes out     | 234 012 B                | ≈ doc size | ✓             |
+| Per-client sync bytes   | ~233 912 B               | —          | ✓             |
+| Heap before/after       | 22 MB → 49.5 MB          | —          | +27.5 MB      |
+| RSS                     | 263.8 MB                 | —          | Node overhead |
 
 **Pozorování**: 228 KB pro 1000 objektů s text content — to je **0.23 KB/objekt**. Pro typický deck (5 slidů × 10 objektů = 50 objektů) bude doc size ~12 KB. Velmi přijatelné. Sync trvá 11–23ms i pro velký dok — Hocuspocus okamžitě streamuje state vector diff.
 
@@ -98,9 +98,11 @@ Výstup: JSON metrik na stdout, debug log na stderr. Node.js v22, žádné brows
 **Problem**: `@hocuspocus/provider` targettuje browser a nelze přímo použít v Node.js bez DOM shims. `y-websocket` klient (`WebsocketProvider`) má jiný wire format (nezačíná document name varstring).
 
 **Zjištění**: Hocuspocus wire format je:
+
 ```
 [varString documentName] [varUint messageType] [...payload]
 ```
+
 kde payload pro Sync obsahuje sub-type byte (syncStep1/2/update) a pak varUint8Array data. Awareness payload je přímo varUint8Array.
 
 **Dopad na M4**: Pro server-side Yjs klienta (AI generování v M20) bude nutné implementovat Hocuspocus-kompatibilní Node klient. Viz `src/yjsClient.ts` v tomto spiku jako vzor. Nebo použít `@hocuspocus/server`'s `openDirectConnection()` API pro in-process access bez WebSocket.
@@ -136,10 +138,14 @@ Extension hook `onStoreDocument` se volá při flush, ne při každém Yjs updat
 3. **Document name = deck ID**: URL pattern `ws://host/hocuspocus/DECK_UUID` — Hocuspocus extrahuje document name z URL path, takže jedna instance serveru obsluhuje N decků simultánně.
 
 4. **Server-side Yjs access**: Pro AI generování (M20) nepoužívat WebSocket. Místo toho:
+
    ```ts
-   const doc = await server.loadDocument('deck-uuid');
-   doc.transact(() => { /* AI mutations */ }, 'ai-agent');
+   const doc = await server.loadDocument('deck-uuid')
+   doc.transact(() => {
+     /* AI mutations */
+   }, 'ai-agent')
    ```
+
    Nebo `server.openDirectConnection(docName, options)` pro full connection lifecycle.
 
 5. **Debounce persistence**: Defaultní Hocuspocus debounce je 2000ms před `onStoreDocument`. Pro produkci zvýšit na 5000ms — frequent edits nepotřebují okamžitou persistenci, ale při disconnect musí server flush okamžitě (`onDisconnect` hook).
@@ -153,9 +159,11 @@ Extension hook `onStoreDocument` se volá při flush, ne při každém Yjs updat
 1. **Throttle awareness na klientovi, ne na serveru**: Browser klient by měl throttlovat cursor updates na max 20 Hz (50ms interval), ne 30 Hz. Snižuje awareness traffic o 33% bez znatelného dopadu na UX.
 
 2. **Payload size budget**: Awareness state by měl obsahovat pouze:
+
    ```ts
    { cursor: {x, y, slideId}, selection: string[], userId: string }
    ```
+
    Tyto 4 pole dávají ~80–120 bytes per update. Nepřidávat do awareness nic, co patří do Y.Doc (selected properties, edit mode atd.).
 
 3. **Awareness timeout je 30s**: Hocuspocus/Yjs automaticky odstraní awareness state klienta po 30s bez update. Při network reconnect je nutné okamžitě re-broadcast awareness.
@@ -183,6 +191,7 @@ Extension hook `onStoreDocument` se volá při flush, ne při každém Yjs updat
 Pokud existuje Spike C (např. Postgres persistence benchmark nebo Fastify integration), pokračovat. Jinak přejít na **M0 — monorepo setup** s finálním stackem.
 
 Konkrétní akce před M4:
+
 - Vytvořit `packages/slide-model/` s Y.Doc schema (Y.Array slides, Y.Map objects)
 - Napsat `registerObjectType` registry s minimálními fields (type, id, x, y, w, h, fill)
 - Nastavit Hocuspocus jako Fastify plugin s database extension

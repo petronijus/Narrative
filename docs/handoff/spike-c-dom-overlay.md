@@ -10,19 +10,19 @@ Lokace spike: `spikes/spike-c-dom-overlay/`
 
 ## Naměřené metriky
 
-| Scénář | Metrika | Hodnota | Kritérium | Výsledek |
-|--------|---------|---------|-----------|----------|
-| C1 Pan/Zoom (5 overlays) | Avg jitter | 0.000 px | < 1 px | PASS |
-| C1 Pan/Zoom (5 overlays) | Max jitter | 0.000 px | < 3 px | PASS |
-| C1 Pan/Zoom (5 overlays) | DOM update avg | 0.032 ms | — | — |
-| C1 Pan/Zoom (5 overlays) | Sample count | 238 | — | — |
-| C2 Text edit handoff | Edit mode enter | true | musí vstoupit | PASS |
-| C2 Text edit handoff | Commit on ESC | true | musí commitovat | PASS |
-| C2 Text edit handoff | Overlay pointer stop | true | žádný event leak | PASS |
-| C3 50 overlays perf | FPS | 60 fps | >= 60 fps | PASS |
-| C3 50 overlays perf | DOM update avg | 0.093 ms | < 4 ms | PASS |
-| C3 50 overlays perf | DOM update max | 0.300 ms | < 8 ms | PASS |
-| C3 50 overlays perf | DOM update p95 | 0.200 ms | < 4 ms | PASS |
+| Scénář                   | Metrika              | Hodnota  | Kritérium        | Výsledek |
+| ------------------------ | -------------------- | -------- | ---------------- | -------- |
+| C1 Pan/Zoom (5 overlays) | Avg jitter           | 0.000 px | < 1 px           | PASS     |
+| C1 Pan/Zoom (5 overlays) | Max jitter           | 0.000 px | < 3 px           | PASS     |
+| C1 Pan/Zoom (5 overlays) | DOM update avg       | 0.032 ms | —                | —        |
+| C1 Pan/Zoom (5 overlays) | Sample count         | 238      | —                | —        |
+| C2 Text edit handoff     | Edit mode enter      | true     | musí vstoupit    | PASS     |
+| C2 Text edit handoff     | Commit on ESC        | true     | musí commitovat  | PASS     |
+| C2 Text edit handoff     | Overlay pointer stop | true     | žádný event leak | PASS     |
+| C3 50 overlays perf      | FPS                  | 60 fps   | >= 60 fps        | PASS     |
+| C3 50 overlays perf      | DOM update avg       | 0.093 ms | < 4 ms           | PASS     |
+| C3 50 overlays perf      | DOM update max       | 0.300 ms | < 8 ms           | PASS     |
+| C3 50 overlays perf      | DOM update p95       | 0.200 ms | < 4 ms           | PASS     |
 
 Headless Chromium 1600×900, DPR=1, Windows 11, CPU: testovací stroj.
 
@@ -35,11 +35,12 @@ Headless Chromium 1600×900, DPR=1, Windows 11, CPU: testovací stroj.
 Pixi v8 s `resolution: window.devicePixelRatio, autoDensity: true` interně škáluje `app.stage` hodnotou DPR. `container.toGlobal(new Point(0,0))` vrací souřadnice v _physical_ pixelech (Pixi render space), nikoliv v CSS logical pixelech. CSS `translate()` pracuje v logical pixelech.
 
 **Správná formula:**
+
 ```ts
-const DPR = window.devicePixelRatio || 1;
-const global = container.toGlobal(new Point(0, 0));
-const cssX = global.x / DPR;
-const cssY = global.y / DPR;
+const DPR = window.devicePixelRatio || 1
+const global = container.toGlobal(new Point(0, 0))
+const cssX = global.x / DPR
+const cssY = global.y / DPR
 ```
 
 Bez tohoto dělení vzniká 2× (nebo DPR×) offset na HiDPI displejích. Headless testy (DPR=1) to neodhalí — nutno ověřit na reálném hardware.
@@ -49,6 +50,7 @@ Alternativní přístup: matrix-based transform přímo z `viewport.worldTransfo
 ### 2. Jitter = 0 px, ale kritická podmínka: viewport driver a syncOverlays musí být ve stejném RAF ticku
 
 Původní implementace používala:
+
 - Animaci viewportu: vlastní `requestAnimationFrame` smyčka
 - Jitter measurement: `setInterval(16ms)`
 - DOM sync: třetí RAF smyčka (main loop)
@@ -56,6 +58,7 @@ Původní implementace používala:
 Výsledek: naměřený jitter 12.8 px avg, 98 px max — kompletně způsobený timing driftem mezi timery, ne skutečným positioning bugem.
 
 **Správná architektura:** viewport update, `syncOverlays()`, a jitter measurement musí probíhat v jednom RAF ticku, ve správném pořadí:
+
 ```
 RAF tick:
   1. Update viewport (vpX, vpY, vpScale → applyViewport)
@@ -68,6 +71,7 @@ Při tomto pořadí je jitter skutečně 0 px (subpixel rounding noise). `getBou
 ### 3. Event routing: `pointer-events: none` by default, `auto` jen pro aktivní overlay
 
 Pattern funguje spolehlivě:
+
 - `#overlay-layer`: `pointer-events: none` — propadá vše na canvas
 - `.overlay-item` v idle: `pointer-events: none`
 - `.overlay-item.edit-mode`: `pointer-events: auto` — zachytí typing, stopPropagation pro pointerdown
@@ -101,26 +105,26 @@ Reflow z `getBoundingClientRect()` v jitter measurement nebude v produkci nutný
 ```ts
 // Registrace
 interface OverlayOptions {
-  worldWidth: number;   // Pixi world units
-  worldHeight: number;
-  zIndex?: number;
+  worldWidth: number // Pixi world units
+  worldHeight: number
+  zIndex?: number
 }
 
 function registerOverlay(
-  objectId: string,           // Yjs object ID
-  pixiContainer: Container,   // tracked Pixi object
-  domElement: HTMLElement,    // caller vytváří element
+  objectId: string, // Yjs object ID
+  pixiContainer: Container, // tracked Pixi object
+  domElement: HTMLElement, // caller vytváří element
   opts: OverlayOptions,
-): OverlayHandle;
+): OverlayHandle
 
 // Zrušení
-function unregisterOverlay(handle: OverlayHandle): void;
+function unregisterOverlay(handle: OverlayHandle): void
 
 // Přepnutí edit módu (pointer-events)
-function setOverlayInteractive(handle: OverlayHandle, interactive: boolean): void;
+function setOverlayInteractive(handle: OverlayHandle, interactive: boolean): void
 
 // Aktualizace rozměrů po změně textu/obsahu
-function updateOverlaySize(handle: OverlayHandle, worldWidth: number, worldHeight: number): void;
+function updateOverlaySize(handle: OverlayHandle, worldWidth: number, worldHeight: number): void
 ```
 
 ### Coordinate sync strategie
@@ -152,11 +156,13 @@ Při `window` resize může DPR změnit (přesun okna mezi monitory) — composi
 ## Doporučení pro mixed-target animation pipeline (M6)
 
 DOM overlay vrstva potřebuje přijímat GSAP tweeny pro:
+
 - Pozici (ale tu řídí coordinator sync z Pixi world coords, ne přímý GSAP na DOM)
 - Opacity / filter efekty overlay elementu
 - Font-size při animated zoom
 
 Doporučení: **GSAP nesmí přímo animovat `left`/`top`/`transform` overlay elementů** — to by kolidovalo s coordinate sync z Pixi. GSAP může animovat:
+
 - `opacity` overlay elementu (fade in/out pro edit mode transition)
 - `font-size` textarea při zoom animaci
 - CSS custom properties pro efekty
@@ -179,6 +185,7 @@ node run-tests.mjs
 ```
 
 Manuální smoke test (Scénář 2 — text editing):
+
 1. `npm run dev` → otevři prohlížeč na `http://localhost:5177`
 2. Klikni "Test 2: Text Edit Handoff"
 3. Double-click na text ve scéně → textarea se otevře, kurzor aktivní
@@ -192,6 +199,7 @@ Manuální smoke test (Scénář 2 — text editing):
 ## Další krok
 
 Všechny tři spiky jsou GO:
+
 - Spike A (GSAP + Pixi performance): GO
 - Spike B (Yjs scale): GO
 - Spike C (DOM overlay): GO
