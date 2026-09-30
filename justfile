@@ -37,8 +37,8 @@ doctor:
 
 # ── fast lane (~1 min, no dev stack) ─────────────────────────────────────
 
-# Formatting, types, lint, every unit test (contract, parity, eval replays) and the capability manifest
-check: fmt-check typecheck lint test capabilities-check
+# Formatting, types, lint, the docs check, every unit test (contract, parity, eval replays) and the capability manifest
+check: fmt-check typecheck lint lint-docs test capabilities-check
 
 # Format every file in place (ESLint --fix + Prettier; tools/dev/format.sh)
 fmt:
@@ -55,6 +55,10 @@ typecheck:
 # ESLint in every package (incl. the one-door rule)
 lint:
     NODE_OPTIONS="{{ eslint_node_options }}" pnpm -r lint
+
+# Docs name only recipes, files, headings and imports that exist
+lint-docs:
+    tools/dev/docs-check.py
 
 # Unit tests; `just test server web` (workspace filters) for some packages
 test *filters:
@@ -98,7 +102,7 @@ eval *args: _stack
     eval "$(tools/dev/playwright-env.sh)"
     exec pnpm agent:eval "$@"
 
-# Load tests; compares with tests/load/baselines.json
+# Load tests; warns on drift from tests/load/baselines.json when that local file exists
 load:
     pnpm load:all
 

@@ -9,7 +9,7 @@ something's broken — file an issue, don't paper over it.
 - **Node.js ≥ 22.18 built with TypeScript support** (`node -v`; `engines` in `package.json` since A2.1, 2026-09-28 — `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default from 22.18; was ≥ 22). The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
 - **pnpm 9.15.4** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.4 --activate`
 - **Docker** with the Compose plugin (`docker compose version`)
-- **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). For secrets: **sops, age** and the 1Password CLI `op`.
+- **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). **python3 ≥ 3.9** for the Claude Code hooks and the docs check (standard library only). For secrets: **sops, age** and the 1Password CLI `op`.
 
 `just doctor` checks all of this and prints the fix for anything missing.
 
@@ -180,14 +180,15 @@ Dev notes:
 
 `just` lists every recipe; the ones you use daily:
 
-| Recipe            | What it does                                                |
-| ----------------- | ----------------------------------------------------------- |
-| `just services`   | the docker services (Postgres, MinIO, imgproxy, Redis)      |
-| `just dev`        | web :5173 + server :3001/:3002 + video worker               |
-| `just check`      | fast lane, ~1 min: formatting, types, lint, every unit test |
-| `just test [pkg]` | unit tests, all or one package (`just test server`)         |
-| `just e2e [args]` | Playwright against the running dev stack                    |
-| `just ci`         | `check` + `integration` + `e2e`                             |
+| Recipe            | What it does                                                                                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just services`   | the docker services (Postgres, MinIO, imgproxy, Redis)                                                                                                                                                          |
+| `just dev`        | web :5173 + server :3001/:3002 + video worker                                                                                                                                                                   |
+| `just check`      | fast lane, ~1 min: formatting, types, lint, docs check, every unit test                                                                                                                                         |
+| `just lint-docs`  | `tools/dev/docs-check.py`: every `just` recipe, relative link, heading anchor, repo path in inline code and `@import` the docs name exists; AGENTS.md and CLAUDE.md within 200 lines (also the pre-commit hook) |
+| `just test [pkg]` | unit tests, all or one package (`just test server`)                                                                                                                                                             |
+| `just e2e [args]` | Playwright against the running dev stack                                                                                                                                                                        |
+| `just ci`         | `check` + `integration` + `e2e`                                                                                                                                                                                 |
 
 AGENTS.md → "When to run what" says which further lanes a change needs
 (`size`, `load`, `lighthouse`, `eval`, `pptx-roundtrip`, `mutate`).
@@ -204,7 +205,7 @@ Chromium for it (`just e2e` / `just eval` use the system Chrome, video off).
 
 | Hook       | Runs                                                                                                                                                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pre-commit | `tools/dev/format.sh` on the staged files (ESLint --fix + Prettier), re-staged; `gitleaks` on the staged diff                                                                                                                                           |
+| pre-commit | `tools/dev/format.sh` on the staged files (ESLint --fix + Prettier), re-staged; `gitleaks` on the staged diff; the docs check (`tools/dev/docs-check.py`, every commit: a rename breaks docs the commit never touched)                                  |
 | commit-msg | Conventional Commits (`tools/dev/commit-msg.sh`); `Merge…` and `autosync(…)` pass                                                                                                                                                                       |
 | pre-push   | `just check` for the pushed content unless it passed before (`tools/dev/check-cache.sh`); skipped for a push that adds no commit (a tag) and for autosync-only pushes (the ai-config session-end autosync pushes work in progress within a 25 s budget) |
 
@@ -238,6 +239,7 @@ already checked. Subagents in
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
 - **`minio-init` cannot pull `minio/mc`** — MinIO's images are gone from Docker Hub and quay (pull access denied, 2026-09). `just services` then creates the bucket with any `minio/mc` image already on the machine; with none at all, create `narrative-media` with another S3 client or a cached image from another machine.
 - **Two compose projects (`infra-*` and `narrative-*` containers)** — the compose file has been named `narrative` since 2026-08; containers started before that belong to a project called `infra`, with its own volumes, and hold the ports `just services` needs. Back up what you need, then `cd infra && docker compose -p infra --env-file ../.env down -v` (the Linux desktop was moved on 2026-09-30; its old data is in `backups/2026-09-30-infra-project/`, gitignored).
+- **`docs-check` names a path or recipe that is right in context** (another repo's file, a file a plan will create, a file that was moved) — write the reference so it cannot be misread (a moved file: its old place in plain text), or put `<!-- docs-check: ignore -->` on that line (above a code fence: the whole block). Docs that record history (handoffs, finished plans) are listed in `EXCLUDE` in `tools/dev/docs-check.py`; never exclude a living doc to make the check pass.
 - **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
 - **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. Install Google Chrome and use `just e2e` / `just eval`, which switch to it by themselves (`tools/dev/playwright-env.sh`); by hand:
   ```bash

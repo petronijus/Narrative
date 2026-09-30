@@ -105,8 +105,10 @@ Enumerate with `ls *.md docs/*.md docs/*/*.md` plus
 - **docs/capabilities.md** + `packages/commands/capabilities.json` — generated,
   never hand-edited (the edit guard refuses it): when a capability changed,
   check both were regenerated with `just capabilities` in the same change.
-- **docs/audits/\*.md**, **docs/plans/\*.md**, **docs/storage.md** — living topic
-  docs; correct in place.
+- **docs/plans/\*.md**, **docs/storage.md** — living topic docs; correct in
+  place. A plan that has shipped is a record: add it to `EXCLUDE` in
+  `tools/dev/docs-check.py` (with the handoff that closed it) instead of
+  editing it. **docs/audits/** notes are dated records.
 - **docs/mcp.md** (since agentic A1) — the MCP server reference: connecting,
   auth, OAuth, env vars, tools, confirmation, awareness privacy. Update with
   any change under `apps/server/src/mcp/`, the confirmation flow or the
@@ -137,9 +139,17 @@ in the ledger and let the user change them.
 - **Evidence, not invention** — quote the real error string, header, image tag,
   commit hash or measured number. Claims you could not verify are marked as
   unverified, not asserted. If a fix was never reproduced, the note says so.
-- **Don't rewrite history** — dated handoff notes are a record. Correct living
+- **Don't rewrite history** — dated handoff notes are a record (the docs
+  check skips them: `EXCLUDE` in `tools/dev/docs-check.py`). Correct living
   docs in place, preserving interesting superseded facts as
   "(was X, now Y as of <date>)".
+- **Verify before you report**: every command exists (`just --list`,
+  scripts), every path exists, every version matches the build files. Then
+  run `just lint-docs`: it proves the recipes, links, anchors, repo paths and
+  `@imports` the docs name; it must pass. A moved or deleted file named as
+  history ("moved from …") goes in plain text, not inline code; a reference
+  that is right in context gets `<!-- docs-check: ignore -->`. The check
+  cannot judge whether the prose is true; that part is yours.
 - **A failure is documentation too** — a notable dead-end, a wrong diagnosis or
   an environment trap gets written down so it isn't re-derived. The trap that
   cost an hour is worth more words than the fix that took five minutes.
@@ -154,6 +164,6 @@ in the ledger and let the user change them.
 ## 3. Output
 
 A tight ledger: each doc changed with a one-line reason, each new note created,
-and anything deliberately left alone with why. Flag any doc that claims
+whether `just lint-docs` passes, and anything deliberately left alone with why. Flag any doc that claims
 something you found to be false but could not fix without changing behaviour.
 End with the honest "where we are / what's next" summary the user asked for.

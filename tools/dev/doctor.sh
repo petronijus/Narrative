@@ -48,6 +48,12 @@ echo "Dev tools"
 for t in just lefthook gitleaks; do
   has "$t" && ok "$t" || bad "$t missing" "$(install_hint "$t")"
 done
+# The Claude Code hooks and the docs check (tools/dev/docs-check.py) run on it.
+if has python3 && python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+  ok "python3 $(python3 -c 'import platform; print(platform.python_version())')"
+else
+  bad "python3 ≥ 3.9 missing (Claude Code hooks, docs check)" "$(install_hint python3)"
+fi
 # Secrets: SOPS + age, key from 1Password (scripts/secrets-decrypt.sh).
 for t in sops age op; do
   has "$t" && ok "$t" || warn "$t missing (only for decrypting secrets)" "$(install_hint "$t")"

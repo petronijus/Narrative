@@ -42,7 +42,7 @@ Feature milestones before that:
 - Node.js >= 22.18 built with TypeScript support (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28). Ubuntu 26.04's own `nodejs` 22.22.1 lacks it — see [SETUP.md](./SETUP.md) "Common first-run failures" (2026-09-29)
 - pnpm 9.15.4 (`packageManager`)
 - Docker (for local Postgres)
-- just, lefthook, gitleaks (task runner and git hooks) — `just doctor` checks the whole toolchain
+- just, lefthook, gitleaks (task runner and git hooks), python3 ≥ 3.9 (the Claude Code hooks and the docs check) — `just doctor` checks the whole toolchain
 
 ## Setup
 
@@ -103,7 +103,7 @@ Everyday development):
 
 ```bash
 just dev          # web + server + video-worker
-just check        # fast lane, ~1 min: formatting, types, lint, unit tests
+just check        # fast lane, ~1 min: formatting, types, lint, docs, unit tests
 just test server  # one package's unit tests
 just e2e          # Playwright against the dev stack
 just ci           # check + integration + e2e

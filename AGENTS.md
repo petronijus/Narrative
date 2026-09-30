@@ -53,18 +53,18 @@ the "Where we stand" section of `docs/plans/a2-extraction.md`.
 wrap the pnpm scripts and add what the machine needs (the tsx loader for
 ESLint on Ubuntu's Node, the system Chrome for Playwright on Ubuntu 26.04).
 
-| Command                                  | What it does                                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `just setup`                             | install dependencies and git hooks, check the toolchain                                                                |
-| `just check`                             | fast lane (~1 min): formatting, types, lint, every unit test (contract, parity, eval replays), the capability manifest |
-| `just ci`                                | full gate: `check` + `integration` + `e2e` (needs `just dev`)                                                          |
-| `just fmt`                               | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                     |
-| `just test [pkg…]`                       | unit tests, all or some workspace packages (`just test server web`)                                                    |
-| `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                            |
-| `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                       |
-| `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                            |
-| `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                          |
-| `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                |
+| Command                                  | What it does                                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `just setup`                             | install dependencies and git hooks, check the toolchain                                                                            |
+| `just check`                             | fast lane (~1 min): formatting, types, lint, docs check, every unit test (contract, parity, eval replays), the capability manifest |
+| `just ci`                                | full gate: `check` + `integration` + `e2e` (needs `just dev`)                                                                      |
+| `just fmt`                               | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                                 |
+| `just test [pkg…]`                       | unit tests, all or some workspace packages (`just test server web`)                                                                |
+| `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                        |
+| `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                   |
+| `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                                        |
+| `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                                      |
+| `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                            |
 
 There is no hosted CI. `just ci` is the CI, run on the Linux desktop, the
 MacBook or the Omarchy desktop; nothing gates a push but the pre-push hook
@@ -124,7 +124,7 @@ packages/animation  animation DSL and GSAP compiler
 claude-plugin/      the generated `narrative` Claude Code plugin
 tests/              agent eval (agent-eval/), load tests, fixtures
 infra/              docker compose, deploy and build scripts
-tools/dev/          formatter, git hook scripts, toolchain doctor
+tools/dev/          formatter, docs check, git hook scripts, toolchain doctor
 ```
 
 ## Conventions
@@ -138,7 +138,8 @@ tools/dev/          formatter, git hook scripts, toolchain doctor
 - **Commit only when Petr says so** ("commit", "push", "ship", "merge",
   "hotovo", "nasaď"); approval to build something is not approval to commit.
 - Toolchain: Node ≥ 22.18, pnpm 9.15.4 (`packageManager`), Docker with
-  compose, xmllint (PPTX schema tests). `just doctor` checks them.
+  compose, xmllint (PPTX schema tests), python3 ≥ 3.9 (hooks, docs check).
+  `just doctor` checks them.
 - Formatting is automatic (pre-commit hook): Prettier (`.prettierrc`) and
   `eslint --fix` for TypeScript.
 - **Versions**: git tag = every package version = GHCR image tag =
