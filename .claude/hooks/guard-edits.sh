@@ -9,11 +9,25 @@
 # Piping a secret from 1Password into a file outside the repo for a command
 # to consume (`op read … > "$tmp/key.p8"`) stays allowed: nothing is printed.
 # tool_paths.py resolves which files a call writes or reads, including shell
-# redirections, sed -i, tee, cp/mv and heredocs; its docstring has the limits.
+# redirections, sed -i, tee, cp/mv, heredocs, wrappers (`sudo -u x cat …`) and
+# recursive searches (`grep -r`, `rg`, `find -exec cat`); its docstring has the
+# limits. If it fails, the call is denied: a guard that cannot read a command
+# must not wave it through.
 set -uo pipefail
 
 root="${CLAUDE_PROJECT_DIR:?}"
 input="$(cat)"
+
+deny_json() {
+  python3 -c 'import json, sys
+print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+      "permissionDecision": sys.argv[1], "permissionDecisionReason": sys.argv[2]}}))' "$@"
+}
+
+if ! paths="$(printf '%s' "$input" | python3 "$(dirname "$0")/tool_paths.py" 2>/dev/null)"; then
+  deny_json deny "guard-edits.sh could not parse this call (tool_paths.py failed); rephrase it."
+  exit 0
+fi
 
 verdict="" reason=""
 # The most restrictive answer wins: deny > ask.
@@ -42,7 +56,7 @@ while IFS=$'\t' read -r kind path; do
     case "$kind" in
       E) decide deny "$rel holds key material. Secrets live in 1Password and SOPS and never pass through the model." ;;
       W) $inside && decide deny "$rel holds key material. Materialise it with \`scripts/secrets-decrypt.sh [dev|prod]\` (SOPS, key from 1Password); change it with \`scripts/secrets-edit.sh\`." ;;
-      R) decide deny "$rel holds key material; printing it would put the secret into the conversation. Let the command that needs it read it (\`source\`, \`--env-file\`, \`op read\` piped into it)." ;;
+      R) decide deny "$rel holds key material; printing it would put the secret into the conversation. Let the command that needs it read it (\`source\`, \`--env-file\`, \`op read\` piped into it). A recursive search reaches it too: use \`rg\` or \`git grep\` (they skip gitignored and hidden files) or name the paths you mean." ;;
     esac
     continue
   fi
@@ -70,7 +84,7 @@ while IFS=$'\t' read -r kind path; do
         decide ask "$rel is an existing database migration; an applied one must never change (apps/server/drizzle/README.md). Write a new migration instead."
       fi ;;
   esac
-done < <(printf '%s' "$input" | python3 "$(dirname "$0")/tool_paths.py")
+done <<<"$paths"
 
 # Prints every variable of .env resolved into the compose file: the same
 # secrets as `cat .env`, which tool_paths.py cannot see through.
@@ -81,6 +95,4 @@ if [[ "$shell_command" =~ docker[[:space:]-]+compose.*[[:space:]]config([[:space
 fi
 
 [[ -n "$verdict" ]] || exit 0
-python3 -c 'import json, sys
-print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-      "permissionDecision": sys.argv[1], "permissionDecisionReason": sys.argv[2]}}))' "$verdict" "$reason"
+deny_json "$verdict" "$reason"

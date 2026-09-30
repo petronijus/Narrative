@@ -14,7 +14,9 @@ is yours.
     generated files (`dist/`, the capability manifest, the plugin, eval
     recordings) is refused — each refusal names the recipe that regenerates
     it — and so is a shell command that prints key material (`cat .env`, a
-    resolved `compose config`); changing an existing database migration asks
+    resolved `compose config`), also when wrapped (`sudo -u x cat …`) or
+    reached by a recursive search (`grep -r`; use `rg` or `git grep`, which
+    skip gitignored files); a call the guard cannot parse is denied; changing an existing database migration asks
     first;
   - when you finish a turn whose content (code, config and docs) has not passed `just check`
     before, it runs (~1 min; `tools/dev/check-cache.sh` remembers green
