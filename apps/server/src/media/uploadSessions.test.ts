@@ -21,7 +21,7 @@ describe('upload sessions', () => {
     const sessions = createUploadSessionService(store, { isOwnerAllowed: async () => true })
     const { token, expiresAt } = await sessions.issue({
       userSub: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       sizeBytes: 1024,
       kind: 'image',
     })
@@ -38,8 +38,18 @@ describe('upload sessions', () => {
       isOwnerAllowed: async () => true,
       now: c.now,
     })
-    const a = await sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' })
-    const b = await sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' })
+    const a = await sessions.issue({
+      userSub: 'u1',
+      owner: { deckId: 'd1' },
+      sizeBytes: 1024,
+      kind: 'image',
+    })
+    const b = await sessions.issue({
+      userSub: 'u1',
+      owner: { deckId: 'd1' },
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     const sb = (await sessions.verify(b.token))!
     expect(await sessions.claim(sb, 'upload-b')).toBe(true)
     c.advance(UPLOAD_SESSION_TTL_MS + 1)
@@ -57,7 +67,7 @@ describe('upload sessions', () => {
     })
     const { token } = await sessions.issue({
       userSub: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       sizeBytes: 1024,
       kind: 'image',
     })
@@ -67,7 +77,7 @@ describe('upload sessions', () => {
 
     const late = await sessions.issue({
       userSub: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       sizeBytes: 1024,
       kind: 'image',
     })
@@ -85,9 +95,9 @@ describe('upload sessions', () => {
     })
     expect(await sessions.verify('nus_nope')).toBeNull()
     expect(await sessions.verify(`nus_${'A'.repeat(43)}`)).toBeNull()
-    await sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' })
+    await sessions.issue({ userSub: 'u1', owner: { deckId: 'd1' }, sizeBytes: 1024, kind: 'image' })
     c.advance(UPLOAD_SESSION_TTL_MS + 25 * 60 * 60 * 1000)
-    await sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' })
+    await sessions.issue({ userSub: 'u1', owner: { deckId: 'd1' }, sizeBytes: 1024, kind: 'image' })
     expect(store.rows).toHaveLength(1)
   })
 
@@ -109,7 +119,7 @@ describe('upload sessions', () => {
     })
     const { token } = await sessions.issue({
       userSub: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       sizeBytes: 1024,
       kind: 'image',
     })
@@ -124,25 +134,30 @@ describe('upload sessions', () => {
     const sessions = createUploadSessionService(store, { isOwnerAllowed: async () => true })
     await sessions.issue({
       userSub: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       credentialKey: 'token:t1',
       sizeBytes: 1024,
       kind: 'image',
     })
     expect(store.rows[0]!.credentialKey).toBe('token:t1')
     for (let i = 1; i < MAX_OPEN_UPLOAD_SESSIONS; i++) {
-      await sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' })
+      await sessions.issue({
+        userSub: 'u1',
+        owner: { deckId: 'd1' },
+        sizeBytes: 1024,
+        kind: 'image',
+      })
     }
     await expect(
-      sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' }),
+      sessions.issue({ userSub: 'u1', owner: { deckId: 'd1' }, sizeBytes: 1024, kind: 'image' }),
     ).rejects.toBeInstanceOf(UploadSessionLimitError)
     // Another user is not affected; a used session no longer counts.
     await expect(
-      sessions.issue({ userSub: 'u2', deckId: 'd1', sizeBytes: 1024, kind: 'image' }),
+      sessions.issue({ userSub: 'u2', owner: { deckId: 'd1' }, sizeBytes: 1024, kind: 'image' }),
     ).resolves.toBeDefined()
     store.rows[0]!.uploadId = 'used'
     await expect(
-      sessions.issue({ userSub: 'u1', deckId: 'd1', sizeBytes: 1024, kind: 'image' }),
+      sessions.issue({ userSub: 'u1', owner: { deckId: 'd1' }, sizeBytes: 1024, kind: 'image' }),
     ).resolves.toBeDefined()
   })
 })

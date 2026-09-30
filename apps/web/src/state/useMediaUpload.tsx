@@ -31,7 +31,14 @@
  * Auth: tus.Upload runs with `withCredentials: true` so the
  *   narrative_session HttpOnly cookie is carried on every PATCH.
  * Endpoint: VITE_API_URL/api/uploads (tus protocol)
- * Metadata: deckId, filename, mimetype, width?, height? (tus-js-client encodes as base64)
+ * Metadata: deckId (or componentId), filename, content-type, width?, height?
+ *   (tus-js-client encodes as base64) — see buildUploadMetadata.
+ *
+ * Owner (A2.12b): the provider uploads into a deck (`deckId`, DeckShell) or
+ * into a component master (`componentId`, ComponentMasterEditor). A master's
+ * pictures and videos belong to the component — the server stores them under
+ * components/<id>/ and lets only the owner of its folder read them; fonts
+ * belong to the folder and are refused for a component.
  *
  * Max file size: 500 MB for video (enforced server-side; drop zone restricts client-side).
  */
@@ -48,6 +55,9 @@ import {
 } from 'react'
 import * as tus from 'tus-js-client'
 import { nanoid } from 'nanoid'
+import { buildUploadMetadata, type MediaUploadOwner } from './uploadMetadata.js'
+
+export type { MediaUploadOwner } from './uploadMetadata.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,12 +114,22 @@ const UPLOAD_ENDPOINT = `${API_URL}/api/uploads`
 const VIDEO_MAX_BYTES = 500 * 1024 * 1024 // 500 MB
 const TRANSCODE_POLL_INTERVAL_MS = 2_000
 
-interface MediaUploadProviderProps {
-  deckId: string
-  children: ReactNode
-}
+type MediaUploadProviderProps = (
+  | { deckId: string; componentId?: never }
+  | { componentId: string; deckId?: never }
+) & { children: ReactNode }
 
-export function MediaUploadProvider({ deckId, children }: MediaUploadProviderProps) {
+export function MediaUploadProvider(props: MediaUploadProviderProps) {
+  const { children } = props
+  const ownerOfProps: MediaUploadOwner =
+    props.componentId !== undefined ? { componentId: props.componentId } : { deckId: props.deckId }
+  // Stable across renders for the same owner (the callbacks below key on it).
+  const ownerKey =
+    'componentId' in ownerOfProps
+      ? `component:${ownerOfProps.componentId}`
+      : `deck:${ownerOfProps.deckId}`
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- ownerKey identifies ownerOfProps
+  const owner = useMemo<MediaUploadOwner>(() => ownerOfProps, [ownerKey])
   const [uploads, setUploads] = useState<UploadEntry[]>([])
   // Synchronous mirror of `uploads` — needed because setUploads runs its updater
   // asynchronously (and twice in Strict Mode). Consumers that need a definitive
@@ -264,13 +284,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
     file: File,
     dims: { width?: number; height?: number } = {},
   ) {
-    const metadata: Record<string, string> = {
-      deckId,
-      filename: file.name,
-      'content-type': file.type,
-    }
-    if (dims.width !== undefined) metadata['width'] = String(dims.width)
-    if (dims.height !== undefined) metadata['height'] = String(dims.height)
+    const metadata = buildUploadMetadata(owner, file, dims)
 
     const isVideo = file.type.startsWith('video/')
 
@@ -451,8 +465,11 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
         ((file.type === '' || file.type === 'application/octet-stream') &&
           /\.(ttf|otf)$/i.test(file.name))
 
-      // Client-side MIME validation
-      if (!isImage && !isVideo && !isFont) {
+      // Client-side MIME validation. A component master takes pictures and
+      // videos only (its fonts belong to the folder); the server refuses the
+      // rest too, this only says so before any byte moves.
+      const intoComponent = 'componentId' in owner
+      if ((!isImage && !isVideo && !isFont) || (intoComponent && isFont)) {
         const errorEntry: UploadEntry = {
           id,
           filename: file.name,
@@ -460,7 +477,11 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
           mimeType: file.type,
           status: 'error',
           progress: 0,
-          error: 'Unsupported file type — only images, videos and fonts are accepted',
+          error: intoComponent
+            ? isFont
+              ? "Fonts belong to the component's folder — add them in the folder settings"
+              : 'Unsupported file type — a component takes images and videos'
+            : 'Unsupported file type — only images, videos and fonts are accepted',
         }
         setUploads((prev) => [...prev, errorEntry])
         if (opts?.onDone !== undefined) {
@@ -519,7 +540,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
       return id
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- createAndStartTusUpload stable via closure over refs
-    [deckId],
+    [owner],
   )
 
   const cancelUpload = useCallback((id: string) => {
@@ -574,7 +595,7 @@ export function MediaUploadProvider({ deckId, children }: MediaUploadProviderPro
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deckId],
+    [owner],
   )
 
   const dismissUpload = useCallback((id: string) => {

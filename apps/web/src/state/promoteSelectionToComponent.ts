@@ -1,30 +1,34 @@
 /**
  * state/promoteSelectionToComponent.ts
  *
- * "Promote selection to component" — stamps-only flow.
+ * "Promote selection to component" — `component.promote` on the server.
  *
- * Reads the selected objects, writes them as a new component master in
- * the folder, and leaves the originals on the slide untouched. Stamps
- * are detached: editing the master afterwards never affects already-
- * placed objects, so there's no reason to delete the originals.
+ * The server reads the deck live, builds the master from the selected
+ * objects and copies the pictures and videos they show into the new
+ * component (a component owns its media). The originals stay on the slide:
+ * stamps are detached, so editing the master never touches placed objects.
+ * Before asking, the editor waits until the server holds the slide's latest
+ * changes (`whenSaved`) — a rename or a page-number flag set a moment
+ * earlier must be in the master.
  *
- * Also fires a one-shot offscreen thumbnail render so the picker drawer
- * + Components tab show the new master immediately. Done here instead
- * of in the master editor route because the user may never navigate to
- * the master editor.
+ * Also fires a one-shot offscreen thumbnail render so the picker drawer and
+ * the Components tab show the new master at once (the render worker takes
+ * this over in A3). It renders the promoted objects as they are on the
+ * slide — the master's copies of their pictures show the same images.
  */
 
-import { promoteToComponent } from '@narrative/slide-model'
-import type { DeckMutationContext } from '@narrative/slide-model'
-import { writeComponentMasterTree } from './writeComponentMasterTree.js'
+import { promoteToComponent, type DeckMutationContext } from '@narrative/slide-model'
 import { invalidateFolderComponentsCache } from './useFolderComponents.js'
 import { createThumbnailRenderer } from '../renderer/thumbnails.js'
 import type { ApiClient } from '../api/client.js'
 
 export interface PromoteSelectionArgs {
   api: ApiClient
+  deckId: string
   folderId: string
   deckCtx: DeckMutationContext
+  /** `useSlideDoc().whenSaved`: resolves once the server holds every local change. */
+  whenSaved: () => Promise<void>
   activeSlideId: string
   targetIds: string[]
   name: string
@@ -33,23 +37,24 @@ export interface PromoteSelectionArgs {
 export async function promoteSelectionToComponent(
   args: PromoteSelectionArgs,
 ): Promise<{ componentId: string }> {
-  const { api, folderId, deckCtx, activeSlideId, targetIds, name } = args
-  const plan = promoteToComponent(deckCtx, activeSlideId, targetIds, folderId)
-
-  const component = await api.createComponent(folderId, { id: plan.componentId, name })
-  invalidateFolderComponentsCache(folderId)
-  await writeComponentMasterTree({
-    componentId: component.id,
-    masterTree: plan.masterTree,
-    masterAnimations: plan.masterAnimations,
+  const { api, deckId, folderId, deckCtx, activeSlideId, targetIds, name } = args
+  // What the thumbnail shows, read before the request: the objects as the
+  // user promoted them.
+  const { masterTree } = promoteToComponent(deckCtx, activeSlideId, targetIds, folderId)
+  await args.whenSaved()
+  const promoted = await api.promoteComponent(deckId, {
+    slideId: activeSlideId,
+    objectIds: targetIds,
+    name,
   })
+  invalidateFolderComponentsCache(folderId)
 
-  // Fire-and-forget initial thumbnail. Failures are swallowed: the
-  // master editor would re-upload on next render, and a missing
-  // thumbnail just shows the ⌘ placeholder.
-  void renderAndUploadInitialThumbnail(api, component.id, folderId, plan.masterTree)
+  // Fire-and-forget initial thumbnail. Failures are swallowed: the master
+  // editor re-uploads on its next render, and a missing thumbnail just
+  // shows the ⌘ placeholder.
+  void renderAndUploadInitialThumbnail(api, promoted.component.id, folderId, masterTree)
 
-  return { componentId: component.id }
+  return { componentId: promoted.component.id }
 }
 
 async function renderAndUploadInitialThumbnail(

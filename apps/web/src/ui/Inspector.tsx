@@ -739,7 +739,8 @@ export function Inspector() {
   // declared here so hook-order stays stable regardless of which
   // sub-inspector renders.
   const api = useApi()
-  const { deckCtx } = useSlideDoc()
+  // A deck's document name is its id; a component master (null) cannot promote.
+  const { deckCtx, documentName: deckId, whenSaved } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
   // Use the optional variant so the Inspector can render during the
   // brief window after a route change when DeckRole hasn't resolved
@@ -780,7 +781,7 @@ export function Inspector() {
     setPromptedSlideNumber(true)
   }, [setPromptedSlideNumber])
   const handleCreateComponent = useCallback(() => {
-    if (deckCtx === null || deckFolderId === null) {
+    if (deckCtx === null || deckFolderId === null || deckId === null) {
       closeSlideNumberPrompt()
       return
     }
@@ -788,17 +789,28 @@ export function Inspector() {
     // inherits the page-number behaviour.
     const target = setPromptedSlideNumber(false)
     if (target === null) return
+    // promoteSelectionToComponent waits until the server holds the flag.
     void promoteSelectionToComponent({
       api,
+      deckId,
       folderId: deckFolderId,
       deckCtx,
+      whenSaved,
       activeSlideId: target.slide,
       targetIds: [target.object],
       name: 'Page number',
     }).catch((err: unknown) => {
       console.warn('[Inspector] slide-number → component promote failed', err)
     })
-  }, [api, closeSlideNumberPrompt, deckCtx, deckFolderId, setPromptedSlideNumber])
+  }, [
+    api,
+    closeSlideNumberPrompt,
+    deckCtx,
+    deckFolderId,
+    deckId,
+    whenSaved,
+    setPromptedSlideNumber,
+  ])
 
   const handleLeaveAsIs = useCallback(() => {
     setPromptedSlideNumber(false)

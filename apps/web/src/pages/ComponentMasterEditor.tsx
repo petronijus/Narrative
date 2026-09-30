@@ -4,7 +4,7 @@
  * M16 P-flatten — full-editor master view.
  *
  * The master Y.Doc is slide-shaped (one synthetic slide id='master'
- * seeded by writeComponentMasterTree), so we mount the same
+ * written by the server's `writeComponentMaster`), so we mount the same
  * `<EditorLayout masterMode>` the deck path uses. Slides panel is
  * hidden, slide creation is impossible (the only entry point lives
  * inside SlidesPanel). Toolbar, inspector, transforms, animations,
@@ -99,7 +99,9 @@ export function ComponentMasterEditor() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <DeckRoleStaticProvider role="owner" folderId={folderId}>
         <FolderDocProvider folderId={folderId}>
-          <MediaUploadProvider deckId={`component:${componentId}`}>
+          {/* The master's pictures and videos belong to the component
+              (A2.12b): tus gets `componentId`, not a deck. */}
+          <MediaUploadProvider componentId={componentId}>
             <SlideDocProvider deckId={`component:${componentId}`} doc={doc}>
               <ActiveSlideProvider>
                 <SelectionProvider>

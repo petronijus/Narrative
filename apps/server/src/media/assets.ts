@@ -13,7 +13,7 @@
  * but the original MinIO objects remain orphaned. See migration 0002 for details.
  */
 
-import { eq, and, isNull } from 'drizzle-orm'
+import { eq, and, inArray, isNull } from 'drizzle-orm'
 import type { Database } from '../db/client.js'
 import { mediaAssets } from '../db/schema.js'
 import type { MediaAsset } from '../db/schema.js'
@@ -33,7 +33,10 @@ export type TranscodeStatus = 'pending' | 'processing' | 'done' | 'failed'
  */
 export interface VideoAssetRow {
   id: string
-  deckId: string
+  /** The owning deck; null for a component master's video. */
+  deckId: string | null
+  /** The owning component (A2.12b); null for a deck's video. */
+  componentId: string | null
   mimeType: string
   sizeBytes: number
   storageKey: string
@@ -59,10 +62,19 @@ export interface CreateMediaAssetArgs {
   deckId?: string
   /** Folder the asset belongs to. Set only for folder-scoped fonts (M16 P3). */
   folderId?: string
+  /**
+   * Component master the asset belongs to (A2.12b) — its pictures and videos.
+   * Exclusive with deckId and folderId: a row has exactly one owner.
+   */
+  componentId?: string
   uploaderUserId: string
   mimeType: string
   sizeBytes: number
-  /** Bucket key: decks/<deckId>/uploads/<id>/original.<ext> */
+  /**
+   * Bucket key: `<owner>/uploads/<id>/original.<ext>` (owner `decks/<deckId>`
+   * or `components/<componentId>`, media/mediaOwner.ts), or the compound tus
+   * upload id that encodes that path.
+   */
   storageKey: string
   originalFilename?: string
   /** Image/video width in px — only present when probe succeeds */
@@ -98,6 +110,7 @@ export async function createMediaAsset(db: Database, args: CreateMediaAssetArgs)
     id: args.id,
     deckId: args.deckId ?? null,
     folderId: args.folderId ?? null,
+    componentId: args.componentId ?? null,
     uploaderUserId: args.uploaderUserId,
     mimeType: args.mimeType,
     sizeBytes: args.sizeBytes,
@@ -156,10 +169,13 @@ export async function getVideoAsset(db: Database, id: string): Promise<VideoAsse
   const row = rows[0]
   if (!row) return null
 
-  if (row.deckId === null) return null
+  // A video belongs to a deck or a component; a row with neither is not
+  // one anybody may resolve.
+  if (row.deckId === null && row.componentId === null) return null
   return {
     id: row.id,
     deckId: row.deckId,
+    componentId: row.componentId,
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes,
     storageKey: row.storageKey,
@@ -190,6 +206,7 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
     .map((row) => ({
       id: row.id,
       deckId: row.deckId,
+      componentId: row.componentId,
       mimeType: row.mimeType,
       sizeBytes: row.sizeBytes,
       storageKey: row.storageKey,
@@ -203,6 +220,38 @@ export async function listVideoAssets(db: Database, deckId: string): Promise<Vid
       transcodeError: row.transcodeError,
       createdAt: row.createdAt,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Read — component media (A2.12b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every storage key the media of the given components occupy — originals
+ * (tus compound ids included) and video outputs. Read BEFORE the rows go
+ * (a component's or its folder's delete cascades them), then handed to
+ * `purgeExplicitKeys` (media/bucketCleanup.ts): a tus original's key is the
+ * compound upload id, which no `components/<id>/` prefix sweep reaches.
+ */
+export async function listComponentMediaKeys(
+  db: Database,
+  componentIds: readonly string[],
+): Promise<string[]> {
+  if (componentIds.length === 0) return []
+  const rows = await db
+    .select({
+      storageKey: mediaAssets.storageKey,
+      playbackKey: mediaAssets.playbackKey,
+      posterKey: mediaAssets.posterKey,
+      thumbnailKey: mediaAssets.thumbnailKey,
+    })
+    .from(mediaAssets)
+    .where(inArray(mediaAssets.componentId, [...componentIds]))
+  return rows.flatMap((r) =>
+    [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
+      (k): k is string => typeof k === 'string' && k !== '',
+    ),
+  )
 }
 
 // ---------------------------------------------------------------------------

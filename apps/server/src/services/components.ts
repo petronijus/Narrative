@@ -3,7 +3,8 @@
  * (packages/commands/src/services/components.ts). GET /folders/:id/components,
  * PATCH/DELETE /components/:id and the `component.*` commands call these
  * functions; the agent host uses `access` to open a master (`component:<id>`)
- * for the ordinary document commands.
+ * for the ordinary document commands. Promoting and stamping move objects
+ * and media between a deck and a master (./componentStaging.ts).
  */
 
 import { eq } from 'drizzle-orm'
@@ -11,10 +12,13 @@ import type { ComponentMaster, ComponentRecord, ComponentService } from '@narrat
 import type { Database } from '../db/client.js'
 import { components, decks } from '../db/schema.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
+import { listComponentMediaKeys } from '../media/assets.js'
+import { purgeComponentBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { iso, requireOwnedFolder } from './shared.js'
 import { documentName, readDocState } from './liveDocs.js'
+import { prepareComponentStamp, promoteComponent } from './componentStaging.js'
 
 /** Longest component name the API accepts. */
 export const MAX_COMPONENT_NAME = 200
@@ -107,9 +111,18 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     folderId?: string | undefined
   }): Promise<void> {
     await requireOwnedComponent(db, args.componentId, args.userId, args.folderId)
-    // component_updates cascade-delete via FK ON DELETE CASCADE. Stamped
-    // copies on slides are detached primitives and stay as they are.
+    // The master's own pictures and videos: tus originals are keyed by
+    // their upload id, outside the components/<id>/ prefix, so their keys
+    // are read before the cascade removes the rows.
+    const keys = await listComponentMediaKeys(db, [args.componentId])
+    // component_updates and the media rows cascade-delete (FK ON DELETE
+    // CASCADE). Stamped copies on slides are detached primitives with
+    // deck-owned media and stay as they are.
     await db.delete(components).where(eq(components.id, args.componentId))
+    await Promise.all([
+      purgeComponentBucketPrefix(args.componentId, deps.log),
+      purgeExplicitKeys(keys, deps.log),
+    ])
   }
 
   async function readMaster(args: {
@@ -135,6 +148,14 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     }
   }
 
+  async function promote(args: Parameters<ComponentService['promote']>[0]) {
+    return promoteComponent(deps, args)
+  }
+
+  async function prepareStamp(args: { userId: string; componentId: string; deckId: string }) {
+    return prepareComponentStamp(deps, { ...args, master: await readMaster(args) })
+  }
+
   async function access(args: { userId: string; componentId: string }) {
     const row = await requireOwnedComponent(db, args.componentId, args.userId)
     return {
@@ -145,5 +166,5 @@ export function createComponentsService(deps: ServiceDeps): ComponentService {
     }
   }
 
-  return { list, rename, delete: remove, readMaster, access }
+  return { list, rename, delete: remove, readMaster, promote, prepareStamp, access }
 }

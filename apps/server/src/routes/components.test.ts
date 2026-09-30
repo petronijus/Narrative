@@ -8,7 +8,7 @@
  *
  * Coverage:
  *   GET  /folders/:folderId/components     → returns components for folder owner; 403 on wrong user; 404 on missing folder
- *   POST /folders/:folderId/components     → creates component; optional name + id; 403/404 guards
+ *   POST /folders/:folderId/components     → creates component (server-minted id); optional name; 403/404 guards
  *   PATCH /components/:id                  → renames; 400 on empty name; 403/404 guards
  *   DELETE /components/:id                 → 204 on success; 403/404 guards
  */
@@ -25,6 +25,15 @@ import type { Database } from '../db/client.js'
 
 vi.mock('../media/imgproxyUrl.js', () => ({
   signImgproxyUrl: vi.fn(({ storageKey }: { storageKey: string }) => `https://img/${storageKey}`),
+}))
+
+// Deleting a component purges its storage; no MinIO here.
+const purgeComponentBucketPrefix = vi.fn().mockResolvedValue({ deleted: 0, pages: 0, errors: 0 })
+const purgeExplicitKeys = vi.fn().mockResolvedValue({ deleted: 0, errors: 0 })
+vi.mock('../media/bucketCleanup.js', () => ({
+  purgeComponentBucketPrefix: (...a: unknown[]) => purgeComponentBucketPrefix(...a),
+  purgeExplicitKeys: (...a: unknown[]) => purgeExplicitKeys(...a),
+  purgeDeckBucketPrefix: vi.fn(),
 }))
 
 // ---------------------------------------------------------------------------
@@ -79,6 +88,8 @@ function makeMockDb(
               return Promise.resolve(result ? [result] : [])
             }),
             orderBy: vi.fn().mockResolvedValue([...componentStore]),
+            // Awaited as is: a component's media rows (none in these tests).
+            then: (onOk: (v: unknown) => unknown) => Promise.resolve([]).then(onOk),
           }),
           orderBy: vi.fn().mockResolvedValue([...componentStore]),
           limit: vi.fn().mockImplementation(() => {
@@ -247,7 +258,7 @@ describe('POST /folders/:folderId/components', () => {
     expect(body.name).toBe('Hero Banner')
   })
 
-  it('uses caller-provided id when supplied', async () => {
+  it('mints the id itself: a caller-chosen id is ignored', async () => {
     const db = makeMockDb({ folders: [ownerFolder] })
     const app = await buildApp(db)
 
@@ -259,8 +270,10 @@ describe('POST /folders/:folderId/components', () => {
     })
 
     expect(res.statusCode).toBe(201)
-    const body = res.json() as { id: string }
-    expect(body.id).toBe('my-custom-id')
+    const body = res.json() as { id: string; name: string }
+    expect(body.id).not.toBe('my-custom-id')
+    expect(body.id).toMatch(/^[\w-]{12}$/)
+    expect(body.name).toBe('Card')
   })
 
   it('returns 403 for a folder owned by another user', async () => {
@@ -373,6 +386,9 @@ describe('DELETE /components/:id', () => {
     })
 
     expect(res.statusCode).toBe(204)
+    // Its storage goes too: the components/<id>/ prefix and the tus originals.
+    expect(purgeComponentBucketPrefix).toHaveBeenCalledWith('comp-1', expect.anything())
+    expect(purgeExplicitKeys).toHaveBeenCalledWith([], expect.anything())
   })
 
   it('returns 404 when component does not exist', async () => {

@@ -56,8 +56,11 @@ import { ToolCatalog, type ConfirmationMode } from './tools.js'
  * 2.3, text.style.createFromObject 1.1, text.style.updateFromObject 1.1,
  * token.delete 1.0, token.seedDefaults 0.9 and token.list 0.6 (186,157
  * bytes measured in url mode, 128 tools).
+ * A2.12b (2026-09-30): 187,000 → 189,000 for component.promote 1.4 KB,
+ * object.insertFromDeck's `fromComponent` and the media commands on a
+ * component master (188,407 bytes measured in url mode, 129 tools).
  */
-export const TOOL_LIST_BUDGET_BYTES = 187_000
+export const TOOL_LIST_BUDGET_BYTES = 189_000
 /** No single tool may carry more than this (object_create, the largest, is ≈ 14 KB). */
 export const TOOL_BUDGET_BYTES = 16_000
 

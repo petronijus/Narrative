@@ -71,11 +71,6 @@ export const ONE_DOOR_RULES = {
  */
 export const ONE_DOOR_PENDING = [
   // What each file still writes directly, and the step that removes it:
-  //   component stamping
-  { file: 'apps/web/src/ui/Toolbar.tsx', step: 'A2.12' },
-  { file: 'apps/web/src/ui/UploadDropZone.tsx', step: 'A2.12' },
-  // A2.12b — components: stamping and the master tree
-  { file: 'apps/web/src/state/writeComponentMasterTree.ts', step: 'A2.12' },
   // A2.13 — close: the dev/e2e test hooks go through commands too
   { file: 'apps/web/src/state/testApi.ts', step: 'A2.13' },
 ]

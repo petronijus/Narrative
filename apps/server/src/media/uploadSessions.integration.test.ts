@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db, pool } from '../db/client.js'
-import { decks, folders, uploadSessions, users } from '../db/schema.js'
+import { components, decks, folders, uploadSessions, users } from '../db/schema.js'
 import {
   UPLOAD_SESSION_TTL_MS,
   createDrizzleUploadSessionStore,
@@ -23,12 +23,14 @@ const suffix = nanoid(8)
 const userSub = `it-user-${suffix}`
 const folderId = `it-folder-${suffix}`
 const deckId = `it-deck-${suffix}`
+const componentId = `it-cmp-${suffix}`
 const store = createDrizzleUploadSessionStore(db)
 
 beforeAll(async () => {
   await db.insert(users).values({ sub: userSub, email: `${userSub}@example.test`, name: 'IT' })
   await db.insert(folders).values({ id: folderId, ownerUserId: userSub, name: 'IT folder' })
   await db.insert(decks).values({ id: deckId, ownerUserId: userSub, folderId, title: 'IT deck' })
+  await db.insert(components).values({ id: componentId, folderId, name: 'IT component' })
 })
 
 afterAll(async () => {
@@ -39,11 +41,45 @@ afterAll(async () => {
 })
 
 describe('Drizzle upload session store', () => {
+  it('binds a session to a component master, and the database keeps it to one owner', async () => {
+    const sessions = createUploadSessionService(store, { isOwnerAllowed: async () => true })
+    const { token } = await sessions.issue({
+      userSub,
+      owner: { componentId },
+      sizeBytes: 2048,
+      kind: 'video',
+    })
+    expect(await sessions.verify(token)).toMatchObject({
+      owner: { componentId },
+      kind: 'video',
+    })
+    // Neither owner, or both: refused by upload_sessions_one_owner (0029).
+    for (const owners of [
+      { deckId: null, componentId: null },
+      { deckId, componentId },
+    ]) {
+      await expect(
+        db.insert(uploadSessions).values({
+          id: nanoid(),
+          tokenHash: nanoid(),
+          userSub,
+          ...owners,
+          expiresAt: new Date(Date.now() + UPLOAD_SESSION_TTL_MS),
+        }),
+      ).rejects.toThrow()
+    }
+  })
+
   it('issues, verifies and binds exactly once, even when two claims race', async () => {
     const sessions = createUploadSessionService(store, { isOwnerAllowed: async () => true })
-    const { token } = await sessions.issue({ userSub, deckId, sizeBytes: 1024, kind: 'image' })
+    const { token } = await sessions.issue({
+      userSub,
+      owner: { deckId },
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     const session = await sessions.verify(token)
-    expect(session).toMatchObject({ userSub, deckId, uploadId: null })
+    expect(session).toMatchObject({ userSub, owner: { deckId }, uploadId: null })
     const results = await Promise.all([
       sessions.claim(session!, 'upload-a'),
       sessions.claim(session!, 'upload-b'),
@@ -59,12 +95,17 @@ describe('Drizzle upload session store', () => {
       isOwnerAllowed: async () => true,
       now: () => now,
     })
-    const { token } = await sessions.issue({ userSub, deckId, sizeBytes: 1024, kind: 'image' })
+    const { token } = await sessions.issue({
+      userSub,
+      owner: { deckId },
+      sizeBytes: 1024,
+      kind: 'image',
+    })
     const session = (await sessions.verify(token))!
     now = new Date(now.getTime() + UPLOAD_SESSION_TTL_MS + 1000)
     expect(await sessions.claim(session, 'late')).toBe(false)
     now = new Date(now.getTime() + 25 * 60 * 60 * 1000)
-    await sessions.issue({ userSub, deckId, sizeBytes: 1024, kind: 'image' })
+    await sessions.issue({ userSub, owner: { deckId }, sizeBytes: 1024, kind: 'image' })
     const [row] = await db.select().from(uploadSessions).where(eq(uploadSessions.id, session.id))
     expect(row).toBeUndefined()
   })
@@ -75,7 +116,7 @@ describe('Drizzle upload session store', () => {
     await db.insert(decks).values({ id: tempDeck, ownerUserId: userSub, folderId, title: 'tmp' })
     const { token } = await sessions.issue({
       userSub,
-      deckId: tempDeck,
+      owner: { deckId: tempDeck },
       sizeBytes: 1024,
       kind: 'image',
     })
@@ -93,12 +134,12 @@ describe('Drizzle upload session store', () => {
     })
     const a = await sessions.issue({
       userSub,
-      deckId,
+      owner: { deckId },
       sizeBytes: 1024,
       kind: 'image',
       credentialKey: `token:it-${suffix}`,
     })
-    const b = await sessions.issue({ userSub, deckId, sizeBytes: 1024, kind: 'image' })
+    const b = await sessions.issue({ userSub, owner: { deckId }, sizeBytes: 1024, kind: 'image' })
     expect(await sessions.verify(a.token)).not.toBeNull()
     expect(seen[0]).toMatchObject({ userSub, email: `${userSub}@example.test` })
     expect(await revokeUploadSessionsForCredential(db, `token:it-${suffix}`)).toBe(1)

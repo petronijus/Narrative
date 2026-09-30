@@ -7,7 +7,7 @@
 
 import { z } from 'zod'
 import { CommandError } from '../errors.js'
-import type { BinarySource } from '../services/common.js'
+import type { BinarySource, DocumentRef } from '../services/common.js'
 import type { CommandContext, ConditionalConfirmation, RouteRef } from '../types.js'
 
 /** Metadata every server-service command shares. */
@@ -37,6 +37,22 @@ export function targetDeckId(ctx: CommandContext): string {
     )
   }
   return id
+}
+
+/**
+ * The document a deck-scoped command that also accepts a component master
+ * acts on: `{ componentId }` for a master, else `{ deckId }`.
+ */
+export function targetDocument(ctx: CommandContext): DocumentRef {
+  const componentId = ctx.target?.componentId
+  return componentId !== undefined ? { componentId } : { deckId: targetDeckId(ctx) }
+}
+
+/** Whether two refs name the same document (a deck and a master never are). Structural. */
+export function sameDocument(a: DocumentRef, b: DocumentRef): boolean {
+  return 'deckId' in a && 'deckId' in b
+    ? a.deckId === b.deckId
+    : 'componentId' in a && 'componentId' in b && a.componentId === b.componentId
 }
 
 /** The folder a `folder`-scoped server command acts on. */

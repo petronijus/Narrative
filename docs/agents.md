@@ -50,18 +50,22 @@ effects, undo policy, model-facing description, examples, handler); the
 editor dispatches them through `useCommand()` (BrowserHost), agents through
 the ServerHost over MCP (ADR 0011). Headless: no React, Pixi or DOM.
 
-_State as of A2.11 (2026-09-30; A2.1–A2.11 released in 0.10.2–0.10.13): 121 commands (74 document commands that run in the
-browser or on the server, 47 server-only ones backed by
-`apps/server/src/services/`). The editor dispatches commands through
+_State as of A2.12b (2026-09-30, uncommitted at the time; A2.1–A2.12a released in 0.10.2–0.10.14): 129 commands (74 that
+run in the browser or on the server, 55 server-only ones backed by
+`apps/server/src/services/`, counted from the manifest's `hosts`; was 121 —
+74 / 47 — at A2.11). Components go through the server since A2.12b
+(`component.promote`, `component.stamp`, cross-document paste), and a
+component owns its pictures and videos
+([ADR 0012](./adr/0012-component-owned-media.md)). The editor dispatches commands through
 `useCommand()` surface by surface — slides panel, guides, object creation,
 transforms, paths, clipboard, fills and effects, animation, tables (chrome,
 table Inspector, cell editor), and since A2.11 the whole Inspector
 (Typography, lists, transition, background), the font pickers and the canvas
 text editor (typing is one `text.edit` per input) — and the "one door" lint
 rule (`apps/web/eslint.one-door.js`) bans slide-model writers and
-`.transact()` in `apps/web/src`, except for the 6 files still listed in
-`ONE_DOOR_PENDING` with the A2 step that migrates them (10 after A2.10, 13
-after A2.9). Commands that need the folder's font faces declare
+`.transact()` in `apps/web/src`, except for the 1 file still listed in
+`ONE_DOOR_PENDING` (`state/testApi.ts`, A2.13; 4 after A2.12a, 6 after
+A2.11, 10 after A2.10, 13 after A2.9). Commands that need the folder's font faces declare
 `readsFolderFonts` and get `ctx.folderFonts` (server:
 `apps/server/src/agent/folderFonts.ts`, from the folder's font assets). Progress
 and next steps: [`plans/a2-extraction.md`](./plans/a2-extraction.md).
@@ -194,17 +198,17 @@ Once the quality gate is green:
 
 ## Conflict zones (settled in advance)
 
-| Zone                | Owner                         | What the others must not do                                                                                                                                                                                                                 |
-| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                                                                                                                            |
-| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                                                                                                                        |
-| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                                                                                                                              |
-| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                                                                                                                  |
-| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                                                                                                                          |
-| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first?                                                                                                 |
-| Document writes     | `packages/commands` owner     | Nobody writes a deck/folder/component doc outside a command: no slide-model writer or `doc.transact` in the UI (ADR 0010; lint-enforced per directory from A2 — no rule exists yet).                                                        |
-| Agent surface (MCP) | `ai-integration`              | No agent-facing tool or endpoint that bypasses the registry. No Anthropic API client in the repo (in-app agent deferred, plan §13).                                                                                                         |
-| Agent writes        | `state-sync` (ServerHost)     | Nobody opens `openDirectConnection` for an agent outside the ServerHost, and nothing accepts a token on the Hocuspocus WebSocket (ADR 0011): the host's access check, confirmation gate, run attribution and audit log are the only way in. |
+| Zone                | Owner                         | What the others must not do                                                                                                                                                                                                                                                                 |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pixi scene graph    | `renderer`                    | Nobody calls Pixi directly. Everything through the renderer API.                                                                                                                                                                                                                            |
+| Y.Doc schema        | `state-sync`                  | Animation stores its DSL in the Y.Map per the state-sync schema; it does not invent its own storage.                                                                                                                                                                                        |
+| GSAP calls          | `animation`                   | No `import { gsap } from 'gsap'` outside `packages/animation`.                                                                                                                                                                                                                              |
+| docker-compose.yml  | `infra`                       | Others describe requirements (ports, volumes, env); infra integrates them.                                                                                                                                                                                                                  |
+| Env var schema      | `infra`                       | A feature owner announces the need for an env var; infra adds it to the schema and `.env.example`.                                                                                                                                                                                          |
+| The production CSP  | `infra` + `security-reviewer` | Nobody loosens a directive to make a library work without the ADR-0007 test: is there an eval-free / same-origin path in the library first?                                                                                                                                                 |
+| Document writes     | `packages/commands` owner     | Nobody writes a deck/folder/component doc outside a command: no slide-model writer or `doc.transact` in the UI (ADR 0010; lint-enforced over all of `apps/web/src` since A2.1, 2026-09-28, exemptions in `apps/web/eslint.one-door.js` — was "per directory from A2 — no rule exists yet"). |
+| Agent surface (MCP) | `ai-integration`              | No agent-facing tool or endpoint that bypasses the registry. No Anthropic API client in the repo (in-app agent deferred, plan §13).                                                                                                                                                         |
+| Agent writes        | `state-sync` (ServerHost)     | Nobody opens `openDirectConnection` for an agent outside the ServerHost, and nothing accepts a token on the Hocuspocus WebSocket (ADR 0011): the host's access check, confirmation gate, run attribution and audit log are the only way in.                                                 |
 
 ---
 

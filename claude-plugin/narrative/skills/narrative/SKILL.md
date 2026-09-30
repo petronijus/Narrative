@@ -127,7 +127,8 @@ text.
   headline, subline, copy block, a repeated column grid). Use the ones the
   folder has for those roles. **Do not create a component for a one-off.**
   Suggest a new component only when the same block repeats across several
-  slides, or when the user asks for one.
+  slides, or when the user asks for one; then make it from the block with
+  `component_promote`, its text boxes named first — the names are its slots.
 
 ## Things that are irreversible
 

@@ -54,17 +54,10 @@ import {
 } from 'lucide-react'
 import { ComponentPickerDrawer } from './ComponentPickerDrawer.js'
 import { useFolderComponents } from '../state/useFolderComponents.js'
-import { readMasterFullBbox } from '../state/readMasterDoc.js'
-import {
-  acquireComponentDoc,
-  releaseComponentDoc,
-  getComponentDoc,
-} from '../state/componentDocCache.js'
-import { stampComponent } from '@narrative/slide-model'
+import { useStampComponent } from '../state/useStampComponent.js'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCommand, type CommandDispatch } from '../state/useCommand.js'
 import type { AgentRunTarget, ComponentSummary } from '../api/client.js'
-import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
 import { useTool } from '../state/ToolContext.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useSnapping } from '../state/SnappingContext.js'
@@ -77,7 +70,6 @@ import { useDeckRole } from '../state/DeckRoleContext.js'
 import { ShareDialog } from './ShareDialog.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
 import { useApi } from '../api/client.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
 import { useSlideDoc } from '../state/useSlideDoc.js'
 import { listSlides } from '@narrative/slide-model'
 import { ExportPptxDialog } from './ExportPptxDialog.js'
@@ -234,7 +226,6 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
 
   // M11: Upload hook + hidden file input ref
   const { startUpload } = useMediaUpload()
-  const { objectsCtx } = useSlideObjects()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
   const { selectOne } = useSelection()
@@ -251,54 +242,16 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
   }, [folderComponents])
   const handleClosePicker = useCallback(() => setPickerOpen(false), [])
 
-  /**
-   * Stamp a component master onto the active slide as detached primitives.
-   * Acquires the component doc, awaits its first sync (so the master is
-   * populated), reads the bbox to compute a slide-centred drop point, then
-   * delegates to `stampComponent` which clones every master object with a
-   * fresh id and pushes the cluster into the slide. After this the result
-   * has no link to the master — edits to the master never touch the stamp.
-   */
-  const stampPickedComponent = useCallback(
-    async (component: ComponentSummary): Promise<void> => {
-      if (objectsCtx === null) return
-      // Warm the master doc cache + await first sync so the master is
-      // populated before we read it. readMasterFullBbox does this and
-      // returns once the bbox is non-empty; we discard the bbox value
-      // because we want the master's authored position 1:1.
-      acquireComponentDoc(component.id)
-      try {
-        const bbox = await readMasterFullBbox(component.id)
-        const masterDoc = getComponentDoc(component.id)
-        if (masterDoc === null || objectsCtx === null) return
-        // Land the stamp at the master's authored slide-space top-left
-        // (bbox.x, bbox.y) when known, else slide-centred fallback.
-        const dropPoint =
-          bbox !== null
-            ? { x: bbox.x, y: bbox.y }
-            : { x: SLIDE_WIDTH / 2 - 200, y: SLIDE_HEIGHT / 2 - 150 }
-        const ids = stampComponent(objectsCtx, masterDoc, dropPoint)
-        if (ids.length > 0) {
-          // Select the first stamped object — replaces prior selection so
-          // the user can immediately move/edit the result.
-          selectOne(ids[0]!)
-        }
-      } finally {
-        releaseComponentDoc(component.id)
-      }
-    },
-    [objectsCtx, selectOne],
-  )
+  // Picking a component stamps it onto the active slide, on the server.
+  const stampComponent = useStampComponent()
 
   const handlePickComponent = useCallback(
     (component: ComponentSummary) => {
-      // Close the drawer immediately — the master-doc await happens in the
-      // background and would otherwise hold the picker open for the WS
-      // sync round-trip.
+      // Close the drawer at once; the server round trip runs in the background.
       setPickerOpen(false)
-      void stampPickedComponent(component)
+      void stampComponent(component.id)
     },
-    [stampPickedComponent],
+    [stampComponent],
   )
 
   // The slide the upload was started on: the object lands there even if

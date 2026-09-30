@@ -19,22 +19,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { stampComponent } from '@narrative/slide-model'
 import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { useCommand } from '../state/useCommand.js'
 import type { UploadEntry } from '../state/useMediaUpload.js'
 import { useMediaUpload } from '../state/useMediaUpload.js'
-import { useSlideObjects } from '../state/useSlideObjects.js'
-import { useSelection } from '../state/SelectionContext.js'
 import { useDeckRole } from '../state/DeckRoleContext.js'
 import { COMPONENT_DRAG_MIME } from './ComponentPickerDrawer.js'
-import { readMasterFullBbox } from '../state/readMasterDoc.js'
-import { SLIDE_WIDTH, SLIDE_HEIGHT } from '../renderer/constants.js'
-import {
-  acquireComponentDoc,
-  releaseComponentDoc,
-  getComponentDoc,
-} from '../state/componentDocCache.js'
+import { useStampComponent } from '../state/useStampComponent.js'
 
 // ---------------------------------------------------------------------------
 // Coordinate helper (mirrors EditorLayout.clientToCanvasCoords)
@@ -67,10 +58,9 @@ interface UploadDropZoneProps {
 export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
   const { role } = useDeckRole()
   const { startUpload } = useMediaUpload()
-  const { objectsCtx } = useSlideObjects()
   const { activeSlideId } = useActiveSlide()
   const command = useCommand()
-  const { selectOne } = useSelection()
+  const stampComponent = useStampComponent()
 
   const [isDragOver, setIsDragOver] = useState(false)
   const [dragFileType, setDragFileType] = useState<'image' | 'video' | 'mixed' | null>(null)
@@ -201,33 +191,17 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       const dropCoords = clientToCanvasCoords(e.clientX, e.clientY, rect)
       pendingDropCoordsRef.current = dropCoords
 
-      // Component drag-out from the picker drawer — stamp the master
-      // onto the slide as detached primitives. Drop position is ignored
-      // by design: the stamp lands at the master's authored slide-space
-      // top-left, identical to the click-from-picker path. (Predictable
-      // default placement — users can always nudge afterwards.)
+      // Component drag-out from the picker drawer — stamped on the server
+      // (useStampComponent). Drop position is ignored by design: the stamp
+      // lands at the master's authored slide-space top-left, identical to
+      // the click-from-picker path. (Predictable default placement — users
+      // can always nudge afterwards.)
       const componentPayload = e.dataTransfer?.getData(COMPONENT_DRAG_MIME) ?? ''
-      if (componentPayload !== '' && objectsCtx !== null) {
+      if (componentPayload !== '') {
         try {
           const parsed = JSON.parse(componentPayload) as { componentId: string }
           if (typeof parsed.componentId === 'string' && parsed.componentId !== '') {
-            const componentId = parsed.componentId
-            void (async (): Promise<void> => {
-              acquireComponentDoc(componentId)
-              try {
-                const bbox = await readMasterFullBbox(componentId)
-                const masterDoc = getComponentDoc(componentId)
-                if (masterDoc === null || objectsCtx === null) return
-                const dropPoint =
-                  bbox !== null
-                    ? { x: bbox.x, y: bbox.y }
-                    : { x: SLIDE_WIDTH / 2 - 200, y: SLIDE_HEIGHT / 2 - 150 }
-                const ids = stampComponent(objectsCtx, masterDoc, dropPoint)
-                if (ids.length > 0) selectOne(ids[0]!)
-              } finally {
-                releaseComponentDoc(componentId)
-              }
-            })()
+            void stampComponent(parsed.componentId)
           }
         } catch {
           // Malformed payload — ignore; the file branch below still runs if applicable.
@@ -258,7 +232,7 @@ export function UploadDropZone({ canvasContainerRef }: UploadDropZoneProps) {
       el.removeEventListener('dragleave', onDragLeave)
       el.removeEventListener('drop', onDrop)
     }
-  }, [isViewer, canvasContainerRef, startUpload, addMediaObject])
+  }, [isViewer, canvasContainerRef, startUpload, addMediaObject, stampComponent])
 
   // Viewer: render inert transparent overlay (no pointer events, no handlers)
   if (isViewer) {

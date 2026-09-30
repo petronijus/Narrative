@@ -36,6 +36,7 @@ import {
 } from './storedImageLimits.js'
 import { classifyUpload, isFontUpload, maxUploadBytes, tooLargeMessage } from './uploadPolicy.js'
 import { MEDIA_BUCKET } from './s3Client.js'
+import type { MediaOwner } from './mediaOwner.js'
 import { subsystemLogger } from '../observability/logger.js'
 
 const defaultLog = subsystemLogger('tus')
@@ -45,6 +46,11 @@ const require = createRequire(import.meta.url)
 const probe: (
   stream: Readable,
 ) => Promise<{ width: number; height: number } | null> = require('probe-image-size')
+
+/** Why a font cannot be uploaded into a component master. */
+export const COMPONENT_FONT_REFUSED =
+  "A component takes pictures and videos only; fonts belong to the component's folder " +
+  '(upload them in the folder settings or with folder.fonts.upload).'
 
 /** An upload the pipeline refused; `status` is the HTTP status to answer with. */
 export class UploadRejected extends Error {
@@ -68,7 +74,11 @@ export interface FinalizeUploadArgs {
   /** Bucket key of the stored bytes (server-constructed, never user input). */
   storageKey: string
   assetId: string
-  deckId: string
+  /**
+   * Who the asset belongs to: a deck, or a component master (A2.12b —
+   * pictures and videos only; a font for a component is rejected).
+   */
+  owner: MediaOwner
   userId: string
   mimeType: string
   filename?: string | undefined
@@ -201,8 +211,13 @@ async function probeImageDimensions(
   }
 }
 
+/** The owner columns of a new row: exactly one of deck_id / component_id. */
+function ownerColumns(owner: MediaOwner): { deckId: string } | { componentId: string } {
+  return 'componentId' in owner ? { componentId: owner.componentId } : { deckId: owner.deckId }
+}
+
 export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<FinalizedUpload> {
-  const { db, s3, storageKey, assetId, deckId, userId, mimeType, filename } = args
+  const { db, s3, storageKey, assetId, owner, userId, mimeType, filename } = args
   const log = args.log ?? defaultLog
   let sizeBytes = args.sizeBytes
 
@@ -213,6 +228,13 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
   if (kind === null) {
     await deleteQuietly(s3, storageKey, log)
     throw new UploadRejected(415, `Unsupported media type: ${mimeType}.`)
+  }
+  // A component master owns pictures and videos; fonts belong to its folder.
+  // The upload paths refuse a font for a component before any byte moves;
+  // this keeps the rule true for every caller.
+  if (kind === 'font' && 'componentId' in owner) {
+    await deleteQuietly(s3, storageKey, log)
+    throw new UploadRejected(415, COMPONENT_FONT_REFUSED)
   }
   const cap = maxUploadBytes(kind)
   if (sizeBytes > cap) {
@@ -240,7 +262,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     try {
       await createMediaAsset(db, {
         id: assetId,
-        deckId,
+        ...ownerColumns(owner),
         uploaderUserId: userId,
         mimeType,
         sizeBytes,
@@ -289,7 +311,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     try {
       await createMediaAsset(db, {
         id: assetId,
-        deckId,
+        ...ownerColumns(owner),
         uploaderUserId: userId,
         mimeType,
         sizeBytes,
@@ -305,7 +327,15 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
     }
 
     try {
-      await enqueueVideoTranscode({ assetId, deckId, storageKey, uploaderUserId: userId, mimeType })
+      // The worker writes the outputs next to the original, under the
+      // owner the storage key names (videoOutputPrefix, @narrative/shared).
+      await enqueueVideoTranscode({
+        assetId,
+        ...('deckId' in owner ? { deckId: owner.deckId } : {}),
+        storageKey,
+        uploaderUserId: userId,
+        mimeType,
+      })
     } catch (err) {
       log.error({ err }, 'enqueueVideoTranscode failed')
       // Asset row already exists — log the failure but don't rollback.
@@ -438,7 +468,7 @@ export async function finalizeMediaUpload(args: FinalizeUploadArgs): Promise<Fin
   try {
     await createMediaAsset(db, {
       id: assetId,
-      deckId,
+      ...ownerColumns(owner),
       uploaderUserId: userId,
       mimeType,
       sizeBytes,

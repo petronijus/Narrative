@@ -35,6 +35,7 @@ import type { Database } from '../db/client.js'
 import { decks, deckPermissions, deckUpdates, folders, mediaAssets } from '../db/schema.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { enqueueVideoTranscode } from '../media/enqueue.js'
+import type { MediaOwner } from '../media/mediaOwner.js'
 import { purgeExplicitKeys } from '../media/bucketCleanup.js'
 import { parseFontMetadata } from '../media/fontMetadata.js'
 import { downscaleForStorage } from '../media/storedImageLimits.js'
@@ -283,7 +284,25 @@ export async function registerDeckMedia<T = void>(args: {
   /** Writes that must commit atomically with the media rows. */
   alongside?: (tx: DbTransaction) => Promise<T>
 }): Promise<T | undefined> {
-  const { db, deckId, ownerUserId, media, log, alongside } = args
+  const { deckId, ...rest } = args
+  return registerOwnedMedia({ ...rest, owner: { deckId } })
+}
+
+/**
+ * `registerDeckMedia` for any owner of the rows — a deck, or a component
+ * master (A2.12b). A component's videos are enqueued without a deck: the
+ * worker takes the output prefix from the storage key.
+ */
+export async function registerOwnedMedia<T = void>(args: {
+  db: Database
+  owner: MediaOwner
+  ownerUserId: string
+  media: Pick<StagedDeckMedia, 'mediaAssetRows' | 'videoTranscodeJobs'>
+  log: ImportLogger
+  /** Writes that must commit atomically with the media rows. */
+  alongside?: (tx: DbTransaction) => Promise<T>
+}): Promise<T | undefined> {
+  const { db, owner, ownerUserId, media, log, alongside } = args
 
   const result = await db.transaction(async (tx) => {
     const r = alongside !== undefined ? await alongside(tx) : undefined
@@ -297,13 +316,13 @@ export async function registerDeckMedia<T = void>(args: {
     try {
       await enqueueVideoTranscode({
         assetId: job.assetId,
-        deckId,
+        ...('deckId' in owner ? { deckId: owner.deckId } : {}),
         storageKey: job.storageKey,
         uploaderUserId: ownerUserId,
         mimeType: job.mimeType,
       })
     } catch (err) {
-      log.warn({ err, assetId: job.assetId, deckId }, 'pptx: enqueueVideoTranscode failed')
+      log.warn({ err, assetId: job.assetId, ...owner }, 'pptx: enqueueVideoTranscode failed')
     }
   }
 
@@ -329,13 +348,28 @@ export async function discardDeckMedia(args: {
   media: Pick<StagedDeckMedia, 'mediaAssetRows'>
   log: ImportLogger
 }): Promise<void> {
-  const { db, deckId, media, log } = args
+  const { deckId, ...rest } = args
+  await discardOwnedMedia({ ...rest, owner: { deckId } })
+}
+
+/**
+ * `discardDeckMedia` for any owner of the rows. What survives a failure is
+ * reaped with its owner: a deck's by its prefix sweep, a component's by
+ * `listComponentMediaKeys` when the component (or its folder) is deleted.
+ */
+export async function discardOwnedMedia(args: {
+  db: Database
+  owner: MediaOwner
+  media: Pick<StagedDeckMedia, 'mediaAssetRows'>
+  log: ImportLogger
+}): Promise<void> {
+  const { db, owner, media, log } = args
   const ids = media.mediaAssetRows.map((r) => r.id).filter((id): id is string => id !== undefined)
   if (ids.length === 0) return
   try {
     await db.delete(mediaAssets).where(inArray(mediaAssets.id, ids))
   } catch (err) {
-    log.warn({ err, deckId, assetIds: ids }, 'pptx: discarding unreferenced media rows failed')
+    log.warn({ err, ...owner, assetIds: ids }, 'pptx: discarding unreferenced media rows failed')
   }
   const result = await purgeExplicitKeys(
     media.mediaAssetRows.map((r) => r.storageKey),
@@ -344,7 +378,7 @@ export async function discardDeckMedia(args: {
       info: (o, m) => log.info(o, m),
     },
   )
-  log.info({ deckId, assetIds: ids, ...result }, 'pptx: discarded unreferenced media')
+  log.info({ ...owner, assetIds: ids, ...result }, 'pptx: discarded unreferenced media')
 }
 
 /**

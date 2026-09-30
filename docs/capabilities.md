@@ -4,7 +4,7 @@
 > registry in `packages/commands`. Do not edit by hand — a test fails when this
 > file is stale. See ADR 0010 and `docs/plans/agentic-layer.md`.
 
-Commands: **128**. Known missing: **8**. Deliberately excluded: **20**.
+Commands: **129**. Known missing: **7**. Deliberately excluded: **20**.
 
 ## agent
 
@@ -27,13 +27,14 @@ Commands: **128**. Known missing: **8**. Deliberately excluded: **20**.
 
 ## component
 
-| Command            | What it does     | Role   | Undo         | Confirm | Hints      |
-| ------------------ | ---------------- | ------ | ------------ | ------- | ---------- |
-| `component.delete` | Delete component | owner  | irreversible | always  |            |
-| `component.get`    | Read component   | owner  | n/a          | never   | read-only  |
-| `component.list`   | List components  | owner  | n/a          | never   | read-only  |
-| `component.rename` | Rename component | owner  | undoable     | never   | idempotent |
-| `component.stamp`  | Stamp component  | editor | undoable     | never   |            |
+| Command             | What it does                | Role   | Undo         | Confirm | Hints      |
+| ------------------- | --------------------------- | ------ | ------------ | ------- | ---------- |
+| `component.delete`  | Delete component            | owner  | irreversible | always  |            |
+| `component.get`     | Read component              | owner  | n/a          | never   | read-only  |
+| `component.list`    | List components             | owner  | n/a          | never   | read-only  |
+| `component.promote` | Make component from objects | editor | undoable     | never   |            |
+| `component.rename`  | Rename component            | owner  | undoable     | never   | idempotent |
+| `component.stamp`   | Stamp component             | editor | undoable     | never   |            |
 
 ## deck
 
@@ -93,35 +94,35 @@ Commands: **128**. Known missing: **8**. Deliberately excluded: **20**.
 
 ## object
 
-| Command                    | What it does                          | Role   | Undo     | Confirm | Hints      |
-| -------------------------- | ------------------------------------- | ------ | -------- | ------- | ---------- |
-| `object.align`             | Align objects to each other           | editor | undoable | never   | idempotent |
-| `object.alignToSlide`      | Align to slide                        | editor | undoable | never   | idempotent |
-| `object.copyTo`            | Copy objects to a slide               | editor | undoable | never   |            |
-| `object.create`            | Create object                         | editor | undoable | never   |            |
-| `object.crop.set`          | Crop image                            | editor | undoable | never   |            |
-| `object.delete`            | Delete objects                        | editor | undoable | never   |            |
-| `object.distribute`        | Distribute objects evenly             | editor | undoable | never   | idempotent |
-| `object.duplicate`         | Duplicate objects                     | editor | undoable | never   |            |
-| `object.effects.shadow`    | Drop shadow                           | editor | undoable | never   | idempotent |
-| `object.fill.gradient`     | Gradient fill                         | editor | undoable | never   | idempotent |
-| `object.flip`              | Flip objects                          | editor | undoable | never   |            |
-| `object.group`             | Group objects                         | editor | undoable | never   |            |
-| `object.insert`            | Insert objects from JSON              | editor | undoable | never   |            |
-| `object.insertFromDeck`    | Insert objects read from another deck | editor | undoable | never   |            |
-| `object.layer`             | Change stacking order                 | editor | undoable | never   |            |
-| `object.line.setEndpoints` | Move line ends                        | editor | undoable | never   | idempotent |
-| `object.mask.apply`        | Mask an image with a shape            | editor | undoable | never   |            |
-| `object.mask.remove`       | Remove image mask                     | editor | undoable | never   |            |
-| `object.move`              | Move objects                          | editor | undoable | never   |            |
-| `object.path.create`       | Draw a path                           | editor | undoable | never   |            |
-| `object.path.fromShape`    | Convert a shape to a path             | editor | undoable | never   |            |
-| `object.path.setAnchors`   | Set path points                       | editor | undoable | never   | idempotent |
-| `object.resize`            | Resize object                         | editor | undoable | never   | idempotent |
-| `object.rotate`            | Rotate objects                        | editor | undoable | never   |            |
-| `object.slideNumber.set`   | Page-number field                     | editor | undoable | never   | idempotent |
-| `object.ungroup`           | Ungroup objects                       | editor | undoable | never   |            |
-| `object.update`            | Update object properties              | editor | undoable | never   | idempotent |
+| Command                    | What it does                                       | Role   | Undo     | Confirm | Hints      |
+| -------------------------- | -------------------------------------------------- | ------ | -------- | ------- | ---------- |
+| `object.align`             | Align objects to each other                        | editor | undoable | never   | idempotent |
+| `object.alignToSlide`      | Align to slide                                     | editor | undoable | never   | idempotent |
+| `object.copyTo`            | Copy objects to a slide                            | editor | undoable | never   |            |
+| `object.create`            | Create object                                      | editor | undoable | never   |            |
+| `object.crop.set`          | Crop image                                         | editor | undoable | never   |            |
+| `object.delete`            | Delete objects                                     | editor | undoable | never   |            |
+| `object.distribute`        | Distribute objects evenly                          | editor | undoable | never   | idempotent |
+| `object.duplicate`         | Duplicate objects                                  | editor | undoable | never   |            |
+| `object.effects.shadow`    | Drop shadow                                        | editor | undoable | never   | idempotent |
+| `object.fill.gradient`     | Gradient fill                                      | editor | undoable | never   | idempotent |
+| `object.flip`              | Flip objects                                       | editor | undoable | never   |            |
+| `object.group`             | Group objects                                      | editor | undoable | never   |            |
+| `object.insert`            | Insert objects from JSON                           | editor | undoable | never   |            |
+| `object.insertFromDeck`    | Insert objects read from another deck or component | editor | undoable | never   |            |
+| `object.layer`             | Change stacking order                              | editor | undoable | never   |            |
+| `object.line.setEndpoints` | Move line ends                                     | editor | undoable | never   | idempotent |
+| `object.mask.apply`        | Mask an image with a shape                         | editor | undoable | never   |            |
+| `object.mask.remove`       | Remove image mask                                  | editor | undoable | never   |            |
+| `object.move`              | Move objects                                       | editor | undoable | never   |            |
+| `object.path.create`       | Draw a path                                        | editor | undoable | never   |            |
+| `object.path.fromShape`    | Convert a shape to a path                          | editor | undoable | never   |            |
+| `object.path.setAnchors`   | Set path points                                    | editor | undoable | never   | idempotent |
+| `object.resize`            | Resize object                                      | editor | undoable | never   | idempotent |
+| `object.rotate`            | Rotate objects                                     | editor | undoable | never   |            |
+| `object.slideNumber.set`   | Page-number field                                  | editor | undoable | never   | idempotent |
+| `object.ungroup`           | Ungroup objects                                    | editor | undoable | never   |            |
+| `object.update`            | Update object properties                           | editor | undoable | never   | idempotent |
 
 ## ops
 
@@ -216,16 +217,15 @@ Commands: **128**. Known missing: **8**. Deliberately excluded: **20**.
 
 ## Known missing
 
-| Capability                   | Phase | Today in                                                                             | Note                                                                                                                                                                                       |
-| ---------------------------- | ----- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `component.promote`          | A2    | apps/web/src/state/writeComponentMasterTree.ts; `POST /folders/:folderId/components` | the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)                                                                                                |
-| `deck.exportPdf`             | A3    | new                                                                                  |                                                                                                                                                                                            |
-| `deck.exportPng`             | A3    | new                                                                                  |                                                                                                                                                                                            |
-| `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                          | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                       |
-| `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail`        | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                 |
-| `query.render`               | A3    | new                                                                                  |                                                                                                                                                                                            |
-| `component.create`           | A4    | new                                                                                  | create a master from objects or a spec; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
-| `component.restamp`          | A4    | new                                                                                  | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                               |
+| Capability                   | Phase | Today in                                                                      | Note                                                                                                                                                                                                                                                                                                |
+| ---------------------------- | ----- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deck.exportPdf`             | A3    | new                                                                           |                                                                                                                                                                                                                                                                                                     |
+| `deck.exportPng`             | A3    | new                                                                           |                                                                                                                                                                                                                                                                                                     |
+| `deck.refreshThumbnail`      | A3    | apps/web/src/ui/SlidesPanel.tsx; `PUT /decks/:id/thumbnail`                   | the browser renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                                |
+| `component.refreshThumbnail` | A3    | apps/web/src/pages/ComponentMasterEditor.tsx; `PUT /components/:id/thumbnail` | the master editor renders the thumbnail and uploads it; the render worker takes over in A3                                                                                                                                                                                                          |
+| `query.render`               | A3    | new                                                                           |                                                                                                                                                                                                                                                                                                     |
+| `component.create`           | A4    | `POST /folders/:folderId/components`                                          | create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data |
+| `component.restamp`          | A4    | new                                                                           | reapply a changed master to the stamps made from it, keeping their slot content (needs component provenance)                                                                                                                                                                                        |
 
 ## Deliberately excluded
 

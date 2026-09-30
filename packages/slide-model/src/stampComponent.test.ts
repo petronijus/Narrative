@@ -12,7 +12,11 @@ import { getSlideObjectsCtx, listSlides } from './slides.js'
 import { yMapToPlainObject } from './bindings.js'
 import type { SlideMutationContext } from './slideMutationContext.js'
 import type { RectangleObject, TextObject, SlideObject } from '@narrative/shared'
-import { insertObjectsWithRichText, stampComponent } from './stampComponent.js'
+import {
+  COMPONENT_MASTER_SLIDE_ID,
+  stampComponent,
+  writeComponentMaster,
+} from './stampComponent.js'
 import { promoteToComponent, type PromoteToComponentPlan } from './components.js'
 import { addObject, groupObjects, LOCAL_ORIGIN, type ObjectsMutationContext } from './mutations.js'
 import { addTable, getTableCellYMap } from './tableMutations.js'
@@ -291,18 +295,10 @@ function seedRichSlide(objCtx: ObjectsMutationContext): { textId: string; tableI
   return { textId: textObj.id, tableId }
 }
 
-/** Mirror `writeComponentMasterTree`: a one-slide component doc. */
+/** A one-slide component doc written by the real master writer. */
 function writeMaster(plan: PromoteToComponentPlan): Y.Doc {
   const doc = new Y.Doc()
-  doc.transact(() => {
-    const slides = doc.getArray<Y.Map<unknown>>('slides')
-    const slide = new Y.Map<unknown>()
-    const objects = new Y.Array<Y.Map<unknown>>()
-    slide.set('objects', objects)
-    slide.set('animations', new Y.Array<Y.Map<unknown>>())
-    slides.push([slide])
-    insertObjectsWithRichText(objects, plan.masterTree)
-  })
+  expect(writeComponentMaster(doc, plan.masterTree, plan.masterAnimations)).toBe(true)
   return doc
 }
 
@@ -404,5 +400,54 @@ describe('promote → stamp rich-text round trip', () => {
     stampComponent(objCtx, master, { x: 0, y: 0 })
     deckCtx.doc.off('afterTransaction', onTx)
     expect(origins).toEqual([LOCAL_ORIGIN])
+  })
+})
+
+describe('writeComponentMaster', () => {
+  it('writes the one master slide, empty for a new component', () => {
+    const doc = new Y.Doc()
+    expect(writeComponentMaster(doc, [], [])).toBe(true)
+    const slides = doc.getArray<Y.Map<unknown>>('slides')
+    expect(slides.length).toBe(1)
+    expect(slides.get(0).get('id')).toBe(COMPONENT_MASTER_SLIDE_ID)
+    expect((slides.get(0).get('objects') as Y.Array<unknown>).length).toBe(0)
+    expect((slides.get(0).get('animations') as Y.Array<unknown>).length).toBe(0)
+  })
+
+  it('keeps the animations of the promoted subtree', () => {
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const objCtx = getSlideObjectsCtx(deckCtx, slideId)!
+    const { textId } = seedRichSlide(objCtx)
+    const plan = promoteToComponent(deckCtx, slideId, [textId], 'folder-1')
+    const doc = new Y.Doc()
+    writeComponentMaster(doc, plan.masterTree, [
+      {
+        id: 'a1',
+        objectId: textId,
+        preset: 'fadeIn',
+        trigger: 'onEnter',
+        duration: 0.5,
+        delay: 0,
+        easing: 'power2.out',
+      },
+    ])
+    const animations = doc.getArray<Y.Map<unknown>>('slides').get(0).get('animations') as Y.Array<
+      Y.Map<unknown>
+    >
+    expect(animations.length).toBe(1)
+    expect(animations.get(0).get('objectId')).toBe(textId)
+  })
+
+  it('never writes over a master that is already there', () => {
+    const doc = new Y.Doc()
+    writeComponentMaster(doc, [], [])
+    const deckCtx = makeDeckCtx()
+    const slideId = listSlides(deckCtx)[0]!.id
+    const { textId } = seedRichSlide(getSlideObjectsCtx(deckCtx, slideId)!)
+    const plan = promoteToComponent(deckCtx, slideId, [textId], 'folder-1')
+    expect(writeComponentMaster(doc, plan.masterTree, [])).toBe(false)
+    expect(doc.getArray('slides').length).toBe(1)
+    expect(masterObjects(doc)).toEqual([])
   })
 })

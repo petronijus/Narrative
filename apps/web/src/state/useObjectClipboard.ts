@@ -8,20 +8,18 @@
  *     copy of the live objects;
  *   - same document, sources gone (cut, or deleted since): `object.insert`
  *     from the snapshot;
- *   - another deck: the server's `object.insertFromDeck`, which copies the
- *     media and fonts into this deck and rebinds tokens (a remote change for
- *     this editor, like the slides panel's cross-deck paste);
- *   - to or from a component master (a local document, not a deck on the
- *     server): `object.insert` from the snapshot. Its pictures are not
- *     copied between a master and a deck (masters keep their media under the
- *     component; A2.12 brings components onto the server).
+ *   - another document — a deck, or a component master, in either
+ *     direction: the server's `object.insertFromDeck`, which copies the
+ *     pictures and videos into this document (a deck and a master each own
+ *     their media), the fonts between decks, and rebinds tokens (a remote
+ *     change for this editor, like the slides panel's cross-deck paste).
  *
  * A paste that cannot be done tells the user why (EditorNotice).
  */
 
 import { useCallback } from 'react'
 import { CommandError, planInsert } from '@narrative/commands'
-import { ApiError, useApi } from '../api/client.js'
+import { ApiError, useApi, type DocumentRef } from '../api/client.js'
 import { useActiveSlide } from './ActiveSlideContext.js'
 import { useCommand } from './useCommand.js'
 import { useSlideDoc } from './useSlideDoc.js'
@@ -38,14 +36,19 @@ export interface ObjectClipboardActions {
   canPaste: () => boolean
 }
 
-/** A deck on the server, not a component master (`component:<id>`). */
-const isDeck = (key: string): boolean => !key.startsWith('component:')
+/** The document a clipboard key names: a deck id, or `component:<id>` for a master. */
+function documentOf(key: string): DocumentRef {
+  return key.startsWith('component:')
+    ? { componentId: key.slice('component:'.length) }
+    : { deckId: key }
+}
 
 function pasteFailure(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 403)
       return 'You can only view the deck these objects come from, so they cannot be copied out of it.'
-    if (err.status === 404) return 'The deck these objects come from no longer exists.'
+    if (err.status === 404)
+      return 'The deck or component these objects come from no longer exists, or is not yours.'
     return `The objects could not be pasted: ${err.message}`
   }
   if (err instanceof CommandError) return `The objects could not be pasted: ${err.message}`
@@ -119,15 +122,8 @@ export function useObjectClipboard(): ObjectClipboardActions {
             ...placement,
           }).objectIds
         }
-        if (!isDeck(clip.deckId) || !isDeck(here)) {
-          return command.run<{ objectIds: string[] }>('object.insert', {
-            slide: activeSlideId,
-            objects: clip.objects,
-            ...placement,
-          }).objectIds
-        }
-        const out = await api.insertObjectsFromDeck(here, {
-          sourceDeckId: clip.deckId,
+        const out = await api.insertObjectsFrom(documentOf(here), {
+          source: documentOf(clip.deckId),
           slideId: activeSlideId,
           objects: clip.objects,
           ...placement,

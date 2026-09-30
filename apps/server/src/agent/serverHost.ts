@@ -800,29 +800,36 @@ export class ServerHost {
       const prepared = await prepareInvocation(this.deps.registry, docCtx, commandId, input)
       if (!prepared.synchronous) return await prepared.execute()
 
-      const activeRun = run!
-      await this.deps.runs.beforeDocumentWrite(activeRun, lease)
-      let output: unknown
-      let touched: Touched | null = null
       try {
-        await lease.transact((doc: Document) => {
-          if (target.deckId !== undefined && doc.getArray('slides').length === 0) {
-            // A deck nobody has opened yet has no slides; the editor would
-            // seed one on first open. Do the same, outside the run.
-            doc.transact(() => hydrateSlideDoc(doc), DECK_HYDRATION_ORIGIN)
-          }
-          touched = collectTouched(doc.getArray('slides'), () => {
-            doc.transact(() => {
-              output = prepared.execute()
-            }, ctx.origin)
+        const activeRun = run!
+        await this.deps.runs.beforeDocumentWrite(activeRun, lease)
+        let output: unknown
+        let touched: Touched | null = null
+        try {
+          await lease.transact((doc: Document) => {
+            if (target.deckId !== undefined && doc.getArray('slides').length === 0) {
+              // A deck nobody has opened yet has no slides; the editor would
+              // seed one on first open. Do the same, outside the run.
+              doc.transact(() => hydrateSlideDoc(doc), DECK_HYDRATION_ORIGIN)
+            }
+            touched = collectTouched(doc.getArray('slides'), () => {
+              doc.transact(() => {
+                output = prepared.execute()
+              }, ctx.origin)
+            })
           })
-        })
+        } finally {
+          // Always close the op's undo step — also when the handler threw —
+          // so the next op never merges into this one.
+          this.deps.runs.afterDocumentWrite(activeRun, document, touched)
+        }
+        return output
       } finally {
-        // Always close the op's undo step — also when the handler threw —
-        // so the next op never merges into this one.
-        this.deps.runs.afterDocumentWrite(activeRun, document, touched)
+        // The write never ran (the run refused it, the connection failed
+        // before the transaction): release what `load` staged, such as media
+        // copied for it. A no-op once the handler ran.
+        await prepared.abandon()
       }
-      return output
     } finally {
       lease.release()
     }

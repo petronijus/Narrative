@@ -8,7 +8,7 @@ claude.ai — see [Agents (MCP)](#agents-mcp) and
 [the agentic-layer plan](./docs/plans/agentic-layer.md). Released since
 0.10.0 (2026-09-27; was unreleased until then, with production on 0.9.29).
 
-Current release: **0.10.13** (2026-09-30) — see [CHANGELOG.md](./CHANGELOG.md).
+Current release: **0.10.14** (2026-09-30) — see [CHANGELOG.md](./CHANGELOG.md).
 Latest work:
 **[Agentic layer A2 — extraction](./docs/plans/a2-extraction.md)** (in
 progress since 2026-09-28): the editor's own logic moves into commands and
@@ -20,9 +20,10 @@ sessions, gradients / shadows / page numbers; in 0.10.12 animation through
 through `table.*`, incl. `table.setSize` and table gradients, and the
 PowerPoint-sized triangle). A2.11 (text: `text.edit`, `text.replace`,
 `text.setBoxTypography`, `text.style.apply`; the Inspector and the canvas
-text editor write only through commands) followed in 0.10.13 on 2026-09-30.
-The plan's "Where we
-stand" is the next-steps list (A2.12 tokens and components next).
+text editor write only through commands) followed in 0.10.13, A2.12a (folder
+tokens on the server) in 0.10.14 on 2026-09-30; A2.12b (components through
+commands, component-owned media) is done and not yet released. The plan's
+"Where we stand" is the next-steps list (A2.13 Close next, then MCP work).
 Before that:
 **[A1 — MCP server and server host](./docs/handoff/A1-mcp-and-server-host.md)**
 (2026-09-27, released in 0.10.0): personal access tokens and OAuth for

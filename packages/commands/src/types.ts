@@ -380,6 +380,15 @@ export interface CommandDef<
   // bivariant in their parameters, which is what lets a registry hold
   // commands of different input types as `AnyCommandDef`.
   load?(ctx: CommandContext, input: z.output<I>): Promise<L>
+  /**
+   * Undo what `load` staged outside the document (media copied for the
+   * write, registered before the document is touched) when the handler will
+   * never run: the host gave up between `load` and the write (a refused
+   * run, a lost connection). The runner calls it through
+   * `PreparedInvocation.abandon`. A handler that refuses before its first
+   * write cleans up itself. Best effort: it must not throw.
+   */
+  release?(loaded: L): Promise<void>
   handler(ctx: CommandContext, input: z.output<I>, loaded: L): z.input<O> | Promise<z.input<O>>
 }
 

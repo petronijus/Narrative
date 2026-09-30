@@ -125,6 +125,7 @@ describe('commandTargetProblems', () => {
       .map((c) => c.id)
     // Everything that needs an actual deck; pinned so a change is deliberate.
     expect(refusing).toEqual([
+      'component.promote',
       'component.stamp',
       'deck.delete',
       'deck.duplicate',
@@ -137,12 +138,6 @@ describe('commandTargetProblems', () => {
       'editor.context',
       'editor.present.link',
       'editor.show',
-      'media.delete',
-      'media.status',
-      'media.upload',
-      'media.uploadSession',
-      'media.url',
-      'object.insertFromDeck',
       'share.invites.cancel',
       'share.invites.list',
       'share.links.create',

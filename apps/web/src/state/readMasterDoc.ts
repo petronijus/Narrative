@@ -16,7 +16,7 @@
  * Both operations are read-only, run rarely (user-initiated), and don't
  * need the per-frame caching the renderer's snapshot extractor must do.
  *
- * Schema assumed (matches `writeComponentMasterTree`):
+ * Schema assumed (what slide-model `writeComponentMaster` writes):
  *   doc.getArray('slides')[0]:
  *     { id: 'master', objects: Y.Array<Y.Map>, animations: Y.Array<Y.Map> }
  */
@@ -54,7 +54,7 @@ export function readMasterDoc(doc: Y.Doc): MasterDocSnapshot | null {
   const slides = doc.getArray<Y.Map<unknown>>('slides')
   if (slides.length === 0) return null
 
-  // Find the master slide. `writeComponentMasterTree` always sets id='master'
+  // Find the master slide. `writeComponentMaster` always sets id='master'
   // on slot 0; defensively scan in case future code reorders.
   let master: Y.Map<unknown> | null = null
   for (let i = 0; i < slides.length; i++) {

@@ -20,7 +20,7 @@ vi.mock('./s3Client.js', () => ({
   MEDIA_BUCKET: 'test-bucket',
 }))
 
-const { purgeDeckBucketPrefix } = await import('./bucketCleanup.js')
+const { purgeComponentBucketPrefix, purgeDeckBucketPrefix } = await import('./bucketCleanup.js')
 
 function makeLog() {
   return {
@@ -153,5 +153,31 @@ describe('purgeDeckBucketPrefix', () => {
 
     expect(result.errors).toBe(1)
     expect(log.warn).toHaveBeenCalledOnce()
+  })
+})
+
+describe('purgeComponentBucketPrefix', () => {
+  it('sweeps components/<id>/', async () => {
+    sendMock
+      .mockResolvedValueOnce({
+        Contents: [{ Key: 'components/c1/thumb.jpg' }],
+        IsTruncated: false,
+      })
+      .mockResolvedValueOnce({ Errors: [] })
+    const result = await purgeComponentBucketPrefix('c1', makeLog())
+    const list = sendMock.mock.calls[0]![0] as ListObjectsV2Command
+    expect(list.input.Prefix).toBe('components/c1/')
+    expect(result.deleted).toBe(1)
+  })
+
+  it("refuses an id that would widen the prefix into another owner's keys", async () => {
+    const log = makeLog()
+    // A legacy client-chosen id (before A2.12b): components/<victim>/uploads/.
+    const result = await purgeComponentBucketPrefix('victim/uploads', log)
+    expect(sendMock).not.toHaveBeenCalled()
+    expect(result).toEqual({ deleted: 0, pages: 0, errors: 1 })
+    expect(log.warn).toHaveBeenCalled()
+    await purgeDeckBucketPrefix('../decks', log)
+    expect(sendMock).not.toHaveBeenCalled()
   })
 })

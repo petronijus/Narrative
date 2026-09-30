@@ -4,6 +4,110 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
+## Unreleased — Components through commands (A2.12b; to be released as 0.10.15)
+
+### Added
+
+- **Agents can make a component from objects on a slide:**
+  `component.promote` builds the master from the chosen objects (a group
+  brings its members; rich text, tables and animations come along), copies
+  their pictures and videos into the component and removes links to slides.
+  The slide itself is not changed. Named objects become the component's
+  slots. The editor's "Promote to component" uses the same server path.
+- **Copy and paste between a master and a deck, in both directions, and
+  between two masters.** Pictures and videos are copied into the document
+  they are pasted into.
+- `media.upload`, `media.url`, `media.status`, `media.delete` and
+  `media.uploadSession` accept a component master (`componentId`). An
+  agent with a shell can send a local picture or video to a master with
+  `curl`.
+
+### Changed
+
+- **A component owns the pictures and videos its master shows.** They are
+  copied in when the component is promoted and copied out into the deck when
+  it is stamped. Before, a master pointed at the media of the deck it was
+  promoted from, so the media disappeared with that deck and was invisible
+  to anyone without access to it. Masters promoted earlier are brought under
+  this rule once, when the server starts (data migration
+  `2026-09-30-component-media`).
+- **Stamping a component (the component picker and dragging one onto the
+  canvas) runs on the server** through `component.stamp`, the same path an
+  agent takes. The stamp arrives in the editor as a remote change: Delete
+  removes it and Ctrl+Z does not. The same applies to every paste from
+  another deck or master.
+- "Promote to component" first waits until the server holds the edits made
+  a moment earlier (a text box renamed just before), so the master includes
+  them.
+- A new component created in a folder gets its empty master slide from the
+  server. The route no longer accepts a client-chosen id.
+
+### Fixed
+
+- **Pictures and videos can be uploaded into a component master.** Before,
+  the master editor sent the upload a made-up deck id (`component:<id>`),
+  which the server refused, so no upload into a master had ever worked. The
+  upload now belongs to the component. Fonts and `.pptx` files are refused
+  there, because the folder's fonts already cover a master.
+
+### Security
+
+- Only the owner of the component's folder can read, upload or delete a
+  component's media. This is the same rule that guards the master document.
+  Share links never reach component media.
+- Each person can have the server copy media at most 60 times a minute
+  (promote, stamp, paste, inserting or duplicating slides; editor and agent
+  alike), otherwise 429.
+- Media a command has copied for a write it never reaches (a refused or
+  abandoned agent call) is discarded.
+- An upload's storage key must lie in the namespace of the owner the upload
+  was authorised for. A component id that could not safely name a storage
+  key is refused.
+- `GET /api/media/:id/url` answers `Cache-Control: private` (was `public`).
+
+### Internal
+
+- A2.12b. Migration 0027 adds `media_assets.component_id`
+  (`ON DELETE CASCADE`). A media row has one owner: a deck, a component or
+  a folder (fonts). Component keys live under `components/<id>/…`
+  (`media/mediaOwner.ts`). Access is checked by `canUseComponentMedia`.
+  Migration 0028 adds two CHECK constraints: `media_assets_one_owner`
+  (validated) and `components_id_storage_safe`
+  (`^[A-Za-z0-9_-]{1,64}$`, `NOT VALID`, because the create route accepted
+  client ids before). Deleting a component or a folder purges
+  `components/<id>/` and the master's tus originals. The video worker takes
+  its output prefix from the storage key (`videoOutputPrefix`,
+  `@narrative/shared`). Migration 0029 lets an upload session belong to a
+  component: `upload_sessions.deck_id` becomes nullable, `component_id` is
+  added, and CHECK `upload_sessions_one_owner` requires exactly one of the
+  two.
+- Server: `services/componentStaging.ts` (promote, stamp staging,
+  `adoptMasterMedia`), `routes/insertObjects.ts`, and new routes
+  `POST /decks/:id/promote-component`, `POST /decks/:id/stamp-component` and
+  `POST /components/:id/insert-objects`. `POST /decks/:id/insert-objects`
+  takes `sourceDeckId` or `sourceComponentId`. `object.insertFromDeck`
+  gains `fromComponent` and accepts a master as its target.
+  `component.stamp`'s handler is the exported `stampMaster`, and its `load`
+  stages the master's media (`ComponentService.prepareStamp`).
+- Command framework: `CommandDef.release(loaded)` and
+  `PreparedInvocation.abandon()`. `services/mediaCopyBudget.ts` provides the
+  copy budget.
+- Web: `state/useStampComponent.ts` and `state/providerSaved.ts`
+  (`whenSaved()` on the slide-doc context). The web clipboard sends every
+  cross-document paste to the server. The browser writer
+  `writeComponentMasterTree.ts` is deleted. `Toolbar` and `UploadDropZone`
+  leave `ONE_DOOR_PENDING`, which now holds only `testApi.ts` (A2.13).
+  `component.promote` leaves `knownMissing`. The create route's claim moves
+  to the A4 `component.create` entry, so 7 entries remain (A3 5, A4 2).
+- 129 commands. The tools/list budget goes from 187,000 to 189,000 bytes
+  (188,407 measured, url mode).
+- Tests: new e2e `component-promote-stamp.spec.ts` and
+  `component-master-upload.spec.ts`. `component-picker-search-settings` and
+  `m16-component-flows` seed their own folder and components, which fixes
+  the known "hardcoded Drafts folder id" failure. New eval scenarios
+  `component-promote-headline` and `component-master-picture` run live only
+  (44 scenarios). 27 web skips (was 28).
+
 ## 0.10.14 — Folder tokens on the server (2026-09-30)
 
 ### Added

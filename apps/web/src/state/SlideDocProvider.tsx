@@ -63,6 +63,8 @@ import { SlideDocContext } from './slideDocContext.js'
 import { EditorShowBusContext, createEditorShowBus, parseEditorShowMessage } from './editorShow.js'
 import type { SlideDocContextValue, WsStatus } from './slideDocContext.js'
 import { markWsConnected, markWsSynced } from './loadTimings.js'
+import { whenProviderSaved } from './providerSaved.js'
+import { whenComponentDocSaved } from './componentDocCache.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 const PEER_ID_STORAGE_KEY = 'narrative:peerId'
@@ -308,6 +310,7 @@ function HocuspocusSlideProvider({ deckId, children }: HocuspocusSlideProviderPr
       localUser,
       documentName: deckId,
       documentKey: deckId,
+      whenSaved: () => whenProviderSaved(provider),
     })
 
     // M8: Set initial awareness state immediately (even before WS connect —
@@ -391,9 +394,14 @@ interface ExternalDocSlideProviderProps {
  *     editing is a single-user concept for P6; P7+ can wire shared
  *     awareness via the cache if/when collaborative master editing lands.
  *   - Doc is NEVER destroyed on unmount — the cache controls lifecycle.
- *   - The doc is seeded by `writeComponentMasterTree` (one slide, id='master')
- *     before the cache exposes it; we do NOT call hydrateSlideDoc here.
+ *   - The server writes the master slide (id 'master') when it creates the
+ *     component (`writeComponentMaster`); we do NOT call hydrateSlideDoc here.
  */
+/** `component:<id>` → `<id>`: the document key a master editor mounts with. */
+function componentIdOf(documentKey: string): string {
+  return documentKey.startsWith('component:') ? documentKey.slice('component:'.length) : documentKey
+}
+
 function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlideProviderProps) {
   const { user } = useAuth()
 
@@ -419,13 +427,15 @@ function ExternalDocSlideProvider({ deckId, doc, children }: ExternalDocSlidePro
       // Local-only: no server, so no peers (and no agent peers) to identify.
       documentName: null,
       documentKey: deckId,
+      // The cache's provider carries this document's edits to the server.
+      whenSaved: () => whenComponentDocSaved(componentIdOf(deckId)),
       wsStatus: 'connected',
     }
   }, [deckId, doc, localUser])
 
-  // We deliberately do NOT call hydrateSlideDoc here. The component master
-  // doc is seeded by `writeComponentMasterTree` immediately after promotion
-  // with a single slide whose id is 'master' — calling hydrateSlideDoc would
+  // We deliberately do NOT call hydrateSlideDoc here. The server writes the
+  // master doc's single slide, id 'master', when it creates the component
+  // (slide-model `writeComponentMaster`) — calling hydrateSlideDoc would
   // seed a fresh nanoid id instead. The cache guarantees the doc is fully
   // synced before `<ComponentMasterEditor>` mounts this provider, so the
   // master slide is always present.

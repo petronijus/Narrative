@@ -8,6 +8,8 @@
  * schema and exactly one slide (see slide-model/src/stampComponent.ts).
  */
 
+import type { SlideRef } from '../refs.js'
+
 export interface ComponentRecord {
   id: string
   folderId: string
@@ -25,6 +27,34 @@ export interface ComponentMaster {
    * editor has it open, else the stored one. Apply it to a fresh `Y.Doc`.
    */
   state: Uint8Array
+}
+
+/** What `component.promote` made. */
+export interface PromotedComponent {
+  component: ComponentRecord
+  /** Objects in the master (a promoted group brings its members). */
+  objectCount: number
+  /** Pictures and videos copied into the component (it owns its media). */
+  mediaCopied: number
+  /** Pictures whose file could not be copied (the source file is gone). */
+  skippedImages: number
+  /** Links to slides of the deck (removed: a master has no slides to jump to). */
+  droppedLinks: number
+}
+
+/**
+ * A master staged for stamping into a deck: its pictures and videos are
+ * copied into the deck (registered as the deck's media) and `master` points
+ * at the copies. Stamp from `master`; call `discard` when the stamp will not
+ * be written, so the copies do not stay behind.
+ */
+export interface PreparedStamp {
+  master: ComponentMaster
+  /** Media rows registered for the deck. */
+  mediaRegistered: number
+  /** Pictures whose file could not be copied. */
+  skippedImages: number
+  discard(): Promise<void>
 }
 
 export interface ComponentService {
@@ -52,6 +82,30 @@ export interface ComponentService {
     folderId?: string | undefined
     deckId?: string | undefined
   }): Promise<ComponentMaster>
+  /**
+   * Make a new component of the deck's folder from objects on one of the
+   * deck's slides: the objects (groups with their members, rich text,
+   * animations of the subtree) become the master, the pictures and videos
+   * they show are copied into the component, and links to the deck's
+   * slides are removed. The slide is not changed. The deck must live in a
+   * folder the user owns.
+   */
+  promote(args: {
+    userId: string
+    deckId: string
+    slide: SlideRef
+    objects: readonly string[]
+    name: string
+  }): Promise<PromotedComponent>
+  /**
+   * `readMaster` with the deck's rule, and the master's media copied into
+   * the deck — see {@link PreparedStamp}.
+   */
+  prepareStamp(args: {
+    userId: string
+    componentId: string
+    deckId: string
+  }): Promise<PreparedStamp>
   /**
    * Authorise opening `component:<id>` as a document (how an agent edits a
    * master with the ordinary document commands). Throws `not_found` /

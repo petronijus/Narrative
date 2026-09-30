@@ -151,7 +151,8 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const defaults = useDefaultObjectFill()
   const api = useApi()
   const { folderId } = useDeckRole()
-  const { deckCtx } = useSlideDoc()
+  // A deck's document name is its id; a component master (null) cannot promote.
+  const { deckCtx, documentName: deckId, whenSaved } = useSlideDoc()
   const { activeSlideId } = useActiveSlide()
 
   // Promote status — used to show a brief feedback toast text
@@ -411,25 +412,17 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   }
 
   /**
-   * Promote the current selection to a shared component.
-   *
-   * Order of operations:
-   * 1. Build a serialisable plan via `promoteToComponent` (slide-model).
-   * 2. Mint the Postgres row with the plan's `componentId` so server +
-   *    Y.Doc agree on the master id.
-   * 3. Open a transient Hocuspocus connection to the new component doc
-   *    and write masterTree + masterAnimations into it.
-   * 4. In one slide-level Yjs transaction, remove the promoted objects
-   *    and insert the instance node — undo restores the originals
-   *    atomically because everything happens inside a single transact.
-   * 5. Select the new instance.
+   * Promote the current selection to a component of the deck's folder:
+   * `component.promote` on the server (state/promoteSelectionToComponent.ts),
+   * after the server holds the slide's latest changes. The slide is not
+   * changed.
    */
   // Promote-to-component runs the actual create + Yjs work after the
   // user confirms a name in the dialog. Split out so the menu item can
   // open the dialog without locking the closure on a name.
   const performPromote = useCallback(
     (name: string): void => {
-      if (mutationCtx === null || folderId === null) return
+      if (mutationCtx === null || folderId === null || deckId === null) return
       if (deckCtx === null || activeSlideId === null) return
       const targets = resolveTargets()
       if (targets.length === 0) return
@@ -440,8 +433,10 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         try {
           await promoteSelectionToComponent({
             api,
+            deckId,
             folderId,
             deckCtx,
+            whenSaved,
             activeSlideId,
             targetIds: targets.map((t) => t.id),
             name,
@@ -450,19 +445,17 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
           setPromoteStatus('done')
           window.setTimeout(() => setPromoteStatus('idle'), 2000)
         } catch (err) {
-          // Cleanup-on-failure is intentionally NOT performed here:
-          // - The Postgres row stays — the user can delete it from the
-          //   Components tab in folder settings if it's empty.
-          // - The slide is unchanged because the transaction never fired.
-          // Surface the failure so the user knows nothing was promoted.
-
+          // Nothing to clean up: the server makes the component, its media
+          // and its master together or not at all, and the slide is never
+          // changed. Surface the failure so the user knows nothing was
+          // promoted.
           console.warn('[EditorContextMenu] promote to component failed', err)
           setPromoteStatus('error')
           window.setTimeout(() => setPromoteStatus('idle'), 2000)
         }
       })()
     },
-    [api, folderId, mutationCtx, deckCtx, activeSlideId],
+    [api, deckId, folderId, mutationCtx, deckCtx, whenSaved, activeSlideId],
   )
 
   const handlePromoteToComponent = useCallback((): void => {
@@ -543,7 +536,11 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
   const isLocked = target?.locked === true
   const hasObjectTarget = targetIdsRef.current.length > 0
   const canPromote =
-    hasObjectTarget && mutationCtx !== null && folderId !== null && promoteStatus === 'idle'
+    hasObjectTarget &&
+    mutationCtx !== null &&
+    folderId !== null &&
+    deckId !== null &&
+    promoteStatus === 'idle'
   // Ungroup is visible when any right-click target carries a groupId.
   const canUngroup =
     hasObjectTarget &&

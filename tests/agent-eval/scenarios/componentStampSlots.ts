@@ -23,10 +23,9 @@ export default defineScenario({
   async setup(world) {
     const componentName = `Headline block ${world.tag}`
     const componentId = await world.createComponent(world.evalFolderId, componentName)
-    // A new component's master has no slide until someone opens it; give it
-    // one and draw the master through the ordinary document commands.
+    // The server writes a new component's empty master slide; draw the
+    // master on it with the ordinary document commands.
     await world.batch({ componentId }, [
-      { command: 'slide.add', input: {} },
       {
         command: 'object.create',
         input: {

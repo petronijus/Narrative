@@ -17,8 +17,12 @@ import type {
   FolderSummary,
   FontFaceInfo,
 } from '@narrative/commands'
-import { decks, folders, mediaAssets } from '../db/schema.js'
-import { purgeDeckBucketPrefix, purgeExplicitKeys } from '../media/bucketCleanup.js'
+import { components, decks, folders, mediaAssets } from '../db/schema.js'
+import {
+  purgeComponentBucketPrefix,
+  purgeDeckBucketPrefix,
+  purgeExplicitKeys,
+} from '../media/bucketCleanup.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
 import {
   folderFontPostscriptCollides,
@@ -270,9 +274,20 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
       .where(eq(decks.folderId, id))
     const deckIds = containedDecks.map((d) => d.id)
 
-    // Storage keys of every contained deck's assets AND the folder's own
-    // fonts, collected BEFORE the cascade removes the rows: tus originals and
-    // folder fonts use keys outside any decks/<id>/ prefix.
+    // Storage keys of every contained deck's assets, the folder's own fonts
+    // AND its component masters' pictures and videos (A2.12b — they cascade
+    // away with the folder's components), collected BEFORE the cascade
+    // removes the rows: tus originals and folder fonts use keys outside any
+    // decks/<id>/ or components/<id>/ prefix.
+    const containedComponents = await db
+      .select({ id: components.id })
+      .from(components)
+      .where(eq(components.folderId, id))
+    const componentIds = containedComponents.map((c) => c.id)
+    const ownMedia =
+      componentIds.length > 0
+        ? or(eq(mediaAssets.folderId, id), inArray(mediaAssets.componentId, componentIds))
+        : eq(mediaAssets.folderId, id)
     const assetRows = await db
       .select({
         storageKey: mediaAssets.storageKey,
@@ -281,11 +296,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
         thumbnailKey: mediaAssets.thumbnailKey,
       })
       .from(mediaAssets)
-      .where(
-        deckIds.length > 0
-          ? or(inArray(mediaAssets.deckId, deckIds), eq(mediaAssets.folderId, id))
-          : eq(mediaAssets.folderId, id),
-      )
+      .where(deckIds.length > 0 ? or(inArray(mediaAssets.deckId, deckIds), ownMedia) : ownMedia)
     const explicitKeys = assetRows.flatMap((r) =>
       [r.storageKey, r.playbackKey, r.posterKey, r.thumbnailKey].filter(
         (k): k is string => typeof k === 'string' && k !== '',
@@ -303,6 +314,7 @@ export function createFoldersService(deps: ServiceDeps): FolderService {
     // Best-effort MinIO cleanup, loss-tolerant.
     await Promise.all([
       ...containedDecks.map((d) => purgeDeckBucketPrefix(d.id, deps.log)),
+      ...componentIds.map((c) => purgeComponentBucketPrefix(c, deps.log)),
       purgeExplicitKeys(explicitKeys, deps.log),
     ])
     return { deletedDeckCount: containedDecks.length }

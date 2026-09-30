@@ -16,9 +16,10 @@
  */
 
 import { eq, sql } from 'drizzle-orm'
-import { appDataMigrations, folders } from '../db/schema.js'
+import { appDataMigrations, components, folders } from '../db/schema.js'
 import type { ServiceDeps } from './deps.js'
 import { ensureFolderTokens, queuePropagation } from './tokens.js'
+import { adoptMasterMedia } from './componentStaging.js'
 
 type Deps = Pick<ServiceDeps, 'db' | 'log' | 'hocuspocus'>
 
@@ -78,7 +79,48 @@ export const folderTokensOnServer: DataMigration = {
   },
 }
 
-export const DATA_MIGRATIONS: readonly DataMigration[] = [folderTokensOnServer]
+/**
+ * A2.12b: a component owns the pictures and videos its master shows (they
+ * are copied in when it is promoted, and out into a deck when it is
+ * stamped). Masters promoted before point at the promoting deck's media —
+ * stamping them into another deck left the picture to a deck the viewer may
+ * not see. Every master's deck media is copied into its component and the
+ * master re-pointed (`adoptMasterMedia`).
+ */
+export const componentMediaOwnedByComponent: DataMigration = {
+  id: '2026-09-30-component-media',
+  description: 'copy the deck media component masters show into their components',
+  async run(deps) {
+    const rows = await deps.db.select({ id: components.id }).from(components)
+    const report = {
+      components: rows.length,
+      adopted: 0,
+      copied: 0,
+      unresolved: 0,
+      failed: [] as string[],
+    }
+    for (const { id } of rows) {
+      try {
+        const { copied, unresolved } = await adoptMasterMedia(deps, id)
+        if (copied > 0) report.adopted++
+        report.copied += copied
+        report.unresolved += unresolved
+      } catch (err) {
+        deps.log.warn({ err, componentId: id }, 'component media data migration: component failed')
+        report.failed.push(`component:${id}`)
+      }
+    }
+    if (report.failed.length > 0) {
+      throw Object.assign(new Error('some masters could not be migrated'), { report })
+    }
+    return report
+  },
+}
+
+export const DATA_MIGRATIONS: readonly DataMigration[] = [
+  folderTokensOnServer,
+  componentMediaOwnedByComponent,
+]
 
 /** Tries before a failing migration is left alone (it then needs a person: see its `last_error`). */
 export const MAX_ATTEMPTS = 3

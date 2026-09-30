@@ -8,7 +8,7 @@
  * scoped to one deck cannot reach another deck's media.
  */
 
-import type { BinarySource } from './common.js'
+import type { BinarySource, DocumentRef } from './common.js'
 
 export type MediaKind = 'image' | 'video' | 'font'
 export type ImageVariant = 'thumb' | 'preview' | 'display' | 'original'
@@ -73,21 +73,28 @@ export interface FontUrlInfo {
 
 export interface MediaService {
   /**
-   * Store an image, video or font for a deck. The bytes go through the same
-   * checks as a browser upload: per-kind size limits, SVG sanitisation,
-   * magic-byte checks for rasters, downscaling to the stored-image limits,
-   * font parsing, and a transcode job for videos.
+   * Store an image, video or font for a deck, or an image or video for a
+   * component master (`owner`; a master takes no fonts — its folder's cover
+   * it). The bytes go through the same checks as a browser upload: per-kind
+   * size limits, SVG sanitisation, magic-byte checks for rasters,
+   * downscaling to the stored-image limits, font parsing, and a transcode
+   * job for videos.
    */
-  upload(args: { userId: string; deckId: string; source: BinarySource }): Promise<MediaUploadResult>
+  upload(args: {
+    userId: string
+    owner: DocumentRef
+    source: BinarySource
+  }): Promise<MediaUploadResult>
   /**
-   * Open a one-time upload session for ONE image, video or font into the
-   * deck (editor access): the caller sends the file itself to the tus upload
-   * the editor uses. For agents with a shell, whose files cannot travel
-   * through the model as base64.
+   * Open a one-time upload session for ONE image, video or font into a deck
+   * (editor access), or ONE image or video into a component master (owning
+   * its folder): the caller sends the file itself to the tus upload the
+   * editor uses. For agents with a shell, whose files cannot travel through
+   * the model as base64.
    */
   openUploadSession(args: {
     userId: string
-    deckId: string
+    owner: DocumentRef
     filename: string
     mimeType?: string | undefined
     /** The file's exact size: the session uploads that file only. */
@@ -95,20 +102,24 @@ export interface MediaService {
     /** The credential asking (AgentSessionInfo.credential); revoking it ends the session. */
     credentialKey?: string | undefined
   }): Promise<UploadSessionInfo>
-  /** Transcode state and playback URLs of a video (viewer access to its deck). */
+  /**
+   * Transcode state and playback URLs of a video: viewer access to its deck,
+   * or owning the folder of its component. With `owner`, the asset must
+   * belong to that deck or component.
+   */
   videoInfo(args: {
     userId: string | null
     shareToken?: string | null | undefined
     assetId: string
-    deckId?: string | undefined
+    owner?: DocumentRef | undefined
   }): Promise<VideoInfo>
-  /** Signed imgproxy URL of an image (viewer access to its deck). */
+  /** Signed imgproxy URL of an image (access and `owner` as `videoInfo`). */
   url(args: {
     userId: string | null
     shareToken?: string | null | undefined
     assetId: string
     variant: ImageVariant
-    deckId?: string | undefined
+    owner?: DocumentRef | undefined
   }): Promise<{ url: string }>
   /** Presigned URL of a folder font file (folder owner only). */
   fontUrl(args: {
@@ -116,6 +127,6 @@ export interface MediaService {
     assetId: string
     folderId?: string | undefined
   }): Promise<FontUrlInfo>
-  /** Remove an asset's row (deck owner only). */
-  delete(args: { userId: string; assetId: string; deckId?: string | undefined }): Promise<void>
+  /** Remove an asset's row: the deck's owner, or the owner of its component's folder. */
+  delete(args: { userId: string; assetId: string; owner?: DocumentRef | undefined }): Promise<void>
 }

@@ -1,6 +1,6 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-09-30, after A2.11 (was 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09).
+> Last updated 2026-09-30, after A2.12b (the counts table below is still the A2.11 measurement; see "Added in A2.12b"). Was 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
 > Current state, **measured** with `pnpm -r test` on 2026-09-30 (the A2.11
 > tree, uncommitted at the time, on top of `925c08c` / v0.10.12), all green
 > in the docs sweep's run. `pnpm typecheck` re-run by the sweep: exit 0.
@@ -34,6 +34,41 @@
 > (`table.setSize`, `overrideCells`, table gradients, two more replayed
 > eval scenarios), web −3 (`oneDoor.test.ts` checks each `ONE_DOOR_PENDING`
 > file, and three left the list); no test file added or removed.)
+>
+> Added in A2.12b (2026-09-30, uncommitted at the time; not re-measured by
+> this sweep: a live agent eval was running against the dev stack):
+>
+> - e2e `component-promote-stamp.spec.ts`: promote a picture, then stamp
+>   it, and each owner gets its copy; a picture pasted from a deck into a
+>   master editor becomes the component's.
+> - e2e `component-master-upload.spec.ts`: a tus upload into a master
+>   carries `componentId`, is owned by the component and renders.
+> - `component-picker-search-settings.spec.ts` and `m16-component-flows.spec.ts`
+>   now seed their own folder and components through the API, which closes
+>   the "hardcoded Drafts folder id" known failure.
+> - 67 e2e spec files (65 at 0.10.14).
+> - Server unit tests for `media/mediaOwner.ts`,
+>   `services/componentStaging.ts`, `routes/componentStaging`
+>   (promote/stamp routes), `services/mediaCopyBudget.ts`, plus changes to
+>   the tus, finalize, bucket-cleanup, media-route, media-sharing,
+>   deck-insert and insert-objects tests.
+> - Web: `state/providerSaved.test.ts` and
+>   `state/promoteSelectionToComponent.test.ts` are new.
+>   `writeComponentMasterTree.test.ts` and
+>   `EditorContextMenu.promote.test.tsx` were deleted with the code they
+>   tested. Web skips are 27 (was 28).
+> - Commands: `serverCommands.test.ts` covers media commands and upload
+>   sessions targeting a component master, and `object.insertFromDeck`
+>   between a master and a deck. `run.test.ts` covers
+>   `release` / `abandon`. `component.promote` is covered by the contract
+>   suite through its examples, like every command.
+> - Upload sessions for a component (migration 0029):
+>   `media/uploadSessions.test.ts` and
+>   `uploadSessions.integration.test.ts` changed. The integration file was
+>   not run by this sweep.
+> - Eval scenarios `component-promote-headline` and
+>   `component-master-picture` are live only (the memory world does not
+>   model component documents), for 44 scenarios, 36 of them replayed.
 >
 > Added in A2.11 (2026-09-30): contract tests for `text.edit`,
 > `text.replace` (`commands/textEdit.test.ts`), `text.setBoxTypography` and
@@ -194,7 +229,8 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
 > 2026-09-27 at A1; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
 > trip (5 differences, AGENTS.md requires 0); `m16-component-flows.spec.ts`
-> (hardcoded Drafts folder id, fails on any other database).
+> (hardcoded Drafts folder id, fails on any other database — fixed in
+> A2.12b, 2026-09-30: the spec seeds its own folder and component).
 >
 > Added in the 0.9.x arc: **5 .pptx parser regression tests** (theme fonts +
 > placeholder geometry inheritance, 0.9.1) and the **first 3 tests for
@@ -231,11 +267,11 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 | Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; atomic batches; manifest current | Strong (1,005 + route guard)         |
 | Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                        | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                              | Strong (1,193)                       |
 | Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                     | Drizzle stores against the real local Postgres: run store, list paging, OAuth store, folder tokens / fonts, upload sessions                                                                | Since A1 (6 files, opt-in)           |
-| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (39 scenarios, 33 replayed) |
+| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (44 scenarios, 36 replayed) |
 | Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                     | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                   | OK                                   |
 | Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                           | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                        | Was bloated; cleaned up              |
 | Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                   | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`              | Strong (ADR 0009)                    |
-| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                            | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                   | Strong (64 spec files)               |
+| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                            | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                   | Strong (67 spec files)               |
 | Visual regression          | `apps/web/e2e/visual/*.spec.ts` (TODO — convert `visual-check.spec.ts`)                                             | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                             | Missing                              |
 | Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts`                                                                  | Throughput, awareness rate, doc growth                                                                                                                                                     | Exists, no thresholds enforced       |
 | Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                       | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                 | Active (Tier B.1; tables in A0)      |

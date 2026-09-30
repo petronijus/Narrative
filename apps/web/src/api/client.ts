@@ -75,10 +75,15 @@ export interface ApiClient {
    * copied into `deckId` and tokens rebound across folders. Rejects with an
    * `ApiError` carrying the server's reason.
    */
-  insertObjectsFromDeck(
-    deckId: string,
+  /**
+   * The cross-document paste (`object.insertFromDeck`): objects read from
+   * `source` onto a slide of `target` — each a deck or a component master —
+   * with their pictures and videos copied into the target.
+   */
+  insertObjectsFrom(
+    target: DocumentRef,
     body: {
-      sourceDeckId: string
+      source: DocumentRef
       slideId: string
       objects: Record<string, unknown>[]
       offset?: { x: number; y: number }
@@ -150,14 +155,24 @@ export interface ApiClient {
   /** List components in a folder (owner only). */
   listComponents(folderId: string): Promise<ComponentSummary[]>
   /**
-   * Create a component metadata row. Pass `id` to pre-assign the component id
-   * so the Hocuspocus doc name is known before connecting (avoids a round-trip).
-   * Omit to let the server generate a nanoid(12).
+   * `component.promote`: objects of a slide become a new component of the
+   * deck's folder; the server builds the master and copies the pictures and
+   * videos into the component. The server reads the deck live, so call it
+   * once it holds the slide's latest changes (`useSlideDoc().whenSaved`).
    */
-  createComponent(
-    folderId: string,
-    opts?: { name?: string; id?: string },
-  ): Promise<ComponentSummary>
+  promoteComponent(
+    deckId: string,
+    body: { slideId: string; objectIds: string[]; name: string },
+  ): Promise<PromotedComponent>
+  /**
+   * `component.stamp`: the server stamps the master onto a slide (its
+   * pictures and videos copied into the deck). The stamp reaches the editor
+   * as a remote change; the ids are the stamped objects in stacking order.
+   */
+  stampComponent(
+    deckId: string,
+    body: { componentId: string; slideId: string; at?: { x: number; y: number } },
+  ): Promise<{ objectIds: string[] }>
   /** Rename a component (owner only). */
   renameComponent(componentId: string, name: string): Promise<ComponentSummary>
   /** Delete a component and cascade its update log (owner only). Caller handles instance cleanup. */
@@ -488,6 +503,9 @@ export interface AppendPptxResult {
 // M16 P5 — Folder component types
 // ---------------------------------------------------------------------------
 
+/** A document objects live in: a deck, or a component master. */
+export type DocumentRef = { deckId: string } | { componentId: string }
+
 export interface ComponentSummary {
   id: string
   folderId: string
@@ -496,6 +514,18 @@ export interface ComponentSummary {
   updatedAt: string
   /** Signed imgproxy URL. NULL until the editor uploads a first thumbnail. */
   thumbnailUrl?: string | null
+}
+
+/** What POST /decks/:id/promote-component made (`component.promote`). */
+export interface PromotedComponent {
+  component: ComponentSummary
+  objectCount: number
+  /** Pictures and videos copied into the component. */
+  mediaCopied: number
+  /** Pictures whose file could not be copied. */
+  skippedImages: number
+  /** Links to slides, removed (a master has no slides). */
+  droppedLinks: number
 }
 
 // ---------------------------------------------------------------------------
@@ -719,11 +749,20 @@ export function createApiClient(): ApiClient {
       return (await res.json()) as { slideIds: string[]; insertedAt: number }
     },
 
-    insertObjectsFromDeck: async (deckId, body) => {
-      const res = await request(`/decks/${deckId}/insert-objects`, {
+    insertObjectsFrom: async (target, { source, ...rest }) => {
+      const path =
+        'deckId' in target
+          ? `/decks/${target.deckId}/insert-objects`
+          : `/components/${target.componentId}/insert-objects`
+      const res = await request(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          ...('deckId' in source
+            ? { sourceDeckId: source.deckId }
+            : { sourceComponentId: source.componentId }),
+          ...rest,
+        }),
       })
       if (!res.ok) throw await apiError(res)
       return (await res.json()) as { objectIds: string[] }
@@ -868,12 +907,25 @@ export function createApiClient(): ApiClient {
     listComponents: (folderId) =>
       requestJson<ComponentSummary[]>(`/folders/${folderId}/components`),
 
-    createComponent: (folderId, opts) =>
-      requestJson<ComponentSummary>(`/folders/${folderId}/components`, {
+    promoteComponent: async (deckId, body) => {
+      const res = await request(`/decks/${deckId}/promote-component`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(opts ?? {}),
-      }),
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as PromotedComponent
+    },
+
+    stampComponent: async (deckId, body) => {
+      const res = await request(`/decks/${deckId}/stamp-component`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw await apiError(res)
+      return (await res.json()) as { objectIds: string[] }
+    },
 
     renameComponent: (componentId, name) =>
       requestJson<ComponentSummary>(`/components/${componentId}`, {

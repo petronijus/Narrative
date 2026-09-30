@@ -20,17 +20,37 @@
  * Anything deeper (scrub-through-master-animation, override badge flip
  * after Yjs round-trip, present-mode parity) belongs in dedicated specs
  * once the manual QA pass surfaces concrete failures.
+ *
+ * The spec seeds its own folder with one component and deletes it
+ * afterwards, so it depends on nothing in the developer's database.
  */
 
 import { test, expect } from '@playwright/test'
 
-const FOLDER_ID = 'drafts-958e2b33e6952467a1fbe3c71fc802e6'
-const SETTINGS_URL = `/folder/${FOLDER_ID}/settings`
-const FOLDER_DECKS_URL = `/folder/${FOLDER_ID}`
+const API = 'http://localhost:3001'
+let folderId: string
+let seededComponentId: string
 
 test.describe('M16 component flows', () => {
+  test.beforeAll(async ({ request }) => {
+    const folder = await request.post(`${API}/folders`, {
+      data: { name: `E2E M16 components ${Date.now()}` },
+    })
+    expect(folder.ok(), `POST /folders: ${folder.status()}`).toBe(true)
+    folderId = ((await folder.json()) as { id: string }).id
+    const component = await request.post(`${API}/folders/${folderId}/components`, {
+      data: { name: 'Seeded component' },
+    })
+    expect(component.status()).toBe(201)
+    seededComponentId = ((await component.json()) as { id: string }).id
+  })
+
+  test.afterAll(async ({ request }) => {
+    await request.delete(`${API}/folders/${folderId}`).catch(() => {})
+  })
+
   test('Folder Settings: Components tab is reachable', async ({ page }) => {
-    await page.goto(SETTINGS_URL)
+    await page.goto(`/folder/${folderId}/settings`)
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Components' }).click()
     // Tab body shows either the empty-state or a grid — both render
@@ -41,7 +61,7 @@ test.describe('M16 component flows', () => {
   })
 
   test('GET /folders/:id/components returns an array', async ({ request }) => {
-    const res = await request.get(`http://localhost:3001/folders/${FOLDER_ID}/components`)
+    const res = await request.get(`${API}/folders/${folderId}/components`)
     expect(res.status()).toBe(200)
     const body = (await res.json()) as { id: string; name: string }[]
     expect(Array.isArray(body)).toBe(true)
@@ -56,37 +76,26 @@ test.describe('M16 component flows', () => {
   test.fixme('GET /folders/:id/component-instance-counts returns a counts object', async ({
     request,
   }) => {
-    const res = await request.get(
-      `http://localhost:3001/folders/${FOLDER_ID}/component-instance-counts`,
-    )
+    const res = await request.get(`${API}/folders/${folderId}/component-instance-counts`)
     expect(res.status()).toBe(200)
     const body = (await res.json()) as { counts: Record<string, number> }
     expect(typeof body.counts).toBe('object')
   })
 
   test('Bogus token category returns 400', async ({ request }) => {
-    const res = await request.get(
-      `http://localhost:3001/folders/${FOLDER_ID}/tokens/not-a-category/abc/usages`,
-    )
+    const res = await request.get(`${API}/folders/${folderId}/tokens/not-a-category/abc/usages`)
     expect(res.status()).toBe(400)
   })
 
   test('Y.Doc cache counter is symmetric across master-editor route navigation', async ({
     page,
   }) => {
-    // Find any existing component in the folder; if none, the test
-    // becomes a no-op (we don't auto-promote here — that's flaky).
-    const listRes = await page.request.get(`http://localhost:3001/folders/${FOLDER_ID}/components`)
-    if (!listRes.ok()) test.skip()
-    const list = (await listRes.json()) as { id: string }[]
-    if (list.length === 0) test.skip()
-
-    const componentId = list[0]!.id
+    const componentId = seededComponentId
 
     // Land on a deck list first to mount the editor chrome (where the
     // cache module is loaded). Folder decks page is fine — it doesn't
     // open any cache slot.
-    await page.goto(FOLDER_DECKS_URL)
+    await page.goto(`/folder/${folderId}`)
     await page.waitForLoadState('networkidle')
 
     const baseline = await page.evaluate(
@@ -94,7 +103,7 @@ test.describe('M16 component flows', () => {
     )
 
     // Navigate to the master editor — opens one cache slot.
-    await page.goto(`/folder/${FOLDER_ID}/component/${componentId}`)
+    await page.goto(`/folder/${folderId}/component/${componentId}`)
     await page.waitForLoadState('networkidle')
     // Give the cache acquire + Hocuspocus connect a beat.
     await page.waitForTimeout(500)
@@ -102,14 +111,14 @@ test.describe('M16 component flows', () => {
     // Navigate back; the master-editor unmount should release the slot.
     // 30 s linger means the destroy fires later — assert the counter
     // doesn't unbounded-grow across two more open/close cycles.
-    await page.goto(FOLDER_DECKS_URL)
+    await page.goto(`/folder/${folderId}`)
     await page.waitForLoadState('networkidle')
 
     // Repeat once more so we'd notice a leak compounding.
-    await page.goto(`/folder/${FOLDER_ID}/component/${componentId}`)
+    await page.goto(`/folder/${folderId}/component/${componentId}`)
     await page.waitForLoadState('networkidle')
     await page.waitForTimeout(500)
-    await page.goto(FOLDER_DECKS_URL)
+    await page.goto(`/folder/${folderId}`)
     await page.waitForLoadState('networkidle')
 
     const final = await page.evaluate(

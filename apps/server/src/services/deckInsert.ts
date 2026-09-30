@@ -55,6 +55,7 @@ import {
 import {
   applyInsertPlan,
   planInsert,
+  sameDocument,
   levelOf,
   normalizeOutline,
   shiftBlockLevels,
@@ -64,15 +65,28 @@ import {
   type PreparedSlideInsert,
   type SlideInsertResult,
 } from '@narrative/commands'
-import { decks, mediaAssets } from '../db/schema.js'
+import { components, decks, mediaAssets } from '../db/schema.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { extensionFromMimeOrFilename } from '../media/uploadPolicy.js'
-import { discardDeckMedia, registerDeckMedia, type StagedDeckMedia } from '../pptx/importDeck.js'
+import {
+  discardDeckMedia,
+  discardOwnedMedia,
+  registerDeckMedia,
+  registerOwnedMedia,
+  type StagedDeckMedia,
+} from '../pptx/importDeck.js'
+import {
+  canUseComponentMedia,
+  mediaOriginalPath,
+  mediaOwnerPrefix,
+  type MediaOwner,
+} from '../media/mediaOwner.js'
 import type { ServiceDeps } from './deps.js'
 import { badRequest, forbidden, notFound } from './errors.js'
 import { readDocCopy, SERVER_EDIT_ORIGIN, writeLiveDoc } from './liveDocs.js'
 import { applyTokenRebinding, planTokenRebinding, type RebindCounts } from './tokenRebind.js'
+import { spendMediaCopyBudget } from './mediaCopyBudget.js'
 
 type MediaRow = typeof mediaAssets.$inferInsert
 const ASSET_KEYS = new Set(['assetId', 'posterAssetId'])
@@ -179,7 +193,7 @@ function fieldKeys(rec: Y.Map<unknown> | Record<string, unknown>): string[] {
 }
 
 /** Asset ids referenced anywhere in the slides. */
-function referencedAssets(slides: ReadonlyArray<Y.Map<unknown>>): Set<string> {
+export function referencedAssets(slides: ReadonlyArray<Y.Map<unknown>>): Set<string> {
   const ids = new Set<string>()
   for (const slide of slides) {
     forEachRecord(slide, (rec) => {
@@ -210,6 +224,31 @@ function referencedFamilies(slides: ReadonlyArray<Y.Map<unknown>>): Set<string> 
     })
   }
   return families
+}
+
+/**
+ * Point every asset reference in `records` that `idMap` names at its new
+ * id; returns how many references changed. Call it inside a transaction.
+ */
+export function pointAssetsAt(
+  records: ReadonlyArray<Y.Map<unknown>>,
+  idMap: ReadonlyMap<string, string>,
+): number {
+  let changed = 0
+  for (const record of records) {
+    forEachRecord(record, (rec, set) => {
+      for (const k of fieldKeys(rec)) {
+        const v = getField(rec, k)
+        if (!ASSET_KEYS.has(k) || typeof v !== 'string') continue
+        const to = idMap.get(v)
+        if (to !== undefined && to !== v) {
+          set(k, to)
+          changed++
+        }
+      }
+    })
+  }
+  return changed
 }
 
 // ---------------------------------------------------------------------------
@@ -282,9 +321,9 @@ async function stageCopy(
       userId: args.userId,
       scratch,
       records: chosen,
-      sourceDeckId: args.sourceDeckId,
+      source: { deckId: args.sourceDeckId },
       sourceFolderId: args.sourceFolderId,
-      targetDeckId: args.targetDeckId,
+      target: { deckId: args.targetDeckId },
       targetFolderId: args.targetFolderId,
       sourceSlideIds: new Set(all.map((m) => m.get('id') as string)),
       slideIdMap: new Map(chosen.map((m, i) => [m.get('id') as string, newSlideIds[i]!])),
@@ -309,20 +348,22 @@ interface Rewritten {
  * Steps 3–5 of the file header, on `records` (slides, or a scratch slide of
  * objects) in `scratch`, a detached document: point slide links at copied
  * slides (`slideIdMap`) or remove those into the source deck, copy the media
- * and fonts they use into the target deck's namespace, and rebind token
- * references when the folders differ. Nothing is registered and no real
- * document is touched; on failure the copied media is discarded (the caller
- * destroys the scratch).
+ * and fonts they use into the target's namespace, and rebind token
+ * references when the folders differ. The source and the target are decks
+ * or component masters (a promote copies deck media into a component, a
+ * stamp copies it back out). Nothing is registered and no real document is
+ * touched; on failure the copied media is discarded (the caller destroys
+ * the scratch).
  */
-async function rewriteForTarget(
+export async function rewriteForTarget(
   deps: ServiceDeps,
   args: {
     userId: string
     scratch: Y.Doc
     records: Y.Map<unknown>[]
-    sourceDeckId: string
+    source: MediaOwner
     sourceFolderId: string | null
-    targetDeckId: string
+    target: MediaOwner
     targetFolderId: string | null
     /** Every slide id of the source deck: a link to one that was not copied is removed. */
     sourceSlideIds: ReadonlySet<string>
@@ -330,7 +371,7 @@ async function rewriteForTarget(
     slideIdMap: ReadonlyMap<string, string>
   },
 ): Promise<Rewritten> {
-  const { userId, scratch, records, sourceDeckId, targetDeckId } = args
+  const { userId, scratch, records, source, target } = args
   const media: Rewritten['media'] = { mediaAssetRows: [], videoTranscodeJobs: [] }
   try {
     let droppedLinks = 0
@@ -357,12 +398,12 @@ async function rewriteForTarget(
       }
     })
 
-    // 3. Media under the target deck's namespace.
-    if (sourceDeckId !== targetDeckId) {
+    // 3. Media under the target's namespace.
+    if (!sameDocument(source, target)) {
       const staged = await copyMedia(deps, {
         userId,
-        sourceDeckId,
-        targetDeckId,
+        source,
+        target,
         assetIds: referencedAssets(records),
         families: referencedFamilies(records),
       })
@@ -370,18 +411,7 @@ async function rewriteForTarget(
       media.videoTranscodeJobs = staged.videoJobs
       skippedImages = staged.failed
       if (staged.idMap.size > 0) {
-        scratch.transact(() => {
-          for (const record of records) {
-            forEachRecord(record, (rec, set) => {
-              for (const k of fieldKeys(rec)) {
-                const v = getField(rec, k)
-                if (!ASSET_KEYS.has(k) || typeof v !== 'string') continue
-                const to = staged.idMap.get(v)
-                if (to !== undefined) set(k, to)
-              }
-            })
-          }
-        })
+        scratch.transact(() => pointAssetsAt(records, staged.idMap))
       }
     }
 
@@ -408,44 +438,84 @@ async function rewriteForTarget(
 
     return { media, skippedImages, tokens, droppedLinks }
   } catch (err) {
-    await discardDeckMedia({ db: deps.db, deckId: targetDeckId, media, log: deps.log })
+    await discardOwnedMedia({ db: deps.db, owner: target, media, log: deps.log })
     throw err
   }
 }
 
+/** The folder a deck or a component lives in (null: a deck in no folder), or not found. */
+async function folderOf(deps: ServiceDeps, doc: MediaOwner): Promise<string | null> {
+  if ('deckId' in doc) {
+    const [row] = await deps.db
+      .select({ folderId: decks.folderId })
+      .from(decks)
+      .where(eq(decks.id, doc.deckId))
+      .limit(1)
+    if (!row) throw notFound('Deck not found')
+    return row.folderId
+  }
+  const [row] = await deps.db
+    .select({ folderId: components.folderId })
+    .from(components)
+    .where(eq(components.id, doc.componentId))
+    .limit(1)
+  if (!row) throw notFound('Component not found')
+  return row.folderId
+}
+
 /**
- * `object.insertFromDeck`: objects read from `sourceDeckId` (already
- * validated and planned by the command) staged for `targetDeckId`. They are
- * built in a scratch document and rewritten there like copied slides —
- * links into the source's slides removed, the media and fonts they use
- * copied into the target, token references rebound across folders — and
- * the media rows are registered; `apply` then clones them onto a slide of
- * the target, in the host's one transaction.
+ * A component master the user may copy out of or into: its folder must be
+ * theirs (the rule of the `component:<id>` document). One they cannot use
+ * answers "not found", like a component that does not exist.
+ */
+async function requireComponentAccess(
+  deps: ServiceDeps,
+  userId: string,
+  componentId: string,
+): Promise<void> {
+  if (!(await canUseComponentMedia(deps.db, componentId, userId))) {
+    throw notFound(`Component '${componentId}' not found`)
+  }
+}
+
+/**
+ * `object.insertFromDeck`: objects read from `source` (already validated
+ * and planned by the command) staged for `target` — each a deck or a
+ * component master. They are built in a scratch document and rewritten
+ * there like copied slides — links into the source's slides removed, the
+ * media they use copied into the target (and, between decks, the source's
+ * own fonts), token references rebound across folders — and the media rows
+ * are registered; `apply` then clones them onto a slide of the target, in
+ * the host's one transaction.
  */
 export async function stageObjectInsert(
   deps: ServiceDeps,
-  args: { userId: string; sourceDeckId: string; targetDeckId: string; plan: InsertPlan },
+  args: { userId: string; source: MediaOwner; target: MediaOwner; plan: InsertPlan },
 ): Promise<PreparedObjectInsert> {
   const { db, log } = deps
-  const { userId, sourceDeckId, targetDeckId, plan } = args
-  if (sourceDeckId === targetDeckId) {
-    // Links into the "source" would be links into this deck, and its media is here already.
-    throw badRequest('The objects come from this deck: paste them with object.insert')
+  const { userId, source, target, plan } = args
+  if (sameDocument(source, target)) {
+    // Links into the "source" would be links into this document, and its media is here already.
+    throw badRequest('The objects come from this document: paste them with object.insert')
   }
 
-  await requireCopyAccess(deps, userId, sourceDeckId)
-  const rows = await db
-    .select({ id: decks.id, folderId: decks.folderId })
-    .from(decks)
-    .where(inArray(decks.id, [sourceDeckId, targetDeckId]))
-  const source = rows.find((r) => r.id === sourceDeckId)
-  const target = rows.find((r) => r.id === targetDeckId)
-  if (!source) throw notFound(`Source deck '${sourceDeckId}' not found`)
-  if (!target) throw notFound('Deck not found')
+  if ('deckId' in source) await requireCopyAccess(deps, userId, source.deckId)
+  else await requireComponentAccess(deps, userId, source.componentId)
+  // A deck target is authorised by the caller (the host, the route's role
+  // check); a master is its folder owner's.
+  if ('componentId' in target) await requireComponentAccess(deps, userId, target.componentId)
+  const [sourceFolderId, targetFolderId] = await Promise.all([
+    folderOf(deps, source),
+    folderOf(deps, target),
+  ])
 
   // The source's slide ids, read live: a link to one of them would jump
   // nowhere in the target.
-  const sourceDoc = await readDocCopy(deps, 'deck', sourceDeckId)
+  const sourceDoc = await readDocCopy(
+    deps,
+    'deckId' in source ? 'deck' : 'component',
+    'deckId' in source ? source.deckId : source.componentId,
+  )
   let sourceSlideIds: Set<string>
   try {
     sourceSlideIds = new Set(
@@ -472,10 +542,10 @@ export async function stageObjectInsert(
       userId,
       scratch,
       records: [scratchDeck.slides.get(0)],
-      sourceDeckId,
-      sourceFolderId: source.folderId,
-      targetDeckId,
-      targetFolderId: target.folderId,
+      source,
+      sourceFolderId,
+      target,
+      targetFolderId,
       sourceSlideIds,
       slideIdMap: new Map(),
     })
@@ -485,16 +555,10 @@ export async function stageObjectInsert(
   }
 
   try {
-    await registerDeckMedia({
-      db,
-      deckId: targetDeckId,
-      ownerUserId: userId,
-      media: staged.media,
-      log,
-    })
+    await registerOwnedMedia({ db, owner: target, ownerUserId: userId, media: staged.media, log })
   } catch (err) {
     scratch.destroy()
-    await discardDeckMedia({ db, deckId: targetDeckId, media: staged.media, log })
+    await discardOwnedMedia({ db, owner: target, media: staged.media, log })
     throw err
   }
 
@@ -522,23 +586,24 @@ export async function stageObjectInsert(
       if (settled) return
       settled = true
       scratch.destroy()
-      await discardDeckMedia({ db, deckId: targetDeckId, media: staged.media, log })
+      await discardOwnedMedia({ db, owner: target, media: staged.media, log })
     },
   }
 }
 
 /**
- * The editor's cross-deck object paste (`POST /decks/:id/insert-objects`):
- * `object.insertFromDeck` run as one server write onto slide `slideId`.
- * Invalid objects fail before anything is staged (a CommandError with the
- * offending field); the write reaches open editors as a remote change.
+ * The editor's cross-document object paste (`POST /decks/:id/insert-objects`,
+ * `POST /components/:id/insert-objects`): `object.insertFromDeck` run as one
+ * server write onto slide `slideId` of `target`. Invalid objects fail before
+ * anything is staged (a CommandError with the offending field); the write
+ * reaches open editors as a remote change.
  */
-export async function insertObjectsFromDeck(
+export async function insertObjectsFrom(
   deps: ServiceDeps,
   args: {
     userId: string
-    deckId: string
-    sourceDeckId: string
+    source: MediaOwner
+    target: MediaOwner
     slideId: string
     objects: readonly Record<string, unknown>[]
     offset?: { x: number; y: number } | undefined
@@ -548,18 +613,25 @@ export async function insertObjectsFromDeck(
   const plan = planInsert(args.objects, { offset: args.offset, at: args.at })
   const prepared = await stageObjectInsert(deps, {
     userId: args.userId,
-    sourceDeckId: args.sourceDeckId,
-    targetDeckId: args.deckId,
+    source: args.source,
+    target: args.target,
     plan,
   })
   const touched = { value: false }
   try {
     return await writeLiveDoc(
       deps,
-      'deck',
-      args.deckId,
+      'deckId' in args.target ? 'deck' : 'component',
+      'deckId' in args.target ? args.target.deckId : args.target.componentId,
       (doc) => {
-        const objects = getSlideObjectsCtx(hydrateSlideDoc(doc), args.slideId)
+        // A deck nobody opened yet gets its first slide, as the editor would
+        // seed it; a master is never seeded — its one slide is written with
+        // the component, and a missing one is refused before any write.
+        const deck =
+          'deckId' in args.target
+            ? hydrateSlideDoc(doc)
+            : { doc, slides: doc.getArray<Y.Map<unknown>>('slides') }
+        const objects = getSlideObjectsCtx(deck, args.slideId)
         if (objects === null) throw notFound(`Slide '${args.slideId}' not found`)
         return prepared.apply(objects)
       },
@@ -752,14 +824,26 @@ function basename(key: string): string {
   return key.split('/').pop() ?? 'file'
 }
 
-async function copyMedia(
+/**
+ * Copy the media `assetIds` (owned by `source`) and — deck to deck only —
+ * the source deck's own fonts in `families` into `target`'s namespace:
+ * stored objects copied server side, new rows staged (not inserted) for the
+ * target. A component master has no fonts of its own (its folder's fonts
+ * cover it), so no font crosses between a deck and a component.
+ */
+export async function copyMedia(
   deps: ServiceDeps,
   args: {
     userId: string
-    sourceDeckId: string
-    targetDeckId: string
+    source: MediaOwner
+    target: MediaOwner
     assetIds: ReadonlySet<string>
     families: ReadonlySet<string>
+    /**
+     * Spend the caller's media copy budget (mediaCopyBudget.ts) when there is
+     * something to copy. Off only for the server's own one-time migrations.
+     */
+    budgeted?: boolean
   },
 ): Promise<{
   idMap: Map<string, string>
@@ -768,28 +852,35 @@ async function copyMedia(
   failed: number
 }> {
   const { db, log } = deps
-  const { sourceDeckId, targetDeckId } = args
+  const { source, target } = args
   const idMap = new Map<string, string>()
   const rows: MediaRow[] = []
   const videoJobs: StagedDeckMedia['videoTranscodeJobs'] = []
   let failed = 0
 
-  const referenced =
+  const ownedBy = (owner: MediaOwner) =>
+    'deckId' in owner
+      ? eq(mediaAssets.deckId, owner.deckId)
+      : eq(mediaAssets.componentId, owner.componentId)
+  let referenced =
     args.assetIds.size === 0
       ? []
       : await db
           .select()
           .from(mediaAssets)
-          .where(
-            and(inArray(mediaAssets.id, [...args.assetIds]), eq(mediaAssets.deckId, sourceDeckId)),
-          )
-  // A reference to media the source deck does not own (another deck's, or
+          .where(and(inArray(mediaAssets.id, [...args.assetIds]), ownedBy(source)))
+  // A reference to media the source does not own (another deck's, or
   // deleted) cannot be copied: it stays unresolved, and is counted as such.
+  // Nor can a font into a component master (its folder's fonts cover it).
+  if ('componentId' in target) {
+    const fonts = new Set(referenced.filter((r) => r.kind === 'font').map((r) => r.id))
+    referenced = referenced.filter((r) => !fonts.has(r.id))
+  }
   const owned = new Set(referenced.map((r) => r.id))
   failed += [...args.assetIds].filter((id) => !owned.has(id)).length
   // The source deck's own fonts that the copied text uses, unless the target
   // already has a deck font of the same face.
-  const families = [...args.families]
+  const families = 'deckId' in source && 'deckId' in target ? [...args.families] : []
   const fonts =
     families.length === 0
       ? []
@@ -799,7 +890,7 @@ async function copyMedia(
             .from(mediaAssets)
             .where(
               and(
-                eq(mediaAssets.deckId, sourceDeckId),
+                ownedBy(source),
                 eq(mediaAssets.kind, 'font'),
                 inArray(mediaAssets.fontFamily, families),
               ),
@@ -812,20 +903,24 @@ async function copyMedia(
           await db
             .select({ ps: mediaAssets.fontPostscriptName })
             .from(mediaAssets)
-            .where(and(eq(mediaAssets.deckId, targetDeckId), eq(mediaAssets.kind, 'font')))
+            .where(and(ownedBy(target), eq(mediaAssets.kind, 'font')))
         ).map((r) => r.ps),
   )
 
   const copy = copyStoredObject
+  const toCopy = [...referenced, ...fonts.filter((f) => !targetFaces.has(f.fontPostscriptName))]
+  // Refused before the first copy: nothing is left half done.
+  if (args.budgeted !== false && toCopy.length > 0) spendMediaCopyBudget(args.userId)
 
-  for (const row of [
-    ...referenced,
-    ...fonts.filter((f) => !targetFaces.has(f.fontPostscriptName)),
-  ]) {
+  for (const row of toCopy) {
     const newId = nanoid(16)
     const ext = extensionFromMimeOrFilename(row.mimeType, row.originalFilename ?? undefined)
-    const folder = row.kind === 'font' ? 'fonts' : 'uploads'
-    const storageKey = `decks/${targetDeckId}/${folder}/${newId}/original.${ext}`
+    const storageKey = mediaOriginalPath(
+      target,
+      row.kind === 'font' ? 'fonts' : 'uploads',
+      newId,
+      ext,
+    )
     try {
       await copy(row.storageKey, storageKey)
       const outputs: Partial<MediaRow> = {}
@@ -835,7 +930,7 @@ async function copyMedia(
           for (const key of ['playbackKey', 'posterKey', 'thumbnailKey'] as const) {
             const from = row[key]
             if (typeof from !== 'string' || from === '') continue
-            const to = `decks/${targetDeckId}/videos/${newId}/${basename(from)}`
+            const to = `${mediaOwnerPrefix(target)}/videos/${newId}/${basename(from)}`
             await copy(from, to)
             outputs[key] = to
           }
@@ -846,7 +941,8 @@ async function copyMedia(
       }
       rows.push({
         id: newId,
-        deckId: targetDeckId,
+        deckId: 'deckId' in target ? target.deckId : null,
+        componentId: 'componentId' in target ? target.componentId : null,
         folderId: null,
         uploaderUserId: args.userId,
         mimeType: row.mimeType,
@@ -869,8 +965,8 @@ async function copyMedia(
     } catch (err) {
       failed++
       log.warn(
-        { err, assetId: row.id, sourceDeckId, targetDeckId },
-        'deck insert: copying an asset failed; its references stay unresolved in the target',
+        { err, assetId: row.id, source, target },
+        'media copy: copying an asset failed; its references stay unresolved in the target',
       )
     }
   }

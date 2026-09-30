@@ -204,6 +204,13 @@ export interface PreparedInvocation {
   synchronous: boolean
   /** Run the handler. Throws (or rejects with) `CommandError`. Call at most once. */
   execute(): unknown
+  /**
+   * Give the invocation up without running it: releases what the command's
+   * `load` staged outside the document (`release`). A no-op once `execute()`
+   * was called, so a host may call it unconditionally after trying the
+   * write. Never throws.
+   */
+  abandon(): Promise<void>
 }
 
 /**
@@ -232,6 +239,16 @@ export async function prepareInvocation(
       used = true
       if (synchronous) return executeSync(def, ctx, input, loaded)
       return Promise.resolve(def.handler(ctx, input, loaded)).then((raw) => finish(def, raw))
+    },
+    async abandon() {
+      if (used) return
+      used = true
+      if (def.release === undefined || def.load === undefined) return
+      try {
+        await def.release(loaded)
+      } catch {
+        // Best effort by contract: what stays behind is reaped with its owner.
+      }
     },
   }
 }

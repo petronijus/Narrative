@@ -23,7 +23,11 @@ export const mediaAssets = pgTable(
   'media_assets',
   {
     id: text('id').primaryKey(),
-    deckId: text('deck_id').notNull(),
+    // Nullable since folder fonts (M16 P3); a component master's media has
+    // component_id instead (A2.12b, migration 0027). The worker only
+    // updates rows by id, so neither is read here.
+    deckId: text('deck_id'),
+    componentId: text('component_id'),
     uploaderUserId: text('uploader_user_id').notNull(),
     mimeType: text('mime_type').notNull(),
     sizeBytes: integer('size_bytes').notNull(),

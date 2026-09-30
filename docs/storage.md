@@ -26,6 +26,27 @@ narrative-media/
 - `<uploadId>` — tus upload ID (UUID generated server-side on upload initiation)
 - `<ext>` — original file extension (e.g. `jpg`, `png`, `webp`, `gif`)
 
+**Owners (since A2.12b, 2026-09-30, unreleased at the time; [ADR 0012](./adr/0012-component-owned-media.md)).**
+Each `media_assets` row has one owner, and its keys live in that owner's
+namespace (`apps/server/src/media/mediaOwner.ts`):
+
+```
+narrative-media/
+  decks/<deckId>/…              # a deck's media (uploads, videos/<assetId>/…, fonts/)
+  components/<componentId>/…    # a component master's pictures and videos:
+                                #   uploads/<assetId>/original.<ext>, videos/<assetId>/…,
+                                #   thumb.<ext> (the master snapshot, PUT /components/:id/thumbnail)
+```
+
+Folder fonts belong to a folder (`folder_id`). A component never takes
+fonts. A tus upload's object key is its compound upload id
+`<assetId>:<deckId|unknown>:<base64url(path)>` (`@tus/s3-store` keys objects
+by upload id), with the path above encoded in it. Cleanup therefore purges
+the owner prefix **and** reads the tus originals' keys from the rows before
+the cascade (component delete, folder delete). Ids that name a key segment
+must match `^[A-Za-z0-9_-]{1,64}$` (`isStorageSafeId`). Media is copied,
+never shared, when an object crosses owners (promote, stamp, paste).
+
 Object versioning is NOT enabled. Deletes are hard-deletes. Per-deck object cleanup on deck deletion is not implemented in M11; tracked for M17 (comments — was M21).
 
 ## Access patterns

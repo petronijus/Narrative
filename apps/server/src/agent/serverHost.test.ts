@@ -6,12 +6,16 @@
  *   - viewers read, only editors write — and a refused write loads nothing;
  *   - each command, and each batch, reaches connected editors as exactly ONE
  *     update, attributed on the server to the run's origin;
- *   - every op of a run is logged, failures included.
+ *   - every op of a run is logged, failures included;
+ *   - what a command's `load` staged outside the document is released when
+ *     the write never runs, and left to the handler once it did.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Y from 'yjs'
-import { agentOrigin, isAgentOrigin, getSlideObjectsCtx } from '@narrative/slide-model'
+import { z } from 'zod'
+import { CommandError, createDefaultRegistry, defineCommand } from '@narrative/commands'
+import { addSlide, agentOrigin, isAgentOrigin, getSlideObjectsCtx } from '@narrative/slide-model'
 import {
   createAgentWorld,
   eventually,
@@ -438,5 +442,103 @@ describe('folder fonts', () => {
     expect(out.ok).toBe(true)
     await eventually(() => objectOf(human.doc, id)?.get('fontFamily') === 'Brand Sans')
     expect(objectOf(human.doc, id)?.get('fontWeight')).toBe(400)
+  })
+})
+
+describe("what a command's load staged", () => {
+  /** What the probe's `load` staged, handed to `release` / the handler. */
+  interface Staged {
+    token: string
+  }
+  const release = vi.fn(async (_staged: Staged) => undefined)
+  const handled: string[] = []
+  /** Runs inside `load`, after the staging (what goes wrong before the write). */
+  let afterStaging: (() => Promise<void>) | null = null
+  let failHandler = false
+
+  // A document command with a server side, like object.insertFromDeck: its
+  // `load` stages media outside the document, its `release` gives it back.
+  const probe = defineCommand({
+    id: 'object.fakeStage',
+    domain: 'object',
+    title: 'Stage and insert',
+    description: 'Test-only command: stages a token in load, adds a slide in the handler.',
+    input: z.strictObject({}),
+    output: z.object({ staged: z.string() }),
+    role: 'editor',
+    scope: 'deck',
+    effects: ['doc', 'server'],
+    undo: 'undoable',
+    confirm: 'never',
+    hosts: ['server'],
+    implementedWith: [],
+    examples: [{ title: 'Stage', input: {} }],
+    async load(): Promise<Staged> {
+      const staged = { token: 'staged-media' }
+      if (afterStaging !== null) await afterStaging()
+      return staged
+    },
+    release,
+    handler(ctx, _input, staged) {
+      if (failHandler) throw new CommandError('not_found', 'no such slide')
+      handled.push(staged.token)
+      addSlide(ctx.deck!)
+      return { staged: staged.token }
+    },
+  })
+
+  const stage = (): Promise<HostResult> =>
+    exec({ actor: { userId: 'ed' }, invocation: { command: 'object.fakeStage', input: {} } })
+
+  beforeEach(async () => {
+    release.mockClear()
+    handled.length = 0
+    afterStaging = null
+    failHandler = false
+    await world.destroy()
+    world = await createAgentWorld({ registry: createDefaultRegistry().register(probe) })
+    world.createDeck('deck1')
+    world.grant('deck1', 'ed', 'editor')
+  })
+
+  it('is released once when the direct connection closes between load and the write', async () => {
+    // The server shuts down while the command loads: its runs close and the
+    // direct connection to the document is gone before the transaction.
+    afterStaging = () => world.runtime.shutdown()
+    const out = await stage()
+    expect(out).toMatchObject({ ok: false, error: { code: 'failed' } })
+    expect(handled).toEqual([])
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith({ token: 'staged-media' })
+  })
+
+  it('is released once when attaching the run to the document fails before the write', async () => {
+    const before = vi
+      .spyOn(world.runtime.runs, 'beforeDocumentWrite')
+      .mockRejectedValueOnce(new Error('could not hold the document for the run'))
+    const human = await world.connect('deck1', 'ed')
+    const out = await stage()
+    expect(before).toHaveBeenCalledTimes(1)
+    expect(out).toMatchObject({ ok: false, error: { code: 'failed' } })
+    expect(handled).toEqual([])
+    expect(release).toHaveBeenCalledTimes(1)
+    await settle()
+    expect(human.remoteUpdates).toHaveLength(0)
+  })
+
+  it('is not released after a successful write: the document owns it now', async () => {
+    const human = await world.connect('deck1', 'ed')
+    const out = await stage()
+    expect(out).toMatchObject({ ok: true, result: { staged: 'staged-media' } })
+    expect(handled).toEqual(['staged-media'])
+    await eventually(() => human.doc.getArray('slides').length === 3)
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('is left to the handler when the handler itself refuses', async () => {
+    failHandler = true
+    const out = await stage()
+    expect(out).toMatchObject({ ok: false, error: { code: 'not_found' } })
+    expect(release).not.toHaveBeenCalled()
   })
 })

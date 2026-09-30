@@ -9,10 +9,20 @@
  *
  * list / get / rename / delete call the server's ComponentService (the same
  * service GET /folders/:id/components and PATCH/DELETE /components/:id
- * call). `component.stamp` is a document command with an asynchronous
- * `load` phase: it reads the master through the service, then stamps it
- * synchronously inside the host's one transaction with slide-model's
- * `stampComponent`, filling named text slots in the same step.
+ * call). `component.promote` makes a component from objects on a deck's
+ * slide, on the server (POST /decks/:id/promote-component).
+ *
+ * A component owns its pictures and videos (A2.12b): promoting copies the
+ * deck's media into the component, stamping copies the master's media into
+ * the deck — the rule of pasting between decks, so a stamp never shows a
+ * picture its deck does not own.
+ *
+ * `component.stamp` is a document command with an asynchronous `load`
+ * phase: the service reads the master and stages its media for the deck,
+ * then `stampMaster` stamps it synchronously inside the host's one
+ * transaction with slide-model's `stampComponent`, filling named text slots
+ * in the same step. The editor's stamp (POST /decks/:id/stamp-component)
+ * runs the same `stampMaster` on the server.
  *
  * Editing a master needs no command of its own: the host opens
  * `component:<id>` as the target document and the ordinary document
@@ -30,7 +40,15 @@ import {
 import { defineCommand } from '../registry.js'
 import { requireServices } from '../services.js'
 import { CommandError } from '../errors.js'
-import { SlideRefSchema, objectsOf, requireDeck, requireObjects, resolveSlide } from '../refs.js'
+import {
+  ObjectIdsSchema,
+  SlideRefSchema,
+  objectsOf,
+  requireDeck,
+  requireObjects,
+  resolveSlide,
+  type SlideRef,
+} from '../refs.js'
 import { ObjectOutputSchema, objectForModel, toJsonForModel } from '../read/plain.js'
 import {
   TextBodyInputSchema,
@@ -40,13 +58,15 @@ import {
   type BodyPlan,
   type TextBodyInput,
 } from '../text/body.js'
-import type { ComponentMaster } from '../services/components.js'
+import type { ComponentMaster, PreparedStamp } from '../services/components.js'
+import type { DeckMutationContext } from '@narrative/slide-model'
 import {
   ComponentOutput,
   DELETE,
   GET,
   IdSchema,
   PATCH,
+  POST,
   serverCommand,
   targetDeckId,
   targetFolderId,
@@ -306,6 +326,82 @@ function slotPlan(placeholder: Y.Text, body: TextBodyInput): BodyPlan {
   }
 }
 
+/** What stamping a master wrote: `component.stamp`'s output. */
+export interface StampResult {
+  objectIds: string[]
+  filledSlots: string[]
+  at: { x: number; y: number }
+}
+
+/**
+ * Stamp `master` onto `input.slide` of `deck` and fill its text slots — the
+ * body of `component.stamp`, shared with the editor's server-side stamp
+ * (POST /decks/:id/stamp-component). Every check runs before the first
+ * write, so a refusal leaves the deck untouched; `wrote.value` turns true
+ * the moment the deck is changed. Synchronous: call it inside the one
+ * transaction of the write.
+ */
+export function stampMaster(
+  deck: DeckMutationContext,
+  master: ComponentMaster,
+  input: {
+    componentId: string
+    slide: SlideRef
+    at?: { x: number; y: number } | undefined
+    slots?: Record<string, TextBodyInput> | undefined
+  },
+  wrote?: { value: boolean },
+): StampResult {
+  const slide = resolveSlide(deck, input.slide)
+  const objects = objectsOf(deck, slide)
+  const view = openMaster(master)
+  try {
+    if (view.objects.length === 0) {
+      throw new CommandError('conflict', `component '${input.componentId}' has no objects to stamp`)
+    }
+    // Every slot must name a text object of the master — checked before the first write.
+    const slotNames = Object.keys(input.slots ?? {})
+    const textSlots = new Set(
+      slotsOf(view.objects)
+        .filter((s) => s.type === 'text')
+        .map((s) => s.name),
+    )
+    const unknown = slotNames.filter((n) => !textSlots.has(n))
+    if (unknown.length > 0) {
+      throw new CommandError(
+        'invalid_input',
+        `component '${input.componentId}' has no text slot named ${unknown.map((n) => `'${n}'`).join(', ')}` +
+          ` (its text slots: ${[...textSlots].map((n) => `'${n}'`).join(', ') || 'none'})`,
+      )
+    }
+
+    const bounds = masterBounds(view.objects)
+    const at = input.at ?? { x: bounds.x, y: bounds.y }
+    if (wrote !== undefined) wrote.value = true
+    const ids = stampComponent(objects, view.doc, at)
+
+    // stampComponent copies the master objects in order, with the same
+    // "has a type" rule openMaster applies, so ids[i] is the copy of
+    // view.objects[i].
+    const filled = new Set<string>()
+    if (slotNames.length > 0 && ids.length === view.objects.length) {
+      const stamped = requireObjects(objects, ids, slide.id)
+      view.objects.forEach((m, i) => {
+        const name = m.get('name')
+        const body = typeof name === 'string' ? input.slots?.[name] : undefined
+        if (body === undefined) return
+        const text = stamped.get(ids[i]!)?.get('text')
+        if (!(text instanceof Y.Text)) return
+        writePlan(deck.doc, text, slotPlan(text, body))
+        filled.add(name as string)
+      })
+    }
+    return { objectIds: ids, filledSlots: [...filled], at }
+  } finally {
+    view.doc.destroy()
+  }
+}
+
 export const componentStamp = defineCommand({
   ...serverCommand,
   id: 'component.stamp',
@@ -317,11 +413,10 @@ export const componentStamp = defineCommand({
     "master's animations are not copied — so editing the master later does not change this stamp. Without `at` " +
     'the copy lands where the master was drawn (its bounding box top-left); `at` moves that corner. `slots` maps ' +
     'slot names (component.get lists them: the names of the master objects) to text: a plain string keeps the ' +
-    "slot's formatting, { paragraphs } sets it explicitly. Returns the new object ids in stacking order. Use the " +
-    "folder's existing components for the roles they cover; do not stamp for one-off content. Access differs: " +
-    'stamping needs the editor role on the deck, but component.list and component.get are folder commands for ' +
-    "the folder's owner only — an editor who does not own the folder cannot look components up, so ask the user " +
-    'which component to use.',
+    "slot's formatting, { paragraphs } sets it explicitly. The master's pictures and videos are copied into this " +
+    'deck. Returns the new object ids in stacking order. Use the ' +
+    "folder's existing components for the roles they cover; do not stamp for one-off content. Needs the editor " +
+    "role on the deck and ownership of its folder (components are the folder owner's).",
   input: z.strictObject({
     componentId: ComponentIdSchema,
     slide: SlideRefSchema,
@@ -346,6 +441,7 @@ export const componentStamp = defineCommand({
   effects: ['doc', 'server'],
   undo: 'undoable',
   confirm: 'never',
+  routes: [POST('/decks/:id/stamp-component')],
   implementedWith: [
     'stampComponent',
     'getParagraphDeltas',
@@ -367,65 +463,77 @@ export const componentStamp = defineCommand({
       input: { componentId: 'cmp_headline', slide: { index: 2 }, at: { x: 120, y: 80 } },
     },
   ],
-  async load(ctx, input) {
-    return requireServices(ctx).components.readMaster({
+  async load(ctx, input): Promise<PreparedStamp> {
+    return requireServices(ctx).components.prepareStamp({
       userId: ctx.actor.userId,
       componentId: input.componentId,
       deckId: targetDeckId(ctx),
     })
   },
-  handler(ctx, input, master) {
-    const deck = requireDeck(ctx)
-    const slide = resolveSlide(deck, input.slide)
-    const objects = objectsOf(deck, slide)
-    const view = openMaster(master)
+  release: (prepared) => prepared.discard(),
+  handler(ctx, input, prepared) {
+    const wrote = { value: false }
     try {
-      if (view.objects.length === 0) {
-        throw new CommandError(
-          'conflict',
-          `component '${input.componentId}' has no objects to stamp`,
-        )
-      }
-      // Every slot must name a text object of the master — checked before the first write.
-      const slotNames = Object.keys(input.slots ?? {})
-      const textSlots = new Set(
-        slotsOf(view.objects)
-          .filter((s) => s.type === 'text')
-          .map((s) => s.name),
-      )
-      const unknown = slotNames.filter((n) => !textSlots.has(n))
-      if (unknown.length > 0) {
-        throw new CommandError(
-          'invalid_input',
-          `component '${input.componentId}' has no text slot named ${unknown.map((n) => `'${n}'`).join(', ')}` +
-            ` (its text slots: ${[...textSlots].map((n) => `'${n}'`).join(', ') || 'none'})`,
-        )
-      }
-
-      const bounds = masterBounds(view.objects)
-      const at = input.at ?? { x: bounds.x, y: bounds.y }
-      const ids = stampComponent(objects, view.doc, at)
-
-      // stampComponent copies the master objects in order, with the same
-      // "has a type" rule openMaster applies, so ids[i] is the copy of
-      // view.objects[i].
-      const filled = new Set<string>()
-      if (slotNames.length > 0 && ids.length === view.objects.length) {
-        const stamped = requireObjects(objects, ids, slide.id)
-        view.objects.forEach((m, i) => {
-          const name = m.get('name')
-          const body = typeof name === 'string' ? input.slots?.[name] : undefined
-          if (body === undefined) return
-          const text = stamped.get(ids[i]!)?.get('text')
-          if (!(text instanceof Y.Text)) return
-          writePlan(deck.doc, text, slotPlan(text, body))
-          filled.add(name as string)
-        })
-      }
-      return { objectIds: ids, filledSlots: [...filled], at }
-    } finally {
-      view.doc.destroy()
+      return stampMaster(requireDeck(ctx), prepared.master, input, wrote)
+    } catch (e) {
+      // Refused before the first write: nothing references the media
+      // copied for this stamp.
+      if (!wrote.value) void prepared.discard()
+      throw e
     }
+  },
+})
+
+export const componentPromote = defineCommand({
+  ...serverCommand,
+  id: 'component.promote',
+  domain: 'component',
+  title: 'Make component from objects',
+  description:
+    "Make a new component of this deck's folder from objects on one of its slides, for a block that recurs on " +
+    'many slides (a headline block, the pagination, a card grid) — a folder keeps only a few. The objects become ' +
+    'the master as they are: a group brings its members, rich text, tables and their animations come along; the ' +
+    'slide is not changed. Pictures and videos are copied into the component; links to slides are removed. ' +
+    "Named objects are the component's slots (component.stamp fills text slots by name), so name the text boxes " +
+    "(object.update name) first. Needs ownership of the deck's folder. Undo: component.delete.",
+  input: z.strictObject({
+    slide: SlideRefSchema,
+    objects: ObjectIdsSchema.describe('The objects to promote (a group id brings its members)'),
+    name: z
+      .string()
+      .max(200)
+      .refine((t) => t.trim().length > 0, 'the name must not be blank')
+      .describe('The component name the folder lists it under'),
+  }),
+  output: z.object({
+    component: ComponentOutput,
+    objectCount: z.number().describe('Objects in the master'),
+    mediaCopied: z.number().describe('Pictures and videos copied into the component'),
+    skippedImages: z.number().describe('Pictures whose file could not be copied'),
+    droppedLinks: z.number().describe('Links to slides (removed)'),
+  }),
+  role: 'editor',
+  scope: 'deck',
+  effects: ['server'],
+  undo: 'undoable',
+  undoneBy: 'component.delete',
+  confirm: 'never',
+  routes: [POST('/decks/:id/promote-component')],
+  implementedWith: ['promoteToComponent', 'writeComponentMaster', 'insertObjectsWithRichText'],
+  examples: [
+    {
+      title: 'Make the headline block a component',
+      input: { slide: 's2', objects: ['hd1'], name: 'Headline' },
+    },
+  ],
+  async handler(ctx, input) {
+    return requireServices(ctx).components.promote({
+      userId: ctx.actor.userId,
+      deckId: targetDeckId(ctx),
+      slide: input.slide,
+      objects: input.objects,
+      name: input.name.trim(),
+    })
   },
 })
 
@@ -434,5 +542,6 @@ export const componentCommands = [
   componentGet,
   componentRename,
   componentDelete,
+  componentPromote,
   componentStamp,
 ]

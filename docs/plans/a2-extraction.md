@@ -611,29 +611,168 @@ after the mechanism has been proven on simpler surfaces.
     mode, 128 tools) — `token_update` 2.8 KB, `token_create` 2.3,
     `text_style_createFromObject` 1.1, `text_style_updateFromObject` 1.1,
     `token_delete` 1.0, `token_seedDefaults` 0.9, `token_list` 0.6.
+- 2026-09-30: **A2.12b done** (uncommitted on 2026-09-30, to ship as
+  0.10.15). Components now go through commands on the server. The new
+  command is `component.promote` (`POST /decks/:id/promote-component`), and
+  129 commands exist now. `component.stamp` stages the master's media, and
+  `object.insertFromDeck` crosses between masters and decks. `Toolbar` and
+  `UploadDropZone` are off the exemption list, and
+  `writeComponentMasterTree.ts` is deleted. Decisions:
+  - **A component owns its pictures and videos**
+    ([ADR 0012](../adr/0012-component-owned-media.md)). Migration 0027 adds
+    `media_assets.component_id` (FK, cascade). A media row has one owner: a
+    deck, a component master or, for fonts, a folder. Component keys live
+    under `components/<id>/uploads|videos/…` (`media/mediaOwner.ts`).
+    Access requires owning the component's folder (`canUseComponentMedia`,
+    the rule of the `component:<id>` document), and share tokens never
+    reach component media. The reason: a master used to point at the
+    promoting deck's assets, so it lost them with that deck, and nobody
+    without access to that deck could see them, not even in their own deck
+    where the component was stamped.
+  - **Media is copied whenever it crosses an owner.** This covers promote
+    (deck → component), stamp (component → deck) and paste (deck ↔ master,
+    master ↔ master), the same model as the A2.2 cross-deck slide paste. No
+    font is copied into or out of a component, because a master has no
+    fonts of its own.
+  - **Promote runs on the server.** Slide-model `writeComponentMaster`
+    builds the master in a scratch document from the live deck. The
+    service copies the media and removes links to slides; the slide is not
+    changed. The component row and its media rows commit in one
+    transaction, and only then is the master written through the sync
+    server (`services/componentStaging.ts`). The editor first waits for
+    `whenSaved()` (slide-doc context, `state/providerSaved.ts`: the
+    provider synced and no `hasUnsyncedChanges`), so an edit made a moment
+    earlier (naming a box, flagging the page number) is in the master. It
+    gives up after 10 s instead of promoting from a stale deck.
+  - **Stamp runs on the server too.** `component.stamp`'s `load` copies the
+    master's media into the deck (`ComponentService.prepareStamp`). The
+    handler is the exported `stampMaster`, which
+    `POST /decks/:id/stamp-component` shares; the Toolbar picker and canvas
+    drag use that route (`state/useStampComponent.ts`). Consequence: a
+    stamp reaches the editor as a remote change, so Delete removes it and
+    Ctrl+Z does not undo it (like a cross-deck slide paste).
+  - **Every cross-document object paste goes through the server.**
+    `object.insertFromDeck` gains `fromComponent` and accepts a master as
+    its target. The routes are `POST /decks/:id/insert-objects` (body
+    `sourceDeckId` | `sourceComponentId`) and the new
+    `POST /components/:id/insert-objects` (`routes/insertObjects.ts`).
+  - **Uploads into a master work** for the first time. The master editor
+    used to send tus the made-up deck id `component:<id>`, which the server
+    refused. The upload now carries tus metadata `componentId`. Only images
+    and videos are accepted (fonts and `.pptx` get 415).
+    `media.upload/url/status/delete` and `media.uploadSession` accept a
+    component-master target. An upload session may belong to a component
+    (migration 0029: `upload_sessions.deck_id` nullable, `component_id`,
+    CHECK `upload_sessions_one_owner` = exactly one). This was added late
+    in the step (the working tree at 16:18 on 2026-09-30); the step's brief
+    had said sessions stay deck-only. The video worker takes its output
+    prefix from the storage key (`videoOutputPrefix`), no longer from a
+    deck id.
+  - **The component create route stopped trusting the client.**
+    `POST /folders/:folderId/components` no longer accepts an id, and it
+    writes the empty master slide on the server. Its route claim moved to
+    the A4 `component.create` known-missing entry (source `route`: the
+    empty-master route that the tests and the eval seed with), so
+    `knownMissing` has 7 entries (A2 0, A3 5, A4 2). Migration 0028 adds
+    `components_id_storage_safe` (`^[A-Za-z0-9_-]{1,64}$`, `NOT VALID`,
+    because legacy ids were client-chosen) and the validated
+    `media_assets_one_owner`. `isStorageSafeId` / `mediaOwnerPrefix` and
+    the bucket cleanup refuse an unsafe id rather than widen a prefix into
+    another owner's keys.
+  - **Cleanup**: deleting a component or a folder purges
+    `components/<id>/` plus the master's tus originals. Their keys lie
+    outside the prefix, so they are read before the FK cascade.
+  - **Legacy masters are adopted by a data migration**
+    (`2026-09-30-component-media`, `adoptMasterMedia`). Media belonging to
+    decks in the component's own folder is copied into the component and
+    the master is re-pointed. Other references stay unresolved and are
+    counted in the report, because a master can contain any typed asset id
+    and copying it would hand the folder owner a picture they could not
+    see.
+  - **Security review fixes**:
+    - A per-user media copy budget of 60 a minute (429,
+      `services/mediaCopyBudget.ts`) covers every server-side copy
+      (promote, stamp, paste, slide insert and duplicate), browser and
+      agent alike.
+    - The command framework gets `CommandDef.release(loaded)` and
+      `PreparedInvocation.abandon()`, so media staged in `load` is
+      discarded when the ServerHost never reaches the write.
+    - tus naming reads empty ids as absent (`||`, as `onUploadCreate`
+      does), and the upload key must lie in the namespace of the owner that
+      was authorised (`requireKeyOfOwner`).
+    - `GET /api/media/:id/url` answers `Cache-Control: private`.
+    - No font is copied into a component.
+  - **Open, for Petr to decide (not done)**:
+    - a per-owner storage quota (the budget limits rate, not total);
+    - whether stamping a private component into a deck with other
+      collaborators or share links should need a confirmation. Stamping
+      discloses the master's media to that audience (review L2, the same
+      policy as `deck.insertFrom`).
+  - Tests:
+    - new e2e `component-promote-stamp.spec.ts` (promote → stamp, each
+      owner gets its copy; a deck → master paste) and
+      `component-master-upload.spec.ts`;
+    - `component-picker-search-settings` and `m16-component-flows` seed
+      their own folder and components, so the "hardcoded Drafts folder id"
+      known failure is gone (AGENTS.md updated with the change);
+    - eval scenarios `component-promote-headline` and
+      `component-master-picture` run live only (the memory world does not
+      model component documents), for 44 scenarios;
+    - web skips 27 (was 28).
 
-## Where we stand (2026-09-30, after A2.12a)
+    The suite totals, the full e2e run and the live eval results were not
+    recorded in this sweep.
 
-Done and released: A2.1–A2.11, A2.7a and A2.12a (0.10.2–0.10.14; A2.12a in
-0.10.14, 2026-09-30). `ONE_DOOR_PENDING` holds 4 files (A2.12b: `Toolbar`,
-`UploadDropZone`, `writeComponentMasterTree`; A2.13: `testApi`),
-`knownMissing` 1 A2 entry (`component.promote`; 8 in all: A3 5, A4 2). 128
-commands (76 document, 52 server-only). tools/list 186,157 bytes against the
-187,000 budget.
+  - tools/list budget 187,000 → 189,000 bytes: 188,407 measured (url mode,
+    129 tools). The additions are `component_promote` 1.4 KB,
+    `object_insertFromDeck`'s `fromComponent`, and the media commands on a
+    component master.
+
+## Where we stand (2026-09-30, after A2.12b)
+
+Released: A2.1–A2.11, A2.7a and A2.12a (0.10.2–0.10.14; A2.12a in 0.10.14,
+2026-09-30, which is what production runs). A2.12b is done in the working
+tree and uncommitted on 2026-09-30. It is to ship as 0.10.15, and its
+release has a pre-deploy check ([`deploy.md`](../deploy.md), "Releasing
+A2.12b").
+
+State after A2.12b:
+
+- `ONE_DOOR_PENDING` holds 1 file, `state/testApi.ts` (A2.13).
+- `knownMissing` has no A2 entry, and 7 in all (A3 5, A4 2).
+- 129 commands (74 that run in the browser and on the server, 55
+  server-only, counted from the manifest's `hosts`). The A2.12a line's
+  "76 document, 52 server-only" was counted differently; the manifest said
+  74 / 54 at 0.10.14.
+- tools/list is 188,407 bytes against the 189,000 budget.
 
 Next, in order:
 
-1. **A2.12b Components** — `component.promote` on the server (the
-   page-number dialog's component branch and the Toolbar still call
-   `promoteSelectionToComponent`), component stamping from the browser
-   through `component.stamp` (`Toolbar`, `UploadDropZone`), the master tree
-   writes (`writeComponentMasterTree`), media copied when pasting between a
-   master and a deck.
-2. **A2.13 Close** — parity guard over shortcuts and menu ids, empty
-   exemption list, `FINISHED_PHASES += 'A2'`, ADR 0010 status, handoff note;
-   then the holistic tools/list size review (budget 187,000 today).
+1. **A2.13 Close**:
+   - the parity guard over shortcuts and menu ids;
+   - `testApi.ts` through commands, so the exemption list is empty;
+   - `FINISHED_PHASES += 'A2'`;
+   - ADR 0010 status and a handoff note;
+   - then the holistic tools/list size review (budget 189,000 today).
+2. **Then MCP work** (after A2 closes).
 
 Open, outside the steps:
+
+- **Folder sharing and linked component media — decided 2026-09-30, after
+  the MCP work.** Petr's access model: sharing a folder shows everything in
+  it (decks, components, pictures, videos, fonts, tokens), with no levels
+  inside; sharing a deck shows that deck only. Narrative has no folder
+  sharing today (a folder has one owner, sharing is per deck), which is why
+  A2.12b copies media on every stamp. The follow-up step: folder members and
+  folder invitations (roles proposed as for decks: viewer / editor / owner),
+  access derived from membership everywhere (sync server, media, fonts,
+  tokens, agent host); stamps and pastes inside a folder LINK to the
+  component's media instead of copying it (copy only across folders);
+  component media readable by folder members and by anyone with access to a
+  deck of that folder; a deleted component's media stays with the folder.
+  This supersedes the open A2.12b questions (a storage quota and a
+  confirmation for stamping into a shared deck) and parts of
+  [ADR 0012](../adr/0012-component-owned-media.md).
 
 - folder token writes made by an agent carry `SERVER_EDIT_ORIGIN` (the
   origin of a person's server-side edit) and the propagation

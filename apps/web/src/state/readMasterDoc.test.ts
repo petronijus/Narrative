@@ -3,7 +3,7 @@
  *
  * Unit tests for the master-doc snapshot reader (M16 P6).
  *
- * Builds a real Y.Doc with the schema produced by `writeComponentMasterTree`
+ * Builds a real Y.Doc with the schema slide-model `writeComponentMaster` writes
  * and exercises the bbox + objects + animations extraction. No Hocuspocus
  * involvement — the helper is pure read-only.
  */

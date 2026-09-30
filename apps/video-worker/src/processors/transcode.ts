@@ -21,7 +21,9 @@
  *   5. ffmpeg: extract poster.jpg at the 1 s mark (-q:v 2)
  *   6. ffmpeg: extract thumb.jpg (400 px wide) at the 1 s mark (-q:v 3)
  *   7. Upload playback.mp4 + poster.jpg + thumb.jpg to MinIO under
- *      decks/<deckId>/videos/<assetId>/
+ *      <owner>/videos/<assetId>/, the owner being decks/<deckId> or
+ *      components/<componentId> as the upload's storage key says
+ *      (videoOutputPrefix, @narrative/shared)
  *   8. updateVideoAssetOutputs → sets transcode_status='done'
  *   9. Cleanup /tmp/narrative-transcode/<assetId>/ (always, via finally)
  *
@@ -43,7 +45,11 @@ import { pipeline } from 'node:stream/promises'
 import type { Job } from 'bullmq'
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Readable } from 'node:stream'
-import type { VideoTranscodeJobData, VideoTranscodeResult } from '../queue.js'
+import {
+  videoOutputPrefix,
+  type VideoTranscodeJobData,
+  type VideoTranscodeResult,
+} from '../queue.js'
 
 // ---------------------------------------------------------------------------
 // DB helpers — imported from the shared assets module path in video-worker
@@ -236,7 +242,12 @@ async function uploadFile(
 export async function transcodeProcessor(
   job: Job<VideoTranscodeJobData, VideoTranscodeResult>,
 ): Promise<VideoTranscodeResult> {
-  const { assetId, deckId, storageKey } = job.data
+  const { assetId, storageKey } = job.data
+  // Where the outputs go follows the upload's owner (a deck or a component
+  // master), read from its storage key. Resolved before any work: a key
+  // that names no owner fails the job instead of writing outputs somewhere
+  // no cleanup will ever look.
+  const s3VideoPrefix = videoOutputPrefix(job.data)
   const db = createDb()
 
   // 1. Mark as processing
@@ -348,8 +359,6 @@ export async function transcodeProcessor(
     ])
 
     // 7. Upload all outputs to MinIO
-    const s3VideoPrefix = `decks/${deckId}/videos/${assetId}`
-
     const playbackKey = `${s3VideoPrefix}/playback.mp4`
     const posterKey = `${s3VideoPrefix}/poster.jpg`
     const thumbnailKey = `${s3VideoPrefix}/thumb.jpg`

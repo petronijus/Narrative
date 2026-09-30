@@ -1184,6 +1184,16 @@ editor's selection, which an agent names itself. Decisions:
 | edit master            | SM                         | `component.master.*`                   |
 | list / rename / delete | SRV                        | `component.list` / `rename` / `delete` |
 
+As built (A2.12b, 2026-09-30, unreleased at the time): `component.promote`
+runs on the server (`POST /decks/:id/promote-component`, slide-model
+`writeComponentMaster`), and the browser's `writeComponentMasterTree` is
+gone. `component.stamp` stages the master's media in `load`, and the editor
+reaches it through `POST /decks/:id/stamp-component`. Pasting between a
+master and a deck is `object.insertFromDeck` (`fromComponent`, or a master
+target). A component owns its pictures and videos, which are copied
+whenever they cross an owner ([ADR 0012](../adr/0012-component-owned-media.md)).
+Decisions: [`a2-extraction.md`](./a2-extraction.md), the A2.12b entry.
+
 **Folder design system (B10)**
 
 | Capability    | Today                                       | Command                                             |

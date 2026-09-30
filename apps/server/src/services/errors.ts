@@ -53,3 +53,16 @@ export function sendServiceError(reply: FastifyReply, err: unknown): FastifyRepl
   if (err instanceof ServiceError) return reply.status(err.status).send(err.body)
   throw err
 }
+
+/**
+ * `sendServiceError` for routes that also run shared command code (slide
+ * and object lookups, `planInsert`): a plain `CommandError` answers 400
+ * (invalid input, with its issues), 404 (not found) or 409.
+ */
+export function sendCommandOrServiceError(reply: FastifyReply, err: unknown): FastifyReply {
+  if (err instanceof CommandError && !(err instanceof ServiceError)) {
+    const status = err.code === 'invalid_input' ? 400 : err.code === 'not_found' ? 404 : 409
+    return reply.status(status).send({ error: err.message, issues: err.issues })
+  }
+  return sendServiceError(reply, err)
+}

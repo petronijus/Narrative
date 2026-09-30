@@ -34,6 +34,7 @@
 import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 import type { ObjectIdentifier } from '@aws-sdk/client-s3'
 import { buildS3Client, MEDIA_BUCKET } from './s3Client.js'
+import { isStorageSafeId, mediaOwnerPrefix, type MediaOwner } from './mediaOwner.js'
 
 interface MinimalLogger {
   warn: (obj: Record<string, unknown>, msg?: string) => void
@@ -50,8 +51,32 @@ export async function purgeDeckBucketPrefix(
   deckId: string,
   log: MinimalLogger,
 ): Promise<PurgeResult> {
+  return purgeBucketPrefix({ deckId }, log)
+}
+
+/**
+ * `purgeDeckBucketPrefix` for a component master: everything under
+ * `components/<componentId>/` (copied pictures and videos, their
+ * transcodes, the thumbnail). Originals uploaded into the master by tus
+ * are keyed by their upload id and need `purgeExplicitKeys` as well
+ * (`listComponentMediaKeys`).
+ */
+export async function purgeComponentBucketPrefix(
+  componentId: string,
+  log: MinimalLogger,
+): Promise<PurgeResult> {
+  return purgeBucketPrefix({ componentId }, log)
+}
+
+async function purgeBucketPrefix(owner: MediaOwner, log: MinimalLogger): Promise<PurgeResult> {
+  // An id that is not storage safe would widen the prefix into another
+  // owner's keys (mediaOwner.ts): refuse the sweep, keep the orphans.
+  if (!isStorageSafeId('deckId' in owner ? owner.deckId : owner.componentId)) {
+    log.warn({ ...owner }, 'bucket prefix purge refused: the id cannot name storage keys')
+    return { deleted: 0, pages: 0, errors: 1 }
+  }
+  const Prefix = `${mediaOwnerPrefix(owner)}/`
   const s3 = buildS3Client()
-  const Prefix = `decks/${deckId}/`
 
   let continuationToken: string | undefined
   let totalDeleted = 0
@@ -70,8 +95,8 @@ export async function purgeDeckBucketPrefix(
       )
     } catch (err) {
       log.warn(
-        { err, deckId, prefix: Prefix },
-        'bucket list failed (deck cleanup aborted, orphans left)',
+        { err, ...owner, prefix: Prefix },
+        'bucket list failed (prefix cleanup aborted, orphans left)',
       )
       errors++
       break
@@ -96,13 +121,13 @@ export async function purgeDeckBucketPrefix(
         if (res.Errors && res.Errors.length > 0) {
           errors += res.Errors.length
           log.warn(
-            { deckId, perObjectErrors: res.Errors },
+            { ...owner, perObjectErrors: res.Errors },
             'bucket batch delete returned per-object errors (orphans left)',
           )
         }
       } catch (err) {
         log.warn(
-          { err, deckId, batchSize: objects.length },
+          { err, ...owner, batchSize: objects.length },
           'bucket batch delete failed (orphans left)',
         )
         errors++
@@ -113,7 +138,7 @@ export async function purgeDeckBucketPrefix(
   } while (continuationToken)
 
   if (log.info && (totalDeleted > 0 || errors > 0)) {
-    log.info({ deckId, deleted: totalDeleted, pages, errors }, 'deck bucket prefix purge complete')
+    log.info({ ...owner, deleted: totalDeleted, pages, errors }, 'bucket prefix purge complete')
   }
 
   return { deleted: totalDeleted, pages, errors }

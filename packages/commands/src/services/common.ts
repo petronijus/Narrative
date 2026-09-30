@@ -29,6 +29,12 @@ export type BinarySource =
       mimeType?: string | undefined
     }
 
+/**
+ * A document objects live in: a deck, or a component master (the document
+ * `component:<id>`). Each owns its own pictures and videos.
+ */
+export type DocumentRef = { deckId: string } | { componentId: string }
+
 /** A deck role, as the server stores it. */
 export type DeckRole = Role
 

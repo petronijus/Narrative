@@ -52,9 +52,19 @@ export {
 export {
   FileSourceSchema,
   fileSourceUrlHost,
+  sameDocument,
   urlFetchConfirmation,
 } from './commands/serverShared.js'
-export { SlideRefSchema, ObjectIdSchema, ObjectIdsSchema, type SlideRef } from './refs.js'
+export {
+  SlideRefSchema,
+  ObjectIdSchema,
+  ObjectIdsSchema,
+  objectsOf,
+  requireObjects,
+  resolveSlide,
+  type SlideRef,
+} from './refs.js'
+export { stampMaster, type StampResult } from './commands/components.js'
 export {
   ANCHORS,
   OPPOSITE_ANCHOR,

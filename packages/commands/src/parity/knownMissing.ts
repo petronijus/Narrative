@@ -40,17 +40,6 @@ const POST = (path: string): RouteRef => ({ method: 'POST', path })
 const PUT = (path: string): RouteRef => ({ method: 'PUT', path })
 
 export const KNOWN_MISSING: readonly KnownMissing[] = [
-  // --- A2: web-only logic to extract ------------------------------------------
-  {
-    capability: 'component.promote',
-    phase: 'A2',
-    source: 'web',
-    where: 'apps/web/src/state/writeComponentMasterTree.ts',
-    routes: [POST('/folders/:folderId/components')],
-    writers: ['insertObjectsWithRichText'],
-    note: 'the master tree is written with insertObjectsWithRichText (keeps rich text and cell bodies)',
-  },
-
   // --- A3: render worker ------------------------------------------------------
   { capability: 'deck.exportPdf', phase: 'A3', source: 'new' },
   { capability: 'deck.exportPng', phase: 'A3', source: 'new' },
@@ -76,8 +65,9 @@ export const KNOWN_MISSING: readonly KnownMissing[] = [
   {
     capability: 'component.create',
     phase: 'A4',
-    source: 'new',
-    note: 'create a master from objects or a spec; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data',
+    source: 'route',
+    routes: [POST('/folders/:folderId/components')],
+    note: 'create a master from a spec (component.promote makes one from objects); the route makes an empty master, which the tests and the eval seed with; the pack compiler uses it only for the few recurring blocks (pagination, headline, subline, copy, a repeated column/grid) — layouts stay pack data',
   },
   {
     capability: 'component.restamp',

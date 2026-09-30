@@ -43,6 +43,12 @@ export interface SlideDocContextValue {
    * `component:<id>` for a component master.
    */
   documentKey: string
+  /**
+   * Resolves once the server holds every change made to this document so
+   * far (state/providerSaved.ts); call it before a server write that reads
+   * the document live, such as promoting objects to a component.
+   */
+  whenSaved: () => Promise<void>
 }
 
 export const SlideDocContext = createContext<SlideDocContextValue | null>(null)
@@ -136,6 +142,7 @@ export function createMockSlideDocValue(
     awareness: mockAwareness,
     documentName: null,
     documentKey: 'mock-deck',
+    whenSaved: async () => {},
     localUser: {
       id: 'test-peer-id',
       name: 'User test',

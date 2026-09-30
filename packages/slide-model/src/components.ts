@@ -209,14 +209,12 @@ function collectSubtreeIds(rootIds: ReadonlySet<string>, allObjects: SlideObject
 // ---------------------------------------------------------------------------
 
 /**
- * The caller receives this plan and is responsible for dispatching:
- *   1. REST POST /folders/:folderId/components { id: componentId, name }
- *      to register the Postgres row.
- *   2. Write masterTree + masterAnimations into the component Y.Doc
- *      (via server-side Yjs client or web Hocuspocus connection).
- *   3. Inside the deck Y.Doc, in a single transaction:
- *      - Remove all objects in removedObjectIds from the slide.
- *      - Insert instanceObject at the appropriate z-order position.
+ * The caller receives this plan and dispatches the writes. The server's
+ * `component.promote` (apps/server/src/services/componentStaging.ts) creates
+ * the component row under `componentId` and writes `masterTree` +
+ * `masterAnimations` into the component document with `writeComponentMaster`;
+ * the slide the objects came from is not changed (stamps are detached
+ * copies, so the originals stay).
  *
  * The plan is intentionally serializable (no Yjs types — pure plain objects).
  */

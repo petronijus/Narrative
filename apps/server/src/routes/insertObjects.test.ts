@@ -1,10 +1,11 @@
 /**
- * routes/insertObjects.test.ts — POST /decks/:id/insert-objects, the
- * editor's cross-deck object paste: body validation, the editor role on the
- * TARGET deck, invalid objects answered as 400 with the field, and the
- * hand-off to the shared insert service (the source access rule, media copy
- * and token rebinding are the service's; services/deckInsert.test.ts covers
- * them).
+ * routes/insertObjects.test.ts — POST /decks/:id/insert-objects and
+ * POST /components/:id/insert-objects, the editor's cross-document object
+ * paste: body validation (exactly one source, a deck or a component), the
+ * editor role on a TARGET deck, invalid objects answered as 400 with the
+ * field, and the hand-off to the shared insert service (the source and
+ * master access rules, media copy and token rebinding are the service's;
+ * services/deckInsert.test.ts covers them).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,16 +19,17 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
   return { ...original, resolveDeckAccess: vi.fn() }
 })
 
-const insertObjectsFromDeck = vi.fn()
+const insertObjectsFrom = vi.fn()
 vi.mock('../services/deckInsert.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../services/deckInsert.js')>()
-  return { ...original, insertObjectsFromDeck }
+  return { ...original, insertObjectsFrom }
 })
 
 const { resolveDeckAccess } = await import('../auth/permissions.js')
 const { registerAuthPlugin } = await import('../auth/fastifyAuth.js')
 const { registerDeckRoutes } = await import('./decks.js')
-const { forbidden } = await import('../services/errors.js')
+const { registerComponentRoutes } = await import('./components.js')
+const { forbidden, notFound } = await import('../services/errors.js')
 
 async function buildApp(
   access: DeckAccessResult | null = { role: 'editor', reason: 'direct' },
@@ -46,8 +48,8 @@ const RESULT = { objectIds: ['n1'], mediaRegistered: 0, skippedImages: 0, droppe
 
 describe('POST /decks/:id/insert-objects', () => {
   beforeEach(() => {
-    insertObjectsFromDeck.mockReset()
-    insertObjectsFromDeck.mockResolvedValue(RESULT)
+    insertObjectsFrom.mockReset()
+    insertObjectsFrom.mockResolvedValue(RESULT)
   })
 
   it('pastes the objects read from the source deck onto the slide', async () => {
@@ -59,10 +61,10 @@ describe('POST /decks/:id/insert-objects', () => {
     })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual(RESULT)
-    expect(insertObjectsFromDeck).toHaveBeenCalledWith(expect.anything(), {
+    expect(insertObjectsFrom).toHaveBeenCalledWith(expect.anything(), {
       userId: 'dev-user',
-      deckId: 'dst',
-      sourceDeckId: 'src',
+      source: { deckId: 'src' },
+      target: { deckId: 'dst' },
       slideId: 'T1',
       objects: OBJECTS,
       at: { x: 960, y: 540 },
@@ -76,15 +78,18 @@ describe('POST /decks/:id/insert-objects', () => {
       { sourceDeckId: 'src', slideId: 'T1', objects: [] },
       { sourceDeckId: 'src', slideId: 'T1', objects: OBJECTS, extra: 1 },
       { sourceDeckId: 'src', slideId: 'T1', objects: OBJECTS, at: { x: 'a', y: 0 } },
+      // Exactly one source.
+      { slideId: 'T1', objects: OBJECTS },
+      { sourceDeckId: 'src', sourceComponentId: 'cmp1', slideId: 'T1', objects: OBJECTS },
     ]) {
       const res = await app.inject({ method: 'POST', url: '/decks/dst/insert-objects', payload })
       expect(res.statusCode, JSON.stringify(payload)).toBe(400)
     }
-    expect(insertObjectsFromDeck).not.toHaveBeenCalled()
+    expect(insertObjectsFrom).not.toHaveBeenCalled()
   })
 
   it('answers invalid objects with 400 and the offending field', async () => {
-    insertObjectsFromDeck.mockRejectedValue(
+    insertObjectsFrom.mockRejectedValue(
       new CommandError('invalid_input', 'objects[0]: invalid rectangle', {
         issues: [{ path: ['objects', 0, 'width'], message: 'Too small' }],
       }),
@@ -106,12 +111,56 @@ describe('POST /decks/:id/insert-objects', () => {
       (await viewer.inject({ method: 'POST', url: '/decks/dst/insert-objects', payload }))
         .statusCode,
     ).toBe(403)
-    expect(insertObjectsFromDeck).not.toHaveBeenCalled()
+    expect(insertObjectsFrom).not.toHaveBeenCalled()
 
-    insertObjectsFromDeck.mockRejectedValue(forbidden('Copying from deck src needs editor access'))
+    insertObjectsFrom.mockRejectedValue(forbidden('Copying from deck src needs editor access'))
     const app = await buildApp()
     expect(
       (await app.inject({ method: 'POST', url: '/decks/dst/insert-objects', payload })).statusCode,
     ).toBe(403)
+  })
+})
+
+describe('POST /components/:id/insert-objects', () => {
+  beforeEach(() => {
+    insertObjectsFrom.mockReset()
+    insertObjectsFrom.mockResolvedValue(RESULT)
+  })
+
+  async function buildComponentApp(): Promise<FastifyInstance> {
+    const app = Fastify({ logger: false })
+    const db = {} as Database
+    registerAuthPlugin(app, { bypass: true, db })
+    await registerComponentRoutes(app, db)
+    await app.ready()
+    return app
+  }
+
+  it("pastes a deck's objects into the master (the service checks the folder owner)", async () => {
+    const app = await buildComponentApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/components/cmp1/insert-objects',
+      payload: { sourceDeckId: 'src', slideId: 'master', objects: OBJECTS },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(insertObjectsFrom).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'dev-user',
+      source: { deckId: 'src' },
+      target: { componentId: 'cmp1' },
+      slideId: 'master',
+      objects: OBJECTS,
+    })
+  })
+
+  it("passes on the refusal for a master that is not the user's", async () => {
+    insertObjectsFrom.mockRejectedValue(notFound("Component 'cmp1' not found"))
+    const app = await buildComponentApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/components/cmp1/insert-objects',
+      payload: { sourceComponentId: 'cmp2', slideId: 'master', objects: OBJECTS },
+    })
+    expect(res.statusCode).toBe(404)
   })
 })

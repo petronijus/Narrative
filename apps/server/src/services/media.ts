@@ -4,6 +4,10 @@
  * `media.*` commands call these functions; uploads go through the same
  * finalize step as the tus upload (media/finalizeUpload.ts) and the same
  * policy (media/uploadPolicy.ts).
+ *
+ * Per-asset reads and deletes follow the asset's owner (media/mediaOwner.ts):
+ * a deck's media by the deck role (a share link reads), a component master's
+ * media by owning the component's folder — a share link never does.
  */
 
 import { nanoid } from 'nanoid'
@@ -20,7 +24,12 @@ import type {
 import { deleteMediaAsset, getFontAsset, getMediaAsset, getVideoAsset } from '../media/assets.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET, presignGetUrl } from '../media/s3Client.js'
-import { finalizeMediaUpload, UploadRejected } from '../media/finalizeUpload.js'
+import {
+  COMPONENT_FONT_REFUSED,
+  finalizeMediaUpload,
+  UploadRejected,
+} from '../media/finalizeUpload.js'
+import { canUseComponentMedia, mediaOriginalPath, type MediaOwner } from '../media/mediaOwner.js'
 import {
   classifyUpload,
   extensionFromMimeOrFilename,
@@ -115,12 +124,48 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     }
   }
 
+  /**
+   * The caller may read (`viewer`) or delete (`owner`) the asset. A component
+   * master's picture or video: only the owner of the component's folder, for
+   * both — the one person who may edit the master; a share token never
+   * counts. A deck's asset: the deck role, share links included, as always.
+   */
+  async function requireAssetAccess(
+    asset: { deckId: string | null; componentId?: string | null },
+    userId: string | null,
+    shareToken: string | null | undefined,
+    required: 'viewer' | 'owner',
+  ): Promise<void> {
+    const componentId = asset.componentId ?? null
+    if (componentId !== null) {
+      if (!(await canUseComponentMedia(db, componentId, userId))) throw forbidden('Forbidden')
+      return
+    }
+    await requireDeckRole(asset.deckId, userId, shareToken, required)
+  }
+
+  /** Whether `asset` belongs to `owner` (any owner when none is named). */
+  function ownedBy(
+    asset: { deckId: string | null; componentId?: string | null },
+    owner: MediaOwner | undefined,
+  ): boolean {
+    if (owner === undefined) return true
+    return 'componentId' in owner
+      ? asset.componentId === owner.componentId
+      : asset.deckId === owner.deckId && (asset.componentId ?? null) === null
+  }
+
   async function upload(args: {
     userId: string
-    deckId: string
+    owner: MediaOwner
     source: BinarySource
   }): Promise<MediaUploadResult> {
-    const { userId, deckId, source } = args
+    const { userId, owner, source } = args
+    // A deck's editor role is the caller's to check (the host, the routes);
+    // a master is its folder owner's, as its document is.
+    if ('componentId' in owner && !(await canUseComponentMedia(db, owner.componentId, userId))) {
+      throw notFound('Component not found')
+    }
     const remote = source.kind !== 'bytes'
     // Cap the read by the declared kind when there is one, else by the
     // largest kind; the exact per-kind limit is re-checked once the bytes
@@ -154,7 +199,11 @@ export function createMediaService(deps: ServiceDeps): MediaService {
           )
         }
         if (file.sizeBytes > maxUploadBytes(kind)) throw tooLarge(tooLargeMessage(kind))
-        return storeAndFinalize({ userId, deckId, file, mimeType, kind })
+        if (kind === 'font' && 'componentId' in owner) {
+          // Refused before anything is stored; finalizeUpload refuses it too.
+          throw unsupportedType(COMPONENT_FONT_REFUSED)
+        }
+        return storeAndFinalize({ userId, owner, file, mimeType, kind })
       },
     )
   }
@@ -162,16 +211,16 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   /** Put the file in the bucket (streamed) and run the shared finalize step. */
   async function storeAndFinalize(args: {
     userId: string
-    deckId: string
+    owner: MediaOwner
     file: BinaryFile
     mimeType: string
     kind: UploadKind
   }): Promise<MediaUploadResult> {
-    const { userId, deckId, file, mimeType, kind } = args
+    const { userId, owner, file, mimeType, kind } = args
     const assetId = nanoid(16)
     const ext = extensionFromMimeOrFilename(mimeType, file.filename)
     const folder = kind === 'font' ? 'fonts' : 'uploads'
-    const storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
+    const storageKey = mediaOriginalPath(owner, folder, assetId, ext)
     const s3 = buildS3Client()
     await s3.send(
       new PutObjectCommand({
@@ -192,7 +241,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         s3,
         storageKey,
         assetId,
-        deckId,
+        owner,
         userId,
         mimeType,
         filename: file.filename,
@@ -254,13 +303,13 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     userId: string | null
     shareToken?: string | null | undefined
     assetId: string
-    deckId?: string | undefined
+    owner?: MediaOwner | undefined
   }): Promise<VideoInfo> {
     const asset = await getVideoAsset(db, args.assetId)
-    if (!asset || (args.deckId !== undefined && asset.deckId !== args.deckId)) {
+    if (!asset || !ownedBy(asset, args.owner)) {
       throw notFound('Video asset not found')
     }
-    await requireDeckRole(asset.deckId, args.userId, args.shareToken, 'viewer')
+    await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')
 
     const posterUrl = asset.posterKey
       ? signImgproxyUrl({ storageKey: asset.posterKey, variant: 'display', extension: 'jpg' })
@@ -292,13 +341,13 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     shareToken?: string | null | undefined
     assetId: string
     variant: ImageVariant
-    deckId?: string | undefined
+    owner?: MediaOwner | undefined
   }): Promise<{ url: string }> {
     const asset = await getMediaAsset(db, args.assetId)
-    if (!asset || (args.deckId !== undefined && asset.deckId !== args.deckId)) {
+    if (!asset || !ownedBy(asset, args.owner)) {
       throw notFound('Asset not found')
     }
-    await requireDeckRole(asset.deckId, args.userId, args.shareToken, 'viewer')
+    await requireAssetAccess(asset, args.userId, args.shareToken, 'viewer')
     return { url: signImgproxyUrl({ storageKey: asset.storageKey, variant: args.variant }) }
   }
 
@@ -328,33 +377,40 @@ export function createMediaService(deps: ServiceDeps): MediaService {
   async function remove(args: {
     userId: string
     assetId: string
-    deckId?: string | undefined
+    owner?: MediaOwner | undefined
   }): Promise<void> {
     const asset = await getMediaAsset(db, args.assetId)
-    if (!asset || (args.deckId !== undefined && asset.deckId !== args.deckId)) {
+    if (!asset || !ownedBy(asset, args.owner)) {
       throw notFound('Asset not found')
     }
-    await requireDeckRole(asset.deckId, args.userId, null, 'owner')
+    await requireAssetAccess(asset, args.userId, null, 'owner')
     // NOTE: the MinIO object remains — see TODO(M29) for the GC job.
     await deleteMediaAsset(db, args.assetId)
   }
 
   async function openUploadSession(args: {
     userId: string
-    deckId: string
+    owner: MediaOwner
     filename: string
     mimeType?: string | undefined
     sizeBytes: number
     credentialKey?: string | undefined
   }): Promise<UploadSessionInfo> {
-    const access = await resolveDeckAccess(db, {
-      deckId: args.deckId,
-      userId: args.userId,
-      shareToken: null,
-    })
-    if (!access) throw notFound('Deck not found')
-    if (!roleAtLeast(access.role, 'editor')) {
-      throw forbidden('Uploading into this deck needs editor access')
+    const { owner } = args
+    if ('componentId' in owner) {
+      if (!(await canUseComponentMedia(db, owner.componentId, args.userId))) {
+        throw notFound('Component not found')
+      }
+    } else {
+      const access = await resolveDeckAccess(db, {
+        deckId: owner.deckId,
+        userId: args.userId,
+        shareToken: null,
+      })
+      if (!access) throw notFound('Deck not found')
+      if (!roleAtLeast(access.role, 'editor')) {
+        throw forbidden('Uploading into this deck needs editor access')
+      }
     }
     const mimeType = args.mimeType ?? mimeFromFilename(args.filename)
     if (mimeType === null) {
@@ -368,6 +424,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
         `Unsupported media type: ${mimeType}. An upload session takes images, videos and fonts.`,
       )
     }
+    if (kind === 'font' && 'componentId' in owner) throw unsupportedType(COMPONENT_FONT_REFUSED)
     if (!Number.isInteger(args.sizeBytes) || args.sizeBytes < 1) {
       throw badRequest('sizeBytes must be the size of the file in bytes')
     }
@@ -379,7 +436,7 @@ export function createMediaService(deps: ServiceDeps): MediaService {
     try {
       issued = await deps.uploadSessions.issue({
         userSub: args.userId,
-        deckId: args.deckId,
+        owner,
         sizeBytes: args.sizeBytes,
         kind,
         credentialKey: args.credentialKey,
@@ -397,7 +454,9 @@ export function createMediaService(deps: ServiceDeps): MediaService {
       token,
       expiresAt: expiresAt.toISOString(),
       uploadMetadata: [
-        `deckId ${b64(args.deckId)}`,
+        'componentId' in owner
+          ? `componentId ${b64(owner.componentId)}`
+          : `deckId ${b64(owner.deckId)}`,
         `filename ${b64(args.filename)}`,
         `content-type ${b64(mimeType)}`,
       ].join(','),

@@ -7,7 +7,7 @@
  * also carries the HTTP status and body its route answers with).
  */
 
-import type { DeckRole, FontFaceInfo, ListKeyset } from './common.js'
+import type { DeckRole, DocumentRef, FontFaceInfo, ListKeyset } from './common.js'
 import type { ObjectsMutationContext } from '@narrative/slide-model'
 import type { InsertPlan } from '../insert/plan.js'
 
@@ -183,23 +183,25 @@ export interface DeckService {
    */
   listFonts(args: { deckId: string }): Promise<FontFaceInfo[]>
   /**
-   * Stage objects read from another deck (planned by `planInsert`) for
-   * insertion into `targetDeckId`: the pictures, videos and fonts they use
-   * are copied into the target deck, token references rebound when the
-   * folders differ, and links to the source's slides removed. Needs editor
-   * access to the source (copying out of a deck is exporting it).
+   * Stage objects read from another document (planned by `planInsert`) for
+   * insertion into `target`: the pictures and videos they use are copied
+   * into the target (a deck, or a component master, owns its media), the
+   * source deck's own fonts too between decks, token references rebound
+   * when the folders differ, and links to the source's slides removed.
+   * Copying out of a deck needs editor access to it (it is exporting it);
+   * out of or into a component needs owning its folder.
    */
   prepareObjectInsert(args: {
     userId: string
-    sourceDeckId: string
-    targetDeckId: string
+    source: DocumentRef
+    target: DocumentRef
     plan: InsertPlan
   }): Promise<PreparedObjectInsert>
 }
 
 export interface ObjectInsertResult {
   objectIds: string[]
-  /** Media rows registered for the target deck, copied from the source deck. */
+  /** Media rows registered for the target, copied from the source. */
   mediaRegistered: number
   /** Pictures that could not be copied (their source file is gone). */
   skippedImages: number
@@ -210,7 +212,7 @@ export interface ObjectInsertResult {
 }
 
 /**
- * Objects staged for insertion (media registered under the target deck);
+ * Objects staged for insertion (media registered under the target);
  * `apply` adds them to a slide synchronously, inside the host's one
  * transaction. `discard` releases the staged media when `apply` will not run.
  */

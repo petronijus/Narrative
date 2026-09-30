@@ -5,7 +5,7 @@
  * snapshot the renderer can feed straight into the per-type renderer
  * registry.
  *
- * Schema (mirrors writeComponentMasterTree.ts):
+ * Schema (what slide-model `writeComponentMaster` writes):
  *   doc.getArray('slides') — Y.Array<Y.Map>, exactly one entry for components
  *     slides[0].objects     — Y.Array<Y.Map>  (master tree)
  *     slides[0].animations  — Y.Array<Y.Map>  (master animations)
@@ -141,7 +141,7 @@ function computeSnapshot(doc: Y.Doc): ComponentSnapshot | null {
  *   Y.Text → its toString() (the renderer's text path re-wraps as needed)
  *   primitives → pass through
  *
- * Mirrors the inverse of `writeComponentMasterTree.ts:plainToYValue`.
+ * The inverse of the binding slide-model writes masters with (`plainObjectToYMap`).
  */
 function walkYValue(value: unknown): unknown {
   if (value === null) return null

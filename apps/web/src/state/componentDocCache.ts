@@ -35,6 +35,7 @@
 
 import * as Y from 'yjs'
 import { HocuspocusProvider } from '@hocuspocus/provider'
+import { whenProviderSaved } from './providerSaved.js'
 
 const HOCUSPOCUS_URL = import.meta.env['VITE_HOCUSPOCUS_URL'] ?? 'ws://localhost:3002'
 
@@ -149,6 +150,16 @@ export function releaseComponentDoc(componentId: string): void {
  */
 export function getComponentDoc(componentId: string): Y.Doc | null {
   return cache.get(componentId)?.doc ?? null
+}
+
+/**
+ * Resolves once the server holds every change made to the cached master so
+ * far (state/providerSaved.ts); at once when the master is not cached (then
+ * nothing local can be pending).
+ */
+export function whenComponentDocSaved(componentId: string): Promise<void> {
+  const entry = cache.get(componentId)
+  return entry === undefined ? Promise.resolve() : whenProviderSaved(entry.provider)
 }
 
 /** Returns 'synced' once the first server round-trip lands, else 'pending'. */

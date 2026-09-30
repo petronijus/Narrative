@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { MediaUploadProvider, useMediaUpload } from './useMediaUpload'
+import { buildUploadMetadata } from './uploadMetadata'
 import type { MediaUploadContextValue } from './useMediaUpload'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,7 @@ interface TusUploadCallbacks {
   ) => void
   onSuccess?: () => void
   onError?: (err: Error) => void
+  metadata?: Record<string, string>
 }
 
 // Captured tus.Upload instances for each startUpload call
@@ -592,5 +594,75 @@ describe('useMediaUpload — video uploads (M12)', () => {
     await waitFor(() => {
       expect(capturedCtx!.uploads[0]!.status).toBe('cancelled')
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Upload owner: a deck or a component master (A2.12b)
+// ---------------------------------------------------------------------------
+
+describe('upload metadata names the owner', () => {
+  const file = { name: 'logo.png', type: 'image/png' }
+
+  it('binds a deck upload with deckId only', () => {
+    expect(buildUploadMetadata({ deckId: 'deck-1' }, file, { width: 10, height: 20 })).toEqual({
+      deckId: 'deck-1',
+      filename: 'logo.png',
+      'content-type': 'image/png',
+      width: '10',
+      height: '20',
+    })
+  })
+
+  it('binds a component upload with componentId only — never a synthetic deck id', () => {
+    const metadata = buildUploadMetadata({ componentId: 'comp-1' }, file)
+    expect(metadata).toEqual({
+      componentId: 'comp-1',
+      filename: 'logo.png',
+      'content-type': 'image/png',
+    })
+    expect(metadata).not.toHaveProperty('deckId')
+  })
+
+  function renderFor(owner: { componentId: string } | { deckId: string }) {
+    let ctx: MediaUploadContextValue | null = null
+    render(
+      <MediaUploadProvider {...owner}>
+        <UploadConsumer
+          onContext={(c) => {
+            ctx = c
+          }}
+        />
+      </MediaUploadProvider>,
+    )
+    return () => ctx!
+  }
+
+  it("the master editor's provider sends componentId to tus", async () => {
+    const ctx = renderFor({ componentId: 'comp-1' })
+    act(() => {
+      ctx().startUpload(makeImageFile('clip.mp4', 'video/mp4'))
+    })
+    await waitFor(() => expect(tusInstances).toHaveLength(1))
+    expect(tusInstances[0]!.callbacks.metadata).toMatchObject({
+      componentId: 'comp-1',
+      'content-type': 'video/mp4',
+    })
+    expect(tusInstances[0]!.callbacks.metadata).not.toHaveProperty('deckId')
+  })
+
+  it('refuses a font for a component before any byte moves, pointing at the folder', async () => {
+    const ctx = renderFor({ componentId: 'comp-1' })
+    const onDone = vi.fn()
+    act(() => {
+      ctx().startUpload(makeImageFile('brand.ttf', 'font/ttf'), { onDone })
+    })
+    await waitFor(() => expect(ctx().uploads).toHaveLength(1))
+    expect(ctx().uploads[0]).toMatchObject({
+      status: 'error',
+      error: expect.stringMatching(/folder/),
+    })
+    expect(onDone).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }))
+    expect(tusInstances).toHaveLength(0)
   })
 })

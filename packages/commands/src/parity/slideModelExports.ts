@@ -75,6 +75,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   spliceRichText: 'writer',
   splitTableCell: 'writer',
   stampComponent: 'writer',
+  writeComponentMaster: 'writer',
   toggleListKind: 'writer',
   translateObjects: 'writer',
   ungroupObjects: 'writer',
@@ -125,7 +126,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   listDeckGuides: 'reader',
   listSlides: 'reader',
   paragraphFontSizePx: 'reader',
-  // A pure plan; the write happens in the web today (component.promote is known-missing).
+  // A pure plan; component.promote writes it with writeComponentMaster.
   promoteToComponent: 'reader',
   pruneAnimationsToScope: 'reader',
   readParagraphAttrsForRange: 'reader',
@@ -151,6 +152,7 @@ export const SLIDE_MODEL_EXPORTS: Readonly<Record<string, SlideModelExportKind>>
   createUndoManager: 'infrastructure',
   generatePeerId: 'infrastructure',
   getComponentDocName: 'infrastructure',
+  COMPONENT_MASTER_SLIDE_ID: 'infrastructure',
   getDeckGuidesCtx: 'infrastructure',
   getObjectTypeDef: 'infrastructure',
   getSlideAnimationsCtx: 'infrastructure',

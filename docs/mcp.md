@@ -279,12 +279,15 @@ hand-written:
   on 2026-09-29 (166,020 / 166,980 / 166,884 for 116 tools after A2.9, same day), with
   the `instructions` at 4,030 bytes after A2.10 (of which 2,258 are the shared fields;
   was 3,945 / 2,173; not re-measured after A2.11, whose playbook edits may have moved
-  it). `mcp/toolListBudget.test.ts` fails past 177,000 bytes (16,000 for one tool;
-  169,000 after A2.10, 167,000 after A2.9),
+  it). `mcp/toolListBudget.test.ts` fails past 189,000 bytes (since A2.12b, 2026-09-30:
+  188,407 measured in url mode for 129 tools; 187,000 after A2.12a with 186,157 for 128
+  tools; 177,000 after A2.11, 169,000 after A2.10, 167,000 after A2.9; 16,000 for one
+  tool),
   so it cannot grow unnoticed; the budget was 160,000 until 2026-09-28, then 132,000,
   and Petr's call for A2 is to raise it step by step (each raise is itemised in the
   test's comment) and review the sizes as a whole when A2 closes (A2.13). Headroom on
-  2026-09-30 during A2.11 is ≈ 470 bytes in url mode (124 after A2.10, 20 after A2.9).
+  2026-09-30 after A2.12b is 593 bytes in url mode (843 after A2.12a, ≈ 470 during A2.11, 124
+  after A2.10, 20 after A2.9).
 - **Annotations** come from the registry's explicit metadata (`readOnly` / `idempotent` on each command; the registry refuses inconsistent combinations); a hint equal to the MCP default (`readOnlyHint` / `idempotentHint` false) is left out, `destructiveHint` and `openWorldHint` (default true) are always stated: `readOnlyHint` for commands that change nothing — document queries and server reads such as `deck_list`, `share_links_list`, `media_url`; `destructiveHint` for writes with `undo: 'irreversible'` (false on other writes); `idempotentHint` on read-only tools and on set-to-value writes marked `idempotent` (renames, `text_set`, `slide_setBackground`, `object_update`, … — the contract suite runs each of their examples twice), false on every other write; `openWorldHint` for commands that can fetch a URL (file inputs).
 - **Paged lists**: `deck_list` (most recently changed first — content, title or folder) and `folder_list` (by name) return at most `limit` items (default 50, max 200) as lean records plus `nextCursor`; pass it back as `cursor` with the same filters for the next page. `query` filters by title or name (case-insensitive, literal), and `deck_list` also takes `folderId`. The web app's `GET /decks` and `GET /folders` are unchanged.
 - **Results**: `structuredContent` = the command's output, plus the same as JSON text;
@@ -310,14 +313,17 @@ creation-with-upload; the answer is the asset JSON). The file gets the editor's 
 permission rules refuse `$(…)`), and it passes the token on stdin (`-H @-`), so the
 token is not in the process list while the upload runs.
 
-The token (media/uploadSessions.ts, table `upload_sessions`, migrations 0024–0025):
+The token (media/uploadSessions.ts, table `upload_sessions`, migrations 0024–0025 and 0029):
 
 - is stored only as its SHA-256; the raw value appears once, in the command result;
   the audit log keeps `nus_[redacted]` (agent/opRedaction.ts, also inside the curl line);
 - authenticates tus requests only — it is not a personal access token, every other
   route ignores it;
 - uploads media (image, video, font) into its own deck, as the user who asked, who must
-  still be an editor there and still pass the sign-in policy;
+  still be an editor there and still pass the sign-in policy — or, when the call targets
+  a component master (`componentId`, since A2.12b, 2026-09-30, unreleased at the time),
+  a picture or video into that component, whose folder the user must still own (no
+  fonts; `upload_sessions_one_owner`: exactly one of `deck_id` / `component_id`);
 - uploads exactly the file it was asked for: its declared size (`Upload-Length` must
   match, a deferred length is refused) and kind;
 - must start its upload within 15 minutes, is bound to that upload (an atomic claim —
@@ -458,8 +464,9 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
   Postgres (`vitest.integration.config.ts`, not part of `pnpm test`).
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
-- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 177,000 bytes in every
-  confirmation mode (since A2.11, 2026-09-30; 169,000 after A2.10, 132,000 on
+- `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 189,000 bytes in every
+  confirmation mode (since A2.12b, 2026-09-30, 188,407 measured in url mode for 129 tools;
+  187,000 after A2.12a, 177,000 after A2.11, 169,000 after A2.10, 132,000 on
   2026-09-28, raised per A2 step since; 160,000 before), ≤ 16,000 per tool, `$ref`s
   self-contained. Measured 2026-09-30 during A2.11, before its last example tweak:
   ≈ 175,569 (form), 176,529 (url), 176,433 bytes (link) for 121 tools; the four new

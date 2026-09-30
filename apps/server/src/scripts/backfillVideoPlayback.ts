@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     .select({
       id: mediaAssets.id,
       deckId: mediaAssets.deckId,
+      componentId: mediaAssets.componentId,
       storageKey: mediaAssets.storageKey,
       uploaderUserId: mediaAssets.uploaderUserId,
       mimeType: mediaAssets.mimeType,
@@ -52,9 +53,12 @@ async function main(): Promise<void> {
     .from(mediaAssets)
     .where(where)
 
-  // deckId is nullable in the schema (folder-scoped fonts), but videos always
-  // have one. Skip any defensively.
-  const targets = rows.filter((r): r is typeof r & { deckId: string } => r.deckId !== null)
+  // A video belongs to a deck or (A2.12b) a component master; the worker
+  // finds the output prefix in the storage key either way. A row with
+  // neither is skipped defensively.
+  const targets = rows.filter((r) => r.deckId !== null || r.componentId !== null)
+  const ownerOf = (r: (typeof targets)[number]): string =>
+    r.deckId !== null ? `deck=${r.deckId}` : `component=${r.componentId}`
 
   console.log(
     `[backfill-video] ${targets.length} video(s) ${all ? '(all)' : 'missing playback_key'} ` +
@@ -63,7 +67,7 @@ async function main(): Promise<void> {
 
   if (!apply) {
     for (const r of targets) {
-      console.log(`  would enqueue: asset=${r.id} deck=${r.deckId} key=${r.storageKey}`)
+      console.log(`  would enqueue: asset=${r.id} ${ownerOf(r)} key=${r.storageKey}`)
     }
     await pool.end()
     return
@@ -76,13 +80,13 @@ async function main(): Promise<void> {
     await updateTranscodeStatus(db, r.id, 'pending')
     await enqueueVideoTranscode({
       assetId: r.id,
-      deckId: r.deckId,
+      ...(r.deckId !== null ? { deckId: r.deckId } : {}),
       storageKey: r.storageKey,
       uploaderUserId: r.uploaderUserId,
       mimeType: r.mimeType,
     })
     enqueued++
-    console.log(`  enqueued: asset=${r.id} deck=${r.deckId}`)
+    console.log(`  enqueued: asset=${r.id} ${ownerOf(r)}`)
   }
 
   console.log(`[backfill-video] done — ${enqueued} job(s) enqueued`)

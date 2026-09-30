@@ -6,7 +6,8 @@
  * Architecture:
  *   - Uses @tus/server v2 with @tus/s3-store (MinIO-compatible via forcePathStyle S3).
  *   - Fastify forwards raw Node.js req/res to tusServer.handle() for all /api/uploads/* requests.
- *   - Auth is enforced in onUploadCreate (JWT required, must have deck editor/owner role).
+ *   - Auth is enforced in onUploadCreate (JWT required, must have deck editor/owner role;
+ *     a component upload — metadata `componentId` — needs the component's folder).
  *   - MIME validation: image/* only in M11; rejects with 415 on non-image content types.
  *   - On upload finish: reads S3 object head for size, probes image dimensions, inserts media_assets row.
  *   - Size limit: MAX_UPLOAD_SIZE env var, default 25 MB.
@@ -22,9 +23,16 @@
  * Security:
  *   - storageKey is server-constructed — never user-supplied (no path traversal).
  *   - Share token (viewer) path does NOT grant upload rights — only JWT users with editor/owner role may upload.
+ *   - A component master's pictures and videos (A2.12b) are uploaded with
+ *     metadata `componentId` instead of `deckId`: only the owner of the
+ *     component's folder (resolveComponentAccess — the rule of the master's
+ *     Y.Doc), images and videos only (fonts belong to the folder, a .pptx to
+ *     a deck); an upload session issued for the component may carry one. Key:
+ *     `components/<componentId>/uploads/<assetId>/original.<ext>`, compound
+ *     id `<assetId>:unknown:<base64url(key)>` (media/mediaOwner.ts).
  *   - An upload session token (`nus_…`, media/uploadSessions.ts — what
  *     `media.uploadSession` hands an agent) may create ONE media upload in
- *     its own deck, and then only continue that upload.
+ *     its own deck or component master, and then only continue that upload.
  *   - A personal access token (scope `api` or `mcp`) may upload media only —
  *     image/*, video/* and fonts. A .pptx by token is refused at create, and
  *     at every PATCH/finish (M2): deck import/append by an agent goes through
@@ -49,7 +57,16 @@ import { S3Store } from '@tus/s3-store'
 import type { S3ClientConfig } from '@aws-sdk/client-s3'
 import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
-import { finalizeMediaUpload, UploadRejected } from './finalizeUpload.js'
+import { COMPONENT_FONT_REFUSED, finalizeMediaUpload, UploadRejected } from './finalizeUpload.js'
+import {
+  canUseComponentMedia,
+  encodeTusUploadId,
+  isStorageSafeId,
+  mediaOriginalPath,
+  mediaOwnerPrefix,
+  parseTusUploadId,
+  type MediaOwner,
+} from './mediaOwner.js'
 import {
   MAX_FONT_UPLOAD_SIZE,
   MAX_IMAGE_UPLOAD_SIZE,
@@ -59,6 +76,8 @@ import {
   classifyUpload,
   extensionFromMimeOrFilename,
   isFontUpload,
+  maxUploadBytes,
+  tooLargeMessage,
 } from './uploadPolicy.js'
 import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 import { eq } from 'drizzle-orm'
@@ -89,6 +108,19 @@ const log = subsystemLogger('tus')
 
 // Per-kind limits, the accepted kinds and the MIME → extension map live in
 // ./uploadPolicy.ts, shared with the server-side upload agents use.
+
+/**
+ * The storage key named in `uploadId` (namingFunction, which runs before any
+ * check) must lie in the namespace of the owner onUploadCreate authorised:
+ * two readers of the same metadata must never disagree about where the
+ * bytes go. 400 otherwise.
+ */
+function requireKeyOfOwner(uploadId: string, owner: MediaOwner): void {
+  const path = parseTusUploadId(uploadId)?.path ?? null
+  if (path === null || !path.startsWith(`${mediaOwnerPrefix(owner)}/`)) {
+    throw { status_code: 400, body: 'The upload metadata names no single owner' }
+  }
+}
 
 /** tus server-level maxSize — set to the largest of the four; per-MIME enforcement is in onUploadCreate. */
 const MAX_UPLOAD_SIZE = Math.max(
@@ -204,6 +236,10 @@ export function tokenMayUpload(mime: string, filename?: string): boolean {
   return classifyUpload(mime, filename) !== null
 }
 
+const COMPONENT_KIND_REFUSED =
+  'A component takes pictures and videos only (image/*, video/*); ' +
+  'a .pptx is imported into a deck, fonts belong to the folder.'
+
 const TOKEN_PPTX_REFUSED =
   'Forbidden: a personal access token cannot upload a .pptx through tus; ' +
   'import it with deck.importPptx or add its slides with deck.insertFrom'
@@ -303,17 +339,28 @@ async function requireUploadCreatorAndAccess(
     throw { status_code: 403, body: 'Forbidden: not the creator of this upload' }
   }
 
-  // (b) still-valid access. Recover deckId/folderId from the upload metadata
-  // and the compound id, mirroring what onUploadCreate validated.
+  // (b) still-valid access. Recover deckId/folderId/componentId from the
+  // upload metadata and the compound id, mirroring what onUploadCreate
+  // validated.
   const mime =
     upload.metadata?.['content-type'] ??
     upload.metadata?.['mimeType'] ??
     upload.metadata?.['mimetype'] ??
     ''
-  const idParts = upload.id.split(':')
-  const deckIdFromId = idParts[1] && idParts[1] !== 'unknown' ? idParts[1] : null
+  const deckIdFromId = parseTusUploadId(upload.id)?.deckId ?? null
   const deckId = upload.metadata?.['deckId'] ?? deckIdFromId
   const folderId = upload.metadata?.['folderId'] ?? null
+  const componentId = upload.metadata?.['componentId'] ?? null
+
+  // A component master's picture or video: the creator must still own the
+  // component's folder. Checked first — a component upload has no deck.
+  if (componentId) {
+    if (mime === PPTX_MIME) throw { status_code: 403, body: 'Forbidden: ' + COMPONENT_KIND_REFUSED }
+    if (!(await canUseComponentMedia(db, componentId, userId))) {
+      throw { status_code: 403, body: 'Forbidden: access to the component revoked' }
+    }
+    return
+  }
 
   if (mime === PPTX_MIME) {
     // M2: even the user's own browser-started pptx upload cannot be
@@ -469,12 +516,30 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
     //
     // Encodes assetId + deckId + storageKey into the upload ID so the finalize
     // hook can reconstruct them without an extra DB lookup.
-    // Format: "{assetId}:{deckId}:{storageKey base64url}"
+    // Format: "{assetId}:{deckId}:{storageKey base64url}" — `unknown` in the
+    // deck slot for a folder pptx import and for a component upload
+    // (media/mediaOwner.ts encodeTusUploadId / parseTusUploadId).
+    //
+    // Runs BEFORE onUploadCreate: the ids in the metadata are not checked
+    // yet. A refused create stores nothing, so a key built from an id that
+    // then fails the access check never exists.
     // -----------------------------------------------------------------------
     namingFunction: (_req: IncomingMessage, metadata?: Record<string, string | null>) => {
       const assetId = nanoid(16)
-      const deckId = metadata?.['deckId'] ?? 'unknown'
-      const folderId = metadata?.['folderId'] ?? null
+      // `||`, not `??`: an empty id is no id, exactly as onUploadCreate reads it.
+      const deckId = metadata?.['deckId'] || 'unknown'
+      const folderId = metadata?.['folderId'] || null
+      const componentId = metadata?.['componentId'] || null
+      // An id that could not name storage keys (mediaOwner.ts) is refused
+      // here, before a key is built from it: a 400, not a thrown 500.
+      for (const id of [componentId, deckId === 'unknown' ? null : deckId]) {
+        if (id !== null && !isStorageSafeId(id)) {
+          throw {
+            status_code: 400,
+            body: 'The upload names a deck or component id that is not valid',
+          }
+        }
+      }
       const filename = metadata?.['filename'] ?? undefined
       const mime =
         metadata?.['content-type'] ?? metadata?.['mimeType'] ?? 'application/octet-stream'
@@ -487,6 +552,11 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // P15: fonts get their own folder so the deck listing logic can
       // tell them apart at a glance.
       let storageKey: string
+      if (componentId && deckId === 'unknown' && mime !== PPTX_MIME) {
+        // A component master's picture or video (fonts are refused at create).
+        storageKey = mediaOriginalPath({ componentId }, 'uploads', assetId, ext)
+        return encodeTusUploadId(assetId, null, storageKey)
+      }
       if (mime === PPTX_MIME) {
         // Deck-scoped (insert into an open deck) vs folder-scoped (create a
         // new deck): namespace the transient blob by whichever binding it
@@ -495,11 +565,10 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         storageKey = `imports/pptx-temp/${scope}/${assetId}/source.${ext}`
       } else {
         const folder = isFontUpload(mime, filename) ? 'fonts' : 'uploads'
-        storageKey = `decks/${deckId}/${folder}/${assetId}/original.${ext}`
+        storageKey = mediaOriginalPath({ deckId }, folder, assetId, ext)
       }
 
-      const encoded = `${assetId}:${deckId}:${Buffer.from(storageKey).toString('base64url')}`
-      return encoded
+      return encodeTusUploadId(assetId, deckId === 'unknown' ? null : deckId, storageKey)
     },
 
     // -----------------------------------------------------------------------
@@ -531,6 +600,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       const meta = parseMetadata(req.headers['upload-metadata'])
       const deckId = meta['deckId'] ?? upload.metadata?.['deckId'] ?? null
       const folderId = meta['folderId'] ?? upload.metadata?.['folderId'] ?? null
+      const componentId = meta['componentId'] ?? upload.metadata?.['componentId'] ?? null
       const insertAtRaw = meta['insertAt'] ?? upload.metadata?.['insertAt'] ?? null
 
       // 3. MIME resolution (used by both the pptx branch and the media branch).
@@ -554,6 +624,15 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         )
       }
 
+      // An upload has exactly one owner (A2.12b): a component master, or a
+      // deck / folder.
+      if (componentId && (deckId || folderId)) {
+        throw {
+          status_code: 400,
+          body: 'An upload has one owner: give componentId, or deckId / folderId, not both',
+        }
+      }
+
       // M2: a token uploads media only; decks go through the commands.
       if (uploader.viaToken) {
         const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
@@ -571,8 +650,17 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       if (uploader.session !== null) {
         const session = uploader.session
         const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
-        if (deckId !== session.deckId) {
-          throw { status_code: 403, body: 'Forbidden: this upload session is for another deck' }
+        // A session is issued for one deck or one component master
+        // (media.uploadSession) and uploads there only.
+        const forThisOwner =
+          'componentId' in session.owner
+            ? componentId === session.owner.componentId && !deckId && !folderId
+            : deckId === session.owner.deckId && !componentId
+        if (!forThisOwner) {
+          throw {
+            status_code: 403,
+            body: 'Forbidden: this upload session is for another deck or component',
+          }
         }
         if (upload.size !== session.sizeBytes) {
           throw {
@@ -601,8 +689,43 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
         [CREATOR_META_KEY]: userId,
         ...(deckId ? { deckId } : {}),
         ...(folderId ? { folderId } : {}),
+        ...(componentId ? { componentId } : {}),
         ...(insertAtRaw !== null ? { insertAt: insertAtRaw } : {}),
         ...(mime ? { 'content-type': mime } : {}),
+      }
+
+      // ─── Component master branch (A2.12b) ──────────────────────────────
+      // A master's own pictures and videos. The owner of the component's
+      // folder only — whoever may edit the master's document. Fonts belong
+      // to the folder and a .pptx to a deck: both refused with 415.
+      if (componentId) {
+        const filename = meta['filename'] ?? upload.metadata?.['filename'] ?? undefined
+        const kind = mime === PPTX_MIME ? null : classifyUpload(mime, filename)
+        if (kind === 'font') throw { status_code: 415, body: COMPONENT_FONT_REFUSED }
+        if (kind === null) {
+          throw {
+            status_code: 415,
+            body: `Unsupported media type for a component: ${mime || 'none'}. ${COMPONENT_KIND_REFUSED}`,
+          }
+        }
+        if (upload.size > maxUploadBytes(kind)) {
+          throw { status_code: 413, body: tooLargeMessage(kind) }
+        }
+        if (!(await canUseComponentMedia(db, componentId, userId))) {
+          throw {
+            status_code: 403,
+            body: "Forbidden: only the owner of the component's folder may upload into it",
+          }
+        }
+        requireKeyOfOwner(upload.id, { componentId })
+        // A session is spent on this upload — last, as in the deck branch.
+        if (uploader.session !== null && !(await sessions.claim(uploader.session, upload.id))) {
+          throw {
+            status_code: 403,
+            body: 'Forbidden: this upload session was already used or has expired',
+          }
+        }
+        return { res, metadata: persistedMetadata }
       }
 
       // ─── PPTX import branch ────────────────────────────────────────────
@@ -706,6 +829,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       if (!access || !roleAtLeast(access.role, 'editor')) {
         throw { status_code: 403, body: 'Forbidden: editor or owner role required to upload' }
       }
+      requireKeyOfOwner(upload.id, { deckId })
 
       // 5. An upload session is spent on this upload — last, so a refused
       // attempt leaves it usable. Atomic: a second creation loses.
@@ -769,14 +893,12 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // The actual S3 object key is `upload.id` itself — @tus/s3-store writes the
       // object at that key. We keep the compound encoding so we can recover
       // assetId/deckId without a DB lookup, but storageKey must match what S3 has.
-      const parts = upload.id.split(':')
-      const assetId = parts[0]
-      const deckId = parts[1]
-
-      if (!assetId || !deckId) {
+      const parsedId = parseTusUploadId(upload.id)
+      if (parsedId === null) {
         log.error({ uploadId: upload.id }, 'onUploadFinish: malformed upload id')
         throw { status_code: 500, body: 'Internal error: upload id malformed' }
       }
+      const { assetId } = parsedId
       const storageKey = upload.id
 
       // TUS-1: re-authorize before doing any S3 read or DB write. The compound
@@ -810,6 +932,16 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // what distinguishes them.
       const pptxDeckId = stored['deckId'] ?? null
       const insertAtRaw = stored['insertAt'] ?? null
+      // Who the picture / video belongs to: the component the create checked
+      // (its id is in the stored metadata; the deck slot says `unknown`), else
+      // the deck of the compound id. Nothing else reaches the media branch —
+      // create refuses a media upload with neither.
+      const componentId = stored['componentId'] ?? null
+      const owner: MediaOwner | null = componentId
+        ? { componentId }
+        : parsedId.deckId !== null
+          ? { deckId: parsedId.deckId }
+          : null
 
       // Get authoritative size from S3 head
       let sizeBytes = upload.size ?? 0
@@ -947,6 +1079,14 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
       // ─── Image / video / font: the shared finalize step ───────────────
       // media/finalizeUpload.ts — the same code the server-side upload agents
       // use (services/media.ts), so both paths apply identical checks.
+      if (owner === null) {
+        log.error(
+          { uploadId: upload.id },
+          'onUploadFinish: media upload bound to no deck or component',
+        )
+        await deleteMinIOObject(s3, storageKey)
+        throw { status_code: 400, body: 'Upload is bound to no deck or component' }
+      }
       let finalized
       try {
         finalized = await finalizeMediaUpload({
@@ -954,7 +1094,7 @@ export function registerTusPlugin(app: FastifyInstance, opts: TusPluginOpts): vo
           s3,
           storageKey,
           assetId,
-          deckId,
+          owner,
           userId,
           mimeType: mimeRaw,
           filename,

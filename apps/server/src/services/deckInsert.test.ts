@@ -38,9 +38,17 @@ vi.mock('../auth/permissions.js', async (importOriginal) => {
   return { ...original, resolveDeckAccess: vi.fn() }
 })
 
+const canUseComponentMedia = vi.fn()
+vi.mock('../media/mediaOwner.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../media/mediaOwner.js')>()
+  return {
+    ...original,
+    canUseComponentMedia: (...a: unknown[]) => canUseComponentMedia(...a),
+  }
+})
+
 const { resolveDeckAccess } = await import('../auth/permissions.js')
-const { stageDeckInsert, stageObjectInsert, insertObjectsFromDeck } =
-  await import('./deckInsert.js')
+const { stageDeckInsert, stageObjectInsert, insertObjectsFrom } = await import('./deckInsert.js')
 const { planInsert } = await import('@narrative/commands')
 const accessMock = vi.mocked(resolveDeckAccess)
 
@@ -52,6 +60,8 @@ beforeEach(() => {
   persistence = new MemoryPersistence()
   hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
   accessMock.mockResolvedValue({ role: 'editor', reason: 'direct' })
+  canUseComponentMedia.mockReset()
+  canUseComponentMedia.mockResolvedValue(true)
 })
 
 afterEach(async () => {
@@ -297,7 +307,7 @@ describe('stageDeckInsert', () => {
   })
 })
 
-describe('stageObjectInsert / insertObjectsFromDeck', () => {
+describe('stageObjectInsert / insertObjectsFrom', () => {
   /** Objects as query.slide read them from the source deck's S1. */
   const readObjects = (): Record<string, unknown>[] => [
     {
@@ -334,10 +344,8 @@ describe('stageObjectInsert / insertObjectsFromDeck', () => {
     const sourceEditor = await hp.openDirectConnection('src')
     const script = scriptedDb({
       selects: [
-        [
-          { id: 'src', folderId: 'f1' },
-          { id: 'dst', folderId: 'f1' },
-        ],
+        [{ folderId: 'f1' }], // the source's folder
+        [{ folderId: 'f1' }], // the target's
         [mediaRow],
         [], // deck fonts of the families the text uses (none)
       ],
@@ -345,7 +353,7 @@ describe('stageObjectInsert / insertObjectsFromDeck', () => {
     const plan = planInsert(readObjects(), {})
     const prepared = await stageObjectInsert(
       { db: script.db, log: quietLog, hocuspocus: () => hp },
-      { userId: 'u1', sourceDeckId: 'src', targetDeckId: 'dst', plan },
+      { userId: 'u1', source: { deckId: 'src' }, target: { deckId: 'dst' }, plan },
     )
     const inserted = script.writes.filter((w) => w.kind === 'insert' && w.table === 'media_assets')
     expect(inserted).toHaveLength(1)
@@ -379,8 +387,8 @@ describe('stageObjectInsert / insertObjectsFromDeck', () => {
         { db: script.db, log: quietLog, hocuspocus: () => hp },
         {
           userId: 'u1',
-          sourceDeckId: 'src',
-          targetDeckId: 'dst',
+          source: { deckId: 'src' },
+          target: { deckId: 'dst' },
           plan: planInsert(readObjects(), {}),
         },
       ),
@@ -399,19 +407,17 @@ describe('stageObjectInsert / insertObjectsFromDeck', () => {
     persistence.snapshots.set('dst', Y.encodeStateAsUpdate(targetDoc))
     const script = scriptedDb({
       selects: [
-        [
-          { id: 'src', folderId: 'f1' },
-          { id: 'dst', folderId: 'f1' },
-        ],
+        [{ folderId: 'f1' }], // the source's folder
+        [{ folderId: 'f1' }], // the target's
         [mediaRow],
         [], // deck fonts of the families the text uses (none)
       ],
     })
     const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
-    const out = await insertObjectsFromDeck(deps, {
+    const out = await insertObjectsFrom(deps, {
       userId: 'u1',
-      deckId: 'dst',
-      sourceDeckId: 'src',
+      source: { deckId: 'src' },
+      target: { deckId: 'dst' },
       slideId: 'T1',
       objects: readObjects(),
       offset: { x: 50, y: 0 },
@@ -424,13 +430,93 @@ describe('stageObjectInsert / insertObjectsFromDeck', () => {
     await sourceEditor.disconnect()
 
     await expect(
-      insertObjectsFromDeck(deps, {
+      insertObjectsFrom(deps, {
         userId: 'u1',
-        deckId: 'dst',
-        sourceDeckId: 'src',
+        source: { deckId: 'src' },
+        target: { deckId: 'dst' },
         slideId: 'T1',
         objects: [{ type: 'rectangle', width: -1 }],
       }),
     ).rejects.toMatchObject({ code: 'invalid_input' })
+  })
+})
+
+describe('stageObjectInsert between a deck and a component master', () => {
+  const picture = (): Record<string, unknown>[] => [
+    {
+      id: 'img',
+      type: 'image',
+      assetId: 'a_src',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      rotation: 0,
+      opacity: 1,
+    },
+  ]
+
+  it("copies a deck's picture into the master, which owns the copy", async () => {
+    seedSource()
+    const sourceEditor = await hp.openDirectConnection('src')
+    const script = scriptedDb({
+      selects: [[{ folderId: 'f1' }], [{ folderId: 'f1' }], [mediaRow]],
+    })
+    const prepared = await stageObjectInsert(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      {
+        userId: 'u1',
+        source: { deckId: 'src' },
+        target: { componentId: 'cmp1' },
+        plan: planInsert(picture(), {}),
+      },
+    )
+    expect(canUseComponentMedia).toHaveBeenCalledWith(expect.anything(), 'cmp1', 'u1')
+    const [row] = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
+      Record<string, unknown>
+    >
+    expect(row).toMatchObject({ componentId: 'cmp1', deckId: null })
+    expect(row!['storageKey']).toMatch(/^components\/cmp1\/uploads\/[\w-]+\/original\.png$/)
+
+    const target = createSlideDoc()
+    const objects = getSlideObjectsCtx(target, target.slides.get(0).get('id') as string)!
+    target.doc.transact(() => prepared.apply(objects))
+    expect((listSlides(target)[0]!.objects[0] as ImageObject).assetId).toBe(row!['id'])
+    await sourceEditor.disconnect()
+  })
+
+  it('refuses a master the caller cannot use, as missing, before copying anything', async () => {
+    canUseComponentMedia.mockResolvedValue(false)
+    const script = scriptedDb()
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { componentId: 'cmp_other' },
+          target: { deckId: 'dst' },
+          plan: planInsert(picture(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(404)
+    expect(script.remaining().selects).toBe(0)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('refuses pasting a master into itself', async () => {
+    const script = scriptedDb()
+    const err = await serviceErrorOf(
+      stageObjectInsert(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        {
+          userId: 'u1',
+          source: { componentId: 'cmp1' },
+          target: { componentId: 'cmp1' },
+          plan: planInsert(picture(), {}),
+        },
+      ),
+    )
+    expect(err.status).toBe(400)
   })
 })

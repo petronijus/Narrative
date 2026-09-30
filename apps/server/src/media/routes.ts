@@ -6,7 +6,9 @@
  *   GET  /api/media/:assetId/url?variant=<thumb|display|original>
  *     Returns a signed imgproxy URL for the given asset + variant.
  *     Auth: JWT required (authPreHandler). Deck access: viewer or above.
- *     Cache-Control: max-age=600 (10 min). Signed URLs are stable so caching is safe.
+ *     Cache-Control: private, max-age=600 (10 min). Signed URLs are stable, so the
+ *     browser may keep one; a shared cache must not (it would hand one viewer's
+ *     answer to another — component media is its folder owner's only).
  *
  *   GET  /api/media/:assetId/video-info
  *     Returns transcode status + signed poster/thumbnail URLs + progressive MP4 playback URL.
@@ -31,6 +33,9 @@
  * Security notes:
  *   - Share token (viewer via share link) does NOT permit uploads — only reads.
  *   - Deck ownership verified via getMediaAsset → deckId → resolveDeckAccess chain.
+ *   - A component master's picture or video (A2.12b, `component_id` set):
+ *     url, video-info and DELETE need the owner of the component's folder
+ *     (resolveComponentAccess); a share token never grants it.
  *   - MEDIA-1: the MinIO bucket is PRIVATE (no anonymous download policy).
  *     Every media URL handed to a client is either an imgproxy-signed URL
  *     (images, posters, thumbnails — stable HMAC) or a short-TTL S3 presigned
@@ -158,7 +163,7 @@ export async function registerMediaRoutes(
         assetId: request.params.assetId,
         variant: variantParam,
       })
-      return reply.header('Cache-Control', 'public, max-age=600').send(result)
+      return reply.header('Cache-Control', 'private, max-age=600').send(result)
     } catch (err) {
       return sendServiceError(reply, err)
     }

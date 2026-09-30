@@ -49,13 +49,14 @@ vi.mock('./s3Client.js', () => ({
 
 vi.mock('../auth/permissions.js', () => ({
   resolveDeckAccess: vi.fn(),
+  resolveComponentAccess: vi.fn(),
   roleAtLeast: vi.fn(),
 }))
 
 import { getMediaAsset, getVideoAsset, deleteMediaAsset, getFolderFontAsset } from './assets.js'
 import { signImgproxyUrl } from './imgproxyUrl.js'
 import { presignGetUrl } from './s3Client.js'
-import { resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
+import { resolveComponentAccess, resolveDeckAccess, roleAtLeast } from '../auth/permissions.js'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -66,6 +67,7 @@ import type { VideoAssetRow } from './assets.js'
 const FIXTURE_VIDEO_PENDING: VideoAssetRow = {
   id: 'video-pending-01',
   deckId: 'deck-alpha',
+  componentId: null,
   mimeType: 'video/mp4',
   sizeBytes: 50_000_000,
   storageKey: 'decks/deck-alpha/uploads/video-pending-01/original.mp4',
@@ -83,6 +85,7 @@ const FIXTURE_VIDEO_PENDING: VideoAssetRow = {
 const FIXTURE_VIDEO_DONE: VideoAssetRow = {
   id: 'video-done-01',
   deckId: 'deck-alpha',
+  componentId: null,
   mimeType: 'video/mp4',
   sizeBytes: 50_000_000,
   storageKey: 'decks/deck-alpha/uploads/video-done-01/original.mp4',
@@ -101,6 +104,7 @@ const FIXTURE_ASSET: MediaAsset = {
   id: 'asset-test-01',
   deckId: 'deck-alpha',
   folderId: null,
+  componentId: null,
   uploaderUserId: 'dev-user',
   mimeType: 'image/jpeg',
   sizeBytes: 102400,
@@ -242,7 +246,7 @@ describe('GET /api/media/:assetId/url', () => {
     })
 
     expect(res.statusCode).toBe(200)
-    expect(res.headers['cache-control']).toContain('max-age=600')
+    expect(res.headers['cache-control']).toBe('private, max-age=600')
   })
 })
 
@@ -568,5 +572,103 @@ describe('GET /api/media/:assetId/video-info', () => {
     const body = res.json<Record<string, unknown>>()
     expect(body['transcodeStatus']).toBe('failed')
     expect(body['transcodeError']).toBe('ffmpeg exited with code 1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests: a component master's own media (A2.12b)
+// ---------------------------------------------------------------------------
+
+describe("a component master's media: the owner of its folder only, never a share link", () => {
+  let app: FastifyInstance
+
+  const COMPONENT_IMAGE: MediaAsset = {
+    ...FIXTURE_ASSET,
+    id: 'comp-img-01',
+    deckId: null,
+    componentId: 'comp-1',
+    storageKey: `comp-img-01:unknown:${Buffer.from('components/comp-1/uploads/comp-img-01/original.png').toString('base64url')}`,
+  }
+  const COMPONENT_VIDEO: VideoAssetRow = {
+    ...FIXTURE_VIDEO_DONE,
+    id: 'comp-vid-01',
+    deckId: null,
+    componentId: 'comp-1',
+    posterKey: 'components/comp-1/videos/comp-vid-01/poster.jpg',
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    app = await buildApp()
+    // A deck role would let everyone in: it must never be consulted.
+    vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+    vi.mocked(roleAtLeast).mockReturnValue(true)
+  })
+
+  it('the folder owner gets the signed URL of the stored image', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
+    vi.mocked(resolveComponentAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
+
+    const res = await app.inject({ method: 'GET', url: '/api/media/comp-img-01/url?variant=thumb' })
+
+    expect(res.statusCode).toBe(200)
+    expect(resolveComponentAccess).toHaveBeenCalledWith(expect.anything(), {
+      componentId: 'comp-1',
+      userId: 'dev-user',
+    })
+    expect(signImgproxyUrl).toHaveBeenCalledWith({
+      storageKey: COMPONENT_IMAGE.storageKey,
+      variant: 'thumb',
+    })
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('anyone else is refused, a deck editor or a share link included', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
+    vi.mocked(resolveComponentAccess).mockResolvedValue(null)
+
+    const plain = await app.inject({ method: 'GET', url: '/api/media/comp-img-01/url' })
+    const shared = await app.inject({
+      method: 'GET',
+      url: '/api/media/comp-img-01/url?share_token=tok-1',
+    })
+
+    expect(plain.statusCode).toBe(403)
+    expect(shared.statusCode).toBe(403)
+    expect(signImgproxyUrl).not.toHaveBeenCalled()
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('video-info answers the folder owner and refuses a share link', async () => {
+    vi.mocked(getVideoAsset).mockResolvedValue(COMPONENT_VIDEO)
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+
+    const owner = await app.inject({ method: 'GET', url: '/api/media/comp-vid-01/video-info' })
+    expect(owner.statusCode).toBe(200)
+    expect(owner.json()).toMatchObject({ assetId: 'comp-vid-01', transcodeStatus: 'done' })
+
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce(null)
+    const shared = await app.inject({
+      method: 'GET',
+      url: '/api/media/comp-vid-01/video-info?share_token=tok-1',
+    })
+    expect(shared.statusCode).toBe(403)
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
+  it('only the folder owner deletes it', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue(COMPONENT_IMAGE)
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce(null)
+
+    expect((await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })).statusCode).toBe(
+      403,
+    )
+    expect(deleteMediaAsset).not.toHaveBeenCalled()
+
+    vi.mocked(resolveComponentAccess).mockResolvedValueOnce({ role: 'owner', reason: 'direct' })
+    expect((await app.inject({ method: 'DELETE', url: '/api/media/comp-img-01' })).statusCode).toBe(
+      204,
+    )
+    expect(deleteMediaAsset).toHaveBeenCalledWith(expect.anything(), 'comp-img-01')
   })
 })

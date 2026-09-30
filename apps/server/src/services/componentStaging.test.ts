@@ -1,0 +1,407 @@
+/**
+ * services/componentStaging.test.ts — objects and their media moving
+ * between a deck and a component master (A2.12b): promoting copies the
+ * deck's pictures into the component, which owns them, and writes the
+ * master through the sync server without touching the slide; stamping
+ * copies the master's pictures back into the deck before the deck is
+ * written, and drops the copies again when the stamp is refused.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as Y from 'yjs'
+import { Hocuspocus } from '@hocuspocus/server'
+import {
+  addObjects,
+  getSlideObjectsCtx,
+  hydrateSlideDoc,
+  listSlides,
+  writeComponentMaster,
+} from '@narrative/slide-model'
+import type { ImageObject, RectangleObject, SlideObject } from '@narrative/shared'
+import { MemoryPersistence, quietLog } from '../test-support/agentWorld.js'
+import { scriptedDb } from '../test-support/scriptedDb.js'
+import { serviceErrorOf } from '../test-support/serviceErrors.js'
+
+const send = vi.fn().mockResolvedValue({})
+vi.mock('../media/s3Client.js', () => ({
+  MEDIA_BUCKET: 'bucket',
+  buildS3Client: () => ({ send }),
+  presignGetUrl: vi.fn(),
+}))
+vi.mock('../media/enqueue.js', () => ({
+  enqueueVideoTranscode: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('../media/imgproxyUrl.js', () => ({
+  signImgproxyUrl: ({ storageKey }: { storageKey: string }) => `https://img/${storageKey}`,
+}))
+
+const { adoptMasterMedia, promoteComponent, prepareComponentStamp, stampComponentIntoDeck } =
+  await import('./componentStaging.js')
+
+let hp: Hocuspocus
+let persistence: MemoryPersistence
+
+beforeEach(() => {
+  send.mockClear()
+  persistence = new MemoryPersistence()
+  hp = new Hocuspocus({ quiet: true, stopOnSignals: false, extensions: [persistence] })
+})
+
+afterEach(async () => {
+  await editor?.disconnect()
+  editor = null
+  await hp.destroy?.()
+})
+
+const image = (id: string, assetId: string): ImageObject => ({
+  id,
+  type: 'image',
+  assetId,
+  x: 100,
+  y: 80,
+  width: 200,
+  height: 100,
+  rotation: 0,
+  opacity: 1,
+})
+
+const rect = (id: string, extra: Partial<RectangleObject> = {}): RectangleObject => ({
+  id,
+  type: 'rectangle',
+  x: 320,
+  y: 80,
+  width: 40,
+  height: 40,
+  rotation: 0,
+  opacity: 1,
+  fill: 0,
+  ...extra,
+})
+
+/**
+ * Deck `deck1`: slide S1 with a picture, a linked rectangle and a
+ * bystander, open in an editor (so the services read it live).
+ */
+async function seedDeck(): Promise<void> {
+  const doc = new Y.Doc()
+  const deck = hydrateSlideDoc(doc)
+  deck.slides.get(0).set('id', 'S1')
+  addObjects(getSlideObjectsCtx(deck, 'S1')!, [
+    image('pic', 'a_deck'),
+    rect('link', { hyperlink: { kind: 'slide', slideId: 'S1' }, name: 'title' }),
+    rect('other', { x: 900 }),
+  ])
+  persistence.snapshots.set('deck1', Y.encodeStateAsUpdate(doc))
+  editor = await hp.openDirectConnection('deck1')
+}
+
+let editor: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null
+
+const assetRow = (id: string, owner: { deckId?: string; componentId?: string }) => ({
+  id,
+  deckId: owner.deckId ?? null,
+  componentId: owner.componentId ?? null,
+  folderId: null,
+  uploaderUserId: 'u1',
+  mimeType: 'image/png',
+  sizeBytes: 10,
+  storageKey: `${id}:unknown:ZGVja3M`,
+  originalFilename: 'logo.png',
+  width: 200,
+  height: 100,
+  kind: 'image',
+  durationSec: null,
+  playbackKey: null,
+  posterKey: null,
+  thumbnailKey: null,
+  transcodeStatus: null,
+  transcodeError: null,
+  fontFamily: null,
+  fontWeight: null,
+  fontStyle: null,
+  fontPostscriptName: null,
+  createdAt: new Date(),
+})
+
+const ownedFolder = { id: 'f1', ownerUserId: 'u1', name: 'Client' }
+
+function objectsOfMaster(doc: Y.Doc): SlideObject[] {
+  return listSlides(hydrateSlideDoc(doc))[0]!.objects
+}
+
+describe('promoteComponent', () => {
+  it('makes the master from the objects, copying their pictures into the component', async () => {
+    await seedDeck()
+    const script = scriptedDb({
+      selects: [
+        [{ folderId: 'f1' }], // the deck's folder
+        [ownedFolder], // …which the user owns
+        [assetRow('a_deck', { deckId: 'deck1' })], // media the promoted objects show
+      ],
+    })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    const out = await promoteComponent(deps, {
+      userId: 'u1',
+      deckId: 'deck1',
+      slide: 'S1',
+      objects: ['pic', 'link'],
+      name: '  Headline  ',
+    })
+
+    const componentId = out.component.id
+    expect(out).toMatchObject({
+      component: { folderId: 'f1', name: 'Headline' },
+      objectCount: 2,
+      mediaCopied: 1,
+      skippedImages: 0,
+      droppedLinks: 1,
+    })
+
+    // The component row and its media row, in that order, in one transaction.
+    const inserts = script.writes.filter((w) => w.kind === 'insert')
+    expect(inserts.map((w) => w.table)).toEqual(['components', 'media_assets'])
+    const [media] = inserts[1]!.values as Array<Record<string, unknown>>
+    expect(media).toMatchObject({ componentId, deckId: null, folderId: null })
+    expect(media!['storageKey']).toMatch(
+      new RegExp(`^components/${componentId}/uploads/[\\w-]+/original\\.png$`),
+    )
+    const copy = send.mock.calls[0]![0] as { input: { Key: string } }
+    expect(copy.input.Key).toBe(media!['storageKey'])
+
+    // The master: both objects, the picture on the component's copy, the link to a slide gone.
+    const master = await hp.openDirectConnection(`component:${componentId}`)
+    const objects = objectsOfMaster(master.document!)
+    expect(objects.map((o) => o.id)).toEqual(['pic', 'link'])
+    expect((objects[0] as ImageObject).assetId).toBe(media!['id'])
+    expect(objects[1]!.hyperlink).toBeUndefined()
+    expect(objects[1]!.name).toBe('title')
+    await master.disconnect()
+
+    // The slide is not changed.
+    const deck = await hp.openDirectConnection('deck1')
+    const slide = listSlides(hydrateSlideDoc(deck.document!))[0]!
+    expect(slide.objects.map((o) => o.id)).toEqual(['pic', 'link', 'other'])
+    expect((slide.objects[0] as ImageObject).assetId).toBe('a_deck')
+    await deck.disconnect()
+  })
+
+  it("refuses a deck whose folder is not the user's, before reading the deck", async () => {
+    await seedDeck()
+    const script = scriptedDb({
+      selects: [[{ folderId: 'f1' }], [{ ...ownedFolder, ownerUserId: 'someone-else' }]],
+    })
+    const err = await serviceErrorOf(
+      promoteComponent(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['pic'], name: 'X' },
+      ),
+    )
+    expect(err.status).toBe(403)
+    expect(script.writes).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('refuses a deck in no folder: components live in folders', async () => {
+    const script = scriptedDb({ selects: [[{ folderId: null }]] })
+    const err = await serviceErrorOf(
+      promoteComponent(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['pic'], name: 'X' },
+      ),
+    )
+    expect(err.status).toBe(409)
+  })
+
+  it('refuses an object the slide does not have, writing nothing', async () => {
+    await seedDeck()
+    const script = scriptedDb({ selects: [[{ folderId: 'f1' }], [ownedFolder]] })
+    await expect(
+      promoteComponent(
+        { db: script.db, log: quietLog, hocuspocus: () => hp },
+        { userId: 'u1', deckId: 'deck1', slide: 'S1', objects: ['pic', 'ghost'], name: 'X' },
+      ),
+    ).rejects.toMatchObject({ code: 'not_found' })
+    expect(script.writes).toEqual([])
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
+/** A master showing picture `a_cmp`, owned by component `cmp1`. */
+function masterWithPicture() {
+  const doc = new Y.Doc()
+  writeComponentMaster(doc, [image('pic', 'a_cmp'), rect('title', { name: 'title' })], [])
+  const state = Y.encodeStateAsUpdate(doc)
+  doc.destroy()
+  return {
+    component: {
+      id: 'cmp1',
+      folderId: 'f1',
+      name: 'Headline',
+      thumbnailKey: null,
+      thumbnailUrl: null,
+      createdAt: '2026-09-30T00:00:00.000Z',
+      updatedAt: '2026-09-30T00:00:00.000Z',
+    },
+    state,
+  }
+}
+
+describe('prepareComponentStamp + stampComponentIntoDeck', () => {
+  it("copies the master's pictures into the deck, then stamps onto the slide", async () => {
+    await seedDeck()
+    const script = scriptedDb({ selects: [[assetRow('a_cmp', { componentId: 'cmp1' })]] })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    const prepared = await prepareComponentStamp(deps, {
+      userId: 'u1',
+      componentId: 'cmp1',
+      deckId: 'deck1',
+      master: masterWithPicture(),
+    })
+    expect(prepared.mediaRegistered).toBe(1)
+
+    // Registered for the deck before the deck is touched.
+    const inserts = script.writes.filter((w) => w.kind === 'insert')
+    expect(inserts.map((w) => w.table)).toEqual(['media_assets'])
+    const [media] = inserts[0]!.values as Array<Record<string, unknown>>
+    expect(media).toMatchObject({ deckId: 'deck1', componentId: null })
+    expect(media!['storageKey']).toMatch(/^decks\/deck1\/uploads\/[\w-]+\/original\.png$/)
+
+    const out = await stampComponentIntoDeck(deps, {
+      deckId: 'deck1',
+      componentId: 'cmp1',
+      slideId: 'S1',
+      prepare: async () => prepared,
+    })
+    expect(out.at).toEqual({ x: 100, y: 80 })
+    const deck = await hp.openDirectConnection('deck1')
+    const slide = listSlides(hydrateSlideDoc(deck.document!))[0]!
+    const stamped = slide.objects.filter((o) => out.objectIds.includes(o.id))
+    expect(stamped).toHaveLength(2)
+    expect((stamped.find((o) => o.type === 'image') as ImageObject).assetId).toBe(media!['id'])
+    await deck.disconnect()
+  })
+
+  it('checks the slide before copying anything: a stale slide costs no copy', async () => {
+    await seedDeck()
+    const prepare = vi.fn()
+    await expect(
+      stampComponentIntoDeck(
+        { db: scriptedDb().db, log: quietLog, hocuspocus: () => hp },
+        { deckId: 'deck1', componentId: 'cmp1', slideId: 'no-such-slide', prepare },
+      ),
+    ).rejects.toMatchObject({ code: 'not_found' })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('drops the copies when the slide goes before the deck is written', async () => {
+    await seedDeck()
+    const script = scriptedDb({ selects: [[assetRow('a_cmp', { componentId: 'cmp1' })]] })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    let copiedKey = ''
+    await expect(
+      stampComponentIntoDeck(deps, {
+        deckId: 'deck1',
+        componentId: 'cmp1',
+        slideId: 'S1',
+        prepare: async () => {
+          const prepared = await prepareComponentStamp(deps, {
+            userId: 'u1',
+            componentId: 'cmp1',
+            deckId: 'deck1',
+            master: masterWithPicture(),
+          })
+          copiedKey = (
+            script.writes.find((w) => w.table === 'media_assets')!.values as Array<{
+              storageKey: string
+            }>
+          )[0]!.storageKey
+          send.mockClear()
+          // A collaborator deletes the slide while the media is being copied.
+          await editor!.transact((doc) => hydrateSlideDoc(doc).slides.delete(0, 1))
+          return prepared
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' })
+
+    expect(script.writes.at(-1)).toMatchObject({ kind: 'delete', table: 'media_assets' })
+    const purge = send.mock.calls[0]![0] as {
+      input: { Delete: { Objects: Array<{ Key: string }> } }
+    }
+    expect(purge.input.Delete.Objects.map((o) => o.Key)).toContain(copiedKey)
+  })
+
+  it('leaves a picture the component does not own unresolved, and counts it', async () => {
+    await seedDeck()
+    const script = scriptedDb({ selects: [[]] })
+    const prepared = await prepareComponentStamp(
+      { db: script.db, log: quietLog, hocuspocus: () => hp },
+      { userId: 'u1', componentId: 'cmp1', deckId: 'deck1', master: masterWithPicture() },
+    )
+    expect(prepared).toMatchObject({ mediaRegistered: 0, skippedImages: 1 })
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe('adoptMasterMedia (data migration 2026-09-30-component-media)', () => {
+  it("copies the folder's deck media an older master shows into its component, once", async () => {
+    const doc = new Y.Doc()
+    writeComponentMaster(
+      doc,
+      [
+        image('old', 'a_deck'),
+        image('own', 'a_own'),
+        image('gone', 'a_gone'),
+        image('foreign', 'a_foreign'),
+      ],
+      [],
+    )
+    persistence.snapshots.set('component:cmp1', Y.encodeStateAsUpdate(doc))
+    const master = await hp.openDirectConnection('component:cmp1')
+
+    const script = scriptedDb({
+      selects: [
+        [{ userId: 'u1', folderId: 'f1' }], // the folder owner
+        [
+          { id: 'a_deck', deckId: 'deck1', componentId: null, deckFolderId: 'f1' },
+          { id: 'a_own', deckId: null, componentId: 'cmp1', deckFolderId: null },
+          // Someone else's deck: never copied, whatever the master says.
+          { id: 'a_foreign', deckId: 'deckX', componentId: null, deckFolderId: 'f9' },
+        ],
+        [assetRow('a_deck', { deckId: 'deck1' })], // copyMedia's read of deck1's asset
+      ],
+    })
+    const deps = { db: script.db, log: quietLog, hocuspocus: () => hp }
+    expect(await adoptMasterMedia(deps, 'cmp1')).toEqual({ copied: 1, unresolved: 2 })
+
+    const inserted = script.writes.find((w) => w.table === 'media_assets')!.values as Array<
+      Record<string, unknown>
+    >
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]).toMatchObject({ componentId: 'cmp1', deckId: null, uploaderUserId: 'u1' })
+    const objects = objectsOfMaster(master.document!) as ImageObject[]
+    expect(objects.map((o) => o.assetId)).toEqual([
+      inserted[0]!['id'],
+      'a_own',
+      'a_gone',
+      'a_foreign',
+    ])
+
+    // A second run finds nothing left to adopt and writes nothing.
+    const again = scriptedDb({
+      selects: [
+        [{ userId: 'u1', folderId: 'f1' }],
+        [
+          { id: inserted[0]!['id'], deckId: null, componentId: 'cmp1', deckFolderId: null },
+          { id: 'a_own', deckId: null, componentId: 'cmp1', deckFolderId: null },
+          { id: 'a_foreign', deckId: 'deckX', componentId: null, deckFolderId: 'f9' },
+        ],
+      ],
+    })
+    expect(
+      await adoptMasterMedia({ db: again.db, log: quietLog, hocuspocus: () => hp }, 'cmp1'),
+    ).toEqual({ copied: 0, unresolved: 2 })
+    expect(again.writes).toEqual([])
+    await master.disconnect()
+  })
+})

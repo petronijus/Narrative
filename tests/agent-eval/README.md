@@ -169,6 +169,8 @@ registry, so they run unchanged in both worlds.
 | `objects-from-other-deck`     | a contact card (photo + text) brought from another deck's slide (`object.insertFromDeck`)                                        | no     |
 | `objects-recreate-from-json`  | a deleted callout put back from its JSON, centred on another slide (`object.insert`)                                             | yes    |
 | `local-logo-upload`           | a logo from a local file uploaded with curl through an upload session (`media.uploadSession`)                                    | no     |
+| `component-promote-headline`  | a slide's headline block made a folder component (`component.promote`) with named text slots; the slide unchanged                | no     |
+| `component-master-picture`    | a local picture uploaded into a component master through an upload session and placed in its corner                              | no     |
 | `badge-gradient`              | a left-to-right gradient from the shape's own colour (`object.fill.gradient`)                                                    | yes    |
 | `card-soft-shadow`            | the editor's default shadow, only softer (`object.effects.shadow`)                                                               | yes    |
 | `footer-page-number`          | a footer box turned into the live slide number, keeping its look (`object.slideNumber.set`)                                      | yes    |
@@ -200,8 +202,10 @@ Environment notes:
 
 - `component-stamp-slots` creates its component through the web app's REST
   route (`POST /folders/:id/components`) and fills the master through the
-  command API with a `componentId` target. There is no `component.create`
-  command before A4. Without BYPASS_AUTH the scenario is skipped.
+  command API with a `componentId` target (the route writes the empty master
+  slide). There is no `component.create` command before A4. Without
+  BYPASS_AUTH the scenario is skipped; so is `component-master-picture`,
+  which seeds its component the same way.
 - `selected-slide-context` opens the deck in headless Chromium, as the dev
   user. It needs the BYPASS_AUTH web app, whose dev-only test API sets the
   selection. It follows `apps/web/playwright.config.ts` for the browser

@@ -46,6 +46,8 @@ import { textStyleNameTaken } from '../text/textStyle.js'
 import type { TextObject, RectangleObject } from '@narrative/shared'
 import { CommandError } from '../errors.js'
 import { applyInsertPlan } from '../insert/plan.js'
+import { objectsOf, requireObjects, resolveSlide } from '../refs.js'
+import { createFixtureDeck } from './fixtureDeck.js'
 import type { ServerServices } from '../services.js'
 import type {
   ComponentRecord,
@@ -436,8 +438,10 @@ export function createDomainFakes(
       },
       async prepareObjectInsert(args) {
         rDecks('prepareObjectInsert', { ...args, plan: { objects: args.plan.objects.length } })
-        requireDeck(args.sourceDeckId)
-        requireDeck(args.targetDeckId)
+        for (const ref of [args.source, args.target]) {
+          if ('deckId' in ref) requireDeck(ref.deckId)
+          else requireComponent(ref.componentId)
+        }
         // The fake copies nothing: the planned objects land as they are,
         // their pictures counted as copied media.
         const media = args.plan.objects.filter((o) => o.type === 'image' || o.type === 'video')
@@ -629,7 +633,8 @@ export function createDomainFakes(
     media: {
       async upload(args) {
         rMedia('upload', args)
-        requireDeck(args.deckId)
+        if ('deckId' in args.owner) requireDeck(args.owner.deckId)
+        else requireComponent(args.owner.componentId)
         return {
           assetId: fresh('asset'),
           kind: 'image',
@@ -641,7 +646,8 @@ export function createDomainFakes(
       },
       async openUploadSession(args) {
         rMedia('openUploadSession', args)
-        requireDeck(args.deckId)
+        if ('deckId' in args.owner) requireDeck(args.owner.deckId)
+        else requireComponent(args.owner.componentId)
         const mimeType =
           args.mimeType ??
           (args.filename.toLowerCase().endsWith('.mp4') ? 'video/mp4' : 'image/png')
@@ -651,7 +657,7 @@ export function createDomainFakes(
           url: 'https://narrative.example/api/api/uploads',
           token: `nus_${'x'.repeat(43)}`,
           expiresAt: '2026-01-01T00:15:00.000Z',
-          uploadMetadata: `deckId ${b64(args.deckId)},filename ${b64(args.filename)},content-type ${b64(mimeType)}`,
+          uploadMetadata: `${'deckId' in args.owner ? `deckId ${b64(args.owner.deckId)}` : `componentId ${b64(args.owner.componentId)}`},filename ${b64(args.filename)},content-type ${b64(mimeType)}`,
           kind,
           mimeType,
           sizeBytes: args.sizeBytes,
@@ -725,6 +731,53 @@ export function createDomainFakes(
         return {
           component: requireComponent(args.componentId, folderId),
           state: fixtureComponentState(),
+        }
+      },
+      async promote(args) {
+        rComponents('promote', args)
+        const folderId = requireDeck(args.deckId).folderId
+        if (folderId === null) {
+          throw new CommandError(
+            'conflict',
+            'the deck is in no folder, which is where components live',
+          )
+        }
+        // The fake reads the fixture deck (the one the contract examples
+        // target) to refuse a slide or object it does not have, like the
+        // real service; the objects become the master with no media to copy.
+        const fixture = createFixtureDeck()
+        const slide = resolveSlide(fixture, args.slide)
+        requireObjects(objectsOf(fixture, slide), args.objects, slide.id)
+        const c: ComponentRecord = {
+          id: fresh('cmp'),
+          folderId,
+          name: args.name,
+          thumbnailKey: null,
+          thumbnailUrl: null,
+          createdAt: T0,
+          updatedAt: T0,
+        }
+        components.set(c.id, c)
+        return {
+          component: c,
+          objectCount: args.objects.length,
+          mediaCopied: 0,
+          skippedImages: 0,
+          droppedLinks: 0,
+        }
+      },
+      async prepareStamp(args) {
+        rComponents('prepareStamp', args)
+        const folderId = requireDeck(args.deckId).folderId ?? undefined
+        // The fixture master shows no pictures: nothing to copy.
+        return {
+          master: {
+            component: requireComponent(args.componentId, folderId),
+            state: fixtureComponentState(),
+          },
+          mediaRegistered: 0,
+          skippedImages: 0,
+          async discard() {},
         }
       },
       async access(args) {

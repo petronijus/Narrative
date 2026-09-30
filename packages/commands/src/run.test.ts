@@ -3,7 +3,14 @@ import * as Y from 'yjs'
 import { z } from 'zod'
 import { LOCAL_ORIGIN, agentOrigin, createUndoManager, listSlides } from '@narrative/slide-model'
 import { CommandRegistry, defineCommand } from './registry.js'
-import { commandReadsFolderTokens, runBatch, runCommand, runCommandSync, runGroup } from './run.js'
+import {
+  commandReadsFolderTokens,
+  prepareInvocation,
+  runBatch,
+  runCommand,
+  runCommandSync,
+  runGroup,
+} from './run.js'
 import { CommandError } from './errors.js'
 import { createDefaultRegistry } from './catalog.js'
 import { createFixtureDeck } from './testing/fixtureDeck.js'
@@ -311,5 +318,66 @@ describe('commandReadsFolderTokens', () => {
     expect(commandReadsFolderTokens(registry, 'ops.apply', batch('object.delete'))).toBe(false)
     expect(commandReadsFolderTokens(registry, 'ops.apply', { ops: 'nonsense' })).toBe(false)
     expect(commandReadsFolderTokens(registry, 'no.such', {})).toBe(false)
+  })
+})
+
+describe('prepareInvocation — abandoning what load staged', () => {
+  function stagingRegistry(release: (loaded: { staged: string }) => Promise<void>) {
+    return new CommandRegistry().register(
+      defineCommand({
+        id: 'object.stagedProbe',
+        domain: 'object',
+        title: 'Staged probe',
+        description: 'Stages something outside the document in load, then writes nothing.',
+        input: z.object({}),
+        output: z.object({}),
+        role: 'editor',
+        effects: ['doc', 'server'],
+        undo: 'undoable',
+        confirm: 'never',
+        hosts: ['browser', 'server'],
+        implementedWith: [],
+        examples: [{ title: 'probe', input: {} }],
+        load: async () => ({ staged: 'media' }),
+        release,
+        handler: () => ({}),
+      }),
+    )
+  }
+
+  const serverCtx = () =>
+    ctxFor(undefined, { host: 'server', services: {} as unknown as ServerServices })
+
+  it('releases the staged work when the write never runs, once', async () => {
+    const released: string[] = []
+    const registry = stagingRegistry(async (loaded) => {
+      released.push(loaded.staged)
+    })
+    const prepared = await prepareInvocation(registry, serverCtx(), 'object.stagedProbe', {})
+    await prepared.abandon()
+    await prepared.abandon()
+    expect(released).toEqual(['media'])
+    expect(() => prepared.execute()).toThrow(/executed twice/)
+  })
+
+  it('keeps it once the write ran, and swallows a failing release', async () => {
+    const release = async () => {
+      throw new Error('storage down')
+    }
+    const ran = await prepareInvocation(
+      stagingRegistry(release),
+      serverCtx(),
+      'object.stagedProbe',
+      {},
+    )
+    ran.execute()
+    await expect(ran.abandon()).resolves.toBeUndefined()
+    const abandoned = await prepareInvocation(
+      stagingRegistry(release),
+      serverCtx(),
+      'object.stagedProbe',
+      {},
+    )
+    await expect(abandoned.abandon()).resolves.toBeUndefined()
   })
 })

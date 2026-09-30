@@ -39,6 +39,14 @@ vi.mock('../auth/users.js', () => ({
   listUsersBySubs: vi.fn(),
 }))
 vi.mock('../hocuspocus/connections.js', () => ({ closeDeckConnections: vi.fn() }))
+const canUseComponentMedia = vi.fn()
+vi.mock('../media/mediaOwner.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../media/mediaOwner.js')>()
+  return {
+    ...original,
+    canUseComponentMedia: (...a: unknown[]) => canUseComponentMedia(...a),
+  }
+})
 
 const { finalizeMediaUpload, UploadRejected } = await import('../media/finalizeUpload.js')
 const { getMediaAsset, deleteMediaAsset } = await import('../media/assets.js')
@@ -86,12 +94,12 @@ describe('MediaService.upload', () => {
   it('stores the bytes under the deck and finalizes them as what they are, not what was claimed', async () => {
     const out = await media().upload({
       userId: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       source: { kind: 'base64', data: PNG.toString('base64'), mimeType: 'image/jpeg' },
     })
     const args = finalizeMock.mock.calls[0]![0]
     expect(args.mimeType).toBe('image/png')
-    expect(args.deckId).toBe('d1')
+    expect(args.owner).toEqual({ deckId: 'd1' })
     expect(args.storageKey).toMatch(/^decks\/d1\/uploads\/[\w-]{16}\/original\.png$/)
     const put = send.mock.calls[0]![0] as { input: { Key: string; ContentType: string } }
     expect(put.input).toMatchObject({ Key: args.storageKey, ContentType: 'image/png' })
@@ -113,7 +121,7 @@ describe('MediaService.upload', () => {
     const otf = Buffer.concat([Buffer.from('OTTO'), Buffer.alloc(8)])
     const out = await media().upload({
       userId: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       source: { kind: 'base64', data: otf.toString('base64') },
     })
     expect(finalizeMock.mock.calls[0]![0].storageKey).toMatch(/^decks\/d1\/fonts\//)
@@ -129,7 +137,11 @@ describe('MediaService.upload', () => {
     const text = Buffer.from('just some text').toString('base64')
     expect(
       await status(
-        media().upload({ userId: 'u1', deckId: 'd1', source: { kind: 'base64', data: text } }),
+        media().upload({
+          userId: 'u1',
+          owner: { deckId: 'd1' },
+          source: { kind: 'base64', data: text },
+        }),
       ),
     ).toBe(415)
     expect(send).not.toHaveBeenCalled()
@@ -141,7 +153,7 @@ describe('MediaService.upload', () => {
       await status(
         media().upload({
           userId: 'u1',
-          deckId: 'd1',
+          owner: { deckId: 'd1' },
           source: { kind: 'bytes', bytes: big, mimeType: 'image/png' },
         }),
       ),
@@ -156,7 +168,7 @@ describe('MediaService.upload', () => {
     const err = await serviceErrorOf(
       media().upload({
         userId: 'u1',
-        deckId: 'd1',
+        owner: { deckId: 'd1' },
         source: { kind: 'base64', data: PNG.toString('base64') },
       }),
     )
@@ -165,7 +177,82 @@ describe('MediaService.upload', () => {
   })
 })
 
+describe('MediaService.upload into a component master', () => {
+  it('stores the picture under the component, which owns it', async () => {
+    canUseComponentMedia.mockResolvedValue(true)
+    await media().upload({
+      userId: 'u1',
+      owner: { componentId: 'c1' },
+      source: { kind: 'base64', data: PNG.toString('base64') },
+    })
+    const args = finalizeMock.mock.calls[0]![0]
+    expect(args.owner).toEqual({ componentId: 'c1' })
+    expect(args.storageKey).toMatch(/^components\/c1\/uploads\/[\w-]{16}\/original\.png$/)
+  })
+
+  it("answers 404 for a master that is not the caller's, before reading the file", async () => {
+    canUseComponentMedia.mockResolvedValue(false)
+    expect(
+      await status(
+        media().upload({
+          userId: 'u1',
+          owner: { componentId: 'c1' },
+          source: { kind: 'base64', data: PNG.toString('base64') },
+        }),
+      ),
+    ).toBe(404)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("refuses a font (415) without storing it: the folder's fonts cover a master", async () => {
+    canUseComponentMedia.mockResolvedValue(true)
+    const otf = Buffer.concat([Buffer.from('OTTO'), Buffer.alloc(8)])
+    expect(
+      await status(
+        media().upload({
+          userId: 'u1',
+          owner: { componentId: 'c1' },
+          source: { kind: 'base64', data: otf.toString('base64') },
+        }),
+      ),
+    ).toBe(415)
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
 describe('MediaService scoping', () => {
+  it('keeps deck and component media apart: each answers 404 under the other owner', async () => {
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a1',
+      deckId: null,
+      componentId: 'c1',
+      storageKey: 'k',
+    } as never)
+    expect(
+      await status(
+        media().url({ userId: 'u1', assetId: 'a1', variant: 'display', owner: { deckId: 'd1' } }),
+      ),
+    ).toBe(404)
+    vi.mocked(getMediaAsset).mockResolvedValue({
+      id: 'a2',
+      deckId: 'd1',
+      componentId: null,
+      storageKey: 'k',
+    } as never)
+    expect(
+      await status(
+        media().url({
+          userId: 'u1',
+          assetId: 'a2',
+          variant: 'display',
+          owner: { componentId: 'c1' },
+        }),
+      ),
+    ).toBe(404)
+    expect(canUseComponentMedia).not.toHaveBeenCalled()
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
+  })
+
   it("answers 404 for another deck's asset, before any access check", async () => {
     vi.mocked(getMediaAsset).mockResolvedValue({
       id: 'a1',
@@ -173,9 +260,13 @@ describe('MediaService scoping', () => {
       storageKey: 'k',
     } as never)
     expect(
-      await status(media().url({ userId: 'u1', assetId: 'a1', variant: 'display', deckId: 'd1' })),
+      await status(
+        media().url({ userId: 'u1', assetId: 'a1', variant: 'display', owner: { deckId: 'd1' } }),
+      ),
     ).toBe(404)
-    expect(await status(media().delete({ userId: 'u1', assetId: 'a1', deckId: 'd1' }))).toBe(404)
+    expect(
+      await status(media().delete({ userId: 'u1', assetId: 'a1', owner: { deckId: 'd1' } })),
+    ).toBe(404)
     expect(resolveDeckAccess).not.toHaveBeenCalled()
     expect(deleteMediaAsset).not.toHaveBeenCalled()
   })
@@ -183,7 +274,9 @@ describe('MediaService scoping', () => {
   it('needs the owner role to delete', async () => {
     vi.mocked(getMediaAsset).mockResolvedValue({ id: 'a1', deckId: 'd1', storageKey: 'k' } as never)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'editor', reason: 'direct' })
-    expect(await status(media().delete({ userId: 'u1', assetId: 'a1', deckId: 'd1' }))).toBe(403)
+    expect(
+      await status(media().delete({ userId: 'u1', assetId: 'a1', owner: { deckId: 'd1' } })),
+    ).toBe(403)
     expect(deleteMediaAsset).not.toHaveBeenCalled()
   })
 })
@@ -250,7 +343,7 @@ describe('media.openUploadSession', () => {
     const { svc, store } = await service()
     const out = await svc.openUploadSession({
       userId: 'u1',
-      deckId: 'd1',
+      owner: { deckId: 'd1' },
       filename: 'logo.PNG',
       sizeBytes: 32,
     })
@@ -282,26 +375,41 @@ describe('media.openUploadSession', () => {
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'viewer', reason: 'direct' })
     expect(
       await status(
-        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 10 }),
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { deckId: 'd1' },
+          filename: 'a.png',
+          sizeBytes: 10,
+        }),
       ),
     ).toBe(403)
     vi.mocked(resolveDeckAccess).mockResolvedValue(null)
     expect(
       await status(
-        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 10 }),
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { deckId: 'd1' },
+          filename: 'a.png',
+          sizeBytes: 10,
+        }),
       ),
     ).toBe(404)
     vi.mocked(resolveDeckAccess).mockResolvedValue({ role: 'owner', reason: 'direct' })
     expect(
       await status(
-        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'notes.txt', sizeBytes: 10 }),
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { deckId: 'd1' },
+          filename: 'notes.txt',
+          sizeBytes: 10,
+        }),
       ),
     ).toBe(415)
     expect(
       await status(
         svc.openUploadSession({
           userId: 'u1',
-          deckId: 'd1',
+          owner: { deckId: 'd1' },
           filename: 'x',
           mimeType: 'text/html',
           sizeBytes: 10,
@@ -311,7 +419,12 @@ describe('media.openUploadSession', () => {
     // Larger than its kind may be (the test config caps images at 64 bytes).
     expect(
       await status(
-        svc.openUploadSession({ userId: 'u1', deckId: 'd1', filename: 'a.png', sizeBytes: 65 }),
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { deckId: 'd1' },
+          filename: 'a.png',
+          sizeBytes: 65,
+        }),
       ),
     ).toBe(413)
     expect(store.rows).toHaveLength(0)
@@ -319,11 +432,49 @@ describe('media.openUploadSession', () => {
     await expect(
       svc.openUploadSession({
         userId: 'u1',
-        deckId: 'd1',
+        owner: { deckId: 'd1' },
         filename: 'clip',
         mimeType: 'video/mp4',
         sizeBytes: 10,
       }),
     ).resolves.toMatchObject({ kind: 'video' })
+  })
+
+  it("opens one for a component master's folder owner: pictures and videos, no fonts", async () => {
+    const { svc, store } = await service()
+    canUseComponentMedia.mockResolvedValue(true)
+    const out = await svc.openUploadSession({
+      userId: 'u1',
+      owner: { componentId: 'c1' },
+      filename: 'badge.png',
+      sizeBytes: 32,
+    })
+    expect(out.uploadMetadata.split(',')[0]).toBe(
+      `componentId ${Buffer.from('c1').toString('base64')}`,
+    )
+    expect(store.rows[0]).toMatchObject({ deckId: null, componentId: 'c1' })
+    expect(
+      await status(
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { componentId: 'c1' },
+          filename: 'brand.otf',
+          sizeBytes: 10,
+        }),
+      ),
+    ).toBe(415)
+    canUseComponentMedia.mockResolvedValue(false)
+    expect(
+      await status(
+        svc.openUploadSession({
+          userId: 'u1',
+          owner: { componentId: 'c1' },
+          filename: 'badge.png',
+          sizeBytes: 32,
+        }),
+      ),
+    ).toBe(404)
+    expect(store.rows).toHaveLength(1)
+    expect(resolveDeckAccess).not.toHaveBeenCalled()
   })
 })

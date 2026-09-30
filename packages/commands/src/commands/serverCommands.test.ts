@@ -154,8 +154,34 @@ describe('media.* and share.*', () => {
       userId: 'u1',
       assetId: 'asset-fixture',
       variant: 'display',
-      deckId: FIXTURE_DECK_ID,
+      owner: { deckId: FIXTURE_DECK_ID },
     })
+  })
+
+  it('opens an upload session for a component master when it is the target', async () => {
+    const c = ctx({ target: { componentId: 'cmp_headline' } })
+    const out = (await runCommand(registry, c, 'media.uploadSession', {
+      filename: 'badge.png',
+      sizeBytes: 1800,
+    })) as { headers: Record<string, string> }
+    expect((callsTo(c, 'media')[0]?.args as { owner: unknown }).owner).toEqual({
+      componentId: 'cmp_headline',
+    })
+    expect(out.headers['Upload-Metadata']).toContain(
+      `componentId ${Buffer.from('cmp_headline').toString('base64')}`,
+    )
+  })
+
+  it("targeting a component master, media commands act on the component's media", async () => {
+    const c = ctx({ target: { componentId: 'cmp_headline' } })
+    await runCommand(registry, c, 'media.upload', {
+      file: { url: 'https://example.com/logo.png' },
+    })
+    await runCommand(registry, c, 'media.url', { assetId: 'asset-fixture' })
+    expect(callsTo(c, 'media').map((x) => (x.args as { owner: unknown }).owner)).toEqual([
+      { componentId: 'cmp_headline' },
+      { componentId: 'cmp_headline' },
+    ])
   })
 
   it('media.upload turns a URL input into a url source', async () => {
@@ -165,7 +191,7 @@ describe('media.* and share.*', () => {
     })
     expect(callsTo(c, 'media')[0]?.args).toEqual({
       userId: 'u1',
-      deckId: FIXTURE_DECK_ID,
+      owner: { deckId: FIXTURE_DECK_ID },
       source: { kind: 'url', url: 'https://example.com/a.jpg', filename: 'a.jpg' },
     })
   })
@@ -321,7 +347,7 @@ describe('media.uploadSession', () => {
     expect(out.curl.split('<<<')[0]).not.toContain('nus_')
     const [call] = callsTo(c, 'media').filter((x) => x.method === 'openUploadSession')
     expect(call?.args).toMatchObject({
-      deckId: FIXTURE_DECK_ID,
+      owner: { deckId: FIXTURE_DECK_ID },
       filename: "team photo's.png",
       sizeBytes: 48213,
     })
@@ -369,7 +395,46 @@ describe('object.insertFromDeck', () => {
     const s3 = getSlideObjectsCtx(c.deck!, 's3')!
     expect(s3.objects.toArray().map((m) => m.get('id'))).toEqual(out.objectIds)
     const [call] = callsTo(c, 'decks').filter((x) => x.method === 'prepareObjectInsert')
-    expect(call?.args).toMatchObject({ sourceDeckId: 'deck_other', targetDeckId: FIXTURE_DECK_ID })
+    expect(call?.args).toMatchObject({
+      source: { deckId: 'deck_other' },
+      target: { deckId: FIXTURE_DECK_ID },
+    })
+  })
+
+  it("brings a deck's objects into a component master, and a master's into a deck", async () => {
+    const objects = [{ id: 'x1', type: 'rectangle', x: 10, y: 20, width: 100, height: 50 }]
+    const intoMaster = ctx({ target: { componentId: 'cmp_headline' } })
+    await runCommand(registry, intoMaster, 'object.insertFromDeck', {
+      slide: 's3',
+      fromDeck: FIXTURE_DECK_ID,
+      objects,
+    })
+    const fromMaster = ctx()
+    await runCommand(registry, fromMaster, 'object.insertFromDeck', {
+      slide: 's3',
+      fromComponent: 'cmp_headline',
+      objects,
+    })
+    const argsOf = (c: ReturnType<typeof ctx>) =>
+      callsTo(c, 'decks').find((x) => x.method === 'prepareObjectInsert')?.args
+    expect(argsOf(intoMaster)).toMatchObject({
+      source: { deckId: FIXTURE_DECK_ID },
+      target: { componentId: 'cmp_headline' },
+    })
+    expect(argsOf(fromMaster)).toMatchObject({
+      source: { componentId: 'cmp_headline' },
+      target: { deckId: FIXTURE_DECK_ID },
+    })
+  })
+
+  it('needs exactly one source', async () => {
+    for (const input of [
+      { slide: 's3', objects: [{ type: 'rectangle' }] },
+      { slide: 's3', fromDeck: 'deck_other', fromComponent: 'cmp_headline', objects: [] },
+    ]) {
+      const err = await failure(runCommand(registry, ctx(), 'object.insertFromDeck', input))
+      expect(err.code).toBe('invalid_input')
+    }
   })
 
   it('refuses its own deck as the source (object.insert is the way there)', async () => {

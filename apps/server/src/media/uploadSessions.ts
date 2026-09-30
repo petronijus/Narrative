@@ -38,6 +38,7 @@ import type { Database } from '../db/client.js'
 import { uploadSessions, users } from '../db/schema.js'
 import type { PatOwner } from '../auth/personalAccessTokens.js'
 import type { UploadKind } from './uploadPolicy.js'
+import type { MediaOwner } from './mediaOwner.js'
 
 export const UPLOAD_SESSION_PREFIX = 'nus_'
 /** How long a session may be used to START its upload. */
@@ -59,7 +60,10 @@ export interface UploadSessionRecord {
   id: string
   tokenHash: string
   userSub: string
-  deckId: string
+  /** The deck it uploads into, or null for a component master's session. */
+  deckId: string | null
+  /** The component master it uploads into (migration 0029), or null for a deck's. */
+  componentId: string | null
   expiresAt: Date
   uploadId: string | null
   /** The credential that asked for it (auth/agentSessions.ts keys); null for a browser session. */
@@ -131,6 +135,7 @@ export function createDrizzleUploadSessionStore(db: Database): UploadSessionStor
           tokenHash: uploadSessions.tokenHash,
           userSub: uploadSessions.userSub,
           deckId: uploadSessions.deckId,
+          componentId: uploadSessions.componentId,
           expiresAt: uploadSessions.expiresAt,
           uploadId: uploadSessions.uploadId,
           credentialKey: uploadSessions.credentialKey,
@@ -218,7 +223,8 @@ export interface IssuedUploadSession {
 export interface VerifiedUploadSession {
   id: string
   userSub: string
-  deckId: string
+  /** Where the one upload goes: a deck, or a component master. */
+  owner: MediaOwner
   /** The upload the session is bound to, or null before it created one. */
   uploadId: string | null
   sizeBytes: number
@@ -238,7 +244,7 @@ export interface UploadSessionService {
   /** Throws `UploadSessionLimitError` past `MAX_OPEN_UPLOAD_SESSIONS`. */
   issue(args: {
     userSub: string
-    deckId: string
+    owner: MediaOwner
     sizeBytes: number
     kind: UploadKind
     credentialKey?: string | undefined
@@ -264,7 +270,7 @@ export function createUploadSessionService(
 ): UploadSessionService {
   const now = opts.now ?? (() => new Date())
   return {
-    async issue({ userSub, deckId, sizeBytes, kind, credentialKey }) {
+    async issue({ userSub, owner, sizeBytes, kind, credentialKey }) {
       const issuedAt = now()
       // Keep the table small: whatever expired a day ago is gone.
       await store.sweep(new Date(issuedAt.getTime() - SWEEP_AFTER_MS))
@@ -277,7 +283,8 @@ export function createUploadSessionService(
         id: nanoid(),
         tokenHash: hashUploadSessionToken(token),
         userSub,
-        deckId,
+        deckId: 'deckId' in owner ? owner.deckId : null,
+        componentId: 'componentId' in owner ? owner.componentId : null,
         expiresAt,
         uploadId: null,
         credentialKey: credentialKey ?? null,
@@ -302,10 +309,17 @@ export function createUploadSessionService(
         emailVerified: record.ownerEmailVerified,
       })
       if (!allowed) return null
+      const owner: MediaOwner | null =
+        record.componentId !== null
+          ? { componentId: record.componentId }
+          : record.deckId !== null
+            ? { deckId: record.deckId }
+            : null
+      if (owner === null) return null
       return {
         id: record.id,
         userSub: record.userSub,
-        deckId: record.deckId,
+        owner,
         uploadId: record.uploadId,
         sizeBytes: record.sizeBytes,
         kind: record.kind,

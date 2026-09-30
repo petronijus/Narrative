@@ -37,7 +37,9 @@ import {
   bigserial,
   jsonb,
   uniqueIndex,
+  check,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 // Custom type for bytea (Yjs updates are Uint8Array)
 const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
@@ -269,6 +271,11 @@ export const mediaAssets = pgTable(
      * ON DELETE CASCADE — when folder is deleted, all folder fonts are removed.
      */
     folderId: text('folder_id').references(() => folders.id, { onDelete: 'cascade' }),
+    /**
+     * A2.12b: component master this asset belongs to (pictures and videos of
+     * a master; keys under components/<id>/). NULL otherwise. Migration 0027.
+     */
+    componentId: text('component_id').references(() => components.id, { onDelete: 'cascade' }),
     uploaderUserId: text('uploader_user_id').notNull(),
     mimeType: text('mime_type').notNull(), // e.g. image/png, image/jpeg
     sizeBytes: integer('size_bytes').notNull(),
@@ -314,10 +321,16 @@ export const mediaAssets = pgTable(
   (t) => [
     index('media_assets_deck_idx').on(t.deckId),
     index('media_assets_folder_id_idx').on(t.folderId),
+    index('media_assets_component_id_idx').on(t.componentId),
     // Composite (parent, kind) — hot-path lookups filter by (deck/folder,
     // kind). Created by migration 0015 (hand-written; see drizzle/README.md).
     index('media_assets_deck_kind_idx').on(t.deckId, t.kind),
     index('media_assets_folder_kind_idx').on(t.folderId, t.kind),
+    // One owner at most: a deck, a component master or a folder (0028).
+    check(
+      'media_assets_one_owner',
+      sql`num_nonnulls(${t.deckId}, ${t.componentId}, ${t.folderId}) <= 1`,
+    ),
   ],
 )
 
@@ -347,7 +360,12 @@ export const components = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
-  (t) => [index('components_folder_id_idx').on(t.folderId)],
+  (t) => [
+    index('components_folder_id_idx').on(t.folderId),
+    // The id is a storage key segment (components/<id>/…): the nanoid
+    // alphabet only (0028, NOT VALID for rows from before the server chose ids).
+    check('components_id_storage_safe', sql`${t.id} ~ '^[A-Za-z0-9_-]{1,64}$'`),
+  ],
 )
 
 // ---------------------------------------------------------------------------
@@ -510,9 +528,10 @@ export const uploadSessions = pgTable(
     tokenHash: text('token_hash').notNull(),
     /** Who the upload is for: the user the agent acts as. */
     userSub: text('user_sub').notNull(),
-    deckId: text('deck_id')
-      .notNull()
-      .references(() => decks.id, { onDelete: 'cascade' }),
+    /** The deck it uploads into; null for a component master's session (0029). */
+    deckId: text('deck_id').references(() => decks.id, { onDelete: 'cascade' }),
+    /** The component master it uploads into (0029); exactly one of the two is set. */
+    componentId: text('component_id').references(() => components.id, { onDelete: 'cascade' }),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     /** The tus upload the session created; null until it creates one. */
     uploadId: text('upload_id'),
@@ -533,6 +552,7 @@ export const uploadSessions = pgTable(
     index('upload_sessions_expires_at_idx').on(t.expiresAt),
     index('upload_sessions_credential_key_idx').on(t.credentialKey),
     index('upload_sessions_user_sub_idx').on(t.userSub),
+    check('upload_sessions_one_owner', sql`num_nonnulls(${t.deckId}, ${t.componentId}) = 1`),
   ],
 )
 

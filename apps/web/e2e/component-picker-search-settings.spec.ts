@@ -10,30 +10,39 @@
  *   6. Clicking the Settings icon closes the drawer and navigates to
  *      /folder/<folderId>/settings?tab=components.
  *
- * The folder `drafts-958e2b33e6952467a1fbe3c71fc802e6` has two pre-existing
- * components: "new component" and "sdfsdfsdf". We rely on these so we never
- * need to promote anything during the test.
+ * The spec seeds its own folder with a deck and two components, "new
+ * component" and "sdfsdfsdf" (POST /folders/:id/components makes an empty
+ * master), and deletes the folder afterwards — it depends on nothing in the
+ * developer's database.
  */
 
 import { test, expect } from '@playwright/test'
 
-const FOLDER_ID = 'drafts-958e2b33e6952467a1fbe3c71fc802e6'
-// Use a fresh deck so we have a clean editor context. Created via API in beforeAll.
+const API = 'http://localhost:3001'
+let folderId: string
 let deckId: string
 
 test.describe('ComponentPickerDrawer — search + settings', () => {
   test.beforeAll(async ({ request }) => {
-    const res = await request.post('http://localhost:3001/decks', {
-      data: { title: 'Picker drawer test deck' },
+    const folder = await request.post(`${API}/folders`, {
+      data: { name: `E2E picker ${Date.now()}` },
+    })
+    expect(folder.ok(), `POST /folders: ${folder.status()}`).toBe(true)
+    folderId = ((await folder.json()) as { id: string }).id
+    for (const name of ['new component', 'sdfsdfsdf']) {
+      const res = await request.post(`${API}/folders/${folderId}/components`, { data: { name } })
+      expect(res.status(), `POST components ${name}`).toBe(201)
+    }
+    const res = await request.post(`${API}/decks`, {
+      data: { title: 'Picker drawer test deck', folderId },
     })
     expect([200, 201]).toContain(res.status())
-    const body = (await res.json()) as { id: string }
-    deckId = body.id
+    deckId = ((await res.json()) as { id: string }).id
   })
 
   test.afterAll(async ({ request }) => {
-    // Best-effort cleanup.
-    await request.delete(`http://localhost:3001/decks/${deckId}`).catch(() => {})
+    // Takes the deck and the components with it.
+    await request.delete(`${API}/folders/${folderId}`).catch(() => {})
   })
 
   test('drawer header renders title, settings icon, close button, and search input', async ({
@@ -183,7 +192,7 @@ test.describe('ComponentPickerDrawer — search + settings', () => {
     await expect(drawer).not.toBeVisible({ timeout: 3_000 })
 
     // URL should point to folder settings with tab=components.
-    await expect(page).toHaveURL(new RegExp(`/folder/${FOLDER_ID}/settings\\?tab=components`), {
+    await expect(page).toHaveURL(new RegExp(`/folder/${folderId}/settings\\?tab=components`), {
       timeout: 5_000,
     })
 

@@ -5,7 +5,10 @@
  *
  * Endpoints:
  *   GET    /folders/:folderId/components   → list components in a folder (owner only)
- *   POST   /folders/:folderId/components   → create a component row (Y.Doc created lazily by Hocuspocus)
+ *   POST   /folders/:folderId/components   → create an empty component (row + empty master slide)
+ *   POST   /decks/:id/promote-component    → component.promote: objects of a slide become a component
+ *   POST   /decks/:id/stamp-component      → component.stamp: a master stamped onto a slide
+ *   POST   /components/:id/insert-objects  → object.insertFromDeck into a master (paste)
  *   PATCH  /components/:id                 → rename (owner only)
  *   DELETE /components/:id                 → delete (owner only; cascades component_updates)
  *
@@ -17,23 +20,25 @@
  *   Mirrors the deck thumbnail pattern — NULL until the editor uploads a snapshot.
  *   Served via signImgproxyUrl exactly as deck thumbnails are.
  *
- * Shared implementation: the handlers call services/components.ts (list, rename, delete) — the same code the
- * `component.*` agent commands run (ADR 0010), so the two cannot drift apart.
+ * Shared implementation: the handlers call services/components.ts and services/componentStaging.ts — the
+ * same code the `component.*` agent commands run (ADR 0010), so the two cannot drift apart.
  */
 
 import type { FastifyInstance } from 'fastify'
-import { nanoid } from 'nanoid'
 import { eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import type { Database } from '../db/client.js'
 import { components, folders } from '../db/schema.js'
-import { authPreHandler } from '../auth/fastifyAuth.js'
+import { authPreHandler, requireDeckRole } from '../auth/fastifyAuth.js'
 import { signImgproxyUrl } from '../media/imgproxyUrl.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
-import { createComponentsService } from '../services/components.js'
+import { createComponentsService, MAX_COMPONENT_NAME } from '../services/components.js'
+import { createEmptyComponent, stampComponentIntoDeck } from '../services/componentStaging.js'
+import { sendInsertObjects } from './insertObjects.js'
 import { routeDeps } from '../services/http.js'
-import { sendServiceError } from '../services/errors.js'
+import { sendCommandOrServiceError, sendServiceError } from '../services/errors.js'
 
 /**
  * Hard cap on the data-URL payload — protects against giant uploads.
@@ -42,6 +47,29 @@ import { sendServiceError } from '../services/errors.js'
  * image-heavy designs the way deck thumbnails were before this bump.
  */
 const MAX_THUMBNAIL_BYTES = 6 * 1024 * 1024
+
+const Id = z.string().min(1).max(64)
+
+/** Body of POST /decks/:id/promote-component. */
+const PromoteBody = z.strictObject({
+  slideId: Id,
+  objectIds: z.array(Id).min(1).max(500),
+  name: z
+    .string()
+    .max(MAX_COMPONENT_NAME)
+    .refine((t) => t.trim().length > 0, 'the name must not be blank'),
+})
+
+/** Body of POST /decks/:id/stamp-component. */
+const StampBody = z.strictObject({
+  componentId: Id,
+  slideId: Id,
+  at: z.strictObject({ x: z.number().finite(), y: z.number().finite() }).optional(),
+})
+
+function issuesText(error: z.ZodError): string {
+  return error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ')
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,47 +168,103 @@ export async function registerComponentRoutes(app: FastifyInstance, db: Database
   )
 
   // -------------------------------------------------------------------------
-  // POST /folders/:folderId/components — create a component
+  // POST /folders/:folderId/components — create an empty component
   //
-  // Body: { name?: string, id?: string }
-  // The Y.Doc is created lazily by Hocuspocus on first connect.
+  // Body: { name?: string }. The row and its empty master slide
+  // (services/componentStaging.ts). A component made from objects comes from
+  // POST /decks/:id/promote-component.
   // -------------------------------------------------------------------------
-  app.post<{ Params: { folderId: string }; Body: { name?: unknown; id?: unknown } }>(
+  app.post<{ Params: { folderId: string }; Body: { name?: unknown } }>(
     '/folders/:folderId/components',
     { preHandler: authPreHandler },
     async (request, reply) => {
-      const { folderId } = request.params
-      const userId = request.user!.sub
-
-      const folderResult = await checkFolderOwner(db, folderId, userId)
-      if (folderResult === 'not_found') {
-        return reply.status(404).send({ error: 'Folder not found' })
+      const rawName = request.body?.name
+      try {
+        const created = await createEmptyComponent(routeDeps(app, db, request.log), {
+          userId: request.user!.sub,
+          folderId: request.params.folderId,
+          name: typeof rawName === 'string' ? rawName : '',
+        })
+        return reply.status(201).send(created)
+      } catch (err) {
+        return sendServiceError(reply, err)
       }
-      if (folderResult === 'forbidden') {
-        return reply.status(403).send({ error: 'Forbidden' })
-      }
-
-      const rawName = (request.body?.name as string | undefined)?.trim()
-      const name = rawName && rawName.length > 0 ? rawName : 'Untitled component'
-
-      // Caller (editor-ui promote flow) may pass a pre-generated id so the
-      // component doc and the Postgres row share the same id without a
-      // round-trip. Falls back to a fresh nanoid(12).
-      const rawId = request.body?.id
-      const id = typeof rawId === 'string' && rawId.trim().length > 0 ? rawId.trim() : nanoid(12)
-
-      const now = new Date()
-      const [created] = await db
-        .insert(components)
-        .values({ id, folderId, name, createdAt: now, updatedAt: now })
-        .returning()
-
-      if (!created) {
-        return reply.status(500).send({ error: 'Failed to create component' })
-      }
-
-      return reply.status(201).send(withThumbnailUrl(created))
     },
+  )
+
+  // -------------------------------------------------------------------------
+  // POST /decks/:id/promote-component — `component.promote` for the editor:
+  // the selected objects of slide `slideId` become a new component of the
+  // deck's folder (its media copied into the component). Editor of the deck,
+  // owner of its folder.
+  // -------------------------------------------------------------------------
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/decks/:id/promote-component',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (request, reply) => {
+      const parsed = PromoteBody.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ error: issuesText(parsed.error) })
+      try {
+        const promoted = await createComponentsService(routeDeps(app, db, request.log)).promote({
+          userId: request.user!.sub,
+          deckId: request.params.id,
+          slide: parsed.data.slideId,
+          objects: parsed.data.objectIds,
+          name: parsed.data.name,
+        })
+        return reply.status(201).send(promoted)
+      } catch (err) {
+        return sendCommandOrServiceError(reply, err)
+      }
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // POST /decks/:id/stamp-component — `component.stamp` for the editor: the
+  // master stamped onto slide `slideId` as one server write (its media
+  // copied into the deck), reaching open editors as a remote change.
+  // Editor of the deck, owner of its folder.
+  // -------------------------------------------------------------------------
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/decks/:id/stamp-component',
+    { preHandler: [authPreHandler, requireDeckRole('editor')] },
+    async (request, reply) => {
+      const parsed = StampBody.safeParse(request.body)
+      if (!parsed.success) return reply.status(400).send({ error: issuesText(parsed.error) })
+      const deps = routeDeps(app, db, request.log)
+      const deckId = request.params.id
+      try {
+        const stamped = await stampComponentIntoDeck(deps, {
+          deckId,
+          componentId: parsed.data.componentId,
+          slideId: parsed.data.slideId,
+          at: parsed.data.at,
+          prepare: () =>
+            createComponentsService(deps).prepareStamp({
+              userId: request.user!.sub,
+              componentId: parsed.data.componentId,
+              deckId,
+            }),
+        })
+        return reply.status(200).send(stamped)
+      } catch (err) {
+        return sendCommandOrServiceError(reply, err)
+      }
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // POST /components/:id/insert-objects — the master editor's cross-document
+  // paste: objects read from a deck or another master onto the master's
+  // slide, their pictures and videos copied into the component
+  // (routes/insertObjects.ts). Owner of the component's folder (checked by
+  // the service, as the master's document is), editor of a source deck.
+  // -------------------------------------------------------------------------
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/components/:id/insert-objects',
+    { preHandler: authPreHandler },
+    async (request, reply) =>
+      sendInsertObjects(app, db, request, reply, { componentId: request.params.id }),
   )
 
   // -------------------------------------------------------------------------

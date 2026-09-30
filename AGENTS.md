@@ -86,9 +86,9 @@ below that match it.
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |
 
 If a command does not exist or fails to start (port collision, missing
-service), say so explicitly — never skip it silently. Known
-environment-dependent failure: `m16-component-flows` hardcodes a Drafts
-folder id that exists in one developer's database only.
+service), say so explicitly — never skip it silently. Specs seed their own
+folders, decks and components through the API and delete them afterwards;
+none may depend on data in a developer's database.
 
 ## What not to test
 
@@ -103,7 +103,7 @@ Deleted from the suite; do not re-introduce:
 - CRDT byte-equality — `Y.encodeStateAsUpdate` is not canonical; compare
   `listSlides()` structurally.
 
-28 web tests are `it.skip` with a rationale in the file (plus one each in
+27 web tests are `it.skip` with a rationale in the file (plus one each in
 server and video-worker); ~6 have never been triaged. Do not un-skip without
 reading the comment; a new skip says why in the file and updates this count.
 

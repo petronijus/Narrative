@@ -202,7 +202,12 @@ export {
 export type { PromoteToComponentPlan, RichTextOp, RichTextOps } from './components.js'
 
 // Component stamp helper (refactor: components-as-stamps)
-export { stampComponent, insertObjectsWithRichText } from './stampComponent.js'
+export {
+  stampComponent,
+  insertObjectsWithRichText,
+  writeComponentMaster,
+  COMPONENT_MASTER_SLIDE_ID,
+} from './stampComponent.js'
 
 // Shape-as-image-mask mutation (moved out of apps/web — mutations live here)
 export {

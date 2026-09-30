@@ -130,6 +130,54 @@ token, then
 and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
 Revoke the token afterwards if it was only for the test.
 
+## Releasing A2.12b (component-owned media) — 0.10.15, not deployed yet
+
+Written 2026-09-30, while the work was uncommitted; production ran
+`v0.10.14+61260f2` (`/version.json`). The release brings three schema
+migrations and one data migration
+([ADR 0012](./adr/0012-component-owned-media.md)):
+
+- **0027** adds `media_assets.component_id` (FK to `components`,
+  `ON DELETE CASCADE`) and its index.
+- **0028** adds two CHECK constraints. `media_assets_one_owner`
+  (`num_nonnulls(deck_id, component_id, folder_id) <= 1`) is **validated**:
+  if any existing row breaks it, the migration fails and `deploy.sh` stops
+  at step 5. `components_id_storage_safe` (`id ~ '^[A-Za-z0-9_-]{1,64}$'`)
+  is `NOT VALID`. Existing rows pass, but a legacy component with an
+  unsafe id cannot take media (the storage code refuses it).
+- **0029** makes `upload_sessions.deck_id` nullable, adds
+  `upload_sessions.component_id` and a validated CHECK
+  `upload_sessions_one_owner` (`num_nonnulls(deck_id, component_id) = 1`).
+  Every existing row has a `deck_id` (it was `NOT NULL`), so the check
+  cannot fail.
+- **Data migration `2026-09-30-component-media`** runs in the background
+  after start (step 6 below). It copies the deck media of masters promoted
+  before this release into their components. Watch for
+  `data migration: completed` with a report of `components`, `adopted`,
+  `copied`, `unresolved` and `failed`. `unresolved` counts references it
+  deliberately leaves alone: media of a deck in another folder, or media
+  that no longer exists.
+
+**Before deploying**, check production (on the VM, with Petr's consent for
+the host). Both queries must return no rows:
+
+```bash
+cd /opt/narrative/infra
+# 0028's validated CHECK: a media row with more than one owner (before 0027
+# there is no component_id, so deck + folder is the only way to have two)
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "SELECT id, deck_id, folder_id FROM media_assets WHERE num_nonnulls(deck_id, folder_id) > 1;"'
+# component ids that cannot name storage keys (created by a client before 0.10.15)
+docker exec narrative-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
+  "SELECT id, folder_id, name FROM components WHERE id !~ '"'"'^[A-Za-z0-9_-]{1,64}$'"'"';"'
+```
+
+If the first query returns rows, stop and decide which owner each row
+keeps. The migration fails otherwise. If the second returns rows, those
+components keep working as documents but cannot take media. As of
+2026-09-30 neither query had been run on production or on a dev database.
+Only the shell quoting was checked (by `echo`).
+
 ## Access
 
 The VM is reachable only through the Proxmox host (`pve`), which is the jump
@@ -229,7 +277,10 @@ Deploy dokončen.
    `docker compose logs server`; a failed one leaves no row and runs again on
    the next start. The first, `2026-09-30-folder-tokens-on-server` (0.10.14),
    seeds folders without tokens, brings older seeds up to date and re-styles
-   linked text that lags its text style.
+   linked text that lags its text style. The second,
+   `2026-09-30-component-media` (A2.12b, 0.10.15), copies the deck media
+   that older component masters show into their components (see
+   "Releasing A2.12b" above).
 7. Waits 15s, then runs healthchecks (API, Caddy, optionally cloudflared)
 8. **Prunes old release images** — `infra/scripts/prune-images.sh` keeps the
    deployed tag plus two previous per image (server / video-worker / web),

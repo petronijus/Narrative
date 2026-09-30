@@ -15,6 +15,8 @@ import transitionRemoveDirection from './transitionRemoveDirection.js'
 import deckCreateInFolder from './deckCreateInFolder.js'
 import insertSlidesFromDeck from './insertSlidesFromDeck.js'
 import componentStampSlots from './componentStampSlots.js'
+import componentPromoteHeadline from './componentPromoteHeadline.js'
+import componentMasterPicture from './componentMasterPicture.js'
 import exportPptxRoundtrip from './exportPptxRoundtrip.js'
 import revertLastRun from './revertLastRun.js'
 import selectedSlideContext from './selectedSlideContext.js'
@@ -59,6 +61,8 @@ export const SCENARIOS: readonly AnyScenario[] = [
   deckCreateInFolder,
   insertSlidesFromDeck,
   componentStampSlots,
+  componentPromoteHeadline,
+  componentMasterPicture,
   exportPptxRoundtrip,
   revertLastRun,
   selectedSlideContext,

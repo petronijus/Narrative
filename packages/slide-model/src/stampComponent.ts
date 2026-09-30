@@ -17,16 +17,17 @@
  *
  * Rich text is lossless end to end: the master is read with every Y.Text
  * body captured as a `_richTextOps` delta (text objects and table cells),
- * and `insertObjectsWithRichText` — also used by the web writer of a new
- * master (`writeComponentMasterTree`) — replays those deltas onto the
+ * and `insertObjectsWithRichText` — also used by `writeComponentMaster`,
+ * the writer of a new master — replays those deltas onto the
  * freshly-integrated Y.Texts.
  */
 
 import * as Y from 'yjs'
 import { nanoid } from 'nanoid'
-import type { SlideObject, TableCell } from '@narrative/shared'
+import type { AnimationStep, SlideObject, TableCell } from '@narrative/shared'
 import { LOCAL_ORIGIN, type ObjectsMutationContext } from './mutations.js'
 import { plainObjectToYMap } from './bindings.js'
+import { animationStepToYMap } from './animationBindings.js'
 import { RICH_TEXT_OPS_KEY, richTextOpsOf, type RichTextOps } from './components.js'
 
 interface BBox {
@@ -308,8 +309,7 @@ function replayBodies(p: PreparedObject): void {
  * one `doc.transact(…, origin)` — joined into the caller's transaction
  * when called inside one.
  *
- * Used by `stampComponent` and by the web writer of a new component
- * master (`apps/web/src/state/writeComponentMasterTree.ts`).
+ * Used by `stampComponent` and by `writeComponentMaster`.
  *
  * @throws when `objects` is not integrated into a Y.Doc.
  */
@@ -328,4 +328,43 @@ export function insertObjectsWithRichText(
     objects.push(prepared.map((p) => p.yMap))
     for (const p of prepared) replayBodies(p)
   }, origin)
+}
+
+/** The id of a component master's one slide. */
+export const COMPONENT_MASTER_SLIDE_ID = 'master'
+
+/**
+ * Write a new component master into `doc`, an empty component document:
+ * the one slide (id {@link COMPONENT_MASTER_SLIDE_ID}) with `masterTree`
+ * as its objects — rich text replayed from `_richTextOps` by
+ * `insertObjectsWithRichText` — and `masterAnimations`. With an empty tree
+ * it writes the empty master a new component starts from.
+ *
+ * A document that already has a slide is left alone and `false` returned:
+ * a master is written once, never over what is there. One transaction,
+ * joined into the caller's when called inside one.
+ */
+export function writeComponentMaster(
+  doc: Y.Doc,
+  masterTree: ReadonlyArray<SlideObject>,
+  masterAnimations: ReadonlyArray<AnimationStep>,
+  origin?: unknown,
+): boolean {
+  const slides = doc.getArray<Y.Map<unknown>>('slides')
+  if (slides.length > 0) return false
+  doc.transact(() => {
+    const slide = new Y.Map<unknown>()
+    slide.set('id', COMPONENT_MASTER_SLIDE_ID)
+    slide.set('order', 0)
+    const objects = new Y.Array<Y.Map<unknown>>()
+    const animations = new Y.Array<Y.Map<unknown>>()
+    slide.set('objects', objects)
+    slide.set('animations', animations)
+    // The slide is integrated first: rich-text bodies can only be filled
+    // once their Y.Texts live in the document.
+    slides.push([slide])
+    insertObjectsWithRichText(objects, masterTree, origin)
+    if (masterAnimations.length > 0) animations.push(masterAnimations.map(animationStepToYMap))
+  }, origin)
+  return true
 }

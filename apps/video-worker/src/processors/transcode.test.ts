@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Job } from 'bullmq'
 import type { VideoTranscodeJobData, VideoTranscodeResult } from '../queue.js'
+import { videoOutputPrefix } from '../queue.js'
 
 // ---------------------------------------------------------------------------
 // Hoisted mock factories
@@ -201,13 +202,40 @@ describe('transcodeProcessor', () => {
     expect(result.durationSec).toBeCloseTo(10.5, 0)
   })
 
-  it('output keys include the deckId path segment', async () => {
-    const job = makeJob({ deckId: 'deck-special' })
+  it("writes the outputs under the owner the storage key names: a deck's video", async () => {
+    const result = await transcodeProcessor(makeJob())
+
+    expect(result.playbackKey).toBe('decks/deck-01/videos/asset-01/playback.mp4')
+    expect(result.posterKey).toBe('decks/deck-01/videos/asset-01/poster.jpg')
+    expect(result.thumbnailKey).toBe('decks/deck-01/videos/asset-01/thumb.jpg')
+  })
+
+  it("writes a component master's video (tus compound key, no deckId) under components/<id>/", async () => {
+    const path = 'components/comp-7/uploads/asset-01/original.mp4'
+    const { deckId: _none, ...data } = makeJob().data
+    const job = makeJob()
+    job.data = {
+      ...data,
+      storageKey: `asset-01:unknown:${Buffer.from(path).toString('base64url')}`,
+    }
     const result = await transcodeProcessor(job)
 
-    expect(result.playbackKey).toContain('deck-special')
-    expect(result.posterKey).toContain('deck-special')
-    expect(result.thumbnailKey).toContain('deck-special')
+    expect(result.playbackKey).toBe('components/comp-7/videos/asset-01/playback.mp4')
+    expect(mockUpdateVideoAssetOutputs).toHaveBeenCalledWith(
+      expect.anything(),
+      'asset-01',
+      expect.objectContaining({ posterKey: 'components/comp-7/videos/asset-01/poster.jpg' }),
+    )
+  })
+
+  it('fails a job whose key names no owner and that has no deckId, before any work', async () => {
+    const { deckId: _none, ...data } = makeJob().data
+    const job = makeJob()
+    job.data = { ...data, storageKey: 'imports/whatever/original.mp4' }
+
+    await expect(transcodeProcessor(job)).rejects.toThrow(/names no deck or component/)
+    expect(mockS3Send).not.toHaveBeenCalled()
+    expect(mockUpdateTranscodeStatus).not.toHaveBeenCalled()
   })
 
   it('downloads from S3 using the job storageKey', async () => {
@@ -344,3 +372,64 @@ describe.skipIf(!process.env['CI_HAS_FFMPEG'])(
     })
   },
 )
+
+// ---------------------------------------------------------------------------
+// videoOutputPrefix — where the outputs of a job go
+// ---------------------------------------------------------------------------
+
+describe('videoOutputPrefix', () => {
+  const b64 = (path: string): string => Buffer.from(path).toString('base64url')
+
+  it('takes the first two segments of a plain decks/ or components/ path', () => {
+    expect(
+      videoOutputPrefix({ assetId: 'a1', storageKey: 'decks/d1/uploads/a1/original.mp4' }),
+    ).toBe('decks/d1/videos/a1')
+    expect(
+      videoOutputPrefix({ assetId: 'a1', storageKey: 'components/c1/uploads/a1/original.mov' }),
+    ).toBe('components/c1/videos/a1')
+  })
+
+  it("decodes a tus upload's compound id", () => {
+    expect(
+      videoOutputPrefix({
+        assetId: 'a1',
+        deckId: 'd1',
+        storageKey: `a1:d1:${b64('decks/d1/uploads/a1/original.mp4')}`,
+      }),
+    ).toBe('decks/d1/videos/a1')
+    expect(
+      videoOutputPrefix({
+        assetId: 'a1',
+        storageKey: `a1:unknown:${b64('components/c1/uploads/a1/original.webm')}`,
+      }),
+    ).toBe('components/c1/videos/a1')
+  })
+
+  it('the key wins over the deckId: a component video never lands under a deck', () => {
+    expect(
+      videoOutputPrefix({
+        assetId: 'a1',
+        deckId: 'd9',
+        storageKey: `a1:unknown:${b64('components/c1/uploads/a1/original.mp4')}`,
+      }),
+    ).toBe('components/c1/videos/a1')
+  })
+
+  it('falls back to decks/<deckId> for a key that names no owner', () => {
+    expect(videoOutputPrefix({ assetId: 'a1', deckId: 'd1', storageKey: 'legacy/a1.mp4' })).toBe(
+      'decks/d1/videos/a1',
+    )
+    expect(videoOutputPrefix({ assetId: 'a1', deckId: 'd1', storageKey: 'a1:d1:not*base64' })).toBe(
+      'decks/d1/videos/a1',
+    )
+    expect(
+      videoOutputPrefix({ assetId: 'a1', deckId: 'd1', storageKey: 'decks/../uploads/x.mp4' }),
+    ).toBe('decks/d1/videos/a1')
+  })
+
+  it('throws when neither the key nor the job names an owner', () => {
+    expect(() => videoOutputPrefix({ assetId: 'a1', storageKey: 'legacy/a1.mp4' })).toThrow(
+      /names no deck or component/,
+    )
+  })
+})

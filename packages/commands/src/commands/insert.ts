@@ -19,7 +19,15 @@ import {
   type InsertPlan,
 } from '../insert/plan.js'
 import type { PreparedObjectInsert } from '../services/decks.js'
-import { IdSchema, POST, TokenRebindOutput, serverCommand, targetDeckId } from './serverShared.js'
+import type { DocumentRef } from '../services/common.js'
+import {
+  IdSchema,
+  POST,
+  TokenRebindOutput,
+  sameDocument,
+  serverCommand,
+  targetDocument,
+} from './serverShared.js'
 
 const EXAMPLE_OBJECTS = [
   {
@@ -65,8 +73,8 @@ export const objectInsert = defineCommand({
     'text and table cells included — with new ids, on top of the stacking order, in one step: to recreate or ' +
     'transplant what you read. Each object is checked like object.create input. Objects read together that ' +
     'shared a group get a new group of their own. `offset` moves them, `at` puts the centre of their combined ' +
-    "box on a point. Pictures and videos must be this deck's media: from ANOTHER deck use " +
-    'object.insertFromDeck, which copies them. To copy objects that are still in this deck use object.copyTo.',
+    "box on a point. Pictures and videos must be this document's media: from ANOTHER deck or component use " +
+    'object.insertFromDeck, which copies them. To copy objects that are still here use object.copyTo.',
   input: z.strictObject({
     slide: SlideRefSchema,
     objects: InsertObjectsSchema,
@@ -99,53 +107,73 @@ export const objectInsertFromDeck = defineCommand({
   domain: 'object',
   role: 'editor',
   scope: 'deck',
+  acceptsComponent: true,
   effects: ['doc', 'server'],
   undo: 'undoable',
   confirm: 'never',
-  title: 'Insert objects read from another deck',
+  title: 'Insert objects read from another deck or component',
   description:
-    'object.insert for objects read (query.slide / query.object) from ANOTHER deck, `fromDeck`: the pictures, ' +
-    "videos and fonts they use are copied into this deck, colour and text-style tokens are rebound to this deck's " +
-    "folder when the folders differ, and links to the other deck's slides are removed. Copying out of a deck " +
-    'needs editor access to it (the same as exporting it), so a deck you can only view is refused.',
-  input: z.strictObject({
-    slide: SlideRefSchema,
-    fromDeck: IdSchema.describe('The deck the objects were read from'),
-    objects: InsertObjectsSchema,
-    ...PlacementSchema,
-  }),
+    'object.insert for objects read (query.slide / query.object) from ANOTHER deck (`fromDeck`) or component ' +
+    'master (`fromComponent`): the pictures and videos they use are copied into this document — a deck and a ' +
+    "master each own their media — the other deck's fonts too, colour and text-style tokens are rebound to this " +
+    "folder's when the folders differ, and links to the other document's slides are removed. Works on a master " +
+    'too (target componentId): the way to bring pictures from a deck into a master. Copying out of a deck needs ' +
+    'editor access to it (the same as exporting it); out of or into a component, owning its folder.',
+  input: z
+    .strictObject({
+      slide: SlideRefSchema,
+      fromDeck: IdSchema.optional().describe('The deck the objects were read from'),
+      fromComponent: IdSchema.optional().describe('The component master they were read from'),
+      objects: InsertObjectsSchema,
+      ...PlacementSchema,
+    })
+    .refine((v) => (v.fromDeck === undefined) !== (v.fromComponent === undefined), {
+      message: 'Give fromDeck or fromComponent, exactly one',
+      path: ['fromDeck'],
+    }),
   output: z.object({
     objectIds: z.array(z.string()),
-    mediaRegistered: z.number().describe('Media assets copied into this deck'),
+    mediaRegistered: z.number().describe('Media assets copied into this document'),
     skippedImages: z.number().describe('Pictures whose file could not be copied'),
-    droppedLinks: z.number().describe("Links to the other deck's slides (removed)"),
+    droppedLinks: z.number().describe("Links to the other document's slides (removed)"),
     tokens: TokenRebindOutput.optional(),
   }),
-  routes: [POST('/decks/:id/insert-objects')],
+  routes: [POST('/decks/:id/insert-objects'), POST('/components/:id/insert-objects')],
   examples: [
     {
       title: 'Bring a card read from another deck onto slide 1',
       input: { slide: { index: 0 }, fromDeck: 'deck_other', objects: EXAMPLE_OBJECTS },
     },
+    {
+      title: "Bring a component master's card onto slide 2",
+      input: { slide: { index: 1 }, fromComponent: 'cmp_headline', objects: EXAMPLE_OBJECTS },
+    },
   ],
   async load(ctx, input): Promise<LoadedInsert> {
-    if (input.fromDeck === targetDeckId(ctx)) {
+    const source: DocumentRef =
+      input.fromComponent !== undefined
+        ? { componentId: input.fromComponent }
+        : { deckId: input.fromDeck! }
+    const target = targetDocument(ctx)
+    if (sameDocument(source, target)) {
+      const field = 'deckId' in source ? 'fromDeck' : 'fromComponent'
       throw new CommandError(
         'invalid_input',
-        'fromDeck is this deck: its objects already have their media here — use object.insert (or object.copyTo)',
-        { issues: [{ path: ['fromDeck'], message: 'the same deck as the target' }] },
+        `${field} is this document: its objects already have their media here — use object.insert (or object.copyTo)`,
+        { issues: [{ path: [field], message: 'the same document as the target' }] },
       )
     }
     // Validate before anything is copied: a bad object costs no media staging.
     const plan = planInsert(input.objects, { offset: input.offset, at: input.at })
     const prepared = await requireServices(ctx).decks.prepareObjectInsert({
       userId: ctx.actor.userId,
-      sourceDeckId: input.fromDeck,
-      targetDeckId: targetDeckId(ctx),
+      source,
+      target,
       plan,
     })
     return { plan, prepared }
   },
+  release: (loaded) => loaded.prepared.discard(),
   handler(ctx, input, loaded) {
     let objects
     try {

@@ -39,22 +39,9 @@ import { lookupSession, SESSION_COOKIE_NAME } from '../auth/session.js'
 import { buildS3Client, MEDIA_BUCKET } from '../media/s3Client.js'
 import { parseDataUrl } from '../media/dataUrl.js'
 import { createDecksService, deckRecord } from '../services/decks.js'
-import { z } from 'zod'
-import { CommandError, MAX_INSERT_OBJECTS } from '@narrative/commands'
 import { routeDeps } from '../services/http.js'
-import { sendServiceError, ServiceError } from '../services/errors.js'
-import { insertObjectsFromDeck } from '../services/deckInsert.js'
-
-const Point = z.strictObject({ x: z.number().finite(), y: z.number().finite() })
-
-/** Body of POST /decks/:id/insert-objects (the objects are validated by `planInsert`). */
-const InsertObjectsBody = z.strictObject({
-  sourceDeckId: z.string().min(1).max(64),
-  slideId: z.string().min(1).max(64),
-  objects: z.array(z.record(z.string(), z.unknown())).min(1).max(MAX_INSERT_OBJECTS),
-  offset: Point.optional(),
-  at: Point.optional(),
-})
+import { sendServiceError } from '../services/errors.js'
+import { sendInsertObjects } from './insertObjects.js'
 
 interface CreateDeckBody {
   title?: string
@@ -193,37 +180,17 @@ export async function registerDeckRoutes(app: FastifyInstance, db: Database): Pr
   )
 
   // ---------------------------------------------------------------------------
-  // POST /decks/:id/insert-objects — the editor's cross-deck object paste:
-  // objects read from `sourceDeckId` (the clipboard holds them as
-  // query.slide JSON) onto slide `slideId`, their media and fonts copied
-  // and tokens rebound. Editor of this deck, editor of the source.
+  // POST /decks/:id/insert-objects — the editor's cross-document object
+  // paste: objects read from another deck or a component master (the
+  // clipboard holds them as query.slide JSON) onto slide `slideId`, their
+  // media copied and tokens rebound (routes/insertObjects.ts). Editor of
+  // this deck; editor of a source deck, owner of a source component.
   // ---------------------------------------------------------------------------
   app.post<{ Params: { id: string }; Body: unknown }>(
     '/decks/:id/insert-objects',
     { preHandler: [authPreHandler, requireDeckRole('editor')] },
     async (request, reply) => {
-      const parsed = InsertObjectsBody.safeParse(request.body)
-      if (!parsed.success) {
-        return reply.status(400).send({
-          error: parsed.error.issues
-            .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
-            .join('; '),
-        })
-      }
-      try {
-        const result = await insertObjectsFromDeck(routeDeps(app, db, request.log), {
-          userId: request.user!.sub,
-          deckId: request.params.id,
-          ...parsed.data,
-        })
-        return reply.status(200).send(result)
-      } catch (err) {
-        if (err instanceof CommandError && !(err instanceof ServiceError)) {
-          const status = err.code === 'invalid_input' ? 400 : err.code === 'not_found' ? 404 : 409
-          return reply.status(status).send({ error: err.message, issues: err.issues })
-        }
-        return sendServiceError(reply, err)
-      }
+      return sendInsertObjects(app, db, request, reply, { deckId: request.params.id })
     },
   )
 

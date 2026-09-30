@@ -180,6 +180,7 @@ export const deckInsertFrom = defineCommand({
       source,
     })
   },
+  release: (prepared) => prepared.discard(),
   handler(ctx, input, prepared) {
     let deck
     try {
