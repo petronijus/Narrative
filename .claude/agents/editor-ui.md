@@ -65,8 +65,8 @@ Diagnosed while fixing the survey's bugs; each cost a debugging round. See
   recommendation, with the lint rule still to come.) A `pnpm lint` that
   dies with `ERR_UNKNOWN_FILE_EXTENSION` on `slideModelExports.ts` before
   linting anything is a Node without type stripping (Ubuntu 26.04's distro
-  Node, 2026-09-29), not a one-door hit; run
-  `NODE_OPTIONS="--import=tsx" pnpm lint` (SETUP.md).
+  Node, 2026-09-29), not a one-door hit; `just lint` loads tsx for it
+  (SETUP.md).
 - **Every transaction names its origin.** Wrap a multi-write gesture in
   `doc.transact(fn, LOCAL_ORIGIN)` — an origin-less wrapper re-attributes the
   nested slide-model writes to `null` and drops them from undo. A bare

@@ -14,7 +14,7 @@ COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
 COPY packages/commands/package.json      packages/commands/package.json
 
-# --ignore-scripts přeskočí "prepare: husky" v root package.json
+# --ignore-scripts: no lifecycle scripts of the workspace or its dependencies in the image build
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Kopírujeme zdrojové kódy
@@ -41,7 +41,7 @@ COPY packages/slide-model/package.json   packages/slide-model/package.json
 COPY packages/animation/package.json     packages/animation/package.json
 COPY packages/commands/package.json      packages/commands/package.json
 
-# Instalace jen prod deps, bez lifecycle scripts (husky není potřeba v runtime)
+# Production dependencies only, without lifecycle scripts
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
 # Zkompilovaný server

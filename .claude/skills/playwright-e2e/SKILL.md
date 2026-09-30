@@ -9,27 +9,25 @@ Narrative uses Playwright (chromium only, installed in `apps/web`) to verify UI 
 
 ## Run
 
-From `apps/web/`:
+From the repository root, with the dev stack up (`just services`, then
+`just dev` in another terminal — the recipe refuses to start otherwise):
 
 ```bash
-# Run all specs
-node ../../node_modules/@playwright/test/cli.js test
-
-# Single spec
-node ../../node_modules/@playwright/test/cli.js test e2e/image-upload.spec.ts
-
-# Open failed trace
-node ../../node_modules/@playwright/test/cli.js show-trace test-results/<test>/trace.zip
+just e2e                                  # every spec
+just e2e image-upload                     # one spec file
+just e2e -g "folder-tokens"               # by test name
+node node_modules/@playwright/test/cli.js show-trace apps/web/test-results/<test>/trace.zip
 ```
 
-Prerequisites (always verify before running):
+`just e2e` picks the browser (Playwright's own Chromium, or the system Chrome
+with video off where Playwright ships none — Ubuntu 26.04;
+`tools/dev/playwright-env.sh`). Install Playwright's browser where it is
+supported: `pnpm --filter web exec playwright install chromium`.
 
-- Docker services (`docker ps` → 5 healthy).
-- Dev server running at :3001 (`curl http://localhost:3001/health` → `{"status":"ok"}`).
-- Vite running at :5173.
-- `.env` has `BYPASS_AUTH=true`, `VITE_BYPASS_AUTH=true`, `MINIO_ENDPOINT=http://localhost:9100`, `MINIO_PUBLIC_URL=/storage`, `IMGPROXY_ENDPOINT=/imgproxy`, `VITE_IMGPROXY_URL=/imgproxy`.
-
-Browser install: `node node_modules/@playwright/test/cli.js install chromium` (from repo root; installs to `%LOCALAPPDATA%\ms-playwright`).
+`.env` needs `BYPASS_AUTH=true`, `VITE_BYPASS_AUTH=true`,
+`MINIO_ENDPOINT=http://localhost:9100`, `MINIO_PUBLIC_URL=/storage`,
+`IMGPROXY_ENDPOINT=/imgproxy`, `VITE_IMGPROXY_URL=/imgproxy` (the dev `.env`
+from `scripts/secrets-decrypt.sh dev` has them).
 
 ## Canonical setup: deterministic deck creation
 

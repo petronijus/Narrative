@@ -1,0 +1,13 @@
+# gitleaks (pre-commit hook, lefthook.yml): the default rules, minus known
+# false positives. Keep every entry narrow: an exact fixture value or a
+# committed template, never a whole directory.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The awareness principal-key fixtures of the agent presence tests"
+regexes = ['''suMEL2lykgqwQ5l03rNxzW''', '''Nr0FXJtfxptAS_duWznRdk''']
+
+[[allowlists]]
+description = "Committed env templates (placeholders, no real values)"
+paths = ['''(^|/)\.env(\.[a-z]+)?\.example$''']

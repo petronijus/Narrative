@@ -17,8 +17,7 @@
     "test": "pnpm -r test",
     "size": "pnpm --filter web build && pnpm --filter web size",
     "lighthouse": "pnpm --filter web build && lhci autorun --config=.lighthouserc.json",
-    "format": "prettier --write \"**/*.{ts,tsx,js,cjs,json,md,yaml,yml}\" --ignore-path .gitignore",
-    "prepare": "husky",
+    "format": "tools/dev/format.sh --all",
     "capabilities": "pnpm --filter @narrative/commands capabilities",
     "load:all": "node tests/load/runAll.mjs",
     "load:hotedit": "tsx tests/load/hotEdit.ts",
@@ -37,19 +36,9 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
-    "husky": "^9.1.7",
-    "lint-staged": "^15.5.1",
     "prettier": "^3.5.3",
+    "tsx": "^4.19.2",
     "typescript": "^6.0.3"
-  },
-  "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{js,cjs,mjs,json,md,yaml,yml}": [
-      "prettier --write"
-    ]
   },
   "pnpm": {
     "onlyBuiltDependencies": [

@@ -13,7 +13,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json .npmrc ./
 COPY apps/video-worker/package.json   apps/video-worker/package.json
 COPY packages/shared/package.json     packages/shared/package.json
 
-# --ignore-scripts skips "prepare: husky" in root package.json.
+# --ignore-scripts: no lifecycle scripts of the workspace or its dependencies in the image build.
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Copy source

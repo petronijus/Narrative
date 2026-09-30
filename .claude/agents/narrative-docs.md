@@ -50,25 +50,61 @@ Enumerate with `ls *.md docs/*.md docs/*/*.md` plus
   reality. If genuinely nothing changed, say so in the ledger with the reason.
 - **BUILD_PLAN.md** — the milestone roadmap. Tick off what shipped, keep the
   phase list honest, and move answered open questions into a handoff note.
-- **SETUP.md** — first-run guide. Update when env vars, services, ports,
-  migrations or the troubleshooting list move.
+- **SETUP.md** — first-run guide and the developer reference (machines ×
+  lanes, toolchain, git and Claude Code hooks, troubleshooting). Update when
+  env vars, services, ports, migrations, recipes or the troubleshooting list
+  move.
+- **AGENTS.md** — the shared agent instructions (hard rules, commands, the
+  "When to run what" table, conventions). Its known-state notes (red lanes
+  with dates, skip counts) are facts: correct them when they change. Its
+  rules are configuration: propose rule changes in the ledger instead.
 - **docs/handoff/\*.md** — the engineering record and the cross-session
   handover. For SIGNIFICANT work ADD a new note; match the existing naming
   (`<version>-<topic>.md` for release-shaped work, `MXX-<topic>.md` for
-  milestone work) and the existing structure: status, date, last commit, what
-  was completed, key decisions, how to verify, next step, known TODO, links.
+  milestone work) and the existing structure:
+
+  ```
+  # Handoff <version or MXX> — <title>
+
+  **Status:** done / partial / blocked
+  **Date:** YYYY-MM-DD
+  **Last commit:** <hash>
+
+  ## What was completed      (bullets, not prose)
+  ## Key decisions           (decision + reason + ADR link if any)
+  ## How to verify           (`just …` → what you should see)
+  ## Next step               (a concrete prompt for the next session)
+  ## Known TODO / deferred
+  ## Links                   (ADRs, key files, commits)
+  ```
+
   This is the file a future session with no memory reads first — if it cannot
   continue from it alone, it is not finished.
+
 - **docs/adr/NNNN-<slug>.md** — Architecture Decision Records, sequential, no
   gaps. An ADR is about **why**, not what. Add one when a decision constrains
-  future work; a bug fix is not an ADR.
+  future work; a bug fix is not an ADR. Format:
+
+  ```
+  # ADR-NNNN: <Decision title>
+
+  **Status:** Proposed / Accepted / Superseded by ADR-MMMM
+  **Date:** YYYY-MM-DD
+  **Context:** what situation needs a decision.
+  **Decision:** what was chosen.
+  **Alternatives considered:** what else was weighed, and why not.
+  **Consequences:** the effects, good and bad.
+  ```
+
 - **docs/ops.md** and **docs/deploy.md** — the production runbooks. Anything
   that changes how prod is built, shipped, configured or recovered lands here:
   image tags, the GHCR pipeline, Caddy/CSP, backups, the deploy sequence.
 - **docs/testing-strategy.md** — what is tested and how; keep the suite counts
   and the command list honest.
 - **docs/agents.md** — architecture and agent ownership map.
-- **docs/capabilities.md** + `packages/commands/capabilities.json` — generated, never hand-edited: when a capability changed, check both were regenerated (`pnpm --filter @narrative/commands capabilities`) in the same change.
+- **docs/capabilities.md** + `packages/commands/capabilities.json` — generated,
+  never hand-edited (the edit guard refuses it): when a capability changed,
+  check both were regenerated with `just capabilities` in the same change.
 - **docs/audits/\*.md**, **docs/plans/\*.md**, **docs/storage.md** — living topic
   docs; correct in place.
 - **docs/mcp.md** (since agentic A1) — the MCP server reference: connecting,
@@ -89,9 +125,9 @@ Enumerate with `ls *.md docs/*.md docs/*/*.md` plus
   isn't written into the brief will be re-derived at full cost next session.
 
 Do NOT touch `~/.claude/projects/.../memory/` — maintained separately.
-🚫 Do NOT edit `CLAUDE.md` (project or user) — it is configuration, not
-documentation. If it has gone stale, say so in the ledger and let the user
-change it.
+🚫 Do NOT edit `CLAUDE.md` (project or user) or `.claude/settings.json` —
+they are configuration, not documentation. If they have gone stale, say so
+in the ledger and let the user change them.
 
 ## 2. Rules
 

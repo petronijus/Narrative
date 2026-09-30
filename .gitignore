@@ -22,8 +22,10 @@ infra/.env.prod
 # Backups
 backups/
 
-# Claude local settings
+# Claude local settings, personal hook overrides
 .claude/settings.local.json
+CLAUDE.local.md
+lefthook-local.yml
 
 # Editor
 .vscode/

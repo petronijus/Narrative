@@ -1,0 +1,32 @@
+# Git hooks — https://lefthook.dev. Installed per clone by `just setup`.
+# Personal overrides go to lefthook-local.yml (gitignored).
+
+# Quiet unless something fails (the formatter's and gitleaks' chatter stays out).
+output:
+  - summary
+  - failure
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      # The file types tools/dev/format.sh handles (bare globs match at every depth).
+      glob:
+        - '*.{ts,tsx,js,cjs,mjs}'
+        - '*.{json,md,yaml,yml}'
+      exclude:
+        - pnpm-lock.yaml
+      run: tools/dev/format.sh {staged_files}
+      stage_fixed: true
+    - name: secrets
+      run: gitleaks git --pre-commit --staged --no-banner --redact
+
+commit-msg:
+  jobs:
+    - name: conventional commit
+      run: tools/dev/commit-msg.sh {1}
+
+pre-push:
+  jobs:
+    - name: fast lane
+      run: tools/dev/pre-push.sh

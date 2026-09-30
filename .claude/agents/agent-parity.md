@@ -251,9 +251,9 @@ Quote the failing test name and message verbatim in the ledger.
 `packages/commands/src/parity/slideModelExports.ts` before any file is
 linted is the environment, not a parity finding: the Node in use cannot
 strip types (Ubuntu 26.04's distro Node 22.22.1 on `petronijus-PC`,
-2026-09-29 — `node -p process.features.typescript` prints `false`). Re-run
-as `NODE_OPTIONS="--import=tsx" pnpm lint` and say so in the ledger
-(SETUP.md, "Common first-run failures").
+2026-09-29 — `node -p process.features.typescript` prints `false`). Run
+lint as `just lint`, which loads tsx for such a Node (SETUP.md,
+"Common first-run failures").
 
 ## 5. Failure modes a reviewer must catch
 
