@@ -130,7 +130,7 @@ token, then
 and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
 Revoke the token afterwards if it was only for the test.
 
-## Releasing A2.12b (component-owned media) — 0.10.15, not deployed yet
+## Releasing A2.12b (component-owned media) — 0.10.15
 
 Written 2026-09-30, while the work was uncommitted; production ran
 `v0.10.14+61260f2` (`/version.json`, re-checked the same day after A2.13).

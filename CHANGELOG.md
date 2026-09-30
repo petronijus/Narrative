@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased — Components through commands; A2 closed (A2.12b + A2.13; to be released as 0.10.15)
+## 0.10.15 — Components through commands; A2 closed (2026-09-30)
 
 ### Added
 
