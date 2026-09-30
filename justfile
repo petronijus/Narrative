@@ -1,5 +1,5 @@
 # Narrative task runner — https://just.systems. `just` lists the recipes.
-# The fast lane (`just check`, ~1 min) is what the pre-push hook and the
+# The fast lane (`just check`, ~40 s) is what the pre-push hook and the
 # Claude Code Stop hook run; `just ci` is the full gate. There is no hosted
 # CI: these recipes are the CI, run on the Linux desktop, the MacBook or the
 # Omarchy desktop. The recipes only wrap the pnpm scripts in package.json and
@@ -35,10 +35,12 @@ setup:
 doctor:
     tools/dev/doctor.sh
 
-# ── fast lane (~1 min, no dev stack) ─────────────────────────────────────
+# ── fast lane (~40 s, no dev stack) ────────────────────────────────────
 
-# Formatting, types, lint, the docs check, every unit test (contract, parity, eval replays) and the capability manifest
-check: fmt-check typecheck lint lint-docs test capabilities-check
+# Formatting, types, lint, the docs check, every unit test (contract, parity, eval replays) and the capability manifest;
+# formatting first (seconds, the commonest failure), then the rest side by side (tools/dev/run-parallel.sh)
+check: fmt-check
+    tools/dev/run-parallel.sh typecheck lint lint-docs test capabilities-check
 
 # Format every file in place (ESLint --fix + Prettier; tools/dev/format.sh)
 fmt:
@@ -50,21 +52,23 @@ fmt-check:
 
 # TypeScript in every package
 typecheck:
-    pnpm -r typecheck
+    pnpm -r --no-sort typecheck
 
 # ESLint in every package (incl. the one-door rule)
 lint:
-    NODE_OPTIONS="{{ eslint_node_options }}" pnpm -r lint
+    NODE_OPTIONS="{{ eslint_node_options }}" pnpm -r --no-sort lint
 
-# Docs name only recipes, files, headings and imports that exist
+# Docs name only recipes, files, headings and imports that exist; the e2e map names only specs that exist
 lint-docs:
     tools/dev/docs-check.py
+    tools/dev/e2e-affected.py --check
 
 # Unit tests; `just test server web` (workspace filters) for some packages
 test *filters:
     #!/usr/bin/env bash
     set -euo pipefail
-    if (($# == 0)); then exec pnpm -r test; fi
+    # --no-sort: the packages' tests read each other's sources, not builds, so none waits for another
+    if (($# == 0)); then exec pnpm -r --no-sort test; fi
     args=()
     for f in "$@"; do args+=(--filter "$f"); done
     exec pnpm "${args[@]}" test
@@ -90,6 +94,10 @@ e2e *args: _stack
     set -euo pipefail
     eval "$(tools/dev/playwright-env.sh)"
     exec pnpm --filter web test:e2e "$@"
+
+# The e2e specs the current change needs (tools/dev/e2e-affected.py: `--base REF`, `--list`; other args go to Playwright)
+e2e-affected *args:
+    tools/dev/e2e-affected.py {{ args }}
 
 # Bundle budgets (size-limit)
 size:

@@ -19,7 +19,7 @@ is yours.
     skip gitignored files); a call the guard cannot parse is denied; changing an existing database migration asks
     first;
   - when you finish a turn whose content (code, config and docs) has not passed `just check`
-    before, it runs (~1 min; `tools/dev/check-cache.sh` remembers green
+    before, it runs (~40 s; `tools/dev/check-cache.sh` remembers green
     content, so neither a repeat nor the push of that content runs it again);
     if it fails you get the output and must fix it before stopping. The rows
     of AGENTS.md → "When to run what" are still yours to run;

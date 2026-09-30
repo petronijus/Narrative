@@ -10,7 +10,10 @@ Read before changing code: `docs/testing-strategy.md` (what the suites
 cover), `docs/agents.md` (areas and their owners), `SETUP.md` (setup,
 toolchain, troubleshooting). The agentic layer is planned in
 `docs/plans/agentic-layer.md` (A0–A2 done); the status and next steps are
-the "Where we stand" section of `docs/plans/a2-extraction.md`.
+the "Where we stand" section of `docs/plans/a2-extraction.md`. Folder
+sharing (folder roles, linked component media) is planned in
+`docs/plans/folder-sharing.md` (ADR 0013); faster test loops in
+`docs/plans/dev-speed.md`.
 
 ## Hard rules
 
@@ -53,18 +56,19 @@ the "Where we stand" section of `docs/plans/a2-extraction.md`.
 wrap the pnpm scripts and add what the machine needs (the tsx loader for
 ESLint on Ubuntu's Node, the system Chrome for Playwright on Ubuntu 26.04).
 
-| Command                                  | What it does                                                                                                                       |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `just setup`                             | install dependencies and git hooks, check the toolchain                                                                            |
-| `just check`                             | fast lane (~1 min): formatting, types, lint, docs check, every unit test (contract, parity, eval replays), the capability manifest |
-| `just ci`                                | full gate: `check` + `integration` + `e2e` (needs `just dev`)                                                                      |
-| `just fmt`                               | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                                 |
-| `just test [pkg…]`                       | unit tests, all or some workspace packages (`just test server web`)                                                                |
-| `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                        |
-| `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                   |
-| `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                                        |
-| `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                                      |
-| `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                            |
+| Command                                  | What it does                                                                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `just setup`                             | install dependencies and git hooks, check the toolchain                                                                           |
+| `just check`                             | fast lane (~40 s): formatting, types, lint, docs check, every unit test (contract, parity, eval replays), the capability manifest |
+| `just ci`                                | full gate: `check` + `integration` + `e2e` (needs `just dev`)                                                                     |
+| `just fmt`                               | format everything (`tools/dev/format.sh`: ESLint --fix + Prettier)                                                                |
+| `just test [pkg…]`                       | unit tests, all or some workspace packages (`just test server web`)                                                               |
+| `just services` / `just dev`             | docker services / web :5173 + server :3001 (WebSocket :3002) + video worker                                                       |
+| `just e2e [args]`                        | Playwright against the dev stack (`just e2e -g "folder-tokens"`)                                                                  |
+| `just e2e-affected [--list]`             | the e2e specs the current change needs (the table below, as `tools/dev/e2e-affected.py`)                                          |
+| `just eval [args]`                       | agent eval, headless Claude Code — costs subscription usage                                                                       |
+| `just capabilities`                      | regenerate the capability manifest and the Claude Code plugin                                                                     |
+| `just bump X.Y.Z` / `just deploy vX.Y.Z` | release versions / images, the tagged tree to the VM, deploy, verify (`docs/deploy.md`)                                           |
 
 There is no hosted CI. `just ci` is the CI, run on the Linux desktop, the
 MacBook or the Omarchy desktop; nothing gates a push but the pre-push hook
@@ -88,6 +92,12 @@ below that match it.
 | Hot edit / awareness / doc-growth paths                                                                                               | `just load` (warns on > 20% drift from a local `baselines.json`, copied from `tests/load/baselines.example.json` after a clean run)                                                                |
 | Editor render path (FCP / LCP / TTI)                                                                                                  | `just lighthouse`                                                                                                                                                                                  |
 | `packages/slide-model/src/{mutations,slides}.ts` deep changes                                                                         | `just mutate` — **broken since 2026-09-26** (`@stryker-mutator/vitest-runner` 8.x vs vitest 4): say so instead of skipping silently                                                                |
+
+`just e2e-affected` runs the e2e part of this table for the working tree
+(`--base REF` for a branch): the specs of every area a changed file belongs
+to. A shared package, the schema or a source file no area claims runs the
+whole suite, and names the file — add a new file's area to `AREAS` in
+`tools/dev/e2e-affected.py` rather than living with full runs.
 
 If a command does not exist or fails to start (port collision, missing
 service), say so explicitly — never skip it silently. Specs seed their own
