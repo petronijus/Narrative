@@ -32,8 +32,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { test, expect, type Page } from '@playwright/test'
 
-const DECK_ID = process.env.E2E_DECK_ID ?? 'nO5v10urLTBI'
-const DECK_URL = `http://localhost:5173/deck/${DECK_ID}`
+const API = 'http://localhost:3001'
+/** A deck of its own (or E2E_DECK_ID's), made before the tests and deleted after. */
+let deckId = process.env.E2E_DECK_ID ?? ''
+let ownDeck = false
 
 // Distinct ids and contents — if the race fires, one node's `<img>` is
 // reused by another's texture upload, so the actual rendered glyphs
@@ -175,6 +177,18 @@ async function readResourceIdentitySet(page: Page, ids: string[]): Promise<numbe
 }
 
 test.describe('Pixi HTMLText texture isolation (Pixi v8 WebGL race)', () => {
+  test.beforeAll(async ({ request }) => {
+    if (deckId !== '') return
+    const res = await request.post(`${API}/decks`, { data: { title: 'e2e htmltext isolation' } })
+    expect(res.ok(), `POST /decks: ${res.status()}`).toBe(true)
+    deckId = ((await res.json()) as { id: string }).id
+    ownDeck = true
+  })
+
+  test.afterAll(async ({ request }) => {
+    if (ownDeck) await request.delete(`${API}/decks/${deckId}`).catch(() => {})
+  })
+
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     // Honour an env opt-out so we can run the suite with the patch
@@ -185,7 +199,7 @@ test.describe('Pixi HTMLText texture isolation (Pixi v8 WebGL race)', () => {
         ;(globalThis as { __disableHtmlTextRacePatch?: boolean }).__disableHtmlTextRacePatch = true
       })
     }
-    await page.goto(DECK_URL)
+    await page.goto(`/deck/${deckId}`)
     await waitForTestApi(page)
 
     // Reset slide: drop any stale objects from previous runs and seed

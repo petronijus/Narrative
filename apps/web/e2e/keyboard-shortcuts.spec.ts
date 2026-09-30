@@ -19,6 +19,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
+import { uploadTestPicture } from './fixtures/media'
 
 async function createDeck(page: Page): Promise<string> {
   const res = await page.request.post('http://localhost:3001/decks', {
@@ -427,8 +428,9 @@ test.describe('Canvas object shortcuts', () => {
     await openDeckReady(page, deckId)
 
     const crop = { x: 150, y: 120, width: 600, height: 450 }
+    const assetId = await uploadTestPicture(page.request, deckId)
     await page.evaluate(
-      (imageRect) =>
+      ({ imageRect, assetId }) =>
         window.__narrative_test_api!.addImage({
           id: 'img-nudge',
           x: 200,
@@ -436,8 +438,9 @@ test.describe('Canvas object shortcuts', () => {
           w: 400,
           h: 300,
           imageRect,
+          assetId,
         }),
-      crop,
+      { imageRect: crop, assetId },
     )
     await selectWhenKnown(page, ['img-nudge'])
     await page.waitForTimeout(UNDO_CAPTURE_GAP_MS)

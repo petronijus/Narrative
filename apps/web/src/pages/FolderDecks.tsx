@@ -553,6 +553,7 @@ function DeckCard({
                 >
                   <button
                     role="menuitem"
+                    data-action="deck.rename"
                     onClick={() => {
                       setMenuOpen(false)
                       setEditing(true)
@@ -564,6 +565,7 @@ function DeckCard({
                   </button>
                   <button
                     role="menuitem"
+                    data-action="deck.duplicate"
                     onClick={() => {
                       setMenuOpen(false)
                       onDuplicate()
@@ -575,6 +577,7 @@ function DeckCard({
                   </button>
                   <button
                     role="menuitem"
+                    data-action="deck.moveToFolder"
                     onClick={() => {
                       setMenuOpen(false)
                       onMoveRequest()
@@ -605,6 +608,7 @@ function DeckCard({
                   {confirmDelete ? (
                     <button
                       role="menuitem"
+                      data-action="deck.delete"
                       onClick={() => {
                         setMenuOpen(false)
                         setConfirmDelete(false)
@@ -618,6 +622,7 @@ function DeckCard({
                   ) : (
                     <button
                       role="menuitem"
+                      data-action="deck.delete"
                       onClick={() => setConfirmDelete(true)}
                       className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
                     >

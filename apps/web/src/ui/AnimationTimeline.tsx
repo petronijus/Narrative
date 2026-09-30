@@ -779,6 +779,7 @@ export function AnimationTimeline() {
     {
       keys: ['Delete', 'Backspace'],
       scope: 'timeline',
+      action: 'animation.delete',
       description: 'Delete selected animation step',
       handler: () => {
         if (selectedId !== null && !isViewer) handleRemove(selectedId)

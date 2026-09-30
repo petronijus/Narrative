@@ -531,6 +531,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: 'Escape',
       scope: 'global',
       preventDefault: true,
+      action: 'present.exit',
       description: 'Exit presentation',
       handler: () => {
         setPreloadDismissed(true)
@@ -541,6 +542,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: ['ArrowRight', ' ', 'PageDown'],
       scope: 'global',
       preventDefault: true,
+      action: 'present.next',
       description: 'Next slide',
       handler: () => {
         navigateToSlide('next')
@@ -550,6 +552,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: ['ArrowLeft', 'PageUp'],
       scope: 'global',
       preventDefault: true,
+      action: 'present.previous',
       description: 'Previous slide',
       handler: () => {
         navigateToSlide('prev')
@@ -559,6 +562,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: ['f', 'F11'],
       scope: 'global',
       preventDefault: true,
+      action: 'present.fullscreen',
       description: 'Toggle fullscreen',
       handler: () => {
         void toggleFullscreen()
@@ -568,6 +572,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: ['n', 'N'],
       scope: 'global',
       preventDefault: true,
+      action: 'present.presenterView',
       description: 'Toggle presenter view',
       handler: () => {
         setPresenterVisible((v) => !v)
@@ -577,6 +582,7 @@ export function PresentLayout({ onCanvasReady }: PresentLayoutProps = {}) {
       keys: 'Mod+/',
       scope: 'global',
       preventDefault: true,
+      action: 'view.shortcuts',
       description: 'Keyboard shortcuts cheatsheet',
       handler: () => {
         setCheatsheetOpen((prev) => !prev)

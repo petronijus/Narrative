@@ -1816,6 +1816,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       scope: 'global',
       // preventDefault is called conditionally inside handler — only fires
       // when pen tool is active with an in-progress path.
+      action: 'pen.commit',
       description: 'Commit pen path',
       handler: (e) => {
         const pen = penSessionRef.current
@@ -1838,6 +1839,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       scope: 'global',
       // No preventDefault here — Escape should still propagate to
       // dropdown-close handlers (StageBgPicker, SlideItemMenu, etc.)
+      action: 'selection.clear',
       description: 'Cancel pen path / clear canvas selection',
       handler: (e) => {
         const pen = penSessionRef.current
@@ -1925,6 +1927,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ['+', '='],
       scope: 'global',
       preventDefault: true,
+      action: 'view.zoomIn',
       description: 'Zoom in',
       handler: () => zoomIn(),
     },
@@ -1932,6 +1935,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: '-',
       scope: 'global',
       preventDefault: true,
+      action: 'view.zoomOut',
       description: 'Zoom out',
       handler: () => zoomOut(),
     },
@@ -1939,6 +1943,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+0',
       scope: 'global',
       preventDefault: true,
+      action: 'view.resetZoom',
       description: 'Reset zoom (100%)',
       handler: () => resetZoom(),
     },
@@ -1947,6 +1952,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+z',
       scope: 'global',
       preventDefault: true,
+      action: 'history.undo',
       description: 'Undo',
       handler: () => {
         undo()
@@ -1957,6 +1963,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+Shift+z',
       scope: 'global',
       preventDefault: true,
+      action: 'history.redo',
       description: 'Redo',
       handler: () => {
         redo()
@@ -1966,6 +1973,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     {
       keys: 'Ctrl+y',
       scope: 'global',
+      action: 'history.redo',
       preventDefault: true,
       handler: () => {
         redo()
@@ -1999,6 +2007,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     {
       keys: ['Delete', 'Backspace'],
       scope: 'canvas',
+      action: 'object.delete',
       description: 'Delete selected object(s)',
       handler: () => {
         const ids = unlockedSelection()
@@ -2011,6 +2020,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+d',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.duplicate',
       description: 'Duplicate selected object(s)',
       handler: () => {
         // One command, one undo step; a selected group comes out as its
@@ -2024,6 +2034,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
     {
       keys: 'Mod+c',
       scope: 'canvas',
+      action: 'object.copy',
       description: 'Copy selected object(s)',
       handler: () => {
         if (selectedIds.size === 0) return
@@ -2034,6 +2045,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+v',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.paste',
       description: 'Paste object(s)',
       handler: () => {
         if (!objectClipboard.canPaste()) return
@@ -2046,6 +2058,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+g',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.group',
       description: 'Group selected objects',
       handler: () => {
         if (selectedIds.size >= 2) onSelection('object.group')
@@ -2055,6 +2068,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+Shift+g',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.ungroup',
       description: 'Ungroup selected objects',
       handler: () => {
         onSelection('object.ungroup')
@@ -2064,6 +2078,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ']',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.bringForward',
       description: 'Bring forward',
       handler: () => {
         onSelection('object.layer', { move: 'forward' })
@@ -2073,6 +2088,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: '[',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.sendBackward',
       description: 'Send backward',
       handler: () => {
         onSelection('object.layer', { move: 'backward' })
@@ -2082,6 +2098,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+]',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.bringToFront',
       description: 'Bring to front',
       handler: () => {
         onSelection('object.layer', { move: 'front' })
@@ -2091,6 +2108,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+[',
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.sendToBack',
       description: 'Send to back',
       handler: () => {
         onSelection('object.layer', { move: 'back' })
@@ -2100,6 +2118,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+a',
       scope: 'canvas',
       preventDefault: true,
+      action: 'selection.all',
       description: 'Select all objects',
       handler: () => {
         selectMany(objects.map((o) => o.id))
@@ -2109,6 +2128,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ['ArrowLeft', 'Shift+ArrowLeft'],
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.nudge',
       description: 'Nudge left (hold Shift for ×10)',
       handler: (e) => {
         const step = e.shiftKey ? 10 : 1
@@ -2119,6 +2139,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ['ArrowRight', 'Shift+ArrowRight'],
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.nudge',
       description: 'Nudge right (hold Shift for ×10)',
       handler: (e) => {
         const step = e.shiftKey ? 10 : 1
@@ -2129,6 +2150,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ['ArrowUp', 'Shift+ArrowUp'],
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.nudge',
       description: 'Nudge up (hold Shift for ×10)',
       handler: (e) => {
         const step = e.shiftKey ? 10 : 1
@@ -2139,6 +2161,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: ['ArrowDown', 'Shift+ArrowDown'],
       scope: 'canvas',
       preventDefault: true,
+      action: 'object.nudge',
       description: 'Nudge down (hold Shift for ×10)',
       handler: (e) => {
         const step = e.shiftKey ? 10 : 1
@@ -2153,6 +2176,7 @@ export function EditorLayout({ onCanvasReady, masterMode = false }: EditorLayout
       keys: 'Mod+/',
       scope: 'global',
       preventDefault: true,
+      action: 'view.shortcuts',
       description: 'Keyboard shortcuts cheatsheet',
       handler: () => {
         setCheatsheetOpen((prev) => !prev)

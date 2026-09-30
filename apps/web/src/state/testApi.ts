@@ -4,31 +4,35 @@
  * Dev-only helper that installs `window.__narrative_test_api` for Playwright.
  *
  * Why: the editor UI is too fragile to drive via locators (drag-to-resize,
- * right-click menus, modal confirms...). E2E specs instead mutate the live
- * Y.Doc directly through this API to seed reproducible scenes, then navigate
- * through the real renderer and present-mode orchestrator to observe the
- * result.
+ * right-click menus, modal confirms...). E2E specs instead seed reproducible
+ * scenes in the live deck through this API, then navigate through the real
+ * renderer and present-mode orchestrator to observe the result.
+ *
+ * Writes go through the command registry (ADR 0010), on a browser-host
+ * context like `useCommand()`'s: the same validation, one `LOCAL_ORIGIN`
+ * transaction per command, the same code path an agent takes. Objects keep
+ * the ids a spec gives them (`object.create`'s `id`). Legacy states no
+ * command creates any more — an animation step with the retired `onEnter`
+ * trigger — are seeded by testApiLegacyFixtures.ts.
  *
  * Gated behind `import.meta.env.DEV` so the hook and its function references
  * never reach a production bundle.
  */
 
-import * as Y from 'yjs'
+import {
+  createDefaultRegistry,
+  runCommandSync,
+  runGroup,
+  type CommandContext,
+} from '@narrative/commands'
 import {
   LOCAL_ORIGIN,
-  addObject,
-  addSlide,
-  addAnimation as addAnimationMutation,
-  getSlideAnimationsCtx,
-  updateObject as updateObjectMutation,
-  removeObject as removeObjectMutation,
   getSlideObjectsCtx,
   listSlides,
-  removeSlide,
-  updateSlideTransition,
   type SlideMutationContext,
 } from '@narrative/slide-model'
-import type { AnimationStep, Slide, SlideObject, SlideObjectPatch } from '@narrative/shared'
+import { seedLegacyAnimationStep } from './testApiLegacyFixtures.js'
+import type { AnimationStep, Slide } from '@narrative/shared'
 
 /**
  * Snapshot of the Selection context written by SelectionContext in DEV
@@ -58,11 +62,14 @@ export interface AddRectOpts {
   y: number
   w: number
   h: number
-  fill: number
+  /** 24-bit RGB; the editor's default fill when omitted. */
+  fill?: number
 }
 
 export interface AddImageOpts {
   id: string
+  /** An asset of the deck (a spec uploads one with media.upload first). */
+  assetId: string
   x: number
   y: number
   w: number
@@ -111,7 +118,7 @@ export interface TestApi {
       fontSize?: number
       lineSpacing?: number
       wrap?: 'none'
-      /** Size of the text's own run — makes the body a Y.Text run at that size. */
+      /** Size of the text's own runs (a formatted body at that size). */
       runFontSize?: number
     },
     slideId?: string,
@@ -218,6 +225,55 @@ function liveCtx(): SlideMutationContext {
   return activeCtx
 }
 
+/**
+ * One registry for the page's test hooks (definitions are stateless). Built in
+ * dev builds only: SlideDocProvider imports this module in production too,
+ * where `installTestApi` returns before anything would use it.
+ */
+const registry = import.meta.env.DEV ? createDefaultRegistry() : null
+
+/**
+ * The actor the hooks run commands as. Specs seed decks they own, and the
+ * hooks never depended on the signed-in user's role, so they act as owner.
+ */
+const TEST_ACTOR: CommandContext['actor'] = {
+  userId: 'e2e-test-api',
+  role: 'owner',
+  kind: 'human',
+}
+
+/** A browser-host command context on the live deck, as `useCommand()` builds it. */
+function commandCtx(): CommandContext {
+  return { actor: TEST_ACTOR, host: 'browser', origin: LOCAL_ORIGIN, deck: liveCtx() }
+}
+
+function commandRegistry(): NonNullable<typeof registry> {
+  if (registry === null) throw new Error('test api: dev builds only')
+  return registry
+}
+
+/** A 24-bit RGB integer as the `#rrggbb` a command takes. */
+function hexColour(rgb: number): string {
+  return `#${rgb.toString(16).padStart(6, '0')}`
+}
+
+/** Run one document command on the live deck: one transaction, one undo step. */
+function run<T>(command: string, input: unknown): T {
+  return runCommandSync(commandRegistry(), commandCtx(), command, input) as T
+}
+
+/** Run several commands as one transaction (one undo step, one update on the wire). */
+function group<T>(fn: (run: <R>(command: string, input: unknown) => R) => T): T {
+  return runGroup(commandRegistry(), commandCtx(), fn)
+}
+
+/** The slide a hook targets: `slideId`, else the first slide of the deck. */
+function targetSlide(slideId: string | undefined, hook: string): string {
+  const id = slideId ?? listSlides(liveCtx())[0]?.id
+  if (id === undefined) throw new Error(`${hook}: no slide`)
+  return id
+}
+
 /** Point the API at this deck's live Y.Doc. A destroyed doc is ignored. */
 export function installTestApi(deckCtx: SlideMutationContext): void {
   if (!import.meta.env.DEV) return
@@ -244,57 +300,44 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
         opacity: opts.to?.opacity ?? 1,
       }
 
-      liveCtx().doc.transact(() => {
-        for (const s of listSlides(liveCtx())) {
-          // removeSlide auto-replaces when emptying — ignore, we'll add ours
-          // and end up with 2 seeded slides plus at most one stale empty.
-          removeSlide(liveCtx(), s.id)
-        }
-      }, LOCAL_ORIGIN)
-
-      // After the loop, deck has exactly one empty slide (removeSlide seeds
-      // a fresh one when emptying). We replace both its content and add a
-      // second slide.
-      const existing = listSlides(liveCtx())
-      const fromSlideId = existing[0]?.id ?? addSlide(liveCtx()).id
-      const toSlide = addSlide(liveCtx())
-      const toSlideId = toSlide.id
-
-      const fromCtx = getSlideObjectsCtx(liveCtx(), fromSlideId)
-      const toCtx = getSlideObjectsCtx(liveCtx(), toSlideId)
-      if (fromCtx === null || toCtx === null) {
-        throw new Error('seedMagicMoveFixture: slide object context not found')
-      }
-
-      addObject(fromCtx, {
-        id: objectId,
-        type: 'rectangle',
-        x: from.x,
-        y: from.y,
-        width: from.width,
-        height: from.height,
-        fill,
-        opacity: from.opacity,
-        rotation: 0,
-      })
-      addObject(toCtx, {
-        id: objectId,
-        type: 'rectangle',
-        x: to.x,
-        y: to.y,
-        width: to.width,
-        height: to.height,
-        fill,
-        opacity: to.opacity,
-        rotation: 0,
+      // Every slide goes; deleting the last one leaves a fresh empty slide,
+      // which is where `landOn` points.
+      const { landOn: fromSlideId } = run<{ landOn: string }>('slide.delete', {
+        slides: listSlides(liveCtx()).map((s) => s.id),
       })
 
-      updateSlideTransition(liveCtx(), toSlideId, { kind: 'magic', durationMs })
+      run('object.create', {
+        slide: fromSlideId,
+        id: objectId,
+        object: {
+          type: 'rectangle',
+          x: from.x,
+          y: from.y,
+          width: from.width,
+          height: from.height,
+          fill: hexColour(fill),
+          opacity: from.opacity,
+          rotation: 0,
+        },
+      })
+
+      // The target slide the way an author makes one: a duplicate keeps the
+      // object's id, which is what pairs it for Magic Move.
+      const toSlideId = group((step) => {
+        const { slideId } = step<{ slideId: string }>('slide.duplicate', { slide: fromSlideId })
+        step('object.update', {
+          slide: slideId,
+          object: objectId,
+          patch: { x: to.x, y: to.y, width: to.width, height: to.height, opacity: to.opacity },
+        })
+        step('slide.setTransition', { slide: slideId, kind: 'magic', durationMs })
+        return slideId
+      })
 
       return { fromSlideId, toSlideId }
     },
     addSlide() {
-      return addSlide(liveCtx()).id
+      return run<{ slideId: string }>('slide.add', {}).slideId
     },
     listSlideIds() {
       return listSlides(liveCtx()).map((s) => s.id)
@@ -318,92 +361,95 @@ export function installTestApi(deckCtx: SlideMutationContext): void {
       return out
     },
     updateObject(objectId, patch, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('updateObject: no slide')
-      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('updateObject: slide ctx not found')
-      // Use updateObject (not bulkUpdateObjects) so that Y.Text fields are
-      // mutated in place rather than replaced with a plain string. A plain-
-      // string replacement destroys the CRDT identity and causes Hocuspocus
-      // to echo the old server state back, overriding the client's change.
-      updateObjectMutation(ctx, objectId, patch as SlideObjectPatch<SlideObject>)
+      // object.update patches a text body in place (the Y.Text keeps its
+      // CRDT identity), so a spec's text edit syncs like a typed one.
+      run('object.update', {
+        slide: targetSlide(slideId, 'updateObject'),
+        object: objectId,
+        patch,
+      })
     },
     removeObject(objectId, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('removeObject: no slide')
-      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('removeObject: slide ctx not found')
-      removeObjectMutation(ctx, objectId)
+      run('object.delete', { slide: targetSlide(slideId, 'removeObject'), objects: [objectId] })
     },
     addRect(opts, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('addRect: no slide')
-      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('addRect: slide ctx not found')
-      addObject(ctx, {
+      run('object.create', {
+        slide: targetSlide(slideId, 'addRect'),
         id: opts.id,
-        type: 'rectangle',
-        x: opts.x,
-        y: opts.y,
-        width: opts.w,
-        height: opts.h,
-        fill: opts.fill,
-        opacity: 1,
-        rotation: 0,
+        object: {
+          type: 'rectangle',
+          x: opts.x,
+          y: opts.y,
+          width: opts.w,
+          height: opts.h,
+          ...(opts.fill !== undefined ? { fill: hexColour(opts.fill) } : {}),
+          opacity: 1,
+          rotation: 0,
+        },
       })
     },
     addAnimation(step, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('addAnimation: no slide')
-      const ctx = getSlideAnimationsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('addAnimation: slide ctx not found')
-      return addAnimationMutation(ctx, step).id
+      const slide = targetSlide(slideId, 'addAnimation')
+      // A step with the retired `onEnter` trigger is what older decks and
+      // PowerPoint imports hold; no command writes one any more, so it is
+      // seeded as legacy data (testApiLegacyFixtures.ts).
+      if (step.trigger === 'onEnter') return seedLegacyAnimationStep(liveCtx(), slide, step)
+      return run<{ animationId: string }>('animation.add', {
+        slide,
+        object: step.objectId,
+        preset: step.preset,
+        trigger: step.trigger,
+        duration: step.duration,
+        delay: step.delay,
+        easing: step.easing,
+        ...(step.params !== undefined ? { params: step.params } : {}),
+      }).animationId
     },
     addImage(opts, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('addImage: no slide')
-      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('addImage: slide ctx not found')
-      addObject(ctx, {
+      run('object.create', {
+        slide: targetSlide(slideId, 'addImage'),
         id: opts.id,
-        type: 'image',
-        assetId: '',
-        x: opts.x,
-        y: opts.y,
-        width: opts.w,
-        height: opts.h,
-        opacity: 1,
-        rotation: 0,
-        ...(opts.imageRect !== undefined ? { imageRect: { ...opts.imageRect } } : {}),
+        object: {
+          type: 'image',
+          assetId: opts.assetId,
+          x: opts.x,
+          y: opts.y,
+          width: opts.w,
+          height: opts.h,
+          opacity: 1,
+          rotation: 0,
+          ...(opts.imageRect !== undefined ? { imageRect: { ...opts.imageRect } } : {}),
+        },
       })
     },
     addText(opts, slideId) {
-      const targetSlideId = slideId ?? listSlides(liveCtx())[0]?.id
-      if (targetSlideId === undefined) throw new Error('addText: no slide')
-      const ctx = getSlideObjectsCtx(liveCtx(), targetSlideId)
-      if (ctx === null) throw new Error('addText: slide ctx not found')
-      let text: string | Y.Text = opts.text
-      if (opts.runFontSize !== undefined) {
-        const yt = new Y.Text()
-        yt.insert(0, opts.text, { fontSize: opts.runFontSize })
-        text = yt
-      }
-      addObject(ctx, {
+      // One paragraph per line; a run size makes each line one sized run.
+      const paragraphs = opts.text
+        .split('\n')
+        .map((line) =>
+          opts.runFontSize === undefined
+            ? { text: line }
+            : { runs: [{ text: line, fontSize: opts.runFontSize }] },
+        )
+      run('object.create', {
+        slide: targetSlide(slideId, 'addText'),
         id: opts.id,
-        type: 'text',
-        x: opts.x,
-        y: opts.y,
-        width: opts.w,
-        height: opts.h,
-        text,
-        ...(opts.lineSpacing !== undefined ? { lineSpacing: opts.lineSpacing } : {}),
-        ...(opts.wrap !== undefined ? { wrap: opts.wrap } : {}),
-        fontSize: opts.fontSize ?? 32,
-        fontWeight: 400,
-        color: 0x000000,
-        align: 'left',
-        rotation: 0,
-        opacity: 1,
+        object: {
+          type: 'text',
+          x: opts.x,
+          y: opts.y,
+          width: opts.w,
+          height: opts.h,
+          text: { paragraphs },
+          ...(opts.lineSpacing !== undefined ? { lineSpacing: opts.lineSpacing } : {}),
+          ...(opts.wrap !== undefined ? { wrap: opts.wrap } : {}),
+          fontSize: opts.fontSize ?? 32,
+          fontWeight: 400,
+          color: '#000000',
+          align: 'left',
+          rotation: 0,
+          opacity: 1,
+        },
       })
     },
     objectIds(slideId) {

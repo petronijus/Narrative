@@ -30,6 +30,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test'
+import { uploadTestPicture } from './fixtures/media'
 
 // ---------------------------------------------------------------------------
 // Setup helpers
@@ -182,8 +183,9 @@ test.describe('Inspector — position edits carry a crop', () => {
     test.setTimeout(30_000)
     const deckId = await createDeck(page)
     await openDeckReady(page, deckId)
+    const assetId = await uploadTestPicture(page.request, deckId)
     await page.evaluate(
-      (imageRect) =>
+      ({ imageRect, assetId }) =>
         window.__narrative_test_api!.addImage({
           id: 'img-x',
           x: 200,
@@ -191,8 +193,9 @@ test.describe('Inspector — position edits carry a crop', () => {
           w: 400,
           h: 300,
           imageRect,
+          assetId,
         }),
-      crop,
+      { imageRect: crop, assetId },
     )
     await selectWhenKnown(page, ['img-x'])
 
@@ -209,8 +212,9 @@ test.describe('Inspector — position edits carry a crop', () => {
     test.setTimeout(30_000)
     const deckId = await createDeck(page)
     await openDeckReady(page, deckId)
+    const assetId = await uploadTestPicture(page.request, deckId)
     await page.evaluate(
-      (imageRect) =>
+      ({ imageRect, assetId }) =>
         window.__narrative_test_api!.addImage({
           id: 'img-align',
           x: 200,
@@ -218,8 +222,9 @@ test.describe('Inspector — position edits carry a crop', () => {
           w: 400,
           h: 300,
           imageRect,
+          assetId,
         }),
-      crop,
+      { imageRect: crop, assetId },
     )
     await selectWhenKnown(page, ['img-align'])
 

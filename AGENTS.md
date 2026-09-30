@@ -21,8 +21,11 @@ toolchain, troubleshooting). The agentic phase A2 is planned in
   Narrative only through that registry (MCP, ADR 0011). The parity guards
   fail the build otherwise; a capability deliberately not for agents goes in
   `packages/commands/src/parity/allowlist.ts` with a reason. The editor
-  writes documents only through `useCommand()` (the one-door lint rule;
-  `apps/web/eslint.one-door.js` lists what is still pending).
+  writes documents only through `useCommand()` (the one-door lint rule,
+  `apps/web/eslint.one-door.js`; nothing pending since A2.13, 2026-09-30).
+  Every shortcut, menu item and toolbar button names an action in
+  `apps/web/src/actions/catalog.ts`: the commands that carry its effect,
+  or why it is editor-only (`actions/catalog.test.ts`).
 - **Object locks are editor-only.** `locked` stops canvas
   drag/resize/nudge/delete for a person; commands and agents ignore it.
 - **Render = SceneGraph diff only.** No direct Pixi mutations outside

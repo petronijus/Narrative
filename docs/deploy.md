@@ -133,7 +133,10 @@ Revoke the token afterwards if it was only for the test.
 ## Releasing A2.12b (component-owned media) — 0.10.15, not deployed yet
 
 Written 2026-09-30, while the work was uncommitted; production ran
-`v0.10.14+61260f2` (`/version.json`). The release brings three schema
+`v0.10.14+61260f2` (`/version.json`, re-checked the same day after A2.13).
+0.10.15 also carries A2.13 (the close of A2: the action catalog guard, the
+e2e test hook through commands, `object.create`'s optional `id`), which
+adds no migration, env var or deploy step. The release brings three schema
 migrations and one data migration
 ([ADR 0012](./adr/0012-component-owned-media.md)):
 

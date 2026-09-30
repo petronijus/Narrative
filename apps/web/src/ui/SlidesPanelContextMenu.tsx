@@ -93,19 +93,30 @@ export function SlidesPanelContextMenu({
       <ContextMenuContent className="w-48" data-mode={mode}>
         {mode === 'row' && targetId !== null && (
           <>
-            <ContextMenuItem onSelect={() => onRename(targetId)}>Rename</ContextMenuItem>
-            <ContextMenuItem onSelect={() => onDuplicate(targetId)}>Duplicate</ContextMenuItem>
+            <ContextMenuItem action="slide.rename" onSelect={() => onRename(targetId)}>
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem action="slide.duplicate" onSelect={() => onDuplicate(targetId)}>
+              Duplicate
+            </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => onCopy(targetId)}>Copy slide</ContextMenuItem>
-            <ContextMenuItem disabled={!canPaste} onSelect={() => onPaste(targetId)}>
+            <ContextMenuItem action="slide.copy" onSelect={() => onCopy(targetId)}>
+              Copy slide
+            </ContextMenuItem>
+            <ContextMenuItem
+              action="slide.paste"
+              disabled={!canPaste}
+              onSelect={() => onPaste(targetId)}
+            >
               Paste slide
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => onToggleSkip(targetId)}>
+            <ContextMenuItem action="slide.toggleSkip" onSelect={() => onToggleSkip(targetId)}>
               {targetSkipped ? 'Unskip in present' : 'Skip in present'}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem
+              action="slide.delete"
               onSelect={() => onDelete(targetId)}
               className="text-destructive focus:text-destructive"
             >
@@ -115,7 +126,7 @@ export function SlidesPanelContextMenu({
         )}
 
         {mode === 'empty' && (
-          <ContextMenuItem disabled={!canPaste} onSelect={() => onPaste(null)}>
+          <ContextMenuItem action="slide.paste" disabled={!canPaste} onSelect={() => onPaste(null)}>
             Paste slide
           </ContextMenuItem>
         )}

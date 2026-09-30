@@ -270,6 +270,8 @@ export interface InsertTableOptions {
   cols?: number | undefined
   defaults?: Partial<TableDefaults> | undefined
   name?: string | undefined
+  /** The table's id (default: a fresh one); the caller checks it is free on the slide. */
+  id?: string | undefined
 }
 
 /** Insert a table with the editor's grid-picker sizing; returns its id. */
@@ -285,6 +287,7 @@ export function insertTable(objects: ObjectsMutationContext, o: InsertTableOptio
     cols,
     ...(o.defaults !== undefined ? { defaults: o.defaults } : {}),
     ...(o.name !== undefined ? { name: o.name } : {}),
+    ...(o.id !== undefined ? { id: o.id } : {}),
   })
 }
 

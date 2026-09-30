@@ -1,7 +1,13 @@
 # ADR 0010 — The command layer is the only writer of document state
 
-**Status**: Accepted (2026-09-26). Skeleton lands in phase A0; the editor is
-migrated in A2.
+**Status**: Accepted (2026-09-26). Skeleton landed in phase A0 (2026-09-26);
+**implemented in the editor with A2, closed 2026-09-30 (A2.13)**: the editor
+writes documents only through commands (`ONE_DOOR_PENDING` in
+`apps/web/eslint.one-door.js` is empty), A2 has no known-missing entry
+(`FINISHED_PHASES = ['A0', 'A1', 'A2']`), and every shortcut, menu item
+and toolbar button names an action of the action catalog
+(`apps/web/src/actions/catalog.ts`). A2.12b and A2.13 were uncommitted on
+2026-09-30, to ship as 0.10.15. (Was: "the editor is migrated in A2".)
 **Scope**: `packages/commands` (new) and every code path that writes a deck,
 folder or component document: `apps/web/src/{ui,components,editor,pages}`,
 the server routes that mutate documents, and the agent hosts of ADR 0011.
@@ -105,19 +111,39 @@ holds, and then keep up with it by hand.
   slide-model mutations, `richText` writers, `tableMutations`,
   `animationMutations`, `deckGuides` writers, or calling `Y.Doc.transact`. It
   is switched on per directory as A2 migrates that directory.
+  _As built:_ the rule covers all of `apps/web/src` from A2.1 (2026-09-28).
+  Its writer list is generated from the `writer` entries of
+  `packages/commands/src/parity/slideModelExports.ts`. Files not yet
+  migrated were exempted one by one in `ONE_DOOR_PENDING`, and
+  `oneDoor.test.ts` failed when a listed file no longer needed it. The
+  list has been empty since A2.13 (2026-09-30). The dev-only e2e hook
+  (`state/testApi.ts`) writes through the registry too. The only non-test
+  file exempted (`ONE_DOOR_IGNORES`) is `state/testApiLegacyFixtures.ts`,
+  which seeds legacy states that no command creates any more (the retired
+  `onEnter` animation trigger).
 - **Parity is a test, not a convention.**
   `packages/commands/src/parity/parity.test.ts` requires that every exported
   slide-model writer is used by a command handler, every Fastify route is
   backed by a command, every shortcut in `apps/web/src/state/useShortcuts.ts`
   and every menu/toolbar action dispatches an existing command id, and every
   command has a description of at least 40 characters, an example and a
-  contract test. Two lists sit beside it, with different meanings:
+  contract test. _As built:_ the route part is the server's route guard
+  (`apps/server/src/routes/agentParity.test.ts`). The shortcut / menu /
+  toolbar part is the action catalog (A2.13,
+  `apps/web/src/actions/catalog.ts` + `catalog.test.ts`). There, each
+  action names the commands that carry its effect, or says why it is
+  editor-only (viewport, selection, local clipboard, the editor's own undo,
+  navigation) or `planned`. The binding sites must name a catalog action:
+  the types require it on `ShortcutBinding` and the menu item wrappers,
+  and the test requires it on every toolbar button. Two lists sit beside it, with different meanings:
   - `packages/commands/src/parity/allowlist.ts`: **permanent, deliberate**
     exclusions (view state such as zoom and pan, present-mode navigation),
     each with a reason. Adding an entry is a reviewed change.
   - `packages/commands/src/parity/knownMissing.ts`: **temporary debt** from
     A0: capabilities the UI has that no command covers yet. It only shrinks;
-    A2 is done when it is empty. New work never goes onto it.
+    A2 is done when it is empty. New work never goes onto it. (A2's part
+    has been empty since A2.12b; 7 entries remain for A3 and A4 on
+    2026-09-30.)
 - **Schema coverage is checked at compile time.** A `z.infer` equality check
   fails the typecheck when a property is added to a type in
   `packages/shared/src/slide.ts` but not to its schema.

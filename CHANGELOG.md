@@ -4,7 +4,7 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
 
 ---
 
-## Unreleased — Components through commands (A2.12b; to be released as 0.10.15)
+## Unreleased — Components through commands; A2 closed (A2.12b + A2.13; to be released as 0.10.15)
 
 ### Added
 
@@ -21,6 +21,10 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   `media.uploadSession` accept a component master (`componentId`). An
   agent with a shell can send a local picture or video to a master with
   `curl`.
+- `object.create` takes an optional `id` for the new object (letters,
+  digits, `_` and `-`, at most 64 characters). It is refused with
+  `conflict` if the slide already has an object with that id. The same id
+  on two slides pairs the objects for a magic transition.
 
 ### Changed
 
@@ -96,17 +100,47 @@ All notable changes to Narrative follow [Keep a Changelog](https://keepachangelo
   (`whenSaved()` on the slide-doc context). The web clipboard sends every
   cross-document paste to the server. The browser writer
   `writeComponentMasterTree.ts` is deleted. `Toolbar` and `UploadDropZone`
-  leave `ONE_DOOR_PENDING`, which now holds only `testApi.ts` (A2.13).
+  leave `ONE_DOOR_PENDING`, leaving only `testApi.ts` for A2.13.
   `component.promote` leaves `knownMissing`. The create route's claim moves
   to the A4 `component.create` entry, so 7 entries remain (A3 5, A4 2).
 - 129 commands. The tools/list budget goes from 187,000 to 189,000 bytes
-  (188,407 measured, url mode).
+  (188,407 measured in url mode after A2.12b, 188,697 after A2.13's
+  `object.create` `id`).
 - Tests: new e2e `component-promote-stamp.spec.ts` and
   `component-master-upload.spec.ts`. `component-picker-search-settings` and
   `m16-component-flows` seed their own folder and components, which fixes
   the known "hardcoded Drafts folder id" failure. New eval scenarios
   `component-promote-headline` and `component-master-picture` run live only
   (44 scenarios). 27 web skips (was 28).
+- **A2.13 closes phase A2.** The editor writes documents only through
+  commands: `ONE_DOOR_PENDING` (`apps/web/eslint.one-door.js`) is empty.
+  The dev-only e2e hook `state/testApi.ts` runs its writes through the
+  command registry (`runCommandSync` / `runGroup`, `LOCAL_ORIGIN`). Legacy
+  `onEnter` animation steps, which no command creates, are seeded by
+  `state/testApiLegacyFixtures.ts`, the only non-test file in
+  `ONE_DOOR_IGNORES`. `FINISHED_PHASES` is `['A0', 'A1', 'A2']`, and
+  known-missing keeps 7 entries (A3 5, A4 2).
+- **Action catalog** (`apps/web/src/actions/catalog.ts`, plan §9.1 guard
+  2). It lists every action reachable through a keyboard shortcut, a
+  context or dropdown menu item (hand-rolled ones included), or a toolbar button, 82 in all: 53 name
+  the commands that carry their effect, 28 are editor-only with a reason
+  (viewport, selection, local clipboard, the editor's own undo,
+  navigation), and 1 is planned (object Hide).
+  - The binding sites must name an action: `ShortcutBinding.action`, and
+    an `action` prop (rendered as `data-action`) on the
+    `components/ui/{context-menu,dropdown-menu}` items.
+  - `actions/catalog.test.ts` checks that the commands exist, that the
+    reasons are real and that no action is unused. It also checks that
+    every toolbar button carries a `data-action` (TypeScript AST scan).
+  - The guard found renaming the deck by clicking its title (now
+    `deck.rename`).
+- Slide-model `createObjectOfType` and `buildTable` / `addTable` take an
+  optional id. `insertTable` in commands passes it on.
+- E2E: `htmltext-texture-isolation` creates its own deck. Before, it used
+  a deck id that existed in one database. The `agent-activity` master test
+  builds on the master slide the server writes. Image tests upload a real
+  picture through `media.upload` (`e2e/fixtures/media.ts`), since the
+  test hook's `addImage` now needs an `assetId`.
 
 ## 0.10.14 — Folder tokens on the server (2026-09-30)
 

@@ -212,25 +212,50 @@ export function SlideItemMenu({
           ].join(' ')}
         >
           {onRename !== undefined && (
-            <button type="button" role="menuitem" onClick={handleRename} className={ITEM_CLASS}>
+            <button
+              type="button"
+              role="menuitem"
+              data-action="slide.rename"
+              onClick={handleRename}
+              className={ITEM_CLASS}
+            >
               Rename
             </button>
           )}
-          <button type="button" role="menuitem" onClick={handleDuplicate} className={ITEM_CLASS}>
+          <button
+            type="button"
+            role="menuitem"
+            data-action="slide.duplicate"
+            onClick={handleDuplicate}
+            className={ITEM_CLASS}
+          >
             Duplicate
           </button>
           {onToggleSkip !== undefined && (
-            <button type="button" role="menuitem" onClick={handleToggleSkip} className={ITEM_CLASS}>
+            <button
+              type="button"
+              role="menuitem"
+              data-action="slide.toggleSkip"
+              onClick={handleToggleSkip}
+              className={ITEM_CLASS}
+            >
               {skipped ? 'Unskip in present' : 'Skip in present'}
             </button>
           )}
-          <button type="button" role="menuitem" onClick={handleTransition} className={ITEM_CLASS}>
+          <button
+            type="button"
+            role="menuitem"
+            data-action="slide.transition"
+            onClick={handleTransition}
+            className={ITEM_CLASS}
+          >
             Transition settings
           </button>
           <div className="my-1 border-t border-gray-700" role="separator" />
           <button
             type="button"
             role="menuitem"
+            data-action="slide.delete"
             onClick={handleDelete}
             className={[
               ITEM_CLASS,

@@ -41,6 +41,8 @@ export const DEFAULT_TABLE_COLS = 3
 export const DEFAULT_TABLE_ROWS = 3
 
 export interface AddTableOpts {
+  /** The table's id (default: a fresh nanoid); the caller makes sure the slide has no such object. */
+  id?: string
   /** Slide-local position of the table's top-left. */
   x: number
   y: number
@@ -98,7 +100,7 @@ export function buildTable(opts: AddTableOpts): TableObject {
   }
 
   const table: TableObject = {
-    id: nanoid(),
+    id: opts.id ?? nanoid(),
     type: 'table',
     x: opts.x,
     y: opts.y,

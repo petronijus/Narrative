@@ -1110,6 +1110,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'ArrowDown',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.next',
       description: 'Next slide',
       handler: () => {
         const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
@@ -1121,6 +1122,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'ArrowUp',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.previous',
       description: 'Previous slide',
       handler: () => {
         const currentIdx = slides.findIndex((s) => s.id === activeSlideId)
@@ -1132,6 +1134,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'Enter',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.open',
       description: 'Open active slide',
       handler: () => {
         if (activeSlideId !== null) handleActivate(activeSlideId)
@@ -1141,6 +1144,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: ['Delete', 'Backspace'],
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.delete',
       description: 'Delete active slide',
       handler: () => {
         if (isViewer) return
@@ -1155,6 +1159,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'Mod+d',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.duplicate',
       description: 'Duplicate slide(s)',
       handler: () => {
         if (isViewer) return
@@ -1165,6 +1170,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'Mod+c',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.copy',
       description: 'Copy slide(s)',
       handler: () => {
         if (activeSlideId !== null) handleCopy(activeSlideId)
@@ -1174,6 +1180,7 @@ export function SlidesPanel({ onCollapse }: SlidesPanelProps = {}): ReactElement
       keys: 'Mod+v',
       scope: 'slidePanel',
       preventDefault: true,
+      action: 'slide.paste',
       description: 'Paste slide(s) after active',
       // Yield to canvas Mod+V (object paste) when the slide clipboard is
       // empty — e.g. user copied an object on canvas, clicked another

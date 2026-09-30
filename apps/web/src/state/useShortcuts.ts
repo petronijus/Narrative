@@ -42,6 +42,7 @@
  */
 
 import { useEffect, useRef, type MutableRefObject } from 'react'
+import type { ActionId } from '../actions/catalog.js'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +57,12 @@ export interface ShortcutBinding {
   handler: (e: KeyboardEvent) => void
   /** Human-readable description for the cheatsheet. */
   description?: string
+  /**
+   * What the shortcut does, from the action catalog (actions/catalog.ts):
+   * the commands an agent reaches the same outcome with, or why it is an
+   * editor-only action.
+   */
+  action: ActionId
   /** Call e.preventDefault() when this binding fires. Default: false. */
   preventDefault?: boolean
   /**

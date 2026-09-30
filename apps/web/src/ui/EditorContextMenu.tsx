@@ -55,17 +55,23 @@ import { useActiveSlide } from '../state/ActiveSlideContext.js'
 import { PromoteComponentDialog } from './PromoteComponentDialog.js'
 import { useApi } from '../api/client.js'
 import { formatKeyCombo } from '../state/useShortcuts.js'
+import type { ActionId } from '../actions/catalog.js'
 import type { SlideObject, SlideObjectType, TableObject } from '@narrative/shared'
 
 /**
  * Layer-order items, in menu order. `keys` is the canvas shortcut bound
  * to the same move in EditorLayout's useShortcuts.
  */
-const LAYER_MENU_ITEMS: ReadonlyArray<{ move: LayerMove; label: string; keys: string }> = [
-  { move: 'front', label: 'Bring to front', keys: 'Mod+]' },
-  { move: 'forward', label: 'Bring forward', keys: ']' },
-  { move: 'backward', label: 'Send backward', keys: '[' },
-  { move: 'back', label: 'Send to back', keys: 'Mod+[' },
+const LAYER_MENU_ITEMS: ReadonlyArray<{
+  move: LayerMove
+  label: string
+  keys: string
+  action: ActionId
+}> = [
+  { move: 'front', label: 'Bring to front', keys: 'Mod+]', action: 'object.bringToFront' },
+  { move: 'forward', label: 'Bring forward', keys: ']', action: 'object.bringForward' },
+  { move: 'backward', label: 'Send backward', keys: '[', action: 'object.sendBackward' },
+  { move: 'back', label: 'Send to back', keys: 'Mod+[', action: 'object.sendToBack' },
 ]
 
 /**
@@ -571,17 +577,28 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
       >
         {mode === 'object' && hasObjectTarget && (
           <>
-            <ContextMenuItem disabled={mutationCtx === null} onSelect={handleCut}>
+            <ContextMenuItem
+              action="object.cut"
+              disabled={mutationCtx === null}
+              onSelect={handleCut}
+            >
               Cut
             </ContextMenuItem>
-            <ContextMenuItem onSelect={handleCopy}>Copy</ContextMenuItem>
+            <ContextMenuItem action="object.copy" onSelect={handleCopy}>
+              Copy
+            </ContextMenuItem>
             <ContextMenuItem
+              action="object.paste"
               disabled={!canPaste || activeSlideId === null}
               onSelect={handlePasteAtCursor}
             >
               Paste
             </ContextMenuItem>
-            <ContextMenuItem disabled={mutationCtx === null} onSelect={handleDuplicate}>
+            <ContextMenuItem
+              action="object.duplicate"
+              disabled={mutationCtx === null}
+              onSelect={handleDuplicate}
+            >
               Duplicate
             </ContextMenuItem>
 
@@ -591,9 +608,10 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                 EditorLayout (and the Inspector's layer-order buttons):
                 Mod+] front, ] forward, [ backward, Mod+[ back. The label
                 sits in its own span so text lookups match it exactly. */}
-            {LAYER_MENU_ITEMS.map(({ move, label, keys }) => (
+            {LAYER_MENU_ITEMS.map(({ move, label, keys, action }) => (
               <ContextMenuItem
                 key={move}
+                action={action}
                 disabled={mutationCtx === null}
                 onSelect={() => handleLayerMove(move)}
                 data-layer-move={move}
@@ -615,30 +633,35 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               targetIdsRef.current[0] === tableCellHitRef.current.tableId && (
                 <>
                   <ContextMenuItem
+                    action="table.insertRowAbove"
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertRowAbove}
                   >
                     Insert row above
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.insertRowBelow"
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertRowBelow}
                   >
                     Insert row below
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.insertColumnBefore"
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertColBefore}
                   >
                     Insert column left
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.insertColumnAfter"
                     disabled={mutationCtx === null}
                     onSelect={handleTableInsertColAfter}
                   >
                     Insert column right
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.deleteRow"
                     disabled={
                       mutationCtx === null ||
                       ((): boolean => {
@@ -651,6 +674,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                     Delete row
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.deleteColumn"
                     disabled={
                       mutationCtx === null ||
                       ((): boolean => {
@@ -664,6 +688,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                   </ContextMenuItem>
                   {/* M29 Phase 3 — Merge / Split */}
                   <ContextMenuItem
+                    action="table.merge"
                     disabled={
                       mutationCtx === null ||
                       tableRange === null ||
@@ -674,6 +699,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
                     Merge cells
                   </ContextMenuItem>
                   <ContextMenuItem
+                    action="table.split"
                     disabled={mutationCtx === null || mergeInfoAtClickedCell() === null}
                     onSelect={handleTableSplit}
                   >
@@ -684,29 +710,39 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               )}
 
             <ContextMenuItem
+              action="object.toggleLock"
               disabled={target === undefined || mutationCtx === null}
               onSelect={handleToggleLock}
             >
               {isLocked ? 'Unlock' : 'Lock'}
             </ContextMenuItem>
-            <ContextMenuItem disabled title="Hide not yet implemented (P12)">
+            <ContextMenuItem action="object.hide" disabled title="Hide not yet implemented (P12)">
               Hide
             </ContextMenuItem>
 
             <ContextMenuSeparator />
 
-            <ContextMenuItem disabled={target === undefined} onSelect={handleHyperlink}>
+            <ContextMenuItem
+              action="object.hyperlink"
+              disabled={target === undefined}
+              onSelect={handleHyperlink}
+            >
               Hyperlink…
             </ContextMenuItem>
 
             {resolveMaskPair() !== null && (
-              <ContextMenuItem disabled={mutationCtx === null} onSelect={handleMaskWithShape}>
+              <ContextMenuItem
+                action="object.mask"
+                disabled={mutationCtx === null}
+                onSelect={handleMaskWithShape}
+              >
                 Mask with shape
               </ContextMenuItem>
             )}
 
             {canUngroup && (
               <ContextMenuItem
+                action="object.ungroup"
                 onSelect={handleUngroup}
                 data-testid="ungroup"
                 title="Ungroup (Shift+Cmd+G)"
@@ -717,6 +753,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
             {/* M16 P5 — promote selection to a shared component */}
             <ContextMenuItem
+              action="component.promote"
               disabled={!canPromote}
               onSelect={handlePromoteToComponent}
               data-testid="promote-to-component"
@@ -733,6 +770,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
             <ContextMenuSeparator />
 
             <ContextMenuItem
+              action="object.delete"
               disabled={mutationCtx === null}
               onSelect={handleDelete}
               className="text-destructive focus:text-destructive"
@@ -745,6 +783,7 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
         {mode === 'canvas' && (
           <>
             <ContextMenuItem
+              action="object.paste"
               disabled={!canPaste || activeSlideId === null}
               onSelect={handlePasteAtCursor}
             >
@@ -756,7 +795,11 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
               </ContextMenuSubTrigger>
               <ContextMenuSubContent>
                 {SHAPE_ITEMS.map(({ type, label }) => (
-                  <ContextMenuItem key={type} onSelect={() => handleInsertShape(type)}>
+                  <ContextMenuItem
+                    key={type}
+                    action="object.insertShape"
+                    onSelect={() => handleInsertShape(type)}
+                  >
                     {label}
                   </ContextMenuItem>
                 ))}
@@ -765,8 +808,12 @@ export function EditorContextMenu({ canvasContainerRef, children }: EditorContex
 
             <ContextMenuSeparator />
 
-            <ContextMenuItem onSelect={handleSelectAll}>Select all</ContextMenuItem>
-            <ContextMenuItem onSelect={handleResetZoom}>Reset zoom</ContextMenuItem>
+            <ContextMenuItem action="selection.all" onSelect={handleSelectAll}>
+              Select all
+            </ContextMenuItem>
+            <ContextMenuItem action="view.resetZoom" onSelect={handleResetZoom}>
+              Reset zoom
+            </ContextMenuItem>
           </>
         )}
       </ContextMenuContent>

@@ -85,9 +85,9 @@ test('idle CPU/GPU profile — 10s window', async ({ page }) => {
         id: 'idle-rect',
         x: 100,
         y: 100,
-        width: 400,
-        height: 300,
-        fill: '#3366ff',
+        w: 400,
+        h: 300,
+        fill: 0x3366ff,
       })
     })
   }

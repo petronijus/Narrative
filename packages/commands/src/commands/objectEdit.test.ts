@@ -35,6 +35,27 @@ describe('object.create', () => {
     })
   })
 
+  it('takes a caller-chosen id, for every kind of object, and refuses one the slide has', () => {
+    const h = harness()
+    for (const [id, object] of [
+      ['box-1', { type: 'rectangle' }],
+      ['title_1', { type: 'text', text: { paragraphs: [{ runs: [{ text: 'Hi', bold: true }] }] } }],
+      ['plain', { type: 'text', text: 'Hi' }],
+      ['grid', { type: 'table', rows: 2, cols: 2 }],
+    ] as const) {
+      const out = h.run<{ objectId: string }>('object.create', { slide: 's2', id, object })
+      expect(out.objectId).toBe(id)
+      expect(h.plain('s2', id)).toMatchObject({ id, type: object.type })
+    }
+    const before = h.plain('s2', 'box-1')
+    const clash = h.fail('object.create', { slide: 's2', id: 'box-1', object: { type: 'ellipse' } })
+    expect(clash.code).toBe('conflict')
+    expect(h.plain('s2', 'box-1')).toEqual(before)
+    expect(
+      h.fail('object.create', { slide: 's2', id: 'a/b', object: { type: 'ellipse' } }).code,
+    ).toBe('invalid_input')
+  })
+
   it('rejects unknown keys, wrong types and bad values without writing', () => {
     const h = harness()
     expect(

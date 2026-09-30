@@ -394,6 +394,7 @@ export function GuideOverlay({ guides, slideWidth, slideHeight }: GuideOverlayPr
               onPointerUp={(e) => e.stopPropagation()}
             >
               <ContextMenuItem
+                action="guide.remove"
                 onSelect={() => command.tryRun('guide.remove', { guides: [g.id] })}
                 className="text-red-500 focus:text-red-500"
               >

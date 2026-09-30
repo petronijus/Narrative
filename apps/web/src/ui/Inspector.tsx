@@ -4207,6 +4207,7 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
                       {linkedTextStyle !== null && (
                         <button
                           role="menuitem"
+                          data-action="textStyle.reset"
                           type="button"
                           onClick={() => {
                             // Reset = re-apply the linked preset's
@@ -4228,6 +4229,7 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
                       {linkedTextStyle !== null && (
                         <button
                           role="menuitem"
+                          data-action="textStyle.update"
                           type="button"
                           disabled={tokenWriter === null}
                           onClick={() => {
@@ -4242,6 +4244,7 @@ export function TypographySection({ obj, patch, features: featuresIn }: Typograp
                       )}
                       <button
                         role="menuitem"
+                        data-action="textStyle.create"
                         type="button"
                         disabled={tokenWriter === null}
                         onClick={() => {

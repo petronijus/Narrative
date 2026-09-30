@@ -244,13 +244,14 @@ export function createObjectOfType(
   ctx: ObjectsMutationContext,
   type: SlideObjectType,
   overrides?: PerMemberPartial<SlideObject>,
+  /** The new object's id (default: a fresh nanoid); the caller makes sure the slide has no such object. */
+  id: string = nanoid(),
 ): SlideObject {
   const def = getObjectTypeDef(type)
   if (def === undefined) {
     throw new Error(`createObjectOfType: type '${type}' is not registered`)
   }
 
-  const id = nanoid()
   // defaultProps() vrací Omit<T, 'id' | 'type'> — cast je bezpečný
   const defaults = def.defaultProps() as Omit<SlideObject, 'id' | 'type'>
   const obj: SlideObject = {

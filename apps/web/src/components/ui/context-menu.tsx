@@ -5,6 +5,7 @@ import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
 import { Check, ChevronRight, Circle } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import type { ActionId } from '@/actions/catalog'
 
 const ContextMenu = ContextMenuPrimitive.Root
 
@@ -75,10 +76,13 @@ const ContextMenuItem = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.Item> & {
     inset?: boolean
+    /** What the item does, from the action catalog (actions/catalog.ts). */
+    action: ActionId
   }
->(({ className, inset, ...props }, ref) => (
+>(({ className, inset, action, ...props }, ref) => (
   <ContextMenuPrimitive.Item
     ref={ref}
+    data-action={action}
     className={cn(
       'relative flex cursor-default select-none items-center gap-2 rounded-xs px-2 py-1.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0',
       inset && 'pl-8',
@@ -91,10 +95,14 @@ ContextMenuItem.displayName = ContextMenuPrimitive.Item.displayName
 
 const ContextMenuCheckboxItem = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.CheckboxItem>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.CheckboxItem>
->(({ className, children, checked = false, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.CheckboxItem> & {
+    /** What the item does, from the action catalog (actions/catalog.ts). */
+    action: ActionId
+  }
+>(({ className, children, action, checked = false, ...props }, ref) => (
   <ContextMenuPrimitive.CheckboxItem
     ref={ref}
+    data-action={action}
     className={cn(
       'relative flex cursor-default select-none items-center rounded-xs py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className,
@@ -114,10 +122,14 @@ ContextMenuCheckboxItem.displayName = ContextMenuPrimitive.CheckboxItem.displayN
 
 const ContextMenuRadioItem = React.forwardRef<
   React.ElementRef<typeof ContextMenuPrimitive.RadioItem>,
-  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.RadioItem>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof ContextMenuPrimitive.RadioItem> & {
+    /** What the item does, from the action catalog (actions/catalog.ts). */
+    action: ActionId
+  }
+>(({ className, children, action, ...props }, ref) => (
   <ContextMenuPrimitive.RadioItem
     ref={ref}
+    data-action={action}
     className={cn(
       'relative flex cursor-default select-none items-center rounded-xs py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className,

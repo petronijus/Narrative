@@ -32,11 +32,17 @@ export const SLIDE_MODEL_WRITERS = Object.entries(SLIDE_MODEL_EXPORTS)
 /** Where the rule applies (globs relative to the repository root). */
 export const ONE_DOOR_FILES = ['apps/web/src/**/*.{ts,tsx}']
 
-/** Tests may build fixtures with writers directly; they are not a door. */
+/**
+ * Tests may build fixtures with writers directly; they are not a door. The
+ * dev-only e2e hook's legacy fixtures seed states older versions and
+ * PowerPoint imports leave behind, which no command creates any more
+ * (state/testApiLegacyFixtures.ts says which).
+ */
 export const ONE_DOOR_IGNORES = [
   'apps/web/src/**/*.{test,spec}.{ts,tsx}',
   'apps/web/src/**/__tests__/**',
   'apps/web/src/test/**',
+  'apps/web/src/state/testApiLegacyFixtures.ts',
 ]
 
 export const ONE_DOOR_RULES = {
@@ -70,7 +76,8 @@ export const ONE_DOOR_RULES = {
  * relative to the repository root. Only ever remove entries.
  */
 export const ONE_DOOR_PENDING = [
-  // What each file still writes directly, and the step that removes it:
-  // A2.13 — close: the dev/e2e test hooks go through commands too
-  { file: 'apps/web/src/state/testApi.ts', step: 'A2.13' },
+  // Empty since A2.13 (2026-09-30): the editor writes documents only through
+  // commands. A file that has to break the rule again goes here with the step
+  // that removes it; oneDoor.test.ts fails for a listed file that no longer
+  // breaks it.
 ]

@@ -1,6 +1,6 @@
 # Narrative — Testing Strategy
 
-> Last updated 2026-09-30, after A2.12b (the counts table below is still the A2.11 measurement; see "Added in A2.12b"). Was 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
+> Last updated 2026-09-30, after A2.13 (A2 closed; the counts table below is still the A2.11 measurement; see "Added in A2.13" and "Added in A2.12b"). Was 2026-09-30 after A2.12b, 2026-09-30 after A2.11, 2026-09-29 after A2.10 and after A2.9; before that 2026-09-28, 2026-09-27, 2026-09-26, 2026-09-09 and 2026-05-09.
 > Current state, **measured** with `pnpm -r test` on 2026-09-30 (the A2.11
 > tree, uncommitted at the time, on top of `925c08c` / v0.10.12), all green
 > in the docs sweep's run. `pnpm typecheck` re-run by the sweep: exit 0.
@@ -69,6 +69,44 @@
 > - Eval scenarios `component-promote-headline` and
 >   `component-master-picture` are live only (the memory world does not
 >   model component documents), for 44 scenarios, 36 of them replayed.
+>
+> Added in A2.13 (2026-09-30, A2 close; uncommitted at the time; not
+> re-measured as a whole by this sweep: a full e2e run was going on
+> against the dev stack):
+>
+> - **The action catalog guard**, `apps/web/src/actions/catalog.test.ts`
+>   (new file, 4 tests). It checks that every command named in
+>   `actions/catalog.ts` exists in the registry and that every
+>   `editorOnly` / `planned` reason is at least 20 characters. It fails
+>   on a catalog action that nothing in `src/` uses. It also requires
+>   every `<Button>` / `<button>` in `ui/Toolbar.tsx` to carry a catalog
+>   `data-action`, found by a TypeScript AST scan. Shortcuts and Radix
+>   menu items are covered by the types (`ShortcutBinding.action`, the
+>   `action` prop of the `components/ui` menu items), so `just typecheck`
+>   is part of the guard. Hand-rolled menus are covered too: every element
+>   with a `menuitem` role in `apps/web/src` needs a catalog `data-action`.
+>   Raw key handlers, Inspector controls and canvas gestures are not.
+> - `oneDoor.test.ts` now runs against an empty `ONE_DOOR_PENDING`.
+>   `catalog.test.ts` + `oneDoor.test.ts` passed 7/7 in the sweep.
+> - Commands: `objectEdit.test.ts` adds "takes a caller-chosen id, for
+>   every kind of object, and refuses one the slide has" (`object.create`
+>   `id`; `conflict` on a taken id, `invalid_input` on `a/b`).
+>   `objectEdit.test.ts` + `parity/` passed 42/42 in the sweep.
+> - The parity test now also rejects any A2 known-missing entry
+>   (`FINISHED_PHASES = ['A0', 'A1', 'A2']`).
+> - e2e: the dev-only test hook (`window.__narrative_test_api`,
+>   `state/testApi.ts`) writes through the command registry.
+>   - `addImage` needs a real `assetId`, which specs upload with
+>     `e2e/fixtures/media.ts` (`uploadTestPicture`, `media.upload`
+>     through `POST /commands`). `inspector-flows` and
+>     `keyboard-shortcuts` do so.
+>   - `htmltext-texture-isolation.spec.ts` creates its own deck. It used
+>     to open a hard-coded deck id that existed in one database, and
+>     `E2E_DECK_ID` still overrides it.
+>   - `agent-activity.spec.ts` (component master) builds on the master
+>     slide the server writes.
+>   - Legacy `onEnter` animation steps are seeded by
+>     `state/testApiLegacyFixtures.ts`.
 >
 > Added in A2.11 (2026-09-30): contract tests for `text.edit`,
 > `text.replace` (`commands/textEdit.test.ts`), `text.setBoxTypography` and
@@ -261,20 +299,20 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 
 ## Test layers
 
-| Layer                      | Where                                                                                                               | Purpose                                                                                                                                                                                    | Status                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
-| Unit (pure logic)          | `packages/{slide-model,animation,shared}`                                                                           | Yjs mutations, CRDT, GSAP DSL compiler, schema validators                                                                                                                                  | Strong (402 + 149 + 199)             |
-| Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; atomic batches; manifest current | Strong (1,005 + route guard)         |
-| Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                        | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                              | Strong (1,193)                       |
-| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                     | Drizzle stores against the real local Postgres: run store, list paging, OAuth store, folder tokens / fonts, upload sessions                                                                | Since A1 (6 files, opt-in)           |
-| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                  | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                | Since A1 (44 scenarios, 36 replayed) |
-| Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                     | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                   | OK                                   |
-| Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                           | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                        | Was bloated; cleaned up              |
-| Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                   | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`              | Strong (ADR 0009)                    |
-| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                            | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                   | Strong (67 spec files)               |
-| Visual regression          | `apps/web/e2e/visual/*.spec.ts` (TODO — convert `visual-check.spec.ts`)                                             | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                             | Missing                              |
-| Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts`                                                                  | Throughput, awareness rate, doc growth                                                                                                                                                     | Exists, no thresholds enforced       |
-| Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                       | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                 | Active (Tier B.1; tables in A0)      |
+| Layer                      | Where                                                                                                                                                                 | Purpose                                                                                                                                                                                                                                                                           | Status                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Unit (pure logic)          | `packages/{slide-model,animation,shared}`                                                                                                                             | Yjs mutations, CRDT, GSAP DSL compiler, schema validators                                                                                                                                                                                                                         | Strong (402 + 149 + 199)             |
+| Command contract + parity  | `packages/commands/src/{contract,parity/parity,run,registry}.test.ts`, `apps/server/src/routes/agentParity.test.ts`, `apps/web/src/{actions/catalog,oneDoor}.test.ts` | Every command example runs (server commands against fakes); missing ids leave the doc untouched; every slide-model writer and every server route claimed; every shortcut / menu item / toolbar button named in the action catalog (since A2.13); atomic batches; manifest current | Strong (1,005 + route guard)         |
+| Server (unit + in-process) | `apps/server/src/{routes,hocuspocus,media,auth,agent,mcp,services,http,net}`                                                                                          | Fastify routes, Hocuspocus auth/persistence, the ServerHost, the MCP server and OAuth over real HTTP, SSRF guard, rate limits                                                                                                                                                     | Strong (1,193)                       |
+| Integration (Postgres)     | `apps/server/src/**/*.integration.test.ts` (`pnpm --filter @narrative/server test:integration`)                                                                       | Drizzle stores against the real local Postgres: run store, list paging, OAuth store, folder tokens / fonts, upload sessions                                                                                                                                                       | Since A1 (6 files, opt-in)           |
+| Agent eval                 | `tests/agent-eval/` (`pnpm agent:eval`); replay in `packages/commands/src/agentEvalReplay.test.ts`                                                                    | Headless Claude Code drives the real MCP server; deterministic graders read the resulting document. Replay subset: recorded transcripts in memory, no model                                                                                                                       | Since A1 (44 scenarios, 36 replayed) |
+| Hook / state (React)       | `apps/web/src/state/*.test.tsx`                                                                                                                                       | Pure data hooks (`useMediaUpload`, `useSlideThumbnails`, `useVideoInfo`)                                                                                                                                                                                                          | OK                                   |
+| Component contract (React) | `apps/web/src/{ui,components}/*.test.tsx`                                                                                                                             | ONLY for components with non-trivial logic (state machines, conditional branches) — not "does it render this label"                                                                                                                                                               | Was bloated; cleaned up              |
+| Round trip (PowerPoint)    | `apps/server/src/pptx/{roundtrip.test.ts,ooxml/validate.test.ts}`                                                                                                     | model → .pptx → model is exact for every object type and field (feature matrix); every exported part is ECMA-376-valid (`xmllint`); real decks via `scripts/pptxRoundtrip.ts`                                                                                                     | Strong (ADR 0009)                    |
+| e2e (Playwright)           | `apps/web/e2e/*.spec.ts`                                                                                                                                              | User-visible behaviour — keyboard shortcuts, drag/drop, multi-window sync, full Inspector flows, present mode navigation                                                                                                                                                          | Strong (67 spec files)               |
+| Visual regression          | `apps/web/e2e/visual/*.spec.ts` (TODO — convert `visual-check.spec.ts`)                                                                                               | Renderer output for canonical scenes (rect, text, image, magic-move keyframes)                                                                                                                                                                                                    | Missing                              |
+| Load / soak                | `tests/load/{hotEdit,awarenessFlood,docGrowth}.ts`                                                                                                                    | Throughput, awareness rate, doc growth                                                                                                                                                                                                                                            | Exists, no thresholds enforced       |
+| Property-based             | `packages/slide-model/src/*.property.test.ts`                                                                                                                         | CRDT convergence: random op sequences from N clients converge; table-structure invariants under random insert/delete/merge                                                                                                                                                        | Active (Tier B.1; tables in A0)      |
 
 ## What was just cleaned up
 
@@ -461,6 +499,12 @@ verify the current state_ in the 0.9.x handoff note.
   description, at least one example (the contract suite runs it), and the
   regenerated manifest (`pnpm capabilities`). The `agent-parity` agent
   reviews the rest (ADR 0010).
+- New keyboard shortcuts, menu items and toolbar buttons MUST name an
+  action of `apps/web/src/actions/catalog.ts` (`action` on the binding or
+  the menu item, `data-action` on a toolbar button). The action lists the
+  commands that carry its effect, or says why it is editor-only;
+  `actions/catalog.test.ts` and the typecheck fail otherwise (since A2.13,
+  2026-09-30).
 - Commands must check every precondition before their first write: the
   contract suite runs each one against missing ids and asserts the document
   is byte-for-byte unchanged. (Byte equality is right here because nothing

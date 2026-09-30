@@ -62,6 +62,7 @@ import { useTool } from '../state/ToolContext.js'
 import { useRulers } from '../state/RulersContext.js'
 import { useSnapping } from '../state/SnappingContext.js'
 import type { ActiveTool } from '../state/ToolContext.js'
+import type { ActionId } from '../actions/catalog.js'
 import { useUndoManager } from '../state/useUndoManager.js'
 import { useDeckFontsOptional } from '../state/useDeckFonts.js'
 import { AvatarChips } from './AvatarChips.js'
@@ -109,6 +110,24 @@ const TOOL_BUTTONS: ToolButton[] = [
   { tool: 'text', label: 'Text', shortcut: 'T', icon: Type },
   { tool: 'table', label: 'Table', shortcut: 'K', icon: Table2 },
 ]
+
+/** The catalog action of a tool button (actions/catalog.ts). */
+function toolAction(tool: ActiveTool): ActionId {
+  switch (tool) {
+    case 'select':
+      return 'tool.select'
+    case 'hand':
+      return 'tool.hand'
+    case 'text':
+      return 'tool.text'
+    case 'table':
+      return 'tool.table'
+    case 'pen':
+      return 'tool.pen'
+    default:
+      return 'tool.shape'
+  }
+}
 
 const SHAPE_TOOLS: ToolButton[] = [
   { tool: 'rectangle', label: 'Rectangle', shortcut: 'R', icon: Square },
@@ -308,6 +327,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
       keys: 'Mod+Enter',
       scope: 'global',
       preventDefault: true,
+      action: 'present.start',
       description: 'Start presenting',
       handler: () => {
         navigate(`/deck/${id ?? ''}/present`)
@@ -316,6 +336,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'v',
       scope: 'global',
+      action: 'tool.select',
       description: 'Select tool',
       handler: () => {
         setActiveTool('select')
@@ -324,6 +345,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'h',
       scope: 'global',
+      action: 'tool.hand',
       description: 'Hand / pan tool',
       handler: () => {
         setActiveTool('hand')
@@ -332,6 +354,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 't',
       scope: 'global',
+      action: 'tool.text',
       description: 'Text tool',
       handler: () => {
         setActiveTool('text')
@@ -340,6 +363,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'k',
       scope: 'global',
+      action: 'tool.table',
       description: 'Table tool',
       handler: () => {
         setActiveTool('table')
@@ -348,6 +372,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'r',
       scope: 'global',
+      action: 'tool.shape',
       description: 'Rectangle tool',
       handler: () => {
         setActiveTool('rectangle')
@@ -356,6 +381,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'o',
       scope: 'global',
+      action: 'tool.shape',
       description: 'Ellipse tool',
       handler: () => {
         setActiveTool('ellipse')
@@ -364,6 +390,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'l',
       scope: 'global',
+      action: 'tool.shape',
       description: 'Line tool',
       handler: () => {
         setActiveTool('line')
@@ -372,6 +399,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'a',
       scope: 'global',
+      action: 'tool.shape',
       description: 'Arrow tool',
       handler: () => {
         setActiveTool('arrow')
@@ -380,6 +408,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'p',
       scope: 'global',
+      action: 'tool.pen',
       description: 'Pen tool',
       handler: () => {
         setActiveTool('pen')
@@ -388,6 +417,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
     {
       keys: 'i',
       scope: 'global',
+      action: 'media.insertImage',
       description: 'Insert image',
       handler: () => {
         if (!isViewer) imageFileInputRef.current?.click()
@@ -422,6 +452,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 navigate(-1)
               }
             }}
+            data-action="deck.backToPresentation"
             aria-label="Back to presentation"
             className="h-7 gap-1.5 rounded-full bg-blue-600 px-3 text-xs font-semibold text-white shadow-xs shadow-blue-500/30 hover:bg-blue-500"
           >
@@ -435,6 +466,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 variant="ghost"
                 size="icon"
                 onClick={() => navigate(folderId != null ? `/folder/${folderId}` : '/')}
+                data-action="deck.backToList"
                 aria-label="Back to deck list"
                 className="h-7 w-7"
               >
@@ -453,6 +485,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               size="icon"
               onClick={undo}
               disabled={!canUndo}
+              data-action="history.undo"
               aria-label="Undo"
               className="h-7 w-7"
             >
@@ -470,6 +503,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               size="icon"
               onClick={redo}
               disabled={!canRedo}
+              data-action="history.redo"
               aria-label="Redo"
               className="h-7 w-7"
             >
@@ -509,6 +543,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
             ) : (
               <button
                 type="button"
+                data-action="deck.rename"
                 disabled={isViewer}
                 onClick={() => {
                   if (isViewer) return
@@ -558,6 +593,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                       variant={isActive ? 'default' : 'ghost'}
                       size="icon"
                       onClick={() => setActiveTool(tool)}
+                      data-action={toolAction(tool)}
                       aria-label={`${label} (${shortcut})`}
                       aria-pressed={isActive}
                       className="h-7 w-7"
@@ -597,6 +633,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                       variant={isActive ? 'default' : 'ghost'}
                       size="icon"
                       onClick={() => setActiveTool(tool)}
+                      data-action={toolAction(tool)}
                       aria-label={`${label} (${shortcut})`}
                       aria-pressed={isActive}
                       className="h-7 w-7"
@@ -655,6 +692,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                       <Button
                         variant="ghost"
                         size="icon"
+                        data-action="media.insertMenu"
                         aria-label="Insert media"
                         className="h-7 w-7"
                       >
@@ -665,12 +703,18 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   <TooltipContent side="bottom">Insert media</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="start" sideOffset={4} className="min-w-[8rem]">
-                  <DropdownMenuItem onSelect={() => imageFileInputRef.current?.click()}>
+                  <DropdownMenuItem
+                    action="media.insertImage"
+                    onSelect={() => imageFileInputRef.current?.click()}
+                  >
                     <ImageIcon className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
                     Image
                     <span className="ml-auto text-xs opacity-60">I</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => videoFileInputRef.current?.click()}>
+                  <DropdownMenuItem
+                    action="media.insertVideo"
+                    onSelect={() => videoFileInputRef.current?.click()}
+                  >
                     <Film className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
                     Video
                   </DropdownMenuItem>
@@ -692,6 +736,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   variant="ghost"
                   size="icon"
                   onClick={handleOpenPicker}
+                  data-action="component.picker"
                   aria-label="Add component"
                   aria-haspopup="dialog"
                   aria-expanded={pickerOpen}
@@ -715,6 +760,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 variant={rulersVisible ? 'default' : 'ghost'}
                 size="icon"
                 onClick={toggleRulers}
+                data-action="view.toggleRulers"
                 aria-label="Toggle rulers"
                 aria-pressed={rulersVisible}
                 className="h-7 w-7"
@@ -734,6 +780,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 variant={snappingEnabled ? 'default' : 'ghost'}
                 size="icon"
                 onClick={toggleSnapping}
+                data-action="view.toggleSnapping"
                 aria-label="Toggle snapping"
                 aria-pressed={snappingEnabled}
                 className="h-7 w-7"
@@ -769,6 +816,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   variant="ghost"
                   size="sm"
                   onClick={() => setShareOpen(true)}
+                  data-action="deck.share"
                   aria-label="Share deck"
                   className="gap-1.5"
                 >
@@ -803,6 +851,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                   setExportError(null)
                   setExportDialogSlides(slides)
                 }}
+                data-action="deck.exportPptx"
                 aria-label="Export to PowerPoint"
                 aria-busy={exporting}
                 className="gap-1.5"
@@ -874,6 +923,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
                 variant="ghost"
                 size="icon"
                 onClick={() => navigate(`/deck/${id ?? ''}/present?preview=1`)}
+                data-action="present.preview"
                 aria-label="Preview animations"
                 className="h-7 w-7"
               >
@@ -916,6 +966,7 @@ export function Toolbar({ masterMode = false }: ToolbarProps = {}) {
               <Button
                 size="icon"
                 onClick={() => navigate(`/deck/${id ?? ''}/present`)}
+                data-action="present.start"
                 aria-label="Present (Ctrl+Enter)"
                 className="btn-brand h-7 w-7"
               >
@@ -995,6 +1046,7 @@ function TableGridButton({
             <Button
               variant={isActive ? 'default' : 'ghost'}
               size="icon"
+              data-action="tool.table"
               aria-label="Insert table (K)"
               aria-pressed={isActive}
               className="h-7 w-7"
@@ -1045,6 +1097,7 @@ function TableGridPicker({ onCommit }: TableGridPickerProps) {
               type="button"
               onMouseEnter={() => setHover({ row, col })}
               onClick={() => onCommit(row + 1, col + 1)}
+              data-action="tool.table"
               aria-label={`${col + 1} columns by ${row + 1} rows`}
               className={[
                 'h-3.5 w-3.5 rounded-[2px] border transition-colors',
@@ -1121,6 +1174,7 @@ function ShapesDropdown({ shapes, activeTool, setActiveTool }: ShapesDropdownPro
               if (!isActive) setActiveTool(lastShape.tool)
               setOpen((v) => !v)
             }}
+            data-action="tool.shape"
             aria-label="Shapes"
             aria-haspopup="menu"
             aria-expanded={open}
@@ -1153,6 +1207,7 @@ function ShapesDropdown({ shapes, activeTool, setActiveTool }: ShapesDropdownPro
                   type="button"
                   role="menuitem"
                   onClick={() => pick(tool)}
+                  data-action={toolAction(tool)}
                   aria-label={`${label}${shortcut === '' ? '' : ` (${shortcut})`}`}
                   aria-pressed={selected}
                   title={shortcut === '' ? label : `${label} (${shortcut})`}

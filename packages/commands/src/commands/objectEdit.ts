@@ -116,6 +116,7 @@ type CreateObject = z.output<typeof CreateObjectSchema>
 function createText(
   objects: ObjectsMutationContext,
   props: Extract<CreateObject, { type: 'text' }>,
+  id: string,
 ): string {
   const { text, type, ...rest } = props
   const plan: BodyPlan | null = text === undefined ? null : planFromBody(text)
@@ -125,13 +126,12 @@ function createText(
       plan.paragraphs.some((p) => p.runs.some((r) => Object.keys(r.attrs).length > 0)))
   if (!richer) {
     const overrides = plan === null ? rest : { ...rest, text: planText(plan) }
-    return createObjectOfType(objects, type, overrides as never).id
+    return createObjectOfType(objects, type, overrides as never, id).id
   }
   // Formatted body: the object goes in with its rich text in one insert —
   // addObject replays the `_richTextOps` delta onto the new Y.Text.
   const def = getObjectTypeDef('text')
   if (def === undefined) throw new CommandError('failed', "object type 'text' is not registered")
-  const id = nanoid()
   const obj = {
     ...def.defaultProps(),
     ...rest,
@@ -154,9 +154,20 @@ export const objectCreate = defineCommand({
     'rectangle at 100,100). Text takes `text` as a plain string (blank line = new paragraph) or ' +
     '{ paragraphs: [...] } with formatted runs and bullet/numbered lists. Images and videos need the `assetId` of ' +
     'an asset already uploaded to the deck (media.upload). A table takes rows/cols/defaults (same as table.insert) and is filled ' +
-    'with text.set. New objects go on top of the stacking order; use object.layer to reorder. ' +
+    'with text.set. New objects go on top of the stacking order; use object.layer to reorder. `id` names the ' +
+    'new object yourself (e.g. the same id on two slides pairs them for a magic transition); omit it normally. ' +
     UNITS,
-  input: z.strictObject({ slide: SlideRefSchema, object: CreateObjectSchema }),
+  input: z.strictObject({
+    slide: SlideRefSchema,
+    object: CreateObjectSchema,
+    id: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{1,64}$/, 'letters, digits, _ and - only (at most 64)')
+      .optional()
+      .describe(
+        'Id for the new object (default: a fresh one); refused if the slide already has it',
+      ),
+  }),
   output: z.object({ objectId: z.string() }),
   implementedWith: ['createObjectOfType', 'addObject', 'addTable', 'updateObject'],
   examples: [
@@ -224,8 +235,19 @@ export const objectCreate = defineCommand({
   ],
   handler(ctx, input) {
     const deck = requireDeck(ctx)
-    const objects = objectsOf(deck, resolveSlide(deck, input.slide))
+    const slide = resolveSlide(deck, input.slide)
+    const objects = objectsOf(deck, slide)
     const o = input.object
+    if (input.id !== undefined && objects.objects.toArray().some((m) => m.get('id') === input.id)) {
+      throw new CommandError(
+        'conflict',
+        `slide '${slide.id}' already has an object '${input.id}'`,
+        {
+          issues: [{ path: ['id'], message: 'already on the slide' }],
+        },
+      )
+    }
+    const id = input.id ?? nanoid()
     if (
       o.type === 'video' &&
       o.trimStart !== undefined &&
@@ -241,7 +263,8 @@ export const objectCreate = defineCommand({
     if (o.type === 'table') {
       const { type: _t, rows, cols, defaults, x, y, width, height, name, ...base } = o
       void _t
-      const id = insertTable(objects, {
+      insertTable(objects, {
+        id,
         rows,
         cols,
         x,
@@ -255,9 +278,9 @@ export const objectCreate = defineCommand({
         updateObject(objects, id, base as SlideObjectPatch<SlideObject>)
       return { objectId: id }
     }
-    if (o.type === 'text') return { objectId: createText(objects, o) }
+    if (o.type === 'text') return { objectId: createText(objects, o, id) }
     const { type, ...overrides } = o
-    return { objectId: createObjectOfType(objects, type, overrides as never).id }
+    return { objectId: createObjectOfType(objects, type, overrides as never, id).id }
   },
 })
 

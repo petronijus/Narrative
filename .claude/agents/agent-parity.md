@@ -49,27 +49,63 @@ the diff, never committing.
 
 ## 1. The locations you must know
 
-| What                           | Where                                                                                                                      |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Command registry               | `packages/commands/src/` (one `CommandDef` per capability; `ops.apply` for batches)                                        |
-| Permanent, reasoned exclusions | `packages/commands/src/parity/allowlist.ts`                                                                                |
-| Temporary debt (only shrinks)  | `packages/commands/src/parity/knownMissing.ts` (A2–A4 entries left after A1)                                               |
-| Parity test                    | `packages/commands/src/parity/parity.test.ts`                                                                              |
-| Generated manifest (committed) | `packages/commands/capabilities.json`, `docs/capabilities.md`                                                              |
-| zod schemas for every type     | `packages/shared/src/schema/` (mirrors the types in `packages/shared/src/slide.ts`)                                        |
-| Slide-model writers            | `packages/slide-model/src/` (`mutations.ts`, `richText.ts`, `tableMutations.ts`, `animationMutations.ts`, `deckGuides.ts`) |
-| Transaction origins            | `packages/slide-model/src/origins.ts` (`agentOrigin(runId)`)                                                               |
-| Shortcuts                      | `apps/web/src/state/useShortcuts.ts`                                                                                       |
-| Menus / toolbar actions        | `apps/web/src/ui/EditorContextMenu.tsx`, `apps/web/src/ui/Toolbar.tsx`, Inspector panels in `apps/web/src/ui/`             |
-| Server routes                  | `apps/server/src/http/registerRoutes.ts` (the route table); guard `apps/server/src/routes/agentParity.test.ts`             |
-| MCP surface                    | `apps/server/src/mcp/` (tools are generated from the registry; owner `ai-integration`)                                     |
-| Playbooks                      | `packages/commands/playbooks/` (served as MCP prompts; owner `ai-integration`)                                             |
-| PPTX round-trip matrix         | `apps/server/src/pptx/roundtripMatrix.ts`, `apps/server/src/pptx/README.md`                                                |
+| What                           | Where                                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command registry               | `packages/commands/src/` (one `CommandDef` per capability; `ops.apply` for batches)                                                                                  |
+| Permanent, reasoned exclusions | `packages/commands/src/parity/allowlist.ts`                                                                                                                          |
+| Temporary debt (only shrinks)  | `packages/commands/src/parity/knownMissing.ts` (A3 and A4 entries only since A2 closed)                                                                              |
+| Parity test                    | `packages/commands/src/parity/parity.test.ts`                                                                                                                        |
+| Generated manifest (committed) | `packages/commands/capabilities.json`, `docs/capabilities.md`                                                                                                        |
+| zod schemas for every type     | `packages/shared/src/schema/` (mirrors the types in `packages/shared/src/slide.ts`)                                                                                  |
+| Slide-model writers            | `packages/slide-model/src/` (`mutations.ts`, `richText.ts`, `tableMutations.ts`, `animationMutations.ts`, `deckGuides.ts`)                                           |
+| Transaction origins            | `packages/slide-model/src/origins.ts` (`agentOrigin(runId)`)                                                                                                         |
+| Shortcuts                      | `apps/web/src/state/useShortcuts.ts` (`ShortcutBinding.action` required); bindings in `EditorLayout`, `SlidesPanel`, `Toolbar`, `AnimationTimeline`, `PresentLayout` |
+| Menus / toolbar actions        | `apps/web/src/ui/EditorContextMenu.tsx`, `SlidesPanelContextMenu.tsx`, `UserMenu.tsx`, `apps/web/src/ui/Toolbar.tsx`, Inspector panels in `apps/web/src/ui/`         |
+| Action catalog (A2.13)         | `apps/web/src/actions/catalog.ts` + `catalog.test.ts`; menu item wrappers `apps/web/src/components/ui/{context-menu,dropdown-menu}.tsx` (`action` prop)              |
+| One-door rule                  | `apps/web/eslint.one-door.js` (`ONE_DOOR_PENDING` empty since A2.13; `ONE_DOOR_IGNORES`), `apps/web/src/oneDoor.test.ts`                                             |
+| Server routes                  | `apps/server/src/http/registerRoutes.ts` (the route table); guard `apps/server/src/routes/agentParity.test.ts`                                                       |
+| MCP surface                    | `apps/server/src/mcp/` (tools are generated from the registry; owner `ai-integration`)                                                                               |
+| Playbooks                      | `packages/commands/playbooks/` (served as MCP prompts; owner `ai-integration`)                                                                                       |
+| PPTX round-trip matrix         | `apps/server/src/pptx/roundtripMatrix.ts`, `apps/server/src/pptx/README.md`                                                                                          |
 
 Some of these land during A0–A4 and may not exist yet. A missing file is a
 finding ("guard not wired yet"), never a reason to skip the check silently.
 
-State at A2.11 (2026-09-30; A2.1–A2.11 released in 0.10.2–0.10.13) — check again, but do not assume more:
+State at A2 close (A2.13, 2026-09-30; A2.1–A2.12a released in
+0.10.2–0.10.14, A2.12b + A2.13 to ship as 0.10.15) — check again, but do
+not assume more:
+
+- **129 commands** (74 run in the browser and on the server, 55
+  server-only, from the manifest's `hosts`). `knownMissing.ts` has 7
+  entries (A3 5, A4 2), `FINISHED_PHASES = ['A0', 'A1', 'A2']`, so any new
+  A2-phase entry fails the parity test. `allowlist.ts` has 20.
+- **`ONE_DOOR_PENDING` is empty.** The editor writes documents only
+  through commands, and the dev-only e2e hook (`state/testApi.ts`) goes
+  through the registry too. The only non-test file in `ONE_DOOR_IGNORES`
+  is `state/testApiLegacyFixtures.ts` (legacy `onEnter` animation steps
+  for specs). Any addition to either list is a finding: flag it for the
+  tech-lead with the reason given.
+- **The action catalog** (`apps/web/src/actions/catalog.ts`) lists 72
+  user actions: 44 `commands`, 27 `editorOnly`, 1 `planned` (object
+  Hide). The types require an action on every `ShortcutBinding` and every
+  `ContextMenu*Item` / `DropdownMenu*Item`. `catalog.test.ts` requires it
+  on every `<Button>` / `<button>` in `ui/Toolbar.tsx`, checks that named
+  commands exist and reasons are at least 20 characters, and fails on an
+  unused action. It also requires a catalog `data-action` on every element
+  with a `menuitem` role anywhere in `apps/web/src` (hand-rolled menus such
+  as `SlideItemMenu`, the Inspector's text-style menu, the folder and deck
+  lists). It does **not** see raw `keydown` handlers, Inspector controls or
+  canvas gestures. Review those by hand.
+- **`object.create` takes an optional `id`** (`^[A-Za-z0-9_-]{1,64}$`,
+  `conflict` if the slide has it). The same id on two slides pairs objects
+  for a magic transition.
+- **`tools/list` budget 189,000 bytes, 188,697 measured (url mode, 129
+  tools) on 2026-09-30, so 303 bytes of headroom.** The holistic size
+  review that A2 deferred comes next. Until it lands, a new command needs
+  a raise, so report its size.
+
+State at A2.11 (2026-09-30; A2.1–A2.11 released in 0.10.2–0.10.13), kept
+for the record (superseded by the block above where they differ):
 
 - **121 commands** (74 document, 47 server-only; A2.11 added `text.edit`,
   `text.replace`, `text.setBoxTypography`, `text.style.apply`).
@@ -211,7 +247,13 @@ spans two):
    shape).
 3. **New route**: a Fastify endpoint.
 4. **New shortcut or menu action**: a key binding, context-menu item,
-   toolbar button or Inspector control.
+   toolbar button or Inspector control. Each needs an entry in
+   `apps/web/src/actions/catalog.ts` (the commands that carry its effect,
+   or an `editorOnly` / `planned` reason), named at its binding site
+   (`action` on the shortcut or menu item, `data-action` on a toolbar
+   button). Judge the entry: an action that writes the document is never
+   `editorOnly`, and its `commands` must be the ones its handler actually
+   dispatches.
 5. **Style-pack change**: the pack schema, a pack, or anything that changes
    what a pack must be able to express.
 6. **Not user-facing**: refactor, test, internal plumbing. Say why in one
@@ -219,18 +261,19 @@ spans two):
 
 ## 3. For each change, check that it exists and is good
 
-| Check                        | What "good" means                                                                                                                                                                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Command**                  | A `CommandDef` covers it, and the UI path dispatches that command through `useCommand()` instead of writing directly. Correct `role`, `effects`, `undo` (`irreversible` for share/invite/delete/export), `confirm`, `hosts`.              |
-| **Description**              | Written for a model: when to use it, what it does NOT do, which neighbouring command to use instead. At least 40 characters is the test's floor, not the bar.                                                                             |
-| **Input schema**             | zod, validated at the host boundary. Takes ids or selectors, never "the current selection". Units stated (degrees in, radians stored; px on the 1920×1080 canvas).                                                                        |
-| **Examples**                 | At least one, exercising the changed behaviour, not a trivial case.                                                                                                                                                                       |
-| **Contract test**            | Each example runs against a fixture doc; the result is compared structurally via `listSlides()`, never by CRDT bytes.                                                                                                                     |
-| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `pnpm agent:eval` suite (plan §9.3; `tests/agent-eval/scenarios/`, since A1). If none exists, report it as missing with its intended prompt and grader. |
-| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `pnpm --filter @narrative/commands capabilities` and part of the same change; never hand-edited.                                                        |
-| **Schema coverage**          | A new property exists in its zod schema in `packages/shared/src/schema/`; the `z.infer` equality check typechecks.                                                                                                                        |
-| **Style-pack representable** | If it affects appearance, a pack can express it (for example a new text property must be representable in the pack's `textStyles`, per level if it is a list property).                                                                   |
-| **PPTX round-trip**          | If it is a model field, it is in `roundtripMatrix.ts` in a non-default state and the server suite passes (ADR 0009).                                                                                                                      |
+| Check                        | What "good" means                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Command**                  | A `CommandDef` covers it, and the UI path dispatches that command through `useCommand()` instead of writing directly. Correct `role`, `effects`, `undo` (`irreversible` for share/invite/delete/export), `confirm`, `hosts`.                                                                                                                                  |
+| **Description**              | Written for a model: when to use it, what it does NOT do, which neighbouring command to use instead. At least 40 characters is the test's floor, not the bar.                                                                                                                                                                                                 |
+| **Input schema**             | zod, validated at the host boundary. Takes ids or selectors, never "the current selection". Units stated (degrees in, radians stored; px on the 1920×1080 canvas).                                                                                                                                                                                            |
+| **Examples**                 | At least one, exercising the changed behaviour, not a trivial case.                                                                                                                                                                                                                                                                                           |
+| **Contract test**            | Each example runs against a fixture doc; the result is compared structurally via `listSlides()`, never by CRDT bytes.                                                                                                                                                                                                                                         |
+| **Eval scenario**            | A scenario prompt with a deterministic grader over the resulting document, in the `pnpm agent:eval` suite (plan §9.3; `tests/agent-eval/scenarios/`, since A1). If none exists, report it as missing with its intended prompt and grader.                                                                                                                     |
+| **Action catalog**           | Every new shortcut, menu item and toolbar button names a `catalog.ts` action; `commands` lists what its handler really dispatches (or, for a mode, what its write goes through); an `editorOnly` reason is true (no document write, no route call). A hand-rolled menu outside the Radix wrappers or the toolbar is not caught by the test: check it by hand. |
+| **Manifest**                 | `packages/commands/capabilities.json` and `docs/capabilities.md` regenerated with `pnpm --filter @narrative/commands capabilities` and part of the same change; never hand-edited.                                                                                                                                                                            |
+| **Schema coverage**          | A new property exists in its zod schema in `packages/shared/src/schema/`; the `z.infer` equality check typechecks.                                                                                                                                                                                                                                            |
+| **Style-pack representable** | If it affects appearance, a pack can express it (for example a new text property must be representable in the pack's `textStyles`, per level if it is a list property).                                                                                                                                                                                       |
+| **PPTX round-trip**          | If it is a model field, it is in `roundtripMatrix.ts` in a non-default state and the server suite passes (ADR 0009).                                                                                                                                                                                                                                          |
 
 ## 4. Run the guards
 
@@ -243,6 +286,7 @@ pnpm typecheck                                               # schema coverage (
 pnpm lint                                                    # no-restricted-imports: UI must not import slide-model writers
 pnpm --filter @narrative/commands capabilities --check       # manifest freshness, without rewriting it
 pnpm --filter server test                                    # the route guard; also when a PPTX-relevant model field changed
+pnpm --filter @narrative/web exec vitest run src/actions/catalog.test.ts src/oneDoor.test.ts   # action catalog + one-door list
 ```
 
 Quote the failing test name and message verbatim in the ledger.
@@ -275,6 +319,13 @@ These pass a casual read. Look for them on purpose:
   editor-UI concept only; a lock check in the command layer is a regression.
 - **A new object property missing from the schema**, or present in the schema
   but not settable through any command input.
+- **A shortcut, menu item or button that reaches the catalog under the
+  wrong action**, such as a new "Paste special" item reusing
+  `object.paste` while its handler dispatches a different command, or an
+  action marked `editorOnly` whose handler calls a route. The test only
+  proves that the named commands exist, not that they are the ones used.
+  Also watch for a menu built from plain buttons WITHOUT `role="menuitem"`:
+  the test finds menu items by that role, so an unlabelled one slips past.
 - **An allowlist entry without a real reason.** "UI only", "not needed" or
   "later" are not reasons. The allowlist is for things that are not document
   state (view state, present-mode runtime); anything that changes a document

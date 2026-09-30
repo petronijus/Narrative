@@ -280,13 +280,16 @@ hand-written:
   the `instructions` at 4,030 bytes after A2.10 (of which 2,258 are the shared fields;
   was 3,945 / 2,173; not re-measured after A2.11, whose playbook edits may have moved
   it). `mcp/toolListBudget.test.ts` fails past 189,000 bytes (since A2.12b, 2026-09-30:
-  188,407 measured in url mode for 129 tools; 187,000 after A2.12a with 186,157 for 128
+  187,617 (form) / 188,697 (url) / 188,589 bytes (link) for 129 tools measured
+  2026-09-30 after A2.13, whose `object_create` `id` field added ≈ 290 bytes
+  (`object_create` 12,003 bytes); 188,407 in url mode after A2.12b; 187,000 after A2.12a with 186,157 for 128
   tools; 177,000 after A2.11, 169,000 after A2.10, 167,000 after A2.9; 16,000 for one
   tool),
   so it cannot grow unnoticed; the budget was 160,000 until 2026-09-28, then 132,000,
   and Petr's call for A2 is to raise it step by step (each raise is itemised in the
-  test's comment) and review the sizes as a whole when A2 closes (A2.13). Headroom on
-  2026-09-30 after A2.12b is 593 bytes in url mode (843 after A2.12a, ≈ 470 during A2.11, 124
+  test's comment) and review the sizes as a whole when A2 closes. A2 closed on
+  2026-09-30 (A2.13), and that review is the next step before the MCP work. Headroom on
+  2026-09-30 after A2.13 is 303 bytes in url mode (593 after A2.12b, 843 after A2.12a, ≈ 470 during A2.11, 124
   after A2.10, 20 after A2.9).
 - **Annotations** come from the registry's explicit metadata (`readOnly` / `idempotent` on each command; the registry refuses inconsistent combinations); a hint equal to the MCP default (`readOnlyHint` / `idempotentHint` false) is left out, `destructiveHint` and `openWorldHint` (default true) are always stated: `readOnlyHint` for commands that change nothing — document queries and server reads such as `deck_list`, `share_links_list`, `media_url`; `destructiveHint` for writes with `undo: 'irreversible'` (false on other writes); `idempotentHint` on read-only tools and on set-to-value writes marked `idempotent` (renames, `text_set`, `slide_setBackground`, `object_update`, … — the contract suite runs each of their examples twice), false on every other write; `openWorldHint` for commands that can fetch a URL (file inputs).
 - **Paged lists**: `deck_list` (most recently changed first — content, title or folder) and `folder_list` (by name) return at most `limit` items (default 50, max 200) as lean records plus `nextCursor`; pass it back as `cursor` with the same filters for the next page. `query` filters by title or name (case-insensitive, literal), and `deck_list` also takes `folderId`. The web app's `GET /decks` and `GET /folders` are unchanged.
@@ -465,7 +468,8 @@ The production image ships the playbook files (`apps/server/Dockerfile` copies
 - `packages/commands/src/playbooks/playbooks.test.ts` — playbook frontmatter,
   placeholders and command mentions.
 - `apps/server/src/mcp/toolListBudget.test.ts` — `tools/list` ≤ 189,000 bytes in every
-  confirmation mode (since A2.12b, 2026-09-30, 188,407 measured in url mode for 129 tools;
+  confirmation mode (since A2.12b, 2026-09-30; 188,697 measured in url mode for 129 tools
+  after A2.13, 188,407 after A2.12b;
   187,000 after A2.12a, 177,000 after A2.11, 169,000 after A2.10, 132,000 on
   2026-09-28, raised per A2 step since; 160,000 before), ≤ 16,000 per tool, `$ref`s
   self-contained. Measured 2026-09-30 during A2.11, before its last example tweak:

@@ -221,15 +221,9 @@ test.describe('agent activity (agentic A1)', () => {
     const target = { componentId }
     await page.goto(`/folder/${folderId}/component/${componentId}`)
 
-    // A master made through the API is empty (the editor's promote flow is
-    // what normally seeds it), so the agent sets it up first, in its own run:
-    // a slide, then — in a second run, the one under test — a rectangle.
-    const setup = await commandOn<{ runId: string }>(page, target, 'agent.startRun', {
-      request: 'Set up the master',
-    })
-    expect(setup.ok, setup.error?.message).toBe(true)
-    const added = await commandOn<{ slideId: string }>(page, target, 'slide.add', {})
-    expect(added.ok, added.error?.message).toBe(true)
+    // The server writes a new component's one master slide. The agent sets
+    // the master up in one run (a label), then — in a second run, the one
+    // under test — adds a rectangle.
     const outline = await commandOn<{ slides: Array<{ id: string }> }>(
       page,
       target,
@@ -238,6 +232,15 @@ test.describe('agent activity (agentic A1)', () => {
     )
     const slideId = outline.result?.slides[0]?.id
     expect(slideId, 'the master has its slide').toBeDefined()
+    const setup = await commandOn<{ runId: string }>(page, target, 'agent.startRun', {
+      request: 'Set up the master',
+    })
+    expect(setup.ok, setup.error?.message).toBe(true)
+    const label = await commandOn<{ objectId: string }>(page, target, 'object.create', {
+      slide: slideId,
+      object: { type: 'text', x: 100, y: 20, width: 400, height: 60, text: 'Master label' },
+    })
+    expect(label.ok, label.error?.message).toBe(true)
 
     const started = await commandOn<{ runId: string }>(page, target, 'agent.startRun', {
       request: 'Add a blue box to the master',
@@ -267,7 +270,7 @@ test.describe('agent activity (agentic A1)', () => {
     await row.getByRole('button', { name: 'Confirm revert' }).click()
     await expect(row).toHaveAttribute('data-run-status', 'reverted', { timeout: 10_000 })
 
-    // The rectangle is gone from the master; the setup run (its slide) stays.
+    // The rectangle is gone from the master; the setup run (its label) stays.
     const after = await commandOn(page, target, 'query.object', {
       slide: slideId,
       object: objectId,
@@ -276,6 +279,11 @@ test.describe('agent activity (agentic A1)', () => {
     expect(after.error?.code).toBe('not_found')
     const still = await commandOn<{ slideCount: number }>(page, target, 'query.deck', {})
     expect(still.result?.slideCount).toBe(1)
+    const kept = await commandOn(page, target, 'query.object', {
+      slide: slideId,
+      object: label.result!.objectId,
+    })
+    expect(kept.ok, 'the setup run is untouched').toBe(true)
     await expect(setupRow).not.toHaveAttribute('data-run-status', 'reverted')
   })
 

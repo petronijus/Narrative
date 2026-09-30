@@ -46,12 +46,15 @@ export function UserMenu() {
           )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void navigate(ACCESS_TOKENS_PATH)}>
+        <DropdownMenuItem
+          action="account.accessTokens"
+          onSelect={() => void navigate(ACCESS_TOKENS_PATH)}
+        >
           <KeyRound className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
           Access tokens
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void logout()}>
+        <DropdownMenuItem action="account.signOut" onSelect={() => void logout()}>
           <LogOut className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
           Sign out
         </DropdownMenuItem>

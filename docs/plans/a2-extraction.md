@@ -2,7 +2,8 @@
 
 Execution plan for phase A2 of [`agentic-layer.md`](./agentic-layer.md) §10
 (Appendix B is the checklist it works through). Written 2026-09-28, at
-v0.10.1.
+v0.10.1. **Closed 2026-09-30 with A2.13** (see "Where we stand" at the end;
+handoff: [`../handoff/A2-extraction.md`](../handoff/A2-extraction.md)).
 
 ## Goal
 
@@ -728,33 +729,137 @@ after the mechanism has been proven on simpler surfaces.
     `object_insertFromDeck`'s `fromComponent`, and the media commands on a
     component master.
 
-## Where we stand (2026-09-30, after A2.12b)
+- 2026-09-30: **A2.13 done — A2 closed** (uncommitted on 2026-09-30 on
+  top of `beaf182`; to ship with A2.12b as 0.10.15). Handoff:
+  [`A2-extraction.md`](../handoff/A2-extraction.md).
+  - **The action catalog** (`apps/web/src/actions/catalog.ts`, plan §9.1
+    guard 2, the part that was still missing). Every action a person
+    reaches through a keyboard shortcut, a context or dropdown menu item or
+    a toolbar button is listed once, as one of:
+    - `commands`: the commands that carry its effect, which is what an
+      agent uses;
+    - `editorOnly`: with a reason (viewport, selection, the local
+      clipboard, the editor's own undo, navigation);
+    - `planned`: shown but not built (object Hide, disabled in the menu).
+
+    82 actions: 53 `commands`, 28 `editorOnly`, 1 `planned`.
+
+  - **Enforcement.** `ShortcutBinding.action` is required
+    (`state/useShortcuts.ts`). The menu item wrappers in
+    `components/ui/{context-menu,dropdown-menu}.tsx` (`Item`,
+    `CheckboxItem`, `RadioItem`) require an `action` prop and render it as
+    `data-action`. `actions/catalog.test.ts` checks four things:
+    - every command an action names exists in the registry;
+    - every `editorOnly` / `planned` reason is at least 20 characters;
+    - no catalog action is unused in `src/`;
+    - every `<Button>` / `<button>` in `ui/Toolbar.tsx` carries a
+      catalog `data-action`, a literal id or the typed `toolAction(…)`
+      helper (TypeScript AST scan).
+  - **The guard found an untracked action at once**: renaming the deck by
+    clicking its title in the toolbar (now `deck.rename`).
+  - **Why in `apps/web`, not in `parity.test.ts`** (plan §9.1 put it
+    there): the binding sites live in the web app, and `packages/commands`
+    does not depend on it. The types force an action on every shortcut and
+    menu item, and the test checks what the types cannot.
+  - **Hand-rolled menus** (`<button role="menuitem">` in `SlideItemMenu`,
+    the Inspector's text-style menu, `FoldersHome`, `FolderDecks`; found
+    by the docs sweep) are covered as well: the test requires a catalog
+    `data-action` on every element with a `menuitem` role in the web app.
+    Their 17 items were tagged, adding `slide.transition`, `textStyle.*`,
+    `deck.duplicate` / `moveToFolder` / `delete` and `folder.*` actions.
+  - **What the guard does not see** (not triaged):
+    - key handlers outside `useShortcuts` (48 `onKeyDown` /
+      `addEventListener('keydown')` sites in `apps/web/src`, most of them
+      text fields and Escape handling);
+    - Inspector controls and canvas gestures.
+
+    Writes from those still hit the one-door lint rule, and their routes
+    hit the route guard. What nothing checks there is an `editorOnly`
+    reason, or a new route-backed action without a catalog entry.
+
+  - **`ONE_DOOR_PENDING` is empty.** `state/testApi.ts`, the dev-only e2e
+    hook, writes through the command registry: `runCommandSync` /
+    `runGroup` on a browser-host context with `LOCAL_ORIGIN`, as
+    `useCommand()` builds it. It runs as a fixed owner actor
+    (`e2e-test-api`).
+    - `object.create` gained an optional `id` (letters, digits, `_`, `-`,
+      at most 64 characters), refused with `conflict` when the slide
+      already has that id. The test hook needs it, and it is useful to
+      agents: the same id on two slides pairs objects for a magic
+      transition.
+    - Slide-model `createObjectOfType(…, id?)` and `buildTable` /
+      `addTable` (`AddTableOpts.id`) take the id. `insertTable` in
+      commands passes it through.
+    - One state no command creates any more is an animation step with the
+      retired `onEnter` trigger (decks from before A2.9, and PowerPoint
+      effects whose node type the importer does not know). It is seeded by
+      `state/testApiLegacyFixtures.ts`, which throws outside dev builds.
+      That file is the only non-test entry added to `ONE_DOOR_IGNORES`,
+      with a rationale in `eslint.one-door.js`.
+    - `addImage` now takes a real `assetId`. The specs upload one first
+      with `e2e/fixtures/media.ts` (`uploadTestPicture`: `media.upload` of
+      a 1×1 PNG through `POST /commands`).
+  - **`FINISHED_PHASES = ['A0', 'A1', 'A2']`**
+    (`packages/commands/src/parity/knownMissing.ts`), since A2 has no
+    known-missing entry left. The list holds 7 entries (A3 5, A4 2).
+  - **E2E specs that seeded from one database now seed themselves:**
+    - `htmltext-texture-isolation.spec.ts` creates its own deck (and
+      deletes it afterwards) unless `E2E_DECK_ID` is set. It used to open
+      the hard-coded deck `nO5v10urLTBI`.
+    - `agent-activity.spec.ts` (component-master test) adapted to the
+      master slide the server now writes (A2.12b). The setup run adds a
+      text label instead of a slide, and the test checks that the label
+      survives the revert of the second run.
+    - `inspector-flows` and `keyboard-shortcuts` upload the picture their
+      image tests place.
+  - Verified by the docs sweep on 2026-09-30: `actions/catalog.test.ts` +
+    `oneDoor.test.ts` (7 tests) and `objectEdit.test.ts` + `parity/`
+    (42 tests) pass. A full e2e run was in progress against the dev stack
+    during the sweep; its result is not recorded here.
+  - tools/list: 188,697 bytes in url mode (187,617 form, 188,589 link), 129
+    tools, measured 2026-09-30 by the docs sweep. The budget stays 189,000,
+    leaving 303 bytes of headroom. `object.create`'s `id` added ≈ 290 bytes
+    (was 188,407).
+
+## Where we stand (2026-09-30, after A2.13 — A2 closed)
 
 Released: A2.1–A2.11, A2.7a and A2.12a (0.10.2–0.10.14; A2.12a in 0.10.14,
-2026-09-30, which is what production runs). A2.12b is done in the working
-tree and uncommitted on 2026-09-30. It is to ship as 0.10.15, and its
-release has a pre-deploy check ([`deploy.md`](../deploy.md), "Releasing
-A2.12b").
+2026-09-30, which is what production runs: `/version.json` answered
+`v0.10.14+61260f2` on 2026-09-30). A2.12b and A2.13 are done in the working
+tree and uncommitted on 2026-09-30. They are to ship together as 0.10.15.
+The release has a pre-deploy check ([`deploy.md`](../deploy.md),
+"Releasing A2.12b"); A2.13 adds no migration and no env var.
 
-State after A2.12b:
+State after A2.13:
 
-- `ONE_DOOR_PENDING` holds 1 file, `state/testApi.ts` (A2.13).
-- `knownMissing` has no A2 entry, and 7 in all (A3 5, A4 2).
+- `ONE_DOOR_PENDING` is empty. The editor writes documents only through
+  commands. (Was 1 file after A2.12b, `state/testApi.ts`; 26 at A2.1.)
+- `knownMissing` has 7 entries (A3 5, A4 2), and
+  `FINISHED_PHASES = ['A0', 'A1', 'A2']`. (Was 32 A2 entries at the start
+  of A2.)
 - 129 commands (74 that run in the browser and on the server, 55
-  server-only, counted from the manifest's `hosts`). The A2.12a line's
-  "76 document, 52 server-only" was counted differently; the manifest said
-  74 / 54 at 0.10.14.
-- tools/list is 188,407 bytes against the 189,000 budget.
+  server-only, counted from the manifest's `hosts`); 94 at the start of A2.
+  The A2.12a line's "76 document, 52 server-only" was counted differently;
+  the manifest said 74 / 54 at 0.10.14.
+- 20 allowlist entries (18 at A1 close).
+- 82 catalogued user actions (53 `commands`, 28 `editorOnly`, 1 `planned`).
+- tools/list is 188,697 bytes (url mode) against the 189,000 budget.
 
 Next, in order:
 
-1. **A2.13 Close**:
-   - the parity guard over shortcuts and menu ids;
-   - `testApi.ts` through commands, so the exemption list is empty;
-   - `FINISHED_PHASES += 'A2'`;
-   - ADR 0010 status and a handoff note;
-   - then the holistic tools/list size review (budget 189,000 today).
-2. **Then MCP work** (after A2 closes).
+1. **Release 0.10.15** (A2.12b + A2.13), with the A2.12b pre-deploy check.
+2. **The holistic tools/list size review.** Per Petr's call, the budget
+   only rose during A2 (132,000 → 189,000 bytes over 12 raises, itemised
+   in `apps/server/src/mcp/toolListBudget.test.ts`) and is reviewed as a
+   whole once A2 is done. Start from the largest tools (`object_create`
+   12,003 bytes in url mode on 2026-09-30), the repeated field
+   descriptions (`mcp/vocabulary.ts`) and the examples.
+3. **Then the MCP work.**
+
+(Was, after A2.12b: "Next, 1. A2.13 Close — the parity guard over
+shortcuts and menu ids; `testApi.ts` through commands; `FINISHED_PHASES +=
+'A2'`; ADR 0010 status and a handoff note; then the tools/list review. 2.
+Then MCP work.")
 
 Open, outside the steps:
 

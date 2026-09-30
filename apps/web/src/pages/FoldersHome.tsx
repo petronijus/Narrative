@@ -427,6 +427,7 @@ function FolderCard({
                 >
                   <button
                     role="menuitem"
+                    data-action="folder.rename"
                     onClick={() => {
                       setMenuOpen(false)
                       onInlineEditStart()
@@ -439,6 +440,7 @@ function FolderCard({
 
                   <button
                     role="menuitem"
+                    data-action="folder.settings"
                     onClick={() => {
                       setMenuOpen(false)
                       void navigate(`/folder/${folder.id}/settings`)
@@ -454,6 +456,7 @@ function FolderCard({
                     (confirmDelete ? (
                       <button
                         role="menuitem"
+                        data-action="folder.delete"
                         onClick={() => {
                           setMenuOpen(false)
                           setConfirmDelete(false)
@@ -469,6 +472,7 @@ function FolderCard({
                     ) : (
                       <button
                         role="menuitem"
+                        data-action="folder.delete"
                         onClick={() => setConfirmDelete(true)}
                         className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-destructive"
                       >
