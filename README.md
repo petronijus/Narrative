@@ -43,8 +43,9 @@ Feature milestones before that:
 ## Requirements
 
 - Node.js >= 22.18 built with TypeScript support (`pnpm lint` needs Node's built-in type stripping; was >= 22 until 2026-09-28). Ubuntu 26.04's own `nodejs` 22.22.1 lacks it — see [SETUP.md](./SETUP.md) "Common first-run failures" (2026-09-29)
-- pnpm >= 9
+- pnpm 9.15.4 (`packageManager`)
 - Docker (for local Postgres)
+- just, lefthook, gitleaks (task runner and git hooks) — `just doctor` checks the whole toolchain
 
 ## Setup
 
@@ -55,12 +56,10 @@ troubleshooting list for the failures that actually bite on a fresh machine.
 TL;DR for an experienced setup:
 
 ```bash
-pnpm install
-cp .env.example .env                   # then fill secrets — see SETUP.md
-docker compose -f infra/docker-compose.yml --env-file .env up -d \
-  postgres minio minio-init imgproxy
-pnpm --filter server db:migrate
-pnpm dev                               # web :5173, server :3001
+just setup                             # dependencies, git hooks, toolchain check
+scripts/secrets-decrypt.sh dev         # .env from the private overlay (or cp .env.example .env — see SETUP.md)
+just services                          # Postgres, MinIO, imgproxy, Redis
+just dev                               # web :5173, server :3001 (migrations apply on start)
 ```
 
 Verify:
@@ -102,12 +101,15 @@ See [docs/agents.md](./docs/agents.md) for the AI agent workflow and ownership m
 
 ## Development scripts
 
+`just` lists every recipe; they wrap the pnpm scripts (SETUP.md →
+Everyday development):
+
 ```bash
-pnpm dev          # Start web + server + video-worker in parallel
-pnpm -r build     # Build all workspaces
-pnpm -r typecheck # TypeScript check across all workspaces
-pnpm -r lint      # ESLint across all workspaces
-pnpm -r test      # Unit + integration tests across all workspaces
+just dev          # web + server + video-worker
+just check        # fast lane, ~1 min: formatting, types, lint, unit tests
+just test server  # one package's unit tests
+just e2e          # Playwright against the dev stack
+just ci           # check + integration + e2e
 ```
 
 ## Testing
@@ -154,33 +156,27 @@ Coverage highlights:
   per A2 step), and the agent eval suite's free replay subset (33 recorded
   scenarios, no model; was 11 at A1) inside `pnpm test` — see [`tests/agent-eval/README.md`](./tests/agent-eval/README.md)
 
-> ⚠️ **Playwright cannot install its bundled browsers on Ubuntu 26.04**
-> (`ERROR: Playwright does not support chromium on ubuntu26.04-x64`, same for
-> its ffmpeg download), so a plain `pnpm --filter web test:e2e` fails there.
-> Use the escape hatch already built into `apps/web/playwright.config.ts`:
->
-> ```bash
-> PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
-> ```
->
-> See [docs/testing-strategy.md](./docs/testing-strategy.md).
+> Run the suites through `just` (`just check`, `just e2e`, `just ci`): the
+> recipes add what a machine needs — on Ubuntu 26.04, where Playwright ships
+> no Chromium, `just e2e` drives the system Chrome with video off. See
+> [SETUP.md](./SETUP.md) and [docs/testing-strategy.md](./docs/testing-strategy.md).
 
 ## Checks
 
 There is **no CI**. GitHub Actions was removed on 2026-09-07 (commit
 `573ba64`) after both workflows had been red since 2026-06-17 on a pnpm
-version conflict; there is no `.github/` directory in the repo. Checks run
-locally, and [`CLAUDE.md`](./CLAUDE.md) maps "files you touched" → "tests to
-run before declaring work done":
+version conflict; there is no `.github/` directory in the repo. `just ci` is
+the CI, run locally; the pre-push hook runs `just check`, and
+[`AGENTS.md`](./AGENTS.md) maps "files you touched" → "what else to run":
 
 ```bash
-pnpm typecheck && pnpm lint && pnpm -r test     # the baseline, always
+just check     # the baseline, always (the pre-push hook and Claude Code's Stop hook run it)
 ```
 
-`pnpm size`, `pnpm load:all`, `pnpm lighthouse`, and `pnpm --filter
-@narrative/slide-model mutate` are deliberately not part of that baseline —
-they either need a representative machine (load, lighthouse) or take long
-enough that they belong before a release rather than on every save.
+`just size`, `just load`, `just lighthouse`, `just eval` and `just mutate`
+are deliberately not part of that baseline — they need a representative
+machine (load, lighthouse), cost subscription usage (eval) or are known red
+(AGENTS.md → When to run what has the current state).
 
 ## Agents (MCP)
 

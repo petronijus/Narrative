@@ -7,8 +7,12 @@ something's broken — file an issue, don't paper over it.
 ## Prerequisites
 
 - **Node.js ≥ 22.18 built with TypeScript support** (`node -v`; `engines` in `package.json` since A2.1, 2026-09-28 — `pnpm lint` loads the TypeScript parity table through Node's built-in type stripping, on by default from 22.18; was ≥ 22). The version alone is not enough: check `node -p process.features.typescript` prints `strip` (or `transform`), not `false` — a distro build can leave type stripping out (see "`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION`" below)
-- **pnpm ≥ 9** — recommended via Corepack: `corepack enable && corepack prepare pnpm@latest --activate`
+- **pnpm 9.15.4** (the `packageManager` pin) — via Corepack: `corepack enable && corepack prepare pnpm@9.15.4 --activate`
 - **Docker** with the Compose plugin (`docker compose version`)
+- **just, lefthook, gitleaks** — the task runner and the git hooks (macOS: `brew install just lefthook gitleaks`; Linux: the distro packages or the projects' release binaries). **xmllint** for the PPTX schema tests (`libxml2`). For secrets: **sops, age** and the 1Password CLI `op`.
+
+`just doctor` checks all of this and prints the fix for anything missing.
+
 - **Linux only**: file-watcher headroom for the dev stack
   ```bash
   sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
@@ -21,8 +25,13 @@ something's broken — file an issue, don't paper over it.
 ```bash
 git clone https://github.com/petronijus/Narrative.git
 cd Narrative
-pnpm install
+git clone https://github.com/petronijus/Narrative-private.git private   # secrets overlay
+just setup     # pnpm install, git hooks (lefthook), just doctor
 ```
+
+The dev `.env` comes from the overlay: `scripts/secrets-decrypt.sh dev`
+(SOPS, the age key from 1Password). Steps 2–3 below are for a machine
+without access to it.
 
 ## 2. Generate secrets
 
@@ -61,36 +70,37 @@ Leave everything else at the defaults. In particular:
 ## 4. Boot the storage / image stack
 
 ```bash
-cd infra
-docker compose --env-file ../.env up -d postgres minio minio-init imgproxy
-cd ..
+just services
 ```
 
-What this brings up:
+What this brings up (`infra/docker-compose.yml`):
 
 - `postgres` — main DB.
 - `minio` — S3-compatible object store on `:9100` (API) and `:9101` (console).
 - `minio-init` — one-shot job that creates the `narrative-media` bucket. Should exit `0`. Verify: `docker compose -f infra/docker-compose.yml --env-file .env logs minio-init` — last line should say `Bucket ready: narrative-media`.
 - `imgproxy` — image transformer on `:8080`.
+- `media-redis` — the video pipeline's queue on `:6380` (step 7).
 
-## 5. Run DB migrations
+## 5. DB migrations
 
-```bash
-pnpm --filter server db:migrate
-```
-
-Expected: `Migrations applied successfully`. Re-runnable; safe.
+The dev server applies pending migrations when it starts (step 6), so there
+is nothing to run. `pnpm --filter server db:migrate` is the production
+migrator (tracks files by hash); on a database the dev server migrated it can
+refuse an older file whose SQL changed after it was applied (0003 on the
+Linux desktop, 2026-09-30) — the dev server's migrator is the one to trust
+locally.
 
 ## 6. Start the dev stack
 
 ```bash
-pnpm dev
+just dev          # or `just dev-lite` without the video worker
 ```
 
-This boots two processes in parallel:
+This boots three processes in parallel:
 
 - `apps/web` — Vite on `http://localhost:5173`
 - `apps/server` — Fastify (REST + Hocuspocus WebSocket) on `:3001` / `:3002`
+- `apps/video-worker` — the transcoding worker (step 7)
 
 Verify:
 
@@ -167,6 +177,55 @@ Dev notes:
 | Open home in incognito                                                                                     | Deck thumbnails visible        |
 | Inspector → Identity → set the same Name on objects across two slides → set slide transition to Magic Move | Objects animate between slides |
 
+## Everyday development
+
+`just` lists every recipe; the ones you use daily:
+
+| Recipe            | What it does                                                |
+| ----------------- | ----------------------------------------------------------- |
+| `just services`   | the docker services (Postgres, MinIO, imgproxy, Redis)      |
+| `just dev`        | web :5173 + server :3001/:3002 + video worker               |
+| `just check`      | fast lane, ~1 min: formatting, types, lint, every unit test |
+| `just test [pkg]` | unit tests, all or one package (`just test server`)         |
+| `just e2e [args]` | Playwright against the running dev stack                    |
+| `just ci`         | `check` + `integration` + `e2e`                             |
+
+AGENTS.md → "When to run what" says which further lanes a change needs
+(`size`, `load`, `lighthouse`, `eval`, `pptx-roundtrip`, `mutate`).
+
+### Machines and lanes
+
+There is no hosted CI: `just ci` is the CI. Every lane runs on every machine
+— the Linux desktop (Ubuntu 26.04), the MacBook and the Omarchy (Arch)
+desktop; nothing needs macOS. Differences: Ubuntu 26.04's distro Node has no
+type stripping (the recipes load tsx for ESLint) and Playwright ships no
+Chromium for it (`just e2e` / `just eval` use the system Chrome, video off).
+
+### Git hooks (lefthook, installed by `just setup`)
+
+| Hook       | Runs                                                                                                                                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pre-commit | `tools/dev/format.sh` on the staged files (ESLint --fix + Prettier), re-staged; `gitleaks` on the staged diff                                                                                                                                           |
+| commit-msg | Conventional Commits (`tools/dev/commit-msg.sh`); `Merge…` and `autosync(…)` pass                                                                                                                                                                       |
+| pre-push   | `just check` for the pushed content unless it passed before (`tools/dev/check-cache.sh`); skipped for a push that adds no commit (a tag) and for autosync-only pushes (the ai-config session-end autosync pushes work in progress within a 25 s budget) |
+
+Until 2026-09-30 the hooks were husky + lint-staged; a clone from before
+needs `just setup` once (it removes husky's `core.hooksPath`, without which
+lefthook's hooks never run — `just doctor` flags it).
+
+### Coding agents
+
+`AGENTS.md` is the shared instruction file (Claude Code reads it through
+`CLAUDE.md`, which adds the Claude-only part). `.claude/settings.json`
+wires three hooks: files written are formatted (`tools/dev/format.sh
+--edit`, Prettier only — ESLint costs ~5 s a call), writes of secrets,
+lockfiles and generated files are refused, and a turn whose code content
+has not passed before runs `just check`. Green content is remembered by
+`tools/dev/check-cache.sh` (content fingerprints in `.git/claude-check-green`,
+one run at a time per clone), so the pre-push hook skips a tree the Stop hook
+already checked. Subagents in
+`.claude/agents/`, path-scoped rules in `.claude/rules/`.
+
 ## Common first-run failures
 
 - **`ENOSPC: System limit for number of file watchers reached`** — Linux only. See prerequisites; raise inotify limits.
@@ -178,17 +237,18 @@ Dev notes:
 - **Vite serves stale code after a `git pull`** — `touch` the affected file, or stop+start `pnpm dev`. Vite occasionally caches transformed modules across hard reloads.
 - **Editor logs `Hocuspocus: authentication token required`** — `VITE_BYPASS_AUTH` differs from `BYPASS_AUTH`. Set both to the same value.
 - **Pre-commit hooks fail with permission errors** — you ran `pnpm install` as root. Re-clone, install as a normal user.
-- **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. `apps/web/playwright.config.ts` already has the escape hatch — install Google Chrome and run:
+- **Git hooks do not run after pulling the lefthook change (2026-09-30)** — husky had set `core.hooksPath=.husky/_`, which still points git at the deleted husky hooks. `just setup` (unsets it and runs `lefthook install`); `just doctor` reports it.
+- **`npx playwright install` fails on Ubuntu 26.04** — `ERROR: Playwright does not support chromium on ubuntu26.04-x64` (same for the ffmpeg download that video capture needs). Playwright ships no managed build for this OS release yet, so a plain `pnpm --filter web test:e2e` fails. Install Google Chrome and use `just e2e` / `just eval`, which switch to it by themselves (`tools/dev/playwright-env.sh`); by hand:
   ```bash
   PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
   # or: PLAYWRIGHT_CHROME_EXECUTABLE=/usr/bin/google-chrome PLAYWRIGHT_NO_VIDEO=1 …
   ```
   Verified on `petronijus-PC`, Ubuntu 26.04.1 LTS, 2026-09-09.
-- **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. The version satisfies `engines`, so nothing warns. The lint-staged pre-commit hook runs `eslint --fix` on staged `.ts` / `.tsx` files and fails the same way. Working around it by loading `tsx` as the loader:
+- **`pnpm lint` fails with `ERR_UNKNOWN_FILE_EXTENSION` on Ubuntu 26.04's own Node** — `TypeError [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts" for …/packages/commands/src/parity/slideModelExports.ts`, before a single file is linted (`eslint.config.js` imports that file through `apps/web/eslint.one-door.js`). The distro package `nodejs` (`/usr/bin/node`, v22.22.1) is built without TypeScript support: `node -p process.features.typescript` prints `false`, and `node --experimental-strip-types file.ts` throws `ERR_NO_TYPESCRIPT`. The version satisfies `engines`, so `just doctor` warns instead. Working around it by loading `tsx` as the loader:
   ```bash
   NODE_OPTIONS="--import=tsx" pnpm lint
   ```
-  exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29; the repo does not set this anywhere — a Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5 — both load the config) should remove the need for it, but has not been tried on this machine.
+  exits 0 with 0 errors (219 warnings). Measured on `petronijus-PC`, Ubuntu 26.04, 2026-09-29. Since 2026-09-30 `just lint` and `tools/dev/format.sh` (the pre-commit hook) add the loader themselves when Node lacks type stripping; only a raw `pnpm lint` still needs it. A Node with type stripping (the Omarchy desktop runs 26.8 via mise, the MacBook 26.5) needs nothing.
 
 ## Dev is not production
 

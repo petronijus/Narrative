@@ -89,20 +89,19 @@ at A0: 50 commands, no ServerHost, no MCP server —
   (`apps/server/src/routes/agentParity.test.ts`; every Fastify route claimed),
   the schema coverage typecheck, per-command contract tests, the committed
   manifest (`capabilities.json`,
-  `docs/capabilities.md`, regenerated with
-  `pnpm --filter @narrative/commands capabilities`), and the `agent-parity`
+  `docs/capabilities.md`, regenerated with `just capabilities`), and the
+  `agent-parity`
   agent.
 - **Plan and phases (A0–A5):** [`plans/agentic-layer.md`](./plans/agentic-layer.md).
 
 ## Quality agents (check; do not build features)
 
-| Agent               | Scope                                                                                                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `qa-tester`         | Unit/integration tests across packages, synthetic load, visual regression, performance baselines                                                                                                       |
-| `e2e-tester`        | Playwright specialist — reproduces visual/rendering bugs in a real browser, owns `apps/web/e2e/`                                                                                                       |
-| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                      |
-| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                       |
-| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits |
+| Agent               | Scope                                                                                                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test-runner`       | Every test lane (`just check`, `just test`, `just e2e`, `just integration`, load, eval): runs, diagnoses, writes tests; reproduces UI bugs in a real browser. Merged from `qa-tester` and `e2e-tester` on 2026-09-30 |
+| `code-reviewer`     | Reviews diffs against the architectural principles + code quality                                                                                                                                                    |
+| `security-reviewer` | Security audit (XSS, auth, IDOR, SSRF, DoS, secret leakage, CSP)                                                                                                                                                     |
+| `agent-parity`      | Agentic coverage — every new capability, property, route or shortcut reaches the command registry (command, schema, examples, contract test, eval scenario, manifest); returns a ledger, never commits               |
 
 Invoke `agent-parity` after any feature work, in the same breath as the
 `narrative-docs` sweep.
@@ -112,10 +111,9 @@ Invoke `agent-parity` after any feature work, in the same breath as the
 | Agent            | Scope                                                                                                                                                                   |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `narrative-docs` | Comprehensive doc sweep — reconciles the **whole** doc surface with the code after any significant success or notable failure. Writes the dated handoff notes and ADRs. |
-| `docs-scribe`    | Narrower predecessor: a single ADR / CHANGELOG entry / README edit on request.                                                                                          |
 
-Prefer `narrative-docs` when the question is "does the documentation still tell
-the truth"; `docs-scribe` when a single, well-scoped document is wanted.
+`docs-scribe` (a single ADR / CHANGELOG entry on request) was folded into
+`narrative-docs` on 2026-09-30, ADR and handoff formats included.
 
 ## Tech-lead (main thread)
 
@@ -124,7 +122,7 @@ the truth"; `docs-scribe` when a single, well-scoped document is wanted.
 - Resolves conflicts between agents (e.g. renderer vs. state-sync boundaries).
 - Approves an ADR draft before it is applied.
 - Before a milestone closes: dispatches the quality agents
-  (`qa-tester` → `code-reviewer` → `security-reviewer`, as relevant).
+  (`test-runner` → `code-reviewer` → `security-reviewer`, as relevant).
 - After feature work: dispatches `agent-parity` (agentic coverage) alongside
   `narrative-docs`.
 - After a milestone closes: dispatches `narrative-docs` for the handoff note.
@@ -141,7 +139,7 @@ Example from M6 (animation engine):
 - `animation`: DSL + GSAP compiler + runtime
 - `editor-ui`: timeline preview button + preset dropdown (UI only, calls the animation API)
 - `infra`: Sentry integration + metrics baseline
-- `qa-tester`: load-harness scaffold (after the animation milestone lands)
+- `test-runner`: load-harness scaffold (after the animation milestone lands)
 
 All start in the same session/worktree; integration at the end.
 
@@ -153,7 +151,7 @@ Example from M4 (MVP):
 2. `infra` adds it to docker-compose (depends on the env/volumes state-sync needs).
 3. `infra` writes the deploy script.
 4. `editor-ui` integrates `HocuspocusProvider` (needs the API from state-sync).
-5. `qa-tester` verifies multi-tab sync and persistence across a restart.
+5. `test-runner` verifies multi-tab sync and persistence across a restart.
 6. `security-reviewer` reviews the WebSocket auth flow.
 7. `narrative-docs` writes the M4 handoff.
 
@@ -161,7 +159,7 @@ Example from M4 (MVP):
 
 Always in this order:
 
-1. `qa-tester` — do the critical paths have tests? Did they pass? Load test OK?
+1. `test-runner` — do the critical paths have tests? Did they pass? Load test OK?
 2. `code-reviewer` — are the architectural principles respected?
 3. `security-reviewer` — only if the milestone touches user-facing surface, auth, perms, media, AI or deploy.
 

@@ -45,10 +45,11 @@ both Linux (Ubuntu desktop) and macOS workstations as the deploy client.
   `http://192.0.2.147:80`. Caddy then reverse-proxies to internal services.
 - **Auth**: Google OIDC with server-side code exchange. `OIDC_CLIENT_SECRET`
   stays server-only. Gated by `OIDC_ALLOWED_EMAILS`.
-- **No git on the server** — `/opt/narrative` is an **rsync of a working
-  tree**, not a checkout. `git log` there means nothing, and there is no
-  `git pull`. The directory carries config + scripts; the versioned artifact is
-  the **image**.
+- **No git on the server** — `/opt/narrative` is an **rsync of the tagged
+  tree** (`git archive`, since 2026-09-30; of a working tree before), not a
+  checkout. `git log` there means nothing, and there is no `git pull`. The
+  directory carries config + scripts; the versioned artifact is the
+  **image**.
 - **Images are built locally and pushed to GHCR** (since 2026-09-07); the VM
   only pulls. See _Build & push images_ below and
   [ADR 0008](./adr/0008-release-and-image-tag-discipline.md).
@@ -129,30 +130,60 @@ token, then
 and `claude -p "List my 3 most recently changed decks" --allowedTools "mcp__narrative__*"`.
 Revoke the token afterwards if it was only for the test.
 
-## Quick deploy (copy-paste)
+## Access
 
-From the project root (`~/Documents/Dev/Narrative`):
+The VM is reachable only through the Proxmox host (`pve`), which is the jump
+host; nothing else routes to it. SSH aliases live in `~/.ssh/config`, keys
+come from the 1Password SSH agent (approve the Touch ID prompt):
+
+```
+Host pve        # Proxmox host + jump host (Tailscale), root
+Host narrative  # the VM: user petr (sudo + docker), ProxyJump pve
+```
+
+- Log in as **`petr`**, not root. The Tailscale host `docker`
+  (alias `docker-vm`) is an **unrelated** homelab box — Narrative does not
+  live there.
+- A machine without the `narrative` alias (the Linux desktop, 2026-09-22)
+  reaches the VM directly on the LAN: pass `NARRATIVE_SSH=petr@<vm address>`
+  to `just deploy`.
+- Coding agents connect to these hosts only with Petr's explicit consent per
+  host.
+
+## Quick deploy
+
+From the project root, with the release tagged and pushed (AGENTS.md →
+Conventions: `just bump`, CHANGELOG, commit → tag → push):
 
 ```bash
-# 0. Build the images locally and push them to GHCR (the VM does not build).
-#    Requires Docker running, infra/.env.prod present, and a GHCR login.
+just deploy v0.10.15
+```
+
+The recipe refuses unless `HEAD` is that tag, the tracked files are clean and
+the tag is on origin, then:
+
+1. builds the images and pushes them to GHCR
+   (`NARRATIVE_TAG=<tag> infra/scripts/build-push.sh`; needs Docker,
+   `infra/.env.prod` and a `docker login ghcr.io`);
+2. syncs **the tagged tree** (`git archive <tag>`, never the working
+   directory — gitignored local files such as PPTX fixtures or the private
+   overlay must not travel) to `/opt/narrative` with `rsync --delete`,
+   sparing `infra/.env.prod`, a root `.env` and `backups/`, which live only on
+   the VM;
+3. runs `USE_SHARED_TUNNEL=1 NARRATIVE_TAG=<tag> ./infra/scripts/deploy.sh
+prod` there;
+4. fails unless `https://<domain>/version.json` then serves the tag.
+
+Claude Code asks before running it (`.claude/settings.json`). By hand, the
+same steps:
+
+```bash
 echo "$GHCR_PAT" | docker login ghcr.io -u petronijus --password-stdin
-NARRATIVE_TAG=v0.9.3 infra/scripts/build-push.sh
-#    → ghcr.io/petronijus/narrative-{server,video-worker,web}:{v0.9.3,latest}
-#    Omit NARRATIVE_TAG and the tag defaults to the git short sha.
-
-# 1. Sync files to production VM
-rsync -avz --delete \
-  --exclude .git --exclude node_modules --exclude dist \
-  --exclude .env --exclude infra/.env.prod \
-  --exclude .claude --exclude test-results --exclude playwright-report \
-  --exclude '*.tsbuildinfo' --exclude 'proxmox_mcp.log' \
-  ./ petr@192.0.2.147:/opt/narrative/
-
-# 2. Pull + deploy on the VM
-ssh petr@192.0.2.147 'chmod +x /opt/narrative/infra/scripts/*.sh &&
-  cd /opt/narrative && NARRATIVE_TAG=v0.9.3 USE_SHARED_TUNNEL=1 \
-  ./infra/scripts/deploy.sh prod'
+NARRATIVE_TAG=v0.10.15 infra/scripts/build-push.sh
+tree="$(mktemp -d)" && git archive v0.10.15 | tar -x -C "$tree"
+rsync -az --delete --exclude /.env --exclude infra/.env.prod --exclude backups/ "$tree/" narrative:/opt/narrative/
+ssh narrative 'chmod +x /opt/narrative/infra/scripts/*.sh &&
+  cd /opt/narrative && NARRATIVE_TAG=v0.10.15 USE_SHARED_TUNNEL=1 ./infra/scripts/deploy.sh prod'
 ```
 
 That's it. The script pulls the prebuilt images, extracts the SPA static files,

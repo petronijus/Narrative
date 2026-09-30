@@ -1,4 +1,4 @@
-# Agent eval suite (`pnpm agent:eval`)
+# Agent eval suite (`just eval`)
 
 Scenario prompts driven through **headless Claude Code** against the local
 Narrative MCP server, each graded **deterministically** by reading the
@@ -43,25 +43,21 @@ service commands). No LLM judges anything. See
 The dev stack must be running (`pnpm dev`: web on :5173, API on :3001). The
 harness never starts or restarts it.
 
-On Ubuntu 26.04, where Playwright cannot install its bundled browser, set
-`PLAYWRIGHT_USE_SYSTEM_CHROME=1` (or `PLAYWRIGHT_CHROME_EXECUTABLE`) for
-`selected-slide-context`, the one scenario that opens an editor tab —
-without it that scenario errors instead of running (2026-09-28:
-`browserType.launch: Executable doesn't exist at
-~/.cache/ms-playwright/chromium_headless_shell-1223/…`):
+Run it as `just eval [args]`: on Ubuntu 26.04, where Playwright cannot
+install its bundled browser, the recipe points `selected-slide-context` (the
+one scenario that opens an editor tab) at the system Chrome — a bare
+`pnpm agent:eval` errors on that scenario instead of running it
+(2026-09-28 and again 2026-09-30: `browserType.launch: Executable doesn't
+exist at ~/.cache/ms-playwright/chromium_headless_shell-1223/…`).
 
 ```bash
-PLAYWRIGHT_USE_SYSTEM_CHROME=1 pnpm agent:eval
-```
-
-```bash
-pnpm agent:eval                        # every scenario
-pnpm agent:eval --filter revert        # ids or substrings, comma-separated
-pnpm agent:eval --keep                 # leave the fixture folders for inspection
-pnpm agent:eval --model sonnet         # default: opus (NARRATIVE_EVAL_MODEL)
-pnpm agent:eval --record               # refresh recordings/ for passing replayable scenarios
-pnpm agent:eval --verbose              # echo each tool call as it happens
-pnpm agent:eval --list                 # scenarios, replayable or live-only
+just eval                        # every scenario
+just eval --filter revert        # ids or substrings, comma-separated
+just eval --keep                 # leave the fixture folders for inspection
+just eval --model sonnet         # default: opus (NARRATIVE_EVAL_MODEL)
+just eval --record               # refresh recordings/ for passing replayable scenarios
+just eval --verbose              # echo each tool call as it happens
+just eval --list                 # scenarios, replayable or live-only
 ```
 
 Other flags: `--retries <n>` (default 1: re-run a scenario once when the API
@@ -187,7 +183,7 @@ registry, so they run unchanged in both worlds.
 | `title-style-folderwide`      | Title style 88 px / 800; linked titles in two decks follow, a hand-set size stays, no per-box edits (`token.update`)             | yes    |
 | `quote-style-from-box`        | a hand-styled quote saved as "Testimonial" (size, weight, colour) and applied to two more quotes (`text.style.createFromObject`) | yes    |
 
-The scenario list is `scenarios/index.ts`; `pnpm agent:eval --list` prints
+The scenario list is `scenarios/index.ts`; `just eval --list` prints
 it with each scenario's replay status. 42 scenarios on 2026-09-30 (after
 A2.12a; 39 after A2.11, 36 after A2.10, 34 after A2.9), 36 of them replayable (the six "no"
 rows above), each with a recording in `recordings/`. `heading-one-font` also
@@ -209,8 +205,8 @@ Environment notes:
 - `selected-slide-context` opens the deck in headless Chromium, as the dev
   user. It needs the BYPASS_AUTH web app, whose dev-only test API sets the
   selection. It follows `apps/web/playwright.config.ts` for the browser
-  (`PLAYWRIGHT_USE_SYSTEM_CHROME=1` / `PLAYWRIGHT_CHROME_EXECUTABLE` on Ubuntu
-  26.04).
+  (`just eval` sets `PLAYWRIGHT_USE_SYSTEM_CHROME=1` where Playwright has no
+  Chromium, `tools/dev/playwright-env.sh`).
 
 ## The free smoke subset (`pnpm -r test`)
 
@@ -230,7 +226,7 @@ resolves the `@narrative/*` sources. It needs no model and no server:
   grader must then **pass**.
 
 Refresh recordings after changing a scenario's fixture or grader, or when a
-command's behaviour changes on purpose: `pnpm agent:eval --record` (all
+command's behaviour changes on purpose: `just eval --record` (all
 scenarios) or `--filter <id> --record`. Signed URLs are redacted before a
 recording is written.
 

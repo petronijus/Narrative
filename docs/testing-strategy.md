@@ -20,7 +20,7 @@
 > | `apps/video-worker`    | 1       | 12        | 1       |
 > | **Total**              | **245** | **3,637** | **30**  |
 >
-> (3,666 with the 30 skipped; CLAUDE.md quotes the passed count. A2.11's
+> (3,666 with the 30 skipped; AGENTS.md no longer quotes a count (this table is the one place). A2.11's
 > net +48: commands +4 files / +64 (`commands/textEdit.test.ts`,
 > `commands/typography.test.ts`, `text/body.test.ts`, and
 > `text/fontWeights.test.ts` moved from `apps/web/src/ui/`; three more
@@ -193,7 +193,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 > ⚠️ Red as of 2026-09-26, all pre-existing at `4e3c503`: `pnpm size`
 > (Tiptap chunk 132.64 kB gz vs a 120 kB budget — still exactly that on
 > 2026-09-27 at A1; total first paint 633.9 of 800 kB, was 605.45 at A0); the real-deck PPTX round
-> trip (5 differences, CLAUDE.md requires 0); `m16-component-flows.spec.ts`
+> trip (5 differences, AGENTS.md requires 0); `m16-component-flows.spec.ts`
 > (hardcoded Drafts folder id, fails on any other database).
 >
 > Added in the 0.9.x arc: **5 .pptx parser regression tests** (theme fonts +
@@ -203,7 +203,7 @@ property 'moduleGraph' of 'project.server' as it is undefined`
 >
 > ⚠️ **There is no CI.** GitHub Actions was removed on 2026-09-07 (commit
 > `573ba64`); nothing runs these suites but a human or an agent following
-> `CLAUDE.md`'s auto-run policy.
+> `AGENTS.md`'s auto-run policy.
 >
 > ⚠️ **The e2e suite does not run on Ubuntu 26.04 as configured** — see
 > _Environment traps_ below.
@@ -358,8 +358,9 @@ The ffmpeg download (needed for video capture) fails the same way. Verified on
 does not exist there. **A plain `pnpm --filter web test:e2e` therefore fails on
 that machine.**
 
-`apps/web/playwright.config.ts` already carries the escape hatch — it is easy
-to miss, so it is written down here:
+`apps/web/playwright.config.ts` carries the escape hatch, and `just e2e`
+uses it by itself since 2026-09-30 (`tools/dev/playwright-env.sh`: system
+Chrome and no video where Playwright's own Chromium is missing). By hand:
 
 ```bash
 PLAYWRIGHT_USE_SYSTEM_CHROME=1 PLAYWRIGHT_NO_VIDEO=1 pnpm --filter web test:e2e
@@ -387,7 +388,7 @@ in a container with a supported base image.
   under load, not a regression; not fixed. Rerun the server suite before
   blaming your change.
 - `multi-client-collab` e2e, "three clients … converge" — flaky as of
-  2026-09-26 (CLAUDE.md records the numbers).
+  2026-09-26 (AGENTS.md records the numbers).
 
 ### Diagnostic probes are not tests
 
@@ -434,26 +435,28 @@ verify the current state_ in the 0.9.x handoff note.
 
 ## How Claude uses this suite
 
-Future Claude sessions read [`/CLAUDE.md`](../CLAUDE.md) on every
-conversation. That file maps "files you touched" → "tests to run
-automatically before declaring work complete". It is the operating
-contract for autonomous changes; update it when you add a new test
-target or retire an existing one. Examples of the policy:
+Coding agents read [`/AGENTS.md`](../AGENTS.md) on every conversation
+(Claude Code through `CLAUDE.md`, which imports it; until 2026-09-30 the
+table lived in CLAUDE.md itself). Its "When to run what" table maps "files
+you touched" → "what else to run" on top of `just check`, which the Claude
+Code Stop hook and the pre-push hook run by themselves. It is the operating
+contract for autonomous changes; update it when you add a new test target
+or retire an existing one. Examples of the policy:
 
-- Edit anything → `pnpm typecheck` + `pnpm lint` + `pnpm -r test` (always).
+- Edit anything → `just check` (always; the Stop and pre-push hooks run it).
 - Touch the renderer → also run `renderer-visual` + `inspector-flows` e2e.
 - Touch Yjs mutations → also run the property-based CRDT test +
   `multi-client-collab` e2e.
 - Touch `packages/commands`, slide-model exports, or a UI write path → run
   `pnpm --filter @narrative/commands test` (parity + contract + manifest).
   Add or change a server route → `pnpm --filter server test` (route guard).
-  (CLAUDE.md has carried this row since A0; was noted here as missing.)
+  (the policy has carried this row since A0 — in CLAUDE.md until 2026-09-30, AGENTS.md since; was noted here as missing.)
 - Touch playbooks, MCP prompts/instructions or a command's description,
   schema or examples → `pnpm agent:eval` (real headless Claude Code, costs
   subscription usage: $1.62 list-price equivalent for a full run on
   2026-09-28 with ToolSearch on, was ≈ 2 USD without it); refresh recordings with
   `pnpm agent:eval --record` when a scenario or command behaviour changes on
-  purpose. CLAUDE.md has this row as of A1.
+  purpose. The policy has this row as of A1 (AGENTS.md since 2026-09-30).
 - Touch bundle entry points / dynamic imports → also run `pnpm size`.
 - Touch perf-sensitive paths → also run `pnpm load:all` (compares
   against `tests/load/baselines.json`).
@@ -465,7 +468,8 @@ release (and `agent:eval` after the guidance changes above).
 Nothing runs any of this automatically: **there is no CI** (was GitHub Actions
 on every push and PR, removed 2026-09-07 — commit `573ba64` — after both
 workflows had been red since 2026-06-17 on a pnpm version conflict). The
-auto-run policy in `CLAUDE.md` is the only gate, and it is honoured by
-convention, not by a machine. If a command cannot run (port collision, missing
+baseline (`just check`) is enforced by the pre-push hook and Claude Code's
+Stop hook since 2026-09-30; the rest of the policy in `AGENTS.md` is honoured
+by convention, not by a machine. If a command cannot run (port collision, missing
 service, the Playwright trap above), say so explicitly in the update — do not
 silently skip it.
